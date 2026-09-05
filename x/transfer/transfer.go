@@ -22,9 +22,12 @@
 //   - Stall and speed detection (downloads): cancels on no data (stall) or
 //     speed below 10% of median.
 //
-// For large models (multi-GB), use the server's download/upload code which
-// has resumable downloads with JSON state files, async hashing from OS page
-// cache, and per-part speed tracking with rolling median.
+// This means interruption behavior here differs from the standard downloader in
+// server/download.go. For large models (multi-GB), use the server's
+// download/upload code which has resumable downloads with JSON state files,
+// async hashing from OS page cache, and per-part speed tracking with rolling
+// median. This transfer path intentionally prefers simpler whole-blob retries
+// for many-small-blob workloads.
 package transfer
 
 import (
