@@ -927,6 +927,7 @@ func TestFilesForModel(t *testing.T) {
 		wantFiles     []string
 		wantErr       bool
 		expectErrType error
+		expectErrMsg  string
 	}{
 		{
 			name: "safetensors model files",
@@ -1196,6 +1197,25 @@ func TestFilesForModel(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "invalid content type reports expected and detected types",
+			setup: func(dir string) error {
+				// Binary content is detected as application/octet-stream (a valid gguf).
+				binaryContent := make([]byte, 512)
+				for i := range binaryContent {
+					binaryContent[i] = byte(i % 256)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), binaryContent, 0o644); err != nil {
+					return err
+				}
+				// A config.json that is actually binary (e.g. an unresolved git lfs
+				// pointer or a mislabeled file) is detected as application/octet-stream,
+				// not the expected text/plain, so the *.json glob rejects it.
+				return os.WriteFile(filepath.Join(dir, "config.json"), binaryContent, 0o644)
+			},
+			wantErr:      true,
+			expectErrMsg: "invalid content type: expected text/plain but got application/octet-stream for ",
+		},
 	}
 
 	tmpDir := t.TempDir()
@@ -1219,6 +1239,9 @@ func TestFilesForModel(t *testing.T) {
 				}
 				if tt.expectErrType != nil && err != tt.expectErrType {
 					t.Errorf("Expected error type %v, got %v", tt.expectErrType, err)
+				}
+				if tt.expectErrMsg != "" && (err == nil || !strings.Contains(err.Error(), tt.expectErrMsg)) {
+					t.Errorf("Expected error message to contain %q, got %v", tt.expectErrMsg, err)
 				}
 				return
 			}
