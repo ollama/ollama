@@ -1,6 +1,7 @@
 package create
 
 import (
+	"cmp"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -360,6 +361,30 @@ func ExpertGroupPrefix(tensorName string) string {
 	return ""
 }
 
+// moduleQuantization is one of MLX's per-module quantization overrides. MLX
+// applies its own defaults for the fields an override leaves out: it hands the
+// override straight to to_quantized, which fills the rest in from the mode
+// rather than from the model-wide values (mlx/nn/layers/quantized.py,
+// _defaults_for_mode).
+type moduleQuantization struct {
+	Bits      int    `json:"bits"`
+	GroupSize int    `json:"group_size"`
+	Mode      string `json:"mode"`
+}
+
+// resolve returns the quant_type and group_size this override describes, with
+// the fields it leaves out filled in the way MLX fills them. quantType is ""
+// when the override states a quantization we cannot map.
+func (m moduleQuantization) resolve() (quantType, groupSize string) {
+	mode := cmp.Or(m.Mode, "affine") // to_quantized's default
+	defaultGroupSize, defaultBits := mlxQuantDefaults(mode)
+	quantType = sourceQuantType(mode, cmp.Or(m.Bits, defaultBits))
+	if quantType == "" {
+		return "", ""
+	}
+	return quantType, strconv.Itoa(cmp.Or(m.GroupSize, defaultGroupSize))
+}
+
 type sourceQuantization struct {
 	Bits            int     `json:"bits"`
 	GroupSize       int     `json:"group_size"`
@@ -375,6 +400,49 @@ type sourceQuantization struct {
 			Type           string  `json:"type"`
 		} `json:"weights"`
 	} `json:"config_groups"`
+
+	// Modules holds MLX's per-module quantization overrides, keyed by module
+	// path. MLX writes them into the same object as the model-wide defaults,
+	// so a mixed-precision checkpoint looks like:
+	//
+	//	"quantization": {
+	//	  "group_size": 64, "bits": 4,
+	//	  "model.layers.0.self_attn.q_proj": {"bits": 8, "group_size": 64}
+	//	}
+	//
+	// Modules that are absent take the model-wide defaults above.
+	Modules map[string]moduleQuantization `json:"-"`
+}
+
+// UnmarshalJSON reads the model-wide quantization fields and, from the same
+// object, MLX's per-module overrides. Every model-wide field is a scalar apart
+// from config_groups, so an override is an entry that is neither: an object
+// carrying at least one quantization field.
+func (q *sourceQuantization) UnmarshalJSON(data []byte) error {
+	type fields sourceQuantization // a type without this method, so no recursion
+	if err := json.Unmarshal(data, (*fields)(q)); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for name, value := range raw {
+		if name == "config_groups" {
+			continue
+		}
+		var module moduleQuantization
+		if err := json.Unmarshal(value, &module); err != nil || module == (moduleQuantization{}) {
+			// A model-wide scalar, or a nested object of some other shape.
+			continue
+		}
+		if q.Modules == nil {
+			q.Modules = make(map[string]moduleQuantization)
+		}
+		q.Modules[name] = module
+	}
+	return nil
 }
 
 type sourceModelConfig struct {
@@ -420,17 +488,11 @@ func (cfg sourceModelConfig) Architecture() string {
 	return cfg.TextConfig.ModelType
 }
 
-func (cfg sourceModelConfig) QuantMetadata() map[string]string {
-	// Use the first non-empty quantization config found
-	var q sourceQuantization
-	for _, candidate := range cfg.quantizationConfigs() {
-		if candidate.Bits != 0 {
-			q = candidate
-			break
-		}
-	}
-
-	quantType := sourceQuantType(q.Mode, q.Bits)
+// metadata returns the blob metadata recording the quantization the source
+// declares. defaultMode is the mode to assume when the source states a bit
+// width but no mode; producers that always state one pass "".
+func (q sourceQuantization) metadata(defaultMode string) map[string]string {
+	quantType := sourceQuantType(cmp.Or(q.Mode, defaultMode), q.Bits)
 	if quantType == "" {
 		return nil
 	}
@@ -440,6 +502,17 @@ func (cfg sourceModelConfig) QuantMetadata() map[string]string {
 		metadata["group_size"] = strconv.Itoa(q.GroupSize)
 	}
 	return metadata
+}
+
+// quantization returns the first quantization config the source declares, or
+// the zero value when it declares none.
+func (cfg sourceModelConfig) quantization() sourceQuantization {
+	for _, candidate := range cfg.quantizationConfigs() {
+		if candidate.Bits != 0 {
+			return candidate
+		}
+	}
+	return sourceQuantization{}
 }
 
 func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {

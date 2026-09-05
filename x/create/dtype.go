@@ -93,6 +93,22 @@ func EncodeFloatTensor(dtype string, values []float32) ([]byte, error) {
 	}
 }
 
+// mlxQuantDefaults returns MLX's default group size and bit width for a
+// quantization mode, which is what MLX uses for any field a quantization
+// config leaves out (mlx/nn/layers/quantized.py, _defaults_for_mode).
+func mlxQuantDefaults(mode string) (groupSize, bits int) {
+	switch strings.ToLower(mode) {
+	case "mxfp4":
+		return 32, 4
+	case "nvfp4":
+		return 16, 4
+	case "mxfp8":
+		return 32, 8
+	default:
+		return 64, 4 // affine
+	}
+}
+
 func sourceQuantType(mode string, bits int) string {
 	switch strings.ToLower(mode) {
 	case "affine":
