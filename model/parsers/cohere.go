@@ -60,6 +60,7 @@ func (p *CohereParser) PreservedTokens() []string {
 		cohereStartText, cohereEndText,
 		cohereStartAction, cohereEndAction,
 		cohereStartResponse, cohereEndResponse,
+		cohereEndOfTurn,
 	}
 }
 
