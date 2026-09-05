@@ -187,7 +187,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, true, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, true, "", false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -199,7 +199,7 @@ func TestSchedVisionContextFloor(t *testing.T) {
 		opts := api.DefaultOptions()
 		opts.NumCtx = 128
 
-		s.getRunner(ctx, visionModel, opts, nil, false, false, nil)
+		s.getRunner(ctx, visionModel, opts, nil, false, "", false, nil)
 
 		req := <-s.pendingReqCh
 		require.Equal(t, 2048, req.opts.NumCtx)
@@ -524,10 +524,10 @@ func TestSchedGetRunner(t *testing.T) {
 	s.getSystemInfoFn = getSystemInfoFn
 	s.newServerFn = a.newServer
 	slog.Info("a")
-	successCh1a, errCh1a := s.getRunner(a.ctx, a.req.model, a.req.opts, a.req.sessionDuration, false, false, nil)
+	successCh1a, errCh1a := s.getRunner(a.ctx, a.req.model, a.req.opts, a.req.sessionDuration, false, "", false, nil)
 	require.Len(t, s.pendingReqCh, 1)
 	slog.Info("b")
-	successCh1b, errCh1b := s.getRunner(b.ctx, b.req.model, b.req.opts, b.req.sessionDuration, false, false, nil)
+	successCh1b, errCh1b := s.getRunner(b.ctx, b.req.model, b.req.opts, b.req.sessionDuration, false, "", false, nil)
 	require.Len(t, s.pendingReqCh, 1)
 	require.Empty(t, successCh1b)
 	require.Len(t, errCh1b, 1)
@@ -551,7 +551,7 @@ func TestSchedGetRunner(t *testing.T) {
 
 	c.req.model.ModelPath = "bad path"
 	slog.Info("c")
-	successCh1c, errCh1c := s.getRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration, false, false, nil)
+	successCh1c, errCh1c := s.getRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration, false, "", false, nil)
 	// Starts in pending channel, then should be quickly processed to return an error
 	time.Sleep(50 * time.Millisecond) // Long enough for the "a" model to expire and unload
 	require.Empty(t, successCh1c)
@@ -586,7 +586,7 @@ func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	reqModel := &Model{Name: "safetensors-b", Digest: "sha-b"}
-	successCh, errCh := s.getRunner(ctx, reqModel, opts, nil, false, false, nil)
+	successCh, errCh := s.getRunner(ctx, reqModel, opts, nil, false, "", false, nil)
 
 	require.Empty(t, successCh)
 	require.Empty(t, errCh)
@@ -615,7 +615,7 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	reqCtx, cancelReq := context.WithCancel(ctx)
-	successCh, errCh := s.getRunner(reqCtx, &Model{Name: "safetensors-a-copy", Digest: "sha-a"}, opts, nil, false, false, nil)
+	successCh, errCh := s.getRunner(reqCtx, &Model{Name: "safetensors-a-copy", Digest: "sha-a"}, opts, nil, false, "", false, nil)
 	cancelReq()
 
 	select {
@@ -725,7 +725,7 @@ func TestSchedPrematureExpired(t *testing.T) {
 	s.getGpuFn = getGpuFn
 	s.getSystemInfoFn = getSystemInfoFn
 	s.newServerFn = scenario1a.newServer
-	successCh1a, errCh1a := s.getRunner(scenario1a.ctx, scenario1a.req.model, scenario1a.req.opts, scenario1a.req.sessionDuration, false, false, nil)
+	successCh1a, errCh1a := s.getRunner(scenario1a.ctx, scenario1a.req.model, scenario1a.req.opts, scenario1a.req.sessionDuration, false, "", false, nil)
 	require.Len(t, s.pendingReqCh, 1)
 	s.Run(ctx)
 	select {

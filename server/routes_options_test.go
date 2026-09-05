@@ -129,6 +129,90 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 	}
 }
 
+func TestNumCtxSource(t *testing.T) {
+	tests := []struct {
+		name           string
+		envContextLen  string // empty means not set
+		modelNumCtx    int    // 0 means not set in model
+		requestNumCtx  int    // 0 means not set in request
+		expectedSource string
+	}{
+		{
+			name:           "vram default when nothing else set",
+			envContextLen:  "",
+			modelNumCtx:    0,
+			requestNumCtx:  0,
+			expectedSource: "default",
+		},
+		{
+			name:           "env var when only env set",
+			envContextLen:  "8192",
+			modelNumCtx:    0,
+			requestNumCtx:  0,
+			expectedSource: "env",
+		},
+		{
+			name:           "modelfile overrides env var",
+			envContextLen:  "8192",
+			modelNumCtx:    16384,
+			requestNumCtx:  0,
+			expectedSource: "modelfile",
+		},
+		{
+			name:           "request overrides modelfile and env var",
+			envContextLen:  "8192",
+			modelNumCtx:    16384,
+			requestNumCtx:  4096,
+			expectedSource: "request",
+		},
+		{
+			name:           "modelfile when only modelfile set",
+			envContextLen:  "",
+			modelNumCtx:    65536,
+			requestNumCtx:  0,
+			expectedSource: "modelfile",
+		},
+		{
+			name:           "request when only request set",
+			envContextLen:  "",
+			modelNumCtx:    0,
+			requestNumCtx:  16384,
+			expectedSource: "request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envContextLen != "" {
+				t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.envContextLen)
+			}
+
+			var modelOpts map[string]any
+			if tt.modelNumCtx != 0 {
+				modelOpts = map[string]any{"num_ctx": float64(tt.modelNumCtx)}
+			}
+			m := &Model{
+				Options: modelOpts,
+			}
+
+			var requestOpts map[string]any
+			if tt.requestNumCtx != 0 {
+				requestOpts = map[string]any{"num_ctx": float64(tt.requestNumCtx)}
+			}
+
+			if source := numCtxSource(m, requestOpts); source != tt.expectedSource {
+				t.Errorf("numCtxSource = %q, want %q", source, tt.expectedSource)
+			}
+
+			// numCtxSource must agree with usesAutomaticNumCtx: only the
+			// VRAM-tier default counts as automatic.
+			if auto := usesAutomaticNumCtx(m, requestOpts); auto != (tt.expectedSource == "default") {
+				t.Errorf("usesAutomaticNumCtx = %v, want %v", auto, tt.expectedSource == "default")
+			}
+		})
+	}
+}
+
 func TestModelOptionsGenerationDefaultsPriority(t *testing.T) {
 	m := &Model{
 		GenerationDefaults: model.GenerationDefaults{
