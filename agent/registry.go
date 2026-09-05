@@ -15,6 +15,10 @@ type ToolContext struct {
 type ToolResult struct {
 	Content    string
 	WorkingDir string
+	// Images carries raw image bytes (e.g. PNG screenshots) that should be
+	// passed to the model through the message Images field, not embedded as
+	// base64 in Content.
+	Images [][]byte
 }
 
 type Tool interface {
