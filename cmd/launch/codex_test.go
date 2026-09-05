@@ -38,6 +38,7 @@ func TestCodexArgs(t *testing.T) {
 		"-c", fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
 		"-c", fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
 		"-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath),
+		"-c", "model_context_window=65536",
 	}
 
 	tests := []struct {
@@ -53,7 +54,7 @@ func TestCodexArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.args(tt.model, catalogPath, tt.args)
+			got, err := c.args(tt.model, catalogPath, 65_536, tt.args)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +74,7 @@ func TestCodexArgsRejectManagedProfile(t *testing.T) {
 		{"--profile=myprofile"},
 	} {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			_, err := c.args("llama3.2", "", extra)
+			_, err := c.args("llama3.2", "", 65_536, extra)
 			if err == nil || !strings.Contains(err.Error(), "manages --profile") {
 				t.Fatalf("args error = %v, want profile conflict", err)
 			}
@@ -93,11 +94,114 @@ func TestCodexArgsRejectManagedOverrides(t *testing.T) {
 		{"--config=model_providers.ollama-launch.base_url=\"http://other.invalid/v1/\""},
 	} {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			_, err := c.args("llama3.2", "", extra)
+			_, err := c.args("llama3.2", "", 65_536, extra)
 			if err == nil {
 				t.Fatalf("args error = nil, want managed config conflict")
 			}
 		})
+	}
+}
+
+func TestCodexContextOverridePreservesSmallerAndClampsLarger(t *testing.T) {
+	tests := []struct {
+		name          string
+		available     int
+		inherited     int
+		extra         []string
+		wantEffective int
+		wantCorrected bool
+	}{
+		{name: "runtime default", available: 65_536, wantEffective: 65_536},
+		{name: "smaller inherited budget", available: 65_536, inherited: 32_768, wantEffective: 32_768},
+		{name: "larger inherited budget", available: 65_536, inherited: 1_000_000, wantEffective: 65_536, wantCorrected: true},
+		{name: "smaller CLI budget", available: 65_536, inherited: 48_000, extra: []string{"-c", "model_context_window=16384"}, wantEffective: 16_384},
+		{name: "larger CLI budget", available: 65_536, extra: []string{"--config=model_context_window=1000000"}, wantEffective: 65_536, wantCorrected: true},
+		{name: "compact short CLI budget", available: 65_536, extra: []string{"-c=model_context_window=32768"}, wantEffective: 32_768},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, cleaned, corrected, err := codexReconcileContextWindow(tt.available, tt.inherited, tt.extra)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.wantEffective || corrected != tt.wantCorrected {
+				t.Fatalf("effective = %d, corrected = %v; want %d, %v", got, corrected, tt.wantEffective, tt.wantCorrected)
+			}
+			for _, arg := range cleaned {
+				if strings.Contains(arg, "model_context_window") {
+					t.Fatalf("cleaned args retained managed override: %v", cleaned)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexRunWritesRuntimeContextAndOverridesConflictingRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(tmpDir, "codex-args.json")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "codex-cli 0.153.2"
+  exit 0
+fi
+printf '%%s\n' "$@" > %q
+`, argsLog)
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootConfig := "model_context_window = 1000000\nmodel_auto_compact_token_limit = 60000\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(rootConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Codex{resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
+		if !load {
+			t.Fatal("Codex Run must load before resolving context")
+		}
+		return contextWindowResolution{ContextLength: 65_536, RuntimeVerified: true, Source: contextWindowSourceRuntime}
+	}}
+	if err := c.Run("qwen3.8:27b-mlx", []LaunchModel{{Name: "qwen3.8:27b-mlx", ContextLength: 262_144}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	catalogData, err := os.ReadFile(filepath.Join(configDir, "model.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(catalogData, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
+		t.Fatalf("catalog context_window = %v, want 65536", got)
+	}
+	argsData, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argsData), "model_context_window=65536") {
+		t.Fatalf("managed runtime override missing from args:\n%s", argsData)
+	}
+	rootData, err := os.ReadFile(filepath.Join(configDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "model_auto_compact_token_limit = 60000") {
+		t.Fatalf("compatible compaction setting was not preserved:\n%s", rootData)
 	}
 }
 
@@ -615,14 +719,14 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 			wantContext: 131072,
 		},
 		{
-			name: "OLLAMA_CONTEXT_LENGTH overrides local gguf inventory context",
+			name: "launcher environment does not override resolved model context",
 			model: LaunchModel{
 				Name:          "llama3.2",
 				ContextLength: 131072,
 				Details:       api.ModelDetails{Format: "gguf"},
 			},
 			envContextLen: "64000",
-			wantContext:   64000,
+			wantContext:   131072,
 		},
 		{
 			name: "safetensors uses inventory context only",
