@@ -24,6 +24,7 @@ import (
 
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/renderers"
 
 	"github.com/ollama/ollama/api"
 	"golang.org/x/sync/semaphore"
@@ -148,6 +149,41 @@ func TestContextShiftPromptLimit(t *testing.T) {
 				t.Fatalf("contextShiftPromptLimit(%d, %d) = %d, want %d", tt.numCtx, tt.numKeep, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLlamaServerCompletionRequestMessageDelimitersMarshal(t *testing.T) {
+	withDelimiters := llamaServerCompletionRequest{
+		Prompt: "test prompt",
+		MessageDelimiters: []renderers.MessageDelimiter{
+			{Role: "system", Delimiter: "<|im_start|>system\n"},
+			{Role: "user", Delimiter: "<|im_start|>user\n"},
+			{Role: "assistant", Delimiter: "<|im_start|>assistant\n"},
+		},
+	}
+
+	b, err := json.Marshal(withDelimiters)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(b), `"message_delimiters":[`) {
+		t.Fatalf("expected message_delimiters in marshaled request, got %s", b)
+	}
+	var roundTripped llamaServerCompletionRequest
+	if err := json.Unmarshal(b, &roundTripped); err != nil {
+		t.Fatalf("unexpected error unmarshaling: %v", err)
+	}
+	if !reflect.DeepEqual(roundTripped.MessageDelimiters, withDelimiters.MessageDelimiters) {
+		t.Fatalf("message_delimiters round-trip = %#v, want %#v", roundTripped.MessageDelimiters, withDelimiters.MessageDelimiters)
+	}
+
+	withoutDelimiters := llamaServerCompletionRequest{Prompt: "test prompt"}
+	b, err = json.Marshal(withoutDelimiters)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(string(b), "message_delimiters") {
+		t.Fatalf("expected message_delimiters to be omitted when nil, got %s", b)
 	}
 }
 

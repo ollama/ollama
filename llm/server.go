@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
@@ -216,6 +217,10 @@ type CompletionRequest struct {
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
 	// IncludeIntermediateMetrics adds cumulative metrics to non-final responses; final responses always include metrics.
 	IncludeIntermediateMetrics bool
+
+	// MessageDelimiters marks where each message starts in Prompt, keyed by
+	// role; ignored by runners other than llama-server.
+	MessageDelimiters []renderers.MessageDelimiter
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
