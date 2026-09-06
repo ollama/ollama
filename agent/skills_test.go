@@ -514,3 +514,31 @@ func TestImportSkillsRejectsUnreadableManifest(t *testing.T) {
 		t.Fatalf("failures = %#v", result.Failures)
 	}
 }
+
+func TestLoadNotFoundNamesSearchedRoots(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	skillsDir := t.TempDir()
+	t.Setenv(SkillsDirEnv, skillsDir)
+	project := t.TempDir()
+
+	catalog, err := LoadDefaultSkills(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = catalog.Load("does-not-exist")
+	if err == nil {
+		t.Fatal("expected an error for a missing skill")
+	}
+	for _, want := range []string{
+		filepath.Join(home, ".agents", "skills"),
+		skillsDir,
+		filepath.Join(project, ".agents", "skills"),
+		filepath.Join(project, ".ollama", "skills"),
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load error = %q, want it to name %q", err, want)
+		}
+	}
+}
