@@ -48,11 +48,6 @@ func (t *winTray) initMenus() error {
 }
 
 func (t *winTray) UpdateAvailable(ver string) error {
-	// Check if ver is empty, if so, we don't want to show the update notification
-	if ver == "" {
-		return nil
-	}
-
 	if !t.updateNotified {
 		slog.Debug("updating menu and sending notification for new update")
 		if err := t.addSeparatorMenuItem(updateSeparatorMenuID, 0); err != nil {
@@ -77,17 +72,19 @@ func (t *winTray) UpdateAvailable(ver string) error {
 		t.updateNotified = true
 
 		t.pendingUpdate = true
-		// Now pop up the notification
-		t.muNID.Lock()
-		defer t.muNID.Unlock()
-		copy(t.nid.InfoTitle[:], windows.StringToUTF16(updateTitle))
-		copy(t.nid.Info[:], windows.StringToUTF16(fmt.Sprintf(updateMessage, ver)))
-		t.nid.Flags |= NIF_INFO
-		t.nid.Timeout = 10
-		t.nid.Size = uint32(unsafe.Sizeof(*wt.nid))
-		err = t.nid.modify()
-		if err != nil {
-			return err
+		// Only show notification bubble if we have a version string
+		if ver != "" {
+			t.muNID.Lock()
+			defer t.muNID.Unlock()
+			copy(t.nid.InfoTitle[:], windows.StringToUTF16(updateTitle))
+			copy(t.nid.Info[:], windows.StringToUTF16(fmt.Sprintf(updateMessage, ver)))
+			t.nid.Flags |= NIF_INFO
+			t.nid.Timeout = 10
+			t.nid.Size = uint32(unsafe.Sizeof(*wt.nid))
+			err = t.nid.modify()
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
