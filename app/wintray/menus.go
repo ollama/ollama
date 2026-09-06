@@ -48,6 +48,11 @@ func (t *winTray) initMenus() error {
 }
 
 func (t *winTray) UpdateAvailable(ver string) error {
+	// Check if ver is empty, if so, we don't want to show the update notification
+	if ver == "" {
+		return nil
+	}
+
 	if !t.updateNotified {
 		slog.Debug("updating menu and sending notification for new update")
 		if err := t.addSeparatorMenuItem(updateSeparatorMenuID, 0); err != nil {
