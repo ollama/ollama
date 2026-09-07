@@ -264,7 +264,9 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 			"request_context_err", ctxErr,
 			"error", err,
 		)
-		return
+		// Do not finish an incomplete upstream response as a successful stream.
+		// Propagate the abort through recovery middleware to net/http.
+		panic(http.ErrAbortHandler)
 	}
 }
 
