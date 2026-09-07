@@ -123,7 +123,7 @@ type Name struct {
 //	      length:  [1, 80]
 //	  model:
 //	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
-//	      length:  [1, 80]
+//	      length:  [1, 96]
 //	  tag:
 //	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
 //	      length:  [1, 80]
@@ -334,6 +334,8 @@ func isValidLen(kind partKind, s string) bool {
 	switch kind {
 	case kindHost:
 		return len(s) >= 1 && len(s) <= 350
+	case kindModel:
+		return len(s) >= 1 && len(s) <= 96
 	case kindTag:
 		return len(s) >= 1 && len(s) <= 80
 	default:
