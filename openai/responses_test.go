@@ -250,7 +250,7 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 	})
 
 	t.Run("tool_search_call item", func(t *testing.T) {
-		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -619,7 +619,7 @@ func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
 			"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
 		}],
 		"input":[
-			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
+			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
 			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[
 				{"type":"function","name":"lookup_order","description":"Look up an order","defer_loading":true,"x_client_field":"preserved","parameters":{"type":"object"}}
 			]}
@@ -1014,7 +1014,8 @@ func TestToResponseEmitsClientToolSearchCall(t *testing.T) {
 		t.Fatalf("output = %#v", response.Output)
 	}
 	item := response.Output[0]
-	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" {
+	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" ||
+		!strings.HasPrefix(item.ID, "tsc_") {
 		t.Fatalf("item = %#v", item)
 	}
 	encoded, err := json.Marshal(item)
@@ -1946,7 +1947,8 @@ func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 	item := events[3].Data.(map[string]any)["item"].(map[string]any)
-	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" {
+	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" ||
+		!strings.HasPrefix(item["id"].(string), "tsc_") {
 		t.Fatalf("item = %#v", item)
 	}
 	encoded, err := json.Marshal(item)

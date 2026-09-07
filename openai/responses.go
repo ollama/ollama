@@ -1148,7 +1148,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		for i, tc := range toolCalls {
 			if HasToolSearchTool(request.Tools) && tc.Function.Name == "tool_search" {
 				output = append(output, ResponsesOutputItem{
-					ID:        fmt.Sprintf("ts_%s_%d", responseID, i),
+					ID:        fmt.Sprintf("tsc_%s_%d", responseID, i),
 					Type:      "tool_search_call",
 					Status:    "completed",
 					CallID:    tc.ID,
@@ -1559,7 +1559,7 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		if HasToolSearchTool(c.request.Tools) && tc.Function.Name == "tool_search" {
-			itemID := fmt.Sprintf("ts_%d_%d", rand.Intn(999999), i)
+			itemID := fmt.Sprintf("tsc_%d_%d", rand.Intn(999999), i)
 			arguments := toolSearchArguments(tc.Function.Arguments)
 			item := map[string]any{
 				"id":        itemID,
