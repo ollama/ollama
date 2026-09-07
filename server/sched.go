@@ -711,6 +711,7 @@ iGPUScan:
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.contextShift,
 		trainContext:    trainContext,
+		llamaConfig:     llamaServerConfigForModel(req.model),
 	}
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
@@ -1360,6 +1361,11 @@ type runnerRef struct {
 	useMMapAuto  bool
 	contextShift bool
 	trainContext int
+	// llamaConfig is the model-derived part of the config this runner was
+	// launched with. Two tags can share one blob -- a Modelfile built FROM
+	// another tag -- so ModelPath alone does not identify the flags the
+	// runner needs.
+	llamaConfig llm.LlamaServerConfig
 	*api.Options
 }
 
@@ -1415,6 +1421,17 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		contextShift = resolveContextShift(req.shift, req.model)
 	}
 	if runner.contextShift != contextShift {
+		return true
+	}
+
+	// A runner is keyed on ModelPath, and a Modelfile built FROM another tag
+	// shares that path -- but the two tags can still need different
+	// llama-server flags. usesOllamaRenderedChat() decides DisableJinja, so a
+	// tag with a renderer or parser and a bare tag over the same blob disagree
+	// about --jinja: whichever loads first wins, and the second one is handed a
+	// runner it cannot use. Tool calls on the bare tag then fail with
+	// "tools param requires --jinja flag" until the runner happens to expire.
+	if runner.llamaConfig != llamaServerConfigForModel(req.model) {
 		return true
 	}
 
