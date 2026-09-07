@@ -74,6 +74,12 @@ type Model struct {
 	ParentModel        string
 	HasChatTemplate    bool
 	HasGoTemplate      bool
+	// ThinkOpenTag and ThinkCloseTag are the reasoning tags the GGUF chat
+	// template renders between, for a model that has no renderer, no parser and
+	// no Go template. They are the last place a thinking budget can learn where
+	// to cut, and separating reasoning from content needs them just as much.
+	ThinkOpenTag  string
+	ThinkCloseTag string
 	PreferChatTemplate bool // set when GGUF chat_template should take precedence over Go TEMPLATE
 	AdapterPaths       []string
 	ProjectorPaths     []string
@@ -851,6 +857,10 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 			m.License = append(m.License, string(bts))
 		}
 	}
+
+	// Read once, at load, from the template that will actually render: a model
+	// served by its chat template has no Go template for InferTags to walk.
+	m.ThinkOpenTag, m.ThinkCloseTag = thinking.InferTagsFromChatTemplate(ggufChatTemplate)
 
 	ggufCaps := chatTemplateCapabilities(nil, ggufChatTemplate)
 	goCaps := goTemplateCapabilities(m.Template)
