@@ -48,6 +48,29 @@ Volume Label：Crucial X9
 等待使用者提供其他要部署的完整 Ollama 模型名稱與標籤。
 目前只有 qwen2.5:7b 已明確指定並完成部署。
 
+GitHub 續作位置
+---------------
+Repository：AKB0700/ollama
+Pull Request：#63
+PR URL：https://github.com/AKB0700/ollama/pull/63
+Base branch：main
+PR branch：akb0700-reliable-ai-collaboration
+建立 PR 時的 commit：cf230de1
+
+若需要從 GitHub 取得 PR：
+
+  git fetch origin pull/63/head:pr-63-portable-ai
+  git switch pr-63-portable-ai
+
+若 PR 的來源分支仍存在，也可執行：
+
+  git fetch origin akb0700-reliable-ai-collaboration
+  git switch --track origin/akb0700-reliable-ai-collaboration
+
+給後續 Copilot 的指示：
+先閱讀 SSD 根目錄的「續作狀態.txt」與「使用說明.txt」，再查看
+AKB0700/ollama#63。大型模型與可攜式執行檔只存在 SSD，不在 GitHub PR。
+
 注意
 ----
 ANTHROPIC_API_KEY 與 OPENAI_API_KEY 尚未設定，因此 Claude/OpenAI
