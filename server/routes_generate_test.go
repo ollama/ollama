@@ -670,6 +670,53 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 	})
 }
 
+func TestGenerateHandlerNativeChatTemplateThinking(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		TemplateFn: func(_ context.Context, req llm.ChatRequest) (string, error) {
+			if len(req.Messages) != 1 || req.Messages[0].Content != "is 5 bigger than 6?" {
+				t.Fatalf("chat template messages = %#v", req.Messages)
+			}
+			return "native-thinking-template", nil
+		},
+		CompletionResponse: llm.CompletionResponse{
+			Content:    "The model is checking the comparison. </think> No.",
+			Done:       true,
+			DoneReason: llm.DoneReasonStop,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "native-thinking-generate", ggml.KV{
+		"tokenizer.chat_template": "{% if thinking %}<think>{% endif %}{{ messages[0]['content'] }}{% if thinking %}</think>{% endif %}",
+	}, "", nil)
+
+	stream := false
+	think := true
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "native-thinking-generate",
+		Prompt: "is 5 bigger than 6?",
+		Think:  &api.ThinkValue{Value: think},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.GenerateResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Thinking != "The model is checking the comparison. " {
+		t.Errorf("thinking = %q, want %q", resp.Thinking, "The model is checking the comparison. ")
+	}
+	if resp.Response != "No." {
+		t.Errorf("response = %q, want %q", resp.Response, "No.")
+	}
+}
+
 func TestGenerateChatRemote(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

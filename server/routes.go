@@ -638,15 +638,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	var thinkingState *thinking.Parser
 	if builtinParser == nil {
-		openingTag, closingTag := thinking.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
-			thinkingState = &thinking.Parser{
-				OpeningTag: openingTag,
-				ClosingTag: closingTag,
-			}
-			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
-				thinkingState.AddContent(openingTag)
-			}
+		var primeThinking bool
+		thinkingState, primeThinking = thinkingParserForGenerate(m, req.Think)
+		if thinkingState != nil && (primeThinking || strings.HasSuffix(strings.TrimSpace(prompt), thinkingState.OpeningTag)) {
+			thinkingState.AddContent(thinkingState.OpeningTag)
 		}
 	}
 
@@ -2977,6 +2972,31 @@ func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, 
 	var err error
 	nativeReq.Messages, err = truncateNativeChatMessages(ctx, m, r, optionsForPrompt(opts, r), nativeReq, truncate)
 	return nativeReq, err
+}
+
+func thinkingParserForGenerate(m *Model, think *api.ThinkValue) (*thinking.Parser, bool) {
+	if think == nil || !think.Bool() || m.Template == nil {
+		return nil, false
+	}
+
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
+	primeThinking := false
+	if openingTag == "" || closingTag == "" {
+		if !m.HasChatTemplate || !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
+			return nil, false
+		}
+
+		// Native Jinja templates are rendered by llama-server and are not
+		// available to InferTags. Their thinking delimiter is nevertheless
+		// known from the model capability detection above.
+		openingTag, closingTag = "<think>", "</think>"
+		primeThinking = true
+	}
+
+	return &thinking.Parser{
+		OpeningTag: openingTag,
+		ClosingTag: closingTag,
+	}, primeThinking
 }
 
 func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model, r llm.LlamaServer, opts *api.Options, msgs []api.Message, checkpointStart, checkpointLoaded time.Time) {
