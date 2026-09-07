@@ -761,6 +761,7 @@ iGPUScan:
 		useMMapAuto:     req.useMMapAuto,
 		contextShift:    req.model.ModelPath != "" && launchContextShift(req.shift, req.model),
 		trainContext:    trainContext,
+		llamaConfig:     llamaServerConfigForModel(req.model),
 	}
 	runner.model.Store(req.model)
 	runner.numParallel = numParallel
@@ -1399,6 +1400,11 @@ type runnerRef struct {
 	useMMapAuto  bool
 	contextShift bool
 	trainContext int
+	// llamaConfig is the model-derived part of the config this runner was
+	// launched with. Two tags can share one blob -- a Modelfile built FROM
+	// another tag -- so ModelPath alone does not identify the flags the
+	// runner needs.
+	llamaConfig llm.LlamaServerConfig
 	*api.Options
 }
 
@@ -1456,6 +1462,20 @@ func (runner *runnerRef) reloadReason(ctx context.Context, req *LlmRequest) stri
 
 	if req.model.ModelPath != "" && resolveContextShift(req.shift, req.model) && !runner.contextShift {
 		return "request needs context shift, which the loaded runner was launched without"
+	}
+
+	// A runner is keyed on ModelPath, and a Modelfile built FROM another tag
+	// shares that path -- but the two tags can still need different
+	// llama-server flags. usesOllamaRenderedChat() decides DisableJinja, so a
+	// tag with a renderer or parser and a bare tag over the same blob disagree
+	// about --jinja: whichever loads first wins, and the second one is handed a
+	// runner it cannot use. Tool calls on the bare tag then fail with
+	// "tools param requires --jinja flag" until the runner happens to expire.
+	// DeepEqual rather than !=: upstream gave LlamaServerConfig a
+	// DraftModelShardPaths []string field, so the struct no longer compares
+	// with ==, and the neighbouring adapter/projector checks already use it.
+	if !reflect.DeepEqual(runner.llamaConfig, llamaServerConfigForModel(req.model)) {
+		return "llama-server flags changed"
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
