@@ -264,6 +264,35 @@ type ResponsesReasoningInput struct {
 
 func (ResponsesReasoningInput) responsesInputItem() {}
 
+func unmarshalResponsesAgentMessage(data []byte) (ResponsesInputMessage, error) {
+	var message struct {
+		Content []struct {
+			Type             string `json:"type"`
+			Text             string `json:"text"`
+			EncryptedContent string `json:"encrypted_content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(data, &message); err != nil {
+		return ResponsesInputMessage{}, err
+	}
+
+	content := make([]ResponsesContent, 0, len(message.Content))
+	for i, part := range message.Content {
+		var text string
+		switch part.Type {
+		case "input_text":
+			text = part.Text
+		case "encrypted_content":
+			text = part.EncryptedContent
+		default:
+			return ResponsesInputMessage{}, fmt.Errorf("content[%d]: unknown content type: %s", i, part.Type)
+		}
+		content = append(content, ResponsesTextContent{Type: "input_text", Text: text})
+	}
+
+	return ResponsesInputMessage{Type: "message", Role: "user", Content: content}, nil
+}
+
 // unmarshalResponsesInputItem unmarshals a single input item from JSON.
 func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 	var typeField struct {
@@ -288,6 +317,8 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return msg, nil
+	case "agent_message":
+		return unmarshalResponsesAgentMessage(data)
 	case "function_call":
 		var fc ResponsesFunctionCall
 		if err := json.Unmarshal(data, &fc); err != nil {

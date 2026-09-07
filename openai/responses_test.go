@@ -300,6 +300,16 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 	})
 
+	t.Run("agent message with unknown content type", func(t *testing.T) {
+		_, err := unmarshalResponsesInputItem([]byte(`{"type":"agent_message","content":[{"type":"input_audio"}]}`))
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if err.Error() != "content[0]: unknown content type: input_audio" {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
 	t.Run("unknown item type", func(t *testing.T) {
 		_, err := unmarshalResponsesInputItem([]byte(`{"type": "unknown_type"}`))
 		if err == nil {
@@ -329,6 +339,55 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+}
+
+func TestFromResponsesRequest_AgentMessage(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test",
+		"input": [
+			{
+				"type": "message",
+				"role": "user",
+				"content": [{"type": "input_text", "text": "Relay the task below."}]
+			},
+			{
+				"type": "agent_message",
+				"id": "amsg_0000",
+				"author": "/root",
+				"recipient": "/root/child",
+				"content": [
+					{
+						"type": "input_text",
+						"text": "Message Type: NEW_TASK\nTask name: /root/child\nSender: /root\nPayload:\n"
+					},
+					{
+						"type": "encrypted_content",
+						"encrypted_content": "Reply with the single word: ALPHA"
+					}
+				]
+			}
+		]
+	}`), &req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(chat.Messages) != 2 {
+		t.Fatalf("len(Messages) = %d, want 2", len(chat.Messages))
+	}
+
+	message := chat.Messages[1]
+	if message.Role != "user" {
+		t.Errorf("Role = %q, want %q", message.Role, "user")
+	}
+	if message.Content != "Message Type: NEW_TASK\nTask name: /root/child\nSender: /root\nPayload:\nReply with the single word: ALPHA" {
+		t.Errorf("Content = %q", message.Content)
+	}
 }
 
 func TestFromResponsesRequestIgnoresReplayedWebSearchCall(t *testing.T) {
