@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2074,13 +2075,26 @@ func TestResumePartialFileExactSize(t *testing.T) {
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 	os.WriteFile(dest+".tmp", data, 0o644)
 
+	var completed int64
 	err := Download(context.Background(), DownloadOptions{
-		Blobs:   []Blob{blob},
-		BaseURL: server.URL,
-		DestDir: clientDir,
+		Blobs:    []Blob{blob},
+		BaseURL:  server.URL,
+		DestDir:  clientDir,
+		Progress: func(c, _ int64) { completed = c },
 	})
 	if err != nil {
 		t.Fatalf("Download failed: %v", err)
+	}
+
+	// The blob was already on disk in full; nothing should have been fetched
+	if n := requestCount.Load(); n != 0 {
+		t.Errorf("Requests = %d, want 0 for a complete .tmp", n)
+	}
+	if completed != int64(blobSize) {
+		t.Errorf("Progress reported %d, want %d", completed, blobSize)
+	}
+	if _, err := os.Stat(dest + ".tmp"); !os.IsNotExist(err) {
+		t.Error("Expected .tmp to be renamed away")
 	}
 
 	// Verify final file is correct
@@ -2090,6 +2104,63 @@ func TestResumePartialFileExactSize(t *testing.T) {
 	}
 	resumeHash := sha256.Sum256(finalData)
 	if fmt.Sprintf("sha256:%x", resumeHash) != digest {
+		t.Error("Final file hash mismatch")
+	}
+}
+
+func TestResumePartialFileExactSizeCorrupt(t *testing.T) {
+	blobSize := resumeThreshold + 1024
+	data := make([]byte, blobSize)
+	for i := range data {
+		data[i] = byte((i * 13) % 256)
+	}
+	h := sha256.Sum256(data)
+	digest := fmt.Sprintf("sha256:%x", h)
+	blob := Blob{Digest: digest, Size: int64(blobSize)}
+
+	var rangeHeader string
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		rangeHeader = r.Header.Get("Range")
+		mu.Unlock()
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", blobSize))
+		w.WriteHeader(http.StatusOK)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	clientDir := t.TempDir()
+
+	// A .tmp of the right size whose bytes are not the blob's
+	dest := filepath.Join(clientDir, digestToPath(digest))
+	os.MkdirAll(filepath.Dir(dest), 0o755)
+	wrong := slices.Clone(data)
+	wrong[blobSize/2] ^= 0xff
+	os.WriteFile(dest+".tmp", wrong, 0o644)
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: server.URL,
+		DestDir: clientDir,
+	})
+	if err != nil {
+		t.Fatalf("Download failed: %v", err)
+	}
+
+	// Discarded and fetched whole, not resumed from the corrupt bytes
+	mu.Lock()
+	if rangeHeader != "" {
+		t.Errorf("Range header = %q, want none after discarding a corrupt .tmp", rangeHeader)
+	}
+	mu.Unlock()
+
+	finalData, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("Failed to read final file: %v", err)
+	}
+	if got := sha256.Sum256(finalData); fmt.Sprintf("sha256:%x", got) != digest {
 		t.Error("Final file hash mismatch")
 	}
 }
