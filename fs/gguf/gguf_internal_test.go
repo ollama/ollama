@@ -47,6 +47,26 @@ func TestTensorInfoRejectsRowNotMultipleOfBlockSize(t *testing.T) {
 	}
 }
 
+func TestTensorInfoNumBytesOverflow(t *testing.T) {
+	// A shape whose element count overflows int64 must not be reported as a
+	// small, valid tensor.
+	ti := TensorInfo{
+		Name:  "overflow.weight",
+		Shape: []uint64{3, 6148914691236517206},
+		Type:  TensorTypeF32,
+	}
+
+	if n := ti.NumValues(); n != 0 {
+		t.Fatalf("NumValues() = %d, want 0", n)
+	}
+	if n := ti.NumBytes(); n != 0 {
+		t.Fatalf("NumBytes() = %d, want 0", n)
+	}
+	if ti.Valid() {
+		t.Fatal("Valid() unexpectedly true for overflowing shape")
+	}
+}
+
 func TestTensorReaderReturnsLazyParseError(t *testing.T) {
 	var b bytes.Buffer
 	writeInternalRaw(t, &b, []byte("GGUF"))
