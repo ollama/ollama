@@ -3,8 +3,16 @@ $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "Initialize-PortableEnvironment.ps1")
 
-$runningModels = (Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" `
-    -TimeoutSec 5).models
+$runningModels = @()
+try {
+    $runningModels = @(
+        (Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" `
+            -TimeoutSec 5).models
+    )
+}
+catch [System.Net.WebException] {
+    Write-Host "Ollama API is already stopped."
+}
 foreach ($model in $runningModels) {
     & $script:OllamaExecutable stop $model.name
     if ($LASTEXITCODE -ne 0) {
