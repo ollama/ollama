@@ -359,15 +359,32 @@ func (f FlashAttentionType) String() string {
 // figure out the device environment variables and any recorded
 // per-device runner environment overrides.
 func GetDevicesEnv(l []DeviceInfo) map[string]string {
+	env, _ := GetDevicesEnvAndLogNames(l)
+	return env
+}
+
+// GetDevicesEnvAndLogNames returns the child environment variables along with,
+// for each device in l, the name the child process will use for that device
+// in its own log output - which is positional, and may not match
+// DeviceInfo.Name, when a visible-devices filter is applied.
+func GetDevicesEnvAndLogNames(l []DeviceInfo) (map[string]string, []string) {
 	if len(l) == 0 {
-		return nil
+		return nil, nil
 	}
 	// CUDA-only groups need filtering so devices removed during discovery do
 	// not reappear in the child process.
 	mustFilter := len(l) == 1 || allDevicesUseLibrary(l, "CUDA")
 	env := map[string]string{}
-	for _, d := range l {
-		d.updateVisibleDevicesEnv(env, mustFilter)
+	logNames := make([]string, len(l))
+	for i, d := range l {
+		childOrdinal, filtered := d.updateVisibleDevicesEnv(env, mustFilter)
+		if filtered {
+			logNames[i] = d.childLogName(childOrdinal)
+		} else {
+			// Unfiltered, the child enumerates every device exactly as
+			// discovery, names agree.
+			logNames[i] = d.Name
+		}
 		for k, v := range d.RunnerEnvOverrides {
 			if existing, ok := env[k]; ok && existing != v {
 				slog.Warn("conflicting device environment override", "key", k, "existing", existing, "new", v, "library", d.Library, "id", d.ID)
@@ -376,7 +393,18 @@ func GetDevicesEnv(l []DeviceInfo) map[string]string {
 		}
 	}
 
-	return env
+	return env, logNames
+}
+
+// childLogName returns the name a child process will print for this device
+// when it is the device at index ordinal in the child's filtered view.
+func (d DeviceInfo) childLogName(ordinal int) string {
+	prefix := strings.TrimRight(d.Name, "0123456789")
+	if prefix == "" {
+		// No usable prefix to renumber.
+		return d.Name
+	}
+	return prefix + strconv.Itoa(ordinal)
 }
 
 func allDevicesUseLibrary(l []DeviceInfo, library string) bool {
@@ -415,7 +443,11 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	return false
 }
 
-func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) {
+// updateVisibleDevicesEnv appends this device to the appropriate visible-devices
+// variable in env. It reports the ordinal the device will occupy in the child's
+// renumbered view, and whether filtering applies to it at all; when it does not,
+// the child sees the unfiltered device list and the ordinal is meaningless.
+func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bool) (int, bool) {
 	var envVar string
 	var rocmOrdinalEnv string
 	switch d.Library {
@@ -431,16 +463,16 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 		if !mustFilter {
 			// By default we try to avoid filtering CUDA devices because ROCm also
 			// looks at the CUDA env var, and gets confused in mixed-vendor environments.
-			return
+			return 0, false
 		}
 		envVar = "CUDA_VISIBLE_DEVICES"
 	case "Vulkan":
 		if !mustFilter {
-			return
+			return 0, false
 		}
 		envVar = "GGML_VK_VISIBLE_DEVICES"
 	default:
-		return
+		return 0, false
 	}
 	v, existing := env[envVar]
 	childOrdinal := visibleDeviceCount(v)
@@ -462,6 +494,8 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 		v = v + strconv.Itoa(childOrdinal)
 		env[rocmOrdinalEnv] = v
 	}
+
+	return childOrdinal, true
 }
 
 func visibleDeviceCount(value string) int {

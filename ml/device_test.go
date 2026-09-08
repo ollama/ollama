@@ -3,6 +3,7 @@ package ml
 import (
 	"bytes"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -266,5 +267,109 @@ func TestFlashAttentionSupportedWarnsWhenCUDADriverUnknown(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "CUDA driver version unavailable") {
 		t.Fatalf("expected unknown driver warning, got %q", logs.String())
+	}
+}
+
+func TestGetDevicesEnvAndLogNames(t *testing.T) {
+	// The child only sees the devices in its visible-devices variable and
+	// numbers them from zero, so the name it logs is positional, not discovery's.
+	tests := []struct {
+		name    string
+		gpus    []DeviceInfo
+		wantEnv map[string]string
+		want    []string
+	}{
+		{
+			name: "single CUDA at a non-zero index renumbers to zero",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "1", Name: "CUDA1"},
+			},
+			wantEnv: map[string]string{"CUDA_VISIBLE_DEVICES": "1"},
+			want:    []string{"CUDA0"},
+		},
+		{
+			name: "masked subset renumbers contiguously from zero",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "1", Name: "CUDA1"},
+				{DeviceID: DeviceID{Library: "CUDA", ID: "2"}, FilterID: "2", Name: "CUDA2"},
+			},
+			wantEnv: map[string]string{"CUDA_VISIBLE_DEVICES": "1,2"},
+			want:    []string{"CUDA0", "CUDA1"},
+		},
+		{
+			name: "all devices selected: names unchanged",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "0"}, FilterID: "0", Name: "CUDA0"},
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "1", Name: "CUDA1"},
+			},
+			wantEnv: map[string]string{"CUDA_VISIBLE_DEVICES": "0,1"},
+			want:    []string{"CUDA0", "CUDA1"},
+		},
+		{
+			name: "selection order, not driver order, decides the child's numbering",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "1", Name: "CUDA1"},
+				{DeviceID: DeviceID{Library: "CUDA", ID: "0"}, FilterID: "0", Name: "CUDA0"},
+			},
+			wantEnv: map[string]string{"CUDA_VISIBLE_DEVICES": "1,0"},
+			want:    []string{"CUDA0", "CUDA1"},
+		},
+		{
+			name: "mixed vendor is not filtered, so names are unchanged",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "CUDA", ID: "1"}, FilterID: "1", Name: "CUDA1"},
+				{DeviceID: DeviceID{Library: "Vulkan", ID: "0"}, FilterID: "0", Name: "Vulkan0"},
+			},
+			wantEnv: map[string]string{},
+			want:    []string{"CUDA1", "Vulkan0"},
+		},
+		{
+			name: "single Vulkan at a non-zero index renumbers to zero",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "Vulkan", ID: "1"}, FilterID: "1", Name: "Vulkan1"},
+			},
+			wantEnv: map[string]string{"GGML_VK_VISIBLE_DEVICES": "1"},
+			want:    []string{"Vulkan0"},
+		},
+		{
+			name: "Metal is never filtered",
+			gpus: []DeviceInfo{
+				{DeviceID: DeviceID{Library: "Metal", ID: "0"}, Name: "Metal0"},
+			},
+			wantEnv: map[string]string{},
+			want:    []string{"Metal0"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, got := GetDevicesEnvAndLogNames(tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("log names = %v, want %v", got, tt.want)
+			}
+			for k, want := range tt.wantEnv {
+				if env[k] != want {
+					t.Errorf("%s = %q, want %q", k, env[k], want)
+				}
+			}
+			if len(tt.wantEnv) == 0 && len(env) != 0 {
+				t.Errorf("env = %v, want empty", env)
+			}
+		})
+	}
+}
+
+func TestGetDevicesEnvAndLogNamesROCmMatchesOrdinal(t *testing.T) {
+	// ROCm is always filtered, and the child ordinal it is told to use must be
+	// the same number the log names are built from.
+	gpus := []DeviceInfo{
+		{DeviceID: DeviceID{Library: "ROCm", ID: "1"}, FilterID: "1", Name: "ROCm1"},
+		{DeviceID: DeviceID{Library: "ROCm", ID: "2"}, FilterID: "2", Name: "ROCm2"},
+	}
+
+	_, got := GetDevicesEnvAndLogNames(gpus)
+	want := []string{"ROCm0", "ROCm1"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("log names = %v, want %v", got, want)
 	}
 }
