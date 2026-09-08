@@ -165,14 +165,13 @@ try {
         }
 
         $changes = @(
-            git @gitRepositoryArguments -C $repositoryPath status `
-                --porcelain --untracked-files=no
+            git @gitRepositoryArguments -C $repositoryPath status --porcelain
         )
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to inspect the existing working tree."
         }
         if ($changes.Count -gt 0) {
-            throw "The existing repository has tracked changes. Commit or stash them before deployment."
+            throw "The existing repository has uncommitted changes. Commit, stash, or remove them before deployment."
         }
 
         Invoke-Git ($gitRepositoryArguments + @("-C", $repositoryPath, "fetch", "--prune", "origin"))
