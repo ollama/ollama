@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/proxy"
@@ -1375,5 +1377,50 @@ func TestCodexDesktopModelRefreshErrorUsesUserFacingCopy(t *testing.T) {
 	withoutSavedModels := codexDesktopModelRefreshError(codexDesktopModelsSettings{})
 	if withoutSavedModels != "Couldn’t refresh available models. Try again." {
 		t.Fatalf("empty-selection message = %q", withoutSavedModels)
+	}
+}
+
+func TestCodexDesktopIntroAcknowledgment(t *testing.T) {
+	previous := appStore
+	t.Cleanup(func() { appStore = previous })
+	path := filepath.Join(t.TempDir(), "db.sqlite")
+	appStore = &store.Store{DBPath: path}
+	if codexDesktopIntroAcknowledged() {
+		t.Fatal("new store already acknowledged")
+	}
+	settings, err := appStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.ClaudeDesktopUsed = true
+	if err := appStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := acknowledgeCodexDesktopIntro(); err != nil {
+		t.Fatal(err)
+	}
+	if err := appStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	appStore = &store.Store{DBPath: path}
+	defer appStore.Close()
+	if !codexDesktopIntroAcknowledged() {
+		t.Fatal("acknowledgment did not survive reopening the store")
+	}
+	settings, err = appStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.ClaudeDesktopUsed {
+		t.Fatal("changed Claude history")
+	}
+}
+
+func TestCodexDesktopIntroAcknowledgmentUnavailable(t *testing.T) {
+	previous := appStore
+	t.Cleanup(func() { appStore = previous })
+	appStore = nil
+	if err := acknowledgeCodexDesktopIntro(); err == nil {
+		t.Fatal("expected unavailable store error")
 	}
 }

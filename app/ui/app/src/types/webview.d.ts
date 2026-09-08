@@ -62,6 +62,7 @@ interface ClaudeDesktopActionResult {
 }
 
 interface CodexDesktopStatus {
+  introAcknowledged?: boolean;
   supported: boolean;
   installed: boolean;
   connected: boolean;
@@ -138,6 +139,7 @@ declare global {
     ) => Promise<ClaudeDesktopActionResult>;
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
+    acknowledgeCodexDesktopIntro?: () => Promise<string>;
     getCodexDesktopStatus?: () => Promise<CodexDesktopStatus>;
     getCodexDesktopRequestCount?: () => Promise<number>;
     setCodexDesktopConnected?: (

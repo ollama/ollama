@@ -1,3 +1,4 @@
+import { CodexConnectedIntro } from "./CodexConnectedIntro";
 import type { IntegrationStatus } from "@/api";
 import { INTEGRATION_ICONS } from "@/lib/launchCommands";
 import type {
@@ -67,6 +68,9 @@ export function CodexDesktopRow({
   const [phase, setPhase] = useState<CodexConnectPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showIntro, setShowIntro] = useState(false);
+  const [introAttemptFailed, setIntroAttemptFailed] = useState(false);
+  const introAcknowledged = useRef(false);
   const mounted = useRef(true);
   const operationInFlight = useRef(false);
 
@@ -150,6 +154,12 @@ export function CodexDesktopRow({
         if (!next.installed) return;
         completing = true;
 
+        if (!next.introAcknowledged && !introAcknowledged.current) {
+          setShowIntro(true);
+          setPhase("idle");
+          return;
+        }
+
         if (next.running) {
           setPhase("idle");
           setError(
@@ -201,9 +211,10 @@ export function CodexDesktopRow({
   const installed = status?.installed ?? integration.installed ?? false;
   const pending = phase !== "idle";
   const displayedConnected =
-    phase === "disconnecting"
+    phase === "disconnecting" || (showIntro && introAttemptFailed && !pending)
       ? false
       : connected ||
+        showIntro ||
         phase === "installing" ||
         phase === "waiting-for-install" ||
         phase === "connecting";
@@ -233,18 +244,19 @@ export function CodexDesktopRow({
             ? "Restoring ChatGPT’s usual connection…"
             : codexDesktopDescription(status, integration.description));
 
-  const toggleConnection = async () => {
-    if (pending || operationInFlight.current) return;
+  const toggleConnection = async (fromIntro = false): Promise<boolean> => {
+    if (pending || operationInFlight.current || (showIntro && !fromIntro))
+      return false;
     if (!window.setCodexDesktopConnected) {
       setError("The ChatGPT integration is unavailable.");
-      return;
+      return false;
     }
 
-    const enabled = !connected;
+    const enabled = fromIntro || !connected;
     if (enabled && !installed) {
       if (!window.installCodexDesktop || !window.getCodexDesktopStatus) {
         setError("Ollama could not install ChatGPT.");
-        return;
+        return false;
       }
       setPhase("installing");
       setError(null);
@@ -257,17 +269,30 @@ export function CodexDesktopRow({
       }
       if (installResult === "cancelled") {
         setPhase("idle");
-        return;
+        return false;
       }
       if (installResult !== "opened") {
         setPhase("idle");
         setError("Ollama could not install ChatGPT.");
-        return;
+        return false;
       }
       setPhase("waiting-for-install");
-      return;
+      return false;
     }
 
+    if (
+      enabled &&
+      !fromIntro &&
+      !status?.introAcknowledged &&
+      !introAcknowledged.current
+    ) {
+      setError(null);
+      setNotice(null);
+      setShowIntro(true);
+      return false;
+    }
+
+    let completed = false;
     const nextPhase = enabled ? "connecting" : "disconnecting";
     operationInFlight.current = true;
     setPhase(nextPhase);
@@ -288,37 +313,48 @@ export function CodexDesktopRow({
               : "Restart ChatGPT to remove Ollama models? Any running task will stop.",
           )
         ) {
-          return;
+          return false;
         }
         setPhase(nextPhase);
         result = await window.setCodexDesktopConnected(enabled, true);
         setStatus(result.status);
       }
 
+      if (result.restartConfirmationRequired) return false;
       if (result.error) {
+        if (fromIntro) throw new Error(result.error);
         setError(result.error);
-        return;
+        return false;
       }
+      if (fromIntro && !result.status.connected)
+        throw new Error(
+          "Ollama could not connect to ChatGPT. Please try again.",
+        );
       if (result.status.connected !== enabled) {
         setError(
           enabled
             ? "Ollama could not add its models to ChatGPT."
             : "Ollama could not remove its models from ChatGPT.",
         );
-        return;
+        return false;
       }
-      setNotice(
-        enabled
-          ? "Ollama models added alongside Codex models"
-          : "Ollama models removed · Codex models remain available",
-      );
-    } catch {
+      if (enabled) {
+        setNotice("Ollama models added alongside Codex models");
+      } else {
+        setNotice("Ollama models removed · Codex models remain available");
+      }
+      completed = true;
+      return true;
+    } catch (error) {
+      if (fromIntro) throw error;
       setError(
         enabled
           ? "Ollama could not add its models to ChatGPT."
           : "Ollama could not remove its models from ChatGPT.",
       );
+      return false;
     } finally {
+      if (fromIntro) setIntroAttemptFailed(!completed);
       operationInFlight.current = false;
       if (mounted.current) setPhase("idle");
     }
@@ -359,11 +395,13 @@ export function CodexDesktopRow({
           aria-checked={displayedConnected}
           aria-busy={pending || undefined}
           aria-label={
-            connected
-              ? "Remove Ollama models from ChatGPT"
-              : isConnecting
-                ? "Connecting ChatGPT"
-                : "Add Ollama models to ChatGPT"
+            showIntro
+              ? "Finish connecting ChatGPT"
+              : connected
+                ? "Remove Ollama models from ChatGPT"
+                : isConnecting
+                  ? "Connecting ChatGPT"
+                  : "Add Ollama models to ChatGPT"
           }
           title={
             connected
@@ -372,7 +410,7 @@ export function CodexDesktopRow({
                 ? "Add Ollama models"
                 : "Install ChatGPT and add Ollama models"
           }
-          disabled={pending}
+          disabled={pending || showIntro}
           onClick={() => void toggleConnection()}
           className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${displayedConnected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
         >
@@ -382,6 +420,15 @@ export function CodexDesktopRow({
           />
         </button>
       </div>
+      {showIntro && (
+        <CodexConnectedIntro
+          onConnect={() => toggleConnection(true)}
+          onDone={() => {
+            introAcknowledged.current = true;
+            setShowIntro(false);
+          }}
+        />
+      )}
     </div>
   );
 }

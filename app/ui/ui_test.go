@@ -1061,3 +1061,93 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) 
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
 	}
 }
+
+func TestSettingsPreservesCodexDesktopIntroAcknowledgedWhenOmitted(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.CodexDesktopIntroAcknowledged = true
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "CodexDesktopIntroAcknowledged")
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.CodexDesktopIntroAcknowledged {
+		t.Fatal("expected CodexDesktopIntroAcknowledged to be preserved")
+	}
+}
+
+func TestSettingsPreservesCodexDesktopIntroAcknowledgedWithStaleValue(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.CodexDesktopIntroAcknowledged = true
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["CodexDesktopIntroAcknowledged"] = false
+	payload, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	server := &Server{Store: testStore, Restart: func() {}}
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(payload))
+	rr := httptest.NewRecorder()
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.CodexDesktopIntroAcknowledged {
+		t.Fatal("expected CodexDesktopIntroAcknowledged to be preserved")
+	}
+}

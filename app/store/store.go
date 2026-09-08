@@ -178,6 +178,9 @@ type Settings struct {
 
 	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
 	ClaudeDesktopUsed bool
+
+	// CodexDesktopIntroAcknowledged records dismissal of the ChatGPT connection intro.
+	CodexDesktopIntroAcknowledged bool
 }
 
 // Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
