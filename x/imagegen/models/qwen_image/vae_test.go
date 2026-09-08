@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // TestVAEConfig tests configuration invariants.

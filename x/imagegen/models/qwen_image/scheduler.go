@@ -5,7 +5,7 @@ package qwen_image
 import (
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // SchedulerConfig holds FlowMatchEulerDiscreteScheduler configuration

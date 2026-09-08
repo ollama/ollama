@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
 )
 

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // IsTensorModelDir checks if the directory contains a tensor model
