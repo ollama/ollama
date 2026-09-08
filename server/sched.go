@@ -1498,6 +1498,9 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []ml.Filtered
 	return finished
 }
 
+// LogValue may run from goroutines that already hold refMu (see the scheduler
+// debug logs), so the unload-mutable fields are read only under TryLock and
+// omitted when the lock is contended.
 func (runner *runnerRef) LogValue() slog.Value {
 	if runner == nil {
 		return slog.StringValue("nil")
@@ -1507,24 +1510,27 @@ func (runner *runnerRef) LogValue() slog.Value {
 		modelID = runner.modelKey
 	}
 	attrs := []slog.Attr{}
-	if runner.model != nil {
-		attrs = append(attrs, slog.String("name", runner.model.Name))
-	}
-	if len(runner.gpus) > 0 {
-		attrs = append(attrs,
-			slog.Any("inference", runner.gpus),
-		)
+	if runner.refMu.TryLock() {
+		if runner.model != nil {
+			attrs = append(attrs, slog.String("name", runner.model.Name))
+		}
+		if len(runner.gpus) > 0 {
+			attrs = append(attrs,
+				slog.Any("inference", slices.Clone(runner.gpus)),
+			)
+		}
+		attrs = append(attrs, slog.Int("pid", runner.pid))
+		if runner.Options != nil {
+			attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
+		}
+		runner.refMu.Unlock()
 	}
 	attrs = append(attrs,
 		slog.String("size", format.HumanBytes2(runner.totalSize)),
 		slog.String("vram", format.HumanBytes2(runner.vramSize)),
 		slog.Int("parallel", runner.numParallel),
-		slog.Int("pid", runner.pid),
 		slog.String("model", modelID),
 	)
-	if runner.Options != nil {
-		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
-	}
 	return slog.GroupValue(attrs...)
 }
 
