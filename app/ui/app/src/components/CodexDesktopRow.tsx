@@ -54,7 +54,7 @@ function codexDesktopDescription(
 ): string {
   if (!status?.connected) return defaultDescription;
   const requestCount = status.requests ?? 0;
-  return `${requestCount} Ollama ${requestCount === 1 ? "request" : "requests"} this session`;
+  return `Connected to Ollama · ${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;
 }
 
 export function CodexDesktopRow({

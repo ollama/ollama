@@ -42,7 +42,7 @@ describe("CodexDesktopRow", () => {
     expect(html).toContain('aria-checked="false"');
   });
 
-  it("shows only the Ollama request count when connected", () => {
+  it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
         integration={integration}
@@ -54,27 +54,36 @@ describe("CodexDesktopRow", () => {
       />,
     );
 
-    expect(html).toContain("0 Ollama requests this session");
+    expect(html).toContain("Connected to Ollama · 0 requests this session");
     expect(html).not.toContain("Codex + Ollama");
     expect(html).not.toContain("3 Ollama models");
     expect(html).toContain('aria-label="Remove Ollama models from ChatGPT"');
     expect(html).toContain('aria-checked="true"');
   });
 
-  it("shows the Ollama request count with singular copy", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow
-        integration={integration}
-        initialStatus={status({
-          connected: true,
-          model: "qwen3:8b",
-          requests: 1,
-        })}
-      />,
-    );
+  it.each([
+    { requests: 1, expected: "Connected to Ollama · 1 request this session" },
+    {
+      requests: 12,
+      expected: "Connected to Ollama · 12 requests this session",
+    },
+  ])(
+    "matches Claude's connected copy for $requests requests",
+    ({ requests, expected }) => {
+      const html = renderToStaticMarkup(
+        <CodexDesktopRow
+          integration={integration}
+          initialStatus={status({
+            connected: true,
+            model: "qwen3:8b",
+            requests,
+          })}
+        />,
+      );
 
-    expect(html).toContain("1 Ollama request this session");
-  });
+      expect(html).toContain(expected);
+    },
+  );
 
   it("offers installation when ChatGPT is not installed", () => {
     const html = renderToStaticMarkup(
