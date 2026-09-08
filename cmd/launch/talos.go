@@ -18,7 +18,7 @@ const (
 	// fetches the published sha256 and an Ed25519 release signature and refuses
 	// on mismatch, so piping it into a shell is the vendor-supported install
 	// path, not a shortcut around verification.
-	talosInstallScript = "curl -fsSL https://talos-agent.ch/install.sh | sh"
+	talosInstallScript = "curl -fsSL https://talos-agent.ch/install.sh | bash"
 	// Provider slugs from Talos's own model catalog (talos/catalog.py). The
 	// local entry defaults to http://localhost:11434/v1 and needs no key.
 	talosProviderLocal = "ollama"
@@ -52,7 +52,7 @@ func (t *Talos) Run(_ string, _ []LaunchModel, args []string) error {
 }
 
 // Supported reports platform support separately from installation: Talos's
-// installer requires a POSIX shell and Python 3.11+, and ships no Windows path.
+// installer requires Bash and Python 3.11+, and ships no Windows path.
 func (t *Talos) Supported() error {
 	if talosGOOS == "windows" {
 		return fmt.Errorf("talos currently supports macOS and Linux")
@@ -158,7 +158,7 @@ func (t *Talos) ensureInstalled() error {
 	}
 
 	var missing []string
-	for _, dep := range []string{"curl", "sh"} {
+	for _, dep := range []string{"curl", "bash"} {
 		if _, err := talosLookPath(dep); err != nil {
 			missing = append(missing, dep)
 		}
@@ -178,7 +178,7 @@ func (t *Talos) ensureInstalled() error {
 	// The installer runs Talos's full test suite and its adversarial suite in
 	// front of the user before it finishes, so this takes a few minutes.
 	fmt.Fprintf(os.Stderr, "\nInstalling Talos...\n")
-	if err := talosAttachedCommand([]string{"sh"}, "-c", talosInstallScript).Run(); err != nil {
+	if err := talosAttachedCommand([]string{"bash"}, "-o", "pipefail", "-c", talosInstallScript).Run(); err != nil {
 		return fmt.Errorf("failed to install talos: %w", err)
 	}
 
@@ -190,10 +190,8 @@ func (t *Talos) ensureInstalled() error {
 	return nil
 }
 
-// command resolves how to invoke Talos. The installer puts everything under
-// ~/talos (or $TALOS_PREFIX) and deliberately adds nothing to PATH, so the
-// venv interpreter plus `-m talos` is the canonical invocation; a `talos`
-// shim on PATH still wins when the user made one.
+// command prefers PATH, then the installer's bin/talos wrapper under
+// $TALOS_PREFIX or ~/talos. Older installations can use their venv directly.
 func (t *Talos) command() ([]string, error) {
 	if path, err := talosLookPath("talos"); err == nil {
 		return []string{path}, nil
@@ -202,6 +200,9 @@ func (t *Talos) command() ([]string, error) {
 	prefix, err := talosPrefix()
 	if err != nil {
 		return nil, err
+	}
+	if wrapper, err := talosLookPath(filepath.Join(prefix, "bin", "talos")); err == nil {
+		return []string{wrapper}, nil
 	}
 	python := filepath.Join(prefix, ".venv", "bin", "python")
 	if _, err := os.Stat(python); err == nil {
@@ -223,11 +224,33 @@ func talosPrefix() (string, error) {
 }
 
 func talosConfigPath() (string, error) {
+	// A PATH entry can select a different installation than TALOS_PREFIX.
+	// Recognize the official layout through symlinks so CurrentModel and Paths
+	// inspect the same configuration that the selected command will write.
+	if path, err := talosLookPath("talos"); err == nil {
+		if prefix, ok := talosWrapperPrefix(path); ok {
+			return filepath.Join(prefix, "talos.env"), nil
+		}
+	}
 	prefix, err := talosPrefix()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(prefix, "talos.env"), nil
+}
+
+func talosWrapperPrefix(path string) (string, bool) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || filepath.Base(resolved) != "talos" || filepath.Base(filepath.Dir(resolved)) != "bin" {
+		return "", false
+	}
+	prefix := filepath.Dir(filepath.Dir(resolved))
+	for _, name := range []string{filepath.Join(".venv", "bin", "python"), filepath.Join("talos", "__main__.py")} {
+		if info, err := os.Stat(filepath.Join(prefix, name)); err != nil || !info.Mode().IsRegular() {
+			return "", false
+		}
+	}
+	return prefix, true
 }
 
 // talosSecretsEnvPath mirrors Talos's SECRETS_ENV: $TALOS_SECRETS_ENV, or the
@@ -287,8 +310,7 @@ func talosNonDefaultHostWarning() string {
 }
 
 func talosConfigSet(argv []string, key, value string) error {
-	args := append(append([]string(nil), argv[1:]...), "config", "set", key, value)
-	out, err := talosCommand(argv[0], args...).CombinedOutput()
+	out, err := talosExecCommand(argv, "config", "set", key, value).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("talos config set %s: %w\n%s", key, err, strings.TrimSpace(string(out)))
 	}
@@ -323,9 +345,24 @@ func talosParseEnvFile(data []byte) map[string]string {
 	return out
 }
 
-func talosAttachedCommand(argv []string, args ...string) *exec.Cmd {
+func talosExecCommand(argv []string, args ...string) *exec.Cmd {
 	all := append(append([]string(nil), argv...), args...)
 	cmd := talosCommand(all[0], all[1:]...)
+	if len(argv) == 3 && argv[1] == "-m" && argv[2] == "talos" {
+		// Match bin/talos for a legacy venv: make the module importable without
+		// changing the caller's directory or its relative workspace settings.
+		prefix := filepath.Dir(filepath.Dir(filepath.Dir(argv[0])))
+		pythonPath := prefix
+		if current := os.Getenv("PYTHONPATH"); current != "" {
+			pythonPath += string(os.PathListSeparator) + current
+		}
+		cmd.Env = append(os.Environ(), "PYTHONPATH="+pythonPath)
+	}
+	return cmd
+}
+
+func talosAttachedCommand(argv []string, args ...string) *exec.Cmd {
+	cmd := talosExecCommand(argv, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
