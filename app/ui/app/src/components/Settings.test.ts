@@ -39,6 +39,7 @@ describe("Settings defaults", () => {
       resetClaudeMappings,
       currentSettings: currentSettings({
         Expose: true,
+        AllowedOrigins: "https://app.example.com",
         Models: "/custom/models",
       }),
       currentShowAppsInMenu: false,
@@ -55,6 +56,7 @@ describe("Settings defaults", () => {
 
     expect(updateSettings.mock.calls[0][0]).toMatchObject({
       Expose: false,
+      AllowedOrigins: "",
       Models: "",
       ContextLength: 65_536,
       AutoUpdateEnabled: true,

@@ -402,6 +402,7 @@ export class ErrorEvent {
 export class Settings {
     Expose: boolean;
     Browser: boolean;
+    AllowedOrigins: string;
     Survey: boolean;
     Models: string;
     Agent: boolean;
@@ -423,6 +424,7 @@ export class Settings {
         if ('string' === typeof source) source = JSON.parse(source);
         this.Expose = source["Expose"];
         this.Browser = source["Browser"];
+        this.AllowedOrigins = source["AllowedOrigins"];
         this.Survey = source["Survey"];
         this.Models = source["Models"];
         this.Agent = source["Agent"];

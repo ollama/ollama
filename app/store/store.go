@@ -129,6 +129,9 @@ type Settings struct {
 	// be exposed to browser windows (e.g. CORS set to allow all origins)
 	Browser bool
 
+	// AllowedOrigins is a comma-separated list of additional browser origins.
+	AllowedOrigins string
+
 	// Survey is a boolean that indicates if the user allows anonymous
 	// inference information to be shared with Ollama
 	Survey bool

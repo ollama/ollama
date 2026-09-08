@@ -186,6 +186,43 @@ describe("Settings reset interactions", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   });
 
+  it.each([
+    [
+      " https://app.example.com, https://other.example.com ",
+      "https://app.example.com,https://other.example.com",
+    ],
+    ["", ""],
+  ])("saves browser origins on blur: %s", async (value, expected) => {
+    mocks.settings = new SettingsType({
+      ContextLength: 65_536,
+      AllowedOrigins: "https://old.example.com",
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+      });
+      const input = renderer!.root
+        .findAllByType("input")
+        .find((node) => node.props.placeholder === "https://app.example.com");
+      expect(input?.props.defaultValue).toBe("https://old.example.com");
+      expect(mocks.updateSettings).not.toHaveBeenCalled();
+      await act(async () => {
+        input!.props.onBlur({ target: { value } });
+      });
+      expect(mocks.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          AllowedOrigins: expected,
+          ContextLength: 65_536,
+        }),
+      );
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+      });
+    }
+  });
+
   it("locks every control and shows Saved after reset succeeds", async () => {
     const pendingClaudeReset = deferred<boolean>();
     mocks.resetClaudeMappings.mockImplementation(

@@ -563,3 +563,61 @@ func loadV2Schema(t *testing.T, dbPath string) *database {
 
 	return &database{conn: conn}
 }
+
+func TestAllowedOriginsMigrationAndPersistence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "origins.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { db.Close() }()
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.AllowedOrigins != "" {
+		t.Fatalf("unexpected default origins %q", settings.AllowedOrigins)
+	}
+	if _, err := db.conn.Exec(`ALTER TABLE settings DROP COLUMN allowed_origins; UPDATE settings SET schema_version = 18, expose = 1, browser = 1;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = db.getSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.AllowedOrigins != "" || !settings.Expose || !settings.Browser {
+		t.Fatalf("migration changed existing behavior: %+v", settings)
+	}
+	settings.AllowedOrigins = "https://app.example.com,https://other.example.com"
+	if err := db.setSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = newDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := db.getSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AllowedOrigins != settings.AllowedOrigins {
+		t.Fatalf("origins not persisted: %q", loaded.AllowedOrigins)
+	}
+	loaded.AllowedOrigins = ""
+	if err := db.setSettings(loaded); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = db.getSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.AllowedOrigins != "" {
+		t.Fatalf("origins not cleared: %q", loaded.AllowedOrigins)
+	}
+}

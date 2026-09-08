@@ -5,6 +5,18 @@
 - [macOS](https://github.com/ollama/app/releases/download/latest/Ollama.dmg)
 - [Windows](https://github.com/ollama/app/releases/download/latest/OllamaSetup.exe)
 
+## Browser access
+
+In Settings, enter website origins in **Allowed browser origins**, for example
+`https://app.example.com`. Separate multiple origins with commas. Press Enter or
+leave the field to save; Ollama restarts to apply the change and remembers it on
+subsequent launches. Enable **Expose Ollama to the network** as well when
+connecting from another device.
+
+A nonempty list overrides `OLLAMA_ORIGINS` for the app-managed server. Clearing
+the field restores the existing environment and browser-access defaults. This
+setting controls CORS; it does not enable HTTPS.
+
 ## Development
 
 ### Desktop App
