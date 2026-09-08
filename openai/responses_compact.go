@@ -531,6 +531,15 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 			thinking = "[opaque reasoning state omitted during Ollama compaction]"
 		}
 		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
+	case ResponsesAgentMessageInput:
+		content, _, err := convertResponsesContent(value.Content)
+		if err != nil {
+			return api.Message{}, "", err
+		}
+		return api.Message{
+			Role:    "user",
+			Content: agentMessageContent(value.Author, value.Recipient, content),
+		}, "message", nil
 	case ResponsesCompactionItem, ResponsesCompactionTrigger:
 		return api.Message{}, "", errors.New("unexpected compaction control item")
 	default:

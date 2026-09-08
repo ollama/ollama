@@ -392,6 +392,41 @@ func TestFromResponsesRequestMergesMessageAfterFunctionCall(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequestAgentMessage(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [
+			{"role": "user", "content": "Delegate the parser analysis."},
+			{"type": "function_call", "call_id": "call_spawn", "namespace": "collaboration", "name": "spawn_agent", "arguments": "{\"task_name\":\"worker\"}"},
+			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
+			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
+				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+			]}
+		]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 4 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+
+	agentMsg := chat.Messages[3]
+	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
+		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+		"Analyze the parser module and report issues."
+	if agentMsg.Role != "user" || agentMsg.Content != want {
+		t.Fatalf("agent message = %#v", agentMsg)
+	}
+}
+
 func TestResponsesRequest_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -3052,5 +3087,52 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 		if got, want := item["id"], doneIDs[outputIndex]; got != want {
 			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
 		}
+	}
+}
+
+func TestFromResponsesRequestAgentMessageWithoutRouting(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "agent_message", "content": [
+			{"type": "encrypted_content", "encrypted_content": "bare payload"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	// No routing fields: payload passes through without an envelope.
+	if chat.Messages[0].Role != "user" || chat.Messages[0].Content != "bare payload" {
+		t.Fatalf("agent message = %#v", chat.Messages[0])
+	}
+}
+
+func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "message", "role": "user", "content": [
+			{"type": "input_text", "text": "prefix "},
+			{"type": "encrypted_content", "encrypted_content": "opaque to us"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || chat.Messages[0].Content != "prefix opaque to us" {
+		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }
