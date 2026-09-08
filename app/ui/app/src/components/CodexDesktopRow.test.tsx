@@ -4,13 +4,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { act, create } from "react-test-renderer";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexConnectedIntro } from "./CodexConnectedIntro";
-import { CodexDesktopRow } from "./CodexDesktopRow";
+import {
+  CODEX_DESKTOP_INSTALL_TIMEOUT_MS,
+  CodexDesktopRow,
+} from "./CodexDesktopRow";
 
 vi.mock("./CodexConnectedIntro", () => ({
   CodexConnectedIntro: () => null,
 }));
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -276,6 +280,138 @@ describe("CodexDesktopRow", () => {
       await act(async () => renderer?.unmount());
     }
   });
+
+  it.each([
+    { outcome: "resolved", retry: false },
+    { outcome: "rejected", retry: false },
+    { outcome: "resolved", retry: true },
+    { outcome: "rejected", retry: true },
+  ])(
+    "ignores an expired installation check ($outcome, retried: $retry)",
+    async ({ outcome, retry }) => {
+      vi.useFakeTimers();
+      const notInstalled = status({ installed: false });
+      const stale = deferred<CodexDesktopStatus>();
+      const getStatus = vi.fn().mockResolvedValue(notInstalled);
+      const install = vi.fn().mockResolvedValue("opened");
+      const connect = vi.fn().mockResolvedValue({
+        status: status({ connected: true }),
+      });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        setInterval: globalThis.setInterval,
+        clearInterval: globalThis.clearInterval,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+        getCodexDesktopStatus: getStatus,
+        setCodexDesktopConnected: connect,
+        installCodexDesktop: install,
+      });
+
+      const settleOldCheck = () => {
+        if (outcome === "resolved") stale.resolve(status());
+        else stale.reject(new Error("expired status request failed"));
+      };
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={integration}
+              initialStatus={notInstalled}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ role: "switch" });
+        await act(async () => toggle.props.onClick());
+        await act(async () =>
+          vi.advanceTimersByTimeAsync(CODEX_DESKTOP_INSTALL_TIMEOUT_MS - 2000),
+        );
+        getStatus.mockReturnValueOnce(stale.promise);
+        await act(async () => vi.advanceTimersByTimeAsync(1000));
+        await act(async () => {
+          vi.advanceTimersByTime(1000);
+          if (!retry) settleOldCheck();
+        });
+        expect(toggle.props.disabled).toBe(false);
+        expect(toggle.props["aria-checked"]).toBe(false);
+        expect(
+          renderer!.root.findByProps({ role: "alert" }).children,
+        ).toContain("ChatGPT installation wasn’t detected. Try again.");
+        expect(connect).not.toHaveBeenCalled();
+
+        if (retry) {
+          await act(async () => toggle.props.onClick());
+          expect(install).toHaveBeenCalledTimes(2);
+          await act(async () => settleOldCheck());
+          expect(toggle.props.disabled).toBe(true);
+          expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(
+            0,
+          );
+          expect(
+            renderer!.root.findByProps({ role: "status" }).children,
+          ).toContain("Finish installing…");
+
+          getStatus.mockResolvedValue(status());
+          await act(async () => vi.advanceTimersByTimeAsync(1000));
+          expect(connect).toHaveBeenCalledOnce();
+          expect(toggle.props.disabled).toBe(false);
+          expect(toggle.props["aria-checked"]).toBe(true);
+        }
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
+
+  it.each(["status", "connection"])(
+    "keeps an active installation's %s failure visible",
+    async (step) => {
+      const check = deferred<CodexDesktopStatus>();
+      const connection = deferred<{ status: CodexDesktopStatus }>();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        setInterval: globalThis.setInterval,
+        clearInterval: globalThis.clearInterval,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+        getCodexDesktopStatus: vi.fn().mockReturnValue(check.promise),
+        setCodexDesktopConnected: vi.fn().mockReturnValue(connection.promise),
+        installCodexDesktop: vi.fn().mockResolvedValue("opened"),
+      });
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={integration}
+              initialStatus={status({ installed: false })}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({ role: "switch" });
+        await act(async () => toggle.props.onClick());
+        if (step === "connection") {
+          await act(async () => check.resolve(status()));
+          expect(toggle.props.disabled).toBe(true);
+        }
+        await act(async () => {
+          if (step === "status") check.reject(new Error("status failed"));
+          else connection.reject(new Error("connection failed"));
+        });
+        expect(toggle.props.disabled).toBe(false);
+        expect(
+          renderer!.root.findByProps({ role: "alert" }).children,
+        ).toContain("Ollama could not finish connecting ChatGPT.");
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
 
   it.each([false, true])(
     "does not restart ChatGPT automatically when installation detection finds it running (used: %s)",

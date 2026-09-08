@@ -234,7 +234,7 @@ export function CodexDesktopRow({
           setNotice("Ollama models added alongside Codex models");
         }
       } catch {
-        if (!mounted.current) return;
+        if (!mounted.current || (!active && !completing)) return;
         setPhase("idle");
         setError("Ollama could not finish connecting ChatGPT.");
       } finally {
@@ -247,6 +247,7 @@ export function CodexDesktopRow({
     const interval = window.setInterval(checkForInstall, 1000);
     const timeout = window.setTimeout(() => {
       if (!active || completing) return;
+      active = false;
       setPhase("idle");
       setError("ChatGPT installation wasn’t detected. Try again.");
     }, CODEX_DESKTOP_INSTALL_TIMEOUT_MS);
