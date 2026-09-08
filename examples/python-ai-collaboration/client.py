@@ -13,6 +13,8 @@ from openai import OpenAI
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 PERFECT_SIGNAL = "PASS"
+DEFAULT_MAX_TOKENS = 4096
+RETRY_MAX_TOKENS = 8192
 
 ARCHITECT_SYSTEM_PROMPT = """\
 You are an expert software architect and developer with extensive production
@@ -45,17 +47,38 @@ class Reviewer(Protocol):
 
 
 class ClaudeArchitect:
-    def __init__(self, client: Anthropic, model: str) -> None:
+    def __init__(
+        self,
+        client: Anthropic,
+        model: str,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        retry_max_tokens: int = RETRY_MAX_TOKENS,
+    ) -> None:
         self.client = client
         self.model = model
+        self.max_tokens = max_tokens
+        self.retry_max_tokens = retry_max_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            system=ARCHITECT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        def create_response(max_tokens: int):
+            return self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=ARCHITECT_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt}],
+            )
+
+        response = create_response(self.max_tokens)
+        if response.stop_reason == "max_tokens":
+            response = create_response(self.retry_max_tokens)
+            if response.stop_reason == "max_tokens":
+                raise RuntimeError(
+                    "Claude response was truncated twice (stop_reason: max_tokens)."
+                )
+        if response.stop_reason not in ("stop", "end_turn"):
+            raise RuntimeError(
+                f"Claude returned an unexpected stop_reason: {response.stop_reason}"
+            )
         text = "\n".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
@@ -65,21 +88,50 @@ class ClaudeArchitect:
 
 
 class GPTReviewer:
-    def __init__(self, client: OpenAI, model: str) -> None:
+    def __init__(
+        self,
+        client: OpenAI,
+        model: str,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        retry_max_tokens: int = RETRY_MAX_TOKENS,
+    ) -> None:
         self.client = client
         self.model = model
+        self.max_tokens = max_tokens
+        self.retry_max_tokens = retry_max_tokens
 
     def review(self, prompt: str) -> str:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": REVIEWER_SYSTEM_PROMPT,
-                },
-                {"role": "user", "content": prompt},
-            ],
-        )
+        def create_response(max_tokens: int):
+            return self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": REVIEWER_SYSTEM_PROMPT,
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            )
+
+        response = create_response(self.max_tokens)
+        if not response.choices:
+            raise RuntimeError("OpenAI returned no choices.")
+
+        finish_reason = response.choices[0].finish_reason
+        if finish_reason == "length":
+            response = create_response(self.retry_max_tokens)
+            if not response.choices:
+                raise RuntimeError("OpenAI returned no choices.")
+            finish_reason = response.choices[0].finish_reason
+            if finish_reason == "length":
+                raise RuntimeError(
+                    "OpenAI response was truncated twice (finish_reason: length)."
+                )
+        if finish_reason not in ("stop", "end_turn"):
+            raise RuntimeError(
+                f"OpenAI returned an unexpected finish_reason: {finish_reason}"
+            )
         text = response.choices[0].message.content
         if not text or not text.strip():
             raise RuntimeError("OpenAI returned an empty response.")

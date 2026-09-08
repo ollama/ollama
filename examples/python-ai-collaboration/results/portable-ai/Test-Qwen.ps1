@@ -29,18 +29,84 @@ catch {
     throw "Ollama is not running. Run Start-Portable-Ollama.ps1 -Background first."
 }
 
+function Get-ModelCatalogEntry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ModelName
+    )
+
+    $catalog = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/tags" `
+        -TimeoutSec 5
+    return $catalog.models |
+        Where-Object {
+            $_.name -ieq $ModelName -or $_.model -ieq $ModelName
+        } |
+        Select-Object -First 1
+}
+
+function Find-LoadedModel {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$LoadedModels,
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$TargetModel
+    )
+
+    if ($null -eq $TargetModel) {
+        return $null
+    }
+
+    $targetDigest = [string]$TargetModel.digest
+    if (-not [string]::IsNullOrWhiteSpace($targetDigest)) {
+        $digestMatch = $LoadedModels |
+            Where-Object { [string]$_.digest -eq $targetDigest } |
+            Select-Object -First 1
+        if ($null -ne $digestMatch) {
+            return $digestMatch
+        }
+    }
+
+    $targetNames = @([string]$TargetModel.name, [string]$TargetModel.model) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+        Select-Object -Unique
+
+    foreach ($name in $targetNames) {
+        $nameMatch = $LoadedModels |
+            Where-Object {
+                $_.name -ieq $name -or $_.model -ieq $name
+            } |
+            Select-Object -First 1
+        if ($null -ne $nameMatch) {
+            return $nameMatch
+        }
+    }
+
+    return $null
+}
+
 Write-Host "Pulling $Model to $env:OLLAMA_MODELS ..." -ForegroundColor Cyan
 & $script:OllamaExecutable pull $Model
 if ($LASTEXITCODE -ne 0) {
     throw "ollama pull failed with exit code $LASTEXITCODE."
 }
 
-$loadedBeforeTest = (Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" `
-    -TimeoutSec 5).models |
-    Where-Object { $_.name -like "$($Model.Split(':')[0]):*" } |
-    Select-Object -First 1
+$targetModel = Get-ModelCatalogEntry -ModelName $Model
+if ($null -eq $targetModel) {
+    throw "Unable to resolve model identity for '$Model' from /api/tags."
+}
+
+$loadedBeforeTest = Find-LoadedModel `
+    -LoadedModels (Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" -TimeoutSec 5).models `
+    -TargetModel $targetModel
 if ($null -ne $loadedBeforeTest) {
-    & $script:OllamaExecutable stop $Model
+    $stopName = if ([string]::IsNullOrWhiteSpace([string]$loadedBeforeTest.name)) {
+        $Model
+    }
+    else {
+        [string]$loadedBeforeTest.name
+    }
+    & $script:OllamaExecutable stop $stopName
     if ($LASTEXITCODE -ne 0) {
         throw "Unable to unload $Model before the VRAM baseline measurement."
     }
@@ -48,11 +114,9 @@ if ($null -ne $loadedBeforeTest) {
     $deadline = (Get-Date).AddSeconds(30)
     do {
         Start-Sleep -Milliseconds 500
-        $stillLoaded = (Invoke-RestMethod `
-            -Uri "http://127.0.0.1:11434/api/ps" `
-            -TimeoutSec 5).models |
-            Where-Object { $_.name -like "$($Model.Split(':')[0]):*" } |
-            Select-Object -First 1
+        $stillLoaded = Find-LoadedModel `
+            -LoadedModels (Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" -TimeoutSec 5).models `
+            -TargetModel $targetModel
     } while ($null -ne $stillLoaded -and (Get-Date) -lt $deadline)
 
     if ($null -ne $stillLoaded) {
@@ -124,9 +188,7 @@ $cleanOutput = [regex]::Replace(
 
 $runningModels = Invoke-RestMethod -Uri "http://127.0.0.1:11434/api/ps" `
     -TimeoutSec 5
-$loadedModel = $runningModels.models |
-    Where-Object { $_.name -like "$($Model.Split(':')[0]):*" } |
-    Select-Object -First 1
+$loadedModel = Find-LoadedModel -LoadedModels $runningModels.models -TargetModel $targetModel
 $ollamaVramMiB = if ($null -eq $loadedModel) {
     0
 }

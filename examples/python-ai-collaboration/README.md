@@ -48,8 +48,14 @@ Validate the hardware and destination without changing the SSD:
 ```
 
 Portable environment scripts under `results\portable-ai` configure all model,
-Python, package, and temporary storage beneath the external drive. Copy that
-directory to `H:\ollama\env\scripts`, then run:
+Python, package, and temporary storage beneath the external drive.
+
+- Copy the PowerShell scripts (`*.ps1`) to `H:\ollama\env\scripts\`
+- Copy the command wrappers (`Launch-Portable-AI.cmd`, `Resume-Portable-AI.cmd`,
+  `Stop-And-Eject.cmd`, `Run-Qwen-Test.cmd`, `Open-Portable-AI-Shell.cmd`) to
+  `H:\ollama\`
+
+Then run:
 
 ```powershell
 .\Start-Portable-Ollama.ps1 -Background
@@ -57,8 +63,13 @@ directory to `H:\ollama\env\scripts`, then run:
 ```
 
 Before ejecting the drive, run `Stop-Portable-Ollama.ps1`. After reconnecting
-it on a restored Windows host, double-click `Resume-Portable-AI.cmd`; it checks
-the NVIDIA driver, restores it from the SSD when needed, and starts Ollama.
+it on a restored Windows host, double-click `Resume-Portable-AI.cmd`.
+
+If you want automatic driver restore, pre-place the NVIDIA installer at:
+`H:\ollama\env\drivers\616.64-desktop-win10-win11-64bit-international-dch-whql.exe`
+and run `Resume-Portable-AI.cmd` (or `Resume-Portable-AI.ps1 -InstallDriver`).
+Without that file, resume still works when the installed driver is already
+compatible.
 
 Run the tests without making API calls:
 
