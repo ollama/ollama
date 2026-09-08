@@ -27,7 +27,7 @@ func TestResponsesMiddlewareToolSearchInput(t *testing.T) {
 			"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
 		}],
 		"input":[
-			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders"}},
+			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders"}},
 			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[
 				{"type":"namespace","name":"orders","tools":[
 					{"type":"function","name":"lookup_order","description":"Look up an order","parameters":{"type":"object"}}

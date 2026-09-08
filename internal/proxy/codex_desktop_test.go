@@ -1036,7 +1036,7 @@ func TestCodexDesktopPreservesToolSearchAndOllamaCompactionForOllama(t *testing.
 		"input":[
 			{"type":"compaction","encrypted_content":"native-opaque-state"},
 			{"type":"compaction","encrypted_content":"{\"type\":\"ollama_compaction\",\"version\":1,\"summary\":\"summary\",\"retained\":[]}"},
-			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"notion"}},
+			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"notion"}},
 			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[{"type":"function","name":"notion.search"}]},
 			{"type":"message","role":"user","content":"continue"},
 			{"type":"compaction_trigger"}
