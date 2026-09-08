@@ -11,7 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/runner/common"
-	"github.com/ollama/ollama/sample"
+	"github.com/ollama/ollama/x/mlxrunner/sample"
 	"github.com/ollama/ollama/x/ml"
 	"github.com/ollama/ollama/x/model"
 	"github.com/ollama/ollama/x/model/input"

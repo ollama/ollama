@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 // GenerateConfig holds all options for image editing.

@@ -7,9 +7,9 @@ import (
 	"math"
 	"path/filepath"
 
-	"github.com/ollama/ollama/x/imagegen/cache"
-	"github.com/ollama/ollama/x/imagegen/mlx"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // TransformerConfig holds Qwen-Image transformer configuration

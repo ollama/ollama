@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/x/imagegen"
-	"github.com/ollama/ollama/x/imagegen/mlx"
-	"github.com/ollama/ollama/x/imagegen/models/flux2"
-	"github.com/ollama/ollama/x/imagegen/models/zimage"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	flux2 "github.com/ollama/ollama/x/imagegen/models/qwen_image"
+	zimage "github.com/ollama/ollama/x/imagegen/models/qwen_image_edit"
 )
 
 // Request is the image generation request format
