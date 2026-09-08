@@ -1268,12 +1268,17 @@ func (db *database) setSettings(s Settings) error {
 
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?, codex_desktop_used = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed, s.CodexDesktopUsed)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}
 	return nil
+}
+
+func (db *database) markCodexDesktopUsed() error {
+	_, err := db.conn.Exec(`UPDATE settings SET codex_desktop_used = 1`)
+	return err
 }
 
 func (db *database) isCloudSettingMigrated() (bool, error) {

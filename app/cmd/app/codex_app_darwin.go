@@ -997,10 +997,5 @@ func markCodexDesktopIntegrationUsed() error {
 	if appStore == nil {
 		return errors.New("settings are unavailable")
 	}
-	settings, err := appStore.Settings()
-	if err != nil {
-		return fmt.Errorf("load settings: %w", err)
-	}
-	settings.CodexDesktopUsed = true
-	return appStore.SetSettings(settings)
+	return appStore.MarkCodexDesktopUsed()
 }

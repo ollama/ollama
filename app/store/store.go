@@ -180,6 +180,7 @@ type Settings struct {
 	ClaudeDesktopUsed bool
 
 	// CodexDesktopUsed records whether ChatGPT has successfully connected through Ollama.
+	// Only MarkCodexDesktopUsed updates it; SetSettings preserves the stored value.
 	CodexDesktopUsed bool
 }
 
@@ -427,6 +428,13 @@ func (s *Store) SetSettings(settings Settings) error {
 	}
 
 	return s.db.setSettings(settings)
+}
+
+func (s *Store) MarkCodexDesktopUsed() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	return s.db.markCodexDesktopUsed()
 }
 
 func (s *Store) Chats() ([]Chat, error) {

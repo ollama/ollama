@@ -4,50 +4,8 @@ import {
   DialogTitle,
   Description,
 } from "@headlessui/react";
-import { useRef, useState } from "react";
 
-export function CodexConnectedIntro({
-  onConnect,
-  onDone,
-}: {
-  onConnect: () => Promise<boolean>;
-  onDone: () => void;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const savingRef = useRef(false);
-  const connectedRef = useRef(false);
-
-  const continueToChatGPT = async () => {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setSaving(true);
-    setError(null);
-    try {
-      if (!connectedRef.current) {
-        if (!(await onConnect())) return;
-        connectedRef.current = true;
-      }
-      if (!window.markCodexDesktopIntegrationUsed) {
-        throw new Error("Acknowledgment is unavailable");
-      }
-      const saveError = await window.markCodexDesktopIntegrationUsed();
-      if (saveError) throw new Error(saveError);
-      onDone();
-    } catch (error) {
-      setError(
-        connectedRef.current
-          ? "Ollama couldn’t save your progress. Please try again."
-          : error instanceof Error
-            ? error.message
-            : "Ollama couldn’t open ChatGPT. Please try again.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
-  };
-
+export function CodexConnectedIntro({ onDone }: { onDone: () => void }) {
   return (
     <Dialog open onClose={() => {}} className="relative z-50">
       <div
@@ -72,24 +30,14 @@ export function CodexConnectedIntro({
               Click Continue to open ChatGPT. In Codex mode, choose an Ollama
               model from the model picker for your task.
             </Description>
-            {error && (
-              <p
-                role="alert"
-                className="mt-3 text-[13px] leading-5 text-red-600 dark:text-red-400"
-              >
-                {error}
-              </p>
-            )}
             <div className="mt-5 flex justify-end">
               <button
                 type="button"
                 data-autofocus
-                disabled={saving}
-                aria-busy={saving || undefined}
-                onClick={() => void continueToChatGPT()}
-                className="rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 dark:bg-white dark:hover:bg-neutral-100"
+                onClick={onDone}
+                className="rounded-full bg-neutral-100 px-6 py-2 text-sm font-normal text-neutral-950 transition-colors hover:bg-neutral-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:bg-white dark:hover:bg-neutral-100"
               >
-                {saving ? "Opening…" : "Continue"}
+                Continue
               </button>
             </div>
           </div>

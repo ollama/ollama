@@ -277,54 +277,66 @@ describe("CodexDesktopRow", () => {
     }
   });
 
-  it("does not restart ChatGPT automatically when installation detection finds it running", async () => {
-    const installedAndRunning = status({ installed: true, running: true });
-    const connect = vi.fn();
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      setInterval: globalThis.setInterval,
-      clearInterval: globalThis.clearInterval,
-      setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
-      getCodexDesktopStatus: vi.fn().mockResolvedValue(installedAndRunning),
-      setCodexDesktopConnected: connect,
-      installCodexDesktop: vi.fn().mockResolvedValue("opened"),
-    });
-
-    let renderer;
-    try {
-      await act(async () => {
-        renderer = create(
-          <CodexDesktopRow
-            integration={{ ...integration, installed: false }}
-            initialStatus={status({ installed: false })}
-          />,
-        );
+  it.each([false, true])(
+    "does not restart ChatGPT automatically when installation detection finds it running (used: %s)",
+    async (used) => {
+      const installedAndRunning = status({
+        installed: true,
+        running: true,
+        used,
       });
-      const toggle = renderer!.root.findByProps({
-        "aria-label": "Add Ollama models to ChatGPT",
-      });
-      await act(async () => {
-        await toggle.props.onClick();
-        await Promise.resolve();
-        await Promise.resolve();
+      const connect = vi.fn();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        setInterval: globalThis.setInterval,
+        clearInterval: globalThis.clearInterval,
+        setTimeout: globalThis.setTimeout,
+        clearTimeout: globalThis.clearTimeout,
+        getCodexDesktopStatus: vi.fn().mockResolvedValue(installedAndRunning),
+        setCodexDesktopConnected: connect,
+        installCodexDesktop: vi.fn().mockResolvedValue("opened"),
       });
 
-      expect(connect).not.toHaveBeenCalled();
-      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
-        "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
-      );
-      expect(
-        renderer!.root.findByProps({
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={{ ...integration, installed: false }}
+              initialStatus={status({ installed: false, used })}
+            />,
+          );
+        });
+        const toggle = renderer!.root.findByProps({
           "aria-label": "Add Ollama models to ChatGPT",
-        }).props["aria-checked"],
-      ).toBe(false);
-    } finally {
-      await act(async () => renderer?.unmount());
-    }
-  });
+        });
+        await act(async () => {
+          await toggle.props.onClick();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+
+        expect(connect).not.toHaveBeenCalled();
+        expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
+          0,
+        );
+        expect(
+          renderer!.root.findByProps({ role: "alert" }).children,
+        ).toContain(
+          "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
+        );
+        expect(
+          renderer!.root.findByProps({
+            "aria-label": "Add Ollama models to ChatGPT",
+          }).props["aria-checked"],
+        ).toBe(false);
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
 
   it("returns to the disconnected state when installation is cancelled", async () => {
     const getStatus = vi.fn();
@@ -565,8 +577,11 @@ describe("CodexDesktopRow", () => {
 
 describe("ChatGPT first connection intro", () => {
   it.each([false, true])(
-    "waits for Continue before connecting (running: %s)",
+    "confirms before the intro and waits for Continue to launch (running: %s)",
     async (running) => {
+      const firstUseStatus = status({ running, used: false });
+      const confirm = vi.fn(() => true);
+      const save = vi.fn().mockResolvedValue("");
       const connect = vi
         .fn()
         .mockResolvedValue({ status: status({ connected: true }) });
@@ -574,7 +589,10 @@ describe("ChatGPT first connection intro", () => {
       vi.stubGlobal("window", {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
+        getCodexDesktopStatus: vi.fn().mockResolvedValue(firstUseStatus),
         setCodexDesktopConnected: connect,
+        markCodexDesktopIntegrationUsed: save,
+        confirm,
       });
       let renderer;
       try {
@@ -582,7 +600,7 @@ describe("ChatGPT first connection intro", () => {
           renderer = create(
             <CodexDesktopRow
               integration={integration}
-              initialStatus={status({ running, used: false })}
+              initialStatus={firstUseStatus}
             />,
           );
         });
@@ -590,19 +608,19 @@ describe("ChatGPT first connection intro", () => {
           renderer!.root.findByProps({ role: "switch" }).props.onClick();
         });
         expect(connect).not.toHaveBeenCalled();
+        expect(save).not.toHaveBeenCalled();
+        expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
         const toggle = renderer!.root.findByProps({ role: "switch" });
         expect(toggle.props["aria-checked"]).toBe(true);
         expect(toggle.props.disabled).toBe(true);
         const intro = renderer!.root.findByType(CodexConnectedIntro);
         await act(async () => {
-          expect(await intro.props.onConnect()).toBe(true);
-        });
-        expect(connect).toHaveBeenCalledOnce();
-        expect(connect).toHaveBeenCalledWith(true, false);
-        expect(toggle.props["aria-checked"]).toBe(true);
-        await act(async () => {
           intro.props.onDone();
         });
+        expect(connect).toHaveBeenCalledOnce();
+        expect(connect).toHaveBeenCalledWith(true, running);
+        expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
+        expect(save).toHaveBeenCalledOnce();
         expect(toggle.props.disabled).toBe(false);
         expect(toggle.props["aria-checked"]).toBe(true);
         expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
@@ -652,23 +670,59 @@ describe("ChatGPT first connection intro", () => {
   });
 });
 
-it.each(["cancelled", "failed"])(
-  "turns the first-use toggle off after connection is %s",
+it("leaves the Apps page usable when the initial restart is cancelled", async () => {
+  const firstUseStatus = status({ running: true, used: false });
+  const connect = vi.fn();
+  const save = vi.fn();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: vi.fn().mockResolvedValue(firstUseStatus),
+    setCodexDesktopConnected: connect,
+    markCodexDesktopIntegrationUsed: save,
+    confirm: vi.fn(() => false),
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow
+          integration={integration}
+          initialStatus={firstUseStatus}
+        />,
+      );
+    });
+    const toggle = renderer!.root.findByProps({ role: "switch" });
+    await act(async () => toggle.props.onClick());
+    expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+    expect(toggle.props["aria-checked"]).toBe(false);
+    expect(toggle.props.disabled).toBe(false);
+    expect(connect).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it.each(["failed", "rejected", "save failed"])(
+  "shows errors on the Apps page after Continue (%s)",
   async (outcome) => {
-    const connect = vi.fn().mockResolvedValue(
-      outcome === "cancelled"
-        ? {
-            status: status({ running: true }),
-            restartConfirmationRequired: true,
-          }
-        : { status: status(), error: "launch failed" },
-    );
+    const firstUseStatus = status({ used: false });
+    const connect = vi.fn().mockResolvedValue({
+      status: status({ connected: outcome === "save failed", used: false }),
+      error: outcome === "failed" ? "launch failed" : undefined,
+    });
+    if (outcome === "rejected")
+      connect.mockRejectedValue(new Error("launch failed"));
+    const save = vi.fn().mockResolvedValue("disk error");
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
+      getCodexDesktopStatus: vi.fn().mockResolvedValue(firstUseStatus),
       setCodexDesktopConnected: connect,
-      confirm: vi.fn(() => false),
+      markCodexDesktopIntegrationUsed: save,
     });
     let renderer;
     try {
@@ -676,7 +730,7 @@ it.each(["cancelled", "failed"])(
         renderer = create(
           <CodexDesktopRow
             integration={integration}
-            initialStatus={status({ used: false })}
+            initialStatus={firstUseStatus}
           />,
         );
       });
@@ -688,19 +742,113 @@ it.each(["cancelled", "failed"])(
       expect(toggle.props.disabled).toBe(true);
       const intro = renderer!.root.findByType(CodexConnectedIntro);
       await act(async () => {
-        if (outcome === "failed")
-          await expect(intro.props.onConnect()).rejects.toThrow(
-            "launch failed",
-          );
-        else expect(await intro.props.onConnect()).toBe(false);
+        intro.props.onDone();
       });
-      expect(toggle.props["aria-checked"]).toBe(false);
-      expect(toggle.props.disabled).toBe(true);
-      connect.mockResolvedValue({ status: status({ connected: true }) });
+      expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+      expect(toggle.props["aria-checked"]).toBe(outcome === "save failed");
+      expect(toggle.props.disabled).toBe(false);
+      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
+        outcome === "failed"
+          ? "launch failed"
+          : outcome === "save failed"
+            ? "Ollama couldn’t save your progress. Please try again."
+            : "Ollama could not add its models to ChatGPT.",
+      );
+      expect(save).toHaveBeenCalledTimes(outcome === "save failed" ? 1 : 0);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  },
+);
+
+it("dismisses before launch and prevents duplicate Continue requests", async () => {
+  let finishConnect!: (result: { status: CodexDesktopStatus }) => void;
+  const connect = vi.fn(
+    () =>
+      new Promise<{ status: CodexDesktopStatus }>((resolve) => {
+        finishConnect = resolve;
+      }),
+  );
+  const save = vi.fn().mockResolvedValue("");
+  const firstUseStatus = status({ used: false });
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: vi.fn().mockResolvedValue(firstUseStatus),
+    setCodexDesktopConnected: connect,
+    markCodexDesktopIntegrationUsed: save,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow
+          integration={integration}
+          initialStatus={firstUseStatus}
+        />,
+      );
+    });
+    const toggle = renderer!.root.findByProps({ role: "switch" });
+    await act(async () => toggle.props.onClick());
+    const intro = renderer!.root.findByType(CodexConnectedIntro);
+    await act(async () => {
+      intro.props.onDone();
+      intro.props.onDone();
+    });
+    expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(save).not.toHaveBeenCalled();
+    expect(toggle.props.disabled).toBe(true);
+    await act(async () =>
+      finishConnect({ status: status({ connected: true }) }),
+    );
+    expect(save).toHaveBeenCalledOnce();
+    expect(toggle.props.disabled).toBe(false);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it.each(["cancelled", "status failed"])(
+  "does not launch or acknowledge when Continue is %s",
+  async (outcome) => {
+    const firstUseStatus = status({ used: false });
+    const getStatus = vi.fn().mockResolvedValueOnce(firstUseStatus);
+    if (outcome === "cancelled") {
+      getStatus.mockResolvedValue(status({ used: false, running: true }));
+    } else {
+      getStatus.mockRejectedValue(new Error("status unavailable"));
+    }
+    const connect = vi.fn();
+    const save = vi.fn();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: getStatus,
+      setCodexDesktopConnected: connect,
+      markCodexDesktopIntegrationUsed: save,
+      confirm: vi.fn(() => false),
+    });
+    let renderer;
+    try {
       await act(async () => {
-        expect(await intro.props.onConnect()).toBe(true);
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={firstUseStatus}
+          />,
+        );
       });
-      expect(toggle.props["aria-checked"]).toBe(true);
+      await act(async () =>
+        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+      );
+      await act(async () =>
+        renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+      );
+      expect(connect).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
     } finally {
       await act(async () => renderer?.unmount());
     }
