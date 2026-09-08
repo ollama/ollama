@@ -3,11 +3,133 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestCompactionTrimPreservesProtectedState(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+		{"type":"message","role":"system","content":"system instructions"},
+		{"type":"message","role":"developer","content":"developer instructions"},
+		{"type":"message","role":"user","content":"original goal"},
+		{"type":"tool_search_call","call_id":"old","arguments":{"query":"find a tool"}},
+		{"type":"tool_search_output","call_id":"old","tools":[{"type":"namespace","name":"example","tools":[{"type":"function","name":"shell","description":"` + strings.Repeat("old output ", 1000) + `","parameters":{"type":"object"}}]}]},
+		{"type":"message","role":"assistant","content":"old result processed"},
+		{"type":"message","role":"user","content":"latest request"},
+		{"type":"function_call","call_id":"pending","name":"shell","arguments":"{}"},
+		{"type":"function_call","call_id":"latest","name":"read_image","arguments":"{}"},
+		{"type":"function_call_output","call_id":"latest","output":[{"type":"input_image","image_url":"` + compactionTestPNG + `"}]}
+	]}`)
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 2 {
+		t.Fatalf("removed %d items, want the old call/result pair", removed)
+	}
+	var refs []string
+	for _, item := range plan.items {
+		refs = append(refs, item.Ref)
+	}
+	want := []string{"item_000001", "item_000002", "item_000003", "item_000006", "item_000007", "item_000008", "item_000009", "item_000010"}
+	if !slices.Equal(refs, want) {
+		t.Fatalf("remaining references = %v, want %v", refs, want)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"system instructions", "developer instructions", "original goal", "latest request", compactionTestPNG, "2 older transcript items were omitted"} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("retry prompt missing %q", marker)
+		}
+	}
+	if bytes.Contains(request, []byte("old output")) {
+		t.Fatal("old tool output remains in retry prompt")
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "Continue the task.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if !strings.Contains(payload.Summary, "2 older transcript items were omitted") {
+		t.Fatal("summary does not disclose omitted history")
+	}
+	if len(payload.Retained) != 3 || payload.Retained[0].ToolCalls[0].ID != "pending" || payload.Retained[1].ToolCalls[0].ID != "latest" || len(payload.Retained[2].Images) != 1 {
+		t.Fatalf("active tool state changed: %+v", payload.Retained)
+	}
+	if _, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "invalid selection", "retain_item_ids": []string{"item_000004"},
+	})); err == nil {
+		t.Fatal("accepted a reference removed before summarization")
+	}
+}
+
+func TestCompactionTrimPreservesPriorSummaryAndLatestItem(t *testing.T) {
+	old, err := json.Marshal(OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: "prior summary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "test", "input": []any{
+			ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(old)},
+			map[string]any{"type": "message", "role": "user", "content": "user request"},
+			map[string]any{"type": "message", "role": "assistant", "content": strings.Repeat("older assistant text ", 500)},
+			map[string]any{"type": "message", "role": "assistant", "content": "latest assistant text"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 1 {
+		t.Fatalf("removed=%d, want 1", removed)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"prior summary", "user request", "latest assistant text"} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("retry prompt missing %q", marker)
+		}
+	}
+	if removed := plan.TrimForContextLimit(); removed != 0 {
+		t.Fatalf("removed %d protected items", removed)
+	}
+}
+
+func TestCompactionTrimKeepsToolPairsAcrossInterleavedResults(t *testing.T) {
+	plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[
+		{"type":"function_call","call_id":"a","name":"shell","arguments":"{}"},
+		{"type":"function_call","call_id":"b","name":"shell","arguments":"{}"},
+		{"type":"function_call_output","call_id":"b","output":"b output"},
+		{"type":"function_call_output","call_id":"a","output":"` + strings.Repeat("a output ", 1000) + `"},
+		{"type":"message","role":"assistant","content":"processed both results"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 2 {
+		t.Fatalf("removed=%d, want 2", removed)
+	}
+	if len(plan.items) != 3 || plan.items[0].Message.ToolCalls[0].ID != "b" || plan.items[1].Message.ToolCallID != "b" {
+		t.Fatal("did not preserve the other complete tool pair")
+	}
+	if _, _, err := analyzeCompactionToolState(plan.items); err != nil {
+		t.Fatalf("trim left invalid tool state: %v", err)
+	}
+}
 
 func compactionResponseBody(t *testing.T, selection map[string]any) []byte {
 	t.Helper()
