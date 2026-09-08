@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,129 @@ import (
 
 	"github.com/ollama/ollama/openai"
 )
+
+func TestIsCompactionContextLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"reported cloud error", 400, `{"error":{"message":"The prompt is too long: 1068408, model maximum context length: 1048576 (ref: 00000000-0000-4000-8000-000000000001)","code":null}}`, true},
+		{"without reference", 400, `{"error":{"message":"The prompt is too long: 100, model maximum context length: 90"}}`, true},
+		{"structured code", 400, `{"error":{"message":"input too large","code":"context_length_exceeded"}}`, true},
+		{"structured 413", 413, `{"error":{"code":"context_length_exceeded"}}`, true},
+		{"wrong status", 500, `{"error":{"code":"context_length_exceeded"}}`, false},
+		{"rate limit", 429, `{"error":{"code":"context_length_exceeded"}}`, false},
+		{"other 413", 413, `{"error":{"message":"request body too large"}}`, false},
+		{"other invalid request", 400, `{"error":{"message":"invalid tool schema","code":"invalid_request_error"}}`, false},
+		{"untrusted embedded phrase", 400, `{"error":{"message":"Invalid input contains: The prompt is too long: 100, model maximum context length: 90"}}`, false},
+		{"missing counts", 400, `{"error":{"message":"The prompt is too long: unknown, model maximum context length: unknown"}}`, false},
+		{"invalid JSON", 400, `upstream failed`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			response := &responsesInferenceRecorder{status: tt.status, body: *bytes.NewBufferString(tt.body)}
+			if got := isCompactionContextLimit(response); got != tt.want {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResponsesCompactionOverflowRecovery(t *testing.T) {
+	const overflow = `{"error":{"message":"The prompt is too long: 1068408, model maximum context length: 1048576 (ref: fixture)","type":"invalid_request_error","code":null}}`
+	const invalid = `{"id":"bad","object":"response","output":[]}`
+	for _, tt := range []struct {
+		name        string
+		path        string
+		responses   []string
+		statuses    []int
+		wantStatus  int
+		wantTrimmed bool
+	}{
+		{"standalone", "/v1/responses/compact", []string{overflow, ""}, []int{400, 200}, 200, true},
+		{"trigger", "/v1/responses", []string{overflow, ""}, []int{400, 200}, 200, true},
+		{"overflow then repair", "/v1/responses/compact", []string{overflow, invalid, ""}, []int{400, 200, 200}, 200, true},
+		{"repair then overflow", "/v1/responses/compact", []string{invalid, overflow, ""}, []int{200, 400, 200}, 200, true},
+		{"overflow retry exhausted", "/v1/responses/compact", []string{overflow, overflow}, []int{400, 400}, 400, true},
+		{"both retries exhausted", "/v1/responses/compact", []string{overflow, invalid, invalid}, []int{400, 200, 200}, 500, true},
+		{"unrelated error", "/v1/responses/compact", []string{`{"error":{"message":"invalid tool schema"}}`}, []int{400}, 400, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			local, capture := newCompactionTestServer(t, func(attempt int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+				w.Header().Set("Content-Type", "application/json")
+				if attempt > len(tt.responses) {
+					t.Errorf("unexpected attempt %d", attempt)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				w.WriteHeader(tt.statuses[attempt-1])
+				if body := tt.responses[attempt-1]; body != "" {
+					_, _ = io.WriteString(w, body)
+				} else {
+					_, _ = w.Write(summaryResponse(t, "Continue from the latest result.", nil))
+				}
+			})
+			input := `[
+				{"type":"message","role":"user","content":"original goal"},
+				{"type":"function_call","call_id":"old","name":"shell","arguments":"{}"},
+				{"type":"function_call_output","call_id":"old","output":"` + strings.Repeat("old output ", 1000) + `"},
+				{"type":"message","role":"assistant","content":"old result processed"},
+				{"type":"message","role":"user","content":"latest request"},
+				{"type":"function_call","call_id":"latest","name":"shell","arguments":"{}"},
+				{"type":"function_call_output","call_id":"latest","output":"latest result"}
+			]`
+			stream := tt.path == "/v1/responses"
+			if stream {
+				input = strings.TrimSuffix(input, "]") + `,{"type":"compaction_trigger"}]`
+			}
+			request := fmt.Sprintf(`{"model":"fixture:cloud","stream":%t,"input":%s}`, stream, input)
+			status, _, body := postCompactionRequest(t, local, tt.path, request)
+			if status != tt.wantStatus {
+				t.Fatalf("status=%d, want %d: %s", status, tt.wantStatus, body)
+			}
+			_, requests := capture.snapshot()
+			if len(requests) != len(tt.responses) {
+				t.Fatalf("made %d attempts, want %d", len(requests), len(tt.responses))
+			}
+			if tt.wantTrimmed {
+				last := requests[len(requests)-1]
+				if len(last) >= len(requests[0]) || bytes.Contains(last, []byte("old output")) {
+					t.Fatal("overflow retry did not shrink the old transcript")
+				}
+				for _, marker := range []string{"original goal", "latest request", "latest result", "2 older transcript items were omitted"} {
+					if !bytes.Contains(last, []byte(marker)) {
+						t.Errorf("retry prompt missing %q", marker)
+					}
+				}
+			}
+			if status == http.StatusOK {
+				if !bytes.Contains(body, []byte("2 older transcript items were omitted")) || !bytes.Contains(body, []byte("latest result")) {
+					t.Fatalf("compaction output lost omission notice or active result: %s", body)
+				}
+			} else if status == http.StatusBadRequest && string(body) != tt.responses[len(tt.responses)-1] {
+				t.Fatalf("did not preserve upstream error: %s", body)
+			}
+		})
+	}
+}
+
+func TestResponsesCompactionOverflowWithoutRemovableHistory(t *testing.T) {
+	const overflow = `{"error":{"code":"context_length_exceeded","message":"too many tokens"}}`
+	local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, overflow)
+	})
+	status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":"oversized user message"}`)
+	if status != http.StatusBadRequest || string(body) != overflow {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	_, requests := capture.snapshot()
+	if len(requests) != 1 {
+		t.Fatalf("made %d requests without removable history", len(requests))
+	}
+}
 
 func summaryResponse(t *testing.T, summary string, retained []string) []byte {
 	t.Helper()

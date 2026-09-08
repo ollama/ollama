@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ const (
 	OllamaCompactionPayloadVersion = 1
 	CreateSummaryToolName          = "create_summary"
 	compactionSummaryToolName      = "ollama_compaction_summary"
+	compactionOmissionNotice       = "Compaction warning: %d older transcript items were omitted before summarization because the model's context limit was exceeded."
 )
 
 // ResponsesCompactionTrigger is the terminal input item sent by current Codex
@@ -80,10 +82,11 @@ type ResponsesCompactionPlan struct {
 	Model  string
 	Stream bool
 
-	items      []CompactionTranscriptItem
-	tools      []compactionToolMetadata
-	groups     []compactionToolGroup
-	forcedRefs map[string]struct{}
+	items        []CompactionTranscriptItem
+	tools        []compactionToolMetadata
+	groups       []compactionToolGroup
+	forcedRefs   map[string]struct{}
+	omittedItems int
 }
 
 // ResponsesCompactionResult is the validated result of a compaction-model call.
@@ -647,6 +650,78 @@ func collectCompactionToolMetadata(tools []ResponsesTool) []compactionToolMetada
 	return metadata
 }
 
+// TrimForContextLimit removes the oldest removable items, targeting 20% of
+// serialized transcript text. This is a fallback estimate, not a token budget.
+// User and instruction messages, prior summaries, the latest item, and active
+// tool state are preserved. Completed tool calls and results are removed together.
+// It returns the number of removed items, or zero when no progress is possible.
+func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
+	if len(p.items) == 0 {
+		return 0
+	}
+
+	sizes := make(map[string]int, len(p.items))
+	var total int
+	for _, item := range p.items {
+		message := item.Message
+		message.Images = nil
+		metadata, err := json.Marshal(compactionTranscriptItemWire{
+			Ref: item.Ref, Type: item.Type, Message: message, ImageCount: len(item.Message.Images),
+		})
+		if err != nil {
+			return 0
+		}
+		sizes[item.Ref] = len(metadata)
+		total += len(metadata)
+	}
+
+	protected := make(map[string]bool, len(p.forcedRefs)+1)
+	for ref := range p.forcedRefs {
+		protected[ref] = true
+	}
+	protected[p.items[len(p.items)-1].Ref] = true
+	peers := make(map[string]string, len(p.groups)*2)
+	for _, group := range p.groups {
+		if group.ResultRef != "" {
+			peers[group.CallRef] = group.ResultRef
+			peers[group.ResultRef] = group.CallRef
+		}
+	}
+
+	removed := make(map[string]bool)
+	var removedBytes int
+	for _, item := range p.items {
+		if removedBytes >= (total+4)/5 {
+			break
+		}
+		if protected[item.Ref] || removed[item.Ref] {
+			continue
+		}
+		peer := peers[item.Ref]
+		if item.Type == "function_call" || item.Type == "function_call_output" {
+			// Prior summary pairs are intentionally absent from p.groups.
+			if peer == "" || protected[peer] {
+				continue
+			}
+		} else if item.Message.Role != "assistant" {
+			continue
+		}
+		removed[item.Ref] = true
+		removedBytes += sizes[item.Ref]
+		if peer != "" {
+			removed[peer] = true
+			removedBytes += sizes[peer]
+		}
+	}
+	if len(removed) == 0 {
+		return 0
+	}
+	p.items = slices.DeleteFunc(p.items, func(item CompactionTranscriptItem) bool { return removed[item.Ref] })
+	p.groups = slices.DeleteFunc(p.groups, func(group compactionToolGroup) bool { return removed[group.CallRef] })
+	p.omittedItems += len(removed)
+	return len(removed)
+}
+
 // SummaryRequest returns an ordinary non-streaming Responses request. A repair
 // request includes the validation error from the first model response.
 func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, error) {
@@ -657,6 +732,9 @@ func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, er
 		return nil, err
 	}
 	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. After optional tool metadata, each following user message is one ordered transcript item: its JSON input_text describes the source item, and its input_image blocks belong to that item. Use retain_item_ids for exact source items, including images, that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
+	if p.omittedItems > 0 {
+		prompt += " " + fmt.Sprintf(compactionOmissionNotice, p.omittedItems)
+	}
 	if repairError != "" {
 		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
 	}
@@ -789,6 +867,9 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	}
 	payload := OllamaCompactionPayload{
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: selection.Summary, Retained: retained,
+	}
+	if p.omittedItems > 0 {
+		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
