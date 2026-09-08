@@ -663,9 +663,10 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool
-	hasWebSearch := HasWebSearchTool(r.Tools)
-	hasToolSearch := HasToolSearchTool(r.Tools)
-	for _, t := range r.Tools {
+	requestTools := responsesRequestTools(r)
+	hasWebSearch := HasWebSearchTool(requestTools)
+	hasToolSearch := HasToolSearchTool(requestTools)
+	for _, t := range requestTools {
 		if isWebSearchTool(t) {
 			tools = append(tools, WebSearchFunctionTool())
 			continue
@@ -695,6 +696,18 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 			tools = append(tools, tool)
 		}
 	}
+
+	// Search results can repeat tools already declared or loaded by earlier searches.
+	// Keep the first definition, giving explicit request tools precedence.
+	seen := make(map[string]bool, len(tools))
+	uniqueTools := tools[:0]
+	for _, tool := range tools {
+		if !seen[tool.Function.Name] {
+			seen[tool.Function.Name] = true
+			uniqueTools = append(uniqueTools, tool)
+		}
+	}
+	tools = uniqueTools
 
 	// Handle text format (e.g. json_schema)
 	var format json.RawMessage

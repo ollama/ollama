@@ -608,7 +608,7 @@ func TestFromResponsesRequestRejectsHostedToolSearch(t *testing.T) {
 	}
 }
 
-func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
+func TestFromResponsesRequest_ToolSearchOutputLoadsToolsAndPreservesContent(t *testing.T) {
 	var request ResponsesRequest
 	if err := json.Unmarshal([]byte(`{
 		"model":"test",
@@ -653,8 +653,8 @@ func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
 	if len(content) != 1 || content[0]["name"] != "lookup_order" || content[0]["x_client_field"] != "preserved" {
 		t.Fatalf("content = %#v", content)
 	}
-	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
-		t.Fatalf("native tools = %#v; discovered tool must remain content-only", chat.Tools)
+	if len(chat.Tools) != 2 || chat.Tools[0].Function.Name != "tool_search" || chat.Tools[1].Function.Name != "lookup_order" {
+		t.Fatalf("native tools = %#v", chat.Tools)
 	}
 }
 
@@ -742,8 +742,66 @@ func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testin
 	if got := string(request.Input.Items[1].(ResponsesToolSearchOutput).Tools[0]); got != string(namespace) {
 		t.Fatalf("Responses tool_search_output was mutated: %s", got)
 	}
-	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
-		t.Fatalf("native tools = %#v; discovered tools must remain content-only", chat.Tools)
+	wantNames := []string{"tool_search", "mcp__openaiDeveloperDocs.search_openai_docs", "mcp__codex_apps__github_search", "plain"}
+	if len(chat.Tools) != len(wantNames) {
+		t.Fatalf("native tools = %#v", chat.Tools)
+	}
+	for i, name := range wantNames {
+		if chat.Tools[i].Function.Name != name {
+			t.Fatalf("tool %d name = %q, want %q", i, chat.Tools[i].Function.Name, name)
+		}
+	}
+	loaded := chat.Tools[1].Function
+	if loaded.Description != "Search docs" || len(loaded.Parameters.Required) != 1 || loaded.Parameters.Required[0] != "query" {
+		t.Fatalf("loaded tool definition = %#v", loaded)
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputDeduplicatesTools(t *testing.T) {
+	var request ResponsesRequest
+	if err := json.Unmarshal([]byte(`{
+		"tools":[{"type":"function","name":"orders.lookup","description":"Explicit definition"}],
+		"input":[
+			{"type":"tool_search_output","call_id":"first","tools":[
+				{"type":"namespace","name":"orders","tools":[
+					{"type":"function","name":"lookup","description":"Discovered definition"},
+					{"type":"function","name":"cancel"}
+				]},
+				{"type":"namespace","name":"customers","tools":[{"type":"function","name":"lookup"}]}
+			]},
+			{"type":"tool_search_output","call_id":"second","tools":[
+				{"type":"function","name":"orders.cancel"}
+			]}
+		]
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	before, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNames := []string{"orders.lookup", "orders.cancel", "customers.lookup"}
+	if len(chat.Tools) != len(wantNames) {
+		t.Fatalf("native tools = %#v", chat.Tools)
+	}
+	for i, name := range wantNames {
+		if chat.Tools[i].Function.Name != name {
+			t.Fatalf("tool %d name = %q, want %q", i, chat.Tools[i].Function.Name, name)
+		}
+	}
+	if chat.Tools[0].Function.Description != "Explicit definition" {
+		t.Fatalf("explicit tool definition was replaced: %#v", chat.Tools[0])
+	}
+	after, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("request was mutated")
 	}
 }
 

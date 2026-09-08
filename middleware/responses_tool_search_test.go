@@ -46,7 +46,7 @@ func TestResponsesMiddlewareToolSearchInput(t *testing.T) {
 	if captured == nil {
 		t.Fatal("request was not converted")
 	}
-	if len(captured.Tools) != 1 || captured.Tools[0].Function.Name != "tool_search" {
+	if len(captured.Tools) != 2 || captured.Tools[0].Function.Name != "tool_search" || captured.Tools[1].Function.Name != "orders.lookup_order" {
 		t.Fatalf("native tools = %#v", captured.Tools)
 	}
 	if len(captured.Messages) != 2 {
