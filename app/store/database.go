@@ -90,7 +90,7 @@ func (db *database) init() error {
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
 		claude_desktop_used BOOLEAN NOT NULL DEFAULT 0,
-		codex_desktop_intro_acknowledged BOOLEAN NOT NULL DEFAULT 0,
+		codex_desktop_used BOOLEAN NOT NULL DEFAULT 0,
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
 
@@ -592,11 +592,11 @@ func (db *database) migrateV17ToV18() error {
 	return nil
 }
 
-// migrateV18ToV19 records acknowledgment of the ChatGPT connection intro.
+// migrateV18ToV19 records successful ChatGPT integration use.
 func (db *database) migrateV18ToV19() error {
-	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN codex_desktop_intro_acknowledged BOOLEAN NOT NULL DEFAULT 0`)
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN codex_desktop_used BOOLEAN NOT NULL DEFAULT 0`)
 	if err != nil && !duplicateColumnError(err) {
-		return fmt.Errorf("add codex_desktop_intro_acknowledged column: %w", err)
+		return fmt.Errorf("add codex_desktop_used column: %w", err)
 	}
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 19`)
 	return err
@@ -1250,9 +1250,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used, codex_desktop_intro_acknowledged
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used, codex_desktop_used
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed, &s.CodexDesktopIntroAcknowledged)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed, &s.CodexDesktopUsed)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1268,8 +1268,8 @@ func (db *database) setSettings(s Settings) error {
 
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?, codex_desktop_intro_acknowledged = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed, s.CodexDesktopIntroAcknowledged)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?, codex_desktop_used = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed, s.CodexDesktopUsed)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

@@ -564,7 +564,7 @@ func loadV2Schema(t *testing.T, dbPath string) *database {
 	return &database{conn: conn}
 }
 
-func TestCodexDesktopIntroAcknowledgmentMigration(t *testing.T) {
+func TestCodexDesktopUsedMigration(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "codex-intro.db")
 	db, err := newDatabase(dbPath)
 	if err != nil {
@@ -576,12 +576,12 @@ func TestCodexDesktopIntroAcknowledgmentMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read settings: %v", err)
 	}
-	if settings.CodexDesktopIntroAcknowledged {
+	if settings.CodexDesktopUsed {
 		t.Fatal("expected fresh installs to have no ChatGPT intro acknowledgment")
 	}
 
 	if _, err := db.conn.Exec(`
-		ALTER TABLE settings DROP COLUMN codex_desktop_intro_acknowledged;
+		ALTER TABLE settings DROP COLUMN codex_desktop_used;
 		UPDATE settings SET schema_version = 18;
 	`); err != nil {
 		t.Fatalf("failed to seed v18 settings row: %v", err)
@@ -594,7 +594,7 @@ func TestCodexDesktopIntroAcknowledgmentMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read migrated settings: %v", err)
 	}
-	if settings.CodexDesktopIntroAcknowledged {
+	if settings.CodexDesktopUsed {
 		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
 	}
 }

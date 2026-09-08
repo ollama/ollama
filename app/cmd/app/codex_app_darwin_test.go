@@ -1380,12 +1380,12 @@ func TestCodexDesktopModelRefreshErrorUsesUserFacingCopy(t *testing.T) {
 	}
 }
 
-func TestCodexDesktopIntroAcknowledgment(t *testing.T) {
+func TestCodexDesktopUsed(t *testing.T) {
 	previous := appStore
 	t.Cleanup(func() { appStore = previous })
 	path := filepath.Join(t.TempDir(), "db.sqlite")
 	appStore = &store.Store{DBPath: path}
-	if codexDesktopIntroAcknowledged() {
+	if hasUsedCodexDesktopIntegration() {
 		t.Fatal("new store already acknowledged")
 	}
 	settings, err := appStore.Settings()
@@ -1396,7 +1396,7 @@ func TestCodexDesktopIntroAcknowledgment(t *testing.T) {
 	if err := appStore.SetSettings(settings); err != nil {
 		t.Fatal(err)
 	}
-	if err := acknowledgeCodexDesktopIntro(); err != nil {
+	if err := markCodexDesktopIntegrationUsed(); err != nil {
 		t.Fatal(err)
 	}
 	if err := appStore.Close(); err != nil {
@@ -1404,7 +1404,7 @@ func TestCodexDesktopIntroAcknowledgment(t *testing.T) {
 	}
 	appStore = &store.Store{DBPath: path}
 	defer appStore.Close()
-	if !codexDesktopIntroAcknowledged() {
+	if !hasUsedCodexDesktopIntegration() {
 		t.Fatal("acknowledgment did not survive reopening the store")
 	}
 	settings, err = appStore.Settings()
@@ -1416,11 +1416,11 @@ func TestCodexDesktopIntroAcknowledgment(t *testing.T) {
 	}
 }
 
-func TestCodexDesktopIntroAcknowledgmentUnavailable(t *testing.T) {
+func TestCodexDesktopUsedUnavailable(t *testing.T) {
 	previous := appStore
 	t.Cleanup(func() { appStore = previous })
 	appStore = nil
-	if err := acknowledgeCodexDesktopIntro(); err == nil {
+	if err := markCodexDesktopIntegrationUsed(); err == nil {
 		t.Fatal("expected unavailable store error")
 	}
 }

@@ -28,10 +28,10 @@ export function CodexConnectedIntro({
         if (!(await onConnect())) return;
         connectedRef.current = true;
       }
-      if (!window.acknowledgeCodexDesktopIntro) {
+      if (!window.markCodexDesktopIntegrationUsed) {
         throw new Error("Acknowledgment is unavailable");
       }
-      const saveError = await window.acknowledgeCodexDesktopIntro();
+      const saveError = await window.markCodexDesktopIntegrationUsed();
       if (saveError) throw new Error(saveError);
       onDone();
     } catch (error) {

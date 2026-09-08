@@ -70,7 +70,7 @@ export function CodexDesktopRow({
   const [notice, setNotice] = useState<string | null>(null);
   const [showIntro, setShowIntro] = useState(false);
   const [introAttemptFailed, setIntroAttemptFailed] = useState(false);
-  const introAcknowledged = useRef(false);
+  const used = useRef(false);
   const mounted = useRef(true);
   const operationInFlight = useRef(false);
 
@@ -154,7 +154,7 @@ export function CodexDesktopRow({
         if (!next.installed) return;
         completing = true;
 
-        if (!next.introAcknowledged && !introAcknowledged.current) {
+        if (!next.used && !used.current) {
           setShowIntro(true);
           setPhase("idle");
           return;
@@ -280,12 +280,7 @@ export function CodexDesktopRow({
       return false;
     }
 
-    if (
-      enabled &&
-      !fromIntro &&
-      !status?.introAcknowledged &&
-      !introAcknowledged.current
-    ) {
+    if (enabled && !fromIntro && !status?.used && !used.current) {
       setError(null);
       setNotice(null);
       setShowIntro(true);
@@ -424,7 +419,7 @@ export function CodexDesktopRow({
         <CodexConnectedIntro
           onConnect={() => toggleConnection(true)}
           onDone={() => {
-            introAcknowledged.current = true;
+            used.current = true;
             setShowIntro(false);
           }}
         />

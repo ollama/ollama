@@ -27,7 +27,7 @@ function status(
   overrides: Partial<CodexDesktopStatus> = {},
 ): CodexDesktopStatus {
   return {
-    introAcknowledged: true,
+    used: true,
     supported: true,
     installed: true,
     connected: false,
@@ -582,7 +582,7 @@ describe("ChatGPT first connection intro", () => {
           renderer = create(
             <CodexDesktopRow
               integration={integration}
-              initialStatus={status({ running, introAcknowledged: false })}
+              initialStatus={status({ running, used: false })}
             />,
           );
         });
@@ -624,9 +624,7 @@ describe("ChatGPT first connection intro", () => {
       clearInterval: globalThis.clearInterval,
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
-      getCodexDesktopStatus: vi
-        .fn()
-        .mockResolvedValue(status({ introAcknowledged: false })),
+      getCodexDesktopStatus: vi.fn().mockResolvedValue(status({ used: false })),
       installCodexDesktop: vi.fn().mockResolvedValue("opened"),
       setCodexDesktopConnected: connect,
     });
@@ -638,7 +636,7 @@ describe("ChatGPT first connection intro", () => {
             integration={integration}
             initialStatus={status({
               installed: false,
-              introAcknowledged: false,
+              used: false,
             })}
           />,
         );
@@ -657,16 +655,14 @@ describe("ChatGPT first connection intro", () => {
 it.each(["cancelled", "failed"])(
   "turns the first-use toggle off after connection is %s",
   async (outcome) => {
-    const connect = vi
-      .fn()
-      .mockResolvedValue(
-        outcome === "cancelled"
-          ? {
-              status: status({ running: true }),
-              restartConfirmationRequired: true,
-            }
-          : { status: status(), error: "launch failed" },
-      );
+    const connect = vi.fn().mockResolvedValue(
+      outcome === "cancelled"
+        ? {
+            status: status({ running: true }),
+            restartConfirmationRequired: true,
+          }
+        : { status: status(), error: "launch failed" },
+    );
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -680,7 +676,7 @@ it.each(["cancelled", "failed"])(
         renderer = create(
           <CodexDesktopRow
             integration={integration}
-            initialStatus={status({ introAcknowledged: false })}
+            initialStatus={status({ used: false })}
           />,
         );
       });

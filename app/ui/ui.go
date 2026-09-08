@@ -1547,8 +1547,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	settings := request.Settings
-	// Intro acknowledgment is owned by the native Continue action.
-	settings.CodexDesktopIntroAcknowledged = old.CodexDesktopIntroAcknowledged
+	// Integration history is owned by the native Continue action.
+	settings.CodexDesktopUsed = old.CodexDesktopUsed
 	if request.OnboardingVersion == nil {
 		settings.OnboardingVersion = old.OnboardingVersion
 	} else {

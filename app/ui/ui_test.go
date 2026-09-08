@@ -1062,7 +1062,7 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) 
 	}
 }
 
-func TestSettingsPreservesCodexDesktopIntroAcknowledgedWhenOmitted(t *testing.T) {
+func TestSettingsPreservesCodexDesktopUsedWhenOmitted(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
@@ -1072,7 +1072,7 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWhenOmitted(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings.CodexDesktopIntroAcknowledged = true
+	settings.CodexDesktopUsed = true
 	if err := testStore.SetSettings(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1085,7 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWhenOmitted(t *testing.T)
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		t.Fatal(err)
 	}
-	delete(fields, "CodexDesktopIntroAcknowledged")
+	delete(fields, "CodexDesktopUsed")
 	payload, err = json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
@@ -1102,12 +1102,12 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWhenOmitted(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !saved.CodexDesktopIntroAcknowledged {
-		t.Fatal("expected CodexDesktopIntroAcknowledged to be preserved")
+	if !saved.CodexDesktopUsed {
+		t.Fatal("expected CodexDesktopUsed to be preserved")
 	}
 }
 
-func TestSettingsPreservesCodexDesktopIntroAcknowledgedWithStaleValue(t *testing.T) {
+func TestSettingsPreservesCodexDesktopUsedWithStaleValue(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
@@ -1117,7 +1117,7 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWithStaleValue(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings.CodexDesktopIntroAcknowledged = true
+	settings.CodexDesktopUsed = true
 	if err := testStore.SetSettings(settings); err != nil {
 		t.Fatal(err)
 	}
@@ -1130,7 +1130,7 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWithStaleValue(t *testing
 	if err := json.Unmarshal(payload, &fields); err != nil {
 		t.Fatal(err)
 	}
-	fields["CodexDesktopIntroAcknowledged"] = false
+	fields["CodexDesktopUsed"] = false
 	payload, err = json.Marshal(fields)
 	if err != nil {
 		t.Fatal(err)
@@ -1147,7 +1147,7 @@ func TestSettingsPreservesCodexDesktopIntroAcknowledgedWithStaleValue(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !saved.CodexDesktopIntroAcknowledged {
-		t.Fatal("expected CodexDesktopIntroAcknowledged to be preserved")
+	if !saved.CodexDesktopUsed {
+		t.Fatal("expected CodexDesktopUsed to be preserved")
 	}
 }

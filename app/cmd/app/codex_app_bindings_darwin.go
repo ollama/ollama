@@ -17,8 +17,8 @@ func codexDesktopModelRefreshError(settings codexDesktopModelsSettings) string {
 }
 
 func bindCodexDesktop(wv webview.WebView) {
-	wv.Bind("acknowledgeCodexDesktopIntro", func() string {
-		if err := acknowledgeCodexDesktopIntro(); err != nil {
+	wv.Bind("markCodexDesktopIntegrationUsed", func() string {
+		if err := markCodexDesktopIntegrationUsed(); err != nil {
 			return err.Error()
 		}
 		return ""

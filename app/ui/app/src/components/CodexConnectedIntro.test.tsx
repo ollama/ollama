@@ -25,7 +25,7 @@ describe("CodexConnectedIntro", () => {
       .mockResolvedValueOnce("");
     const done = vi.fn();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", { acknowledgeCodexDesktopIntro: save });
+    vi.stubGlobal("window", { markCodexDesktopIntegrationUsed: save });
     let renderer;
     try {
       await act(async () => {
@@ -60,7 +60,7 @@ describe("CodexConnectedIntro", () => {
     );
     const done = vi.fn();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", { acknowledgeCodexDesktopIntro: save });
+    vi.stubGlobal("window", { markCodexDesktopIntegrationUsed: save });
     let renderer;
     try {
       await act(async () => {
@@ -97,7 +97,7 @@ describe("launch before acknowledgment", () => {
         return false;
       });
       vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      vi.stubGlobal("window", { acknowledgeCodexDesktopIntro: save });
+      vi.stubGlobal("window", { markCodexDesktopIntegrationUsed: save });
       let renderer;
       try {
         await act(async () => {
@@ -129,7 +129,7 @@ describe("launch before acknowledgment", () => {
       .mockResolvedValueOnce("disk error")
       .mockResolvedValueOnce("");
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", { acknowledgeCodexDesktopIntro: save });
+    vi.stubGlobal("window", { markCodexDesktopIntegrationUsed: save });
     let renderer;
     try {
       await act(async () => {

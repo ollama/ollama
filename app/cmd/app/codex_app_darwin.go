@@ -62,15 +62,15 @@ var (
 )
 
 type codexDesktopStatus struct {
-	IntroAcknowledged bool     `json:"introAcknowledged"`
-	Supported         bool     `json:"supported"`
-	Installed         bool     `json:"installed"`
-	Connected         bool     `json:"connected"`
-	Running           bool     `json:"running"`
-	Model             string   `json:"model,omitempty"`
-	Models            []string `json:"models,omitempty"`
-	MaxModels         int      `json:"maxModels"`
-	Requests          uint64   `json:"requests"`
+	Used      bool     `json:"used"`
+	Supported bool     `json:"supported"`
+	Installed bool     `json:"installed"`
+	Connected bool     `json:"connected"`
+	Running   bool     `json:"running"`
+	Model     string   `json:"model,omitempty"`
+	Models    []string `json:"models,omitempty"`
+	MaxModels int      `json:"maxModels"`
+	Requests  uint64   `json:"requests"`
 }
 
 type codexDesktopActionResult struct {
@@ -150,15 +150,15 @@ func getCodexDesktopStatus() codexDesktopStatus {
 		model = models[0]
 	}
 	return codexDesktopStatus{
-		IntroAcknowledged: codexDesktopIntroAcknowledged(),
-		Supported:         true,
-		Installed:         codexDesktop.Installed(),
-		Connected:         connected,
-		Running:           codexDesktop.Running(),
-		Model:             model,
-		Models:            models,
-		MaxModels:         codexDesktopMaxModels,
-		Requests:          requests,
+		Used:      hasUsedCodexDesktopIntegration(),
+		Supported: true,
+		Installed: codexDesktop.Installed(),
+		Connected: connected,
+		Running:   codexDesktop.Running(),
+		Model:     model,
+		Models:    models,
+		MaxModels: codexDesktopMaxModels,
+		Requests:  requests,
 	}
 }
 
@@ -980,7 +980,7 @@ func codexDesktopCloudModel(name string) bool {
 	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
 }
 
-func codexDesktopIntroAcknowledged() bool {
+func hasUsedCodexDesktopIntegration() bool {
 	if appStore == nil {
 		return false
 	}
@@ -988,10 +988,10 @@ func codexDesktopIntroAcknowledged() bool {
 	if err != nil {
 		return false
 	}
-	return settings.CodexDesktopIntroAcknowledged
+	return settings.CodexDesktopUsed
 }
 
-func acknowledgeCodexDesktopIntro() error {
+func markCodexDesktopIntegrationUsed() error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 	if appStore == nil {
@@ -1001,6 +1001,6 @@ func acknowledgeCodexDesktopIntro() error {
 	if err != nil {
 		return fmt.Errorf("load settings: %w", err)
 	}
-	settings.CodexDesktopIntroAcknowledged = true
+	settings.CodexDesktopUsed = true
 	return appStore.SetSettings(settings)
 }
