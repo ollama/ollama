@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/ollama/ollama/types/model"
@@ -750,6 +752,83 @@ func TestToolFunctionParameters_String(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result := test.params.String()
 			assert.Equal(t, test.expected, result)
+		})
+	}
+}
+
+// Model templates render tool schemas by printing values directly, e.g.
+// `{"type": "function", "function": {{ .Function }}}`. text/template only uses
+// String() if the value satisfies fmt.Stringer; a field reached through a
+// non-addressable value does not satisfy it when String() is declared on a
+// pointer receiver, and text/template falls back to printing the raw struct.
+func TestToolTemplateRendering(t *testing.T) {
+	tool := Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "get_weather",
+			Description: "Get the current weather",
+			Parameters: ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"location"},
+				Properties: testPropsMap(map[string]ToolProperty{
+					"location": {
+						Type:        PropertyType{"string"},
+						Description: "The city",
+					},
+				}),
+			},
+		},
+	}
+
+	args := NewToolCallFunctionArguments()
+	args.Set("location", "London")
+	toolCall := ToolCall{
+		Function: ToolCallFunction{
+			Name:      "get_weather",
+			Arguments: args,
+		},
+	}
+
+	tests := []struct {
+		name     string
+		tmpl     string
+		data     any
+		expected string
+	}{
+		{
+			name:     "tool",
+			tmpl:     `{{ . }}`,
+			data:     tool,
+			expected: `{"type":"function","function":{"name":"get_weather","description":"Get the current weather","parameters":{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city"}}}}}`,
+		},
+		{
+			name:     "tool function",
+			tmpl:     `{{ .Function }}`,
+			data:     tool,
+			expected: `{"name":"get_weather","description":"Get the current weather","parameters":{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city"}}}}`,
+		},
+		{
+			name:     "tool function parameters",
+			tmpl:     `{{ .Function.Parameters }}`,
+			data:     tool,
+			expected: `{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city"}}}`,
+		},
+		{
+			name:     "tool call arguments",
+			tmpl:     `{{ .Function.Arguments }}`,
+			data:     toolCall,
+			expected: `{"location":"London"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tmpl, err := template.New("test").Parse(test.tmpl)
+			require.NoError(t, err)
+
+			var b bytes.Buffer
+			require.NoError(t, tmpl.Execute(&b, test.data))
+			assert.Equal(t, test.expected, b.String())
 		})
 	}
 }
