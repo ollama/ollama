@@ -577,11 +577,11 @@ func TestFromMessagesRequest_WithOutputConfigEffort(t *testing.T) {
 	}
 
 	if result.Think == nil {
-		t.Fatal("expected think to be set from output_config.effort")
+		t.Fatal("expected think to be set")
 	}
 
-	if got := result.Think.String(); got != "high" {
-		t.Fatalf("expected think level 'high', got %q", got)
+	if got, ok := result.Think.Value.(bool); !ok || got {
+		t.Fatalf("expected think=false when output_config.effort is sent without a thinking block (Anthropic semantics), got %v", result.Think.Value)
 	}
 }
 
@@ -606,11 +606,11 @@ func TestFromMessagesRequest_WithOutputConfigEffortXHighMapsToHigh(t *testing.T)
 	}
 
 	if result.Think == nil {
-		t.Fatal("expected think to be set from output_config.effort")
+		t.Fatal("expected think to be set")
 	}
 
-	if got := result.Think.String(); got != "high" {
-		t.Fatalf("expected think level 'high' for xhigh effort, got %q", got)
+	if got, ok := result.Think.Value.(bool); !ok || got {
+		t.Fatalf("expected think=false when output_config.effort is sent without a thinking block (Anthropic semantics), got %v", result.Think.Value)
 	}
 }
 
@@ -2168,5 +2168,53 @@ func TestCitation(t *testing.T) {
 
 	if unmarshaled.CitedText != "Some cited text..." {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
+	}
+}
+
+// Claude Code with thinking switched off (alwaysThinkingEnabled=false or
+// MAX_THINKING_TOKENS=0) sends no thinking block but still sends
+// output_config.effort. That must disable thinking, not select a level.
+func TestFromMessagesRequest_EffortWithoutThinkingDisablesThinking(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 32000,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		OutputConfig: &OutputConfig{
+			Effort: "high",
+		},
+	}
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	think := result.Think
+	if think == nil {
+		t.Fatal("expected think to be set")
+	}
+	if got, ok := think.Value.(bool); !ok || got {
+		t.Fatalf("expected think=false, got %v", think.Value)
+	}
+}
+
+// Enabled thinking plus an effort still selects the level.
+func TestFromMessagesRequest_EnabledThinkingUsesOutputConfigEffort(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 32000,
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
+		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 4096},
+		OutputConfig: &OutputConfig{
+			Effort: "low",
+		},
+	}
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Think == nil {
+		t.Fatal("expected think to be set")
+	}
+	if got, ok := result.Think.Value.(string); !ok || got != "low" {
+		t.Fatalf("expected think level 'low', got %v", result.Think.Value)
 	}
 }
