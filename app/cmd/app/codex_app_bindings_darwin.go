@@ -17,6 +17,12 @@ func codexDesktopModelRefreshError(settings codexDesktopModelsSettings) string {
 }
 
 func bindCodexDesktop(wv webview.WebView) {
+	wv.Bind("markCodexDesktopIntegrationUsed", func() string {
+		if err := markCodexDesktopIntegrationUsed(); err != nil {
+			return err.Error()
+		}
+		return ""
+	})
 	wv.Bind("getCodexDesktopStatus", func() codexDesktopStatus {
 		return getCodexDesktopStatus()
 	})

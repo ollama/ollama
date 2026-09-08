@@ -62,6 +62,7 @@ var (
 )
 
 type codexDesktopStatus struct {
+	Used      bool     `json:"used"`
 	Supported bool     `json:"supported"`
 	Installed bool     `json:"installed"`
 	Connected bool     `json:"connected"`
@@ -149,6 +150,7 @@ func getCodexDesktopStatus() codexDesktopStatus {
 		model = models[0]
 	}
 	return codexDesktopStatus{
+		Used:      hasUsedCodexDesktopIntegration(),
 		Supported: true,
 		Installed: codexDesktop.Installed(),
 		Connected: connected,
@@ -976,4 +978,24 @@ func codexDesktopModelKey(name string) string {
 func codexDesktopCloudModel(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+}
+
+func hasUsedCodexDesktopIntegration() bool {
+	if appStore == nil {
+		return false
+	}
+	settings, err := appStore.Settings()
+	if err != nil {
+		return false
+	}
+	return settings.CodexDesktopUsed
+}
+
+func markCodexDesktopIntegrationUsed() error {
+	codexDesktopMu.Lock()
+	defer codexDesktopMu.Unlock()
+	if appStore == nil {
+		return errors.New("settings are unavailable")
+	}
+	return appStore.MarkCodexDesktopUsed()
 }
