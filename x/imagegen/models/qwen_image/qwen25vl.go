@@ -8,9 +8,9 @@ import (
 	"math"
 	"path/filepath"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/safetensors"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 // Qwen25VLConfig holds Qwen2.5-VL configuration

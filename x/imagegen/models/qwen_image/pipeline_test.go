@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // TestPipelineOutput runs the full pipeline (integration test).

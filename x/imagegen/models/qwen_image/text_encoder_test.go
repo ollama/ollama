@@ -10,8 +10,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ollama/ollama/x/imagegen/mlx"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // TinyTextEncoderConfig holds config for the tiny test text encoder
