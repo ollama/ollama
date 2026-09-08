@@ -99,6 +99,7 @@ export async function applySettingsDefaults({
       new SettingsType({
         Expose: false,
         Browser: false,
+        AllowedOrigins: "",
         Models: "",
         Agent: false,
         Tools: false,
@@ -699,6 +700,35 @@ export default function Settings() {
                     />
                   </div>
                 </div>
+              </Field>
+
+              <Field>
+                <Label>Allowed browser origins</Label>
+                <Description>
+                  Allow websites to connect to Ollama. Separate origins with
+                  commas, for example https://app.example.com. Leave blank to
+                  use defaults. Changes restart Ollama.
+                </Description>
+                <Input
+                  className="mt-2"
+                  key={settings.AllowedOrigins || ""}
+                  defaultValue={settings.AllowedOrigins || ""}
+                  placeholder="https://app.example.com"
+                  onBlur={(e) => {
+                    const origins = e.target.value
+                      .split(",")
+                      .map((origin) => origin.trim())
+                      .filter(Boolean)
+                      .join(",");
+                    e.target.value = origins;
+                    if (origins !== (settings.AllowedOrigins || "")) {
+                      handleChange("AllowedOrigins", origins);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                />
               </Field>
 
               {/* Model Directory */}

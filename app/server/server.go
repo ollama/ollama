@@ -250,7 +250,9 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	if settings.Expose {
 		env["OLLAMA_HOST"] = "0.0.0.0"
 	}
-	if settings.Browser {
+	if settings.AllowedOrigins != "" {
+		env["OLLAMA_ORIGINS"] = settings.AllowedOrigins
+	} else if settings.Browser {
 		env["OLLAMA_ORIGINS"] = "*"
 	}
 	if settings.Models != "" {

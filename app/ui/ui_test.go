@@ -1061,3 +1061,42 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) 
 		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
 	}
 }
+
+func TestSettingsAllowedOrigins(t *testing.T) {
+	for _, tt := range []struct {
+		name, body, want string
+		restart          bool
+	}{
+		{"change", `{"Models":"/test/models","AllowedOrigins":"https://new.example.com"}`, "https://new.example.com", true},
+		{"clear", `{"Models":"/test/models","AllowedOrigins":""}`, "", true},
+		{"unchanged", `{"Models":"/test/models","AllowedOrigins":"https://app.example.com"}`, "https://app.example.com", false},
+		{"omitted", `{"Models":"/test/models"}`, "https://app.example.com", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			defer st.Close()
+			if err := st.SetSettings(store.Settings{Models: "/test/models", AllowedOrigins: "https://app.example.com"}); err != nil {
+				t.Fatal(err)
+			}
+			restarts := 0
+			s := &Server{Store: st, Restart: func() { restarts++ }}
+			if err := s.settings(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/v1/settings", strings.NewReader(tt.body))); err != nil {
+				t.Fatal(err)
+			}
+			settings, err := st.Settings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if settings.AllowedOrigins != tt.want {
+				t.Fatalf("got origins %q, want %q", settings.AllowedOrigins, tt.want)
+			}
+			wantRestarts := 0
+			if tt.restart {
+				wantRestarts = 1
+			}
+			if restarts != wantRestarts {
+				t.Fatalf("got %d restarts, want %d", restarts, wantRestarts)
+			}
+		})
+	}
+}

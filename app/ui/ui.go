@@ -1541,12 +1541,17 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		store.Settings
 		OnboardingVersion *int
 		ClaudeDesktopUsed *bool
+		AllowedOrigins    *string
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
 	}
 
 	settings := request.Settings
+	settings.AllowedOrigins = old.AllowedOrigins
+	if request.AllowedOrigins != nil {
+		settings.AllowedOrigins = *request.AllowedOrigins
+	}
 	if request.OnboardingVersion == nil {
 		settings.OnboardingVersion = old.OnboardingVersion
 	} else {
@@ -1582,7 +1587,8 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
-		old.Expose != settings.Expose {
+		old.Expose != settings.Expose ||
+		old.AllowedOrigins != settings.AllowedOrigins {
 		s.Restart()
 	}
 

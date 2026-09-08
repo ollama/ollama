@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 18
+const currentSchemaVersion = 19
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -69,6 +69,7 @@ func (db *database) init() error {
 		expose BOOLEAN NOT NULL DEFAULT 0,
 		survey BOOLEAN NOT NULL DEFAULT TRUE,
 		browser BOOLEAN NOT NULL DEFAULT 0,
+		allowed_origins TEXT NOT NULL DEFAULT '',
 		models TEXT NOT NULL DEFAULT '',
 		agent BOOLEAN NOT NULL DEFAULT 0,
 		tools BOOLEAN NOT NULL DEFAULT 0,
@@ -285,6 +286,11 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v17 to v18: %w", err)
 			}
 			version = 18
+		case 18:
+			if err := db.migrateV18ToV19(); err != nil {
+				return fmt.Errorf("migrate v18 to v19: %w", err)
+			}
+			version = 19
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -583,6 +589,19 @@ func (db *database) migrateV17ToV18() error {
 		return fmt.Errorf("update schema version: %w", err)
 	}
 
+	return nil
+}
+
+// migrateV18ToV19 adds configurable browser origins.
+func (db *database) migrateV18ToV19() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN allowed_origins TEXT NOT NULL DEFAULT ''`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add allowed_origins column: %w", err)
+	}
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 19`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
 	return nil
 }
 
@@ -1234,9 +1253,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used
+		SELECT expose, survey, browser, allowed_origins, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, last_home_view, onboarding_version, think_enabled, think_level, auto_update_enabled, claude_desktop_used
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.AllowedOrigins, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.LastHomeView, &s.OnboardingVersion, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled, &s.ClaudeDesktopUsed)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1252,8 +1271,8 @@ func (db *database) setSettings(s Settings) error {
 
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed)
+		SET expose = ?, survey = ?, browser = ?, allowed_origins = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, last_home_view = ?, onboarding_version = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?, claude_desktop_used = ?
+	`, s.Expose, s.Survey, s.Browser, s.AllowedOrigins, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, lastHomeView, s.OnboardingVersion, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled, s.ClaudeDesktopUsed)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

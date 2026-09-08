@@ -66,6 +66,18 @@ func TestServerCmd(t *testing.T) {
 			dont:     []string{"OLLAMA_HOST="},
 		},
 		{
+			name:     "allowed origins",
+			settings: store.Settings{AllowedOrigins: "https://app.example.com,https://other.example.com"},
+			want:     []string{"OLLAMA_ORIGINS=https://app.example.com,https://other.example.com"},
+			dont:     []string{"OLLAMA_HOST="},
+		},
+		{
+			name:     "allowed origins override browser wildcard",
+			settings: store.Settings{Browser: true, AllowedOrigins: "https://app.example.com"},
+			want:     []string{"OLLAMA_ORIGINS=https://app.example.com"},
+			dont:     []string{"OLLAMA_ORIGINS=*"},
+		},
+		{
 			name:     "models",
 			settings: store.Settings{Models: tmpModels},
 			want:     []string{"OLLAMA_MODELS=" + tmpModels},
@@ -396,5 +408,39 @@ func TestGetInferenceInfoTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("unexpected error: %s", err)
+	}
+}
+
+func TestServerCmdAllowedOriginsEnvironment(t *testing.T) {
+	t.Setenv("OLLAMA_ORIGINS", "https://environment.example.com")
+	for _, origins := range []string{"", "https://app.example.com"} {
+		t.Run(origins, func(t *testing.T) {
+			st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			defer st.Close()
+			if err := st.SetSettings(store.Settings{AllowedOrigins: origins}); err != nil {
+				t.Fatal(err)
+			}
+			s := &Server{store: st}
+			cmd, err := s.cmd(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := origins
+			if want == "" {
+				want = "https://environment.example.com"
+			}
+			count := 0
+			for _, env := range cmd.Env {
+				if strings.HasPrefix(env, "OLLAMA_ORIGINS=") {
+					count++
+					if env != "OLLAMA_ORIGINS="+want {
+						t.Errorf("got %q, want origins %q", env, want)
+					}
+				}
+			}
+			if count != 1 {
+				t.Errorf("got %d OLLAMA_ORIGINS entries, want 1", count)
+			}
+		})
 	}
 }
