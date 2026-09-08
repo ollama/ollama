@@ -1,8 +1,13 @@
 import type { IntegrationStatus } from "@/api";
 import type { CodexDesktopStatus } from "@/types/webview";
+import {
+  QueryClient,
+  defaultScheduler,
+  notifyManager,
+} from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act, create } from "react-test-renderer";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexConnectedIntro } from "./CodexConnectedIntro";
 import {
   CODEX_DESKTOP_INSTALL_TIMEOUT_MS,
@@ -13,7 +18,26 @@ vi.mock("./CodexConnectedIntro", () => ({
   CodexConnectedIntro: () => null,
 }));
 
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return Object.assign({}, actual, {
+    useQueryClient: () => queryClient,
+    useMutation: (options: Parameters<typeof actual.useMutation>[0]) =>
+      actual.useMutation(options, queryClient),
+    useMutationState: (
+      options: Parameters<typeof actual.useMutationState>[0],
+    ) => actual.useMutationState(options, queryClient),
+  });
+});
+
+let queryClient: QueryClient;
+beforeEach(() => {
+  queryClient = new QueryClient();
+  notifyManager.setScheduler(queueMicrotask);
+});
 afterEach(() => {
+  queryClient.clear();
+  notifyManager.setScheduler(defaultScheduler);
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -1246,6 +1270,248 @@ it.each(["returned", "rejected"])(
       expect(toggle.props["aria-checked"]).toBe(true);
       expect(connect).toHaveBeenCalledOnce();
       expect(save).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  },
+);
+
+it.each([
+  { failure: "returned", timing: "before leaving" },
+  { failure: "rejected", timing: "before leaving" },
+  { failure: "returned", timing: "while away" },
+  { failure: "rejected", timing: "while away" },
+  { failure: "returned", timing: "after returning" },
+  { failure: "rejected", timing: "after returning" },
+])(
+  "preserves save-only recovery across navigation ($failure failure $timing)",
+  async ({ failure, timing }) => {
+    vi.useFakeTimers();
+    const firstUseStatus = status({ used: false });
+    const connectedStatus = status({ used: false, connected: true });
+    const getStatus = vi.fn().mockResolvedValue(firstUseStatus);
+    const connect = vi.fn().mockResolvedValue({ status: connectedStatus });
+    const firstSave = deferred<string>();
+    const retrySave = deferred<string>();
+    const save = vi
+      .fn()
+      .mockReturnValueOnce(firstSave.promise)
+      .mockReturnValue(retrySave.promise);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: getStatus,
+      setCodexDesktopConnected: connect,
+      markCodexDesktopIntegrationUsed: save,
+    });
+    const failSave = () => {
+      if (failure === "returned") firstSave.resolve("disk error");
+      else firstSave.reject(new Error("disk error"));
+    };
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<CodexDesktopRow integration={integration} />);
+      });
+      await act(async () =>
+        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+      );
+      await act(async () =>
+        renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+      );
+      if (timing === "before leaving") await act(async () => failSave());
+      await act(async () => renderer!.unmount());
+      if (timing === "while away") await act(async () => failSave());
+      await act(async () => vi.advanceTimersByTimeAsync(6 * 60_000));
+      getStatus.mockResolvedValue(connectedStatus);
+      await act(async () => {
+        renderer = create(<CodexDesktopRow integration={integration} />);
+      });
+      const toggle = renderer!.root.findByProps({ role: "switch" });
+      if (timing === "after returning") {
+        expect(toggle.props.disabled).toBe(true);
+        await act(async () => toggle.props.onClick());
+        expect(connect).toHaveBeenCalledOnce();
+        expect(save).toHaveBeenCalledOnce();
+        await act(async () => failSave());
+      }
+      expect(toggle.props.disabled).toBe(false);
+      const retry = renderer!.root.findByProps({
+        "aria-label": "Retry saving progress",
+      });
+      await act(async () => {
+        retry.props.onClick();
+        retry.props.onClick();
+        toggle.props.onClick();
+      });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(toggle.props.disabled).toBe(true);
+      await act(async () => renderer!.unmount());
+      await act(async () => {
+        renderer = create(<CodexDesktopRow integration={integration} />);
+      });
+      expect(
+        renderer!.root.findByProps({ role: "switch" }).props.disabled,
+      ).toBe(true);
+      await act(async () =>
+        renderer!.root
+          .findByProps({ "aria-label": "Retry saving progress" })
+          .props.onClick(),
+      );
+      expect(save).toHaveBeenCalledTimes(2);
+      await act(async () => retrySave.resolve(""));
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Retry saving progress",
+        }),
+      ).toHaveLength(0);
+      expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+      expect(
+        renderer!.root.findByProps({ role: "switch" }).props.disabled,
+      ).toBe(false);
+      expect(
+        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
+      ).toBe(true);
+      expect(connect).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  },
+);
+
+it("refreshes connection status when Retry overtakes the returning page's status check", async () => {
+  const firstUseStatus = status({ used: false });
+  const connectedStatus = status({ used: false, connected: true });
+  const stale = deferred<CodexDesktopStatus>();
+  const retrySave = deferred<string>();
+  const getStatus = vi.fn().mockResolvedValue(firstUseStatus);
+  const connect = vi.fn().mockResolvedValue({ status: connectedStatus });
+  const save = vi
+    .fn()
+    .mockResolvedValueOnce("disk error")
+    .mockReturnValue(retrySave.promise);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: getStatus,
+    setCodexDesktopConnected: connect,
+    markCodexDesktopIntegrationUsed: save,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(<CodexDesktopRow integration={integration} />);
+    });
+    await act(async () =>
+      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+    );
+    await act(async () =>
+      renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+    );
+    await act(async () => renderer!.unmount());
+    getStatus
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue(connectedStatus);
+    await act(async () => {
+      renderer = create(<CodexDesktopRow integration={integration} />);
+    });
+    await act(async () =>
+      renderer!.root
+        .findByProps({ "aria-label": "Retry saving progress" })
+        .props.onClick(),
+    );
+    await act(async () => stale.resolve(connectedStatus));
+    await act(async () => retrySave.resolve(""));
+    expect(
+      renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
+    ).toBe(true);
+    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
+      false,
+    );
+    expect(connect).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it("observes a successful pending save after returning without saving again", async () => {
+  const firstUseStatus = status({ used: false });
+  const connectedStatus = status({ used: false, connected: true });
+  const pendingSave = deferred<string>();
+  const getStatus = vi.fn().mockResolvedValue(firstUseStatus);
+  const connect = vi.fn().mockResolvedValue({ status: connectedStatus });
+  const save = vi.fn().mockReturnValue(pendingSave.promise);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: getStatus,
+    setCodexDesktopConnected: connect,
+    markCodexDesktopIntegrationUsed: save,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(<CodexDesktopRow integration={integration} />);
+    });
+    await act(async () =>
+      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+    );
+    await act(async () =>
+      renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+    );
+    await act(async () => renderer!.unmount());
+    getStatus.mockResolvedValue(connectedStatus);
+    await act(async () => {
+      renderer = create(<CodexDesktopRow integration={integration} />);
+    });
+    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
+      true,
+    );
+    await act(async () => pendingSave.resolve(""));
+    expect(
+      renderer!.root.findAllByProps({ "aria-label": "Retry saving progress" }),
+    ).toHaveLength(0);
+    expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
+      false,
+    );
+    expect(connect).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it.each([false, true])(
+  "does not infer acknowledgment from connection status (connected: %s)",
+  async (connected) => {
+    const save = vi.fn();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: vi
+        .fn()
+        .mockResolvedValue(status({ used: false, connected })),
+      markCodexDesktopIntegrationUsed: save,
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<CodexDesktopRow integration={integration} />);
+      });
+      expect(save).not.toHaveBeenCalled();
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Retry saving progress",
+        }),
+      ).toHaveLength(0);
     } finally {
       await act(async () => renderer?.unmount());
     }

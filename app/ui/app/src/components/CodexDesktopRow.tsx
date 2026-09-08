@@ -6,9 +6,15 @@ import type {
   CodexDesktopStatus,
 } from "@/types/webview";
 import { ArrowPathIcon, CommandLineIcon } from "@heroicons/react/24/outline";
+import {
+  useMutation,
+  useMutationState,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export const CODEX_DESKTOP_INSTALL_TIMEOUT_MS = 120_000;
+const acknowledgmentKey = ["codex-desktop-acknowledgment"];
 
 const connectionProgress = {
   idle: null,
@@ -88,22 +94,55 @@ export function CodexDesktopRow({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showIntro, setShowIntro] = useState(false);
-  const [acknowledgmentFailed, setAcknowledgmentFailed] = useState(false);
   const introRestartConfirmed = useRef(false);
   const used = useRef(false);
   const mounted = useRef(true);
   const operationInFlight = useRef(false);
   const statusRequest = useRef(0);
+  const queryClient = useQueryClient();
+  const acknowledgment = useMutation({
+    mutationKey: acknowledgmentKey,
+    // Keep the save and its retry available across Apps page navigation.
+    gcTime: Infinity,
+    retry: false,
+    networkMode: "always",
+    mutationFn: async () => {
+      if (!window.markCodexDesktopIntegrationUsed)
+        throw new Error("Acknowledgment is unavailable");
+      const saveError = await window.markCodexDesktopIntegrationUsed();
+      if (saveError) throw new Error(saveError);
+    },
+  });
+  const acknowledgmentStates = useMutationState({
+    filters: { mutationKey: acknowledgmentKey, exact: true },
+    select: (mutation) => mutation.state.status,
+  });
+  const acknowledgmentStatus =
+    acknowledgmentStates[acknowledgmentStates.length - 1];
+  const savingAcknowledgment = acknowledgmentStates.includes("pending");
+  const acknowledgmentFailed =
+    acknowledgmentStates.includes("error") &&
+    acknowledgmentStatus !== "success" &&
+    !status?.used &&
+    !used.current;
 
-  const beginOperation = useCallback((nextPhase: CodexConnectPhase) => {
-    if (!mounted.current || operationInFlight.current) return false;
-    operationInFlight.current = true;
-    ++statusRequest.current;
-    setPhase(nextPhase);
-    setError(null);
-    setNotice(null);
-    return true;
-  }, []);
+  const beginOperation = useCallback(
+    (nextPhase: CodexConnectPhase) => {
+      if (
+        !mounted.current ||
+        operationInFlight.current ||
+        queryClient.isMutating({ mutationKey: acknowledgmentKey })
+      )
+        return false;
+      operationInFlight.current = true;
+      ++statusRequest.current;
+      setPhase(nextPhase);
+      setError(null);
+      setNotice(null);
+      return true;
+    },
+    [queryClient],
+  );
 
   const finishOperation = useCallback(
     (nextPhase: CodexConnectPhase = "idle") => {
@@ -120,6 +159,14 @@ export function CodexDesktopRow({
     };
   }, []);
 
+  useEffect(() => {
+    if (acknowledgmentStatus !== "success") return;
+    used.current = true;
+    setStatus((current) =>
+      current && !current.used ? { ...current, used: true } : current,
+    );
+  }, [acknowledgmentStatus]);
+
   const refreshStatus = useCallback(async () => {
     if (operationInFlight.current || !window.getCodexDesktopStatus) return;
     const request = ++statusRequest.current;
@@ -133,7 +180,6 @@ export function CodexDesktopRow({
       setStatus(next);
       if (next.used) {
         used.current = true;
-        setAcknowledgmentFailed(false);
       }
       setError(null);
       setNotice(null);
@@ -260,7 +306,7 @@ export function CodexDesktopRow({
 
   const connected = status?.connected ?? false;
   const installed = status?.installed ?? integration.installed ?? false;
-  const pending = phase !== "idle";
+  const pending = phase !== "idle" || savingAcknowledgment;
   const displayedConnected =
     phase === "disconnecting"
       ? false
@@ -269,7 +315,7 @@ export function CodexDesktopRow({
         phase === "installing" ||
         phase === "waiting-for-install" ||
         phase === "connecting";
-  const progress = connectionProgress[phase];
+  const progress = connectionProgress[savingAcknowledgment ? "saving" : phase];
   const statusLabel =
     progress?.label ?? (!connected && !installed ? "Download & connect" : null);
   const actionError =
@@ -284,21 +330,18 @@ export function CodexDesktopRow({
     codexDesktopDescription(status, integration.description);
 
   const saveAcknowledgment = async (): Promise<boolean> => {
+    if (queryClient.isMutating({ mutationKey: acknowledgmentKey }))
+      return false;
     try {
-      if (!window.markCodexDesktopIntegrationUsed)
-        throw new Error("Acknowledgment is unavailable");
-      const saveError = await window.markCodexDesktopIntegrationUsed();
-      if (saveError) throw new Error(saveError);
+      await acknowledgment.mutateAsync();
       used.current = true;
       if (mounted.current) {
-        setAcknowledgmentFailed(false);
         setStatus((current) =>
           current ? { ...current, used: true } : current,
         );
       }
       return true;
     } catch {
-      if (mounted.current) setAcknowledgmentFailed(true);
       return false;
     }
   };
@@ -309,6 +352,7 @@ export function CodexDesktopRow({
       await saveAcknowledgment();
     } finally {
       finishOperation();
+      if (mounted.current) void refreshStatus();
     }
   };
 
