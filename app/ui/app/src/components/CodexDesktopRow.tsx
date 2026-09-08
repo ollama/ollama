@@ -16,6 +16,7 @@ type CodexConnectPhase =
   | "installing"
   | "waiting-for-install"
   | "connecting"
+  | "saving"
   | "disconnecting";
 
 interface CodexDesktopRowProps {
@@ -69,10 +70,12 @@ export function CodexDesktopRow({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showIntro, setShowIntro] = useState(false);
+  const [acknowledgmentFailed, setAcknowledgmentFailed] = useState(false);
   const introRestartConfirmed = useRef(false);
   const used = useRef(false);
   const mounted = useRef(true);
   const operationInFlight = useRef(false);
+  const statusRequest = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
@@ -83,12 +86,29 @@ export function CodexDesktopRow({
 
   const refreshStatus = useCallback(async () => {
     if (operationInFlight.current || !window.getCodexDesktopStatus) return;
+    const request = ++statusRequest.current;
     try {
       const next = await window.getCodexDesktopStatus();
+      if (
+        !mounted.current ||
+        request !== statusRequest.current ||
+        operationInFlight.current
+      )
+        return;
       setStatus(next);
+      if (next.used) {
+        used.current = true;
+        setAcknowledgmentFailed(false);
+      }
       setError(null);
       setNotice(null);
     } catch {
+      if (
+        !mounted.current ||
+        request !== statusRequest.current ||
+        operationInFlight.current
+      )
+        return;
       setError("Ollama could not read the ChatGPT connection status.");
     }
   }, []);
@@ -141,6 +161,7 @@ export function CodexDesktopRow({
         !active ||
         checking ||
         completing ||
+        operationInFlight.current ||
         !window.getCodexDesktopStatus ||
         !window.setCodexDesktopConnected
       ) {
@@ -153,6 +174,8 @@ export function CodexDesktopRow({
         setStatus(next);
         if (!next.installed) return;
         completing = true;
+        operationInFlight.current = true;
+        ++statusRequest.current;
 
         if (next.running) {
           setPhase("idle");
@@ -191,6 +214,7 @@ export function CodexDesktopRow({
         setError("Ollama could not finish connecting ChatGPT.");
       } finally {
         checking = false;
+        if (completing) operationInFlight.current = false;
       }
     };
 
@@ -227,13 +251,20 @@ export function CodexDesktopRow({
         ? "Finish installing…"
         : phase === "connecting"
           ? "Connecting…"
-          : phase === "disconnecting"
-            ? "Disconnecting…"
-            : !connected && !installed
-              ? "Download & connect"
-              : null;
-  const description =
+          : phase === "saving"
+            ? "Saving…"
+            : phase === "disconnecting"
+              ? "Disconnecting…"
+              : !connected && !installed
+                ? "Download & connect"
+                : null;
+  const actionError =
     error ??
+    (acknowledgmentFailed
+      ? "Ollama couldn’t save your progress. Please try again."
+      : null);
+  const description =
+    actionError ??
     notice ??
     (phase === "installing"
       ? "Ollama is downloading the ChatGPT installer…"
@@ -241,13 +272,55 @@ export function CodexDesktopRow({
         ? "Finish installing ChatGPT. Ollama will connect it automatically."
         : phase === "connecting"
           ? "Connecting ChatGPT to Ollama…"
-          : phase === "disconnecting"
-            ? "Restoring ChatGPT’s usual connection…"
-            : codexDesktopDescription(status, integration.description));
+          : phase === "saving"
+            ? "Saving your progress…"
+            : phase === "disconnecting"
+              ? "Restoring ChatGPT’s usual connection…"
+              : codexDesktopDescription(status, integration.description));
+
+  const saveAcknowledgment = async (): Promise<boolean> => {
+    try {
+      if (!window.markCodexDesktopIntegrationUsed)
+        throw new Error("Acknowledgment is unavailable");
+      const saveError = await window.markCodexDesktopIntegrationUsed();
+      if (saveError) throw new Error(saveError);
+      used.current = true;
+      if (mounted.current) {
+        setAcknowledgmentFailed(false);
+        setStatus((current) =>
+          current ? { ...current, used: true } : current,
+        );
+      }
+      return true;
+    } catch {
+      if (mounted.current) setAcknowledgmentFailed(true);
+      return false;
+    }
+  };
+
+  const retryAcknowledgment = async () => {
+    if (pending || operationInFlight.current || !acknowledgmentFailed) return;
+    operationInFlight.current = true;
+    ++statusRequest.current;
+    setPhase("saving");
+    setError(null);
+    setNotice(null);
+    try {
+      await saveAcknowledgment();
+    } finally {
+      operationInFlight.current = false;
+      if (mounted.current) setPhase("idle");
+    }
+  };
 
   const toggleConnection = async (fromIntro = false): Promise<boolean> => {
     if (pending || operationInFlight.current || (showIntro && !fromIntro))
       return false;
+    let restartConfirmed = fromIntro && introRestartConfirmed.current;
+    if (fromIntro) {
+      setShowIntro(false);
+      introRestartConfirmed.current = false;
+    }
     if (!window.setCodexDesktopConnected) {
       setError("The ChatGPT integration is unavailable.");
       return false;
@@ -259,6 +332,8 @@ export function CodexDesktopRow({
         setError("Ollama could not install ChatGPT.");
         return false;
       }
+      operationInFlight.current = true;
+      ++statusRequest.current;
       setPhase("installing");
       setError(null);
       setNotice(null);
@@ -267,7 +342,10 @@ export function CodexDesktopRow({
         installResult = await window.installCodexDesktop();
       } catch {
         // The shared failure message below covers a rejected native request.
+      } finally {
+        operationInFlight.current = false;
       }
+      if (!mounted.current) return false;
       if (installResult === "cancelled") {
         setPhase("idle");
         return false;
@@ -283,11 +361,11 @@ export function CodexDesktopRow({
 
     const nextPhase = enabled ? "connecting" : "disconnecting";
     operationInFlight.current = true;
+    ++statusRequest.current;
     setPhase(nextPhase);
     setError(null);
     setNotice(null);
     try {
-      let restartConfirmed = false;
       if (fromIntro || (enabled && !status?.used && !used.current)) {
         if (!window.getCodexDesktopStatus) {
           setError("Ollama could not read the ChatGPT connection status.");
@@ -296,7 +374,6 @@ export function CodexDesktopRow({
         const liveStatus = await window.getCodexDesktopStatus();
         if (!mounted.current) return false;
         setStatus(liveStatus);
-        restartConfirmed = fromIntro && introRestartConfirmed.current;
         if (liveStatus.running && !restartConfirmed) {
           restartConfirmed = window.confirm(
             "Restart ChatGPT to add Ollama models? Any running task will stop.",
@@ -309,9 +386,6 @@ export function CodexDesktopRow({
           setShowIntro(true);
           return false;
         }
-
-        introRestartConfirmed.current = false;
-        setShowIntro(false);
       }
 
       let result: CodexDesktopActionResult =
@@ -319,6 +393,7 @@ export function CodexDesktopRow({
 
       setStatus(result.status);
       if (result.restartConfirmationRequired) {
+        if (!mounted.current) return false;
         // Keep focus-driven status refreshes from discarding this operation
         // while the native confirmation dialog temporarily owns focus.
         if (
@@ -349,14 +424,8 @@ export function CodexDesktopRow({
         return false;
       }
       if (fromIntro) {
-        const saveError = window.markCodexDesktopIntegrationUsed
-          ? await window.markCodexDesktopIntegrationUsed()
-          : "Acknowledgment is unavailable";
-        if (saveError) {
-          setError("Ollama couldn’t save your progress. Please try again.");
-          return false;
-        }
-        used.current = true;
+        setPhase("saving");
+        if (!(await saveAcknowledgment())) return false;
       }
       if (enabled) {
         setNotice("Ollama models added alongside Codex models");
@@ -386,7 +455,7 @@ export function CodexDesktopRow({
             ChatGPT (Desktop)
           </p>
           <p
-            role={error ? "alert" : notice ? "status" : undefined}
+            role={actionError ? "alert" : notice ? "status" : undefined}
             className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {description}
@@ -394,6 +463,17 @@ export function CodexDesktopRow({
         </div>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-2.5">
+        {acknowledgmentFailed && (
+          <button
+            type="button"
+            aria-label="Retry saving progress"
+            disabled={pending}
+            onClick={() => void retryAcknowledgment()}
+            className="text-xs font-medium text-neutral-700 hover:underline disabled:cursor-wait disabled:opacity-50 dark:text-neutral-300"
+          >
+            Retry
+          </button>
+        )}
         {statusLabel && (
           <span
             role="status"

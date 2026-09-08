@@ -811,7 +811,7 @@ it("dismisses before launch and prevents duplicate Continue requests", async () 
 });
 
 it.each(["cancelled", "status failed"])(
-  "does not launch or acknowledge when Continue is %s",
+  "closes the intro and restores the switch when Continue is %s",
   async (outcome) => {
     const firstUseStatus = status({ used: false });
     const getStatus = vi.fn().mockResolvedValueOnce(firstUseStatus);
@@ -849,6 +849,328 @@ it.each(["cancelled", "status failed"])(
       );
       expect(connect).not.toHaveBeenCalled();
       expect(save).not.toHaveBeenCalled();
+      expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+      const toggle = renderer!.root.findByProps({ role: "switch" });
+      expect(toggle.props.disabled).toBe(false);
+      expect(toggle.props["aria-checked"]).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  },
+);
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+it("does not open a restart prompt after leaving the Apps page", async () => {
+  const action = deferred<{
+    status: CodexDesktopStatus;
+    restartConfirmationRequired: boolean;
+  }>();
+  const connect = vi.fn().mockReturnValue(action.promise);
+  const confirm = vi.fn(() => true);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    setCodexDesktopConnected: connect,
+    confirm,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow integration={integration} initialStatus={status()} />,
+      );
+    });
+    await act(async () =>
+      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+    );
+    await act(async () => renderer!.unmount());
+    await act(async () =>
+      action.resolve({
+        status: status({ running: true }),
+        restartConfirmationRequired: true,
+      }),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(connect).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it("keeps the latest status when focus refreshes complete out of order", async () => {
+  const older = deferred<CodexDesktopStatus>();
+  const newer = deferred<CodexDesktopStatus>();
+  const getStatus = vi
+    .fn()
+    .mockReturnValueOnce(older.promise)
+    .mockReturnValueOnce(newer.promise);
+  let onFocus: (() => void) | undefined;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn((event: string, handler: () => void) => {
+      if (event === "focus") onFocus = handler;
+    }),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: getStatus,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow integration={integration} initialStatus={status()} />,
+      );
+    });
+    await act(async () => {
+      onFocus?.();
+      onFocus?.();
+    });
+    await act(async () => newer.resolve(status({ connected: true })));
+    await act(async () => older.resolve(status()));
+    expect(
+      renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
+    ).toBe(true);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it("does not start overlapping installers before the switch rerenders", async () => {
+  const result = deferred<"cancelled">();
+  const install = vi.fn().mockReturnValue(result.promise);
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: vi.fn(),
+    setCodexDesktopConnected: vi.fn(),
+    installCodexDesktop: install,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow
+          integration={integration}
+          initialStatus={status({ installed: false })}
+        />,
+      );
+    });
+    const toggle = renderer!.root.findByProps({ role: "switch" });
+    await act(async () => {
+      toggle.props.onClick();
+      toggle.props.onClick();
+    });
+    expect(install).toHaveBeenCalledOnce();
+    await act(async () => result.resolve("cancelled"));
+    expect(toggle.props.disabled).toBe(false);
+    expect(toggle.props["aria-checked"]).toBe(false);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it("does not retry acknowledgment during a disconnect, or reconnect to save afterward", async () => {
+  const firstUseStatus = status({ used: false });
+  const disconnect = deferred<{ status: CodexDesktopStatus }>();
+  const connect = vi
+    .fn()
+    .mockReturnValue(disconnect.promise)
+    .mockResolvedValueOnce({
+      status: status({ used: false, connected: true }),
+    });
+  const save = vi
+    .fn()
+    .mockResolvedValueOnce("disk error")
+    .mockResolvedValue("");
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopStatus: vi.fn().mockResolvedValue(firstUseStatus),
+    setCodexDesktopConnected: connect,
+    markCodexDesktopIntegrationUsed: save,
+  });
+  let renderer;
+  try {
+    await act(async () => {
+      renderer = create(
+        <CodexDesktopRow
+          integration={integration}
+          initialStatus={firstUseStatus}
+        />,
+      );
+    });
+    const toggle = renderer!.root.findByProps({ role: "switch" });
+    await act(async () => toggle.props.onClick());
+    await act(async () =>
+      renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+    );
+    const retry = renderer!.root.findByProps({
+      "aria-label": "Retry saving progress",
+    });
+    await act(async () => {
+      toggle.props.onClick();
+      retry.props.onClick();
+    });
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect).toHaveBeenLastCalledWith(false, false);
+    expect(save).toHaveBeenCalledOnce();
+    await act(async () => disconnect.resolve({ status: firstUseStatus }));
+    await act(async () => retry.props.onClick());
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(toggle.props["aria-checked"]).toBe(false);
+    expect(
+      renderer!.root.findAllByProps({ "aria-label": "Retry saving progress" }),
+    ).toHaveLength(0);
+  } finally {
+    await act(async () => renderer?.unmount());
+  }
+});
+
+it.each(["returned", "rejected"])(
+  "retries only acknowledgment after a %s save failure, including overlapping clicks",
+  async (failure) => {
+    const firstUseStatus = status({ used: false });
+    const connectedStatus = status({ used: false, connected: true });
+    const connect = vi.fn().mockResolvedValue({ status: connectedStatus });
+    const getStatus = vi.fn().mockResolvedValue(firstUseStatus);
+    const retry = deferred<string>();
+    const save = vi.fn().mockReturnValue(retry.promise);
+    if (failure === "returned") save.mockResolvedValueOnce("disk error");
+    else save.mockRejectedValueOnce(new Error("disk error"));
+    let onFocus: (() => void) | undefined;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === "focus") onFocus = handler;
+      }),
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: getStatus,
+      setCodexDesktopConnected: connect,
+      markCodexDesktopIntegrationUsed: save,
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={firstUseStatus}
+          />,
+        );
+      });
+      await act(async () =>
+        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+      );
+      await act(async () =>
+        renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+      );
+      expect(connect).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledOnce();
+      expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
+
+      getStatus.mockResolvedValue(connectedStatus);
+      await act(async () => onFocus?.());
+      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
+        "Ollama couldn’t save your progress. Please try again.",
+      );
+      const retryButton = renderer!.root.findByProps({
+        "aria-label": "Retry saving progress",
+      });
+      const toggle = renderer!.root.findByProps({ role: "switch" });
+      await act(async () => {
+        retryButton.props.onClick();
+        retryButton.props.onClick();
+        toggle.props.onClick();
+      });
+      expect(connect).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledTimes(2);
+      expect(retryButton.props.disabled).toBe(true);
+      expect(toggle.props.disabled).toBe(true);
+      expect(toggle.props["aria-checked"]).toBe(true);
+      await act(async () => retry.resolve(""));
+      expect(
+        renderer!.root.findAllByProps({
+          "aria-label": "Retry saving progress",
+        }),
+      ).toHaveLength(0);
+      expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
+      expect(toggle.props.disabled).toBe(false);
+      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(connect).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  },
+);
+
+it.each(["resolved", "rejected"])(
+  "ignores a stale focus refresh that is %s after the connection and save failure",
+  async (outcome) => {
+    const firstUseStatus = status({ used: false });
+    const stale = deferred<CodexDesktopStatus>();
+    const getStatus = vi
+      .fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue(firstUseStatus);
+    const connect = vi.fn().mockResolvedValue({
+      status: status({ used: false, connected: true }),
+    });
+    const save = vi.fn().mockResolvedValue("disk error");
+    let onFocus: (() => void) | undefined;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === "focus") onFocus = handler;
+      }),
+      removeEventListener: vi.fn(),
+      getCodexDesktopStatus: getStatus,
+      setCodexDesktopConnected: connect,
+      markCodexDesktopIntegrationUsed: save,
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopRow
+            integration={integration}
+            initialStatus={firstUseStatus}
+          />,
+        );
+      });
+      await act(async () => onFocus?.());
+      await act(async () =>
+        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
+      );
+      await act(async () =>
+        renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
+      );
+      await act(async () => {
+        if (outcome === "resolved") stale.resolve(firstUseStatus);
+        else stale.reject(new Error("stale status failure"));
+      });
+      expect(
+        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
+      ).toBe(true);
+      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
+        "Ollama couldn’t save your progress. Please try again.",
+      );
+      expect(
+        renderer!.root.findByProps({ "aria-label": "Retry saving progress" })
+          .props.disabled,
+      ).toBe(false);
     } finally {
       await act(async () => renderer?.unmount());
     }
