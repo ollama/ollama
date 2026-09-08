@@ -3055,6 +3055,81 @@ func TestCodexAppRestoreDoesNotTreatCLIProfileAsOwned(t *testing.T) {
 	}
 }
 
+func TestCodexAppDarwinOpenArgs(t *testing.T) {
+	for _, path := range []string{"", "/Applications/ChatGPT.app", "/Users/test/Apps/ChatGPT Preview.app"} {
+		t.Run(path, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			withCodexAppPlatform(t, "darwin")
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+			usualArgs := []string{"-b", codexAppBundleID}
+			ollamaArgs := []string{"-b", codexAppBundleID, "codex://threads/new?mode=codex"}
+			if path != "" {
+				usualArgs = []string{path}
+				ollamaArgs = []string{"-a", path, "codex://threads/new?mode=codex"}
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, usualArgs) {
+				t.Fatalf("unconfigured open args = %q, want %q", got, usualArgs)
+			}
+
+			app := &CodexApp{}
+			if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+				t.Fatal(err)
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, ollamaArgs) {
+				t.Fatalf("Ollama open args = %q, want %q", got, ollamaArgs)
+			}
+
+			if err := restoreCodexAppProfile(); err != nil {
+				t.Fatal(err)
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, usualArgs) {
+				t.Fatalf("restored open args = %q, want %q", got, usualArgs)
+			}
+		})
+	}
+}
+
+func TestCodexAppDesktopLaunchMode(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	running := false
+	var openedArgs [][]string
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error { running = false; return nil },
+		func() error {
+			openedArgs = append(openedArgs, codexAppDarwinOpenArgs("/Applications/ChatGPT.app"))
+			running = true
+			return nil
+		},
+	)
+	codexAppCanOpenID = func() bool { return true }
+
+	app := &CodexApp{}
+	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestartFromDesktop(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreFromDesktop(true); err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"-a", "/Applications/ChatGPT.app", "codex://threads/new?mode=codex"},
+		{"-a", "/Applications/ChatGPT.app", "codex://threads/new?mode=codex"},
+		{"/Applications/ChatGPT.app"},
+	}
+	if !slices.EqualFunc(openedArgs, want, slices.Equal[[]string]) {
+		t.Fatalf("open args = %q, want first launch and restart in Codex, then a normal launch on restore: %q", openedArgs, want)
+	}
+}
+
 func TestCodexAppRunRestartsRunningAppWhenConfirmed(t *testing.T) {
 	withCodexAppPlatform(t, "darwin")
 	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
