@@ -1558,6 +1558,25 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 }
 
 func TestCodexAppHostChangePreservesRestoreState(t *testing.T) {
+	for _, host := range []string{
+		"http://127.0.0.1:11434",
+		"http://localhost:11434",
+		"http://localhost:11434/ollama",
+		"http://127.0.0.1:11434/ollama",
+		"http://[::1]:11434/ollama",
+	} {
+		t.Run(host, func(t *testing.T) {
+			t.Run("restore", func(t *testing.T) {
+				testCodexAppHostChangePreservesRestoreState(t, host, false)
+			})
+			t.Run("reconfigure then restore", func(t *testing.T) {
+				testCodexAppHostChangePreservesRestoreState(t, host, true)
+			})
+		})
+	}
+}
+
+func testCodexAppHostChangePreservesRestoreState(t *testing.T, host string, reconfigure bool) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withCodexAppPlatform(t, "darwin")
@@ -1575,10 +1594,16 @@ func TestCodexAppHostChangePreservesRestoreState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	t.Setenv("OLLAMA_HOST", host)
 	app := &CodexApp{}
 	if err := app.ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
 		t.Fatalf("initial ConfigureWithModels returned error: %v", err)
+	}
+	if !app.OllamaConfigured() {
+		t.Fatal("generated configuration is not recognized as owned")
+	}
+	if got := app.CurrentModel(); got != "llama3.2" {
+		t.Fatalf("CurrentModel after setup = %q, want llama3.2", got)
 	}
 
 	// A changed server address must not make the off-switch disappear or cause
@@ -1587,8 +1612,20 @@ func TestCodexAppHostChangePreservesRestoreState(t *testing.T) {
 	if !app.OllamaConfigured() {
 		t.Fatal("OllamaConfigured = false after host change, want managed config to remain detectable")
 	}
-	if err := app.ConfigureWithModels("gemma4", testLaunchModels("gemma4")); err != nil {
-		t.Fatalf("updated ConfigureWithModels returned error: %v", err)
+	if got := app.CurrentModel(); got != "" {
+		t.Fatalf("CurrentModel after host change = %q, want empty to require launcher reconfiguration", got)
+	}
+	if reconfigure {
+		if err := app.ConfigureWithModels("gemma4", testLaunchModels("gemma4")); err != nil {
+			t.Fatalf("updated ConfigureWithModels returned error: %v", err)
+		}
+		updated, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := codexRootStringValue(string(updated), codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:22434/api/codex/v1" {
+			t.Fatalf("updated endpoint = %q, want current host", got)
+		}
 	}
 	if err := app.RestoreFromDesktop(false); err != nil {
 		t.Fatalf("RestoreFromDesktop returned error: %v", err)
