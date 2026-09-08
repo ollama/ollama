@@ -3,6 +3,7 @@ package launch
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -105,7 +106,7 @@ func TestTalosCommandFallsBackToInstallerVenv(t *testing.T) {
 	clearTalosEnvVars(t)
 	t.Setenv("PATH", tmpDir)
 
-	// The installer puts everything under ~/talos and adds nothing to PATH.
+	// Older installations have only the venv, without bin/talos.
 	python := filepath.Join(tmpDir, "talos", ".venv", "bin", "python")
 	if err := os.MkdirAll(filepath.Dir(python), 0o755); err != nil {
 		t.Fatal(err)
@@ -387,7 +388,7 @@ func TestTalosEnsureInstalledUnixPromptsBeforeInstall(t *testing.T) {
 
 	writeTalosScript(t, tmpDir, "curl", "#!/bin/sh\nexit 0\n")
 	// The fake installer lays down the venv the real one would create.
-	writeTalosScript(t, tmpDir, "sh", fmt.Sprintf(`#!/bin/sh
+	writeTalosScript(t, tmpDir, "bash", fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q
 /bin/mkdir -p %q
 /bin/cat > %q <<'EOS'
@@ -396,7 +397,7 @@ exit 0
 EOS
 /bin/chmod +x %q
 exit 0
-`, filepath.Join(tmpDir, "sh.log"), filepath.Join(tmpDir, "talos", ".venv", "bin"), filepath.Join(tmpDir, "talos", ".venv", "bin", "python"), filepath.Join(tmpDir, "talos", ".venv", "bin", "python")))
+`, filepath.Join(tmpDir, "bash.log"), filepath.Join(tmpDir, "talos", ".venv", "bin"), filepath.Join(tmpDir, "talos", ".venv", "bin", "python"), filepath.Join(tmpDir, "talos", ".venv", "bin", "python")))
 
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt != "Talos is not installed. Install now?" {
@@ -409,11 +410,11 @@ exit 0
 		t.Fatalf("ensureInstalled returned error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(tmpDir, "sh.log"))
+	data, err := os.ReadFile(filepath.Join(tmpDir, "bash.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "-c "+talosInstallScript) {
+	if !strings.Contains(string(data), "-o pipefail -c "+talosInstallScript) {
 		t.Fatalf("expected official install script invocation, got logs:\n%s", data)
 	}
 }
@@ -430,7 +431,7 @@ func TestTalosEnsureInstalledUnixCanBeDeclined(t *testing.T) {
 	withLauncherHooks(t)
 	t.Setenv("PATH", tmpDir)
 
-	for _, name := range []string{"curl", "sh"} {
+	for _, name := range []string{"curl", "bash"} {
 		writeTalosScript(t, tmpDir, name, "#!/bin/sh\nexit 0\n")
 	}
 
@@ -471,5 +472,158 @@ EMPTY=
 	}
 	if got, ok := parsed["EMPTY"]; !ok || got != "" {
 		t.Fatalf("expected empty value to be kept, got %q (present=%v)", got, ok)
+	}
+}
+
+func TestTalosInstallerWrapperAndConfigStayTogether(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX launcher")
+	}
+	tmp := t.TempDir()
+	clearTalosEnvVars(t)
+	withTalosUserHome(t, tmp)
+	prefix := filepath.Join(tmp, "installed with spaces")
+	for _, dir := range []string{"bin", ".venv/bin", "talos"} {
+		if err := os.MkdirAll(filepath.Join(prefix, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wrapper := writeTalosScript(t, filepath.Join(prefix, "bin"), "talos", "#!/bin/sh\nexit 0\n")
+	writeTalosScript(t, filepath.Join(prefix, ".venv/bin"), "python", "#!/bin/sh\nexit 0\n")
+	if err := os.WriteFile(filepath.Join(prefix, "talos/__main__.py"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefix, "talos.env"), []byte("TALOS_MODEL_PROVIDER=ollama\nTALOS_MODEL=fixture-model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TALOS_SECRETS_ENV", filepath.Join(tmp, "no-secrets"))
+	t.Run("prefix without PATH entry", func(t *testing.T) {
+		t.Setenv("PATH", tmp)
+		t.Setenv("TALOS_PREFIX", prefix)
+		argv, err := (&Talos{}).command()
+		if err != nil || len(argv) != 1 || argv[0] != wrapper {
+			t.Fatalf("wrapper not selected: %v, %v", argv, err)
+		}
+	})
+	t.Run("PATH symlink wins over another prefix", func(t *testing.T) {
+		bin := filepath.Join(tmp, "commands")
+		if err := os.Mkdir(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(wrapper, filepath.Join(bin, "talos")); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		t.Setenv("TALOS_PREFIX", filepath.Join(tmp, "different-installation"))
+		if got := (&Talos{}).CurrentModel(); got != "fixture-model" {
+			t.Fatalf("read config from wrong installation: %q", got)
+		}
+		paths := (&Talos{}).Paths()
+		canonical, err := filepath.EvalSymlinks(filepath.Join(prefix, "talos.env"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) != 1 || paths[0] != canonical {
+			t.Fatalf("wrong config path: %v", paths)
+		}
+	})
+}
+
+func TestTalosLegacyVenvKeepsCallerDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX launcher")
+	}
+	tmp := t.TempDir()
+	clearTalosEnvVars(t)
+	prefix := filepath.Join(tmp, "legacy install")
+	bin := filepath.Join(prefix, ".venv/bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(tmp, "invocations")
+	writeTalosScript(t, bin, "python", fmt.Sprintf("#!/bin/sh\nprintf '%%s|%%s|%%s\\n' \"$PWD\" \"$PYTHONPATH\" \"$*\" >> %q\n", log))
+	caller := filepath.Join(tmp, "project")
+	if err := os.Mkdir(caller, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(caller)
+	t.Setenv("PATH", tmp)
+	t.Setenv("TALOS_PREFIX", prefix)
+	t.Setenv("PYTHONPATH", filepath.Join(tmp, "existing-python-path"))
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	if err := (&Talos{}).Configure("fixture-model"); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Talos{}).Run("", nil, []string{"--continue"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected configure and run: %q", data)
+	}
+	wantPrefix := caller + "|" + prefix + string(os.PathListSeparator) + filepath.Join(tmp, "existing-python-path") + "|"
+	for _, line := range lines {
+		if !strings.HasPrefix(line, wantPrefix) {
+			t.Fatalf("caller/import context lost: %q", line)
+		}
+	}
+	if !strings.HasSuffix(lines[2], "-m talos chat --continue") {
+		t.Fatalf("arguments changed: %q", lines[2])
+	}
+}
+
+func TestTalosInstallExecutesBashAndPropagatesDownloadFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX launcher")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash unavailable")
+	}
+	for _, failDownload := range []bool{false, true} {
+		t.Run(fmt.Sprintf("download-failure-%v", failDownload), func(t *testing.T) {
+			tmp := t.TempDir()
+			clearTalosEnvVars(t)
+			withTalosUserHome(t, tmp)
+			withLauncherHooks(t)
+			if err := os.Symlink(bash, filepath.Join(tmp, "bash")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("/bin/sh", filepath.Join(tmp, "sh")); err != nil {
+				t.Fatal(err)
+			}
+			prefix := filepath.Join(tmp, "prefix")
+			t.Setenv("TALOS_PREFIX", prefix)
+			t.Setenv("PATH", tmp)
+			marker := filepath.Join(tmp, "bash-proof")
+			curl := fmt.Sprintf("#!/bin/sh\n/bin/cat <<'INSTALLER'\nset -euo pipefail\ntrap ':' ERR\nvalues=(bash-only)\nprintf '%%s' \"${values[0]}\" > %q\n/bin/mkdir -p %q\nprintf '#!/bin/sh\\nexit 0\\n' > %q\n/bin/chmod +x %q\nINSTALLER\n", marker, filepath.Join(prefix, "bin"), filepath.Join(prefix, "bin/talos"), filepath.Join(prefix, "bin/talos"))
+			if failDownload {
+				curl += "exit 22\n"
+			}
+			writeTalosScript(t, tmp, "curl", curl)
+			prompts := 0
+			DefaultConfirmPrompt = func(_ string, _ ConfirmOptions) (bool, error) { prompts++; return true, nil }
+			err := (&Talos{}).ensureInstalled()
+			if failDownload {
+				if err == nil || !strings.Contains(err.Error(), "failed to install talos") {
+					t.Fatalf("download failure was lost: %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(marker)
+				if err != nil || string(data) != "bash-only" {
+					t.Fatalf("Bash installer did not run: %q %v", data, err)
+				}
+			}
+			if prompts != 1 {
+				t.Fatalf("install consent requested %d times", prompts)
+			}
+		})
 	}
 }
