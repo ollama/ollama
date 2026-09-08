@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -863,9 +864,16 @@ func (w *WebSearchResponsesWriter) runLoop(ctx context.Context, initial api.Chat
 		}
 		calls = append(calls, responseCall)
 
+		resultContent := formatResponsesWebSearchResults(searchResponse.Results)
+		if loop == maxWebSearchLoops {
+			tools = slices.DeleteFunc(tools, func(tool api.Tool) bool {
+				return tool.Function.Name == "web_search"
+			})
+			resultContent += "\nThe web search limit for this response has been reached. Continue using the available results and state any limitations."
+		}
 		messages = append(messages,
 			buildWebSearchAssistantMessage(current, currentCall),
-			api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: formatResponsesWebSearchResults(searchResponse.Results)},
+			api.Message{Role: "tool", ToolCallID: currentCall.ID, Content: resultContent},
 		)
 		var followUp api.ChatResponse
 		var followUpOutputStreamed bool
