@@ -606,15 +606,13 @@ func (c *prefixCache) enforceEvictionPolicy() {
 		return
 	}
 
-	activeSet := make(map[*trieNode]bool, len(c.activePath))
-	for _, n := range c.activePath {
-		activeSet[n] = true
-	}
-
 	for c.pagedOutBytes > maxPagedOutBytes {
+		// Evicting the frontier's parent merges the frontier into it, so
+		// resolve the frontier again after every eviction.
+		frontier := c.activePath[len(c.activePath)-1]
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n == c.root || activeSet[n] || len(n.children) > 1 {
+			if n == c.root || n == frontier || len(n.children) > 1 {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -644,7 +642,11 @@ func (c *prefixCache) evictNode(node *trieNode) {
 		// Interior node with one child: merge with child.
 		before := c.pagedOutBytes
 		tokens := len(node.tokens)
+		child := node.children[0]
 		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		if i := slices.Index(c.activePath, child); i >= 0 {
+			c.activePath = slices.Delete(c.activePath, i, i+1)
+		}
 		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
 	} else {
 		panic("evictNode called on multi-child branch point")
