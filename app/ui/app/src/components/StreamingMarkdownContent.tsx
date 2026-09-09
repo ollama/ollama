@@ -4,6 +4,7 @@ import {
   defaultRehypePlugins,
   defaultRemarkPlugins,
 } from "streamdown";
+import remarkMath from "remark-math";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
@@ -97,7 +98,8 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < tokens.light.length - 1 && "\n"}
+                    {i < tokens.light.length - 1 && "
+"}
                   </React.Fragment>
                 ))
               : codeText}
@@ -119,7 +121,8 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < tokens.dark.length - 1 && "\n"}
+                    {i < tokens.dark.length - 1 && "
+"}
                   </React.Fragment>
                 ))
               : codeText}
@@ -136,7 +139,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
     const remarkPlugins = React.useMemo(() => {
       return [
         defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
+        remarkMath,
         remarkCitationParser,
       ];
     }, []);
