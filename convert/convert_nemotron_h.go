@@ -153,7 +153,11 @@ func (n *nemotronHNanoVLModel) parseMore(fsys fs.FS) error {
 		return err
 	}
 
-	if version := strings.TrimSpace(n.VisionConfig.Version); version != "" && version != "radio_v2.5-h" {
+	// radio_v2.5-h and c-radio_v4-h are both ViT-H/16 with identical tensor
+	// layouts; the version string only reflects the distillation recipe.
+	switch version := strings.TrimSpace(n.VisionConfig.Version); version {
+	case "", "radio_v2.5-h", "c-radio_v4-h":
+	default:
 		return fmt.Errorf("nemotron_h_omni: unsupported RADIO version %q", version)
 	}
 	if patchSize := n.visionPatchSize(); patchSize != 16 {
