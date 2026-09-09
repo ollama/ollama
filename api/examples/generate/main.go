@@ -19,7 +19,7 @@ func main() {
 		Prompt: "how many planets are there?",
 
 		// set streaming to false
-		Stream: new(bool),
+		Stream: new(false),
 	}
 
 	ctx := context.Background()
