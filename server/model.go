@@ -74,9 +74,11 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			if err != nil {
 				return nil, err
 			}
-			defer blob.Close()
 
-			f, err := ggml.Decode(blob, -1)
+			f, err := func() (*ggml.GGML, error) {
+				defer blob.Close()
+				return ggml.Decode(blob, -1)
+			}()
 			if err != nil {
 				return nil, err
 			}
