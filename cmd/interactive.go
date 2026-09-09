@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -19,6 +21,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/skills"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 )
@@ -36,6 +39,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /skills         Show active skills")
+		fmt.Fprintln(os.Stderr, "  /skill ...      Run an active skill in chat")
+		fmt.Fprintln(os.Stderr, "  /skilltrace     Show recent skill invocations")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
@@ -135,6 +141,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	var sb strings.Builder
 	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
+	skillTraces := make([]string, 0, 32)
 
 	for {
 		line, err := scanner.Readline()
@@ -471,6 +478,68 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 			} else {
 				usageShow()
+			}
+		case strings.HasPrefix(line, "/skills"):
+			if err := printActiveSkills(os.Stderr, true); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			}
+		case strings.HasPrefix(line, "/skilltrace"):
+			if len(skillTraces) == 0 {
+				fmt.Fprintln(os.Stderr, "No skill invocations yet.")
+				continue
+			}
+			fmt.Fprintln(os.Stderr, "Skill invocation trace:")
+			for _, trace := range skillTraces {
+				fmt.Fprintf(os.Stderr, "  - %s\n", trace)
+			}
+		case strings.HasPrefix(line, "/skill "):
+			args := strings.Fields(line)
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "Usage:\n  /skill <name> [args...]")
+				continue
+			}
+
+			name := args[1]
+			skillArgs := args[2:]
+			started := time.Now()
+			var outBuf bytes.Buffer
+			var errBuf bytes.Buffer
+
+			runErr := skills.RunWithOptions(cmd.Context(), name, skillArgs, nil, &outBuf, &errBuf, skills.RunOptions{})
+			if runErr != nil {
+				additional, grantErr := maybePromptForPermissions(name, runErr, false)
+				if grantErr == nil {
+					runErr = skills.RunWithOptions(cmd.Context(), name, skillArgs, nil, &outBuf, &errBuf, skills.RunOptions{
+						GrantedPermissions: additional,
+					})
+				}
+			}
+
+			duration := time.Since(started).Round(time.Millisecond)
+			rawOutput := strings.TrimSpace(outBuf.String())
+			if rawOutput == "" {
+				rawOutput = strings.TrimSpace(errBuf.String())
+			}
+			if rawOutput == "" {
+				rawOutput = "-"
+			}
+			preview := strings.ReplaceAll(rawOutput, "\n", " ")
+			if len(preview) > 140 {
+				preview = preview[:140] + "..."
+			}
+
+			status := "ok"
+			if runErr != nil {
+				status = "error"
+				fmt.Fprintf(os.Stderr, "skill %s failed: %v\n", name, runErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "[skill %s] %s\n", name, rawOutput)
+			}
+
+			traceLine := fmt.Sprintf("%s skill=%s status=%s duration=%s output=%q", time.Now().Format("15:04:05"), name, status, duration, preview)
+			skillTraces = append(skillTraces, traceLine)
+			if len(skillTraces) > 30 {
+				skillTraces = skillTraces[len(skillTraces)-30:]
 			}
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)
