@@ -63,6 +63,34 @@ func TestCopyProxyResponseHeaders_StripsConnectionTokenHeaders(t *testing.T) {
 	}
 }
 
+func TestProxyCloudRequestWithPath_PropagatesUpstreamStreamFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"message":"partial"}`)
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	defer upstream.Close()
+
+	previousBaseURL := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	defer func() { cloudProxyBaseURL = previousBaseURL }()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/chat", nil)
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		proxyCloudRequestWithPath(ctx, nil, "/api/chat", "test")
+	}()
+
+	if recovered != http.ErrAbortHandler {
+		t.Fatalf("panic = %v, want %v", recovered, http.ErrAbortHandler)
+	}
+}
+
 func TestResolveCloudProxyBaseURL_Default(t *testing.T) {
 	baseURL, signingHost, overridden, err := resolveCloudProxyBaseURL("", gin.ReleaseMode)
 	if err != nil {
