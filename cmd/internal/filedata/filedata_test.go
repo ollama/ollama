@@ -107,6 +107,37 @@ func TestExtractNamesDragDropPaths(t *testing.T) {
 	assertContains(t, res[3], `.\relative\four.png`)
 }
 
+func TestExtractNamesTildePath(t *testing.T) {
+	input := `~/Pictures/photo.png some text ~/Documents/image with spaces/scene.jpg`
+	res := ExtractNames(input)
+	if len(res) != 2 {
+		t.Fatalf("len = %d, want 2", len(res))
+	}
+	assertContains(t, res[0], "~/Pictures/photo.png")
+	assertContains(t, res[1], "~/Documents/image with spaces/scene.jpg")
+}
+
+func TestExtractNamesEscapedTilde(t *testing.T) {
+	input := `/Users/jdoe/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshot.png`
+	res := ExtractNames(input)
+	if len(res) != 1 {
+		t.Fatalf("len = %d, want 1", len(res))
+	}
+	assertContains(t, res[0], "screenshot.png")
+}
+
+func TestNormalizePathTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	got := NormalizePath(`~/Pictures/img.png`)
+	want := filepath.Join(home, "Pictures", "img.png")
+	if got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
 func TestNormalizePathFileURL(t *testing.T) {
 	got := NormalizePath("file:///C:/Users/jdoe/Pictures/img.png")
 	want := filepath.FromSlash("C:/Users/jdoe/Pictures/img.png")

@@ -64,6 +64,29 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesTildePath(t *testing.T) {
+	input := "~/Pictures/photo.png some text ~/Documents/image with spaces/scene.jpg"
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "~/Pictures/photo.png")
+	assert.Contains(t, res[1], "~/Documents/image with spaces/scene.jpg")
+}
+
+func TestExtractFilenamesFileURL(t *testing.T) {
+	input := "check this file:///Users/test/image.png and file:///tmp/photo.jpg"
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "file:///Users/test/image.png")
+	assert.Contains(t, res[1], "file:///tmp/photo.jpg")
+}
+
+func TestExtractFilenamesMacOSDragDrop(t *testing.T) {
+	input := `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot\\ 2025-04-17\\ at\\ 21.26.40@2x.png")
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
