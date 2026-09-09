@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -123,21 +124,47 @@ func (p *deepseek2Model) Replacements() []string {
 	}
 }
 
+// maxDeepSeek2HiddenLayers is a generous sanity bound on num_hidden_layers.
+// It is far above any known DeepSeek-V2/V3 configuration (~60-64 layers) but
+// keeps HiddenLayers*3 (used for merge-slice sizing below) well clear of
+// uint32 overflow, and keeps a hostile config.json from making conversion
+// allocate/iterate an unbounded number of times.
+const maxDeepSeek2HiddenLayers = 1024
+
+func (p *deepseek2Model) parseMore(_ fs.FS) error {
+	return p.validate()
+}
+
+func (p *deepseek2Model) validate() error {
+	if p.HiddenLayers == 0 {
+		return fmt.Errorf("deepseek2: num_hidden_layers must be set")
+	}
+	if p.HiddenLayers > maxDeepSeek2HiddenLayers {
+		return fmt.Errorf("deepseek2: num_hidden_layers (%d) exceeds max supported value (%d)", p.HiddenLayers, maxDeepSeek2HiddenLayers)
+	}
+	return nil
+}
+
 func (p *deepseek2Model) Tensors(s []Tensor) (out []*ggml.Tensor) {
-	merges := make([]merge, p.HiddenLayers*3)
+	// Built with append (not a pre-sized index-assigned slice) so a bad
+	// HiddenLayers value can never cause an out-of-bounds write here even
+	// if validate() above did not run on some future call path.
+	merges := make([]merge, 0, p.HiddenLayers*3)
 	for i := range p.HiddenLayers {
-		merges[i*3+0] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
-		}
-		merges[i*3+1] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
-		}
-		merges[i*3+2] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
-		}
+		merges = append(merges,
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
+			},
+		)
 	}
 
 	skipLayer := func(n string, minValue uint32) bool {

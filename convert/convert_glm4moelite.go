@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -192,21 +193,45 @@ func (p *glm4MoeLiteModel) repackKVB(extractK bool, kvFirst bool, numHeads int) 
 	}
 }
 
+// maxGLM4MoeLiteHiddenLayers mirrors maxDeepSeek2HiddenLayers's rationale:
+// far above any known config, but keeps HiddenLayers*3 clear of uint32
+// overflow and bounds how many times Tensors() below can iterate.
+const maxGLM4MoeLiteHiddenLayers = 1024
+
+func (p *glm4MoeLiteModel) parseMore(_ fs.FS) error {
+	return p.validate()
+}
+
+func (p *glm4MoeLiteModel) validate() error {
+	if p.HiddenLayers == 0 {
+		return fmt.Errorf("glm4moelite: num_hidden_layers must be set")
+	}
+	if p.HiddenLayers > maxGLM4MoeLiteHiddenLayers {
+		return fmt.Errorf("glm4moelite: num_hidden_layers (%d) exceeds max supported value (%d)", p.HiddenLayers, maxGLM4MoeLiteHiddenLayers)
+	}
+	return nil
+}
+
 func (p *glm4MoeLiteModel) Tensors(s []Tensor) (out []*ggml.Tensor) {
-	merges := make([]merge, p.HiddenLayers*3)
+	// Built with append (not a pre-sized index-assigned slice) so a bad
+	// HiddenLayers value can never cause an out-of-bounds write here even
+	// if validate() above did not run on some future call path.
+	merges := make([]merge, 0, p.HiddenLayers*3)
 	for i := range p.HiddenLayers {
-		merges[i*3+0] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
-		}
-		merges[i*3+1] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
-		}
-		merges[i*3+2] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
-		}
+		merges = append(merges,
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
+			},
+		)
 	}
 
 	skipLayer := func(n string, minValue uint32) bool {
