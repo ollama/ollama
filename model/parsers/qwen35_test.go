@@ -513,3 +513,49 @@ func TestQwen35ParserThinkingTruncatedWithoutCloseTag(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen35ParserTruncatedToolCall(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	// Thinking followed by truncated tool call (no close tag)
+	input := "Let me help</think>\n<tool_call><function=write_file><parameter=content>print('hel"
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if thinking != "Let me help" {
+		t.Fatalf("expected thinking %q, got %q", "Let me help", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "<function=write_file><parameter=content>print('hel" {
+		t.Fatalf("expected truncated content as fallback, got %q", content)
+	}
+}
+
+func TestQwen35ParserInvalidToolCallFallsBackToContent(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Tool call with invalid XML content
+	content, _, calls, err := parser.Add("<tool_call>not valid xml</tool_call>", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "not valid xml" {
+		t.Fatalf("expected raw content as fallback, got %q", content)
+	}
+}
