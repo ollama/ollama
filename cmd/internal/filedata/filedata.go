@@ -23,6 +23,10 @@ type File struct {
 func NormalizePath(fp string) string {
 	fp = strings.Trim(fp, "\"")
 	fp = strings.NewReplacer(
+		// A shell single-quoted path spells a literal apostrophe as '\'':
+		// close the quote, escape one, reopen. Collapse the whole
+		// four-character sequence back to a single apostrophe.
+		"'\\''", "'",
 		"\\ ", " ",
 		"\\(", "(",
 		"\\)", ")",

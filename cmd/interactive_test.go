@@ -64,6 +64,53 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+// Dragging a file whose name contains an apostrophe into a shell prompt yields
+// a single-quoted path in which each apostrophe is spelled
+//
+//	'\''
+//
+// that is: close the quote, escape a literal apostrophe, reopen. The whole
+// four-character sequence collapses back to one apostrophe.
+func TestNormalizeFilePathShellQuotedApostrophe(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "apostrophe",
+			in:   `/home/jdoe/Pictures/jdoe'\''s.png`,
+			want: `/home/jdoe/Pictures/jdoe's.png`,
+		},
+		{
+			name: "apostrophe and spaces",
+			in:   `/home/jdoe/my pictures/jdoe'\''s photo.png`,
+			want: `/home/jdoe/my pictures/jdoe's photo.png`,
+		},
+		{
+			name: "multiple apostrophes",
+			in:   `/home/jdoe/a'\''b'\''c.png`,
+			want: `/home/jdoe/a'b'c.png`,
+		},
+		{
+			name: "backslash escaped apostrophe still works",
+			in:   `/home/jdoe/jdoe\'s.png`,
+			want: `/home/jdoe/jdoe's.png`,
+		},
+		{
+			name: "bare apostrophe untouched",
+			in:   `/home/jdoe/jdoe's.png`,
+			want: `/home/jdoe/jdoe's.png`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeFilePath(tt.in))
+		})
+	}
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
