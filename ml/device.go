@@ -358,13 +358,64 @@ func (f FlashAttentionType) String() string {
 // Given the list of GPUs this instantiation is targeted for,
 // figure out the device environment variables and any recorded
 // per-device runner environment overrides.
+// devicesMustFilter reports whether the runner child's visible devices are
+// restricted for this set. CUDA-only groups need filtering so devices removed
+// during discovery do not reappear in the child process.
+func devicesMustFilter(l []DeviceInfo) bool {
+	return len(l) == 1 || allDevicesUseLibrary(l, "CUDA")
+}
+
+// RunnerDeviceNames returns the name the runner child will use for each device
+// in l, in the same order.
+//
+// These are not always the discovery names. When the child's visible devices are
+// filtered it enumerates what it can see from zero, so the i-th visible CUDA
+// device is "CUDA0", "CUDA1", ... regardless of its index on the host. A model
+// placed on host device 1 alone runs in a child that calls it "CUDA0", and
+// llama-server's buffer accounting is reported under that name. Callers holding
+// discovery names must translate through this, or they will look up a device
+// the child never mentioned and conclude it is using no memory.
+//
+// Devices whose library is not filtered keep their discovery name, which the
+// child also uses.
+func RunnerDeviceNames(l []DeviceInfo) []string {
+	mustFilter := devicesMustFilter(l)
+
+	names := make([]string, len(l))
+	ordinals := map[string]int{}
+	for i, d := range l {
+		if !d.filtersVisibleDevices(mustFilter) {
+			names[i] = d.Name
+			continue
+		}
+
+		prefix := strings.TrimRight(d.Name, "0123456789")
+		names[i] = prefix + strconv.Itoa(ordinals[prefix])
+		ordinals[prefix]++
+	}
+	return names
+}
+
+// filtersVisibleDevices reports whether this device's library restricts the
+// child's view, which is what makes the child renumber from zero. It mirrors the
+// switch in updateVisibleDevicesEnv.
+func (d DeviceInfo) filtersVisibleDevices(mustFilter bool) bool {
+	switch d.Library {
+	case "ROCm":
+		// always filtered: unsupported devices can crash the runner
+		return true
+	case "CUDA", "Vulkan":
+		return mustFilter
+	default:
+		return false
+	}
+}
+
 func GetDevicesEnv(l []DeviceInfo) map[string]string {
 	if len(l) == 0 {
 		return nil
 	}
-	// CUDA-only groups need filtering so devices removed during discovery do
-	// not reappear in the child process.
-	mustFilter := len(l) == 1 || allDevicesUseLibrary(l, "CUDA")
+	mustFilter := devicesMustFilter(l)
 	env := map[string]string{}
 	for _, d := range l {
 		d.updateVisibleDevicesEnv(env, mustFilter)

@@ -299,3 +299,65 @@ func TestHeadCount(t *testing.T) {
 		}
 	}
 }
+
+func TestAttentionLayers(t *testing.T) {
+	cases := []struct {
+		name  string
+		kv    KV
+		want  []bool
+		count uint64
+	}{
+		{
+			// Hybrid architecture: the scalar head counts broadcast to every block, so only
+			// the per-block compress ratios distinguish attention blocks from recurrent ones.
+			name: "per-block compress ratios override broadcast scalars",
+			kv: KV{
+				"general.architecture":          "abc",
+				"abc.block_count":               uint32(8),
+				"abc.attention.head_count":      uint32(24),
+				"abc.attention.head_count_kv":   uint32(2),
+				"abc.attention.compress_ratios": &array[int32]{values: []int32{0, 0, 0, 4, 0, 0, 0, 4}, size: 8},
+			},
+			want:  []bool{false, false, false, true, false, false, false, true},
+			count: 2,
+		},
+		{
+			// Without per-block metadata the scalar head counts apply to every block, which
+			// is the correct answer for a non-hybrid model.
+			name: "scalar head counts mark every block as attention",
+			kv: KV{
+				"general.architecture":        "abc",
+				"abc.block_count":             uint32(4),
+				"abc.attention.head_count":    uint32(8),
+				"abc.attention.head_count_kv": uint32(2),
+			},
+			want:  []bool{true, true, true, true},
+			count: 4,
+		},
+		{
+			// Architectures that publish per-layer head counts already distinguish recurrent
+			// blocks with a zero head count; that path must keep working.
+			name: "per-layer head counts mark zero-head blocks as recurrent",
+			kv: KV{
+				"general.architecture":        "abc",
+				"abc.block_count":             uint32(4),
+				"abc.attention.head_count":    &array[int32]{values: []int32{8, 0, 8, 0}, size: 4},
+				"abc.attention.head_count_kv": &array[int32]{values: []int32{2, 0, 2, 0}, size: 4},
+			},
+			want:  []bool{true, false, true, false},
+			count: 2,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if diff := cmp.Diff(tt.kv.AttentionLayers(), tt.want); diff != "" {
+				t.Errorf("unexpected attention layers (-got +want):\n%s", diff)
+			}
+
+			if got := tt.kv.AttentionLayerCount(); got != tt.count {
+				t.Errorf("unexpected attention layer count: got=%d want=%d", got, tt.count)
+			}
+		})
+	}
+}
