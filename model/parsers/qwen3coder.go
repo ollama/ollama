@@ -256,14 +256,7 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
 			if prop, ok := matchedTool.Function.Parameters.Properties.Get(parameter.Name); ok {
-				// Handle anyOf by collecting all types from the union
-				if len(prop.AnyOf) > 0 {
-					for _, anyOfProp := range prop.AnyOf {
-						paramType = append(paramType, anyOfProp.Type...)
-					}
-				} else {
-					paramType = prop.Type
-				}
+				paramType = prop.EffectiveTypes()
 			}
 		}
 

@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -417,6 +418,7 @@ func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
 
 type ToolProperty struct {
 	AnyOf       []ToolProperty     `json:"anyOf,omitempty"`
+	OneOf       []ToolProperty     `json:"oneOf,omitempty"`
 	Type        PropertyType       `json:"type,omitempty"`
 	Items       any                `json:"items,omitempty"`
 	Description string             `json:"description,omitempty"`
@@ -425,12 +427,41 @@ type ToolProperty struct {
 	Required    []string           `json:"required,omitempty"`
 }
 
+// unionBranches returns the alternative schemas of a union property. JSON
+// Schema spells a union either "anyOf" or "oneOf"; both describe a value that
+// may take any of the listed shapes, so tools treat them the same.
+func (tp ToolProperty) unionBranches() []ToolProperty {
+	if len(tp.AnyOf) > 0 {
+		return tp.AnyOf
+	}
+	return tp.OneOf
+}
+
+// EffectiveTypes returns the JSON Schema types a value for this property may
+// take, flattening unions so that {"oneOf":[{"type":"string"},{"type":"object"}]}
+// coerces the same way as {"type":["string","object"]}. Parsers that reconstruct
+// tool call arguments from text need this: a property whose types they cannot
+// see is left as the raw string the model emitted, so a nested object arrives
+// at the caller stringified.
+func (tp ToolProperty) EffectiveTypes() PropertyType {
+	branches := tp.unionBranches()
+	if len(branches) == 0 {
+		return tp.Type
+	}
+
+	types := slices.Clone(tp.Type)
+	for _, branch := range branches {
+		types = append(types, branch.EffectiveTypes()...)
+	}
+	return types
+}
+
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
 func (tp ToolProperty) ToTypeScriptType() string {
-	if len(tp.AnyOf) > 0 {
+	if branches := tp.unionBranches(); len(branches) > 0 {
 		var types []string
-		for _, anyOf := range tp.AnyOf {
-			types = append(types, anyOf.ToTypeScriptType())
+		for _, branch := range branches {
+			types = append(types, branch.ToTypeScriptType())
 		}
 		return strings.Join(types, " | ")
 	}
