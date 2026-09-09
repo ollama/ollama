@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,13 +11,17 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -875,5 +881,171 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	err = PullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
 	if !errors.Is(err, errDigestMismatch) {
 		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
+	}
+}
+
+func TestPullModelRejectsNonFitBeforeBlobDownload(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+	t.Setenv("OLLAMA_GPU_OVERHEAD", "0")
+
+	var manifestRequests atomic.Int32
+	var blobRequests atomic.Int32
+	const (
+		configDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		tensorDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			manifestRequests.Add(1)
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			mf := manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Config: manifest.Layer{
+					MediaType: "application/vnd.ollama.image.config",
+					Digest:    configDigest,
+					Size:      1,
+				},
+				Layers: []manifest.Layer{{
+					MediaType: manifest.MediaTypeImageTensor,
+					Digest:    tensorDigest,
+					Size:      2 << 30,
+					Name:      "model.weight",
+				}},
+			}
+			if err := json.NewEncoder(w).Encode(mf); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			blobRequests.Add(1)
+			http.Error(w, "blob should not be requested", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/test/huge")
+	n.ProtocolScheme = "http"
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			return []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "Metal"},
+				TotalMemory: 1 << 30,
+				FreeMemory:  1 << 30,
+			}}
+		},
+	}}
+
+	err = s.pullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, false, func(api.ProgressResponse) {})
+	want := n.String() + " is too large to run on this system - Try a smaller local model, consider a cloud model, or --force to pull anyway"
+	if err == nil || err.Error() != want {
+		t.Fatalf("pullModel error = %q, want %q", err, want)
+	}
+	if manifestRequests.Load() != 1 {
+		t.Fatalf("manifest requests = %d, want 1", manifestRequests.Load())
+	}
+	if blobRequests.Load() != 0 {
+		t.Fatalf("blob requests = %d, want 0", blobRequests.Load())
+	}
+	manifestPath, err := manifest.PathForName(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manifestPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rejected pull left manifest at %s: %v", manifestPath, err)
+	}
+}
+
+func TestPullHandlerForceBypassesFitCheck(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	tensorData := []byte("hi")
+	tensorDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(tensorData))
+	var blobRequests atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+			mf := manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Layers: []manifest.Layer{{
+					MediaType: manifest.MediaTypeImageTensor,
+					Digest:    tensorDigest,
+					Size:      int64(len(tensorData)),
+					Name:      "model.weight",
+				}},
+			}
+			if err := json.NewEncoder(w).Encode(mf); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			blobRequests.Add(1)
+			if _, err := w.Write(tensorData); err != nil {
+				t.Errorf("write tensor: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	u, err := url.Parse(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := model.ParseName(u.Host + "/test/huge")
+	n.ProtocolScheme = "http"
+
+	var fitChecks atomic.Int32
+	s := &Server{sched: &Scheduler{
+		getGpuFn: func(context.Context, []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+			fitChecks.Add(1)
+			return []ml.DeviceInfo{{
+				DeviceID:    ml.DeviceID{Library: "Metal"},
+				TotalMemory: 1 << 30,
+				FreeMemory:  1 << 30,
+			}}
+		},
+	}}
+	router := gin.New()
+	router.POST("/api/pull", s.PullHandler)
+	apiServer := httptest.NewServer(router)
+	defer apiServer.Close()
+
+	apiURL, err := url.Parse(apiServer.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := api.NewClient(apiURL, apiServer.Client())
+	err = client.Pull(t.Context(), &api.PullRequest{
+		Model:    n.String(),
+		Force:    true,
+		Insecure: true,
+	}, func(api.ProgressResponse) error { return nil })
+	if fitChecks.Load() != 0 {
+		t.Fatalf("fit checks = %d, want 0", fitChecks.Load())
+	}
+	if err != nil && strings.Contains(err.Error(), "is too large to run on this system") {
+		t.Fatalf("forced pull was rejected by fit check: %v", err)
+	}
+	switch blobRequests.Load() {
+	case 0:
+		if err == nil || !strings.Contains(err.Error(), "requires MLX support") {
+			t.Fatalf("forced pull stopped before blob transfer: %v", err)
+		}
+	case 1:
+		if err != nil {
+			t.Fatalf("forced pull: %v", err)
+		}
+	default:
+		t.Fatalf("blob requests = %d, want at most 1", blobRequests.Load())
 	}
 }

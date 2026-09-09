@@ -763,7 +763,10 @@ type CopyRequest struct {
 
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
-	Model    string `json:"model"`
+	Model string `json:"model"`
+	// Force downloads the model even when it is determined too large to run on
+	// this system.
+	Force    bool   `json:"force,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored

@@ -51,7 +51,7 @@ func prepareAgentModel(cmd *cobra.Command, client *api.Client, opts *agentTUIOpt
 	// Unlike `ollama run`, the bare `ollama` root command doesn't define
 	// --insecure, so GetBool would error; treat it as false.
 	insecure, _ := cmd.Flags().GetBool("insecure")
-	info, resolved, err := showOrPullModel(cmd, client, opts.Model, insecure, "run")
+	info, resolved, err := showOrPullModel(cmd, client, api.PullRequest{Model: opts.Model, Insecure: insecure}, "run")
 	if err != nil {
 		return nil, err
 	}
