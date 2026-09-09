@@ -40,6 +40,7 @@ type Gemma4Parser struct {
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
+	needsContentTrim      bool // true when we just left thinking and need to strip leading whitespace
 }
 
 func (p *Gemma4Parser) HasToolSupport() bool {
@@ -177,6 +178,19 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 	switch p.state {
 	case Gemma4CollectingContent:
+		// Whitespace between <channel|> and the answer is dropped, even when it
+		// arrives in a later chunk than the closing tag itself.
+		if p.needsContentTrim {
+			trimmed := strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(trimmed)
+			if trimmed == "" {
+				return events, false
+			}
+			bufStr = trimmed
+			p.needsContentTrim = false
+		}
+
 		// Check for thinking open tag
 		if idx := strings.Index(bufStr, gemma4ThinkingOpenTag); idx != -1 {
 			contentBefore := bufStr[:idx]
@@ -226,7 +240,22 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			}
 		}
 
-		// No tags found, emit all content
+		// No tags found, emit content (hold back trailing whitespace, which is
+		// dropped if an opening tag turns out to follow it)
+		if !done {
+			whitespaceLen := trailingWhitespaceLen(bufStr)
+			ambiguousStart := len(bufStr) - whitespaceLen
+
+			unambiguous := bufStr[:ambiguousStart]
+			ambiguous := bufStr[ambiguousStart:]
+			p.buffer.Reset()
+			p.buffer.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, gemma4EventContent{content: unambiguous})
+			}
+			return events, false
+		}
+
 		p.buffer.Reset()
 		if len(bufStr) > 0 {
 			events = append(events, gemma4EventContent{content: bufStr})
@@ -260,6 +289,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4CollectingContent
+			p.needsContentTrim = true
 
 			if len(thinking) > 0 {
 				events = append(events, gemma4EventThinkingContent{content: thinking})
