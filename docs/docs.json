@@ -130,6 +130,7 @@
             "group": "More information",
             "pages": [
               "/cli",
+              "/statusline",
               "/modelfile",
               "/context-length",
               "/linux",

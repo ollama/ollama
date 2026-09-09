@@ -61,6 +61,13 @@ func (m chatModel) allowAllToolsEnabled() bool {
 	return m.approvalState.AllGranted()
 }
 
+func (m chatModel) accessLevelName() string {
+	if m.allowAllToolsEnabled() {
+		return "full-access"
+	}
+	return "review"
+}
+
 func (m *chatModel) setAllowAllTools(allowAll bool) {
 	if allowAll {
 		m.ensureApprovalState().GrantAll()

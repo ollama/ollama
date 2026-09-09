@@ -1,0 +1,185 @@
+---
+title: Status Line
+---
+
+The status line is the bar shown at the bottom of `ollama run`'s interactive chat. It gives you an at-a-glance view of the working directory, access level, context window usage, model, thinking effort, and how long the session has been running.
+
+Status lines are useful when you:
+
+- Want to know at a glance whether the session has full tool access or requires approval for each action
+- Want to keep an eye on context window usage as a conversation grows
+- Want to know how long you've been in a session
+- Want to customize what's shown — git branch, working directory, or anything else a shell script can compute
+
+No setup is required — a status line is shown by default. You can replace it entirely with your own script if you want different information.
+
+## Default status line
+
+```
+repo (full access)          ██████░░░░ 42% ctx          llama3.2 (high) • 12m34s
+```
+
+It has three segments:
+
+- **Left**: the working directory's folder name, and the session's access level in parentheses — `full access` (colored) when all tools are auto-approved, `review` (plain, same color as the directory) when tool calls require approval.
+- **Center**: a 10-cell progress bar and percentage of the model's context window in use. Only the bar is colored, changing with usage: grey from 0-50%, yellow from 51-65%, orange from 66-85%, and red from 86-100%; the percentage text next to it is plain, matching the rest of the line. This segment is omitted if the context window size isn't known yet. While a compaction is running, this segment instead shows `Compacting N tokens` — there's no meaningful percentage for compaction progress, so a running token count is shown.
+- **Right**: the current model and its thinking effort, followed by elapsed time since the session started, e.g. `llama3.2 (high) • 12m34s`. Plain, same color as the rest of the line.
+
+On narrow terminals, the center segment is dropped first, then the right segment, to avoid overlapping text.
+
+## Customizing with a script
+
+Set the `OLLAMA_STATUSLINE` environment variable to replace the default status line with the output of your own script:
+
+```shell
+export OLLAMA_STATUSLINE="~/.ollama/statusline.sh"
+ollama run llama3.2
+```
+
+The value is run through `sh -c`, so it can be either an inline command or a path to a script file. If you point it at a script file, make sure it's executable:
+
+```shell
+chmod +x ~/.ollama/statusline.sh
+```
+
+## How it works
+
+`ollama` writes a JSON object describing the current session to your script's **stdin**, waits for it to exit, and displays whatever it printed to **stdout** in place of the default status line.
+
+Your script re-runs whenever something statusline-relevant changes — the model, access level, thinking state, context usage, or compaction status — plus at least every 5 seconds as a fallback, so externally-driven changes (like switching git branches in another terminal) still show up promptly. It does not re-run on a fixed interval regardless of activity, so an idle session won't spawn your script every second.
+
+Keep your script fast — there's no timeout, so a slow or hanging script will delay status line updates.
+
+If your script exits with a non-zero status or otherwise fails, the status line goes blank until the next successful run rather than showing an error.
+
+Printing more than one line (e.g. multiple `echo` statements) is supported — each line is shown as its own row.
+
+## Available data
+
+Your script receives this JSON structure on stdin:
+
+```json
+{
+  "model": "llama3.2",
+  "status": "ready",
+  "context_tokens": 1234,
+  "working_dir": "/path/to/project",
+  "chat_id": "01JB3F0X8T5Y6Z9G3K1QW2ERT7",
+  "access_level": "full-access",
+  "compacting": false,
+  "compacting_tokens": 0,
+  "session_elapsed_seconds": 754,
+  "version": "0.x.y",
+  "context_window_size": 8192,
+  "context_used_percentage": 15,
+  "thinking": {
+    "active": true,
+    "tokens": 512,
+    "value": "high"
+  }
+}
+```
+
+- `model` - the current model name
+- `status` - the chat's current status string (e.g. `ready`)
+- `context_tokens` - estimated tokens currently used in the context window
+- `working_dir` - the working directory the session was started in
+- `chat_id` - a unique identifier for the current chat session
+- `access_level` - `full-access` when all tools are auto-approved, otherwise `review`
+- `compacting` - `true` while a context compaction is in progress
+- `compacting_tokens` - tokens processed so far during an in-progress compaction (0 when not compacting)
+- `session_elapsed_seconds` - seconds since the session started
+- `version` - the running `ollama` version
+- `context_window_size` / `context_used_percentage` - the model's context window size and percentage used; both are omitted when the window size isn't known yet
+- `thinking` - only present while a thinking turn is in progress
+  - `thinking.active` - always `true` when present
+  - `thinking.tokens` - thinking tokens generated so far for the current turn
+  - `thinking.value` - the thinking effort in effect (`auto`, `on`, `off`, or an effort level)
+
+## Examples
+
+To use any example below: save it to a file, `chmod +x` it, and point `OLLAMA_STATUSLINE` at its path.
+
+### Recreate the default look
+
+```bash
+#!/bin/bash
+input=$(cat)
+
+DIR=$(echo "$input" | jq -r '.working_dir')
+ACCESS=$(echo "$input" | jq -r '.access_level')
+MODEL=$(echo "$input" | jq -r '.model')
+THINK=$(echo "$input" | jq -r '.thinking.value // "auto"')
+COMPACTING=$(echo "$input" | jq -r '.compacting')
+ELAPSED=$(echo "$input" | jq -r '.session_elapsed_seconds')
+
+MINS=$((ELAPSED / 60))
+SECS=$((ELAPSED % 60))
+
+if [ "$COMPACTING" = "true" ]; then
+  TOKENS=$(echo "$input" | jq -r '.compacting_tokens')
+  CENTER="Compacting ${TOKENS} tokens"
+else
+  PCT=$(echo "$input" | jq -r '.context_used_percentage // empty')
+  if [ -n "$PCT" ]; then
+    FILLED=$((PCT / 10))
+    EMPTY=$((10 - FILLED))
+    BAR=""
+    [ "$FILLED" -gt 0 ] && printf -v FILL "%${FILLED}s" && BAR="${FILL// /█}"
+    [ "$EMPTY" -gt 0 ] && printf -v PAD "%${EMPTY}s" && BAR="${BAR}${PAD// /░}"
+    CENTER="$BAR ${PCT}% ctx"
+  fi
+fi
+
+echo "${DIR##*/} (${ACCESS}) | ${CENTER} | ${MODEL} (${THINK}) • ${MINS}m${SECS}s"
+```
+
+### Model and context percentage
+
+```bash
+#!/bin/bash
+input=$(cat)
+
+MODEL=$(echo "$input" | jq -r '.model')
+TOKENS=$(echo "$input" | jq -r '.context_tokens // 0')
+
+echo "[$MODEL] ctx: ${TOKENS} tokens"
+```
+
+### Colors
+
+Use [ANSI escape codes](https://en.wikipedia.org/wiki/ANSI_escape_code#Colors) to add color; your terminal must support them.
+
+```bash
+#!/bin/bash
+input=$(cat)
+
+MODEL=$(echo "$input" | jq -r '.model')
+ACCESS=$(echo "$input" | jq -r '.access_level')
+
+GREEN='\033[32m'
+YELLOW='\033[33m'
+RESET='\033[0m'
+
+if [ "$ACCESS" = "full-access" ]; then
+  echo -e "${YELLOW}[$MODEL] full access${RESET}"
+else
+  echo -e "${GREEN}[$MODEL] review${RESET}"
+fi
+```
+
+## Troubleshooting
+
+**Status line is blank**
+
+- Verify your script is executable: `chmod +x ~/.ollama/statusline.sh`
+- Confirm it prints to stdout, not stderr
+- Test it manually with mock input:
+
+  ```shell
+  echo '{"model":"llama3.2","status":"ready","context_tokens":100,"working_dir":"/tmp","chat_id":"test","access_level":"full-access","compacting":false,"compacting_tokens":0,"session_elapsed_seconds":10,"version":"0.1.0"}' | ~/.ollama/statusline.sh
+  ```
+
+**Status line feels slow to update**
+
+- Your script runs when something relevant changes, plus at least every 5 seconds. Avoid slow operations (network calls, large file reads) inside it — there's no timeout, so a hanging script delays the next visible update.

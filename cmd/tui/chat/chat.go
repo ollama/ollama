@@ -1,19 +1,24 @@
 package chat
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	coreagent "github.com/ollama/ollama/agent"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/filedata"
+	"github.com/ollama/ollama/version"
 )
 
 var chatSpinnerFrames = []string{".", "..", "..."}
@@ -21,11 +26,12 @@ var chatSpinnerFrames = []string{".", "..", "..."}
 var chatRuntimeGOOS = runtime.GOOS
 
 const (
-	maxPickerItems            = 8
-	maxInlineModelPickerItems = 5
-	maxSlashCompletions       = 5
-	maxPromptHistory          = 50
-	idleWorkingDelayTicks     = 4
+	maxPickerItems               = 8
+	maxInlineModelPickerItems    = 5
+	maxSlashCompletions          = 5
+	maxPromptHistory             = 50
+	idleWorkingDelayTicks        = 4
+	statuslineCoarseRefreshTicks = 5
 )
 
 var chatEmptyPrompts = []string{
@@ -83,6 +89,7 @@ type Options struct {
 	PollCloudAuth               func(context.Context) (string, bool, error)
 	CompactionThreshold         float64
 	SystemPrompt                string
+	StatusLineScript            string // Path to the external statusline shell script
 }
 
 type Result struct {
@@ -145,20 +152,26 @@ type chatModel struct {
 
 	systemPromptDisabled bool
 
-	width              int
-	height             int
-	status             string
-	spinner            int
-	tickActive         bool
-	preloadingModel    string
-	complete           int
-	quitting           bool
-	openModelOnInit    bool
-	quitArmed          bool
-	quitArmedKey       string
-	escArmed           bool
-	eventErrorRendered bool
-	err                error
+	width                   int
+	height                  int
+	status                  string
+	customStatusText        string
+	persistedThinkValue     string
+	sessionStartedAt        time.Time
+	statuslineTickActive    bool
+	statuslineTicks         int
+	lastStatuslineSignature statuslineSignature
+	spinner                 int
+	tickActive              bool
+	preloadingModel         string
+	complete                int
+	quitting                bool
+	openModelOnInit         bool
+	quitArmed               bool
+	quitArmedKey            string
+	escArmed                bool
+	eventErrorRendered      bool
+	err                     error
 }
 
 type chatSelectionPoint struct {
@@ -171,6 +184,77 @@ type chatSelection struct {
 	dragging bool
 	anchor   chatSelectionPoint
 	cursor   chatSelectionPoint
+}
+
+func (m chatModel) serializeState() []byte {
+	state := map[string]any{
+		"model":                   strings.TrimSpace(m.opts.Model),
+		"status":                  m.status,
+		"context_tokens":          m.contextTokens,
+		"working_dir":             m.workingDir,
+		"chat_id":                 m.chatID,
+		"access_level":            m.accessLevelName(),
+		"compacting":              m.compacting,
+		"compacting_tokens":       m.compactingTokens,
+		"session_elapsed_seconds": int(time.Since(m.sessionStartedAt).Seconds()),
+		"version":                 version.Version,
+	}
+	if percent, ok := m.contextPercent(); ok {
+		state["context_window_size"] = m.displayContextWindowTokens()
+		state["context_used_percentage"] = percent
+	}
+	if m.thinking {
+		state["thinking"] = map[string]any{
+			"active": true,
+			"tokens": m.thinkingTokens,
+			"value":  m.persistedThinkValue,
+		}
+	}
+	b, _ := json.Marshal(state)
+	return b
+}
+
+// statuslineSignature captures the fields that materially change what the
+// native statusline (or a custom OLLAMA_STATUSLINE script) would render, so the
+// script only needs to re-run when something relevant actually changed.
+type statuslineSignature struct {
+	model            string
+	accessLevel      string
+	running          bool
+	compacting       bool
+	compactingTokens int
+	contextPercent   int
+	thinking         bool
+}
+
+func (m chatModel) statuslineSignature() statuslineSignature {
+	percent, _ := m.contextPercent()
+	return statuslineSignature{
+		model:            strings.TrimSpace(m.opts.Model),
+		accessLevel:      m.accessLevelName(),
+		running:          m.running,
+		compacting:       m.compacting,
+		compactingTokens: m.compactingTokens,
+		contextPercent:   percent,
+		thinking:         m.thinking,
+	}
+}
+
+func updateCustomStatusLineCmd(m chatModel) tea.Cmd {
+	return func() tea.Msg {
+		if m.opts.StatusLineScript == "" {
+			return nil
+		}
+
+		payload := m.serializeState()
+		cmd := exec.Command("sh", "-c", m.opts.StatusLineScript)
+		cmd.Stdin = bytes.NewReader(payload)
+		out, err := cmd.Output()
+		if err != nil {
+			return customStatusLineMsg("") // Fail silently
+		}
+		return customStatusLineMsg(strings.TrimSpace(string(out)))
+	}
 }
 
 func startChatSelection(selection *chatSelection, msg tea.MouseMsg, contains func(tea.MouseMsg) bool, point func(tea.MouseMsg) chatSelectionPoint) {
@@ -216,16 +300,17 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	approvalState.Set(opts.AllowAllTools, nil)
 
 	m := chatModel{
-		ctx:             ctx,
-		opts:            opts,
-		chatID:          opts.ChatID,
-		messages:        slices.Clone(opts.Messages),
-		workingDir:      opts.WorkingDir,
-		approvalState:   approvalState,
-		defaultAllowAll: opts.AllowAllTools,
-		promptHistory:   initialPromptHistory(ctx, opts),
-		status:          "ready",
-		openModelOnInit: opts.OpenModelPicker || (strings.TrimSpace(opts.Model) == "" && opts.ModelOptions != nil),
+		ctx:              ctx,
+		opts:             opts,
+		chatID:           opts.ChatID,
+		messages:         slices.Clone(opts.Messages),
+		workingDir:       opts.WorkingDir,
+		approvalState:    approvalState,
+		defaultAllowAll:  opts.AllowAllTools,
+		promptHistory:    initialPromptHistory(ctx, opts),
+		status:           "ready",
+		openModelOnInit:  opts.OpenModelPicker || (strings.TrimSpace(opts.Model) == "" && opts.ModelOptions != nil),
+		sessionStartedAt: time.Now(),
 	}
 	m.nextImageID, m.nextAudioID = nextInputAttachmentIDsFromMessages(m.messages)
 	m.nextPastedTextID = nextInputPastedTextIDFromMessages(m.messages)
@@ -269,6 +354,7 @@ func (m chatModel) Init() tea.Cmd {
 	if cmd := cloudModelPreflightCmd(m.ctx, m.opts, m.opts.Model, ""); cmd != nil && !m.openModelOnInit {
 		cmds = append(cmds, cmd)
 	}
+	cmds = append(cmds, chatStatuslineTickCmd())
 	return tea.Batch(cmds...)
 }
 
@@ -298,8 +384,20 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.spinner++
-		cmd := m.scheduleTick()
-		return m, cmd
+		return m, m.scheduleTick()
+
+	case chatStatuslineTickMsg:
+		m.statuslineTickActive = false
+		m.statuslineTicks++
+		cmds := []tea.Cmd{m.scheduleStatuslineTick()}
+		if m.opts.StatusLineScript != "" {
+			signature := m.statuslineSignature()
+			if signature != m.lastStatuslineSignature || m.statuslineTicks%statuslineCoarseRefreshTicks == 0 {
+				m.lastStatuslineSignature = signature
+				cmds = append(cmds, updateCustomStatusLineCmd(m))
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case chatModelPreloadDoneMsg:
 		if msg.model != "" && msg.model != m.preloadingModel {
@@ -445,6 +543,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cloudAuthPrompt != nil {
 			return m.updateCloudAuthPrompt(msg)
 		}
+		return m, nil
+
+	case customStatusLineMsg:
+		m.customStatusText = string(msg)
 		return m, nil
 
 	case tea.MouseMsg:
