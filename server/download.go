@@ -438,7 +438,7 @@ func (b *blobDownload) acquire() {
 }
 
 func (b *blobDownload) release() {
-	if b.references.Add(-1) == 0 {
+	if b.references.Add(-1) == 0 && b.CancelFunc != nil {
 		b.CancelFunc()
 	}
 }
