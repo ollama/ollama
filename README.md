@@ -158,6 +158,7 @@ console.log(response.message.content);
 
 #### Web
 
+- [RemiAI](https://remiai.crickdevs.com) - self-hosted AI assistant with a bunch of tools.
 - [Open WebUI](https://github.com/open-webui/open-webui) - Extensible, self-hosted AI interface
 - [Onyx](https://github.com/onyx-dot-app/onyx) - Connected AI workspace
 - [LibreChat](https://github.com/danny-avila/LibreChat) - Enhanced ChatGPT clone with multi-provider support
@@ -177,6 +178,7 @@ console.log(response.message.content);
 
 #### Desktop
 
+- [RemiAI](https://remiai.crickdevs.com) - self-hosted AI assistant with a bunch of tools.
 - [Dify.AI](https://github.com/langgenius/dify) - LLM app development platform
 - [AnythingLLM](https://github.com/Mintplex-Labs/anything-llm) - All-in-one AI app for Mac, Windows, and Linux
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid) - Cross-platform mobile and desktop client
@@ -305,6 +307,7 @@ console.log(response.message.content);
 
 ### Productivity & Apps
 
+- [RemiAI](https://remiai.crickdevs.com) - self-hosted AI assistant with a bunch of tools.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
