@@ -108,24 +108,25 @@ type Reasoning struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	StreamOptions    *StreamOptions  `json:"stream_options"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty"`
-	TopP             *float64        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
-	Tools            []api.Tool      `json:"tools"`
-	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
-	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
-	Logprobs         *bool           `json:"logprobs"`
-	TopLogprobs      int             `json:"top_logprobs"`
-	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	StreamOptions       *StreamOptions  `json:"stream_options"`
+	MaxTokens           *int            `json:"max_tokens"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens"`
+	Seed                *int            `json:"seed"`
+	Stop                any             `json:"stop"`
+	Temperature         *float64        `json:"temperature"`
+	FrequencyPenalty    *float64        `json:"frequency_penalty"`
+	PresencePenalty     *float64        `json:"presence_penalty"`
+	TopP                *float64        `json:"top_p"`
+	ResponseFormat      *ResponseFormat `json:"response_format"`
+	Tools               []api.Tool      `json:"tools"`
+	Reasoning           *Reasoning      `json:"reasoning,omitempty"`
+	ReasoningEffort     *string         `json:"reasoning_effort,omitempty"`
+	Logprobs            *bool           `json:"logprobs"`
+	TopLogprobs         int             `json:"top_logprobs"`
+	DebugRenderOnly     bool            `json:"_debug_render_only"`
 }
 
 type ChatCompletion struct {
@@ -666,7 +667,11 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
-	if r.MaxTokens != nil {
+	// max_completion_tokens is the successor to the deprecated max_tokens
+	// field for chat completions; prefer it when a client sends both.
+	if r.MaxCompletionTokens != nil {
+		options["num_predict"] = *r.MaxCompletionTokens
+	} else if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
 	}
 
