@@ -7,6 +7,67 @@ import (
 	"testing"
 )
 
+func TestIsUnifiedMemoryAPU(t *testing.T) {
+	cases := []struct {
+		name string
+		dev  DeviceInfo
+		want bool
+	}{
+		{
+			name: "strix halo rocm",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "ROCm"}, Integrated: true, GFXTarget: "gfx1151"},
+			want: true,
+		},
+		{
+			name: "strix halo rocm lowercase library",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "rocm"}, Integrated: true, GFXTarget: "gfx1151"},
+			want: true,
+		},
+		{
+			name: "strix halo vulkan gfx target in name",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "Vulkan"}, Integrated: true, Description: "Radeon 8060S Graphics (RADV GFX1151)"},
+			want: true,
+		},
+		{
+			name: "strix halo vulkan codename in name",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "Vulkan"}, Integrated: true, Description: "AMD Radeon 8060S Graphics (RADV STRIX_HALO)"},
+			want: true,
+		},
+		{
+			name: "discrete rocm gfx1100",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "ROCm"}, Integrated: false, GFXTarget: "gfx1100"},
+			want: false,
+		},
+		{
+			name: "integrated rocm other gfx",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "ROCm"}, Integrated: true, GFXTarget: "gfx1103"},
+			want: false,
+		},
+		{
+			name: "integrated vulkan non-amd",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "Vulkan"}, Integrated: true, Description: "Intel(R) Arc(TM) Graphics"},
+			want: false,
+		},
+		{
+			name: "discrete vulkan with strix name",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "Vulkan"}, Integrated: false, Description: "Radeon 8060S Graphics (RADV GFX1151)"},
+			want: false,
+		},
+		{
+			name: "cuda",
+			dev:  DeviceInfo{DeviceID: DeviceID{Library: "CUDA"}, Integrated: false},
+			want: false,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.dev.IsUnifiedMemoryAPU(); got != tt.want {
+				t.Errorf("IsUnifiedMemoryAPU() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMergeEnvWithRunnerEnvOverrides(t *testing.T) {
 	devices := []DeviceInfo{
 		{
