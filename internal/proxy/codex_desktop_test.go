@@ -1640,7 +1640,7 @@ func TestCodexDesktopWritesSafeActivityLog(t *testing.T) {
 	}
 }
 
-func TestCodexDesktopRecordsMidstreamAbortWithoutPanicking(t *testing.T) {
+func TestCodexDesktopRecordsMidstreamAbortAndTerminatesResponse(t *testing.T) {
 	activityLogPath := filepath.Join(t.TempDir(), "codex-proxy.log")
 	streamErr := errors.New("upstream stream failed")
 	handler, err := NewCodexDesktop(CodexDesktopConfig{
@@ -1665,22 +1665,32 @@ func TestCodexDesktopRecordsMidstreamAbortWithoutPanicking(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	req, err := http.NewRequest(
 		http.MethodPost,
-		"http://localhost"+CodexDesktopPathPrefix+"/v1/responses",
+		server.URL+CodexDesktopPathPrefix+"/v1/responses",
 		strings.NewReader(`{"model":"glm-5.3-flash:cloud"}`),
 	)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req = req.WithContext(context.WithValue(req.Context(), http.ServerContextKey, &http.Server{}))
-	recorder := httptest.NewRecorder()
-
-	handler.ServeHTTP(recorder, req)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", recorder.Code)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := recorder.Body.String(); got != "data: partial\n\n" {
-		t.Fatalf("body = %q, want partial event", got)
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	<-done
+	if resp.StatusCode != http.StatusOK || string(body) != "data: partial\n\n" {
+		t.Fatalf("response = %d %q, want partial 200 response", resp.StatusCode, body)
+	}
+	if !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		t.Errorf("read error = %v, want unexpected EOF for aborted stream", readErr)
 	}
 	if got := handler.upstreamErrors.Load(); got != 1 {
 		t.Fatalf("upstream errors = %d, want 1", got)
