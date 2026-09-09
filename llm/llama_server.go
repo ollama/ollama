@@ -1070,6 +1070,8 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 			"model", s.modelPath, "gpus", len(s.gpus))
 	}
 
+	s.warnIfCPUFallback()
+
 	if s.options.MainGPU != nil && *s.options.MainGPU >= 0 && *s.options.MainGPU < len(gpus) {
 		return []ml.DeviceID{gpus[*s.options.MainGPU].DeviceID}, nil
 	}
@@ -1140,6 +1142,26 @@ func (s *llamaServerRunner) hasParsedVRAM() bool {
 	defer s.memoryMu.RUnlock()
 
 	return len(s.vramByDevice) > 0
+}
+
+// warnIfCPUFallback reports a load that ended up entirely on CPU despite GPUs
+// being present. Partial offload is left to `ollama ps`, and num_gpu=0 is
+// intentional rather than a fallback.
+func (s *llamaServerRunner) warnIfCPUFallback() {
+	if len(s.gpus) == 0 || s.options.NumGPU == 0 {
+		return
+	}
+
+	s.memoryMu.RLock()
+	gpuLayers, totalLayers := s.gpuLayers, s.totalLayers
+	s.memoryMu.RUnlock()
+
+	if totalLayers == 0 || gpuLayers > 0 {
+		return
+	}
+
+	slog.Warn("model loaded entirely on CPU: no layers fit in available VRAM",
+		"model", s.modelPath, "layers", totalLayers, "gpus", len(s.gpus))
 }
 
 func (s *llamaServerRunner) startLoadTracking(t time.Time) {
