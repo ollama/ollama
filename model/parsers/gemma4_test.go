@@ -1501,3 +1501,63 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestGemma4ClosedToolCallMissingObjectClose(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("read_files", "files")}
+
+	tests := []struct {
+		name     string
+		content  string
+		wantName string
+	}{
+		{
+			// captured from a live session: the model emitted the closing tag
+			// but not the brace before it, and the whole call was dropped
+			name:     "a closed call missing only its final brace is recovered",
+			content:  `call:read_files{files:[{path:<|"|>c:\Users\bob\assets.json<|"|>,start_line:1}]`,
+			wantName: "read_files",
+		},
+		{
+			name:     "a well formed call is unaffected",
+			content:  `call:read_files{files:[{path:<|"|>c:\Users\bob\assets.json<|"|>}]}`,
+			wantName: "read_files",
+		},
+		{
+			// a brace is not the only thing wrong here, so nothing is invented
+			name:    "a call broken in other ways still fails",
+			content: `call:read_files{files:[{path:`,
+		},
+		{
+			name:    "content with no arguments at all still fails",
+			content: `call:read_files`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, tools)
+			if tt.wantName == "" {
+				if err == nil {
+					t.Fatalf("parsed %+v, want an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Function.Name != tt.wantName {
+				t.Errorf("tool = %q, want %q", got.Function.Name, tt.wantName)
+			}
+		})
+	}
+}
+
+func TestGemma4UnclosedToolCallIsStillLeftAlone(t *testing.T) {
+	// the flush-on-done path has no closing tag, so the call may have been cut
+	// short by a token limit; closing the brace there would turn a truncated
+	// call into a plausible one with arguments missing
+	got := gemma4RepairCandidates(`{n:1`, "count", []api.Tool{gemma4TestStringTool("count", "name")})
+	if len(got) != 1 || got[0] != `{n:1` {
+		t.Fatalf("candidates = %q, want the input unchanged", got)
+	}
+}

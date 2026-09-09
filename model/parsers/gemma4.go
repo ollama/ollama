@@ -315,7 +315,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4IgnoringPostToolCallNoise
 
-			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
+			if toolCall, err := parseGemma4ClosedToolCall(toolCallContent, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
@@ -390,6 +390,38 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 // parseGemma4ToolCall parses a tool call in Gemma 4 format:
 // call:NAME{key:value,key:value}
+// parseGemma4ClosedToolCall parses a tool call the model finished: its closing
+// tag was emitted, so the call is not truncated and a missing final brace is a
+// formatting slip rather than an argument that never arrived.
+//
+// The general repair path deliberately leaves an unclosed object alone, because
+// closing one that a token limit cut short would turn a partial call into a
+// plausible-looking call with arguments missing. That reasoning does not apply
+// once the model has closed the call itself, and the case is common enough to
+// matter: one missing brace otherwise costs the whole call, which reaches the
+// caller as an empty response with the tool call silently dropped.
+func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
+	toolCall, err := parseGemma4ToolCall(content, tools)
+	if err == nil {
+		return toolCall, nil
+	}
+
+	open := strings.Index(content, "{")
+	if open == -1 {
+		return api.ToolCall{}, err
+	}
+
+	closed := content[:open] + repairGemma4MissingObjectClose(content[open:])
+	if closed == content {
+		return api.ToolCall{}, err
+	}
+
+	if toolCall, retryErr := parseGemma4ToolCall(closed, tools); retryErr == nil {
+		return toolCall, nil
+	}
+	return api.ToolCall{}, err
+}
+
 func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
 	// Expected format: call:NAME{args}
 	if !strings.HasPrefix(content, "call:") {
