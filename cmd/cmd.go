@@ -1069,7 +1069,9 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	p.Stop()
-	spinner.Stop()
+	if spinner != nil {
+		spinner.Stop()
+	}
 
 	destination := n.String()
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
