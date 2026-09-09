@@ -228,6 +228,7 @@ console.log(response.message.content);
 
 ### Libraries & SDKs
 
+- [LLM-Client](https://github.com/AlexandreBrillant/llm-client) - Lightweight JS library providing a unified REST API interface
 - [LiteLLM](https://github.com/BerriAI/litellm) - Unified API for 100+ LLM providers
 - [Semantic Kernel](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama) - Microsoft AI orchestration SDK
 - [LangChain4j](https://github.com/langchain4j/langchain4j) - Java LangChain ([example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java))
