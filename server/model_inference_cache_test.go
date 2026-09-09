@@ -24,7 +24,14 @@ func TestInferenceModelCache(t *testing.T) {
 	loadCount := 0
 	cache.loadModel = func(name string) (*Model, error) {
 		loadCount++
-		return GetModel(name)
+		m, err := GetModel(name)
+		if err == nil {
+			m.Options = map[string]any{
+				"stop":   []any{"END", "STOP"},
+				"nested": map[string]any{"enabled": true},
+			}
+		}
+		return m, err
 	}
 
 	first, err := cache.Get("inference-cache")
@@ -46,6 +53,8 @@ func TestInferenceModelCache(t *testing.T) {
 	first.Config.Parser = "mutated"
 	first.Config.ModelFamilies[0] = "mutated"
 	first.capabilities[0] = model.CapabilityImage
+	first.Options["stop"].([]any)[0] = "mutated"
+	first.Options["nested"].(map[string]any)["enabled"] = false
 
 	second, err := cache.Get("inference-cache")
 	if err != nil {
@@ -59,6 +68,12 @@ func TestInferenceModelCache(t *testing.T) {
 	}
 	if got := second.Capabilities(); !slices.Contains(got, model.CapabilityCompletion) || slices.Contains(got, model.CapabilityImage) {
 		t.Fatalf("cached capabilities = %v, want completion only", got)
+	}
+	if got := second.Options["stop"].([]any)[0]; got != "END" {
+		t.Fatalf("cached stop option = %v, want END", got)
+	}
+	if got := second.Options["nested"].(map[string]any)["enabled"]; got != true {
+		t.Fatalf("cached nested option = %v, want true", got)
 	}
 
 	// Recreating the manifest changes its digest and invalidates the entry.
