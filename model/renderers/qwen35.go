@@ -287,7 +287,7 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		content = strings.TrimSpace(content)
 
 		lastMessage := i == len(messages)-1
-		prefill := lastMessage && message.Role == "assistant"
+		prefill := lastMessage && message.Role == "assistant" && len(message.ToolCalls) == 0
 
 		if message.Role == "user" || (message.Role == "system" && i != 0) {
 			if r.variant == qwen35Renderer38 && message.Role == "system" {
