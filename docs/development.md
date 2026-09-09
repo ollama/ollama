@@ -117,6 +117,56 @@ Additional prerequisites:
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
 
+## Linux on IBM Z (s390x)
+
+IBM Z and LinuxONE use a **big-endian** CPU. GGUF model files are always stored
+little-endian, so Ollama must byte-swap the FP16/FP32 scale fields in each
+tensor block at load time. This is handled automatically: the build system
+detects `s390x` and enables `OLLAMA_S390X_BIGENDIAN`, which compiles the
+byte-swap logic into the `llama` inference library.
+
+Additional prerequisites:
+
+- GCC 11+ or Clang 14+
+- CMake 3.24+
+- Ninja (recommended)
+- OpenBLAS: `sudo dnf install openblas-devel` or `sudo apt install libopenblas-dev`
+
+Standard build (auto-detects s390x and enables byte-swap):
+
+```shell
+cmake -B build .
+cmake --build build --parallel 8
+./ollama serve
+```
+
+To build only the llama-server component directly using the preset:
+
+```shell
+cmake -S llama/server --preset cpu_s390x
+cmake --build build/llama-server-cpu_s390x --parallel 8
+```
+
+To cross-compile for s390x from another host, or to enable the byte-swap
+explicitly on any platform:
+
+```shell
+cmake -B build . -DOLLAMA_S390X_BIGENDIAN=ON
+cmake --build build --parallel 8
+```
+
+To verify that the byte-swap is active at runtime, check the server log for:
+
+```
+[llama] OLLAMA_BIGENDIAN_BSWAP: tensor byte-swap enabled
+```
+
+> [!NOTE]
+> GPU acceleration backends (CUDA, ROCm, Vulkan) are not supported on s390x.
+> The `GGML_VXE` flag enables IBM z15+ SIMD vector extensions and can be
+> passed manually (`-DGGML_VXE=ON`), but is not yet wired into the default
+> build presets.
+
 ## MLX Engine (Optional)
 
 The MLX engine enables running safetensor based models. On macOS arm64, MLX is enabled by default. On other platforms, MLX backends are selected with `OLLAMA_MLX_BACKENDS`.
