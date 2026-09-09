@@ -185,3 +185,17 @@ Ollama looks for native helper binaries and acceleration libraries in installed 
 * `build/lib/ollama` and `dist/<platform>/lib/ollama` for local development builds
 
 If the libraries are not found, Ollama will not run with any acceleration libraries.
+
+## Documentation
+
+Install the prerequisites:
+
+- [NodeJS](https://nodejs.org/en).
+- [Mint](https://www.mintlify.com/) via `npm i -g mint`.
+
+Then change to the `/docs` directory and build a local preview:
+
+```shell
+cd docs
+mint dev # This will launch a tab in your browser
+```
