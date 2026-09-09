@@ -2390,3 +2390,28 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+// Regression for https://github.com/ollama/ollama/issues/16785: when stdout is
+// redirected to a file or pipe (not a terminal), displayResponse must not emit
+// word-wrap cursor-control escape sequences into the output.
+func TestDisplayResponseNoEscapesWhenNotATTY(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	// A long single line that would wrap (and emit escape sequences) on a real
+	// terminal. The pipe is not a terminal, so the output must stay plain.
+	content := strings.Repeat("the quick brown fox jumps over the lazy dog ", 5)
+	displayResponse(content, true, &displayResponseState{})
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	out, _ := io.ReadAll(r)
+	if strings.ContainsRune(string(out), '\x1b') {
+		t.Errorf("output contains an ANSI escape sequence when stdout is not a TTY:\n%q", out)
+	}
+	if string(out) != content {
+		t.Errorf("output = %q, want plain content %q", out, content)
+	}
+}
