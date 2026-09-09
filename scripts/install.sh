@@ -86,6 +86,12 @@ if [ "$OS" = "Darwin" ]; then
     if [ -z "${OLLAMA_NO_START:-}" ]; then
         status "Starting Ollama..."
         open -a Ollama --args hidden
+
+        # Wait for the server to be ready
+        for i in 1 2 3 4 5; do
+            curl -s http://localhost:11434/ >/dev/null 2>&1 && break
+            sleep 1
+        done
     fi
 
     status "Install complete. You can now run 'ollama'."
