@@ -1474,6 +1474,7 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 		predictedVRAM    uint64
 		opts             api.Options
 		schedSpread      string
+		tensorSplit      string
 		wantLibrary      string
 		wantMainGPU      *int
 		wantSelectedGPUs int
@@ -1558,11 +1559,73 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 			wantLibrary:      "CUDA",
 			wantSelectedGPUs: 2,
 		},
+		{
+			// Without the bypass this selects CUDA alone: the discrete-before-memory
+			// tie-break drops the integrated Vulkan group regardless of its size, and
+			// the split would then address a device list the iGPU is not in.
+			name:          "request tensor_split keeps devices from every backend",
+			predictedVRAM: 19 * format.GigaByte,
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0", FreeMemory: 11 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "Vulkan1", Integrated: true, FreeMemory: 33 * format.GigaByte},
+			},
+			opts: api.Options{
+				Runner: api.Runner{NumGPU: -1, TensorSplit: "0.48,0.52"},
+			},
+			wantLibrary:      "CUDA",
+			wantSelectedGPUs: 2,
+		},
+		{
+			// Same bypass, reached through the server-wide default instead.
+			name:          "OLLAMA_TENSOR_SPLIT keeps devices from every backend",
+			predictedVRAM: 19 * format.GigaByte,
+			tensorSplit:   "0.45,0.55",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0", FreeMemory: 11 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "Vulkan1", Integrated: true, FreeMemory: 33 * format.GigaByte},
+			},
+			opts:             api.DefaultOptions(),
+			wantLibrary:      "CUDA",
+			wantSelectedGPUs: 2,
+		},
+		{
+			// main_gpu pins the model to one device and appendTensorSplitArgs discards
+			// the split for that reason, so the bypass must not fire ahead of it.
+			name:          "main_gpu still wins over tensor_split",
+			predictedVRAM: 8 * format.GigaByte,
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "CUDA"}, Name: "CUDA0", FreeMemory: 11 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "Vulkan1", Integrated: true, FreeMemory: 33 * format.GigaByte},
+			},
+			opts: api.Options{
+				Runner: api.Runner{NumGPU: -1, MainGPU: testIntPtr(0), TensorSplit: "0.48,0.52"},
+			},
+			wantLibrary:      "CUDA",
+			wantMainGPU:      testIntPtr(0),
+			wantSelectedGPUs: 1,
+			wantGPUID:        "0",
+		},
+		{
+			// A split across one backend must still reach both devices, and must not
+			// be compacted onto the single card that fits.
+			name:          "tensor_split defeats single-GPU compaction",
+			predictedVRAM: 8 * format.GigaByte,
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Name: "Vulkan0", FreeMemory: 11 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "Vulkan1", Integrated: true, FreeMemory: 33 * format.GigaByte},
+			},
+			opts: api.Options{
+				Runner: api.Runner{NumGPU: -1, TensorSplit: "0.48,0.52"},
+			},
+			wantLibrary:      "Vulkan",
+			wantSelectedGPUs: 2,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("OLLAMA_SCHED_SPREAD", tt.schedSpread)
+			t.Setenv("OLLAMA_TENSOR_SPLIT", tt.tensorSplit)
 
 			selected, launchOpts := selectLlamaServerPlacement(systemInfo, tt.gpus, tt.predictedVRAM, tt.opts)
 			require.Len(t, selected, tt.wantSelectedGPUs)

@@ -417,6 +417,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendMainGPUArgs(params, launch.opts)
 
+	params = appendTensorSplitArgs(params, launch.opts, launch.gpus)
+
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
 
 	// Set up library paths for GPU backend discovery
@@ -450,9 +452,13 @@ func SetupLlamaServerCommandEnv(cmd *exec.Cmd, exe string, gpuLibs []string, ext
 		envUpdates[k] = v
 	}
 
-	libraryPaths := llamaServerLibraryPaths(exe, gpuLibs, envUpdates)
+	libraryPaths, backends := llamaServerLibraryPaths(exe, gpuLibs, envUpdates)
 	pathEnv := llamaServerLibraryPathEnv()
 	envUpdates[pathEnv] = strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+	if dir := llamaServerBackendWorkingDir(backends); dir != "" {
+		cmd.Dir = dir
+	}
 
 	applied := make(map[string]bool, len(envUpdates))
 	for i := range cmd.Env {
@@ -485,10 +491,15 @@ func llamaServerLibraryPathEnv() string {
 	}
 }
 
-func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string]string) []string {
+// llamaServerLibraryPaths returns the library search path for the subprocess and,
+// alongside it, every GPU backend it found across gpuLibs in order. The first is
+// published as GGML_BACKEND_PATH; the rest are the caller's problem, because ggml
+// takes only one path there — see llamaServerBackendWorkingDir.
+func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string]string) ([]string, []string) {
 	llamaDir := filepath.Dir(exe)
 	seen := map[string]bool{}
 	var libraryPaths []string
+	var backends []string
 	addPath := func(path string) {
 		if path == "" || seen[path] {
 			return
@@ -506,8 +517,9 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 		if dir == ml.LibOllamaPath || dir == llamaDir {
 			continue
 		}
-		if envUpdates["GGML_BACKEND_PATH"] == "" {
-			if backend := findLlamaServerGPUBackend(dir); backend != "" {
+		if backend := findLlamaServerGPUBackend(dir); backend != "" {
+			backends = append(backends, backend)
+			if envUpdates["GGML_BACKEND_PATH"] == "" {
 				envUpdates["GGML_BACKEND_PATH"] = backend
 			}
 		}
@@ -518,7 +530,38 @@ func llamaServerLibraryPaths(exe string, gpuLibs []string, envUpdates map[string
 			addPath(dir)
 		}
 	}
-	return adjustPlatformLibraryPaths(libraryPaths, gpuLibs)
+	return adjustPlatformLibraryPaths(libraryPaths, gpuLibs), backends
+}
+
+// llamaServerBackendWorkingDir returns the directory to run llama-server from so
+// that a second GPU backend is loaded, or "" when one backend is all there is.
+//
+// ggml loads the single library named by GGML_BACKEND_PATH, then scans two
+// directories for more: the one holding llama-server itself, and the process
+// working directory. Ollama ships each GPU backend in its own subdirectory of
+// lib/ollama, so the executable scan never turns up a GPU backend and the env var
+// is the only one that normally loads. A device list spanning libraries then dies
+// at startup with "invalid device: Vulkan1" -- the flag is right, the backend that
+// would name that device was never registered.
+//
+// The working directory is the one remaining search path a launcher can aim, so
+// aim it at the second backend. Adding the directory to PATH/LD_LIBRARY_PATH is
+// not equivalent: that resolves dependencies of a library already being loaded, it
+// does not make ggml discover one.
+//
+// Two is therefore the ceiling, and it is enough for the case that motivates this
+// (a CUDA discrete GPU plus a Vulkan iGPU). Anything beyond it is dropped loudly
+// rather than silently producing an unloadable device list.
+func llamaServerBackendWorkingDir(backends []string) string {
+	if len(backends) < 2 {
+		return ""
+	}
+	if len(backends) > 2 {
+		slog.Warn("llama-server can load at most two GPU backends; ignoring the rest",
+			"loading", backends[:2], "ignored", backends[2:])
+	}
+
+	return filepath.Dir(backends[1])
 }
 
 func findLlamaServerGPUBackend(dir string) string {
@@ -644,6 +687,101 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	}
 
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
+}
+
+// appendTensorSplitArgs passes an explicit per-device split through to
+// llama-server. A per-request tensor_split option wins over the
+// OLLAMA_TENSOR_SPLIT server-wide default.
+//
+// This deliberately overrides Ollama's own placement decision. The scheduler
+// ranks devices by class and will spill the remainder of a model to CPU rather
+// than place it on a device it considers unhelpful (an iGPU, say); --tensor-split
+// is how a caller overrules that.
+//
+// The devices are named explicitly alongside the split. llama.cpp runs its own
+// device selection first and prunes integrated GPUs from the list, so
+// --tensor-split on its own is silently a no-op -- the proportions get applied
+// to a device list the iGPU was already dropped from. --device puts it back.
+func appendTensorSplitArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
+	split := strings.TrimSpace(opts.TensorSplit)
+	if split == "" {
+		split = strings.TrimSpace(envconfig.TensorSplit())
+	}
+	if split == "" {
+		return params
+	}
+
+	// --main-gpu emits --split-mode none, which pins the whole model to one
+	// device and would silently discard the split. Refuse rather than emit
+	// contradictory flags.
+	if opts.MainGPU != nil {
+		slog.Warn("ignoring tensor_split because main_gpu pins the model to a single device",
+			"tensor_split", split, "main_gpu", *opts.MainGPU)
+		return params
+	}
+
+	normalized, err := normalizeTensorSplit(split)
+	if err != nil {
+		slog.Warn("ignoring invalid tensor_split", "value", split, "error", err)
+		return params
+	}
+
+	names := make([]string, 0, len(gpus))
+	for _, gpu := range gpus {
+		if gpu.Name != "" {
+			names = append(names, gpu.Name)
+		}
+	}
+	if len(names) == 0 {
+		slog.Warn("ignoring tensor_split: no GPU devices to split across", "tensor_split", normalized)
+		return params
+	}
+
+	// Not fatal: llama.cpp pads missing trailing proportions with zero and
+	// ignores extras. But a mismatch is usually a mistake worth surfacing.
+	if got, want := strings.Count(normalized, ",")+1, len(names); got != want {
+		slog.Warn("tensor_split proportion count does not match device count",
+			"proportions", got, "devices", want, "tensor_split", normalized)
+	}
+
+	params = append(params, "--device", strings.Join(names, ","))
+
+	return append(params, "--split-mode", "layer", "--tensor-split", normalized)
+}
+
+// normalizeTensorSplit validates a comma-separated proportion list. The values
+// are proportions rather than percentages -- llama.cpp normalizes them itself,
+// so "3,7" and "0.3,0.7" mean the same thing. Entries beyond the number of
+// available devices are ignored by llama.cpp, and missing trailing entries are
+// treated as zero.
+func normalizeTensorSplit(s string) (string, error) {
+	fields := strings.Split(s, ",")
+	out := make([]string, 0, len(fields))
+
+	var total float64
+	for _, f := range fields {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			return "", fmt.Errorf("empty proportion in %q", s)
+		}
+
+		v, err := strconv.ParseFloat(f, 64)
+		if err != nil {
+			return "", fmt.Errorf("%q is not a number", f)
+		}
+		if v < 0 {
+			return "", fmt.Errorf("proportion %q is negative", f)
+		}
+
+		total += v
+		out = append(out, f)
+	}
+
+	if total <= 0 {
+		return "", errors.New("proportions sum to zero")
+	}
+
+	return strings.Join(out, ","), nil
 }
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
