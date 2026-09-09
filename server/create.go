@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -115,6 +116,17 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		defer func() {
+			// A panic anywhere in the conversion pipeline (e.g. a malformed
+			// GGUF/safetensors file triggering an index-out-of-range or
+			// divide-by-zero in one of the model converters) must not take
+			// down the whole ollama serve process. Recover it here and
+			// report it to the client as a regular error instead.
+			if rec := recover(); rec != nil {
+				slog.Error("panic while creating model", "name", name, "error", rec, "stack", string(debug.Stack()))
+				ch <- gin.H{"error": fmt.Sprintf("failed to create model: %v", rec)}
+			}
+		}()
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}
@@ -189,7 +201,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 		} else if r.Files != nil {
-			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
+			baseLayers, err = convertModelFromFilesFn(r.Files, baseLayers, false, fn)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
@@ -403,6 +415,12 @@ func remoteURL(raw string) (string, error) {
 func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	return convertModelFromFilesWithMediaType(files, baseLayers, isAdapter, "", true, fn)
 }
+
+// convertModelFromFilesFn is a seam over convertModelFromFiles so tests can
+// simulate a panic from the model conversion pipeline (e.g. a malformed
+// GGUF/safetensors file) without needing a real file that crashes a specific
+// converter.
+var convertModelFromFilesFn = convertModelFromFiles
 
 func convertDraftModelFromFiles(files map[string]string, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	return convertModelFromFilesWithMediaType(files, baseLayers, false, manifest.MediaTypeImageDraft, false, fn)
