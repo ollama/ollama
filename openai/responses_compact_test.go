@@ -132,6 +132,120 @@ func TestCompactionTrimKeepsToolPairsAcrossInterleavedResults(t *testing.T) {
 	}
 }
 
+func TestCompactionPreservesStandaloneOutputs(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+		{"type":"message","role":"user","content":"Continue the task."},
+		{"type":"function_call_output","name":"handoff","namespace":"workspace.tools","output":[
+			{"type":"input_text","text":"Keep the original task instructions."},
+			{"type":"input_image","image_url":"` + compactionTestPNG + `"}
+		]},
+		{"type":"function_call_output","call_id":null,"name":"tool_search","output":"A standalone function can have this name."},
+		{"type":"message","role":"assistant","content":"` + strings.Repeat("old reasoning ", 1000) + `"},
+		{"type":"message","role":"user","content":"Latest request."}
+	]}`)
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 1 {
+		t.Fatalf("removed %d items, want only the old assistant message", removed)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"Keep the original task instructions.", "workspace.tools", "handoff", compactionTestPNG} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("summary request lost %q", marker)
+		}
+	}
+	for cycle := range 2 {
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "Continue the work.", "retain_item_ids": []string{},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := decodeResultPayload(t, result)
+		if len(payload.Retained) != 2 {
+			t.Fatalf("cycle %d: retained %d messages, want both standalone outputs", cycle, len(payload.Retained))
+		}
+		handoff, search := payload.Retained[0], payload.Retained[1]
+		if handoff.ToolName != "handoff" || handoff.ToolNamespace != "workspace.tools" || handoff.Content != "Keep the original task instructions." || len(handoff.Images) != 1 {
+			t.Fatalf("cycle %d: handoff changed: %+v", cycle, handoff)
+		}
+		if search.ToolName != "tool_search" || search.Content != "A standalone function can have this name." {
+			t.Fatalf("cycle %d: standalone tool_search changed: %+v", cycle, search)
+		}
+		replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expanded, changed, err := ExpandResponsesCompactionInput(replay)
+		if err != nil || !changed {
+			t.Fatalf("cycle %d: changed=%v err=%v", cycle, changed, err)
+		}
+		var decoded ResponsesRequest
+		if err := json.Unmarshal(expanded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded.Input.Items) != 4 {
+			t.Fatalf("cycle %d: want summary pair and two standalone outputs, got %d items", cycle, len(decoded.Input.Items))
+		}
+		for i, want := range []api.Message{handoff, search} {
+			output, ok := decoded.Input.Items[i+2].(ResponsesFunctionCallOutput)
+			if !ok || output.CallID != "" || output.Name != want.ToolName || output.Namespace != want.ToolNamespace || output.Output != want.Content {
+				t.Fatalf("cycle %d: standalone output %d lost identity or gained a call: %+v", cycle, i, decoded.Input.Items[i+2])
+			}
+		}
+		chat, err := FromResponsesRequest(decoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chat.Messages) != 4 || chat.Messages[2].ToolName != "workspace.tools.handoff" || !bytes.Equal(chat.Messages[2].Images[0], handoff.Images[0]) {
+			t.Fatalf("cycle %d: replay changed standalone content or images: %+v", cycle, chat.Messages)
+		}
+		plan, err = PrepareStandaloneCompaction(expanded)
+		if err != nil {
+			t.Fatalf("cycle %d: cannot compact replay: %v", cycle, err)
+		}
+	}
+}
+
+func TestCompactionStandaloneOutputsDoNotRelaxPairing(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"function_call_output","name":"handoff","call_id":"missing","output":"unmatched"}`,
+		`{"type":"tool_search_output","tools":[]}`,
+		`{"type":"tool_search_output","call_id":null,"tools":[]}`,
+		`{"type":"function_call_output","name":"handoff","call_id":"","output":"empty ID"}`,
+		`{"type":"function_call_output","output":"anonymous"}`,
+	} {
+		t.Run(item, func(t *testing.T) {
+			if _, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[` + item + `]}`)); err == nil {
+				t.Fatal("accepted invalid or unmatched output")
+			}
+		})
+	}
+	// A name on a result with a call ID does not turn it into a standalone output.
+	plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[
+		{"type":"function_call","call_id":"paired","name":"read","arguments":"{}"},
+		{"type":"function_call_output","call_id":"paired","name":"read","output":"ok"},
+		{"type":"message","role":"assistant","content":"Read completed."}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "Finished reading.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained := decodeResultPayload(t, result).Retained; len(retained) != 0 {
+		t.Fatalf("completed pair was forced as standalone state: %+v", retained)
+	}
+}
+
 func compactionResponseBody(t *testing.T, selection map[string]any) []byte {
 	t.Helper()
 	arguments, err := json.Marshal(selection)

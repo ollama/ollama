@@ -331,6 +331,57 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 	})
 }
 
+func TestResponsesStandaloneFunctionOutput(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		fields    string
+		wantName  string
+		wantError bool
+	}{
+		{"omitted call ID", `"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"null call ID", `"call_id":null,"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"no namespace", `"name":"handoff",`, "handoff", false},
+		{"null namespace", `"name":"handoff","namespace":null,`, "handoff", false},
+		{"empty call ID", `"call_id":"","name":"handoff",`, "", true},
+		{"blank call ID", `"call_id":"  ","name":"handoff",`, "", true},
+		{"missing name", ``, "", true},
+		{"null name", `"name":null,`, "", true},
+		{"empty name", `"name":"",`, "", true},
+		{"blank name", `"name":"  ",`, "", true},
+		{"namespace only", `"namespace":"workspace",`, "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"function_call_output","id":"fco_handoff",` + tt.fields + `"output":[{"type":"input_text","text":"Continue the task."}]}]}`)
+			var request ResponsesRequest
+			err := json.Unmarshal(body, &request)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("accepted invalid standalone output")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := request.Input.Items[0].(ResponsesFunctionCallOutput)
+			if output.ID != "fco_handoff" || output.Name != "handoff" || output.CallID != "" || len(output.OutputItems) != 1 {
+				t.Fatalf("standalone identity or content changed: %+v", output)
+			}
+			chat, err := FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chat.Messages) != 1 {
+				t.Fatalf("got %d messages, want the standalone output only", len(chat.Messages))
+			}
+			message := chat.Messages[0]
+			if message.Role != "tool" || message.ToolName != tt.wantName || message.ToolCallID != "" || len(message.ToolCalls) != 0 || message.Content != "Continue the task." {
+				t.Fatalf("standalone output lost its name/content or gained a call: %+v", message)
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequestIgnoresReplayedWebSearchCall(t *testing.T) {
 	req := ResponsesRequest{
 		Model: "test",
@@ -1307,7 +1358,7 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 		"input": [
 			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
 			{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
-			{"type": "function_call_output", "call_id": "call_abc123", "output": "sunny, 72F"}
+			{"type": "function_call_output", "call_id": "call_abc123", "name": "stale_name", "namespace": "stale_namespace", "output": "sunny, 72F"}
 		]
 	}`
 
@@ -1380,6 +1431,9 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	}
 	if toolMsg.ToolCallID != "call_abc123" {
 		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
+	}
+	if toolMsg.ToolName != "" {
+		t.Errorf("paired output name %q would override the original call's name", toolMsg.ToolName)
 	}
 }
 

@@ -342,9 +342,19 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 	}
 	if message.Role == "tool" {
 		if message.ToolCallID == "" {
-			return nil, errors.New("retained tool message is missing tool_call_id")
-		}
-		if message.ToolName == "tool_search" {
+			if strings.TrimSpace(message.ToolName) == "" {
+				return nil, errors.New("retained tool message is missing tool_call_id or name")
+			}
+			output, err := responsesContentValue(message.Content, message.Images)
+			if err != nil {
+				return nil, err
+			}
+			value := map[string]any{"type": "function_call_output", "name": message.ToolName, "output": output}
+			if message.ToolNamespace != "" {
+				value["namespace"] = message.ToolNamespace
+			}
+			values = append(values, value)
+		} else if message.ToolName == "tool_search" {
 			if len(message.Images) > 0 {
 				return nil, errors.New("retained tool search output cannot contain images")
 			}
@@ -502,12 +512,20 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 				return api.Message{}, "", err
 			}
 		}
-		return api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}, "function_call_output", nil
+		message := api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}
+		if value.CallID == "" {
+			message.ToolName = value.Name
+			message.ToolNamespace = value.Namespace
+		}
+		return message, "function_call_output", nil
 	case ResponsesToolSearchCall:
 		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
 			ID: value.CallID, Function: api.ToolCallFunction{Name: "tool_search", Arguments: value.Arguments},
 		}}}, "function_call", nil
 	case ResponsesToolSearchOutput:
+		if value.CallID == "" {
+			return api.Message{}, "", errors.New("tool search output is missing call_id")
+		}
 		tools, err := json.Marshal(value.Tools)
 		if err != nil {
 			return api.Message{}, "", fmt.Errorf("invalid tool search output: %w", err)
@@ -571,6 +589,7 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 	}
 	byCallID := make(map[string]*pendingGroup)
 	ignoredCallIDs := make(map[string]struct{})
+	forced := make(map[string]struct{})
 	var ordered []*pendingGroup
 
 	for i, item := range items {
@@ -592,6 +611,12 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			ordered = append(ordered, group)
 		case "function_call_output":
 			callID := item.Message.ToolCallID
+			if callID == "" && strings.TrimSpace(item.Message.ToolName) != "" {
+				// Standalone outputs can carry the task instructions. Retain them
+				// without inventing a call or relying on the summary to repeat them.
+				forced[item.Ref] = struct{}{}
+				continue
+			}
 			if _, ignored := ignoredCallIDs[callID]; ignored {
 				continue
 			}
@@ -607,7 +632,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 		}
 	}
 
-	forced := make(map[string]struct{})
 	groups := make([]compactionToolGroup, 0, len(ordered))
 	for _, candidate := range ordered {
 		groups = append(groups, candidate.group)
