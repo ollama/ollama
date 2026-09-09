@@ -3,14 +3,22 @@
 // optional per-layer snapshots that can be paged in/out of the live MLX cache
 // arrays.
 //
-// Key properties:
+// Invariants:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
 //     at a time. Switching paths pages in the new path from its snapshots.
-//   - Every node carries its snapshots from creation: prefill captures for
-//     prompt segments, a page-out at close for generated ones. Sliceable
-//     (KV) layers always span exactly the node's edge; whole-state layers
-//     (recurrent, rotating) keep entries only at node ends.
+//   - Sliceable (KV) layers: every node holds a snapshot covering exactly its
+//     edge, so the layer's history is complete along any path from the root.
+//   - Whole-state (recurrent, rotating) layers: what a node holds is the
+//     state at its end offset. A node may hold none.
+//   - Whole-state is captured only while the live caches sit at that offset
+//     (prefill captures, the page-out at close) and is never rebuilt later. A
+//     node split out of an existing edge afterward therefore holds none.
+//   - A request resumes at the deepest node at or below its match that holds
+//     whole-state. begin schedules a capture at the match, so any node a
+//     request resumes at holds whole-state afterward.
 //   - All cache layers must stay at the same token offset.
+//   - Draft caches are settled whenever the trie captures, pages out, or
+//     rewinds: no entry is still waiting on the next token.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
 //   - begin() always re-evaluates at least one token so the pipeline can seed
@@ -281,7 +289,7 @@ pageIn:
 // state that prefix alone determines (offset - draftLookahead), which is where
 // a prompt sharing exactly that prefix restores. The offsets are merged with
 // any snapshots begin already scheduled (e.g. a branch point), with coinciding
-// offsets upgraded to user so eviction preserves them.
+// offsets upgraded to user so compaction keeps them.
 //
 // Offsets at or before the current cache position, or past the end of the
 // prompt, are dropped: callers only request offsets ahead of the prefill base,
@@ -471,20 +479,21 @@ func (c *prefixCache) compactPath() {
 	c.activePath = c.activePath[:n-1]
 }
 
-// pageOut captures a fresh node's state from the live caches, which rest
-// exactly at its end. Nodes reached by traversal already carry snapshots.
+// pageOut captures the snapshots a node is missing from the live caches, which
+// rest exactly at its end.
 func (c *prefixCache) pageOut(node *trieNode) {
-	if node.hasSnapshots() {
+	if hasAllSnapshots(node, c.caches) {
 		return
 	}
 	snaps := make([]cache.Snapshot, len(c.caches))
+	copy(snaps, node.snapshots)
 	for i, kv := range c.caches {
-		if kv == nil {
+		if kv == nil || snaps[i] != nil {
 			continue
 		}
 		snaps[i] = kv.Snapshot(node.startOffset())
 	}
-	node.setSnapshots(snaps, &c.pagedOutBytes)
+	node.swapSnapshots(snaps, &c.pagedOutBytes)
 	logutil.Trace(fmt.Sprintf("page out: [%d, %d)", node.startOffset(), node.endOffset))
 	c.enforceEvictionPolicy()
 }
