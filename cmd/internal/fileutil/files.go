@@ -62,7 +62,7 @@ func writeBackupCopy(srcPath string, integration string) (string, error) {
 		return "", err
 	}
 
-	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().Unix()))
+	backupPath := filepath.Join(dir, fmt.Sprintf("%s.%d", name, time.Now().UnixNano()))
 	if err := copyFile(srcPath, backupPath); err != nil {
 		return "", err
 	}
