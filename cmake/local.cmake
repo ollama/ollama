@@ -112,6 +112,16 @@ if(NOT OLLAMA_HAVE_LLAMA_SERVER)
 else()
     file(READ "${CMAKE_SOURCE_DIR}/LLAMA_CPP_VERSION" OLLAMA_LLAMA_CPP_GIT_TAG)
     string(STRIP "${OLLAMA_LLAMA_CPP_GIT_TAG}" OLLAMA_LLAMA_CPP_GIT_TAG)
+    set(_ollama_llama_cpp_repo "https://github.com/ggml-org/llama.cpp.git")
+    set(_ollama_llama_cpp_tag ${OLLAMA_LLAMA_CPP_GIT_TAG})
+    if(DEFINED ENV{OLLAMA_LLAMA_CPP_REPOSITORY})
+        set(_ollama_llama_cpp_repo "$ENV{OLLAMA_LLAMA_CPP_REPOSITORY}")
+        message(STATUS "Using overridden llama.cpp repository: ${_ollama_llama_cpp_repo}")
+    endif()
+    if(DEFINED ENV{OLLAMA_LLAMA_CPP_TAG})
+        set(_ollama_llama_cpp_tag "$ENV{OLLAMA_LLAMA_CPP_TAG}")
+        message(STATUS "Using overridden llama.cpp tag: ${_ollama_llama_cpp_tag}")
+    endif()
     include(${CMAKE_SOURCE_DIR}/llama/compat/compat.cmake)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" STREQUAL "")
         get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR
@@ -126,8 +136,8 @@ else()
     else()
         set(OLLAMA_LLAMA_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/llama_cpp-src")
         ExternalProject_Add(ollama-llama-cpp-source
-            GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
-            GIT_TAG ${OLLAMA_LLAMA_CPP_GIT_TAG}
+            GIT_REPOSITORY "${_ollama_llama_cpp_repo}"
+            GIT_TAG ${_ollama_llama_cpp_tag}
             GIT_SHALLOW TRUE
             SOURCE_DIR ${OLLAMA_LLAMA_CPP_SOURCE_DIR}
             CONFIGURE_COMMAND ""
