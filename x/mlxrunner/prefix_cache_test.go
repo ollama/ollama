@@ -7,6 +7,7 @@ import (
 
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 // snapshotTracker records every fakeSnapshot created and every Close() call
@@ -1006,6 +1007,46 @@ func TestSnapshotBeyondPrefillSkipped(t *testing.T) {
 			}
 			return true
 		})
+
+		checkTrieInvariants(t, pc.root)
+	})
+}
+
+// TestAtomicMediaBoundaries verifies that a non-causal media item is never
+// split by the cache: a capture scheduled inside its tokens lands at their
+// end, and a prompt whose match ends inside them resumes before them.
+func TestAtomicMediaBoundaries(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		pc := env.pc
+		inputs := []int32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+		const itemPos, itemLen = 3, 6
+		items := []mediaItem{{pos: itemPos, length: itemLen, fold: 1 << 31, item: &base.PreparedItem{}}}
+
+		session := pc.begin(inputs, items)
+		session.schedulePrefillSnapshots([]int{itemPos + itemLen/2})
+		feedAll(pc.caches, inputs[pc.minCacheOffset():len(inputs)-1])
+		session.attachPrefillSnapshots()
+		session.close()
+
+		walkNodes(pc.root, func(n *trieNode) bool {
+			if itemPos < n.endOffset && n.endOffset < itemPos+itemLen {
+				t.Errorf("trie node ends at %d, inside the item's tokens [%d,%d)", n.endOffset, itemPos, itemPos+itemLen)
+			}
+			return true
+		})
+		if !nodeExistsAtOffset(pc.root, itemPos+itemLen) {
+			t.Errorf("capture inside the item did not move to its end %d", itemPos+itemLen)
+		}
+
+		// A prompt ending inside the item matches the stored path through its
+		// last token, which would put the resume point inside the item.
+		short := inputs[:itemPos+itemLen-2]
+		shortItems := []mediaItem{{pos: itemPos, length: len(short) - itemPos, fold: 1 << 31, item: &base.PreparedItem{}}}
+		session = pc.begin(short, shortItems)
+		if resumed := len(short) - len(session.remaining); resumed > itemPos {
+			t.Errorf("resumed at %d, inside the item's tokens starting at %d", resumed, itemPos)
+		}
+		session.close()
 
 		checkTrieInvariants(t, pc.root)
 	})
