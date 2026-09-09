@@ -18,6 +18,11 @@ func TestGetAuthorizationTokenRejectsCrossDomain(t *testing.T) {
 		{"https://example.com/token", "localhost:8000", true},
 		{"https://localhost:5000/token", "localhost:5000", false},
 		{"https://localhost:5000/token", "localhost:6000", true},
+		// The default registry serves its API from registry.ollama.ai but
+		// issues tokens from ollama.com, so that delegation is allowed.
+		{"https://ollama.com/token", "registry.ollama.ai", false},
+		// An arbitrary realm host is still rejected for the default registry.
+		{"https://evil.com/token", "registry.ollama.ai", true},
 	}
 
 	for _, tt := range tests {
@@ -34,6 +39,28 @@ func TestGetAuthorizationTokenRejectsCrossDomain(t *testing.T) {
 			}
 			if !tt.wantMismatch && isMismatch {
 				t.Errorf("unexpected domain mismatch error: %v", err)
+			}
+		})
+	}
+}
+
+func TestRealmHostAllowed(t *testing.T) {
+	tests := []struct {
+		originalHost string
+		realmHost    string
+		want         bool
+	}{
+		{"registry.ollama.ai", "ollama.com", true},
+		{"registry.ollama.ai", "registry.ollama.ai", false}, // same host handled by the caller, not the allowlist
+		{"registry.ollama.ai", "evil.com", false},
+		{"example.com", "ollama.com", false},
+		{"example.com", "auth.example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.originalHost+"->"+tt.realmHost, func(t *testing.T) {
+			if got := realmHostAllowed(tt.originalHost, tt.realmHost); got != tt.want {
+				t.Errorf("realmHostAllowed(%q, %q) = %v, want %v", tt.originalHost, tt.realmHost, got, tt.want)
 			}
 		})
 	}
