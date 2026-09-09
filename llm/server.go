@@ -116,6 +116,13 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
+	if !f.KV().SupportsKVCacheType(kvct) {
+		// Some architectures (e.g. gpt-oss, which uses attention with sinks)
+		// crash llama-server when served with a quantized KV cache. Fall back
+		// to the default rather than passing an unsupported cache type.
+		slog.Warn("model does not support the requested kv cache type, using the default", "model", f.KV().Architecture(), "type", kvct)
+		kvct = ""
+	}
 	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
 }
 
