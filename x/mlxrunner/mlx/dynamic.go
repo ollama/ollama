@@ -69,7 +69,7 @@ func tryLoadFromDir(dir string) bool {
 			continue
 		}
 		if C.mlx_dynamic_load_symbols(handle) != 0 {
-			initLoadError = fmt.Sprintf("failed to load MLX dynamic library symbols: path=%s", path)
+			initLoadError = fmt.Sprintf("failed to load MLX dynamic library symbols: path=%s missing_symbol=%s", path, C.GoString(C.mlx_dynamic_load_error()))
 			C.mlx_dynamic_unload(&handle)
 			continue
 		}
