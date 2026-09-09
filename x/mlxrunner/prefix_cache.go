@@ -19,6 +19,8 @@
 //   - All cache layers must stay at the same token offset.
 //   - Draft caches are settled whenever the trie captures, pages out, or
 //     rewinds: no entry is still waiting on the next token.
+//   - A non-causal media item's tokens are evaluated in one batch: no node
+//     boundary or resume point lies strictly inside them.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
 //   - begin() always re-evaluates at least one token so the pipeline can seed
@@ -64,6 +66,7 @@ type cacheSession struct {
 	cache     *prefixCache
 	inputs    []int32
 	effInputs []uint32 // inputs' key alphabet, media folds applied
+	items     []mediaItem
 	outputs   []int32
 
 	caches    []cache.Cache
@@ -104,6 +107,10 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	if matched == len(inputs) && matched > 0 {
 		matchPath, matched = findBestMatch(c.root, keys[:matched-1])
 	}
+	// A match ending inside a non-causal media item resumes before it.
+	if item := insideAtomicItem(items, matched); item != nil {
+		matchPath, matched = findBestMatch(c.root, keys[:item.pos])
+	}
 
 	// Switch to the matched path, paging in/out as needed.
 	c.switchToPath(matchPath, matched)
@@ -116,6 +123,7 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 		cache:     c,
 		inputs:    inputs,
 		effInputs: effInputs,
+		items:     items,
 		caches:    c.caches,
 		remaining: remaining,
 	}
@@ -133,6 +141,18 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
 	return session
+}
+
+// insideAtomicItem returns the non-causal media item that offset lies strictly
+// inside, or nil.
+func insideAtomicItem(items []mediaItem, offset int) *mediaItem {
+	for i := range items {
+		item := &items[i]
+		if item.atomic() && item.pos < offset && offset < item.pos+item.length {
+			return item
+		}
+	}
+	return nil
 }
 
 // effectiveKeyTokens returns the per-position key alphabet: the token ID
@@ -287,7 +307,8 @@ pageIn:
 // prefill records interior states without the caller breaking the batch. A
 // passed offset names a token prefix; the capture lands at the deepest
 // state that prefix alone determines (offset - draftLookahead), which is where
-// a prompt sharing exactly that prefix restores. The offsets are merged with
+// a prompt sharing exactly that prefix restores. An offset inside a non-causal
+// media item's tokens moves past them. The offsets are merged with
 // any snapshots begin already scheduled (e.g. a branch point), with coinciding
 // offsets upgraded to user so compaction keeps them.
 //
@@ -299,6 +320,9 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	base := c.minCacheOffset()
 	for _, offset := range offsets {
 		offset -= c.draftLookahead
+		if item := insideAtomicItem(s.items, offset); item != nil {
+			offset = item.pos + item.length
+		}
 		if offset <= base || offset > len(s.inputs) {
 			continue
 		}
