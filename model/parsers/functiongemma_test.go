@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -429,4 +431,51 @@ func TestFunctionGemmaParser_HasSupport(t *testing.T) {
 	parser := &FunctionGemmaParser{}
 	assert.True(t, parser.HasToolSupport())
 	assert.False(t, parser.HasThinkingSupport())
+}
+
+func TestFunctionGemmaArrayJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		arguments string
+		want      string
+	}{
+		{"empty", "items:[]", `{"items":[]}`},
+		{"nested_object", "payload:{items:[]}", `{"payload":{"items":[]}}`},
+		{"nested_array", "items:[[]]", `{"items":[[]]}`},
+		{"nonempty", "items:[1,<escape>x<escape>]", `{"items":[1,"x"]}`},
+	} {
+		for _, streaming := range []bool{false, true} {
+			name := tc.name
+			if streaming {
+				name += "/streaming"
+			}
+			t.Run(name, func(t *testing.T) {
+				p := ParserForName("functiongemma")
+				p.Init(nil, nil, nil)
+				input := "<start_function_call>call:set_items{" + tc.arguments + "}<end_function_call>"
+				chunks := []string{input}
+				if streaming {
+					chunks = strings.Split(input, "")
+				}
+				var calls []api.ToolCall
+				for i, chunk := range chunks {
+					_, _, got, err := p.Add(chunk, i == len(chunks)-1)
+					if err != nil {
+						t.Fatal(err)
+					}
+					calls = append(calls, got...)
+				}
+				if len(calls) != 1 {
+					t.Fatalf("got %d tool calls, want 1", len(calls))
+				}
+				encoded, err := json.Marshal(calls[0].Function.Arguments)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(encoded) != tc.want {
+					t.Errorf("arguments = %s, want %s", encoded, tc.want)
+				}
+			})
+		}
+	}
 }
