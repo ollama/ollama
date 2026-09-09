@@ -58,6 +58,21 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
+	filePtr := f
+	defer func() {
+		if err != nil && filePtr != nil {
+			if filePtr.tensors != nil && filePtr.tensors.stop != nil {
+				filePtr.tensors.stop()
+			}
+			if filePtr.keyValues != nil && filePtr.keyValues.stop != nil {
+				filePtr.keyValues.stop()
+			}
+			if filePtr.file != nil {
+				filePtr.file.Close()
+			}
+		}
+	}()
+
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err := binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {

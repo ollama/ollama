@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
+	"runtime"
 )
 
 func createBinFile(tb testing.TB) string {
@@ -245,5 +246,37 @@ func BenchmarkRead(b *testing.B) {
 		}
 
 		f.Close()
+	}
+}
+
+func TestOpenGoroutineLeak(t *testing.T) {
+	data := []byte{0x47, 0x47, 0x55, 0x46, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	
+	f, err := os.CreateTemp("", "truncated-*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	runtime.GC()
+	initialGoroutines := runtime.NumGoroutine()
+
+	for i := 0; i < 20; i++ {
+		ggufFile, err := gguf.Open(f.Name())
+		if err == nil {
+			t.Errorf("expected error, got nil")
+			ggufFile.Close()
+		}
+	}
+
+	runtime.GC()
+	finalGoroutines := runtime.NumGoroutine()
+
+	if finalGoroutines-initialGoroutines > 5 {
+		t.Fatalf("goroutine leak detected: initial %d, final %d", initialGoroutines, finalGoroutines)
 	}
 }
