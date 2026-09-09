@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -9,9 +10,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 func BenchmarkDownloadChunkCompletion(b *testing.B) {
@@ -109,5 +117,79 @@ func TestDownloadChunkDetectsStallBeforeFirstByte(t *testing.T) {
 	}
 	if elapsed >= 5*downloadStallTimeout {
 		t.Fatalf("downloadChunk() detected the stall after %v, want less than %v", elapsed, 5*downloadStallTimeout)
+	}
+}
+
+// TestDownloadBlobRedownloadsCorruptedExisting reproduces
+// https://github.com/ollama/ollama/issues/17520: a blob on disk whose
+// content doesn't match its digest, but whose size happens to match, must
+// not be trusted as a cache hit just because a same-size file exists at its
+// path.
+func TestDownloadBlobRedownloadsCorruptedExisting(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	goodData := []byte("the quick brown fox jumps over the lazy dog")
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(goodData))
+
+	fp, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pre-populate the blob store with a same-size but corrupted blob, as a
+	// stalled write or disk error would leave behind.
+	if err := os.WriteFile(fp, make([]byte, len(goodData)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var directRequests atomic.Int32
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead:
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(goodData)))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/direct/"):
+			directRequests.Add(1)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(goodData)))
+			w.WriteHeader(http.StatusPartialContent)
+			w.Write(goodData)
+		case r.Method == http.MethodGet:
+			// Resolution request: redirect to the direct blob URL, mirroring
+			// a registry handing off to a CDN.
+			w.Header().Set("Location", serverURL+"/direct/blob")
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	n := model.ParseName("test/model:latest")
+	n.ProtocolScheme = "http"
+	n.Host = strings.TrimPrefix(server.URL, "http://")
+
+	cacheHit, err := downloadBlob(t.Context(), downloadOpts{
+		n:       n,
+		digest:  digest,
+		regOpts: &registryOptions{},
+		fn:      func(api.ProgressResponse) {},
+	})
+	if err != nil {
+		t.Fatalf("downloadBlob failed: %v", err)
+	}
+	if cacheHit {
+		t.Error("cacheHit = true for a corrupted blob; want a fresh download")
+	}
+	if directRequests.Load() == 0 {
+		t.Error("no request made to fetch blob content; corrupted same-size blob was trusted instead of re-downloaded")
+	}
+
+	got, err := os.ReadFile(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, goodData) {
+		t.Error("blob on disk does not match expected content after re-download")
 	}
 }

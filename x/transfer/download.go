@@ -88,6 +88,69 @@ func (d *downloader) holdBody(ctx context.Context) (func(), error) {
 	return func() { d.bodySem.Release(1) }, nil
 }
 
+// verifyExisting checks blobs already present at destDir against their
+// digest, concurrently. Blobs that are missing, wrong-sized, or fail digest
+// verification are returned for (re)download; the rest count toward the
+// returned already-verified byte total.
+func verifyExisting(ctx context.Context, blobs []Blob, destDir string, concurrency int, logger *slog.Logger) ([]Blob, int64, error) {
+	var (
+		mu           sync.Mutex
+		needDownload []Blob
+		verified     int64
+	)
+
+	sem := semaphore.NewWeighted(int64(max(1, concurrency)))
+	g, ctx := errgroup.WithContext(ctx)
+	for _, blob := range blobs {
+		g.Go(func() error {
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+			defer sem.Release(1)
+
+			path := filepath.Join(destDir, digestToPath(blob.Digest))
+			ok := blobMatchesDigest(path, blob.Size, blob.Digest)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if ok {
+				if logger != nil {
+					logger.Debug("blob already exists", "digest", blob.Digest, "size", blob.Size)
+				}
+				verified += blob.Size
+			} else {
+				needDownload = append(needDownload, blob)
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, 0, err
+	}
+	return needDownload, verified, nil
+}
+
+// blobMatchesDigest reports whether the file at path exists, matches size,
+// and its content hashes to digest.
+func blobMatchesDigest(path string, size int64, digest string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil || fi.Size() != size {
+		return false
+	}
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)) == digest
+}
+
 func download(ctx context.Context, opts DownloadOptions) error {
 	if len(opts.Blobs) == 0 {
 		return nil
@@ -99,25 +162,23 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		total += b.Size
 	}
 
-	// Filter out already-downloaded blobs and track completed bytes
-	var blobs []Blob
-	var alreadyCompleted int64
-	for _, b := range opts.Blobs {
-		if fi, _ := os.Stat(filepath.Join(opts.DestDir, digestToPath(b.Digest))); fi != nil && fi.Size() == b.Size {
-			if opts.Logger != nil {
-				opts.Logger.Debug("blob already exists", "digest", b.Digest, "size", b.Size)
-			}
-			alreadyCompleted += b.Size
-			continue
-		}
-		blobs = append(blobs, b)
-	}
-	if len(blobs) == 0 {
-		return nil
+	concurrency := cmp.Or(opts.Concurrency, DefaultDownloadConcurrency)
+
+	// Blobs already on disk are verified against their digest, not just
+	// stat'd, before being trusted: a size-only check can't tell a valid
+	// blob from one a stalled write or disk error left corrupted at the
+	// right length.
+	blobs, alreadyCompleted, err := verifyExisting(ctx, opts.Blobs, opts.DestDir, concurrency, opts.Logger)
+	if err != nil {
+		return err
 	}
 
 	progress := newProgressTracker(total, opts.Progress)
-	progress.add(alreadyCompleted) // Report already-downloaded bytes upfront
+	progress.add(alreadyCompleted) // Report already-verified bytes upfront
+
+	if len(blobs) == 0 {
+		return nil
+	}
 
 	d := &downloader{
 		client:       cmp.Or(opts.Client, defaultClient),
@@ -135,7 +196,6 @@ func download(ctx context.Context, opts DownloadOptions) error {
 	// 0 or negative serializes; never unbounded.
 	d.bodySem = semaphore.NewWeighted(int64(max(1, opts.BodyConcurrency)))
 
-	concurrency := cmp.Or(opts.Concurrency, DefaultDownloadConcurrency)
 	sem := semaphore.NewWeighted(int64(concurrency))
 
 	start := time.Now()
@@ -149,7 +209,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 			return d.download(ctx, blob)
 		})
 	}
-	err := g.Wait()
+	err = g.Wait()
 	elapsed := time.Since(start)
 	done := d.progress.completed.Load() - alreadyCompleted
 	mbps := float64(done) / 1e6 / max(0.001, elapsed.Seconds())
