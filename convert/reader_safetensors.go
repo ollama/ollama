@@ -24,6 +24,10 @@ type safetensorMetadata struct {
 	Offsets []int64  `json:"data_offsets"`
 }
 
+// maxSafetensorsHeader is the largest safetensors header length we will
+// allocate for. The safetensors format specifies a 100MB header limit.
+const maxSafetensorsHeader = 100 << 20
+
 func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	fp8Block, err := safetensorsFP8BlockSize(fsys)
 	if err != nil {
@@ -41,6 +45,15 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 		var n int64
 		if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
 			return nil, err
+		}
+
+		// n is the safetensors header length, read directly from the
+		// (attacker-controlled) file. Validate it before using it as an
+		// allocation size: a negative value panics make() with
+		// "makeslice: cap out of range" and a huge value exhausts memory.
+		// The safetensors format caps the header at 100MB.
+		if n < 0 || n > maxSafetensorsHeader {
+			return nil, fmt.Errorf("invalid safetensors header length %d (must be between 0 and %d bytes)", n, maxSafetensorsHeader)
 		}
 
 		b := bytes.NewBuffer(make([]byte, 0, n))
