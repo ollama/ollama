@@ -1,0 +1,276 @@
+---
+title: Image generation
+description: Generate images from text prompts using Ollama's experimental text-to-image feature
+---
+
+<Warning>
+Image generation is an experimental feature and may change or be removed in future versions.
+</Warning>
+
+Ollama supports text-to-image generation using diffusion-based models. Generate images from text prompts using the CLI, native API, or OpenAI-compatible endpoint.
+
+## Quick start
+
+```shell
+ollama run x/z-image-turbo "A mountain landscape at sunset"
+```
+
+The generated image will be saved to your current directory.
+
+## CLI usage
+
+### Basic generation
+
+```shell
+ollama run x/z-image-turbo "A futuristic city with flying cars"
+```
+
+### Specify output file
+
+```shell
+ollama run x/z-image-turbo "A cute robot" --output robot.png
+```
+
+### Custom dimensions
+
+```shell
+ollama run x/z-image-turbo "Abstract art" --width 1024 --height 768
+```
+
+## API usage
+
+Use the `/api/generate` endpoint with an image generation model to create images programmatically.
+
+<Tabs>
+  <Tab title="cURL">
+    ```shell
+    curl -X POST http://localhost:11434/api/generate \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "x/z-image-turbo",
+      "prompt": "A serene Japanese garden with cherry blossoms",
+      "options": {
+        "width": 1024,
+        "height": 1024,
+        "num_inference_steps": 20
+      },
+      "stream": false
+    }'
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from ollama import generate
+    import base64
+
+    response = generate(
+      model='x/z-image-turbo',
+      prompt='A serene Japanese garden with cherry blossoms',
+      options={
+        'width': 1024,
+        'height': 1024,
+        'num_inference_steps': 20,
+      },
+    )
+
+    # The response contains base64-encoded image data
+    image_data = base64.b64decode(response['images'][0])
+    with open('garden.png', 'wb') as f:
+      f.write(image_data)
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import ollama from 'ollama'
+    import fs from 'fs'
+
+    const response = await ollama.generate({
+      model: 'x/z-image-turbo',
+      prompt: 'A serene Japanese garden with cherry blossoms',
+      options: {
+        width: 1024,
+        height: 1024,
+        num_inference_steps: 20,
+      },
+      stream: false,
+    })
+
+    // The response contains base64-encoded image data
+    const imageData = Buffer.from(response.images[0], 'base64')
+    fs.writeFileSync('garden.png', imageData)
+    ```
+  </Tab>
+</Tabs>
+
+## Parameters
+
+Control image generation with the following parameters in the `options` object:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `width` | integer | 1024 | Width of the generated image in pixels |
+| `height` | integer | 1024 | Height of the generated image in pixels |
+| `num_inference_steps` | integer | 20 | Number of diffusion steps. Higher values produce better quality but take longer |
+| `guidance_scale` | float | 7.5 | How closely to follow the prompt. Higher values adhere more strictly to the prompt |
+| `seed` | integer | random | Seed for reproducible generation |
+
+### Adjusting quality vs speed
+
+For faster generation with acceptable quality:
+
+```shell
+curl -X POST http://localhost:11434/api/generate \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "x/z-image-turbo",
+  "prompt": "A colorful parrot",
+  "options": {
+    "num_inference_steps": 10
+  }
+}'
+```
+
+For higher quality with longer generation time:
+
+```shell
+curl -X POST http://localhost:11434/api/generate \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "x/z-image-turbo",
+  "prompt": "A colorful parrot",
+  "options": {
+    "num_inference_steps": 50,
+    "guidance_scale": 10
+  }
+}'
+```
+
+## Streaming progress
+
+Enable streaming to receive progress updates during image generation:
+
+<Tabs>
+  <Tab title="cURL">
+    ```shell
+    curl -X POST http://localhost:11434/api/generate \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "x/z-image-turbo",
+      "prompt": "A majestic lion",
+      "stream": true
+    }'
+    ```
+
+    Each streamed response includes a `progress` field indicating completion percentage:
+
+    ```json
+    {"progress": 0.1, "status": "generating"}
+    {"progress": 0.5, "status": "generating"}
+    {"progress": 1.0, "status": "complete", "images": ["base64..."]}
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from ollama import generate
+
+    stream = generate(
+      model='x/z-image-turbo',
+      prompt='A majestic lion',
+      stream=True,
+    )
+
+    for chunk in stream:
+      if 'progress' in chunk:
+        print(f"Progress: {chunk['progress'] * 100:.0f}%")
+      if 'images' in chunk:
+        print("Image generation complete!")
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import ollama from 'ollama'
+
+    const stream = await ollama.generate({
+      model: 'x/z-image-turbo',
+      prompt: 'A majestic lion',
+      stream: true,
+    })
+
+    for await (const chunk of stream) {
+      if (chunk.progress) {
+        console.log(`Progress: ${(chunk.progress * 100).toFixed(0)}%`)
+      }
+      if (chunk.images) {
+        console.log('Image generation complete!')
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## OpenAI compatibility
+
+Ollama provides an OpenAI-compatible endpoint for image generation at `/v1/images/generations`. See [OpenAI compatibility](/api/openai-compatibility#v1imagesgenerations-experimental) for details.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url='http://localhost:11434/v1/',
+        api_key='ollama',  # required but ignored
+    )
+
+    response = client.images.generate(
+        model='x/z-image-turbo',
+        prompt='A cute robot learning to paint',
+        size='1024x1024',
+        response_format='b64_json',
+    )
+
+    print(response.data[0].b64_json[:50] + '...')
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import OpenAI from "openai"
+
+    const openai = new OpenAI({
+      baseURL: "http://localhost:11434/v1/",
+      apiKey: "ollama", // required but ignored
+    })
+
+    const response = await openai.images.generate({
+      model: "x/z-image-turbo",
+      prompt: "A cute robot learning to paint",
+      size: "1024x1024",
+      response_format: "b64_json",
+    })
+
+    console.log(response.data[0].b64_json.slice(0, 50) + "...")
+    ```
+  </Tab>
+  <Tab title="cURL">
+    ```shell
+    curl -X POST http://localhost:11434/v1/images/generations \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "x/z-image-turbo",
+      "prompt": "A cute robot learning to paint",
+      "size": "1024x1024",
+      "response_format": "b64_json"
+    }'
+    ```
+  </Tab>
+</Tabs>
+
+## Available models
+
+Pull an image generation model to get started:
+
+```shell
+ollama pull x/z-image-turbo
+```
+
+Check [ollama.com/search](https://ollama.com/search?c=image-generation) for available image generation models.
