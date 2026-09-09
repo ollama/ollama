@@ -604,6 +604,13 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 		rawContent := result.Content
 
 		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, historyTokens+batchTokens)
+		if len(result.Images) > 0 {
+			images := make([]api.ImageData, len(result.Images))
+			for i, img := range result.Images {
+				images[i] = api.ImageData(img)
+			}
+			msg.Images = images
+		}
 		batch.messages = append(batch.messages, msg)
 		batchTokens += estimateMessagesTokens([]api.Message{msg})
 		content := msg.Content
@@ -922,6 +929,18 @@ func toolMessageWithLimit(toolName, toolCallID, content string, maxRunes int) ap
 		ToolName:   toolName,
 		ToolCallID: toolCallID,
 	}
+}
+
+// toolMessageWithImages creates a tool result message that includes image data
+// (e.g. screenshots). Images are not truncated by the text content limiter.
+func toolMessageWithImages(toolName, toolCallID, content string, maxRunes int, images [][]byte) api.Message {
+	msg := toolMessageWithLimit(toolName, toolCallID, content, maxRunes)
+	apiImages := make([]api.ImageData, len(images))
+	for i, img := range images {
+		apiImages[i] = api.ImageData(img)
+	}
+	msg.Images = apiImages
+	return msg
 }
 
 func smallContextToolResultLimitRunes(contextWindow int) int {
