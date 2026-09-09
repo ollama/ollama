@@ -146,8 +146,13 @@ func parseAdditionalSpecialTokens(fsys fs.FS) ([]specialToken, error) {
 		}
 	case []any:
 		for _, s := range st {
-			// marshal and unmarshal the object to get the special token
-			tMap := s.(map[string]any)
+			// marshal and unmarshal the object to get the special token.
+			// s comes from attacker-controlled JSON: a non-object entry
+			// (e.g. [1,2,3]) would panic an unchecked type assertion.
+			tMap, ok := s.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("invalid additional_special_tokens entry %v: expected object", s)
+			}
 			data, err := json.Marshal(tMap)
 			if err != nil {
 				return nil, err
