@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [Skales](https://github.com/skalesapp/skales) - Local-first AI agent for Windows, macOS and Linux with 197 built-in tools, a media studio and mobile companions
 
 #### Mobile
 
