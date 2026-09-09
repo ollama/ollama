@@ -36,12 +36,15 @@ mkdir -p dist
 
 _build_darwin_intel() {
     status "Building darwin amd64 (Intel, macOS 12+)"
+    # MLX is deliberately disabled on this fork target: it is an Apple-Silicon
+    # optimized backend, this build is Intel-only with no usable Metal GPU,
+    # and MLX's current LAPACK usage does not compile against this machine's
+    # Xcode 14 SDK. GGML/llama.cpp (used by every locally pulled model) is
+    # unaffected and remains the only backend built here.
     SOURCE_BUILD=build/darwin-sources
-    cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
-    cmake --build "$SOURCE_BUILD" --target ollama-llama-cpp-source --target ollama-mlx-sources
+    cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS= -DOLLAMA_LLAMA_BACKENDS=
+    cmake --build "$SOURCE_BUILD" --target ollama-llama-cpp-source
     LLAMA_CPP_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/llama_cpp-src"
-    MLX_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-src"
-    MLX_C_SHARED_SRC="$(pwd)/$SOURCE_BUILD/_deps/mlx-c-src"
 
     INSTALL_PREFIX=dist/darwin-amd64/
     BUILD_DIR=build/darwin-amd64
@@ -54,17 +57,14 @@ _build_darwin_intel() {
         -DOLLAMA_PAYLOAD_INSTALL_PREFIX=$INSTALL_PREFIX \
         -DOLLAMA_GO_OUTPUT=$INSTALL_PREFIX/ollama \
         -DOLLAMA_VERSION="$VERSION" \
-        -DOLLAMA_MLX_BACKENDS=metal_v3 \
+        -DOLLAMA_MLX_BACKENDS= \
         -DOLLAMA_LLAMA_BACKENDS= \
-        -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC \
-        -DFETCHCONTENT_SOURCE_DIR_MLX=$MLX_SHARED_SRC \
-        -DFETCHCONTENT_SOURCE_DIR_MLX-C=$MLX_C_SHARED_SRC \
-        -DMLX_ENABLE_X64_MAC=ON
+        -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=$LLAMA_CPP_SHARED_SRC
 
     GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 \
         CGO_CFLAGS="-O3 -mmacosx-version-min=12.0" \
         CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=12.0" \
-        cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel
+        cmake --build "$BUILD_DIR" --target ollama-local --parallel
 }
 
 _build_macapp_intel() {
