@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 	"testing"
@@ -2089,6 +2090,10 @@ type mockLlm struct {
 	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
 	// load failure (e.g. llama-server crashing due to under-predicted VRAM).
 	loadErr error
+
+	// done, if non-nil, is returned from Done(); tests can close it to
+	// simulate a llama-server process exiting while the runner is loaded.
+	done chan struct{}
 }
 
 func (s *mockLlm) ModelPath() string {
@@ -2154,9 +2159,19 @@ func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
-func (s *mockLlm) HasExited() bool                                    { return false }
-func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
-func (s *mockLlm) ContextLength() int                                 { return s.contextLength }
+func (s *mockLlm) HasExited() bool {
+	if s.done != nil {
+		select {
+		case <-s.done:
+			return true
+		default:
+		}
+	}
+	return false
+}
+func (s *mockLlm) Done() <-chan struct{}             { return s.done }
+func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID { return nil }
+func (s *mockLlm) ContextLength() int                { return s.contextLength }
 
 func TestRunnerCanBeEvicted(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
@@ -2235,4 +2250,206 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}
+
+// TestSchedExpiredRunnerNotResurrected reproduces the deadlock from
+// https://github.com/ollama/ollama/issues/17408. When the scheduler marks a
+// runner for expiration (e.g. to evict it and make room for another model)
+// while a request is still in flight, a concurrent request taking the fast
+// path must not overwrite the runner's session duration. If it did, the
+// runner would be "resurrected" with a long-lived expiration timer, the
+// scheduler's unload wait would never complete, and all subsequent loads
+// would hang forever.
+func TestSchedExpiredRunnerNotResurrected(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	runner := &runnerRef{
+		llama:           llm,
+		sessionDuration: 2 * time.Second,
+		numParallel:     1,
+	}
+
+	// Simulate the scheduler marking this runner for eviction while a
+	// request is still in flight (refCount > 0, so it cannot be unloaded
+	// yet). This is exactly the state processPending reaches before it
+	// blocks waiting for the unload.
+	runner.refMu.Lock()
+	runner.refCount = 1
+	runner.markForExpiration()
+	runner.refMu.Unlock()
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+
+	// A concurrent request arrives and takes the fast path. With the bug,
+	// useLoadedRunner would overwrite sessionDuration with the request's
+	// keep-alive (e.g. MaxInt64 for keep_alive=-1), resurrecting the runner.
+	req := &LlmRequest{
+		ctx:             ctx,
+		opts:            api.DefaultOptions(),
+		sessionDuration: &api.Duration{Duration: time.Duration(math.MaxInt64)},
+		successCh:       make(chan *runnerRef, 1),
+	}
+	finished := make(chan *LlmRequest, 1)
+	req.useLoadedRunner(runner, finished)
+
+	// The runner must still be marked for expiration with a zero session
+	// duration so that once it goes idle the finished handler unloads it
+	// instead of arming a ~292-year timer.
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+	require.Equal(t, uint(2), runner.refCount)
+
+	// Complete the in-flight request, then let the fast-path request finish.
+	runner.refMu.Lock()
+	runner.refCount = 1
+	runner.refMu.Unlock()
+	done()
+	fin := <-finished
+	require.Equal(t, req, fin)
+}
+
+// TestSchedMarkForExpiration verifies that markForExpiration stops any
+// pending expiration timer, zeroes the session duration, and sets the
+// expiring flag so concurrent requests cannot resurrect the runner.
+func TestSchedMarkForExpiration(t *testing.T) {
+	runner := &runnerRef{
+		sessionDuration: 5 * time.Minute,
+		expireTimer:     time.AfterFunc(time.Hour, func() {}),
+	}
+
+	runner.refMu.Lock()
+	runner.markForExpiration()
+	runner.refMu.Unlock()
+
+	require.True(t, runner.expiring)
+	require.Equal(t, time.Duration(0), runner.sessionDuration)
+	require.Nil(t, runner.expireTimer)
+}
+
+// TestSchedEvictsRunnerOnProcessExit verifies the crash-detection path: when
+// the llama-server subprocess dies while the runner is still considered
+// loaded (see #17428 / #17509), closing the runner's Done channel must cause
+// the scheduler to evict it from s.loaded instead of leaving a stale entry
+// that makes ollama ps report the model as loaded and requests hang against
+// a dead process.
+func TestSchedEvictsRunnerOnProcessExit(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	llm := &mockLlm{
+		vramByGPU: map[ml.DeviceID]uint64{},
+		done:      make(chan struct{}),
+	}
+	runner := &runnerRef{
+		model:           &Model{Name: "crashy", ModelPath: "/fake/crashy/model"},
+		modelPath:       "/fake/crashy/model",
+		modelKey:        "/fake/crashy/model",
+		llama:           llm,
+		sessionDuration: time.Hour, // long-lived: would never unload on its own
+		refCount:        0,
+		pid:             -1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/crashy/model"] = runner
+	s.loadedMu.Unlock()
+	require.Len(t, s.loaded, 1)
+
+	// Start the scheduler loops so processCompleted consumes expiredCh.
+	s.Run(ctx)
+
+	// Register the crash watcher exactly as load() does, then simulate the
+	// llama-server process dying.
+	go func(r *runnerRef, l *mockLlm) {
+		<-l.Done()
+		slog.Warn("llama-server process exited while loaded; evicting runner",
+			"model", r.modelKey, "pid", r.pid)
+		s.expiredCh <- r
+	}(runner, llm)
+	close(llm.done)
+
+	// Drive the expiredCh consumer (processCompleted) until the runner is gone.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.loadedMu.Lock()
+		_, stillLoaded := s.loaded["/fake/crashy/model"]
+		s.loadedMu.Unlock()
+		if !stillLoaded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	require.NotContains(t, s.loaded, "/fake/crashy/model",
+		"runner whose process exited must be evicted from loaded")
+}
+
+// TestSchedExpiredEventForcesUnloadWhenExited verifies the eviction path: an
+// expired event for a runner whose process has already exited must not be
+// retried forever even if refCount > 0 (a dead process never completes its
+// in-flight requests), otherwise the stale runner would never be cleaned up.
+func TestSchedExpiredEventForcesUnloadWhenExited(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+
+	doneCh := make(chan struct{})
+	close(doneCh) // process already dead
+	llm := &mockLlm{
+		vramByGPU: map[ml.DeviceID]uint64{},
+		done:      doneCh,
+	}
+	runner := &runnerRef{
+		model:           &Model{Name: "dead", ModelPath: "/fake/dead/model"},
+		modelPath:       "/fake/dead/model",
+		modelKey:        "/fake/dead/model",
+		llama:           llm,
+		sessionDuration: time.Hour,
+		refCount:        1, // in-flight request that will never complete
+		pid:             -1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/dead/model"] = runner
+	s.loadedMu.Unlock()
+
+	// Start the scheduler loops so processCompleted consumes expiredCh.
+	s.Run(ctx)
+
+	// Send an expired event while refCount > 0 and the process has exited.
+	// With the fix, HasExited() short-circuits the retry loop and forces the
+	// unload path instead of rescheduling forever.
+	select {
+	case s.expiredCh <- runner:
+	case <-time.After(time.Second):
+		t.Fatal("timed out sending expired event")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.loadedMu.Lock()
+		_, stillLoaded := s.loaded["/fake/dead/model"]
+		s.loadedMu.Unlock()
+		if !stillLoaded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	require.NotContains(t, s.loaded, "/fake/dead/model",
+		"exited runner with in-flight requests must still be unloaded")
 }
