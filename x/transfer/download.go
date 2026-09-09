@@ -314,7 +314,6 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 		if err != nil {
 			return 0, err
 		}
-		setSparse(f)
 	}
 	defer f.Close()
 
