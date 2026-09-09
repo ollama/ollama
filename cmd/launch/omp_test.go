@@ -313,6 +313,25 @@ func TestOMPFindPath(t *testing.T) {
 	})
 }
 
+func TestOMPModelConfig(t *testing.T) {
+	t.Run("sets reasoning when model has thinking capability", func(t *testing.T) {
+		cfg := ompModelConfig(LaunchModel{
+			Name:         "glm-5.2:cloud",
+			Capabilities: []modelpkg.Capability{modelpkg.CapabilityThinking},
+		})
+		if cfg["reasoning"] != true {
+			t.Error("expected reasoning = true for thinking model")
+		}
+	})
+
+	t.Run("omits reasoning for non-thinking model", func(t *testing.T) {
+		cfg := ompModelConfig(LaunchModel{Name: "llama3.2"})
+		if _, ok := cfg["reasoning"]; ok {
+			t.Error("reasoning should not be set for non-thinking model")
+		}
+	})
+}
+
 func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	home := t.TempDir()
 	setOMPTestHome(t, home)
@@ -321,16 +340,17 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	o := &OMP{}
 	models := []LaunchModel{
 		{
-			Name:            "glm-5.1:cloud",
-			ContextLength:   202_752,
+			Name:            "glm-5.2:cloud",
+			ContextLength:   1_048_576,
 			MaxOutputTokens: 131_072,
+			Capabilities:    []modelpkg.Capability{modelpkg.CapabilityThinking},
 		},
 		{
 			Name:         "qwen3.6",
 			Capabilities: []modelpkg.Capability{modelpkg.CapabilityVision},
 		},
 	}
-	if err := o.ConfigureWithModels("glm-5.1:cloud", models); err != nil {
+	if err := o.ConfigureWithModels("glm-5.2:cloud", models); err != nil {
 		t.Fatalf("ConfigureWithModels returned error: %v", err)
 	}
 
@@ -360,20 +380,23 @@ func TestOMPConfigureWithModelsWritesModelsYML(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("models length = %d, want 2", len(entries))
 	}
-	if entries[0]["id"] != "glm-5.1:cloud" {
+	if entries[0]["id"] != "glm-5.2:cloud" {
 		t.Fatalf("first model id = %v, want primary first", entries[0]["id"])
 	}
-	if got := numericYAMLValue(entries[0]["contextWindow"]); got != 202_752 {
-		t.Fatalf("contextWindow = %d, want 202752", got)
+	if got := numericYAMLValue(entries[0]["contextWindow"]); got != 1_048_576 {
+		t.Fatalf("contextWindow = %d, want 1048576", got)
 	}
 	if got := numericYAMLValue(entries[0]["maxTokens"]); got != 131_072 {
 		t.Fatalf("maxTokens = %d, want 131072", got)
 	}
+	if entries[0]["reasoning"] != true {
+		t.Fatalf("reasoning = %v, want true", entries[0]["reasoning"])
+	}
 	if input := stringSliceYAMLValue(entries[1]["input"]); !slices.Equal(input, []string{"text", "image"}) {
 		t.Fatalf("vision input = %v, want [text image]", input)
 	}
-	if got := o.CurrentModel(); got != "glm-5.1:cloud" {
-		t.Fatalf("CurrentModel = %q, want glm-5.1:cloud", got)
+	if got := o.CurrentModel(); got != "glm-5.2:cloud" {
+		t.Fatalf("CurrentModel = %q, want glm-5.2:cloud", got)
 	}
 
 	configPath := filepath.Join(home, ".omp", "agent", "config.yml")
