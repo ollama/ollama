@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1522,6 +1524,59 @@ func TestCreateHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCreateHandlerRejectsInvalidSplitGGUFBeforeUpload(t *testing.T) {
+	dir := t.TempDir()
+	files := make(map[string]string)
+	for i, name := range []string{"bad-part-a.gguf", "bad-part-b.gguf"} {
+		filePath := filepath.Join(dir, name)
+		f, err := os.Create(filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ggml.WriteGGUF(f, ggml.KV{
+			"general.architecture": "llama",
+			"split.no":             uint32(i),
+			"split.count":          uint32(2),
+		}, nil); err != nil {
+			f.Close()
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		files[filePath] = fmt.Sprintf("model-%05d-of-00002.gguf", i+1)
+	}
+	if err := validateSplitGGUFFiles(files); err != nil {
+		t.Fatalf("valid split filenames: %v", err)
+	}
+
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM .\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var requests atomic.Int32
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, "request should not be sent", http.StatusInternalServerError)
+	}))
+	t.Cleanup(mockServer.Close)
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.SetContext(t.Context())
+
+	err := CreateHandler(cmd, []string{"test-model"})
+	if err == nil || !strings.Contains(err.Error(), `split GGUF "bad-part-a.gguf" must use llama.cpp split filename pattern`) {
+		t.Fatalf("error = %v, want split filename validation error", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("HTTP request count = %d, want 0", got)
 	}
 }
 

@@ -1106,6 +1106,15 @@ func prepareSplitGGUFInput(layer *layerGGML, dir string) (*os.File, func(), erro
 	return f, cleanup, nil
 }
 
+// ValidateSplitGGUFFile validates split metadata against the source filename.
+func ValidateSplitGGUFFile(name string, model *ggml.GGML) error {
+	_, _, err := splitGGUFGroupKey(&layerGGML{
+		Layer: manifest.Layer{From: name},
+		GGML:  model,
+	})
+	return err
+}
+
 var splitGGUFNameRe = regexp.MustCompile(`^(.*)-(\d{5})-of-(\d{5})\.gguf$`)
 
 func splitGGUFName(name string) (prefix string, index, count uint16, ok bool) {
