@@ -1132,6 +1132,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 	delete(deleteMap, mf.Config.Digest)
 
+	if existingMf != nil && existingMf.Digest() == fmt.Sprintf("%x", sha256.Sum256(manifestData)) {
+		fn(api.ProgressResponse{Status: "success"})
+		return nil
+	}
+
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
 	fp, err := manifest.PathForName(n)
