@@ -38,6 +38,7 @@ type llama4Model struct {
 func (p *llama4Model) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama4"
+	kv["tokenizer.ggml.pre"] = "llama4"
 
 	for k, v := range p.TextModel.KV(t) {
 		if strings.HasPrefix(k, "llama.") {
