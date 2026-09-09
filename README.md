@@ -318,6 +318,7 @@ console.log(response.message.content);
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) - Painting app with AI integrations
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
+- [AI Career OS](https://github.com/semirturgay/ai-career-os) - Explainable job matching and resume tailoring, fully local
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
 
 ### Observability & Monitoring
