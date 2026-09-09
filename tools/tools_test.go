@@ -147,6 +147,22 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "foo",
+				Description: "Foo tool with parameter named name",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"name": {
+							Type:        api.PropertyType{"string"},
+							Description: "Name parameter",
+						},
+					}),
+				},
+			},
+		},
 	}
 
 	tests := []struct {
@@ -248,6 +264,40 @@ func TestParser(t *testing.T) {
 						Name:  "get_conditions",
 						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "tool call with parameter named name",
+			inputs:  []string{`[TOOL_CALLS] [{"name": "foo", "arguments": {"name": "bar"}}][/TOOL_CALLS]`},
+			content: "",
+			tmpl:    mistral,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "foo",
+						Arguments: testArgs(map[string]any{
+							"name": "bar",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "json tool call with parameter named name",
+			inputs:  []string{`{"name": "foo", "parameters": {"name": "bar"}}`},
+			content: "",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "foo",
+						Arguments: testArgs(map[string]any{
+							"name": "bar",
 						}),
 					},
 				},

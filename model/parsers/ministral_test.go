@@ -49,6 +49,15 @@ func TestMinistralParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			desc:  "tool call with parameter named name and whitespace",
+			tools: []api.Tool{{Function: api.ToolFunction{Name: "foo"}}},
+			steps: []step{
+				{input: `[TOOL_CALLS] foo [ARGS]{"name": "bar"}`, wantEvents: []ministralEvent{
+					ministralEventToolCall{name: "foo", args: `{"name": "bar"}`},
+				}},
+			},
+		},
+		{
 			desc:  "tool call with nested object",
 			tools: []api.Tool{{Function: api.ToolFunction{Name: "create_entities"}}},
 			steps: []step{
