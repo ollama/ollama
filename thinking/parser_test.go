@@ -285,3 +285,56 @@ func TestThinkingStreaming(t *testing.T) {
 		}
 	}
 }
+
+func TestParserFlush(t *testing.T) {
+	cases := []struct {
+		desc         string
+		input        string
+		wantThinking string
+		wantContent  string
+	}{
+		{
+			desc:        "stream ends mid partial opening tag",
+			input:       "<thi",
+			wantContent: "<thi",
+		},
+		{
+			desc:        "stream ends on whitespace-only prefix",
+			input:       "   ",
+			wantContent: "   ",
+		},
+		{
+			desc: "stream ends mid partial closing tag",
+			// "reasoning" is already emitted by AddContent itself; Flush only
+			// owes the ambiguous closing-tag candidate still held in acc.
+			input:        "<think>reasoning</",
+			wantThinking: "</",
+		},
+		{
+			desc:         "stream ends on a closing-tag fakeout",
+			input:        "<think>reasoning</thi",
+			wantThinking: "</thi",
+		},
+		{
+			desc:        "stream ends cleanly outside any buffering state",
+			input:       "<think>a</think>done",
+			wantContent: "",
+		},
+	}
+
+	for _, c := range cases {
+		parser := Parser{
+			OpeningTag: "<think>",
+			ClosingTag: "</think>",
+		}
+		parser.AddContent(c.input)
+		gotThinking, gotContent := parser.Flush()
+		if gotThinking != c.wantThinking || gotContent != c.wantContent {
+			t.Errorf("case %q: Flush() = (%q,%q), want (%q,%q)", c.desc, gotThinking, gotContent, c.wantThinking, c.wantContent)
+		}
+		// Flush must not resurrect the same bytes on a second call.
+		if again, again2 := parser.Flush(); again != "" || again2 != "" {
+			t.Errorf("case %q: second Flush() = (%q,%q), want (\"\",\"\")", c.desc, again, again2)
+		}
+	}
+}
