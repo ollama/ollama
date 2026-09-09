@@ -4,9 +4,9 @@
 // and it never exposes the PCI address. The Intel Level Zero management API
 // (libze.so.1 + libze_intel_gpu.so.1) provides the canonical device name,
 // memory sizes, free VRAM (via the sysman API) and PCI BDF, which we use to
-// refine the Vulkan device entries in place. We deliberately do not register a
-// separate "XPU"/"SYCL" library: models execute through the Vulkan backend, and
-// injecting unknown libraries would break scheduler decisions.
+// refine the Vulkan device entries in place. Intel GPUs can also run through
+// the native SYCL backend when the sycl runner payload is installed; this
+// refinement only touches Vulkan entries so SYCL metadata stays authoritative.
 package discover
 
 import (

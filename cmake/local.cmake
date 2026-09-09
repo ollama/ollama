@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;sycl;vulkan;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
@@ -729,6 +729,36 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 TARGETS ggml-hip
                 CMAKE_ARGS ${_rocm_args})
             list(APPEND _backend_targets ollama-llama-server-${_backend})
+        elseif(_backend STREQUAL "sycl")
+            # Intel oneAPI SYCL backend. Requires the oneAPI compilers
+            # (icx/icpx) and the oneMKL runtime (intel-oneapi-mkl); both are
+            # resolved from the oneAPI toolkit, typically after sourcing
+            # setvars.sh so ONEAPI_ROOT is set.
+            find_program(OLLAMA_SYCL_C_COMPILER icx)
+            find_program(OLLAMA_SYCL_CXX_COMPILER icpx)
+            if(NOT OLLAMA_SYCL_C_COMPILER OR NOT OLLAMA_SYCL_CXX_COMPILER)
+                message(FATAL_ERROR
+                    "OLLAMA_LLAMA_BACKENDS=sycl requires the Intel oneAPI compilers (icx/icpx). "
+                    "Install the oneAPI DPC++ compiler (e.g. apt install intel-oneapi-compiler-dpcpp-cpp "
+                    "intel-oneapi-mkl) and source /opt/intel/oneapi/setvars.sh before configuring.")
+            endif()
+            set(_sycl_args
+                -DBUILD_SHARED_LIBS=ON
+                -DGGML_BACKEND_DL=ON
+                -DGGML_SYCL=ON
+                -DGGML_SYCL_TARGET=INTEL
+                -DCMAKE_C_COMPILER=${OLLAMA_SYCL_C_COMPILER}
+                -DCMAKE_CXX_COMPILER=${OLLAMA_SYCL_CXX_COMPILER}
+                -DOLLAMA_GPU_BACKEND=sycl)
+            if(DEFINED ENV{ONEAPI_ROOT} AND NOT "$ENV{ONEAPI_ROOT}" STREQUAL "")
+                list(APPEND _sycl_args "-DCMAKE_PREFIX_PATH=$ENV{ONEAPI_ROOT}")
+            endif()
+            ollama_append_cache_arg_if_set(_sycl_args CMAKE_PREFIX_PATH)
+            ollama_add_llama_server_build(sycl
+                RUNNER_DIR sycl
+                TARGETS ggml-sycl
+                CMAKE_ARGS ${_sycl_args})
+            list(APPEND _backend_targets ollama-llama-server-sycl)
         elseif(_backend STREQUAL "vulkan")
             ollama_add_llama_server_build(vulkan
                 RUNNER_DIR vulkan

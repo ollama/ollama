@@ -109,6 +109,27 @@ if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
     endif()
 endif()
 
+if(GGML_SYCL)
+    # The SYCL backend requires the Intel oneAPI compilers (icx/icpx). The
+    # superbuild passes them explicitly (cmake/local.cmake); when configuring
+    # the sycl preset directly, the caller must run from an environment where
+    # setvars.sh has been sourced.
+    if(NOT CMAKE_CXX_COMPILER MATCHES "(icpx|icx|dpcpp)")
+        message(WARNING
+            "GGML_SYCL requires the Intel oneAPI compiler (icpx/icx); "
+            "currently using '${CMAKE_CXX_COMPILER}'. The SYCL backend will "
+            "likely fail to configure. Source oneAPI's setvars.sh and re-run "
+            "with -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx.")
+    endif()
+    # oneMKL (intel-oneapi-mkl) supplies the GEMM kernels for the SYCL backend.
+    # ggml resolves MKL itself; we only extend the package search path so both
+    # configure-time discovery and install-time dependency scanning find the
+    # oneAPI runtime libraries (libsycl, Level Zero loader, oneMKL).
+    if(DEFINED ENV{ONEAPI_ROOT} AND NOT "$ENV{ONEAPI_ROOT}" STREQUAL "")
+        list(APPEND CMAKE_PREFIX_PATH "$ENV{ONEAPI_ROOT}")
+    endif()
+endif()
+
 include(FetchContent)
 
 # Read pinned llama.cpp commit from version file (shared with Dockerfile)
@@ -587,6 +608,34 @@ if(OLLAMA_RUNNER_DIR)
                     break()
                 endif()
             endforeach()
+        endif()
+    endif()
+    if(GGML_SYCL)
+        if(TARGET ggml-sycl)
+            set(_oneapi_dep_dirs)
+            if(DEFINED ENV{ONEAPI_ROOT} AND NOT "$ENV{ONEAPI_ROOT}" STREQUAL "")
+                file(TO_CMAKE_PATH "$ENV{ONEAPI_ROOT}" _oneapi_root)
+                foreach(_oneapi_dir IN ITEMS
+                        "${_oneapi_root}/lib"
+                        "${_oneapi_root}/lib/intel64"
+                        "${_oneapi_root}/compiler/lib"
+                        "${_oneapi_root}/compiler/lib/intel64"
+                        "${_oneapi_root}/mkl/lib"
+                        "${_oneapi_root}/mkl/lib/intel64")
+                    if(EXISTS "${_oneapi_dir}")
+                        list(APPEND _oneapi_dep_dirs "${_oneapi_dir}")
+                    endif()
+                endforeach()
+            endif()
+            install(TARGETS ggml-sycl
+                RUNTIME_DEPENDENCIES
+                    DIRECTORIES ${_oneapi_dep_dirs}
+                    PRE_INCLUDE_REGEXES sycl ze_loader ur_loader ur_adapter_level_zero pi_level_zero mkl imf
+                    PRE_EXCLUDE_REGEXES ".*"
+                    POST_EXCLUDE_REGEXES "system32"
+                RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+                LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
+            )
         endif()
     endif()
     if(GGML_VULKAN)

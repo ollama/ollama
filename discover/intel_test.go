@@ -25,6 +25,22 @@ func vulkanDevicesForIntelTest() []ml.DeviceInfo {
 	}
 }
 
+func TestInferLibrarySYCL(t *testing.T) {
+	tests := []struct {
+		label, name, description, want string
+	}{
+		{"sycl device", "SYCL0", "Intel(R) Arc(TM) B70 Graphics", "SYCL"},
+		{"vulkan device", "Vulkan0", "Intel(R) Arc(TM) B70 Graphics", "Vulkan"},
+		{"cuda device", "CUDA0", "NVIDIA GeForce RTX 4060 Ti", "CUDA"},
+	}
+
+	for _, tt := range tests {
+		if got := inferLibrary(tt.name, tt.description); got != tt.want {
+			t.Errorf("inferLibrary(%q, %q) = %q, want %q", tt.name, tt.description, got, tt.want)
+		}
+	}
+}
+
 func TestApplyIntelLevelZeroRefinementMatchesByName(t *testing.T) {
 	devices := vulkanDevicesForIntelTest()
 	lzDevices := []intelLevelZeroDevice{

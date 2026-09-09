@@ -404,12 +404,16 @@ func (d DeviceInfo) AddInitValidation(env map[string]string) {
 
 // PreferredLibrary returns true if this library is preferred over the other input
 // library
-// Used to filter out Vulkan in favor of CUDA or ROCm
+// Used to filter out Vulkan in favor of CUDA, ROCm or SYCL
 func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	// TODO in the future if we find Vulkan is better than ROCm on some devices
 	// that implementation can live here.
 
 	if d.Library == "CUDA" || d.Library == "ROCm" {
+		return true
+	}
+	// Prefer the native SYCL backend over Vulkan on Intel GPUs.
+	if d.Library == "SYCL" && other.Library == "Vulkan" {
 		return true
 	}
 	return false
@@ -439,6 +443,10 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 			return
 		}
 		envVar = "GGML_VK_VISIBLE_DEVICES"
+	case "SYCL":
+		// SYCL's ONEAPI_VISIBLE_DEVICES is only consumed by the oneAPI
+		// backend, so filtering is always safe (ROCm-style).
+		envVar = "ONEAPI_VISIBLE_DEVICES"
 	default:
 		return
 	}
