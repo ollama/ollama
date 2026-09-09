@@ -23,6 +23,17 @@ type Parser interface {
 	HasThinkingSupport() bool
 }
 
+// ThinkingStateReporter is an optional interface a Parser may implement to
+// report that it is still inside an unterminated thinking block. Callers use it
+// to distinguish "the model never closed its thinking tag" from "the model
+// produced no content", which are indistinguishable from Add's return values
+// alone.
+type ThinkingStateReporter interface {
+	// UnclosedThinking reports whether the parser is still collecting thinking
+	// because it has not seen a closing thinking tag.
+	UnclosedThinking() bool
+}
+
 type ParserConstructor func() Parser
 
 type ParserRegistry struct {
