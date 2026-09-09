@@ -30,6 +30,32 @@ const (
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
+func TestFromChatRequest_Basic(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	if result.Messages[0].Role != "user" || result.Messages[0].Content != "Hello" {
+		t.Errorf("unexpected message: %+v", result.Messages[0])
+	}
+}
+
 func TestChatCompletionRequestAcceptsNestedRequiredObject(t *testing.T) {
 	var req ChatCompletionRequest
 	err := json.Unmarshal([]byte(`{
@@ -56,32 +82,6 @@ func TestChatCompletionRequestAcceptsNestedRequiredObject(t *testing.T) {
 	}
 	if len(req.Tools) != 1 || req.Tools[0].Function.Name != "calculate_area" {
 		t.Fatalf("unexpected parsed tools: %#v", req.Tools)
-	}
-}
-
-func TestFromChatRequest_Basic(t *testing.T) {
-	req := ChatCompletionRequest{
-		Model: "test-model",
-		Messages: []Message{
-			{Role: "user", Content: "Hello"},
-		},
-	}
-
-	result, err := FromChatRequest(req)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Model != "test-model" {
-		t.Errorf("expected model 'test-model', got %q", result.Model)
-	}
-
-	if len(result.Messages) != 1 {
-		t.Fatalf("expected 1 message, got %d", len(result.Messages))
-	}
-
-	if result.Messages[0].Role != "user" || result.Messages[0].Content != "Hello" {
-		t.Errorf("unexpected message: %+v", result.Messages[0])
 	}
 }
 
