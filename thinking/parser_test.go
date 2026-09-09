@@ -1,6 +1,7 @@
 package thinking
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,60 @@ func TestExtractThinking(t *testing.T) {
 		if gotContent != tt.wantContent || gotThinking != tt.wantThink {
 			t.Errorf("case %d: got (%q,%q), want (%q,%q)", i, gotThinking, gotContent, tt.wantThink, tt.wantContent)
 		}
+	}
+}
+
+func TestFlush(t *testing.T) {
+	tests := []struct {
+		name         string
+		chunks       []string
+		wantThinking string
+		wantContent  string
+	}{
+		{
+			name:        "partial opening tag is content",
+			chunks:      []string{"  <th", "i"},
+			wantContent: "  <thi",
+		},
+		{
+			name:         "partial closing tag is thinking",
+			chunks:       []string{"<think>reasoning</"},
+			wantThinking: "reasoning</",
+		},
+		{
+			name:        "whitespace without an opening tag is content",
+			chunks:      []string{"  \n"},
+			wantContent: "  \n",
+		},
+		{
+			name:   "whitespace after opening tag is discarded",
+			chunks: []string{"<think>  \n"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := Parser{OpeningTag: "<think>", ClosingTag: "</think>"}
+			var thinking, content strings.Builder
+			for _, chunk := range tt.chunks {
+				gotThinking, gotContent := parser.AddContent(chunk)
+				thinking.WriteString(gotThinking)
+				content.WriteString(gotContent)
+			}
+
+			gotThinking, gotContent := parser.Flush()
+			thinking.WriteString(gotThinking)
+			content.WriteString(gotContent)
+
+			if thinking.String() != tt.wantThinking || content.String() != tt.wantContent {
+				t.Errorf("got (%q, %q), want (%q, %q)", thinking.String(), content.String(), tt.wantThinking, tt.wantContent)
+			}
+
+			gotThinking, gotContent = parser.Flush()
+			if gotThinking != "" || gotContent != "" {
+				t.Errorf("second Flush returned (%q, %q), want empty output", gotThinking, gotContent)
+			}
+		})
 	}
 }
 
