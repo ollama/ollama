@@ -1731,6 +1731,35 @@ func TestCreateNemotronHDefaultsKeepExplicitRendererParser(t *testing.T) {
 	}
 }
 
+func TestCreateQwen3MoeDefaultsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "qwen3moe",
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	cfg := readCreatedModelConfig(t, "test")
+	if cfg.Renderer != "qwen3-coder" {
+		t.Fatalf("expected renderer %q, got %q", "qwen3-coder", cfg.Renderer)
+	}
+	if cfg.Parser != "qwen3-coder" {
+		t.Fatalf("expected parser %q, got %q", "qwen3-coder", cfg.Parser)
+	}
+}
+
 func TestDetectModelTypeFromFiles(t *testing.T) {
 	t.Run("gguf file", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
