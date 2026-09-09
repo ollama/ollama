@@ -881,7 +881,7 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 			t.Fatalf("pagedOutBytes = %d, want <= %d", pc.pagedOutBytes, maxPagedOutBytes)
 		}
 
-		// Active path should be untouched.
+		// The branch point and the frontier survive.
 		if len(pc.activePath) < 2 {
 			t.Fatalf("activePath should have >= 2 nodes, got %d", len(pc.activePath))
 		}
@@ -954,8 +954,26 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 			t.Fatalf("user node children = %d, want 2", len(userNode.children))
 		}
 
-		// Inflate snapshot sizes and evict. The non-active branch should be
-		// evicted, leaving the user node with one child.
+		// Inflate snapshot sizes so that evicting the non-active branch alone
+		// brings the trie under budget, leaving the user node with one child.
+		var kept, evicted int
+		walkNodes(pc.root, func(n *trieNode) bool {
+			for _, s := range n.snapshots {
+				if s == nil {
+					continue
+				}
+				if n.parent == userNode && !slices.Contains(pc.activePath, n) {
+					evicted++
+				} else {
+					kept++
+				}
+			}
+			return true
+		})
+		if evicted == 0 {
+			t.Fatal("no snapshots on the non-active branch")
+		}
+		size := int(maxPagedOutBytes) / kept
 		walkNodes(pc.root, func(n *trieNode) bool {
 			if !n.hasSnapshots() {
 				return true
@@ -963,7 +981,7 @@ func TestUserSnapshotResistsAutoMerge(t *testing.T) {
 			snaps := make([]cache.Snapshot, len(n.snapshots))
 			for i, s := range n.snapshots {
 				if s != nil {
-					snaps[i] = &fakeSnapshot{byteSize: 5 * 1024 * 1024 * 1024}
+					snaps[i] = &fakeSnapshot{byteSize: size}
 				}
 			}
 			n.setSnapshots(snaps, &pc.pagedOutBytes)
