@@ -130,6 +130,14 @@ ollama create -f Modelfile
 ollama ps
 ```
 
+### Load a model
+
+```
+ollama load gemma3
+```
+
+Preloads a model into memory without starting an interactive session, useful for warming up models at server startup or from scripts. Use `--keepalive` to control how long the model stays loaded (e.g. `--keepalive 1h`, `--keepalive -1s` to keep indefinitely).
+
 ### Stop a running model
 
 ```
