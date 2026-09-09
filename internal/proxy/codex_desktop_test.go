@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -376,6 +377,76 @@ func TestNormalizeFullAccessExecToolLeavesSandboxedTurnUnchanged(t *testing.T) {
 	}
 	if !bytes.Equal(normalized, body) {
 		t.Fatalf("sandboxed request changed:\n%s", normalized)
+	}
+}
+
+func TestNormalizeFullAccessNamespacedExecTool(t *testing.T) {
+	const tools = `[{"type":"namespace","name":"functions","description":"Command tools","tools":[
+		{"type":"function","name":"exec_command","strict":false,"parameters":{"type":"object","properties":{"cmd":{"type":"string"},"sandbox_permissions":{"type":"string","enum":["use_default","require_escalated"]},"justification":{"type":"string"},"prefix_rule":{"type":"array","items":{"type":"string"}}},"required":["cmd","sandbox_permissions","justification","prefix_rule"],"additionalProperties":false}},
+		{"type":"function","name":"other_tool","parameters":{"type":"object","properties":{"sandbox_permissions":{"type":"string"}}}}
+	]}]`
+	for _, mode := range []string{"danger-full-access", "workspace-write", "read-only", ""} {
+		t.Run(mode, func(t *testing.T) {
+			metadata, err := json.Marshal(map[string]string{"sandbox_mode": mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := []byte(fmt.Sprintf(`{"model":"glm-5.3-flash:cloud","client_metadata":{"x-codex-turn-metadata":%q},"tools":%s}`, metadata, tools))
+			normalized, err := normalizeFullAccessExecTool(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode != "danger-full-access" {
+				if !bytes.Equal(normalized, body) {
+					t.Fatalf("sandboxed request changed: %s", normalized)
+				}
+				return
+			}
+			var want, got map[string]any
+			if err := json.Unmarshal(body, &want); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(normalized, &got); err != nil {
+				t.Fatal(err)
+			}
+			namespace := want["tools"].([]any)[0].(map[string]any)
+			exec := namespace["tools"].([]any)[0].(map[string]any)
+			parameters := exec["parameters"].(map[string]any)
+			properties := parameters["properties"].(map[string]any)
+			for _, key := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
+				delete(properties, key)
+			}
+			parameters["required"] = []any{"cmd"}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("namespace tool normalization did not preserve the expected request: %s", normalized)
+			}
+		})
+	}
+}
+
+func TestNormalizeFullAccessNamespaceBoundaries(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		tools   string
+		wantErr bool
+	}{
+		{"missing members", `[{"type":"namespace","name":"functions"}]`, false},
+		{"null members", `[{"type":"namespace","name":"functions","tools":null}]`, false},
+		{"empty members", `[{"type":"namespace","name":"functions","tools":[]}]`, false},
+		{"no escalation arguments", `[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"exec_command","parameters":{"properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]}]`, false},
+		{"malformed members", `[{"type":"namespace","name":"functions","tools":{}}]`, true},
+		{"malformed parameters", `[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"exec_command","parameters":42}]}]`, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"client_metadata":{"x-codex-turn-metadata":{"sandbox_mode":"danger-full-access"}},"tools":` + tt.tools + `}`)
+			normalized, err := normalizeFullAccessExecTool(body)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("normalization error = %v, want error = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && !bytes.Equal(normalized, body) {
+				t.Fatalf("unchanged namespace was rewritten: %s", normalized)
+			}
+		})
 	}
 }
 
