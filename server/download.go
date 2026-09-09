@@ -448,6 +448,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 	defer b.release()
 
 	ticker := time.NewTicker(60 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-b.done:
