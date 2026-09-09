@@ -2545,6 +2545,26 @@ func TestAppendDraftArgs(t *testing.T) {
 	}
 }
 
+func TestAppendDraftArgsTensorSplit(t *testing.T) {
+	// Backend draft sampling is rejected by llama.cpp under SPLIT_MODE_TENSOR,
+	// so the flag must be omitted when the server will run in tensor split mode.
+	t.Setenv("LLAMA_ARG_SPLIT_MODE", "tensor")
+	got := appendDraftArgs([]string{"base"}, draftTypeMTP, "", api.Options{Runner: api.Runner{DraftNumPredict: 4}})
+	want := []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("appendDraftArgs with tensor split = %v, want %v", got, want)
+	}
+
+	// An explicit main_gpu forces "--split-mode none", which overrides the env
+	// var, so backend sampling is safe to request again.
+	opts := api.Options{Runner: api.Runner{DraftNumPredict: 4, MainGPU: testIntPtr(0)}}
+	got = appendDraftArgs([]string{"base"}, draftTypeMTP, "", opts)
+	want = []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("appendDraftArgs with main_gpu override = %v, want %v", got, want)
+	}
+}
+
 func TestExternalDraftType(t *testing.T) {
 	tests := []struct {
 		architecture string

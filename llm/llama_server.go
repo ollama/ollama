@@ -804,6 +804,22 @@ const (
 	draftTypeDFlash = "draft-dflash"
 )
 
+// draftBackendSamplingEnabled reports whether backend draft sampling should be
+// requested. llama.cpp rejects backend sampling under SPLIT_MODE_TENSOR (output
+// logits are sharded across GPUs, so the sampling kernel cannot reduce them
+// across devices) and silently falls back to CPU sampling, wasting a doomed
+// sampler offload attempt plus scheduler reserve churn. Skip the flag whenever
+// the server would run in tensor split mode.
+func draftBackendSamplingEnabled(opts api.Options) bool {
+	if opts.MainGPU != nil {
+		// appendMainGPUArgs passes "--split-mode none", which overrides the env var
+		return true
+	}
+	// The runner inherits the parent environment, so an explicitly requested
+	// LLAMA_ARG_SPLIT_MODE=tensor is the one case we can detect from here.
+	return strings.ToLower(strings.TrimSpace(os.Getenv("LLAMA_ARG_SPLIT_MODE"))) != "tensor"
+}
+
 func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
 	if draftType == "" {
 		return params
@@ -814,7 +830,7 @@ func appendDraftArgs(params []string, draftType, draftModelPath string, opts api
 
 	params = append(params, "--spec-type", draftType)
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
-	if draftType == draftTypeMTP {
+	if draftType == draftTypeMTP && draftBackendSamplingEnabled(opts) {
 		params = append(params, "--spec-draft-backend-sampling")
 	}
 	if draftModelPath != "" {
