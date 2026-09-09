@@ -2390,3 +2390,23 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateCommand(t *testing.T) {
+	t.Run("check flag execution", func(t *testing.T) {
+		cli := NewCLI()
+		var outBuf, errBuf bytes.Buffer
+		cli.SetOut(&outBuf)
+		cli.SetErr(&errBuf)
+		cli.SetArgs([]string{"update", "--check"})
+
+		err := cli.Execute()
+		if err != nil {
+			t.Fatalf("unexpected error executing update --check: %v", err)
+		}
+
+		output := outBuf.String()
+		if !strings.Contains(output, "up to date") && !strings.Contains(output, "To update") {
+			t.Errorf("unexpected output from update --check: %q", output)
+		}
+	})
+}
