@@ -24,6 +24,28 @@ type safetensorMetadata struct {
 	Offsets []int64  `json:"data_offsets"`
 }
 
+// safetensorsMaxHeaderSize bounds the JSON header length prefix of a
+// safetensors file. The header is a metadata map that is fully buffered in
+// memory before parsing, so an unbounded length prefix from an untrusted file
+// would allow a single request to trigger an arbitrarily large allocation.
+const safetensorsMaxHeaderSize = 100 << 20 // 100 MiB
+
+// validSafetensorsOffsets reports whether a tensor's data_offsets slice is
+// well formed: exactly two entries describing a non-negative, non-inverted
+// region that lies within the file's data section (dataSize bytes). The
+// safetensors header is attacker-controlled when converting an uploaded model,
+// so these bounds must be checked before the offsets are used to size slices
+// or seek within the file.
+func validSafetensorsOffsets(offsets []int64, dataSize int64) error {
+	if len(offsets) != 2 {
+		return fmt.Errorf("expected 2 data_offsets, got %d", len(offsets))
+	}
+	if offsets[0] < 0 || offsets[1] < offsets[0] || offsets[1] > dataSize {
+		return fmt.Errorf("invalid data_offsets [%d %d] for data section of %d bytes", offsets[0], offsets[1], dataSize)
+	}
+	return nil
+}
+
 func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	fp8Block, err := safetensorsFP8BlockSize(fsys)
 	if err != nil {
@@ -32,6 +54,12 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 
 	var ts []Tensor
 	for _, p := range ps {
+		fi, err := fs.Stat(fsys, p)
+		if err != nil {
+			return nil, err
+		}
+		fileSize := fi.Size()
+
 		f, err := fsys.Open(p)
 		if err != nil {
 			return nil, err
@@ -42,6 +70,18 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 		if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
 			return nil, err
 		}
+
+		// n is read directly from the file and is used below to size an
+		// in-memory buffer, so it must be validated before use: reject
+		// negative, oversized, or out-of-file header lengths.
+		if n < 0 || n > safetensorsMaxHeaderSize || 8+n > fileSize {
+			return nil, fmt.Errorf("invalid safetensors header length %d for file of %d bytes", n, fileSize)
+		}
+
+		// dataSize is the number of bytes in the tensor data section that
+		// follows the 8-byte length prefix and the n-byte JSON header. All
+		// tensor data_offsets are relative to the start of this section.
+		dataSize := fileSize - 8 - n
 
 		b := bytes.NewBuffer(make([]byte, 0, n))
 		if _, err = io.CopyN(b, f, n); err != nil {
@@ -57,7 +97,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 
 		names := make(map[string]struct{}, len(keys))
 
-		fp8Scales, err := collectSafetensorsFP8Scales(n, headers)
+		fp8Scales, err := collectSafetensorsFP8Scales(n, dataSize, headers)
 		if err != nil {
 			return nil, err
 		}
@@ -66,6 +106,10 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			if value := headers[key]; value.Type != "" {
 				if _, ok := fp8Scales.consumed[key]; ok {
 					continue
+				}
+
+				if err := validSafetensorsOffsets(value.Offsets, dataSize); err != nil {
+					return nil, fmt.Errorf("tensor %q: %w", key, err)
 				}
 
 				// Scalar tensors (e.g. clipped linear min/max) are 0-dim in safetensors.
@@ -286,7 +330,7 @@ type safetensorsFP8Scales struct {
 	consumed map[string]struct{}
 }
 
-func collectSafetensorsFP8Scales(n int64, headers map[string]safetensorMetadata) (safetensorsFP8Scales, error) {
+func collectSafetensorsFP8Scales(n, dataSize int64, headers map[string]safetensorMetadata) (safetensorsFP8Scales, error) {
 	scales := safetensorsFP8Scales{
 		byWeight: make(map[string]*safetensorScale),
 		consumed: make(map[string]struct{}),
@@ -306,6 +350,10 @@ func collectSafetensorsFP8Scales(n int64, headers map[string]safetensorMetadata)
 		}
 		if _, ok := scales.consumed[scaleKey]; ok {
 			return safetensorsFP8Scales{}, fmt.Errorf("fp8 scale companion %q is used by multiple tensors", scaleKey)
+		}
+
+		if err := validSafetensorsOffsets(scaleValue.Offsets, dataSize); err != nil {
+			return safetensorsFP8Scales{}, fmt.Errorf("fp8 scale companion %q: %w", scaleKey, err)
 		}
 
 		scales.byWeight[key] = &safetensorScale{

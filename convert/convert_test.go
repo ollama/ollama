@@ -229,6 +229,17 @@ func generateSafetensorTestData(t *testing.T, tempDir string, tensorData map[str
 		t.Fatal(err)
 	}
 
+	// Append a data section large enough to cover every tensor's declared
+	// data_offsets so the fixture is a valid safetensors file (offsets must
+	// lie within the data section that follows the JSON header).
+	var dataLen int
+	for _, td := range tensorData {
+		if len(td.Offsets) == 2 && td.Offsets[1] > dataLen {
+			dataLen = td.Offsets[1]
+		}
+	}
+	buf.Write(make([]byte, dataLen))
+
 	fdata, err := os.Create(filepath.Join(tempDir, "model-00001-of-00001.safetensors"))
 	if err != nil {
 		t.Fatal(err)
