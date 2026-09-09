@@ -566,7 +566,7 @@ export const CodexDesktopModelsSettings = forwardRef<
             <Popover className="relative w-full">
               <div
                 data-testid="chatgpt-model-picker"
-                className="relative flex min-h-10 w-full flex-wrap items-center gap-1.5 rounded-lg bg-neutral-50 px-2 py-1.5 ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 dark:bg-neutral-700 dark:ring-neutral-600 dark:hover:bg-neutral-600"
+                className="relative flex min-h-10 w-full flex-wrap items-center gap-2 rounded-lg bg-neutral-50 p-2 ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 dark:bg-neutral-700 dark:ring-neutral-600 dark:hover:bg-neutral-600"
               >
                 <PopoverButton
                   aria-label="Add ChatGPT model"
@@ -575,7 +575,7 @@ export const CodexDesktopModelsSettings = forwardRef<
                 >
                   <span className="sr-only">Choose ChatGPT models</span>
                 </PopoverButton>
-                <div className="pointer-events-none relative z-10 flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                <div className="pointer-events-none relative z-10 flex min-w-0 flex-1 flex-wrap items-center gap-2">
                   {selected.map((model) => (
                     <span
                       key={model}
