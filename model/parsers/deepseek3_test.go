@@ -626,15 +626,15 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 		{
 			name:             "nested_think_tags_in_thinking",
 			input:            "Outer thinking <think>inner</think> content</think>Final content",
-			expectedThinking: "Outer thinking <think>inner",
-			expectedContent:  "content</think>Final content",
+			expectedThinking: "Outer thinking <think>inner</think> content",
+			expectedContent:  "Final content",
 			hasThinking:      true,
 		},
 		{
 			name:             "multiple_think_close_tags",
 			input:            "First thought</think>Second thought</think>Final content",
-			expectedThinking: "First thought",
-			expectedContent:  "Second thought</think>Final content",
+			expectedThinking: "First thought</think>Second thought",
+			expectedContent:  "Final content",
 			hasThinking:      true,
 		},
 		{
