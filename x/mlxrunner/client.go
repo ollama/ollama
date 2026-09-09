@@ -42,6 +42,7 @@ type Client struct {
 	status            *llm.StatusWriter
 	mu                sync.Mutex
 	cmd               *exec.Cmd
+	closed            bool
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
@@ -141,15 +142,11 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.closed = true
 	if c.cmd != nil && c.cmd.Process != nil {
 		slog.Info("stopping mlx runner subprocess", "pid", c.cmd.Process.Pid)
-		c.cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-c.done:
-		case <-time.After(5 * time.Second):
-			c.cmd.Process.Kill()
-		}
+		c.cmd.Process.Kill()
+		<-c.done
 		c.cmd = nil
 	}
 	return nil
@@ -405,19 +402,24 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 		}
 	}
 
-	c.cmd = cmd
-
 	status := llm.NewStatusWriter(os.Stderr)
-	c.status = status
 	// os/exec serializes Write calls when shared, which keeps the status writer
 	// from seeing concurrent stdout/stderr fragments.
 	cmd.Stdout = status
 	cmd.Stderr = status
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("mlx runner client is closed")
+	}
+
+	c.status = status
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
+	c.cmd = cmd
 
 	// Reap subprocess when it exits
 	go func() {
