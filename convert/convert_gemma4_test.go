@@ -1,6 +1,9 @@
 package convert
 
 import (
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -312,6 +315,79 @@ func TestGemma4AudioReplacements(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := r.Replace(tt.in); got != tt.want {
 				t.Errorf("Replace(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGemma4ConfigLayouts(t *testing.T) {
+	// Text fields as found in a Gemma4ForCausalLM (text-only) config.json,
+	// where they live at the top level rather than under "text_config".
+	textFields := `
+		"hidden_size": 3840,
+		"intermediate_size": 15360,
+		"num_hidden_layers": 48,
+		"num_attention_heads": 16,
+		"num_key_value_heads": 8,
+		"head_dim": 256,
+		"global_head_dim": 512,
+		"max_position_embeddings": 131072,
+		"vocab_size": 262144,
+		"rms_norm_eps": 1e-6,
+		"sliding_window": 1024,
+		"layer_types": ["sliding_attention", "full_attention"],
+		"final_logit_softcapping": 30.0,
+		"rope_parameters": {
+			"full_attention": {"rope_theta": 1000000},
+			"sliding_attention": {"rope_theta": 10000}
+		}`
+
+	configs := map[string]string{
+		"text-only top-level": fmt.Sprintf(`{
+			"architectures": ["Gemma4ForCausalLM"],
+			%s
+		}`, textFields),
+		"nested text_config": fmt.Sprintf(`{
+			"architectures": ["Gemma4ForConditionalGeneration"],
+			"text_config": {%s}
+		}`, textFields),
+	}
+
+	want := map[string]any{
+		"gemma4.block_count":                      uint32(48),
+		"gemma4.embedding_length":                 uint32(3840),
+		"gemma4.feed_forward_length":              uint32(15360),
+		"gemma4.context_length":                   uint32(131072),
+		"gemma4.attention.head_count":             uint32(16),
+		"gemma4.attention.head_count_kv":          uint32(8),
+		"gemma4.attention.key_length":             uint32(512),
+		"gemma4.attention.value_length":           uint32(512),
+		"gemma4.attention.key_length_swa":         uint32(256),
+		"gemma4.attention.value_length_swa":       uint32(256),
+		"gemma4.attention.layer_norm_rms_epsilon": float32(1e-6),
+		"gemma4.attention.sliding_window":         uint32(1024),
+		"gemma4.attention.sliding_window_pattern": []bool{true, false},
+		"gemma4.rope.freq_base":                   float32(1000000),
+		"gemma4.rope.dimension_count":             uint32(512),
+		"gemma4.rope.freq_base_swa":               float32(10000),
+		"gemma4.rope.dimension_count_swa":         uint32(256),
+		"gemma4.final_logit_softcapping":          float32(30),
+	}
+
+	for name, config := range configs {
+		t.Run(name, func(t *testing.T) {
+			p := &gemma4Model{}
+			if err := json.Unmarshal([]byte(config), p); err != nil {
+				t.Fatal(err)
+			}
+
+			kv := p.KV(&Tokenizer{Vocabulary: &Vocabulary{}})
+			for key, w := range want {
+				if got, ok := kv[key]; !ok {
+					t.Errorf("missing %s", key)
+				} else if !reflect.DeepEqual(got, w) {
+					t.Errorf("%s = %v (%T), want %v (%T)", key, got, got, w, w)
+				}
 			}
 		})
 	}
