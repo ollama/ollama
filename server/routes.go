@@ -652,6 +652,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("generate handler panic", "error", r)
+				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r)}
+			}
+		}()
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
@@ -1137,6 +1143,12 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("chat completion handler panic", "error", r)
+				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r)}
+			}
+		}()
 		defer close(ch)
 		fn := func(r api.ProgressResponse) {
 			ch <- r
@@ -2758,6 +2770,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	ch := make(chan any)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("chat handler panic", "error", r)
+				ch <- gin.H{"error": fmt.Sprintf("internal error: %v", r)}
+			}
+		}()
 		defer close(ch)
 
 		structuredOutputsState := structuredOutputsState_None
