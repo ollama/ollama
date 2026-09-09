@@ -64,6 +64,16 @@ func (p *FunctionGemmaParser) Add(s string, done bool) (content string, thinking
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
+	// in this state anything still buffered is tool call content whose closing
+	// tag never arrived
+	if done && p.state == FunctionGemmaCollectingToolCalls && strings.TrimSpace(p.buffer.String()) != "" {
+		event, err := p.finalizeToolCall()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("incomplete function_call: %v", err)
+		}
+		events = append(events, event)
+	}
+
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
 	for _, event := range events {
@@ -155,6 +165,33 @@ func (p *FunctionGemmaParser) eat() ([]functionGemmaEvent, bool) {
 	}
 
 	return nil, false
+}
+
+// finalizeToolCall handles a tool call that is still buffered when the stream
+// ends. Only the closing tag may be missing: the call itself must still match,
+// since repairing a truncated call could turn partial model output into a
+// mutating tool call. parseToolCall reports a regex miss as an empty call
+// rather than an error, so the name is checked explicitly. A leading open tag
+// needs no special handling because the call pattern is matched anywhere in
+// the buffer.
+func (p *FunctionGemmaParser) finalizeToolCall() (functionGemmaEventToolCall, error) {
+	raw := p.buffer.String()
+	// drop a partially emitted closing tag
+	if overlapLen := overlap(raw, functionGemmaFunctionCallClose); overlapLen > 0 {
+		raw = raw[:len(raw)-overlapLen]
+	}
+
+	toolCall, err := p.parseToolCall(raw)
+	if err != nil {
+		return functionGemmaEventToolCall{}, err
+	}
+	if toolCall.Function.Name == "" {
+		return functionGemmaEventToolCall{}, fmt.Errorf("truncated call %q", raw)
+	}
+
+	p.buffer.Reset()
+	p.state = FunctionGemmaCollectingContent
+	return functionGemmaEventToolCall{toolCall: toolCall}, nil
 }
 
 // Matches call:function_name{args}
