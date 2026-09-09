@@ -119,6 +119,76 @@ func (kv KV) HeadCountKVMin() uint64 {
 	return uint64(kv.UintOrMinArrayValue("attention.head_count_kv", 1))
 }
 
+// AttentionLayers reports, for each block, whether that block carries an attention KV
+// cache.
+//
+// attention.head_count and attention.head_count_kv are frequently stored as scalars,
+// which broadcast across every block. For a hybrid architecture — recurrent layers
+// interleaved with attention, e.g. qwen4exp (Gated DeltaNet + sparse attention) — the
+// head counts therefore cannot distinguish an attention block from a recurrent one, and
+// treating every block as attention overestimates the KV cache by the ratio of total
+// blocks to attention blocks. When the architecture publishes a per-block
+// attention.compress_ratios array it is authoritative: entries are non-zero exactly on
+// the blocks that run attention.
+func (kv KV) AttentionLayers() []bool {
+	out := make([]bool, kv.BlockCount())
+
+	if ratios := kv.Ints("attention.compress_ratios"); len(ratios) > 0 {
+		for i := range out {
+			if i < len(ratios) {
+				out[i] = ratios[i] != 0
+			}
+		}
+		return out
+	}
+
+	heads, headsKV := kv.HeadCount(), kv.HeadCountKV()
+	for i := range out {
+		out[i] = i < len(heads) && i < len(headsKV) && heads[i] > 0 && headsKV[i] > 0
+	}
+	return out
+}
+
+// AttentionLayerCount returns the number of blocks that carry an attention KV cache.
+func (kv KV) AttentionLayerCount() (n uint64) {
+	for _, isAttention := range kv.AttentionLayers() {
+		if isAttention {
+			n++
+		}
+	}
+	return n
+}
+
+// KVCacheBytesPerToken reports how many bytes of attention KV cache one token of context
+// occupies, summed over the blocks that actually run attention.
+//
+// Each such block holds a key and a value vector per KV head, so its width is
+// head_count_kv * (key_length + value_length). key_length and value_length are read from
+// the model rather than derived as embedding_length/head_count: architectures increasingly
+// set a head dimension that is not that ratio, and deriving it is then wrong by whatever
+// factor separates the two. Qwen3.8-Flash-Next publishes key_length 256 against an implied
+// 2560/24, so the derived figure is off by more than 2x.
+//
+// Elements are assumed to be 2 bytes, matching the default f16 cache. A quantized cache is
+// smaller, so this is an upper bound for one.
+//
+// This covers the caches the metadata describes. An architecture that allocates a further
+// cache the metadata does not describe uses more than this, and the shortfall grows with
+// context; measuring a load is the only way to capture that.
+func (kv KV) KVCacheBytesPerToken() uint64 {
+	headsKV := kv.HeadCountKV()
+	width := kv.EmbeddingHeadCountK() + kv.EmbeddingHeadCountV()
+
+	var total uint64
+	for i, isAttention := range kv.AttentionLayers() {
+		if !isAttention || i >= len(headsKV) {
+			continue
+		}
+		total += headsKV[i] * width * 2
+	}
+	return total
+}
+
 func (kv KV) EmbeddingHeadCountMax() uint64 {
 	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads
@@ -650,7 +720,6 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCountMax()
-	headsArr := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKVMax()
 	headsKVArr := f.KV().HeadCountKV()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
@@ -677,10 +746,15 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	kv = make([]uint64, f.KV().BlockCount())
 	kvSizeAttn := uint64(0)
 	kvSizeRecurrent := uint64(0)
+
+	// Which blocks actually hold a KV cache. For hybrid architectures the scalar head
+	// counts broadcast across every block and cannot distinguish attention blocks from
+	// recurrent ones, so consult the per-block metadata. See KV.AttentionLayers.
+	attentionLayers := f.KV().AttentionLayers()
+
 	for i := range kv {
-		headsL := headsArr[i]
 		headsKVL := headsKVArr[i]
-		if headsL > 0 && headsKVL > 0 {
+		if i < len(attentionLayers) && attentionLayers[i] {
 			// full attention layer
 			// NOTE: Assumes uniform values for all attn layers
 			kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKVL) * bytesPerElement)

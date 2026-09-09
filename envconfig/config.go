@@ -302,6 +302,11 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // Set aside VRAM per GPU
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
+// SingleGPUFitPercent is the maximum percentage of a single GPU's available VRAM a model
+// may be predicted to use and still be packed onto that one GPU instead of spread across
+// several. Lower leaves more headroom; higher packs tighter. Default 80.
+var SingleGPUFitPercent = Uint("OLLAMA_SINGLE_GPU_FIT_PERCENT", 80)
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -316,6 +321,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_SINGLE_GPU_FIT_PERCENT": {"OLLAMA_SINGLE_GPU_FIT_PERCENT", SingleGPUFitPercent(), "Max % of one GPU's free VRAM a model may use and still be packed onto a single GPU (default 80)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
