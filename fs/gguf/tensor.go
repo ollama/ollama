@@ -16,12 +16,14 @@ func (ti TensorInfo) Valid() bool {
 	return ti.Name != "" && ti.NumBytes() > 0
 }
 
+// NumValues returns the number of elements in the tensor, or 0 if the shape
+// overflows int64 (e.g. a maliciously crafted GGUF file).
 func (ti TensorInfo) NumValues() int64 {
-	var numItems int64 = 1
-	for _, dim := range ti.Shape {
-		numItems *= int64(dim)
+	numValues, ok := ti.numValues()
+	if !ok {
+		return 0
 	}
-	return numItems
+	return numValues
 }
 
 func (ti TensorInfo) numValues() (int64, bool) {
@@ -39,9 +41,14 @@ func (ti TensorInfo) numValues() (int64, bool) {
 	return numItems, true
 }
 
-// NumBytes returns the number of bytes in the tensor.
+// NumBytes returns the number of bytes in the tensor, or 0 if the size
+// overflows int64 (e.g. a maliciously crafted GGUF file).
 func (ti TensorInfo) NumBytes() int64 {
-	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
+	numBytes, ok := ti.numBytes()
+	if !ok {
+		return 0
+	}
+	return numBytes
 }
 
 func (ti TensorInfo) numBytes() (int64, bool) {
