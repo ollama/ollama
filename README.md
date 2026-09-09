@@ -257,6 +257,7 @@ console.log(response.message.content);
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama) - AI gateway
 - [Testcontainers](https://testcontainers.com/modules/ollama/) - Container-based testing
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama) - PHP AI framework
+- [Bifrost](https://getmaxim.ai/bifrost) - Bifrost is the fastest LLM gateway, with just 11μs overhead at 5,000 RPS, making it 50x faster than LiteLLM.
 
 ### Frameworks & Agents
 
