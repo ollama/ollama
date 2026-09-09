@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
@@ -603,6 +604,98 @@ func TestAnthropicMessagesMiddleware_SetsRelaxThinkingFlag(t *testing.T) {
 
 	if !flagSet {
 		t.Error("expected relax_thinking flag to be set in context")
+	}
+}
+
+func TestAnthropicMessagesMiddleware_StreamingKeepAlivePing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	original := anthropicPingInterval
+	anthropicPingInterval = 5 * time.Millisecond
+	t.Cleanup(func() { anthropicPingInterval = original })
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		c.Writer.WriteHeader(http.StatusOK)
+		// Simulate the model silently composing tool-call arguments: no
+		// chunk is written for long enough that at least one ping should
+		// fire before the final chunk arrives.
+		time.Sleep(40 * time.Millisecond)
+		chunk := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "done"},
+			Done:       true,
+			DoneReason: "stop",
+		}
+		data, _ := json.Marshal(chunk)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{"model":"test-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"Hi"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	events := parseSSEEvents(t, resp.Body.String())
+
+	pingCount := 0
+	hasMessageStop := false
+	for _, e := range events {
+		switch e.event {
+		case "ping":
+			pingCount++
+		case "message_stop":
+			hasMessageStop = true
+		}
+	}
+	if pingCount == 0 {
+		t.Fatalf("expected at least one ping event during the silent stretch, got none in %d events", len(events))
+	}
+	if !hasMessageStop {
+		t.Error("expected message_stop event after the silent stretch ends")
+	}
+}
+
+func TestAnthropicMessagesMiddleware_NoPingForFastStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	original := anthropicPingInterval
+	anthropicPingInterval = 500 * time.Millisecond
+	t.Cleanup(func() { anthropicPingInterval = original })
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		c.Writer.WriteHeader(http.StatusOK)
+		chunk := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "hi"},
+			Done:       true,
+			DoneReason: "stop",
+		}
+		data, _ := json.Marshal(chunk)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{"model":"test-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"Hi"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	events := parseSSEEvents(t, resp.Body.String())
+	for _, e := range events {
+		if e.event == "ping" {
+			t.Fatalf("did not expect a ping event for a stream that never stalls, got one among %d events", len(events))
+		}
 	}
 }
 
