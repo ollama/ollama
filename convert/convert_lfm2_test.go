@@ -2,9 +2,12 @@ package convert
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 type lfm2StubTensor struct {
@@ -125,6 +128,90 @@ func TestLFM2DenseKV(t *testing.T) {
 	}
 }
 
+func TestLFM2ColBERTSentenceTransformersMetadata(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite := func(name, content string) {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mustWrite("modules.json", `[
+		{"idx": 0, "name": "0", "path": "0_Transformer", "type": "sentence_transformers.models.Transformer"},
+		{"idx": 1, "name": "1", "path": "1_Dense", "type": "sentence_transformers.models.Dense"},
+		{"idx": 2, "name": "2", "path": "2_Normalize", "type": "sentence_transformers.models.Normalize"}
+	]`)
+	mustWrite("1_Dense/config.json", `{"in_features": 1024, "out_features": 128, "bias": false}`)
+
+	p := lfm2Model{
+		ModelParameters:       ModelParameters{Architectures: []string{"Lfm2Model"}, ModelType: "lfm2", VocabSize: 65536},
+		HiddenSize:            1024,
+		NumHiddenLayers:       16,
+		MaxPositionEmbeddings: 32768,
+		IntermediateSize:      4096,
+		NumAttentionHeads:     16,
+		NumKeyValueHeads:      8,
+		LayerTypes:            []string{"conv", "full_attention"},
+		NormEps:               1e-5,
+		ConvLCache:            3,
+	}
+
+	if err := p.parseMore(os.DirFS(dir)); err != nil {
+		t.Fatal(err)
+	}
+
+	kv := p.KV(&Tokenizer{Vocabulary: &Vocabulary{Model: "gpt2"}})
+	if got, want := kv["pooling_type"], uint32(1); got != want {
+		t.Fatalf("pooling_type = %v, want %v", got, want)
+	}
+	if got, want := kv["normalize_embeddings"], true; got != want {
+		t.Fatalf("normalize_embeddings = %v, want %v", got, want)
+	}
+	if got, want := kv["dense_2_feat_in"], uint32(1024); got != want {
+		t.Fatalf("dense_2_feat_in = %v, want %v", got, want)
+	}
+	if got, want := kv["dense_2_feat_out"], uint32(128); got != want {
+		t.Fatalf("dense_2_feat_out = %v, want %v", got, want)
+	}
+}
+
+func TestLFM2ParseMoreMissingModulesIsOptional(t *testing.T) {
+	var p lfm2Model
+	if err := p.parseMore(os.DirFS(t.TempDir())); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLFM2ParseMoreUsesFSPaths(t *testing.T) {
+	fsys := fstest.MapFS{
+		"modules.json": &fstest.MapFile{Data: []byte(`[
+			{"path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+			{"path": "2_Dense", "type": "sentence_transformers.models.Dense"}
+		]`)},
+		"1_Pooling/config.json": &fstest.MapFile{Data: []byte(`{"pooling_mode_mean_tokens": true}`)},
+		"2_Dense/config.json":   &fstest.MapFile{Data: []byte(`{"in_features": 1024, "out_features": 128}`)},
+	}
+
+	var p lfm2Model
+	if err := p.parseMore(fsys); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.PoolingType, uint32(1); got != want {
+		t.Fatalf("pooling type = %v, want %v", got, want)
+	}
+	if got, want := p.dense2FeatIn, uint32(1024); got != want {
+		t.Fatalf("dense2FeatIn = %v, want %v", got, want)
+	}
+	if got, want := p.dense2FeatOut, uint32(128); got != want {
+		t.Fatalf("dense2FeatOut = %v, want %v", got, want)
+	}
+}
+
 func TestLFM2MoETensors(t *testing.T) {
 	p := lfm2Model{
 		ModelParameters: ModelParameters{ModelType: "lfm2_moe"},
@@ -188,6 +275,22 @@ func TestLFM2MoEReplacements(t *testing.T) {
 
 	if got, want := replacer.Replace("model.layers.2.feed_forward.gate.weight"), "blk.2.ffn_gate_inp.weight"; got != want {
 		t.Fatalf("gate replacement = %q, want %q", got, want)
+	}
+
+	if got, want := replacer.Replace("1_Dense.linear.weight"), "dense_2.weight"; got != want {
+		t.Fatalf("dense replacement = %q, want %q", got, want)
+	}
+
+	if got, want := replacer.Replace("embed_tokens.weight"), "token_embd.weight"; got != want {
+		t.Fatalf("root token embedding replacement = %q, want %q", got, want)
+	}
+
+	if got, want := replacer.Replace("embedding_norm.weight"), "token_embd_norm.weight"; got != want {
+		t.Fatalf("root embedding norm replacement = %q, want %q", got, want)
+	}
+
+	if got, want := replacer.Replace("layers.0.operator_norm.weight"), "blk.0.attn_norm.weight"; got != want {
+		t.Fatalf("root layer replacement = %q, want %q", got, want)
 	}
 }
 

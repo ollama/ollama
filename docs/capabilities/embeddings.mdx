@@ -68,6 +68,12 @@ Embeddings turn text into numeric vectors you can store in a vector database, se
   The `/api/embed` endpoint returns L2‑normalized (unit‑length) vectors.
 </Note>
 
+### LFM2-ColBERT models
+
+Ollama can load LFM2-based ColBERT checkpoints that are converted from a SentenceTransformers layout with a dense projection head. During conversion, the LFM2 backbone is exposed as an embedding model when the checkpoint includes SentenceTransformers embedding metadata, and dense projection metadata is preserved in the converted model.
+
+For ColBERT checkpoints that are trained for late-interaction retrieval, `/api/embed` returns one pooled vector per input so it can be used with standard vector databases. Applications that need token-level MaxSim scoring should use a retrieval stack that exposes token-level embeddings from the same checkpoint.
+
 ## Generate a batch of embeddings
 
 Pass an array of strings to `input`.
@@ -123,5 +129,3 @@ Pass an array of strings to `input`.
 
 - Use cosine similarity for most semantic search use cases.
 - Use the same embedding model for both indexing and querying.
-
-

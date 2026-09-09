@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"maps"
 	"math"
+	"path"
 	"slices"
 	"strings"
 
@@ -31,6 +32,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 	}
 
 	var ts []Tensor
+	names := make(map[string]struct{})
 	for _, p := range ps {
 		f, err := fsys.Open(p)
 		if err != nil {
@@ -54,8 +56,6 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 		}
 
 		keys := slices.Sorted(maps.Keys(headers))
-
-		names := make(map[string]struct{}, len(keys))
 
 		fp8Scales, err := collectSafetensorsFP8Scales(n, headers)
 		if err != nil {
@@ -85,7 +85,12 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 					}
 				}
 
-				ggufName := replacer.Replace(key)
+				sourceKey := key
+				if dir := path.Dir(p); dir != "." {
+					sourceKey = dir + "." + sourceKey
+				}
+
+				ggufName := replacer.Replace(sourceKey)
 				if _, ok := names[ggufName]; ok {
 					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
 				}

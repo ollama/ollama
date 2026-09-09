@@ -377,6 +377,60 @@ func TestParseSafetensorsConsumesFP8ScaleCompanion(t *testing.T) {
 	}
 }
 
+func TestParseSafetensorsPrefixesNestedModulePath(t *testing.T) {
+	tempDir := t.TempDir()
+	moduleDir := filepath.Join(tempDir, "1_Dense")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	generateSafetensorTestData(t, moduleDir, map[string]*tensorData{
+		"linear.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F32",
+			Shape:   []int{1, 1},
+		},
+	})
+
+	tensors, err := parseTensors(os.DirFS(tempDir), strings.NewReplacer("1_Dense.linear", "dense_2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tensors) != 1 {
+		t.Fatalf("expected one tensor, got %d", len(tensors))
+	}
+	if got, want := tensors[0].Name(), "dense_2.weight"; got != want {
+		t.Fatalf("tensor name = %q, want %q", got, want)
+	}
+}
+
+func TestParseSafetensorsRejectsDuplicateNamesAcrossFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	generateSafetensorTestData(t, tempDir, map[string]*tensorData{
+		"dense_2.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F32",
+			Shape:   []int{1, 1},
+		},
+	})
+
+	moduleDir := filepath.Join(tempDir, "1_Dense")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	generateSafetensorTestData(t, moduleDir, map[string]*tensorData{
+		"linear.weight": {
+			Offsets: []int{0, 4},
+			Type:    "F32",
+			Shape:   []int{1, 1},
+		},
+	})
+
+	_, err := parseTensors(os.DirFS(tempDir), strings.NewReplacer("1_Dense.linear", "dense_2"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate tensor name 'dense_2.weight'") {
+		t.Fatalf("expected duplicate tensor name error, got %v", err)
+	}
+}
+
 func TestParseSafetensorsRejectsFP8WithoutBlockMetadata(t *testing.T) {
 	tempDir := t.TempDir()
 	generateSafetensorTestData(t, tempDir, map[string]*tensorData{
