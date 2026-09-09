@@ -195,7 +195,7 @@ console.log(response.message.content);
 - [ConfiChat](https://github.com/1runeberg/confichat) - Privacy-focused with optional encryption
 - [LLocal.in](https://github.com/kartikm7/llocal) - Electron desktop client
 - [MindMac](https://mindmac.app) - AI chat client for Mac
-- [Msty](https://msty.app) - Multi-model desktop client
+- [Msty](https://msty.ai) - Multi-model desktop client
 - [BoltAI for Mac](https://boltai.com) - AI chat client for Mac
 - [IntelliBar](https://intellibar.app/) - AI-powered assistant for macOS
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
