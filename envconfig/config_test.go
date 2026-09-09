@@ -226,6 +226,29 @@ func TestUint(t *testing.T) {
 	}
 }
 
+func TestCacheRAM(t *testing.T) {
+	cases := map[string]struct {
+		mib uint
+		ok  bool
+	}{
+		"":     {0, false},
+		"0":    {0, true},
+		"1024": {1024, true},
+		"-1":   {0, false},
+		"8g":   {0, false},
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_CACHE_RAM", k)
+			mib, ok := CacheRAM()
+			if mib != v.mib || ok != v.ok {
+				t.Errorf("%s: expected (%d, %t), got (%d, %t)", k, v.mib, v.ok, mib, ok)
+			}
+		})
+	}
+}
+
 func TestKeepAlive(t *testing.T) {
 	cases := map[string]time.Duration{
 		"":       5 * time.Minute,

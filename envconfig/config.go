@@ -302,6 +302,25 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // Set aside VRAM per GPU
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
+// CacheRAM returns the limit, in MiB, for the prompt cache llama-server keeps
+// in system memory, and whether OLLAMA_CACHE_RAM was set. llama-server saves
+// the KV state of prompts evicted from a slot so a later request that shares
+// a prefix can skip re-processing it; its own default budget is 8192 MiB per
+// runner, which is not part of Ollama's memory estimates. 0 disables the
+// cache. When unset, llama-server's default applies.
+func CacheRAM() (uint, bool) {
+	s := Var("OLLAMA_CACHE_RAM")
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(s, 10, 32)
+	if err != nil {
+		slog.Warn("invalid environment variable, ignoring", "key", "OLLAMA_CACHE_RAM", "value", s)
+		return 0, false
+	}
+	return uint(n), true
+}
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -316,6 +335,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_CACHE_RAM":            {"OLLAMA_CACHE_RAM", String("OLLAMA_CACHE_RAM")(), "Limit for the llama-server prompt cache in system memory (MiB, 0 disables; default 8192)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
 		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
 		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},

@@ -368,6 +368,10 @@ How much the cache quantization impacts the model's response quality will depend
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
 
+## How much system memory does a loaded model use?
+
+Besides the weights and the K/V cache, the runner keeps a prompt cache in system memory. When a request replaces the prompt in a slot, the previous prompt's K/V state is saved on the host so a later request that shares a prefix can restore it instead of processing it again. This cache is limited to 8 GiB per loaded model by default, and it fills up over time on workloads that alternate between many different prompts, even when the model itself is fully offloaded to the GPU. Set `OLLAMA_CACHE_RAM` to a limit in MiB to bound it, or `OLLAMA_CACHE_RAM=0` to disable it.
+
 ## Where can I find my Ollama Public Key?
 
 Your **Ollama Public Key** is the public part of the key pair that lets your local Ollama instance talk to [ollama.com](https://ollama.com).
