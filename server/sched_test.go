@@ -1558,6 +1558,24 @@ func TestSelectLlamaServerPlacement(t *testing.T) {
 			wantLibrary:      "CUDA",
 			wantSelectedGPUs: 2,
 		},
+		{
+			// Regression for https://github.com/ollama/ollama/issues/17018: when a
+			// model must be split across GPUs, the group must be ordered with the
+			// most free memory first so the main GPU (which holds the output layer)
+			// isn't a smaller device that llama-server's fit leaves at zero layers.
+			name:          "multi-GPU split orders largest free GPU first",
+			predictedVRAM: 60 * format.GigaByte,
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{ID: "0", Library: "Vulkan"}, Name: "provii-a", FreeMemory: 15 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "1", Library: "Vulkan"}, Name: "mi60-a", FreeMemory: 31 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "2", Library: "Vulkan"}, Name: "mi60-b", FreeMemory: 30 * format.GigaByte},
+				{DeviceID: ml.DeviceID{ID: "3", Library: "Vulkan"}, Name: "provii-b", FreeMemory: 16 * format.GigaByte},
+			},
+			opts:             api.DefaultOptions(),
+			wantLibrary:      "Vulkan",
+			wantSelectedGPUs: 4,
+			wantGPUID:        "1",
+		},
 	}
 
 	for _, tt := range tests {
