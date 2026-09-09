@@ -50,6 +50,20 @@ type DeviceInfo struct {
 	// TotalMemory is the total amount of memory the device can use for loading models
 	TotalMemory uint64 `json:"total_memory"`
 
+	// PhysicalMemory is the memory the device reports having, which is not the same
+	// quantity as TotalMemory and is never smaller. TotalMemory is what a runner can
+	// address; the driver reserves a further amount for itself that is present on the card
+	// but unusable for models — 638 MiB of an RTX PRO 6000's 95.59 GiB.
+	//
+	// Every placement decision uses TotalMemory. PhysicalMemory exists so that a tool
+	// displaying a machine's hardware can show the figure the rest of the system shows: it
+	// is what nvidia-smi reports, and a UI that quietly omits it looks like it has lost
+	// memory the user can see elsewhere.
+	//
+	// It is zero where no source distinguishes the two, in which case TotalMemory is the
+	// only figure available and should be displayed instead.
+	PhysicalMemory uint64 `json:"physical_memory,omitempty"`
+
 	// FreeMemory is the amount of memory currently available on the device for loading models
 	FreeMemory uint64 `json:"free_memory,omitempty"`
 

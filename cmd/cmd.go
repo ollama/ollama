@@ -2480,6 +2480,12 @@ func NewCLI() *cobra.Command {
 		},
 	}
 	gpuDiscoverCmd.Flags().StringArrayVar(&gpuDiscoverLibDirs, "lib-dir", nil, "Ollama runtime library directory")
+	infoCmd := &cobra.Command{
+		Use:     "info",
+		Short:   "Display system-wide information",
+		PreRunE: checkServerHeartbeat,
+		RunE:    InfoHandler,
+	}
 
 	envVars := envconfig.AsMap()
 
@@ -2497,6 +2503,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		infoCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -2549,6 +2556,7 @@ func NewCLI() *cobra.Command {
 		runnerCmd,
 		gpuDiscoverCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
+		infoCmd,
 	)
 
 	return rootCmd

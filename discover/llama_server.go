@@ -336,6 +336,11 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 			if nativeDevice.DeviceID != "" {
 				dev.PCIID = nativeDevice.DeviceID
 			}
+			// Only the native probe can tell these apart: llama-server reports the memory
+			// it can use, which is already dev.TotalMemory.
+			if nativeDevice.PhysicalMemory > dev.TotalMemory {
+				dev.PhysicalMemory = nativeDevice.PhysicalMemory
+			}
 			if nativeDevice.IntegratedKnown {
 				dev.Integrated = nativeDevice.Integrated
 			} else {
