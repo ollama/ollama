@@ -181,11 +181,15 @@ type ResponsesFunctionCall struct {
 
 func (ResponsesFunctionCall) responsesInputItem() {}
 
-// ResponsesFunctionCallOutput represents a function call result from the client.
+// ResponsesFunctionCallOutput represents a paired result or standalone named
+// output from the client.
 type ResponsesFunctionCallOutput struct {
-	Type   string `json:"type"`    // always "function_call_output"
-	CallID string `json:"call_id"` // links to the original function call
-	Output string `json:"output"`  // the function result
+	ID        string `json:"id,omitempty"`
+	Type      string `json:"type"`              // always "function_call_output"
+	CallID    string `json:"call_id,omitempty"` // links to the original function call, if any
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Output    string `json:"output"`
 
 	// OutputItems is populated when output is provided as Responses content
 	// items instead of the string shorthand.
@@ -194,18 +198,27 @@ type ResponsesFunctionCallOutput struct {
 
 func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 	var aux struct {
-		Type   string          `json:"type"`
-		CallID string          `json:"call_id"`
-		Output json.RawMessage `json:"output"`
+		ID        string          `json:"id"`
+		Type      string          `json:"type"`
+		CallID    *string         `json:"call_id"`
+		Name      string          `json:"name"`
+		Namespace string          `json:"namespace"`
+		Output    json.RawMessage `json:"output"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 
-	o.Type = aux.Type
-	o.CallID = aux.CallID
-	o.Output = ""
-	o.OutputItems = nil
+	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
+		return errors.New("function output call_id must not be empty")
+	}
+	if aux.CallID == nil && strings.TrimSpace(aux.Name) == "" {
+		return errors.New("standalone function output is missing name")
+	}
+	*o = ResponsesFunctionCallOutput{ID: aux.ID, Type: aux.Type, Name: aux.Name, Namespace: aux.Namespace}
+	if aux.CallID != nil {
+		o.CallID = *aux.CallID
+	}
 
 	if len(aux.Output) == 0 {
 		return nil
@@ -654,12 +667,16 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 			}
-			messages = append(messages, api.Message{
+			message := api.Message{
 				Role:       "tool",
 				Content:    content,
 				Images:     images,
 				ToolCallID: v.CallID,
-			})
+			}
+			if v.CallID == "" {
+				message.ToolName = qualifyNamespaceToolName(v.Namespace, v.Name)
+			}
+			messages = append(messages, message)
 		case ResponsesToolSearchCall:
 			messages = appendResponseToolCall(messages, api.ToolCall{
 				ID: v.CallID,

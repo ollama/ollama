@@ -7,12 +7,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/openai"
 )
 
@@ -392,6 +396,169 @@ func TestResponsesCompactionTriggerReturnsCodexStream(t *testing.T) {
 	paths, requests := capture.snapshot()
 	if len(paths) != 1 || paths[0] != "/v1/responses" {
 		t.Fatalf("paths=%v requests=%s", paths, requests)
+	}
+}
+
+func TestResponsesCompactionPreservesStandaloneOutputIntoNextTurn(t *testing.T) {
+	const imageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	for _, tt := range []struct {
+		name      string
+		stream    bool
+		namespace string
+		nullID    bool
+	}{
+		{name: "Codex trigger with namespaced handoff", stream: true, namespace: "workspace"},
+		{name: "compact endpoint with null call ID", nullID: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			local, capture := newCompactionTestServer(t, func(attempt int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+				w.Header().Set("Content-Type", "application/json")
+				if attempt%2 == 1 {
+					// The compactor does not select the handoff for retention.
+					_, _ = w.Write(summaryResponse(t, "Continue the task.", nil))
+					return
+				}
+				_, _ = io.WriteString(w, `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`)
+			})
+			endpoint, path := local, "/v1/responses/compact"
+			if tt.stream {
+				catalogPath := filepath.Join(t.TempDir(), proxy.CodexDesktopRoutingCatalogFilename)
+				if err := os.WriteFile(catalogPath, []byte(`{"models":[{"slug":"fixture:cloud"}]}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				handler, err := proxy.NewCodexDesktop(proxy.CodexDesktopConfig{
+					OllamaURL: local.URL, ChatGPTURL: local.URL, OpenAIURL: local.URL,
+					RoutingCatalogPath: catalogPath,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				endpoint = httptest.NewServer(handler)
+				t.Cleanup(endpoint.Close)
+				path = proxy.CodexDesktopPathPrefix + "/v1/responses"
+			}
+
+			output := []any{
+				map[string]any{"type": "input_text", "text": "Use the supplied architecture diagram."},
+				map[string]any{"type": "input_image", "detail": "auto", "image_url": imageURL},
+			}
+			standalone := map[string]any{"type": "function_call_output", "name": "handoff", "output": output}
+			if tt.namespace != "" {
+				standalone["namespace"] = tt.namespace
+			}
+			if tt.nullID {
+				standalone["call_id"] = nil
+			}
+			input := []any{
+				map[string]any{"type": "message", "role": "user", "content": "Implement the feature."},
+				standalone,
+				map[string]any{"type": "message", "role": "assistant", "content": "I have read the handoff."},
+				map[string]any{"type": "message", "role": "user", "content": "Continue."},
+			}
+			for cycle := range 2 {
+				compactInput := append([]any(nil), input...)
+				if tt.stream {
+					compactInput = append(compactInput, map[string]any{"type": "compaction_trigger"})
+				}
+				request, err := json.Marshal(map[string]any{"model": "fixture:cloud", "stream": tt.stream, "input": compactInput})
+				if err != nil {
+					t.Fatal(err)
+				}
+				status, header, body := postCompactionRequest(t, endpoint, path, string(request))
+				if status != http.StatusOK {
+					t.Fatalf("cycle %d compact status=%d body=%s", cycle, status, body)
+				}
+				var compacted openai.ResponsesCompactionItem
+				if tt.stream {
+					if !strings.HasPrefix(header.Get("Content-Type"), "text/event-stream") {
+						t.Fatalf("unexpected stream content-type %q", header.Get("Content-Type"))
+					}
+					done := 0
+					for _, line := range strings.Split(string(body), "\n") {
+						data, ok := strings.CutPrefix(line, "data: ")
+						if !ok || data == "[DONE]" {
+							continue
+						}
+						var event struct {
+							Type string                         `json:"type"`
+							Item openai.ResponsesCompactionItem `json:"item"`
+						}
+						if err := json.Unmarshal([]byte(data), &event); err != nil {
+							t.Fatal(err)
+						}
+						if event.Type == "response.output_item.done" {
+							compacted = event.Item
+							done++
+						}
+					}
+					if done != 1 {
+						t.Fatalf("expected one completed compaction item, got %d: %s", done, body)
+					}
+				} else {
+					var response openai.ResponsesCompactedResponse
+					if err := json.Unmarshal(body, &response); err != nil {
+						t.Fatal(err)
+					}
+					if len(response.Output) != 1 {
+						t.Fatalf("expected one compaction item: %s", body)
+					}
+					compacted = response.Output[0]
+				}
+				if compacted.Type != "compaction" {
+					t.Fatalf("unexpected output item: %+v", compacted)
+				}
+
+				input = []any{compacted, map[string]any{"type": "message", "role": "user", "content": "Continue."}}
+				request, err = json.Marshal(map[string]any{"model": "fixture:cloud", "stream": false, "input": input})
+				if err != nil {
+					t.Fatal(err)
+				}
+				status, _, body = postCompactionRequest(t, endpoint, strings.TrimSuffix(path, "/compact"), string(request))
+				if status != http.StatusOK {
+					t.Fatalf("cycle %d replay status=%d body=%s", cycle, status, body)
+				}
+				paths, bodies := capture.snapshot()
+				if len(paths) != 2*(cycle+1) || paths[len(paths)-1] != "/v1/responses" {
+					t.Fatalf("unexpected upstream requests: %v", paths)
+				}
+				var forwarded struct {
+					Input []map[string]any `json:"input"`
+				}
+				if err := json.Unmarshal(bodies[len(bodies)-1], &forwarded); err != nil {
+					t.Fatal(err)
+				}
+				outputs := 0
+				var summaryCallID string
+				for _, item := range forwarded.Input {
+					if item["type"] == "compaction" {
+						t.Fatalf("opaque compaction item reached upstream: %+v", item)
+					}
+					if item["type"] == "function_call" {
+						if item["name"] != "ollama_compaction_summary" {
+							t.Fatalf("unexpected synthetic function call: %+v", item)
+						}
+						summaryCallID, _ = item["call_id"].(string)
+						continue
+					}
+					if item["type"] != "function_call_output" {
+						continue
+					}
+					if summaryCallID != "" && item["call_id"] == summaryCallID {
+						continue
+					}
+					outputs++
+					if item["call_id"] != nil || item["name"] != "handoff" || !reflect.DeepEqual(item["output"], output) {
+						t.Fatalf("standalone output changed during replay: %+v", item)
+					}
+					if namespace, _ := item["namespace"].(string); namespace != tt.namespace {
+						t.Fatalf("namespace=%q, want %q", namespace, tt.namespace)
+					}
+				}
+				if outputs != 1 {
+					t.Fatalf("expected one replayed standalone output, got %d: %s", outputs, bodies[len(bodies)-1])
+				}
+			}
+		})
 	}
 }
 

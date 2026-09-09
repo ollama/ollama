@@ -49,14 +49,23 @@ type OllamaCompactionPayload struct {
 	Version  int           `json:"version"`
 	Summary  string        `json:"summary"`
 	Retained []api.Message `json:"retained"`
+	// StandaloneNames preserves Responses identities by retained-message index.
+	// Qualified native names alone cannot distinguish every namespace/member pair.
+	StandaloneNames map[int]compactionFunctionName `json:"standalone_names,omitempty"`
+}
+
+type compactionFunctionName struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
 }
 
 // CompactionTranscriptItem is one ordered input item shown to the compaction
 // model. Ref is request-local and is the only value the model may select.
 type CompactionTranscriptItem struct {
-	Ref     string      `json:"ref"`
-	Type    string      `json:"type"`
-	Message api.Message `json:"message"`
+	Ref            string                  `json:"ref"`
+	Type           string                  `json:"type"`
+	Message        api.Message             `json:"message"`
+	StandaloneName *compactionFunctionName `json:"standalone_name,omitempty"`
 }
 
 type compactionToolMetadata struct {
@@ -65,10 +74,11 @@ type compactionToolMetadata struct {
 }
 
 type compactionTranscriptItemWire struct {
-	Ref        string      `json:"ref"`
-	Type       string      `json:"type"`
-	Message    api.Message `json:"message"`
-	ImageCount int         `json:"image_count,omitempty"`
+	Ref            string                  `json:"ref"`
+	Type           string                  `json:"type"`
+	Message        api.Message             `json:"message"`
+	StandaloneName *compactionFunctionName `json:"standalone_name,omitempty"`
+	ImageCount     int                     `json:"image_count,omitempty"`
 }
 
 type compactionToolGroup struct {
@@ -300,6 +310,15 @@ func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, 
 }
 
 func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage, error) {
+	for index, name := range payload.StandaloneNames {
+		if index < 0 || index >= len(payload.Retained) {
+			return nil, fmt.Errorf("standalone name refers to invalid retained-message index %d", index)
+		}
+		message := payload.Retained[index]
+		if message.Role != "tool" || message.ToolCallID != "" || strings.TrimSpace(name.Name) == "" || qualifyNamespaceToolName(name.Namespace, name.Name) != message.ToolName {
+			return nil, fmt.Errorf("standalone name does not match retained message %d", index)
+		}
+	}
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -322,8 +341,8 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 		return nil, err
 	}
 	items = append(items, call, result)
-	for _, message := range payload.Retained {
-		converted, err := messageToResponsesItems(message)
+	for i, message := range payload.Retained {
+		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
 		if err != nil {
 			return nil, fmt.Errorf("invalid retained message: %w", err)
 		}
@@ -332,7 +351,7 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 	return items, nil
 }
 
-func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
+func messageToResponsesItems(message api.Message, standaloneName compactionFunctionName) ([]json.RawMessage, error) {
 	var values []any
 	if message.Thinking != "" {
 		values = append(values, map[string]any{
@@ -342,9 +361,19 @@ func messageToResponsesItems(message api.Message) ([]json.RawMessage, error) {
 	}
 	if message.Role == "tool" {
 		if message.ToolCallID == "" {
-			return nil, errors.New("retained tool message is missing tool_call_id")
-		}
-		if message.ToolName == "tool_search" {
+			if strings.TrimSpace(standaloneName.Name) == "" {
+				return nil, errors.New("retained tool message is missing tool_call_id or standalone name")
+			}
+			output, err := responsesContentValue(message.Content, message.Images)
+			if err != nil {
+				return nil, err
+			}
+			value := map[string]any{"type": "function_call_output", "name": standaloneName.Name, "output": output}
+			if standaloneName.Namespace != "" {
+				value["namespace"] = standaloneName.Namespace
+			}
+			values = append(values, value)
+		} else if message.ToolName == "tool_search" {
 			if len(message.Images) > 0 {
 				return nil, errors.New("retained tool search output cannot contain images")
 			}
@@ -455,9 +484,13 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 		if err != nil {
 			return nil, fmt.Errorf("input[%d]: %w", i, err)
 		}
-		items = append(items, CompactionTranscriptItem{
+		entry := CompactionTranscriptItem{
 			Ref: fmt.Sprintf("item_%06d", i+1), Type: kind, Message: message,
-		})
+		}
+		if output, ok := item.(ResponsesFunctionCallOutput); ok && output.CallID == "" {
+			entry.StandaloneName = &compactionFunctionName{Name: output.Name, Namespace: output.Namespace}
+		}
+		items = append(items, entry)
 	}
 
 	groups, forced, err := analyzeCompactionToolState(items)
@@ -502,7 +535,11 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 				return api.Message{}, "", err
 			}
 		}
-		return api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}, "function_call_output", nil
+		message := api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}
+		if value.CallID == "" {
+			message.ToolName = qualifyNamespaceToolName(value.Namespace, value.Name)
+		}
+		return message, "function_call_output", nil
 	case ResponsesToolSearchCall:
 		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
 			ID: value.CallID, Function: api.ToolCallFunction{Name: "tool_search", Arguments: value.Arguments},
@@ -571,6 +608,7 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 	}
 	byCallID := make(map[string]*pendingGroup)
 	ignoredCallIDs := make(map[string]struct{})
+	forced := make(map[string]struct{})
 	var ordered []*pendingGroup
 
 	for i, item := range items {
@@ -592,6 +630,12 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			ordered = append(ordered, group)
 		case "function_call_output":
 			callID := item.Message.ToolCallID
+			if callID == "" && item.StandaloneName != nil {
+				// Standalone outputs can carry the task instructions. Retain them
+				// without inventing a call or relying on the summary to repeat them.
+				forced[item.Ref] = struct{}{}
+				continue
+			}
 			if _, ignored := ignoredCallIDs[callID]; ignored {
 				continue
 			}
@@ -607,7 +651,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 		}
 	}
 
-	forced := make(map[string]struct{})
 	groups := make([]compactionToolGroup, 0, len(ordered))
 	for _, candidate := range ordered {
 		groups = append(groups, candidate.group)
@@ -675,7 +718,7 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 		message := item.Message
 		message.Images = nil
 		metadata, err := json.Marshal(compactionTranscriptItemWire{
-			Ref: item.Ref, Type: item.Type, Message: message, ImageCount: len(item.Message.Images),
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(item.Message.Images),
 		})
 		if err != nil {
 			return 0
@@ -792,7 +835,7 @@ func (p *ResponsesCompactionPlan) summaryTranscriptMessages() ([]any, error) {
 		images := message.Images
 		message.Images = nil
 		metadata, err := json.Marshal(compactionTranscriptItemWire{
-			Ref: item.Ref, Type: item.Type, Message: message, ImageCount: len(images),
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(images),
 		})
 		if err != nil {
 			return nil, err
@@ -869,13 +912,21 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	}
 
 	retained := make([]api.Message, 0, len(selected))
+	var standaloneNames map[int]compactionFunctionName
 	for _, item := range p.items {
 		if _, ok := selected[item.Ref]; ok {
+			if item.StandaloneName != nil {
+				if standaloneNames == nil {
+					standaloneNames = make(map[int]compactionFunctionName)
+				}
+				standaloneNames[len(retained)] = *item.StandaloneName
+			}
 			retained = append(retained, item.Message)
 		}
 	}
 	payload := OllamaCompactionPayload{
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: selection.Summary, Retained: retained,
+		StandaloneNames: standaloneNames,
 	}
 	if p.omittedItems > 0 {
 		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
