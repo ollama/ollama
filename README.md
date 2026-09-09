@@ -268,6 +268,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [RAGAgent](https://github.com/MikeyBeez/RAGAgent) - Agent that runs Ollama and manages memories in files
 
 ### RAG & Knowledge Bases
 
