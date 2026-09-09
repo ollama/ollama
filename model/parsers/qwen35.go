@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -106,7 +107,7 @@ func (p *Qwen35Parser) Add(s string, done bool) (content string, thinking string
 			parsedContent, _, parsedCalls, err := p.toolParser.Add(event.content, done)
 			if err != nil {
 				slog.Warn("qwen3.5 tool call parsing failed", "error", err)
-				return "", "", nil, err
+				return "", "", nil, fmt.Errorf("failed to parse model-generated tool call: %w", err)
 			}
 			contentSb.WriteString(parsedContent)
 			calls = append(calls, parsedCalls...)
