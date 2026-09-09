@@ -35,6 +35,7 @@ type DeepSeek3Parser struct {
 	buffer             strings.Builder
 	callIndex          int
 	hasThinkingSupport bool
+	suppressThinking   bool
 }
 
 func (p *DeepSeek3Parser) HasToolSupport() bool {
@@ -61,12 +62,14 @@ func (p *DeepSeek3Parser) PreservedTokens() []string {
 func (p *DeepSeek3Parser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
-	// Check both model capability AND request preference
-	thinkingEnabled := p.HasThinkingSupport() && (thinkValue != nil && thinkValue.Bool())
-
-	if !thinkingEnabled {
-		p.state = DeepSeekCollectingContent
-		return
+	// When the model supports thinking, always start in the Thinking state
+	// to properly separate reasoning from content. suppressThinking controls
+	// whether the separated thinking is returned to the caller or discarded,
+	// mirroring how the template-based thinking parser works.
+	if p.HasThinkingSupport() {
+		p.suppressThinking = thinkValue != nil && !thinkValue.Bool()
+	} else {
+		p.suppressThinking = false
 	}
 
 	if prefill && lastMessage.Content != "" {
@@ -74,7 +77,11 @@ func (p *DeepSeek3Parser) setInitialState(lastMessage *api.Message, tools []api.
 		return
 	}
 
-	p.state = DeepSeekCollectingThinking
+	if p.HasThinkingSupport() {
+		p.state = DeepSeekCollectingThinking
+	} else {
+		p.state = DeepSeekCollectingContent
+	}
 }
 
 func (p *DeepSeek3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
@@ -115,7 +122,9 @@ func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking str
 		case deepseekEventToolCall:
 			toolCalls = append(toolCalls, event.toolCall)
 		case deepseekEventThinkingContent:
-			thinkingSb.WriteString(event.content)
+			if !p.suppressThinking {
+				thinkingSb.WriteString(event.content)
+			}
 		case deepseekEventContent:
 			contentSb.WriteString(event.content)
 		}
@@ -126,6 +135,9 @@ func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking str
 		p.callIndex++
 	}
 
+	if p.suppressThinking {
+		thinkingSb.Reset()
+	}
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
