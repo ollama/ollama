@@ -54,6 +54,15 @@ type ResponsesFileContent struct {
 
 func (ResponsesFileContent) responsesContent() {}
 
+// ResponsesEncryptedContent is content a provider labeled as encrypted; for
+// Ollama-native conversations the value is plain text, which we accept as-is.
+type ResponsesEncryptedContent struct {
+	Type             string `json:"type"` // always "encrypted_content"
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func (ResponsesEncryptedContent) responsesContent() {}
+
 type ResponsesInputMessage struct {
 	Type    string             `json:"type"` // always "message"
 	Role    string             `json:"role"` // one of `user`, `system`, `developer`
@@ -135,6 +144,12 @@ func unmarshalResponsesContent(data []byte) (ResponsesContent, error) {
 		return content, nil
 	case "input_file":
 		var content ResponsesFileContent
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		return content, nil
+	case "encrypted_content":
+		var content ResponsesEncryptedContent
 		if err := json.Unmarshal(data, &content); err != nil {
 			return nil, err
 		}
@@ -264,6 +279,55 @@ type ResponsesReasoningInput struct {
 
 func (ResponsesReasoningInput) responsesInputItem() {}
 
+// AgentMessageEnvelopeFormat is the routing prefix for converted agent
+// messages; internal/proxy uses the same text (cross-pinned by tests).
+const AgentMessageEnvelopeFormat = "Agent message from %q to %q:\n"
+
+func agentMessageContent(author, recipient, content string) string {
+	if author == "" && recipient == "" {
+		return content
+	}
+	return fmt.Sprintf(AgentMessageEnvelopeFormat+"%s", author, recipient, content)
+}
+
+// ResponsesAgentMessageInput is a message passed between Codex agents in the
+// multi-agent collaboration flow.
+type ResponsesAgentMessageInput struct {
+	ID        string             `json:"id,omitempty"`
+	Type      string             `json:"type"` // always "agent_message"
+	Author    string             `json:"author"`
+	Recipient string             `json:"recipient"`
+	Content   []ResponsesContent `json:"content"`
+}
+
+func (ResponsesAgentMessageInput) responsesInputItem() {}
+
+func (m *ResponsesAgentMessageInput) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		ID        string            `json:"id"`
+		Type      string            `json:"type"`
+		Author    string            `json:"author"`
+		Recipient string            `json:"recipient"`
+		Content   []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	m.ID = aux.ID
+	m.Type = aux.Type
+	m.Author = aux.Author
+	m.Recipient = aux.Recipient
+	m.Content = make([]ResponsesContent, 0, len(aux.Content))
+	for i, raw := range aux.Content {
+		content, err := unmarshalResponsesContent(raw)
+		if err != nil {
+			return fmt.Errorf("content[%d]: %w", i, err)
+		}
+		m.Content = append(m.Content, content)
+	}
+	return nil
+}
+
 // unmarshalResponsesInputItem unmarshals a single input item from JSON.
 func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 	var typeField struct {
@@ -324,6 +388,12 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return call, nil
+	case "agent_message":
+		var agentMessage ResponsesAgentMessageInput
+		if err := json.Unmarshal(data, &agentMessage); err != nil {
+			return nil, err
+		}
+		return agentMessage, nil
 	case "compaction":
 		var compaction ResponsesCompactionItem
 		if err := json.Unmarshal(data, &compaction); err != nil {
@@ -498,6 +568,15 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		case ResponsesReasoningInput:
 			// Store thinking to merge with the next assistant message
 			pendingThinking = v.EncryptedContent
+		case ResponsesAgentMessageInput:
+			content, _, err := convertResponsesContent(v.Content)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, api.Message{
+				Role:    "user",
+				Content: agentMessageContent(v.Author, v.Recipient, content),
+			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
 			if err != nil {
@@ -956,6 +1035,8 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 			content += v.Text
 		case ResponsesOutputTextContent:
 			content += v.Text
+		case ResponsesEncryptedContent:
+			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
 				continue // Skip if no URL (FileID not supported)

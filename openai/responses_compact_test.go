@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -788,5 +789,31 @@ func TestCompactionStreamContainsExactlyOneCompletedItem(t *testing.T) {
 	}
 	if done != 1 || completed != 1 {
 		t.Fatalf("done=%d completed=%d events=%+v", done, completed, events)
+	}
+}
+
+func TestCompactionMessageAgentMessage(t *testing.T) {
+	var item ResponsesAgentMessageInput
+	err := json.Unmarshal([]byte(`{
+		"type": "agent_message",
+		"author": "/root",
+		"recipient": "/root/worker",
+		"content": [
+			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+			{"type": "encrypted_content", "encrypted_content": "analyze the parser"}
+		]
+	}`), &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, kind, err := compactionMessage(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
+	want = fmt.Sprintf(want, "/root", "/root/worker")
+	if kind != "message" || msg.Role != "user" || msg.Content != want {
+		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }
