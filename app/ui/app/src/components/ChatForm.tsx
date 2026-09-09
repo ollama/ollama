@@ -16,6 +16,7 @@ import {
   useCancelMessage,
 } from "@/hooks/useChats";
 import { useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
@@ -92,12 +93,21 @@ function ChatForm({
   onCancelEdit,
   onFilesReceived,
 }: ChatFormProps) {
-  const [message, setMessage] = useState<MessageInput>({
-    content: "",
+  const queryClient = useQueryClient();
+  const getChatDraft = useCallback(
+    (id: string) => queryClient.getQueryData<string>(["chatDraft", id]) ?? "",
+    [queryClient],
+  );
+  const [message, setMessage] = useState<MessageInput>(() => ({
+    content: queryClient.getQueryData<string>(["chatDraft", chatId]) ?? "",
     attachments: [],
     fileErrors: [],
-  });
+  }));
   const [isEditing, setIsEditing] = useState<boolean>(false);
+  const prevDraftChatIdRef = useRef(chatId);
+  const hadEditingMessageRef = useRef(false);
+  // Captured at mount so the caret can be moved to the end after a restored draft
+  const restoredDraftAtMountRef = useRef(getChatDraft(chatId));
   const compositionEndTimeoutRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -270,6 +280,37 @@ function ChatForm({
     }
   };
 
+  // Move the caret to the end of the textarea (used after restoring a draft)
+  const moveCaretToEnd = useCallback(() => {
+    if (textareaRef.current) {
+      const position = textareaRef.current.value.length;
+      textareaRef.current.setSelectionRange(position, position);
+    }
+  }, []);
+
+  // Restore the saved draft for a chat (used when switching between chats)
+  const restoreChatDraft = useCallback(
+    (id: string) => {
+      const draft = getChatDraft(id);
+      setMessage({
+        content: draft,
+        attachments: [],
+        fileErrors: [],
+      });
+
+      // Reset textarea height to fit the restored draft
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = "auto";
+          textareaRef.current.style.height =
+            Math.min(textareaRef.current.scrollHeight, 24 * 8) + "px";
+          moveCaretToEnd();
+        }
+      }, 0);
+    },
+    [getChatDraft, moveCaretToEnd],
+  );
+
   // Clear loginPromptFeature when user becomes authenticated or no features are enabled
   useEffect(() => {
     if (
@@ -284,11 +325,21 @@ function ChatForm({
   // When entering edit mode, populate the composition with existing data
   useEffect(() => {
     if (!editingMessage) {
-      // Clear composition and reset textarea height when not editing
-      resetChatForm();
+      // Only reset when leaving edit mode (not on initial mount), preserving
+      // any restored draft; if the chat changed while editing, restore that
+      // chat's draft instead of clearing.
+      if (hadEditingMessageRef.current) {
+        hadEditingMessageRef.current = false;
+        if (prevDraftChatIdRef.current === chatId) {
+          resetChatForm();
+        } else {
+          restoreChatDraft(chatId);
+        }
+      }
       return;
     }
 
+    hadEditingMessageRef.current = true;
     const existingAttachments =
       editingMessage.originalMessage?.attachments || [];
     setMessage({
@@ -300,7 +351,7 @@ function ChatForm({
       })),
       fileErrors: [],
     });
-  }, [editingMessage]);
+  }, [editingMessage, chatId, restoreChatDraft]);
 
   // Focus and setup textarea when editing
   useLayoutEffect(() => {
@@ -314,10 +365,19 @@ function ChatForm({
     }
   }, [editingMessage]);
 
-  // Clear composition and reset textarea height when chatId changes
+  // Restore the saved draft when switching between chats instead of clearing it
   useEffect(() => {
-    resetChatForm();
-  }, [chatId]);
+    if (prevDraftChatIdRef.current === chatId) return;
+    prevDraftChatIdRef.current = chatId;
+    restoreChatDraft(chatId);
+  }, [chatId, restoreChatDraft]);
+
+  // On initial mount, if a saved draft was restored, place the caret at the end
+  useEffect(() => {
+    if (restoredDraftAtMountRef.current) {
+      moveCaretToEnd();
+    }
+  }, [moveCaretToEnd]);
 
   // Auto-focus textarea when autoFocus is true or when streaming completes (but not when editing)
   useEffect(() => {
@@ -531,6 +591,9 @@ function ChatForm({
       fileErrors: [],
     });
 
+    // Clear the saved draft for this chat after it was sent
+    queryClient.setQueryData(["chatDraft", chatId], "");
+
     // Reset textarea height and refocus after submit
     setTimeout(() => {
       if (textareaRef.current) {
@@ -628,6 +691,12 @@ function ChatForm({
   // Auto-resize textarea function
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setMessage((prev) => ({ ...prev, content: e.target.value }));
+
+    // Persist the draft per chat so it survives switching between chats.
+    // Skip while editing an existing message so its text isn't saved as a draft.
+    if (!editingMessage) {
+      queryClient.setQueryData(["chatDraft", chatId], e.target.value);
+    }
 
     // Reset height to auto to get the correct scrollHeight, then cap at 8 lines
     e.target.style.height = "auto";
