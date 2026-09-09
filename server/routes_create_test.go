@@ -885,6 +885,128 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	}
 }
 
+func TestCreateFromModelSkipsRendererInheritanceWithCustomTemplate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, nil, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:     "base",
+		Files:    map[string]string{"base.gguf": digest},
+		Renderer: "custom-renderer",
+		Parser:   "custom-parser",
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	// The child sets its own template, so it must not inherit the parent's renderer:
+	// renderPrompt short-circuits on a non-empty renderer and the template would be
+	// silently ignored.
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:     "child",
+		From:     "base",
+		Template: "{{ .Prompt }}",
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("child"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for child manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != "" {
+		t.Fatalf("expected no inherited renderer, got %q", cfg.Renderer)
+	}
+	// The parser reads model output rather than building the prompt, so it is still
+	// inherited: dropping it would take CapabilityTools and CapabilityThinking with it.
+	if cfg.Parser != "custom-parser" {
+		t.Fatalf("expected parser %q, got %q", "custom-parser", cfg.Parser)
+	}
+}
+
+func TestCreateGemma4SkipsRendererAutodetectWithCustomTemplate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":    "gemma4",
+		"general.parameter_count": uint64(25_200_000_000),
+	}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:     "test",
+		Files:    map[string]string{"test.gguf": digest},
+		Template: "{{ .Prompt }}",
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	mf, err := manifest.ParseNamedManifest(model.ParseName("test"))
+	if err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if mf.Config.Digest == "" {
+		t.Fatalf("unexpected empty config digest for manifest")
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("config blob path: %v", err)
+	}
+
+	cfgFile, err := os.Open(configPath)
+	if err != nil {
+		t.Fatalf("open config blob: %v", err)
+	}
+	defer cfgFile.Close()
+
+	var cfg model.ConfigV2
+	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+
+	if cfg.Renderer != "" {
+		t.Fatalf("expected no auto-detected renderer, got %q", cfg.Renderer)
+	}
+	// Parser and stop tokens describe the output and the architecture, so they still apply.
+	if cfg.Parser != "gemma4" {
+		t.Fatalf("expected parser %q, got %q", "gemma4", cfg.Parser)
+	}
+}
+
 func TestCreateRemovesLayers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
