@@ -188,21 +188,36 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
-			name:    "empty args",
-			inputs:  []string{`<tool_call>{"name": "get_conditions", "arguments": {}}</tool_call>`},
-			content: "",
-			tmpl:    qwen,
-			calls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Index:     0,
-						Name:      "get_conditions",
-						Arguments: api.NewToolCallFunctionArguments(),
-					},
+		name:    "empty args",
+		inputs:  []string{`<tool_call>{"name": "get_conditions", "arguments": {}}</tool_call>`},
+		content: "",
+		tmpl:    qwen,
+		calls: []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{
+					Index:     0,
+					Name:      "get_conditions",
+					Arguments: api.NewToolCallFunctionArguments(),
 				},
 			},
 		},
-		{
+	},
+	{
+		name:    "omitted args",
+		inputs:  []string{`<tool_call>{"name": "get_conditions"}</tool_call>`},
+		content: "",
+		tmpl:    qwen,
+		calls: []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{
+					Index:     0,
+					Name:      "get_conditions",
+					Arguments: api.NewToolCallFunctionArguments(),
+				},
+			},
+		},
+	},
+	{
 			name:    "text before tool call",
 			inputs:  []string{`Let me check the weather. <tool_call>{"name": "get_temperature", "arguments": {"city": "New York"}}</tool_call>`},
 			content: "Let me check the weather. ",
@@ -1349,6 +1364,12 @@ func TestFindArguments(t *testing.T) {
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
+		},
+		{
+			name: "omitted arguments",
+			tool: "get_conditions",
+			buffer: []byte(`{"name": "get_conditions"}`),
+			want: nil,
 		},
 	}
 
