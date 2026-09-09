@@ -52,8 +52,24 @@ var deprecatedParameters = []string{
 	"mirostat_eta",
 }
 
-// CreateRequest creates a new *api.CreateRequest from an existing Modelfile
+// HashProgress reports per-file SHA-256 hashing progress during CreateRequest.
+// It is invoked once per file about to be hashed with the file's path and
+// total size in bytes. Bytes written to the returned io.WriteCloser reflect
+// hashing progress; Close is called when hashing of that file completes.
+// A nil return value from the function or from the writer suppresses
+// progress reporting for that file.
+type HashProgress func(path string, size int64) io.WriteCloser
+
+// CreateRequest creates a new *api.CreateRequest from an existing Modelfile.
+// SHA-256 hashing of local files is silent; use CreateRequestWithProgress to
+// receive per-file progress updates.
 func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
+	return f.CreateRequestWithProgress(relativeDir, nil)
+}
+
+// CreateRequestWithProgress is like CreateRequest but invokes hashProgress
+// (if non-nil) as each local file is SHA-256'd.
+func (f Modelfile) CreateRequestWithProgress(relativeDir string, hashProgress HashProgress) (*api.CreateRequest, error) {
 	req := &api.CreateRequest{}
 
 	var messages []api.Message
@@ -70,7 +86,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMap(path, hashProgress)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
@@ -95,7 +111,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMap(path, hashProgress)
 			if err != nil {
 				return nil, err
 			}
@@ -117,7 +133,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMap(path, hashProgress)
 			if err != nil {
 				return nil, err
 			}
@@ -215,7 +231,7 @@ func canonicalLocalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
-func fileDigestMap(path string) (map[string]string, error) {
+func fileDigestMap(path string, hashProgress HashProgress) (map[string]string, error) {
 	fl := make(map[string]string)
 
 	fi, err := os.Stat(path)
@@ -259,7 +275,7 @@ func fileDigestMap(path string) (map[string]string, error) {
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 	for _, f := range files {
 		g.Go(func() error {
-			digest, err := digestForFile(f)
+			digest, err := digestForFile(f, hashProgress)
 			if err != nil {
 				return err
 			}
@@ -278,7 +294,7 @@ func fileDigestMap(path string) (map[string]string, error) {
 	return fl, nil
 }
 
-func digestForFile(filename string) (string, error) {
+func digestForFile(filename string, hashProgress HashProgress) (string, error) {
 	filepath, err := filepath.EvalSymlinks(filename)
 	if err != nil {
 		return "", err
@@ -291,7 +307,18 @@ func digestForFile(filename string) (string, error) {
 	defer bin.Close()
 
 	hash := sha256.New()
-	if _, err := io.Copy(hash, bin); err != nil {
+	var target io.Writer = hash
+	if hashProgress != nil {
+		fi, err := bin.Stat()
+		if err != nil {
+			return "", err
+		}
+		if pw := hashProgress(filename, fi.Size()); pw != nil {
+			defer pw.Close()
+			target = io.MultiWriter(hash, pw)
+		}
+	}
+	if _, err := io.Copy(target, bin); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
