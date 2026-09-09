@@ -735,10 +735,9 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
-		},
-		{
-			name: "args before name",
-			inputs: []string{
+		},		{
+			name:    "args before name",
+			inputs:  []string{
 				`<tool_call>{"arguments": {"a": "5", "b": "10"}, "name": "add"}</tool_call>`,
 			},
 			content: "",
@@ -751,6 +750,23 @@ func TestParser(t *testing.T) {
 						Arguments: testArgs(map[string]any{
 							"a": "5",
 							"b": "10",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:   "skip non-tool JSON before valid tool call",
+			inputs: []string{`<tool_call>{"name": "unknown_tool"}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: testArgs(map[string]any{
+							"location": "Tokyo",
 						}),
 					},
 				},
