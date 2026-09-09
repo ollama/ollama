@@ -171,7 +171,7 @@ func TestCompactionPreservesStandaloneOutputs(t *testing.T) {
 			t.Fatalf("cycle %d: retained %d messages, want both standalone outputs", cycle, len(payload.Retained))
 		}
 		handoff, search := payload.Retained[0], payload.Retained[1]
-		if handoff.ToolName != "handoff" || handoff.ToolNamespace != "workspace.tools" || handoff.Content != "Keep the original task instructions." || len(handoff.Images) != 1 {
+		if handoff.ToolName != "workspace.tools.handoff" || handoff.Content != "Keep the original task instructions." || len(handoff.Images) != 1 {
 			t.Fatalf("cycle %d: handoff changed: %+v", cycle, handoff)
 		}
 		if search.ToolName != "tool_search" || search.Content != "A standalone function can have this name." {
@@ -194,7 +194,8 @@ func TestCompactionPreservesStandaloneOutputs(t *testing.T) {
 		}
 		for i, want := range []api.Message{handoff, search} {
 			output, ok := decoded.Input.Items[i+2].(ResponsesFunctionCallOutput)
-			if !ok || output.CallID != "" || output.Name != want.ToolName || output.Namespace != want.ToolNamespace || output.Output != want.Content {
+			name := payload.StandaloneNames[i]
+			if !ok || output.CallID != "" || output.Name != name.Name || output.Namespace != name.Namespace || output.Output != want.Content {
 				t.Fatalf("cycle %d: standalone output %d lost identity or gained a call: %+v", cycle, i, decoded.Input.Items[i+2])
 			}
 		}

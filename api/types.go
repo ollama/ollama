@@ -204,8 +204,6 @@ type Message struct {
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName   string      `json:"tool_name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
-	// ToolNamespace qualifies ToolName for standalone tool outputs without a call ID.
-	ToolNamespace string `json:"tool_namespace,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
