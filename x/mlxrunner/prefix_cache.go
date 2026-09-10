@@ -283,11 +283,19 @@ pageIn:
 			}
 		}
 	}
+
+	// If the live offset falls inside the last node, split it so the reused
+	// head stays on the active path and only the unused tail can be evicted.
 	for i := len(c.activePath) - 1; i >= 0; i-- {
-		if c.activePath[i].endOffset <= minOff {
-			c.activePath = c.activePath[:i+1]
-			break
+		node := c.activePath[i]
+		if i > 0 && node.startOffset() >= minOff {
+			continue
 		}
+		if node.endOffset > minOff {
+			node = splitNode(node, minOff-node.startOffset(), c.caches, &c.pagedOutBytes)
+		}
+		c.activePath = append(c.activePath[:i], node)
+		break
 	}
 
 	// Update last-used time on only the final used node. For recurrent
