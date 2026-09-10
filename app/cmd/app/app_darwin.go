@@ -90,12 +90,15 @@ var (
 	claudeProxyFail   claudeProxyFailure
 	claudeDesktop     claudeDesktopController = &launch.ClaudeDesktop{}
 
-	claudeDesktopInstalled        = launch.ClaudeDesktopInstalled
-	claudeDesktopRunning          = launch.ClaudeDesktopRunning
-	claudeProxyListenAddr         = proxy.DefaultClaudeDesktopListenAddr
-	claudeProxyRetryWait          = 750 * time.Millisecond
-	claudeProxyRetryPoll          = 50 * time.Millisecond
-	claudeAccessRetryWait         = 3 * time.Second
+	claudeDesktopInstalled = launch.ClaudeDesktopInstalled
+	claudeDesktopRunning   = launch.ClaudeDesktopRunning
+	claudeProxyListenAddr  = proxy.DefaultClaudeDesktopListenAddr
+	claudeProxyRetryWait   = 750 * time.Millisecond
+	claudeProxyRetryPoll   = 50 * time.Millisecond
+	claudeAccessRetryWait  = 3 * time.Second
+	// claudeContextLengthTimeout bounds one model metadata lookup. A cloud
+	// model's metadata is fetched from Ollama.com, so allow for a round trip.
+	claudeContextLengthTimeout    = 10 * time.Second
 	claudeAccessRetryPoll         = 100 * time.Millisecond
 	claudeCatalogRefreshInterval  = time.Minute
 	claudeCatalogNow              = time.Now
@@ -117,6 +120,8 @@ var (
 
 	claudeAccessStateResolver = currentClaudeDesktopAccessState
 	claudeLocalModelsResolver = currentClaudeDesktopLocalModels
+
+	claudeContextLengthResolver = currentClaudeDesktopContextLength
 )
 
 var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the selected models. Try again")
@@ -616,8 +621,9 @@ func startClaudeAppProxy() error {
 			_, selected, _ := refreshClaudeDesktopCatalog(ctx, current, false)
 			return selected, nil
 		},
-		ResolveAccessState: claudeAccessStateResolver,
-		ListLocalModels:    claudeLocalModelsResolver,
+		ResolveAccessState:   claudeAccessStateResolver,
+		ListLocalModels:      claudeLocalModelsResolver,
+		ResolveContextLength: claudeContextLengthResolver,
 	})
 	if err != nil {
 		return recordClaudeProxyFailure(err, claudeProxyFailureNone)
@@ -1027,6 +1033,45 @@ func claudeLocalModels(
 		}
 	}
 	return names, nil
+}
+
+// currentClaudeDesktopContextLength reports a model's trained context length.
+// The recommendation catalog covers recommended models only, so this answers
+// for every model an account can select, at the exact tag it selected.
+func currentClaudeDesktopContextLength(ctx context.Context, model string) int {
+	ctx, cancel := context.WithTimeout(ctx, claudeContextLengthTimeout)
+	defer cancel()
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
+	if err != nil || resp == nil {
+		slog.Debug("could not resolve model context length for Claude", "model", model, "error", err)
+		return 0
+	}
+	if resp.Details.ContextLength > 0 {
+		return resp.Details.ContextLength
+	}
+	return modelInfoContextLength(resp.ModelInfo)
+}
+
+// modelInfoContextLength reads the architecture-prefixed context length that
+// model_info reports, such as "deepseek4.context_length".
+func modelInfoContextLength(modelInfo map[string]any) int {
+	for key, value := range modelInfo {
+		if !strings.HasSuffix(key, ".context_length") {
+			continue
+		}
+		switch contextLength := value.(type) {
+		case float64:
+			return int(contextLength)
+		case int:
+			return contextLength
+		case json.Number:
+			if parsed, err := contextLength.Int64(); err == nil {
+				return int(parsed)
+			}
+		}
+	}
+	return 0
 }
 
 func currentClaudeDesktopLocalModels(ctx context.Context) ([]string, error) {
