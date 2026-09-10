@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -432,17 +433,42 @@ func gemma4ArgsToJSON(s string) string {
 	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
 		quotedStrings = append(quotedStrings, submatches[1])
-		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
+		return gemma4StringPlaceholder(len(quotedStrings) - 1)
 	})
 
 	text = quoteGemma4BareKeys(text)
 
 	for i, value := range quotedStrings {
 		escaped, _ := json.Marshal(value)
-		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
+		text = strings.ReplaceAll(text, gemma4StringPlaceholder(i), string(escaped))
 	}
 
 	return text
+}
+
+// gemma4StringPlaceholder returns the NUL-delimited marker gemma4ArgsToJSON
+// substitutes for the string at the given index while it restructures the
+// surrounding Gemma 4 argument syntax into JSON. The index is rendered as
+// decimal digits rather than a single rune. JSON's own structural bytes
+// (',', ':', '{', '}', '[', ']', '"') are never digits, so a two-NUL span can
+// only decode as pure digits when it is one complete, still-unresolved
+// placeholder; it can never straddle the seam between two different
+// placeholders, because that seam always has a non-digit JSON separator
+// sitting between the two NULs.
+//
+// A raw rune index does not have that property: rune(44) is a comma, so the
+// placeholder for string index 44 is byte-identical to the "\x00,\x00" seam
+// that two adjacent, still-unresolved array element placeholders produce
+// around their separating comma. Restoring index 44 first (the restore loop
+// runs in index order) then matches that seam instead of, or in addition to,
+// its own placeholder, splicing string 44's value into the array and
+// corrupting the two placeholders it straddles. That happens whenever 45 or
+// more strings precede an array: the 45th string takes index 44, and the
+// array's own elements have not been restored yet. json.Unmarshal then fails
+// on the stray NUL bytes left behind, and the caller silently drops the tool
+// call. See https://github.com/ollama/ollama/issues/18354.
+func gemma4StringPlaceholder(i int) string {
+	return "\x00" + strconv.Itoa(i) + "\x00"
 }
 
 func quoteGemma4BareKeys(s string) string {

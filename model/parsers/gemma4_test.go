@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -952,6 +954,91 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGemma4ArgsToJSON_StringPlaceholderCollision reproduces
+// https://github.com/ollama/ollama/issues/18354.
+//
+// gemma4ArgsToJSON fences each quoted string with the placeholder
+// "\x00" + string(rune(index)) + "\x00" while it converts bare keys, then
+// restores the placeholders in index order. rune(44) is a comma, byte
+// identical to the JSON array separator that sits between two
+// still-unreplaced placeholders. When 45 or more scalar strings are restored
+// before an array gets its turn, index 44 lands on a scalar, and replacing
+// that placeholder also matches the "\x00,\x00" seam between the array's
+// first two elements, splicing the scalar's value into the array and
+// corrupting both element placeholders it straddles. The result is invalid
+// JSON and the caller drops the whole tool call.
+func TestGemma4ArgsToJSON_StringPlaceholderCollision(t *testing.T) {
+	scalarField := func(i int, expected map[string]any) string {
+		key, value := fmt.Sprintf("k%02d", i), fmt.Sprintf("v%02d", i)
+		expected[key] = value
+		return key + ":" + gemma4StringDelimiter + value + gemma4StringDelimiter
+	}
+	arrayField := func(expected map[string]any) string {
+		expected["members"] = []any{"a", "b"}
+		return "members:[" + gemma4StringDelimiter + "a" + gemma4StringDelimiter + "," +
+			gemma4StringDelimiter + "b" + gemma4StringDelimiter + "]"
+	}
+
+	build := func(scalarCount int, array func(map[string]any) string, arrayFirst bool) (string, map[string]any) {
+		expected := map[string]any{}
+		var fields []string
+		if arrayFirst && array != nil {
+			fields = append(fields, array(expected))
+		}
+		for i := 0; i < scalarCount; i++ {
+			fields = append(fields, scalarField(i, expected))
+		}
+		if !arrayFirst && array != nil {
+			fields = append(fields, array(expected))
+		}
+		return "{" + strings.Join(fields, ",") + "}", expected
+	}
+
+	check := func(t *testing.T, input string, expected map[string]any) {
+		t.Helper()
+		jsonStr := gemma4ArgsToJSON(input)
+		var got map[string]any
+		if err := json.Unmarshal([]byte(jsonStr), &got); err != nil {
+			t.Fatalf("gemma4ArgsToJSON produced invalid JSON: %v\noutput: %q", err, jsonStr)
+		}
+		if diff := cmp.Diff(expected, got); diff != "" {
+			t.Errorf("arguments mismatch (-want +got):\n%s", diff)
+		}
+	}
+
+	// 45 scalar strings followed by a two-string array: the reporter's
+	// failing shape. Index 44's placeholder collides with the boundary
+	// between the array's two still-raw element placeholders.
+	t.Run("45_scalars_then_array", func(t *testing.T) {
+		input, expected := build(45, arrayField, false)
+		check(t, input, expected)
+	})
+
+	// 43 scalar strings followed by the same array: index 44 now belongs to
+	// the array's own second element, so restoring it is a correct self
+	// match rather than a false-positive collision.
+	t.Run("43_scalars_then_array", func(t *testing.T) {
+		input, expected := build(43, arrayField, false)
+		check(t, input, expected)
+	})
+
+	// Same 47 values, array moved first: its two elements take indices 0
+	// and 1, so they are long since resolved by the time index 44 comes
+	// around and there is nothing left for it to collide with.
+	t.Run("array_then_45_scalars", func(t *testing.T) {
+		input, expected := build(45, arrayField, true)
+		check(t, input, expected)
+	})
+
+	// Same 45 values, all scalar, no array: index 44 exists but no two raw
+	// placeholders are ever adjacent across a bare comma, so there is
+	// nothing for it to collide with.
+	t.Run("45_scalars_no_array", func(t *testing.T) {
+		input, expected := build(45, nil, false)
+		check(t, input, expected)
+	})
 }
 
 func TestRepairGemma4MissingStringDelimiter(t *testing.T) {
