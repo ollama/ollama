@@ -221,6 +221,13 @@ func (s *llamaServerRunner) GetPort() int {
 }
 
 func (s *llamaServerRunner) HasExited() bool {
+	if s.done != nil {
+		select {
+		case <-s.done:
+			return true
+		default:
+		}
+	}
 	return s.cmd != nil && s.cmd.ProcessState != nil && s.cmd.ProcessState.ExitCode() >= 0
 }
 
