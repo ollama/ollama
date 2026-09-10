@@ -63,6 +63,7 @@ func (r *Runner) Load(modelName string) error {
 		return err
 	}
 	mlx.Eval(weights...)
+	mlx.ClearCache()
 	r.weights = mlx.NewScope()
 	r.weights.Attach(weights...)
 	configureWiredMemory()
