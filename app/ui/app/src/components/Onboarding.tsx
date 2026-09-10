@@ -1,7 +1,9 @@
 import CopyButton from "@/components/CopyButton";
 import { CodexDesktopRow } from "@/components/CodexDesktopRow";
 import Logo from "@/components/Logo";
-import { nextOnboardingStep, type OnboardingStep } from "@/lib/onboarding";
+import type { OnboardingStep } from "@/lib/onboarding";
+import { IntegrationConnectButton } from "@/components/IntegrationConnectButton";
+import { Transition } from "@headlessui/react";
 import {
   getIntegrationStatuses,
   type IntegrationStatus,
@@ -27,13 +29,10 @@ import type {
 } from "@/types/webview";
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
-  ArrowPathIcon,
   ArrowsRightLeftIcon,
   CommandLineIcon,
   ShieldCheckIcon,
-  Square2StackIcon,
 } from "@heroicons/react/24/outline";
-import { CheckIcon } from "@heroicons/react/20/solid";
 import {
   useCallback,
   useEffect,
@@ -43,6 +42,57 @@ import {
 } from "react";
 
 export const FIRST_MODEL_COMMAND = "ollama";
+export const INTEGRATION_HIGHLIGHT_MS = 2000;
+// Slower than the browser's built-in smooth scroll so the handoff from
+// onboarding does not feel like a jump cut.
+export const INTEGRATION_SCROLL_MS = 700;
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+function scrollRowIntoView(container: HTMLElement, row: HTMLElement) {
+  const targetScrollTop = () => {
+    const rowRect = row.getBoundingClientRect();
+    const offset = rowRect.top - container.getBoundingClientRect().top;
+    const centered =
+      container.scrollTop +
+      offset -
+      (container.clientHeight - rowRect.height) / 2;
+    return Math.max(
+      0,
+      Math.min(centered, container.scrollHeight - container.clientHeight),
+    );
+  };
+  if (
+    prefersReducedMotion() ||
+    typeof window.requestAnimationFrame !== "function"
+  ) {
+    container.scrollTop = targetScrollTop();
+    return;
+  }
+
+  // Let the Apps page paint before measuring and starting the scroll. Time
+  // spent waiting for native window work must not consume the animation.
+  let frame = window.requestAnimationFrame(() => {
+    frame = window.requestAnimationFrame((startedAt) => {
+      const start = container.scrollTop;
+      const end = targetScrollTop();
+      const step = (now: number) => {
+        const progress = Math.min(1, (now - startedAt) / INTEGRATION_SCROLL_MS);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        container.scrollTop = start + (end - start) * eased;
+        if (progress < 1) frame = window.requestAnimationFrame(step);
+      };
+      step(startedAt);
+    });
+  });
+  return () => window.cancelAnimationFrame(frame);
+}
 
 type ClaudeConnectPhase =
   | "idle"
@@ -84,6 +134,7 @@ interface ScreenProps {
 
 interface WelcomeScreenProps extends ScreenProps {
   isAuthenticated: boolean;
+  isLeaving?: boolean;
   completionError?: string | null;
   onRetryCompletion?: () => void;
   onLocal: () => void;
@@ -99,6 +150,10 @@ interface ConnectAppsScreenProps {
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
   initialCodexStatus?: CodexDesktopStatus;
+  autoConnectClaude?: boolean;
+  autoConnectChatGPT?: boolean;
+  highlightIntegrationId?: string;
+  onDeepLinkHandled?: () => void;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -170,8 +225,10 @@ export function IntroScreen({
   completionError = null,
   onContinue,
   onRetryCompletion,
+  isLeaving = false,
 }: {
   completionError?: string | null;
+  isLeaving?: boolean;
   onContinue: () => void;
   onRetryCompletion?: () => void;
 }) {
@@ -220,6 +277,8 @@ export function IntroScreen({
             type="button"
             className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onContinue}
+            disabled={isLeaving}
+            aria-busy={isLeaving || undefined}
           >
             Continue
           </button>
@@ -258,6 +317,7 @@ function InlineError({
 export function WelcomeScreen({
   isAuthenticated,
   isSigningIn,
+  isLeaving = false,
   signInError,
   completionError = null,
   onSignIn,
@@ -285,15 +345,20 @@ export function WelcomeScreen({
             type="button"
             className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70"
             onClick={onSignUp}
-            disabled={isSigningIn}
-            aria-busy={isSigningIn}
+            disabled={isSigningIn || isLeaving}
+            aria-busy={isSigningIn || isLeaving}
           >
-            {isSigningIn ? "Finish in your browser…" : "Sign up"}
+            {isLeaving
+              ? "Opening apps…"
+              : isSigningIn
+                ? "Finish in your browser…"
+                : "Sign up"}
           </button>
           <button
             type="button"
             className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onLocal}
+            disabled={isLeaving}
           >
             No thanks, I&apos;ll use Ollama locally
           </button>
@@ -357,8 +422,8 @@ export function RunOllamaScreen({
   );
 }
 
-function LaunchCommandIcon({ item }: { item: IntegrationStatus }) {
-  const icon = INTEGRATION_ICONS[item.id];
+function LaunchCommandIcon({ id }: { id: string }) {
+  const icon = INTEGRATION_ICONS[id];
 
   return (
     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-transparent">
@@ -436,9 +501,32 @@ export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
   initialCodexStatus,
+  autoConnectClaude,
+  autoConnectChatGPT,
+  highlightIntegrationId,
+  onDeepLinkHandled,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{
+    sequence: number;
+    id: string;
+    name: string;
+    command: string;
+    copied: boolean;
+    visible: boolean;
+  } | null>(null);
+  const copyInFlight = useRef(false);
+  const copySequence = useRef(0);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [initialIntegrationsSettled, setInitialIntegrationsSettled] =
+    useState(false);
+  const [initialClaudeStatusSettled, setInitialClaudeStatusSettled] = useState(
+    Boolean(initialClaudeStatus),
+  );
+  const rowRefs = useRef(new Map<string, HTMLElement>());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const cancelScrollRef = useRef<(() => void) | undefined>(undefined);
+  const handledDeepLinkRef = useRef<string | null>(null);
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(
     initialClaudeStatus ?? null,
@@ -457,18 +545,17 @@ export function ConnectAppsScreen({
     screenMounted.current = true;
     return () => {
       screenMounted.current = false;
+      cancelScrollRef.current?.();
     };
   }, []);
 
   useEffect(() => {
-    if (!copiedCommand) return;
-
+    if (!copyNotice?.copied) return;
     const timeout = window.setTimeout(() => {
-      setCopiedCommand(null);
-    }, 5000);
-
+      setCopyNotice((current) => current && { ...current, visible: false });
+    }, 6000);
     return () => window.clearTimeout(timeout);
-  }, [copiedCommand]);
+  }, [copyNotice?.sequence, copyNotice?.copied]);
 
   const refreshClaudeStatus = useCallback(async () => {
     if (isWindows) return null;
@@ -497,30 +584,48 @@ export function ConnectAppsScreen({
     const integrations = initialIntegrations
       ? Promise.resolve(initialIntegrations)
       : getIntegrationStatuses();
-    const claude = initialClaudeStatus
-      ? Promise.resolve(initialClaudeStatus)
-      : getClaudeConnectionSummary();
 
-    void Promise.allSettled([integrations, claude]).then(
-      ([integrationResult, claudeResult]) => {
+    void integrations.then(
+      (statuses) => {
         if (!active) return;
-        if (integrationResult.status === "fulfilled") {
-          setIntegrationStatuses(integrationResult.value);
-        } else {
-          setStatusError(true);
-        }
-        if (claudeResult.status === "fulfilled") {
-          setClaudeStatus(claudeResult.value);
-        } else {
-          setClaudeError("Ollama could not read the Claude connection status.");
-        }
+        setIntegrationStatuses(statuses);
+        setInitialIntegrationsSettled(true);
+      },
+      () => {
+        if (!active) return;
+        setStatusError(true);
+        setInitialIntegrationsSettled(true);
       },
     );
 
     return () => {
       active = false;
     };
-  }, [initialClaudeStatus, initialIntegrations]);
+  }, [initialIntegrations]);
+
+  useEffect(() => {
+    let active = true;
+    const claude = initialClaudeStatus
+      ? Promise.resolve(initialClaudeStatus)
+      : getClaudeConnectionSummary();
+
+    void claude.then(
+      (status) => {
+        if (!active) return;
+        setClaudeStatus(status);
+        setInitialClaudeStatusSettled(true);
+      },
+      () => {
+        if (!active) return;
+        setClaudeError("Ollama could not read the Claude connection status.");
+        setInitialClaudeStatusSettled(true);
+      },
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [initialClaudeStatus]);
 
   const openConnectedClaude = useCallback(
     async (status: ClaudeDesktopStatus) => {
@@ -593,12 +698,13 @@ export function ConnectAppsScreen({
   );
 
   const dismissClaudeConnectedIntro = async () => {
-    if (!window.setClaudeDesktopConnected) return;
+    if (!window.setClaudeDesktopConnected || claudePhase !== "idle") return;
     setClaudePhase("launching");
     try {
       const liveStatus = await withClaudeConnectionTimeout(
         getClaudeConnectionSummary(),
       );
+      if (!screenMounted.current) return;
       if (!liveStatus) {
         throw new Error("Claude Desktop connection status is unavailable");
       }
@@ -609,6 +715,7 @@ export function ConnectAppsScreen({
         restartConfirmed = window.confirm(
           "Restart Claude Desktop to use Ollama? Any running task will stop.",
         );
+        if (!screenMounted.current) return;
         if (!restartConfirmed) {
           setClaudePhase("idle");
           return;
@@ -755,9 +862,27 @@ export function ConnectAppsScreen({
   }, [claudePhase, finishClaudeConnection, reconcileLateClaudeAction]);
 
   const copyLaunchCommand = async (item: IntegrationStatus) => {
-    if (item.command && (await copyTextToClipboard(item.command))) {
-      setClaudeError(null);
-      setCopiedCommand(item.command);
+    if (!item.command || copyInFlight.current) return;
+    copyInFlight.current = true;
+    let copied = false;
+    try {
+      copied = await copyTextToClipboard(item.command);
+    } catch {
+      // Keep the command available for manual copying when clipboard access fails.
+    } finally {
+      copyInFlight.current = false;
+    }
+    if (!screenMounted.current) return;
+    setCopyNotice({
+      sequence: ++copySequence.current,
+      id: item.id,
+      name: item.name,
+      command: item.command,
+      copied,
+      visible: true,
+    });
+    if (copied) {
+      setHighlightedId((current) => (current === item.id ? null : current));
     }
   };
 
@@ -772,7 +897,7 @@ export function ConnectAppsScreen({
       return;
     }
 
-    setCopiedCommand(null);
+    setCopyNotice((current) => current && { ...current, visible: false });
     setClaudeError(null);
     const enabling = claudeStatus ? !isClaudeConfigured(claudeStatus) : true;
     setClaudePhase(enabling ? "connecting" : "disconnecting");
@@ -789,6 +914,7 @@ export function ConnectAppsScreen({
       );
       return;
     }
+    if (!screenMounted.current) return;
     if (!status) {
       setClaudePhase("idle");
       setClaudeError("Ollama could not read the Claude connection status.");
@@ -842,6 +968,7 @@ export function ConnectAppsScreen({
           ? "Restart Claude Desktop to use Ollama? Any running task will stop."
           : "Restart Claude Desktop to remove Ollama? Any running task will stop.",
       );
+      if (!screenMounted.current) return;
       if (!restartConfirmed) {
         setClaudePhase("idle");
         return;
@@ -925,6 +1052,91 @@ export function ConnectAppsScreen({
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const isConnectingClaude = claudePhase !== "idle";
+
+  // connectClaude is a fresh closure every render; the deep-link effect reads
+  // the latest one through a ref so it does not re-run on each render.
+  const connectClaudeRef = useRef(connectClaude);
+  useEffect(() => {
+    connectClaudeRef.current = connectClaude;
+  });
+
+  const deepLinkIntent = autoConnectClaude
+    ? "connect"
+    : highlightIntegrationId
+      ? `highlight:${highlightIntegrationId}`
+      : null;
+  useEffect(() => {
+    if (!deepLinkIntent || !initialIntegrationsSettled) return;
+    if (autoConnectClaude && !initialClaudeStatusSettled) return;
+    // Refs survive StrictMode's simulated remount, so the intent runs once.
+    if (handledDeepLinkRef.current === deepLinkIntent) return;
+    handledDeepLinkRef.current = deepLinkIntent;
+    cancelScrollRef.current?.();
+
+    const targetId = autoConnectClaude
+      ? "claude-desktop"
+      : highlightIntegrationId;
+    const row = targetId ? rowRefs.current.get(targetId) : undefined;
+    if (targetId && row) {
+      setHighlightedId(targetId);
+      if (scrollContainerRef.current) {
+        // Keep scrolling when handling the intent clears its URL parameters.
+        cancelScrollRef.current = scrollRowIntoView(
+          scrollContainerRef.current,
+          row,
+        );
+      }
+    }
+    // connectClaude toggles, so it must not run when Claude is already
+    // configured (for example from the menu bar) or it would disconnect.
+    if (autoConnectClaude && claudeIntegration && !claudeConfigured) {
+      void connectClaudeRef.current();
+    }
+    onDeepLinkHandled?.();
+  }, [
+    autoConnectClaude,
+    claudeConfigured,
+    claudeIntegration,
+    deepLinkIntent,
+    highlightIntegrationId,
+    initialClaudeStatusSettled,
+    initialIntegrationsSettled,
+    onDeepLinkHandled,
+  ]);
+
+  useEffect(() => {
+    if (!highlightedId) return;
+    // Command rows stay highlighted until copied or this screen is left.
+    if (
+      integrationStatuses?.some(
+        (item) => item.id === highlightedId && item.command,
+      )
+    ) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setHighlightedId(null);
+    }, INTEGRATION_HIGHLIGHT_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [highlightedId, integrationStatuses]);
+
+  const registerRow = (id: string) => (node: HTMLElement | null) => {
+    if (node) {
+      rowRefs.current.set(id, node);
+    } else {
+      rowRefs.current.delete(id);
+    }
+  };
+  const rowClass = (id: string, recommended = false) =>
+    `rounded-2xl border border-neutral-200 transition-colors duration-700 motion-reduce:transition-none dark:border-neutral-700 ${
+      highlightedId === id
+        ? "bg-neutral-100 dark:bg-neutral-700/60"
+        : recommended
+          ? "bg-neutral-50 dark:bg-neutral-800/50"
+          : "bg-white dark:bg-neutral-900"
+    }`;
   const claudeStatusLabel =
     claudePhase === "installing"
       ? "Downloading…"
@@ -936,67 +1148,56 @@ export function ConnectAppsScreen({
             ? "Opening…"
             : claudePhase === "disconnecting"
               ? "Disconnecting…"
-              : !claudeConfigured && !claudeInstalled
-                ? "Download & connect"
-                : null;
+              : null;
   const claudeGuidance = claudeDesktopRecoveryMessage(
     claudeStatus?.error,
     claudeError,
   );
-  const launchIntegrationRow = (item: IntegrationStatus) => {
-    const copied = copiedCommand === item.command;
+  const launchIntegrationCard = (item: IntegrationStatus) => {
+    const copied =
+      copyNotice?.id === item.id && copyNotice.copied && copyNotice.visible;
     return (
-      <div
+      <button
         key={item.id}
-        className="flex min-h-18 items-center justify-between gap-4 px-4 py-3"
+        id={`integration-${item.id}`}
+        ref={registerRow(item.id)}
+        type="button"
+        onClick={() => copyLaunchCommand(item)}
+        aria-label={
+          copied ? `${item.name} command copied` : `Copy ${item.name} command`
+        }
+        title={item.description}
+        className={`${rowClass(item.id)} relative isolate flex min-w-0 items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:hover:bg-neutral-800`}
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <LaunchCommandIcon item={item} />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
-              {item.name}
-            </p>
-            <p className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400">
-              {item.description}
-            </p>
-          </div>
-        </div>
-        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
-          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
-            {item.command}
-          </code>
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-neutral-500 transition-colors hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:text-neutral-400 dark:hover:text-neutral-100"
-            onClick={() => copyLaunchCommand(item)}
-            aria-label={
-              copied
-                ? `${item.name} command copied`
-                : `Copy ${item.name} command`
-            }
-            title={copied ? "Copied" : "Copy command"}
-          >
-            {copied ? (
-              <CheckIcon className="h-4 w-4 text-green-600" />
-            ) : (
-              <Square2StackIcon className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      </div>
+        {copied && (
+          <span
+            key={copyNotice?.sequence}
+            aria-hidden="true"
+            className="apps-copy-card-feedback pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-neutral-100 ring-1 ring-inset ring-neutral-300/70 dark:bg-neutral-700/60 dark:ring-neutral-500/50"
+          />
+        )}
+        <LaunchCommandIcon id={item.id} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-950 dark:text-neutral-100">
+          {item.name}
+        </span>
+      </button>
     );
   };
   const claudeRow = claudeIntegration ? (
-    <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 dark:bg-neutral-900">
-      <div className="flex min-w-0 items-center gap-3">
-        <LaunchCommandIcon item={claudeIntegration} />
+    <div
+      id={`integration-${claudeIntegration.id}`}
+      ref={registerRow(claudeIntegration.id)}
+      className={`${rowClass(claudeIntegration.id, true)} flex items-center gap-4 px-5 py-3`}
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-4">
+        <LaunchCommandIcon id={claudeIntegration.id} />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
-            {claudeIntegration.name}
+          <p className="text-base font-medium text-neutral-950 dark:text-neutral-100">
+            Claude Code
           </p>
           <p
             role={claudeGuidance ? "alert" : undefined}
-            className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
+            className="mt-1 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {claudeGuidance ??
               (claudeConnected
@@ -1011,71 +1212,62 @@ export function ConnectAppsScreen({
                         ? "Opening Claude…"
                         : claudePhase === "disconnecting"
                           ? "Restoring Claude’s usual connection…"
-                          : claudeIntegration.description)}
+                          : !claudeInstalled
+                            ? "We’ll download Claude and connect it to Ollama."
+                            : "Use Ollama models in your Claude Code.")}
           </p>
         </div>
       </div>
-      <div className="ml-auto flex shrink-0 items-center gap-2.5">
-        {claudeStatusLabel && (
-          <span
-            role="status"
-            aria-live="polite"
-            className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
-          >
-            {isConnectingClaude && (
-              <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />
-            )}
-            {claudeStatusLabel}
-          </span>
-        )}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={claudeToggleConfigured}
-          aria-busy={isConnectingClaude || undefined}
-          aria-label={
-            claudeConfigured
-              ? "Disconnect Claude"
-              : isConnectingClaude
-                ? "Connecting Claude"
-                : "Connect Claude"
-          }
-          title={claudeConfigured ? "Disconnect" : "Connect"}
-          disabled={isConnectingClaude}
-          onClick={connectClaude}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${claudeToggleConfigured ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
-        >
-          <span
-            aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isConnectingClaude ? "animate-pulse" : ""} ${claudeToggleConfigured ? "translate-x-4.5 dark:bg-neutral-900" : "translate-x-0.5"}`}
-          />
-        </button>
-      </div>
+      <IntegrationConnectButton
+        connected={claudeToggleConfigured}
+        busy={!initialClaudeStatusSettled || isConnectingClaude}
+        progress={isConnectingClaude ? claudeStatusLabel : null}
+        label={
+          claudeConfigured
+            ? "Disconnect Claude"
+            : isConnectingClaude
+              ? "Connecting Claude"
+              : "Connect Claude"
+        }
+        title={claudeConfigured ? "Disconnect" : "Connect"}
+        disabled={!initialClaudeStatusSettled || isConnectingClaude}
+        onClick={connectClaude}
+      />
     </div>
   ) : null;
 
   return (
-    <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-6">
+    <main className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
+      <div
+        ref={scrollContainerRef}
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 pt-4"
+      >
         <section className="min-h-0 flex-1">
-          <div className="mx-auto w-full max-w-4xl text-left">
+          <div className="mx-auto w-full max-w-[620px] text-left">
             {integrationStatuses ? (
-              <div className="space-y-7 pb-4 pt-2">
+              <div className="space-y-8 pb-4 pt-2">
                 {(claudeIntegration || codexIntegration) && (
-                  <section aria-labelledby="desktop-heading">
+                  <section aria-labelledby="recommended-heading">
                     <h2
-                      id="desktop-heading"
-                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+                      id="recommended-heading"
+                      className="text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
                     >
-                      Desktop
+                      Recommended
                     </h2>
                     <div className="mt-2 space-y-2 bg-white dark:bg-neutral-900">
                       {claudeRow}
                       {codexIntegration && (
-                        <CodexDesktopRow
-                          integration={codexIntegration}
-                          initialStatus={initialCodexStatus}
-                        />
+                        <div
+                          id="integration-chatgpt"
+                          ref={registerRow("chatgpt")}
+                        >
+                          <CodexDesktopRow
+                            integration={codexIntegration}
+                            initialStatus={initialCodexStatus}
+                            autoConnect={autoConnectChatGPT}
+                            onAutoConnectHandled={onDeepLinkHandled}
+                          />
+                        </div>
                       )}
                     </div>
                   </section>
@@ -1085,14 +1277,12 @@ export function ConnectAppsScreen({
                   <section aria-labelledby="terminal-heading">
                     <h2
                       id="terminal-heading"
-                      className="px-4 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+                      className="text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
                     >
-                      Terminal
+                      {isWindows ? "Apps" : "Other apps"}
                     </h2>
-                    <div className="mt-2 bg-white dark:bg-neutral-900">
-                      <div className="space-y-2">
-                        {launchIntegrations.map(launchIntegrationRow)}
-                      </div>
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {launchIntegrations.map(launchIntegrationCard)}
                     </div>
                   </section>
                 )}
@@ -1117,6 +1307,42 @@ export function ConnectAppsScreen({
           </div>
         </section>
       </div>
+      {copyNotice && (
+        <Transition
+          appear
+          show={copyNotice.visible}
+          as="div"
+          className="apps-copy-hint pointer-events-none absolute right-4 top-4 z-30 w-[360px] max-w-[calc(100%-2rem)]"
+        >
+          <div
+            role={copyNotice.copied ? "status" : "alert"}
+            aria-live={copyNotice.copied ? "polite" : "assertive"}
+            aria-atomic="true"
+            className={`flex items-start gap-3 rounded-2xl border border-neutral-200/80 bg-neutral-100/95 p-4 text-[13px] shadow-lg shadow-black/10 backdrop-blur-xl dark:border-white/10 dark:bg-neutral-700/90 dark:shadow-black/30 ${copyNotice.copied ? "" : "pointer-events-auto"}`}
+          >
+            <div aria-hidden="true" className="shrink-0">
+              <LaunchCommandIcon id={copyNotice.id} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold leading-5 text-neutral-900 dark:text-neutral-100">
+                {copyNotice.copied
+                  ? "Launch command copied."
+                  : `Couldn’t copy the ${copyNotice.name} command`}
+              </p>
+              <p className="mt-0.5 leading-5 text-neutral-600 dark:text-neutral-200">
+                {copyNotice.copied
+                  ? "Paste it into your terminal"
+                  : "Select and copy the command below, then paste it into your terminal."}
+              </p>
+              {!copyNotice.copied && (
+                <code className="mt-2 block select-all break-all rounded-md bg-white/70 px-3 py-2 text-xs dark:bg-neutral-900/60">
+                  {copyNotice.command}
+                </code>
+              )}
+            </div>
+          </div>
+        </Transition>
+      )}
       {showClaudeConnectedIntro && (
         <ClaudeConnectedIntro
           onDone={() => void dismissClaudeConnectedIntro()}
@@ -1137,14 +1363,20 @@ interface OnboardingProps extends ScreenProps {
 
 export default function Onboarding(props: OnboardingProps) {
   const [step, setStep] = useState<OnboardingStep>("intro");
-  const appsOpeningRef = useRef(false);
+  const [isLeaving, setIsLeaving] = useState(false);
+  const leavingRef = useRef(false);
+  const authenticationHandoffStarted = useRef(false);
   const { onOpenApps } = props;
 
-  const openApps = useCallback(async () => {
-    if (appsOpeningRef.current) return;
-    appsOpeningRef.current = true;
+  const leave = useCallback(async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    setIsLeaving(true);
     const opened = await onOpenApps();
-    if (!opened) appsOpeningRef.current = false;
+    if (!opened) {
+      leavingRef.current = false;
+      setIsLeaving(false);
+    }
   }, [onOpenApps]);
 
   useEffect(() => {
@@ -1153,14 +1385,16 @@ export default function Onboarding(props: OnboardingProps) {
   }, []);
 
   useEffect(() => {
-    if (!props.isAuthenticated) return;
-    const nextStep = nextOnboardingStep(step, "authenticated", true);
-    if (nextStep === "apps") {
-      void openApps();
+    if (!props.isAuthenticated) {
+      authenticationHandoffStarted.current = false;
       return;
     }
-    setStep(nextStep);
-  }, [openApps, props.isAuthenticated, step]);
+    if (step !== "welcome" || authenticationHandoffStarted.current) return;
+    // A failed save waits for an explicit retry, even if query updates replace
+    // the callback. StrictMode must not start a second completion either.
+    authenticationHandoffStarted.current = true;
+    void leave();
+  }, [step, props.isAuthenticated, leave]);
 
   if (step === "run") {
     return (
@@ -1175,18 +1409,11 @@ export default function Onboarding(props: OnboardingProps) {
     return (
       <IntroScreen
         completionError={props.completionError}
-        onRetryCompletion={() => void openApps()}
+        isLeaving={isLeaving}
+        onRetryCompletion={() => void leave()}
         onContinue={() => {
-          const nextStep = nextOnboardingStep(
-            step,
-            "continue",
-            props.isAuthenticated,
-          );
-          if (nextStep === "apps") {
-            void openApps();
-            return;
-          }
-          setStep(nextStep);
+          if (props.isAuthenticated) void leave();
+          else setStep("welcome");
         }}
       />
     );
@@ -1195,12 +1422,12 @@ export default function Onboarding(props: OnboardingProps) {
   return (
     <WelcomeScreen
       {...props}
-      onRetryCompletion={() => void openApps()}
+      isLeaving={isLeaving}
+      onRetryCompletion={() => void leave()}
       onLocal={() => {
+        if (leavingRef.current) return;
         props.onUseLocal();
-        setStep((current) =>
-          nextOnboardingStep(current, "local", props.isAuthenticated),
-        );
+        setStep("run");
       }}
     />
   );
