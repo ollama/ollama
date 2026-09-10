@@ -449,9 +449,32 @@ ggml_vulkan: 1 = Intel(R) RaptorLake-S Mobile Graphics Controller (Intel Corpora
 			t.Fatalf("cudaRuntimeVersion = %d.%d, %v, want 12.8, true", major, minor, ok)
 		}
 
+		// CUDA 11 and earlier name the runtime DLL with the minor version.
+		legacy := t.TempDir()
+		if err := os.WriteFile(filepath.Join(legacy, "cudart64_110.dll"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		major, minor, ok = cudaRuntimeVersion([]string{legacy})
+		if !ok || major != 11 || minor != 0 {
+			t.Fatalf("cudaRuntimeVersion legacy dll = %d.%d, %v, want 11.0, true", major, minor, ok)
+		}
+
+		// CUDA 12 and later don't, so the minor is unknown rather than zero.
+		windows := filepath.Join(t.TempDir(), "cuda_v12")
+		if err := os.MkdirAll(windows, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(windows, "cudart64_12.dll"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		major, minor, ok = cudaRuntimeVersion([]string{windows})
+		if !ok || major != 12 || minor != cudaRuntimeMinorUnknown {
+			t.Fatalf("cudaRuntimeVersion cuda 12 dll = %d.%d, %v, want 12.unknown, true", major, minor, ok)
+		}
+
 		major, minor, ok = cudaRuntimeVersion([]string{filepath.Join(t.TempDir(), "cuda_v13")})
-		if !ok || major != 13 || minor != 0 {
-			t.Fatalf("cudaRuntimeVersion fallback = %d.%d, %v, want 13.0, true", major, minor, ok)
+		if !ok || major != 13 || minor != cudaRuntimeMinorUnknown {
+			t.Fatalf("cudaRuntimeVersion fallback = %d.%d, %v, want 13.unknown, true", major, minor, ok)
 		}
 	})
 
