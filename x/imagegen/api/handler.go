@@ -59,7 +59,7 @@ func ImageGenerationHandler(c *gin.Context, scheduler RunnerScheduler) {
 	}
 
 	// Verify model exists
-	if imagegen.ResolveModelName(req.Model) == "" {
+	if _, err := imagegen.LoadManifest(req.Model); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"message": fmt.Sprintf("model %q not found", req.Model)}})
 		return
 	}
