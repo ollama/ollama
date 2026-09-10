@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "tealkit", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -288,6 +288,21 @@ var integrationSpecs = []*IntegrationSpec{
 				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
 			},
 			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "tealkit",
+		Runner:      &TealKit{},
+		Aliases:     []string{"tealkit-cli", "tealkit-agent"},
+		Description: "Cross-platform AI agent with MCP tools, visual canvas, and skills",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&TealKit{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&TealKit{}).ensureInstalled()
+			},
+			URL: "https://github.com/lschaffer/tealkit",
 		},
 	},
 	{
