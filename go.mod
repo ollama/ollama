@@ -16,7 +16,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/x448/float16 v0.8.4
 	golang.org/x/sync v0.17.0
-	golang.org/x/sys v0.37.0
+	golang.org/x/sys v0.48.0
 )
 
 require (
@@ -37,7 +37,7 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-cpp v0.23.4
 	github.com/wk8/go-ordered-map/v2 v2.1.8
-	golang.org/x/image v0.22.0
+	golang.org/x/image v0.46.0
 	golang.org/x/mod v0.30.0
 	gonum.org/v1/gonum v0.15.0
 )
@@ -103,7 +103,7 @@ require (
 	golang.org/x/exp v0.0.0-20250218142911-aa4b98e5adaa // indirect
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/term v0.36.0
-	golang.org/x/text v0.30.0
+	golang.org/x/text v0.42.0
 	google.golang.org/protobuf v1.34.1
 	gopkg.in/yaml.v3 v3.0.1
 )
