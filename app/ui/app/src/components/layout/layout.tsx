@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import { ArrowLeftIcon } from "@heroicons/react/20/solid";
 import { ChatIcon } from "@/components/ChatIcon";
 import { isWindowsPlatform } from "@/lib/platform";
 import { useState } from "react";
@@ -78,12 +79,18 @@ export function SidebarLayout({
           onMouseDown={() => window.drag && window.drag()}
         >
           {title && (
-            <h1
-              className={`${sidebarOpen ? "pl-6" : isWindows ? "pl-16" : "pl-36"} transition-[padding-left] duration-300 font-rounded text-md font-medium dark:text-white`}
-            >
-              {title}
-            </h1>
-          )}
+             <div className={`flex items-center transition-[padding-left] duration-300 ${sidebarOpen ? "pl-6" : isWindows ? "pl-16" : "pl-36"}`}>                                     
+                  <Link                                                                                                                                                                  
+                    to="/"                                                                                                                                                               
+                    title="Back"                                                                                                                                                         
+                    className="mr-3 flex items-center justify-center h-8 w-8 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-neutral-500 dark:text-neutral-400 cursor-pointer"                                                                                                                                                            
+                  >                                                                                                                                                                      
+                    <ArrowLeftIcon className="h-5 w-5" />                                                                                                                                
+                  </Link>                                                                                                                                                                
+                  <h1 className="font-rounded text-md font-medium dark:text-white">                                                                                                      
+                    {title}                                                                                                                                                              
+                  </h1>                                                                                                                                                                  
+                </div> )} 
         </div>
         {children}
       </main>
