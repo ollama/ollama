@@ -122,12 +122,12 @@ func GetManifestPath() (string, error) {
 	return path, nil
 }
 
+// digestPattern matches valid sha256 digests, e.g. "sha256:<64 hex chars>" or "sha256-<64 hex chars>".
+var digestPattern = regexp.MustCompile(`^sha256[:-][0-9a-fA-F]{64}$`)
+
 func GetBlobsPath(digest string) (string, error) {
 	// only accept actual sha256 digests
-	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
-	re := regexp.MustCompile(pattern)
-
-	if digest != "" && !re.MatchString(digest) {
+	if digest != "" && !digestPattern.MatchString(digest) {
 		return "", ErrInvalidDigestFormat
 	}
 

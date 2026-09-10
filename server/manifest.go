@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -43,7 +44,7 @@ func (m *Manifest) Remove() error {
 		return err
 	}
 
-	return PruneDirectory(manifests)
+	return manifest.PruneDirectory(manifests)
 }
 
 func (m *Manifest) RemoveLayers() error {
