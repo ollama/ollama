@@ -2,7 +2,6 @@ package laguna
 
 import (
 	"math"
-	"slices"
 	"strings"
 	"testing"
 
@@ -482,10 +481,7 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 		}
 
 		xFlat := mlx.FromValues([]float32{1}, 1, int(cfg.HiddenSize)).AsType(mlx.DTypeBFloat16)
-		scores, inds, scalesFolded := moe.route(xFlat, cfg)
-		if scalesFolded {
-			t.Fatal("route folded scales without expert projection scales")
-		}
+		scores, inds := moe.route(xFlat, cfg)
 		scores = scores.AsType(mlx.DTypeFloat32)
 		inds = inds.AsType(mlx.DTypeInt32)
 		mlx.Eval(scores, inds)
@@ -506,76 +502,6 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 		if got := scores.Floats(); len(got) != 1 || math.Abs(float64(got[0]-probVals[0])) > 1e-6 {
 			t.Fatalf("routing weights = %v, want [%v] using unbiased sigmoid scores", got, probVals[0])
 		}
-	})
-}
-
-func TestLagunaSigmoidTopK8CompiledMatchesEager(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		gates := make([]float32, 2*16)
-		for i := range gates {
-			gates[i] = float32((i%13)-6) * 0.2
-		}
-		bias := make([]float32, 16)
-		scaleA := make([]float32, 16)
-		scaleB := make([]float32, 16)
-		for i := range bias {
-			bias[i] = float32((i%5)-2) * 0.03
-			scaleA[i] = 0.5 + float32(i)*0.01
-			scaleB[i] = 0.75 + float32(i)*0.005
-		}
-
-		gatesArray := mlx.FromValues(gates, 2, 16).AsType(mlx.DTypeBFloat16)
-		biasArray := mlx.FromValues(bias, 16)
-		scaleAArray := mlx.FromValues(scaleA, 16)
-		scaleBArray := mlx.FromValues(scaleB, 16)
-		got := lagunaSigmoidTopK8ScaledNormalized(gatesArray, biasArray, scaleAArray, scaleBArray)
-
-		probs, neg := mlx.SigmoidRouter(gatesArray.AsType(mlx.DTypeFloat32), biasArray)
-		wantIndices := mlx.Argpartition(neg, 7, -1)
-		wantIndices = mlx.SliceStartStop(wantIndices, []int32{0, 0}, []int32{2, 8})
-		wantScores := mlx.TakeAlongAxis(probs, wantIndices, -1)
-		wantScores = mlx.Div(wantScores, mlx.Sum(wantScores, -1, true))
-		wantScores = scaleScoresByExpert(wantScores, wantIndices, scaleAArray)
-		wantScores = scaleScoresByExpert(wantScores, wantIndices, scaleBArray)
-
-		gotScores := got[0].AsType(mlx.DTypeFloat32)
-		gotIndices := got[1].AsType(mlx.DTypeInt32)
-		wantScores = wantScores.AsType(mlx.DTypeFloat32)
-		wantIndices = wantIndices.AsType(mlx.DTypeInt32)
-		mlx.Eval(gotScores, gotIndices, wantScores, wantIndices)
-		assertFloatSlicesClose(t, gotScores.Floats(), wantScores.Floats(), 1e-6)
-		if got, want := gotIndices.Ints(), wantIndices.Ints(); !slices.Equal(got, want) {
-			t.Fatalf("indices = %v, want %v", got, want)
-		}
-	})
-}
-
-func TestLagunaSwiGLUGatheredGateScaleCompiledMatchesEager(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		gateValues := make([]float32, 2*8*4)
-		upValues := make([]float32, len(gateValues))
-		for i := range gateValues {
-			gateValues[i] = float32((i%17)-8) * 0.04
-			upValues[i] = float32((i%11)-5) * 0.03
-		}
-		scaleValues := make([]float32, 16)
-		for i := range scaleValues {
-			scaleValues[i] = 0.5 + float32(i)*0.025
-		}
-		indices := mlx.FromValues([]int32{
-			0, 3, 6, 9, 12, 15, 2, 5,
-			1, 4, 7, 10, 13, 14, 8, 11,
-		}, 2, 8)
-		gate := mlx.FromValues(gateValues, 2, 8, 1, 4).AsType(mlx.DTypeBFloat16)
-		up := mlx.FromValues(upValues, 2, 8, 1, 4).AsType(mlx.DTypeBFloat16)
-		scales := mlx.FromValues(scaleValues, 16)
-
-		got := lagunaSwiGLUGatheredGateScale(gate, up, scales, indices)[0]
-		want := mlx.SwiGLU(applyExpertGlobalScale(gate, scales, indices), up)
-		got = got.AsType(mlx.DTypeFloat32)
-		want = want.AsType(mlx.DTypeFloat32)
-		mlx.Eval(got, want)
-		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 1e-6)
 	})
 }
 

@@ -176,15 +176,20 @@ type SparseMoE struct {
 	SharedExpertGate nn.LinearLayer
 }
 
-// SwitchMLP executes selected expert MLPs. Gate and up are always held
-// packed as one gate_up tensor; checkpoints that ship them separately are
-// fused at load.
+// SwitchMLP executes selected expert MLPs. Gate and up stay fused when the
+// checkpoint layout and quantization parameters allow it.
 type SwitchMLP struct {
 	GateUpWeight *mlx.Array
 	DownWeight   *mlx.Array
+	GateWeight   *mlx.Array
+	UpWeight     *mlx.Array
 
 	GateUpWeightQ, GateUpScales, GateUpBias *mlx.Array
 	DownWeightQ, DownScales, DownBiases     *mlx.Array
+	GateUpGlobalScales, DownGlobalScales    *mlx.Array
+	GateWeightQ, GateScales, GateBiases     *mlx.Array
+	UpWeightQ, UpScales, UpBiases           *mlx.Array
+	GateGlobalScales, UpGlobalScales        *mlx.Array
 
 	GateUpBits      int
 	DownBits        int
@@ -192,15 +197,22 @@ type SwitchMLP struct {
 	DownGroupSize   int
 	GateUpMode      string
 	DownMode        string
+	GateBits        int
+	UpBits          int
+	GateGroupSize   int
+	UpGroupSize     int
+	GateMode        string
+	UpMode          string
 }
 
 type stackedExpertWeights struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	Biases    *mlx.Array
-	Bits      int
-	GroupSize int
-	Mode      string
+	Weight       *mlx.Array
+	Scales       *mlx.Array
+	Biases       *mlx.Array
+	GlobalScales *mlx.Array
+	Bits         int
+	GroupSize    int
+	Mode         string
 }
 
 func parseConfig(configData []byte) (Config, error) {
@@ -506,6 +518,7 @@ func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights
 		return nil
 	}
 	if gate.Scales != nil && up.Scales != nil &&
+		gate.GlobalScales == nil && up.GlobalScales == nil &&
 		gate.Bits == up.Bits && gate.GroupSize == up.GroupSize && gate.Mode == up.Mode &&
 		(gate.Biases == nil) == (up.Biases == nil) {
 		fused := &stackedExpertWeights{
@@ -521,20 +534,10 @@ func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights
 		return fused
 	}
 	if gate.Scales != nil || up.Scales != nil {
-		slog.Warn("dequantizing gate/up experts: quantization parameters differ",
-			"gate_mode", gate.Mode, "gate_bits", gate.Bits, "gate_group_size", gate.GroupSize,
-			"up_mode", up.Mode, "up_bits", up.Bits, "up_group_size", up.GroupSize)
-	}
-	gateWeight := gate.Weight
-	if gate.Scales != nil {
-		gateWeight = mlx.Dequantize(gate.Weight, gate.Scales, gate.Biases, gate.GroupSize, gate.Bits, gate.Mode, nil)
-	}
-	upWeight := up.Weight
-	if up.Scales != nil {
-		upWeight = mlx.Dequantize(up.Weight, up.Scales, up.Biases, up.GroupSize, up.Bits, up.Mode, nil)
+		return nil
 	}
 	return &stackedExpertWeights{
-		Weight:    mlx.Concatenate([]*mlx.Array{gateWeight, upWeight}, 1),
+		Weight:    mlx.Concatenate([]*mlx.Array{gate.Weight, up.Weight}, 1),
 		Bits:      gate.Bits,
 		GroupSize: gate.GroupSize,
 		Mode:      gate.Mode,
@@ -554,6 +557,11 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		}
 
 		qbiases := tensors[key+"_qbias"]
+		globalScale, _ := tensorAny(tensors,
+			key+".global_scale",
+			base+".weight.global_scale",
+			base+".global_scale",
+		)
 		groupSize, bits, mode := model.ResolveLinearQuantParams(
 			cfg.QuantGroupSize,
 			cfg.QuantBits,
@@ -563,14 +571,16 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			w,
 			scales,
 		)
-		if useQuantized && supportsGatherQMM(mode, bits) {
+		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, w.Dim(0))
+		if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
 			return &stackedExpertWeights{
-				Weight:    w,
-				Scales:    scales,
-				Biases:    qbiases,
-				Bits:      bits,
-				GroupSize: groupSize,
-				Mode:      mode,
+				Weight:       w,
+				Scales:       scales,
+				Biases:       qbiases,
+				GlobalScales: kernelGlobalScale,
+				Bits:         bits,
+				GroupSize:    groupSize,
+				Mode:         mode,
 			}
 		}
 
@@ -578,7 +588,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
 		}
 		return &stackedExpertWeights{
-			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
+			Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale),
 			Bits:      bits,
 			GroupSize: groupSize,
 			Mode:      mode,
@@ -592,24 +602,38 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	weights := make([]*mlx.Array, 0, numExperts)
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
+	globalScales := make([]*mlx.Array, 0, numExperts)
+	dequantGlobalScales := make([]*mlx.Array, 0, numExperts)
 	consumedKeys := make([]string, 0, numExperts*3)
 	numDequantized := 0
 	bits := 0
 	groupSize := 0
 	mode := cfg.QuantMode
+	quantized := false
+	sourceQuantized := false
 
 	for e := range numExperts {
 		base := fmt.Sprintf("%s.mlp.experts.%d.%s", layerPrefix, e, proj)
 		w, key := tensorByBase(tensors, base)
 		if w == nil {
-			continue
+			return nil
 		}
 		consumedKeys = append(consumedKeys, key)
 
 		s := tensors[key+"_scale"]
 		if s == nil {
+			if e == 0 {
+				sourceQuantized = false
+			} else if sourceQuantized {
+				return nil
+			}
 			weights = append(weights, w)
 			continue
+		}
+		if e == 0 {
+			sourceQuantized = true
+		} else if !sourceQuantized {
+			return nil
 		}
 		consumedKeys = append(consumedKeys, key+"_scale")
 		qb := tensors[key+"_qbias"]
@@ -630,14 +654,36 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		if useQuantized && supportsGatherQMM(m, b) {
+		globalScale, globalScaleKey := tensorAny(tensors,
+			key+".global_scale",
+			base+".weight.global_scale",
+			base+".global_scale",
+		)
+		if globalScaleKey != "" {
+			consumedKeys = append(consumedKeys, globalScaleKey)
+		}
+		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, m, 1)
+		keepQuantized := useQuantized && supportsGatherQMM(m, b) && supportsGlobalScale
+		if e == 0 {
+			quantized = keepQuantized
+		} else if quantized != keepQuantized ||
+			(sourceQuantized && (b != bits || gs != groupSize || m != mode)) {
+			return nil
+		}
+		if qb != nil {
+			biases = append(biases, qb)
+		}
+		if globalScale != nil {
+			dequantGlobalScales = append(dequantGlobalScales, globalScale)
+		}
+		if keepQuantized {
 			weights = append(weights, w)
 			scales = append(scales, s)
-			if qb != nil {
-				biases = append(biases, qb)
+			if kernelGlobalScale != nil {
+				globalScales = append(globalScales, kernelGlobalScale)
 			}
 		} else {
-			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m, nil))
+			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m, globalScale))
 			numDequantized++
 		}
 	}
@@ -649,13 +695,21 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	if len(weights) == 0 {
 		return nil
 	}
+	if (len(biases) != 0 && len(biases) != len(weights)) ||
+		(len(globalScales) != 0 && len(globalScales) != len(weights)) ||
+		(len(dequantGlobalScales) != 0 && len(dequantGlobalScales) != len(weights)) {
+		return nil
+	}
 
 	out := &stackedExpertWeights{Weight: stackAndClone(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
 		out.Scales = stackAndClone(scales)
 	}
-	if len(biases) == len(weights) {
+	if quantized && len(biases) == len(weights) {
 		out.Biases = stackAndClone(biases)
+	}
+	if len(globalScales) == len(weights) {
+		out.GlobalScales = mlx.Reshape(stackAndClone(globalScales), int32(len(weights)))
 	}
 	freeTensorKeys(tensors, consumedKeys...)
 	return out
@@ -679,6 +733,11 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 	}
 
 	qbiases := tensors[key+"_qbias"]
+	globalScale, _ := tensorAny(tensors,
+		key+".global_scale",
+		layerPrefix+".mlp.experts.gate_up_proj.weight.global_scale",
+		layerPrefix+".mlp.experts.gate_up_proj.global_scale",
+	)
 	groupSize, bits, mode := model.ResolveLinearQuantParams(
 		cfg.QuantGroupSize,
 		cfg.QuantBits,
@@ -688,21 +747,23 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 		gateUp,
 		scales,
 	)
-	if useQuantized && supportsGatherQMM(mode, bits) {
+	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, gateUp.Dim(0))
+	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
 		return &stackedExpertWeights{
-			Weight:    gateUp,
-			Scales:    scales,
-			Biases:    qbiases,
-			Bits:      bits,
-			GroupSize: groupSize,
-			Mode:      mode,
+			Weight:       gateUp,
+			Scales:       scales,
+			Biases:       qbiases,
+			GlobalScales: kernelGlobalScale,
+			Bits:         bits,
+			GroupSize:    groupSize,
+			Mode:         mode,
 		}
 	}
 	if useQuantized {
 		slog.Warn("dequantizing expert weights: no gather kernel for format", "tensor", key, "mode", mode, "bits", bits)
 	}
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode, nil),
+		Weight:    mlx.Dequantize(gateUp, scales, qbiases, groupSize, bits, mode, globalScale),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
@@ -729,17 +790,18 @@ func splitLastAxisHalves(a *mlx.Array) (lo, hi *mlx.Array) {
 // loadSwitchMLP assembles a layer's routed experts from any supported
 // checkpoint layout.
 func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix string) (*SwitchMLP, error) {
+	var gateW, upW *stackedExpertWeights
 	gateUpW := combinedGateUpProjection(tensors, cfg, useQuantized, layerPrefix)
 	downW := loadStackedProjection(tensors, cfg, useQuantized,
 		layerPrefix+".mlp.switch_mlp.down_proj",
 		layerPrefix+".mlp.experts.down_proj",
 	)
 	if gateUpW == nil {
-		gateW := loadStackedProjection(tensors, cfg, useQuantized,
+		gateW = loadStackedProjection(tensors, cfg, useQuantized,
 			layerPrefix+".mlp.switch_mlp.gate_proj",
 			layerPrefix+".mlp.experts.gate_proj",
 		)
-		upW := loadStackedProjection(tensors, cfg, useQuantized,
+		upW = loadStackedProjection(tensors, cfg, useQuantized,
 			layerPrefix+".mlp.switch_mlp.up_proj",
 			layerPrefix+".mlp.experts.up_proj",
 		)
@@ -754,25 +816,52 @@ func loadSwitchMLP(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool
 	if downW == nil {
 		downW = collectPerExpertProjection(tensors, cfg, useQuantized, layerPrefix, "down_proj", cfg.NumExperts)
 	}
-	if gateUpW == nil || downW == nil {
+	if (gateUpW == nil && (gateW == nil || upW == nil)) || downW == nil {
 		return nil, fmt.Errorf("missing switch expert weights")
 	}
 
 	switchMLP := &SwitchMLP{}
-	if gateUpW.Scales != nil {
-		switchMLP.GateUpWeightQ = gateUpW.Weight
-		switchMLP.GateUpScales = gateUpW.Scales
-		switchMLP.GateUpBias = gateUpW.Biases
-		switchMLP.GateUpBits = gateUpW.Bits
-		switchMLP.GateUpGroupSize = gateUpW.GroupSize
-		switchMLP.GateUpMode = gateUpW.Mode
+	if gateUpW != nil {
+		if gateUpW.Scales != nil {
+			switchMLP.GateUpWeightQ = gateUpW.Weight
+			switchMLP.GateUpScales = gateUpW.Scales
+			switchMLP.GateUpBias = gateUpW.Biases
+			switchMLP.GateUpGlobalScales = gateUpW.GlobalScales
+			switchMLP.GateUpBits = gateUpW.Bits
+			switchMLP.GateUpGroupSize = gateUpW.GroupSize
+			switchMLP.GateUpMode = gateUpW.Mode
+		} else {
+			switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
+		}
 	} else {
-		switchMLP.GateUpWeight = transposeExpertWeightForGatherMM(gateUpW.Weight)
+		if gateW.Scales != nil {
+			switchMLP.GateWeightQ = gateW.Weight
+			switchMLP.GateScales = gateW.Scales
+			switchMLP.GateBiases = gateW.Biases
+			switchMLP.GateGlobalScales = gateW.GlobalScales
+			switchMLP.GateBits = gateW.Bits
+			switchMLP.GateGroupSize = gateW.GroupSize
+			switchMLP.GateMode = gateW.Mode
+		} else {
+			switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
+		}
+		if upW.Scales != nil {
+			switchMLP.UpWeightQ = upW.Weight
+			switchMLP.UpScales = upW.Scales
+			switchMLP.UpBiases = upW.Biases
+			switchMLP.UpGlobalScales = upW.GlobalScales
+			switchMLP.UpBits = upW.Bits
+			switchMLP.UpGroupSize = upW.GroupSize
+			switchMLP.UpMode = upW.Mode
+		} else {
+			switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
+		}
 	}
 	if downW.Scales != nil {
 		switchMLP.DownWeightQ = downW.Weight
 		switchMLP.DownScales = downW.Scales
 		switchMLP.DownBiases = downW.Biases
+		switchMLP.DownGlobalScales = downW.GlobalScales
 		switchMLP.DownBits = downW.Bits
 		switchMLP.DownGroupSize = downW.GroupSize
 		switchMLP.DownMode = downW.Mode
@@ -1143,18 +1232,36 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		idxFlat = mlx.Reshape(mlx.Take(idxAll, order, 0), n, 1)
 	}
 
-	var gateUp, down *mlx.Array
+	var gate, up, down *mlx.Array
 	if s.GateUpWeightQ != nil {
-		gateUp = mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBias,
-			nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
+		gateUp := mlx.GatherQMMWithGlobalScale(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBias,
+			nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode,
+			s.GateUpGlobalScales, doSort)
+		gate, up = splitLastAxisHalves(gateUp)
+	} else if s.GateUpWeight != nil {
+		gateUp := mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
+		gate, up = splitLastAxisHalves(gateUp)
 	} else {
-		gateUp = mlx.GatherMM(xFlat, s.GateUpWeight, nil, idxFlat, doSort)
+		if s.GateWeightQ != nil {
+			gate = mlx.GatherQMMWithGlobalScale(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
+				nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode,
+				s.GateGlobalScales, doSort)
+		} else {
+			gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
+		}
+		if s.UpWeightQ != nil {
+			up = mlx.GatherQMMWithGlobalScale(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
+				nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode,
+				s.UpGlobalScales, doSort)
+		} else {
+			up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
+		}
 	}
-	gate, up := splitLastAxisHalves(gateUp)
 	hidden := mlx.SwiGLU(gate, up)
 	if s.DownWeightQ != nil {
-		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
-			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode, doSort)
+		down = mlx.GatherQMMWithGlobalScale(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode,
+			s.DownGlobalScales, doSort)
 	} else {
 		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
 	}

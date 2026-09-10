@@ -121,6 +121,56 @@ func TestSupportsGatherQMM(t *testing.T) {
 	}
 }
 
+func TestLoadSwitchMLPKeepsSeparateGlobalScales(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const experts, width = 4, 64
+		cfg := &Config{
+			HiddenSize:       width,
+			NumExperts:       experts,
+			QuantGroupSize:   16,
+			QuantBits:        4,
+			QuantMode:        "nvfp4",
+			NumExpertsPerTok: 2,
+		}
+		prefix := "model.layers.0"
+		tensors := make(map[string]*mlx.Array)
+		for _, proj := range []string{"gate_proj", "up_proj", "down_proj"} {
+			key := prefix + ".mlp.experts." + proj + ".weight"
+			tensors[key] = mlx.Zeros(mlx.DTypeUint32, experts, width, width/8)
+			tensors[key+"_scale"] = mlx.Zeros(mlx.DTypeUint8, experts, width, width/16)
+			tensors[key+".global_scale"] = mlx.FromValues([]float32{0.5, 1, 2, 4}, experts)
+		}
+
+		switchMLP, err := loadSwitchMLP(tensors, cfg, true, prefix)
+		if err != nil {
+			t.Fatalf("loadSwitchMLP() failed: %v", err)
+		}
+		if !mlx.MetalIsAvailable() {
+			if switchMLP.GateUpWeight == nil || switchMLP.DownWeight == nil {
+				t.Fatal("global-scale experts did not use the dense fallback off Metal")
+			}
+			return
+		}
+		if switchMLP.GateUpWeightQ != nil {
+			t.Fatal("gate and up with independent global scales were fused")
+		}
+		if switchMLP.GateWeightQ == nil || switchMLP.UpWeightQ == nil || switchMLP.DownWeightQ == nil {
+			t.Fatal("separate expert projections did not remain quantized")
+		}
+		if switchMLP.GateGlobalScales == nil || switchMLP.UpGlobalScales == nil || switchMLP.DownGlobalScales == nil {
+			t.Fatal("separate expert global scales were not retained")
+		}
+
+		x := mlx.Zeros(mlx.DTypeBFloat16, 1, 1, width)
+		indices := mlx.FromValues([]int32{0, 1}, 1, 1, int(cfg.NumExpertsPerTok))
+		out := switchMLP.Forward(x, indices, cfg)
+		mlx.Eval(out)
+		if dims := out.Dims(); len(dims) != 4 || dims[0] != 1 || dims[1] != 1 || dims[2] != int(cfg.NumExpertsPerTok) || dims[3] != width {
+			t.Fatalf("output shape = %v, want [1 1 %d %d]", dims, cfg.NumExpertsPerTok, width)
+		}
+	})
+}
+
 func TestResolveTensorPathLayout(t *testing.T) {
 	dummy := mlx.New("dummy")
 
