@@ -301,11 +301,14 @@ func (c *Client) HasExited() bool {
 }
 
 // Load checks whether the model fits in GPU memory and starts the subprocess.
-func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if len(gpus) > 0 {
 		modelSize := c.memory.Load()
 		// We currently only use the first GPU with MLX
 		available := gpus[0].FreeMemory
+		if requireFull && gpus[0].Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < available {
+			available = systemInfo.FreeMemory
+		}
 		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
 		if available > overhead {
 			available -= overhead
