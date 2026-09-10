@@ -5,16 +5,12 @@ import "context"
 type modelCaches struct {
 	recommendations *modelRecommendationsCache
 	show            *modelShowCache
-	modelList       *modelListCache
-	inference       *inferenceModelCache
 }
 
 func newModelCaches() *modelCaches {
 	return &modelCaches{
 		recommendations: newModelRecommendationsCache(),
 		show:            newModelShowCache(),
-		modelList:       newModelListCache(),
-		inference:       newInferenceModelCache(),
 	}
 }
 
@@ -27,8 +23,5 @@ func (c *modelCaches) Start(ctx context.Context) {
 	}
 	if c.show != nil {
 		c.show.Start(ctx)
-	}
-	if c.modelList != nil {
-		c.modelList.Start(ctx)
 	}
 }
