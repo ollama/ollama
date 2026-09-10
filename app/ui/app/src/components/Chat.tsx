@@ -27,7 +27,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useUser } from "@/hooks/useUser";
-import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import {
+  useHasVisionCapability,
+  useHasImageCapability,
+} from "@/hooks/useModelCapabilities";
+import { useImageGeneration } from "@/hooks/useImageGeneration";
+import { ImageGenerationDisplay } from "./ImageGenerationDisplay";
 import { Message } from "@/gotypes";
 
 export default function Chat({ chatId }: { chatId: string }) {
@@ -38,6 +43,8 @@ export default function Chat({ chatId }: { chatId: string }) {
   const { selectedModel } = useSelectedModel(chatId);
   const { user } = useUser();
   const hasVisionCapability = useHasVisionCapability(selectedModel?.model);
+  const hasImageCapability = useHasImageCapability(selectedModel?.model);
+  const imageGen = useImageGeneration();
   const shouldShowStaleDisplay = useShouldShowStaleDisplay(selectedModel);
   const dismissStaleModel = useDismissStaleModel();
   const { isHealthy } = useHealth();
@@ -141,6 +148,14 @@ export default function Chat({ chatId }: { chatId: string }) {
       clearChatError();
     }
 
+    // Route to image generation for image-capable models
+    if (hasImageCapability && selectedModel) {
+      imageGen.reset();
+      imageGen.generate(selectedModel.model, message);
+      handleNewUserMessage();
+      return;
+    }
+
     // Prepare attachments for backend
     const allAttachments = (options.attachments || []).map((att) => ({
       filename: att.filename,
@@ -203,6 +218,9 @@ export default function Chat({ chatId }: { chatId: string }) {
     >
       {chatId === "new" ? (
         <div className="flex flex-col h-screen justify-center relative">
+          <div className="max-w-3xl mx-auto w-full">
+            <ImageGenerationDisplay {...imageGen} />
+          </div>
           <div className="px-6">
             <ChatForm
               hasMessages={false}
@@ -237,6 +255,8 @@ export default function Chat({ chatId }: { chatId: string }) {
               error={chatError}
               browserToolResult={browserToolResult}
             />
+
+            <ImageGenerationDisplay {...imageGen} />
           </section>
 
           <div className="flex-shrink-0 sticky bottom-0 z-20">
