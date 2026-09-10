@@ -27,19 +27,24 @@ type RopeScaling struct {
 	MscaleAllDim float32 `json:"mscale_all_dim"`
 }
 
+type RopeParameters struct {
+	Theta float32 `json:"rope_theta"`
+}
+
 // Config holds GLM4-MoE-Lite model configuration
 type Config struct {
-	HiddenSize            int32   `json:"hidden_size"`
-	NumHiddenLayers       int32   `json:"num_hidden_layers"`
-	IntermediateSize      int32   `json:"intermediate_size"`
-	MoEIntermediateSize   int32   `json:"moe_intermediate_size"`
-	NumAttentionHeads     int32   `json:"num_attention_heads"`
-	NumKeyValueHeads      int32   `json:"num_key_value_heads"`
-	VocabSize             int32   `json:"vocab_size"`
-	RMSNormEps            float32 `json:"rms_norm_eps"`
-	RopeTheta             float32 `json:"rope_theta"`
-	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
-	AttentionBias         bool    `json:"attention_bias"`
+	HiddenSize            int32           `json:"hidden_size"`
+	NumHiddenLayers       int32           `json:"num_hidden_layers"`
+	IntermediateSize      int32           `json:"intermediate_size"`
+	MoEIntermediateSize   int32           `json:"moe_intermediate_size"`
+	NumAttentionHeads     int32           `json:"num_attention_heads"`
+	NumKeyValueHeads      int32           `json:"num_key_value_heads"`
+	VocabSize             int32           `json:"vocab_size"`
+	RMSNormEps            float32         `json:"rms_norm_eps"`
+	RopeTheta             float32         `json:"rope_theta"`
+	RopeParameters        *RopeParameters `json:"rope_parameters"`
+	MaxPositionEmbeddings int32           `json:"max_position_embeddings"`
+	AttentionBias         bool            `json:"attention_bias"`
 
 	// MLA (Multi-head Latent Attention) parameters
 	QLoraRank     int32 `json:"q_lora_rank"`
@@ -70,6 +75,12 @@ type Config struct {
 	// Computed fields
 	QHeadDim int32   `json:"-"` // qk_nope_head_dim + qk_rope_head_dim
 	Scale    float32 `json:"-"` // 1/sqrt(QHeadDim) with mscale adjustment
+}
+
+func (c *Config) normalize() {
+	if c.RopeTheta == 0 && c.RopeParameters != nil {
+		c.RopeTheta = c.RopeParameters.Theta
+	}
 }
 
 // MLAAttention implements Multi-head Latent Attention with absorption.
@@ -196,9 +207,10 @@ type SwitchMLP struct {
 	UpWeight   *mlx.Array
 	DownWeight *mlx.Array
 
-	GateWeightQ, GateScales, GateBiases *mlx.Array
-	UpWeightQ, UpScales, UpBiases       *mlx.Array
-	DownWeightQ, DownScales, DownBiases *mlx.Array
+	GateWeightQ, GateScales, GateBiases                *mlx.Array
+	UpWeightQ, UpScales, UpBiases                      *mlx.Array
+	DownWeightQ, DownScales, DownBiases                *mlx.Array
+	GateGlobalScales, UpGlobalScales, DownGlobalScales *mlx.Array
 
 	GateBits int
 	UpBits   int
@@ -207,6 +219,9 @@ type SwitchMLP struct {
 	GateGroupSize int
 	UpGroupSize   int
 	DownGroupSize int
+	GateMode      string
+	UpMode        string
+	DownMode      string
 
 	UseQuantized bool
 }
@@ -238,15 +253,18 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	var gate, up, hidden, down *mlx.Array
 
 	if s.UseQuantized {
-		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
-			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
-		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
-			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
+		gate = mlx.GatherQMMWithGlobalScale(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
+			nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode,
+			s.GateGlobalScales, doSort)
+		up = mlx.GatherQMMWithGlobalScale(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
+			nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode,
+			s.UpGlobalScales, doSort)
 
 		hidden = mlx.SwiGLU(gate, up)
 
-		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
-			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
+		down = mlx.GatherQMMWithGlobalScale(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
+			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode,
+			s.DownGlobalScales, doSort)
 	} else {
 		gate = mlx.GatherMM(xFlat, mlx.Transpose(s.GateWeight, 0, 2, 1), nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, mlx.Transpose(s.UpWeight, 0, 2, 1), nil, idxFlat, doSort)
@@ -366,19 +384,31 @@ func computeScale(cfg *Config) float32 {
 
 // supportsGatherQMM returns true if the quantization mode has GatherQMM kernel support.
 func supportsGatherQMM(mode string, bits int) bool {
-	return mode == "affine" && (bits == 4 || bits == 8)
+	switch mode {
+	case "affine":
+		return bits == 4 || bits == 8
+	case "mxfp8":
+		return bits == 8
+	case "nvfp4", "mxfp4":
+		return bits == 4
+	default:
+		return false
+	}
 }
 
 // ExpertWeight holds a single expert's weight with optional quantization components.
 type ExpertWeight struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	Biases    *mlx.Array
-	Bits      int
-	GroupSize int
+	Weight             *mlx.Array
+	Scales             *mlx.Array
+	Biases             *mlx.Array
+	GlobalScale        *mlx.Array
+	DequantGlobalScale *mlx.Array
+	Bits               int
+	GroupSize          int
+	Mode               string
+	SourceQuantized    bool
 }
 
-// loadExpertWeight loads an expert weight from the tensor map.
 func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized bool, cfg *Config) *ExpertWeight {
 	w := tensors[path+".weight"]
 	if w == nil {
@@ -399,11 +429,24 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 			scales,
 		)
 
-		if useQuantized && supportsGatherQMM(mode, bits) {
-			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
+		globalScale := tensors[path+".weight.global_scale"]
+		if globalScale == nil {
+			globalScale = tensors[path+".global_scale"]
+		}
+		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, 1)
+		if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
+			return &ExpertWeight{
+				Weight: w, Scales: scales, Biases: qbiases,
+				GlobalScale: kernelGlobalScale, DequantGlobalScale: globalScale,
+				Bits: bits, GroupSize: groupSize, Mode: mode, SourceQuantized: true,
+			}
 		}
 
-		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
+		return &ExpertWeight{
+			Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale),
+			Biases: qbiases, DequantGlobalScale: globalScale,
+			Bits: bits, GroupSize: groupSize, Mode: mode, SourceQuantized: true,
+		}
 	}
 
 	return &ExpertWeight{Weight: w}
@@ -411,11 +454,14 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 
 // StackedExpertWeights holds stacked weights for all experts.
 type StackedExpertWeights struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	Biases    *mlx.Array
-	Bits      int
-	GroupSize int
+	Weight              *mlx.Array
+	Scales              *mlx.Array
+	Biases              *mlx.Array
+	GlobalScales        *mlx.Array
+	DequantGlobalScales *mlx.Array
+	Bits                int
+	GroupSize           int
+	Mode                string
 }
 
 // loadStackedProjection loads an expert projection stored as a single stacked
@@ -433,15 +479,24 @@ func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuanti
 	}
 
 	qbiases := tensors[key+"_qbias"]
+	globalScale := tensors[key+".global_scale"]
+	if globalScale == nil {
+		globalScale = tensors[key+".weight.global_scale"]
+	}
 	groupSize, bits, mode := model.ResolveLinearQuantParams(
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
 		key, w, scales,
 	)
-	if useQuantized && supportsGatherQMM(mode, bits) {
-		return &StackedExpertWeights{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
+	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, w.Dim(0))
+	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
+		return &StackedExpertWeights{
+			Weight: w, Scales: scales, Biases: qbiases,
+			GlobalScales: kernelGlobalScale, DequantGlobalScales: globalScale,
+			Bits: bits, GroupSize: groupSize, Mode: mode,
+		}
 	}
 
-	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
+	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale), Mode: mode}
 }
 
 // loadStackedExperts loads a stacked expert projection by its .experts name,
@@ -462,14 +517,26 @@ func collectAndStackExpertWeights(
 	useQuantized bool,
 	cfg *Config,
 ) *StackedExpertWeights {
-	var w, s, b []*mlx.Array
+	var w, s, b, g, dg []*mlx.Array
 	var bits, groupSize int
+	var mode string
+	var quantized bool
+	var sourceQuantized bool
 
 	for e := range numExperts {
 		path := fmt.Sprintf("%s.mlp.experts.%d.%s", prefix, e, projName)
 		ew := loadExpertWeight(tensors, path, useQuantized, cfg)
 		if ew == nil {
-			continue
+			return nil
+		}
+		if e == 0 {
+			quantized = ew.Scales != nil
+			sourceQuantized = ew.SourceQuantized
+			bits, groupSize, mode = ew.Bits, ew.GroupSize, ew.Mode
+		} else if quantized != (ew.Scales != nil) ||
+			sourceQuantized != ew.SourceQuantized ||
+			(sourceQuantized && (ew.Bits != bits || ew.GroupSize != groupSize || ew.Mode != mode)) {
+			return nil
 		}
 		w = append(w, ew.Weight)
 		if ew.Scales != nil {
@@ -478,23 +545,45 @@ func collectAndStackExpertWeights(
 		if ew.Biases != nil {
 			b = append(b, ew.Biases)
 		}
-		if e == 0 {
-			bits = ew.Bits
-			groupSize = ew.GroupSize
+		if ew.GlobalScale != nil {
+			g = append(g, ew.GlobalScale)
+		}
+		if ew.DequantGlobalScale != nil {
+			dg = append(dg, ew.DequantGlobalScale)
 		}
 	}
 
-	result := &StackedExpertWeights{Bits: bits, GroupSize: groupSize}
+	if (len(b) != 0 && len(b) != len(w)) ||
+		(len(g) != 0 && len(g) != len(w)) ||
+		(len(dg) != 0 && len(dg) != len(w)) {
+		return nil
+	}
+	result := &StackedExpertWeights{Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(w) > 0 {
 		result.Weight = mlx.Stack(w, 0)
-		if len(s) > 0 {
+		if quantized {
 			result.Scales = mlx.Stack(s, 0)
 		}
-		if len(b) > 0 {
+		if quantized && len(b) == len(w) {
 			result.Biases = mlx.Stack(b, 0)
+		}
+		if quantized && len(g) == len(w) {
+			result.GlobalScales = mlx.Reshape(mlx.Stack(g, 0), int32(len(w)))
+		}
+		if quantized && len(dg) == len(w) {
+			result.DequantGlobalScales = mlx.Reshape(mlx.Stack(dg, 0), int32(len(w)))
 		}
 	}
 	return result
+}
+
+func denseStackedExpertWeight(w *StackedExpertWeights) *mlx.Array {
+	if w.Scales == nil {
+		return w.Weight
+	}
+	return mlx.Dequantize(
+		w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode, w.DequantGlobalScales,
+	)
 }
 
 // sanitizeExpertWeights resolves the three MoE projections, preferring the
@@ -523,6 +612,10 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 	// Check if quantized and dequantize
 	if scales := tensors[path+".weight_scale"]; scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
+		globalScale := tensors[path+".weight.global_scale"]
+		if globalScale == nil {
+			globalScale = tensors[path+".weight_scale_2"]
+		}
 		groupSize, bits, mode := model.ResolveLinearQuantParams(
 			cfg.QuantGroupSize,
 			cfg.QuantBits,
@@ -532,7 +625,7 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 			w,
 			scales,
 		)
-		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
@@ -559,6 +652,7 @@ func newModel(root *model.Root) (base.Model, error) {
 	if err := json.Unmarshal(configData, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	cfg.normalize()
 
 	cfg.QHeadDim = cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
 	cfg.Scale = computeScale(&cfg)
@@ -691,28 +785,38 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			// Stack expert weights
 			gate, up, down := sanitizeExpertWeights(tensors, prefix, cfg.NRoutedExperts, useQuantized, cfg)
+			if gate == nil || up == nil || down == nil {
+				return fmt.Errorf("layer %d: missing or inconsistent expert weights", i)
+			}
 
-			switchMLP := &SwitchMLP{UseQuantized: useQuantized}
-			if useQuantized {
+			useQuantizedLayer := gate.Scales != nil && up.Scales != nil && down.Scales != nil
+			switchMLP := &SwitchMLP{UseQuantized: useQuantizedLayer}
+			if useQuantizedLayer {
 				switchMLP.GateWeightQ = gate.Weight
 				switchMLP.GateScales = gate.Scales
 				switchMLP.GateBiases = gate.Biases
+				switchMLP.GateGlobalScales = gate.GlobalScales
 				switchMLP.GateBits = gate.Bits
 				switchMLP.GateGroupSize = gate.GroupSize
+				switchMLP.GateMode = gate.Mode
 				switchMLP.UpWeightQ = up.Weight
 				switchMLP.UpScales = up.Scales
 				switchMLP.UpBiases = up.Biases
+				switchMLP.UpGlobalScales = up.GlobalScales
 				switchMLP.UpBits = up.Bits
 				switchMLP.UpGroupSize = up.GroupSize
+				switchMLP.UpMode = up.Mode
 				switchMLP.DownWeightQ = down.Weight
 				switchMLP.DownScales = down.Scales
 				switchMLP.DownBiases = down.Biases
+				switchMLP.DownGlobalScales = down.GlobalScales
 				switchMLP.DownBits = down.Bits
 				switchMLP.DownGroupSize = down.GroupSize
+				switchMLP.DownMode = down.Mode
 			} else {
-				switchMLP.GateWeight = gate.Weight
-				switchMLP.UpWeight = up.Weight
-				switchMLP.DownWeight = down.Weight
+				switchMLP.GateWeight = denseStackedExpertWeight(gate)
+				switchMLP.UpWeight = denseStackedExpertWeight(up)
+				switchMLP.DownWeight = denseStackedExpertWeight(down)
 			}
 
 			moeGate := &MoEGate{}

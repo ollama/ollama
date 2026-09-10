@@ -31,22 +31,23 @@ var (
 )
 
 type Config struct {
-	ModelType             string  `json:"model_type"`
-	VocabSize             int32   `json:"vocab_size"`
-	HiddenSize            int32   `json:"hidden_size"`
-	IntermediateSize      int32   `json:"intermediate_size"`
-	NumHiddenLayers       int32   `json:"num_hidden_layers"`
-	HybridOverridePattern string  `json:"hybrid_override_pattern"`
-	NumAttentionHeads     int32   `json:"num_attention_heads"`
-	NumKeyValueHeads      int32   `json:"num_key_value_heads"`
-	HeadDim               int32   `json:"head_dim"`
-	LayerNormEpsilon      float32 `json:"layer_norm_epsilon"`
-	RMSNormEps            float32 `json:"rms_norm_eps"`
-	TieWordEmbeddings     bool    `json:"tie_word_embeddings"`
-	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
-	AttentionBias         bool    `json:"attention_bias"`
-	MLPBias               bool    `json:"mlp_bias"`
-	UseBias               bool    `json:"use_bias"`
+	ModelType             string   `json:"model_type"`
+	VocabSize             int32    `json:"vocab_size"`
+	HiddenSize            int32    `json:"hidden_size"`
+	IntermediateSize      int32    `json:"intermediate_size"`
+	NumHiddenLayers       int32    `json:"num_hidden_layers"`
+	HybridOverridePattern string   `json:"hybrid_override_pattern"`
+	LayersBlockType       []string `json:"layers_block_type"`
+	NumAttentionHeads     int32    `json:"num_attention_heads"`
+	NumKeyValueHeads      int32    `json:"num_key_value_heads"`
+	HeadDim               int32    `json:"head_dim"`
+	LayerNormEpsilon      float32  `json:"layer_norm_epsilon"`
+	RMSNormEps            float32  `json:"rms_norm_eps"`
+	TieWordEmbeddings     bool     `json:"tie_word_embeddings"`
+	MaxPositionEmbeddings int32    `json:"max_position_embeddings"`
+	AttentionBias         bool     `json:"attention_bias"`
+	MLPBias               bool     `json:"mlp_bias"`
+	UseBias               bool     `json:"use_bias"`
 
 	ConvKernel     int32 `json:"conv_kernel"`
 	SSMStateSize   int32 `json:"ssm_state_size"`
@@ -136,20 +137,22 @@ type SparseMoE struct {
 
 	UseQuantized bool
 
-	UpWeight      *mlx.Array
-	UpWeightQ     *mlx.Array
-	UpScales      *mlx.Array
-	UpBiases      *mlx.Array
-	UpGroupSize   int
-	UpBits        int
-	UpMode        string
-	DownWeight    *mlx.Array
-	DownWeightQ   *mlx.Array
-	DownScales    *mlx.Array
-	DownBiases    *mlx.Array
-	DownGroupSize int
-	DownBits      int
-	DownMode      string
+	UpWeight         *mlx.Array
+	UpWeightQ        *mlx.Array
+	UpScales         *mlx.Array
+	UpBiases         *mlx.Array
+	UpGroupSize      int
+	UpBits           int
+	UpMode           string
+	DownWeight       *mlx.Array
+	DownWeightQ      *mlx.Array
+	DownScales       *mlx.Array
+	DownBiases       *mlx.Array
+	DownGroupSize    int
+	DownBits         int
+	DownMode         string
+	UpGlobalScales   *mlx.Array
+	DownGlobalScales *mlx.Array
 
 	SharedUp   nn.LinearLayer
 	SharedDown nn.LinearLayer
@@ -158,12 +161,13 @@ type SparseMoE struct {
 }
 
 type stackedExpertWeights struct {
-	Weight    *mlx.Array
-	Scales    *mlx.Array
-	Biases    *mlx.Array
-	Bits      int
-	GroupSize int
-	Mode      string
+	Weight       *mlx.Array
+	Scales       *mlx.Array
+	Biases       *mlx.Array
+	GlobalScales *mlx.Array
+	Bits         int
+	GroupSize    int
+	Mode         string
 }
 
 type configEnvelope struct {
@@ -182,6 +186,25 @@ func parseConfig(data []byte) (Config, error) {
 	}
 	if env.LLMConfig != nil {
 		cfg = *env.LLMConfig
+	}
+	if cfg.HybridOverridePattern == "" && len(cfg.LayersBlockType) > 0 {
+		pattern := make([]byte, len(cfg.LayersBlockType))
+		for i, layerType := range cfg.LayersBlockType {
+			switch layerType {
+			case "linear_attention":
+				pattern[i] = 'M'
+			case "full_attention":
+				pattern[i] = '*'
+			case "moe":
+				pattern[i] = 'E'
+			default:
+				return Config{}, fmt.Errorf("unsupported layers_block_type %q at layer %d", layerType, i)
+			}
+		}
+		cfg.HybridOverridePattern = string(pattern)
+		if cfg.NumHiddenLayers == 0 {
+			cfg.NumHiddenLayers = int32(len(pattern))
+		}
 	}
 
 	if cfg.HiddenSize <= 0 {
@@ -622,19 +645,21 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 		freeTensorKeys(tensors, key+"_qbias")
 	}
 
-	if useQuantized && supportsGatherQMM(mode, bits) && globalScale == nil {
+	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, w.Dim(0))
+	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
 		return &stackedExpertWeights{
-			Weight:    w,
-			Scales:    scales,
-			Biases:    qbiases,
-			Bits:      bits,
-			GroupSize: groupSize,
-			Mode:      mode,
+			Weight:       w,
+			Scales:       scales,
+			Biases:       qbiases,
+			GlobalScales: kernelGlobalScale,
+			Bits:         bits,
+			GroupSize:    groupSize,
+			Mode:         mode,
 		}
 	}
 
 	return &stackedExpertWeights{
-		Weight:    applyExpertWeightGlobalScale(mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil), globalScale),
+		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, globalScale),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
@@ -645,10 +670,14 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 	weights := make([]*mlx.Array, 0, numExperts)
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
+	globalScales := make([]*mlx.Array, 0, numExperts)
+	dequantGlobalScales := make([]*mlx.Array, 0, numExperts)
 	consumed := make([]string, 0, numExperts*3)
 	bits := 0
 	groupSize := 0
 	mode := cfg.QuantMode
+	quantized := false
+	sourceQuantized := false
 
 	for e := range numExperts {
 		key := fmt.Sprintf("%s.mixer.experts.%d.%s.weight", layerPrefix, e, proj)
@@ -661,8 +690,18 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 		scaleKey := key + "_scale"
 		scale := tensors[scaleKey]
 		if scale == nil {
+			if e == 0 {
+				sourceQuantized = false
+			} else if sourceQuantized {
+				return nil
+			}
 			weights = append(weights, w)
 			continue
+		}
+		if e == 0 {
+			sourceQuantized = true
+		} else if !sourceQuantized {
+			return nil
 		}
 
 		consumed = append(consumed, scaleKey)
@@ -688,18 +727,37 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			groupSize = gs
 			mode = m
 		}
-		if useQuantized && supportsGatherQMM(m, b) && globalScale == nil {
+		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, m, 1)
+		keepQuantized := useQuantized && supportsGatherQMM(m, b) && supportsGlobalScale
+		if e == 0 {
+			quantized = keepQuantized
+		} else if quantized != keepQuantized ||
+			(sourceQuantized && (b != bits || gs != groupSize || m != mode)) {
+			return nil
+		}
+		if qbias != nil {
+			biases = append(biases, qbias)
+		}
+		if globalScale != nil {
+			dequantGlobalScales = append(dequantGlobalScales, globalScale)
+		}
+		if keepQuantized {
 			weights = append(weights, w)
 			scales = append(scales, scale)
-			if qbias != nil {
-				biases = append(biases, qbias)
+			if kernelGlobalScale != nil {
+				globalScales = append(globalScales, kernelGlobalScale)
 			}
 			continue
 		}
 
-		weights = append(weights, applyExpertWeightGlobalScale(mlx.Dequantize(w, scale, qbias, gs, b, m, nil), globalScale))
+		weights = append(weights, mlx.Dequantize(w, scale, qbias, gs, b, m, globalScale))
 	}
 
+	if (len(biases) != 0 && len(biases) != len(weights)) ||
+		(len(globalScales) != 0 && len(globalScales) != len(weights)) ||
+		(len(dequantGlobalScales) != 0 && len(dequantGlobalScales) != len(weights)) {
+		return nil
+	}
 	out := &stackedExpertWeights{
 		Weight:    stackAndClone(weights),
 		Bits:      bits,
@@ -709,8 +767,11 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 	if len(scales) == len(weights) {
 		out.Scales = stackAndClone(scales)
 	}
-	if len(biases) == len(weights) {
+	if quantized && len(biases) == len(weights) {
 		out.Biases = stackAndClone(biases)
+	}
+	if len(globalScales) == len(weights) {
+		out.GlobalScales = mlx.Reshape(stackAndClone(globalScales), int32(len(weights)))
 	}
 	freeTensorKeys(tensors, consumed...)
 	return out
@@ -904,6 +965,7 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 			moe.UpWeightQ = up.Weight
 			moe.UpScales = up.Scales
 			moe.UpBiases = up.Biases
+			moe.UpGlobalScales = up.GlobalScales
 			moe.UpGroupSize = up.GroupSize
 			moe.UpBits = up.Bits
 			moe.UpMode = up.Mode
@@ -914,6 +976,7 @@ func loadLayer(linears model.LinearFactory, tensors map[string]*mlx.Array, cfg *
 			moe.DownWeightQ = down.Weight
 			moe.DownScales = down.Scales
 			moe.DownBiases = down.Biases
+			moe.DownGlobalScales = down.GlobalScales
 			moe.DownGroupSize = down.GroupSize
 			moe.DownBits = down.Bits
 			moe.DownMode = down.Mode
@@ -1147,7 +1210,7 @@ func shouldSortMoEExperts(tokens int32) bool {
 
 func (m *SparseMoE) gatherExpertUp(xFlat, idxFlat *mlx.Array, doSort bool) *mlx.Array {
 	if m.UpWeightQ != nil {
-		return mlx.GatherQMM(
+		return mlx.GatherQMMWithGlobalScale(
 			xFlat,
 			m.UpWeightQ,
 			m.UpScales,
@@ -1158,6 +1221,7 @@ func (m *SparseMoE) gatherExpertUp(xFlat, idxFlat *mlx.Array, doSort bool) *mlx.
 			m.UpGroupSize,
 			m.UpBits,
 			m.UpMode,
+			m.UpGlobalScales,
 			doSort,
 		)
 	}
@@ -1166,7 +1230,7 @@ func (m *SparseMoE) gatherExpertUp(xFlat, idxFlat *mlx.Array, doSort bool) *mlx.
 
 func (m *SparseMoE) gatherExpertDown(hidden, idxFlat *mlx.Array, doSort bool) *mlx.Array {
 	if m.DownWeightQ != nil {
-		return mlx.GatherQMM(
+		return mlx.GatherQMMWithGlobalScale(
 			hidden,
 			m.DownWeightQ,
 			m.DownScales,
@@ -1177,6 +1241,7 @@ func (m *SparseMoE) gatherExpertDown(hidden, idxFlat *mlx.Array, doSort bool) *m
 			m.DownGroupSize,
 			m.DownBits,
 			m.DownMode,
+			m.DownGlobalScales,
 			doSort,
 		)
 	}

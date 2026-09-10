@@ -5,6 +5,32 @@ import (
 	"github.com/ollama/ollama/x/quant"
 )
 
+// nvfp4MaxProduct is the product of the maximum E4M3 and E2M1 values.
+const nvfp4MaxProduct = 448 * 6
+
+// PrepareGatherQMMGlobalScale converts a ModelOpt NVFP4 dequantization
+// multiplier to the amax convention that MLX's gather_qmm expects. MLX requires
+// one global scale per expert, so a checkpoint-wide scalar is expanded to the
+// expert count. The native global-scale path is currently available only on
+// Metal.
+func PrepareGatherQMMGlobalScale(globalScale *mlx.Array, mode string, numExperts int) (*mlx.Array, bool) {
+	if globalScale == nil {
+		return nil, true
+	}
+	if mode != "nvfp4" || !mlx.MetalIsAvailable() || numExperts <= 0 {
+		return nil, false
+	}
+	if globalScale.Size() != 1 && globalScale.Size() != numExperts {
+		return nil, false
+	}
+
+	globalScale = mlx.Reshape(globalScale.AsType(mlx.DTypeFloat32), int32(globalScale.Size()))
+	if globalScale.Size() == 1 && numExperts > 1 {
+		globalScale = mlx.Add(mlx.Zeros(mlx.DTypeFloat32, numExperts), globalScale)
+	}
+	return mlx.MulScalar(globalScale, nvfp4MaxProduct), true
+}
+
 // QuantizationParams returns default groupSize, bits, and mode for a
 // quantization type. The values live in the shared x/quant package so the
 // importer, the runtime loader, and `ollama show` agree on them.

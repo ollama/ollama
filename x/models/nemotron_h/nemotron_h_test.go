@@ -52,6 +52,39 @@ func TestParseConfigNestedWrapper(t *testing.T) {
 	}
 }
 
+func TestParseConfigLayersBlockType(t *testing.T) {
+	cfg, err := parseConfig([]byte(`{
+		"model_type": "nemotron_h",
+		"hidden_size": 8,
+		"num_attention_heads": 2,
+		"layers_block_type": ["linear_attention", "moe", "full_attention"]
+	}`))
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+
+	if got, want := cfg.NumHiddenLayers, int32(3); got != want {
+		t.Fatalf("NumHiddenLayers = %d, want %d", got, want)
+	}
+	if got, want := cfg.HybridOverridePattern, "ME*"; got != want {
+		t.Fatalf("HybridOverridePattern = %q, want %q", got, want)
+	}
+	if got, want := string(cfg.LayerTypes), "ME*"; got != want {
+		t.Fatalf("LayerTypes = %q, want %q", got, want)
+	}
+}
+
+func TestParseConfigRejectsUnknownLayerBlockType(t *testing.T) {
+	_, err := parseConfig([]byte(`{
+		"hidden_size": 8,
+		"num_attention_heads": 2,
+		"layers_block_type": ["linear_attention", "dense"]
+	}`))
+	if err == nil || !strings.Contains(err.Error(), `unsupported layers_block_type "dense" at layer 1`) {
+		t.Fatalf("parseConfig error = %v, want unsupported layer type error", err)
+	}
+}
+
 func TestParseConfigRejectsBadPattern(t *testing.T) {
 	_, err := parseConfig([]byte(`{
 		"hidden_size": 4,
