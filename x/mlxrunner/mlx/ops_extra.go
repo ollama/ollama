@@ -63,9 +63,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, glob
 	if globalScale != nil {
 		// The C-level global_scale argument is rejected on Metal; apply it on top.
 		gs := globalScale
-		if gs.Size() > 1 {
-			// A vector scale is per-row; bind it to the weight's leading axis.
-			gs = Reshape(gs, int32(gs.Size()), 1)
+		for gs.NumDims() < out.NumDims() {
+			gs = ExpandDims(gs, -1)
 		}
 		outType := out.DType()
 		out = Mul(out, gs).AsType(outType)
@@ -90,6 +89,16 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 }
 
 func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, sortedIndices bool) *Array {
+	return gatherQMM(x, w, scales, biases, lhsIndices, rhsIndices, transpose, groupSize, bits, mode, nil, sortedIndices)
+}
+
+// GatherQMMWithGlobalScale applies one global scale per quantized weight bank.
+// A nil globalScale is equivalent to GatherQMM.
+func GatherQMMWithGlobalScale(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array, sortedIndices bool) *Array {
+	return gatherQMM(x, w, scales, biases, lhsIndices, rhsIndices, transpose, groupSize, bits, mode, globalScale, sortedIndices)
+}
+
+func gatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array, sortedIndices bool) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
@@ -105,9 +114,12 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	if rhsIndices != nil {
 		rhs = rhsIndices.ctx
 	}
-
 	out := New("GATHER_QMM")
-	mlxCheck(C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx))
+	if globalScale != nil {
+		mlxCheck(C.mlx_gather_qmm_with_global_scale(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, globalScale.ctx, C.bool(sortedIndices), DefaultStream().ctx))
+	} else {
+		mlxCheck(C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx))
+	}
 	return out
 }
 

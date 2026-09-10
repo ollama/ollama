@@ -1406,6 +1406,21 @@ int (*mlx_gather_qmm_)(
     const char* mode,
     bool sorted_indices,
     const mlx_stream s) = NULL;
+int (*mlx_gather_qmm_with_global_scale_)(
+    mlx_array* res,
+    const mlx_array x,
+    const mlx_array w,
+    const mlx_array scales,
+    const mlx_array biases /* may be null */,
+    const mlx_array lhs_indices /* may be null */,
+    const mlx_array rhs_indices /* may be null */,
+    bool transpose,
+    mlx_optional_int group_size,
+    mlx_optional_int bits,
+    const char* mode,
+    const mlx_array global_scale,
+    bool sorted_indices,
+    const mlx_stream s) = NULL;
 int (*mlx_gather_qqmm_)(
     mlx_array* res,
     const mlx_array x,
@@ -2940,6 +2955,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_gather_single);
     CHECK_LOAD(handle, mlx_gather_mm);
     CHECK_LOAD(handle, mlx_gather_qmm);
+    CHECK_LOAD(handle, mlx_gather_qmm_with_global_scale);
     CHECK_LOAD(handle, mlx_gather_qqmm);
     CHECK_LOAD(handle, mlx_greater);
     CHECK_LOAD(handle, mlx_greater_equal);

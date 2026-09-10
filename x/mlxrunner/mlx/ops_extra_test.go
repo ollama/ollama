@@ -78,4 +78,34 @@ func testDequantizeGlobalScale(t *mlxthreadtest.T) {
 		}
 		check(tc.name, got, tc.gs)
 	}
+
+	const experts = 2
+	expertPacked := make([]uint32, experts*len(packed))
+	expertScales := make([]uint8, experts*len(scaleBits))
+	for e := range experts {
+		copy(expertPacked[e*len(packed):], packed)
+		copy(expertScales[e*len(scaleBits):], scaleBits)
+	}
+	expertWeights := FromValues(expertPacked, experts, rows, cols/8)
+	expertBlockScales := FromValues(expertScales, experts, rows, cols/group)
+	expertGlobalScales := []float32{0.5, 2}
+	expertOut := Dequantize(
+		expertWeights,
+		expertBlockScales,
+		nil,
+		group,
+		4,
+		"nvfp4",
+		FromValues(expertGlobalScales, experts),
+	).AsType(DTypeFloat32)
+	Eval(expertOut)
+	for i, got := range expertOut.Floats() {
+		e := i / (rows * cols)
+		r := (i / cols) % rows
+		c := i % cols
+		want := fp4Values[c%16] * scaleOf(r, c/group) * expertGlobalScales[e]
+		if got != want {
+			t.Fatalf("expert bank[%d] = %v, want %v", i, got, want)
+		}
+	}
 }
