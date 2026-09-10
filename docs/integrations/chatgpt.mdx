@@ -1,0 +1,55 @@
+---
+title: ChatGPT Desktop
+description: Use Ollama models in ChatGPT Desktop.
+---
+
+ChatGPT Desktop includes Codex, OpenAI's desktop coding agent. Ollama adds compatible local and cloud models to Codex's model picker alongside ChatGPT's native models.
+
+## Prerequisites
+
+- Ollama v0.34.0 or newer
+
+If ChatGPT is not installed, Ollama offers to download it during setup.
+
+## Connect ChatGPT
+
+1. Open the Ollama desktop app and select **Apps**.
+2. Toggle **ChatGPT (Desktop)** to On.
+3. Follow the setup prompts. If ChatGPT is already open, Ollama asks to restart it before the new models appear.
+4. Open the ChatGPT desktop app and use Codex mode.
+
+## Choose models
+
+Open Ollama **Settings**, select **Apps**, then select ChatGPT. Choose up to five compatible local or cloud models and save your changes. Ollama asks to restart ChatGPT when a model change needs one.
+
+## Disconnect ChatGPT
+
+Open Ollama **Apps** and turn ChatGPT off. Ollama restores ChatGPT's connection settings and usual profile. If ChatGPT is open, Ollama asks to restart it so the change takes effect.
+
+You can also restore ChatGPT from the terminal:
+
+```shell
+ollama launch chatgpt --restore
+```
+
+## Terminal alternative
+
+With both apps installed, run:
+
+```shell
+ollama launch chatgpt
+```
+
+Ollama opens ChatGPT in Codex mode. You can also choose a model during setup with `--model <model>`.
+
+## Codex behavior and limits
+
+- Only requests made with an Ollama model go to Ollama. ChatGPT's native models keep using their usual provider.
+- Ollama models are for Codex mode. Regular Chat and voice keep using their usual ChatGPT connection.
+- Codex manages sessions. Ollama routes model requests and compaction when Codex asks for it, but does not store ChatGPT sessions.
+- Web search uses Ollama's web-search service when you use an Ollama model. It requires Ollama sign-in and is limited to three calls per response.
+
+## Related integrations
+
+- Use Codex from a terminal with [Codex CLI](/integrations/codex).
+- Connect other desktop apps from [Claude Desktop](/integrations/claude-desktop).
