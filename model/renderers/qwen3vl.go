@@ -17,6 +17,10 @@ func (r *Qwen3VLRenderer) LeadingBOS() string {
 	return ""
 }
 
+func (r *Qwen3VLRenderer) MessageDelimiters() []MessageDelimiter {
+	return chatMLMessageDelimiters()
+}
+
 func (r *Qwen3VLRenderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	if r.useImgTags {
 		return renderContentWithImageTags(content.Content, len(content.Images), imageOffset)

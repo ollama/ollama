@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -83,6 +84,34 @@ func TestLeadingBOSForRenderer(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := LeadingBOSForRenderer(tt.name); got != tt.want {
 				t.Fatalf("LeadingBOSForRenderer(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMessageDelimitersForRenderer(t *testing.T) {
+	wantChatML := []MessageDelimiter{
+		{Role: "system", Delimiter: "<|im_start|>system\n"},
+		{Role: "user", Delimiter: "<|im_start|>user\n"},
+		{Role: "assistant", Delimiter: "<|im_start|>assistant\n"},
+	}
+
+	tests := []struct {
+		name string
+		want []MessageDelimiter
+	}{
+		{name: "qwen3.5", want: wantChatML},
+		{name: "qwen3-vl-instruct", want: wantChatML},
+		{name: "qwen3-vl-thinking", want: wantChatML},
+		{name: "qwen3-coder", want: nil},
+		{name: "unknown", want: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MessageDelimitersForRenderer(tt.name)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("MessageDelimitersForRenderer(%q) = %#v, want %#v", tt.name, got, tt.want)
 			}
 		})
 	}

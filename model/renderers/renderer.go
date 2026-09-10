@@ -11,6 +11,22 @@ type Renderer interface {
 	LeadingBOS() string
 }
 
+// MessageDelimiter marks where a message of the given role starts in the
+// rendered prompt; llama-server uses these to place context checkpoints at
+// message boundaries.
+type MessageDelimiter struct {
+	Role      string `json:"role"`
+	Delimiter string `json:"delimiter"`
+}
+
+// MessageDelimiterProvider is an optional interface implemented by renderers
+// that use fixed, role-keyed markers to open each message. Renderers whose
+// message boundaries can't be expressed as a static per-role marker should
+// not implement it.
+type MessageDelimiterProvider interface {
+	MessageDelimiters() []MessageDelimiter
+}
+
 type (
 	RendererConstructor func() Renderer
 	RendererRegistry    struct {
@@ -50,6 +66,33 @@ func LeadingBOSForRenderer(name string) string {
 	}
 
 	return renderer.LeadingBOS()
+}
+
+// MessageDelimitersForRenderer returns the message delimiters for the named
+// renderer, or nil if the renderer is unknown or doesn't have fixed,
+// role-keyed message markers.
+func MessageDelimitersForRenderer(name string) []MessageDelimiter {
+	renderer := rendererForName(name)
+	if renderer == nil {
+		return nil
+	}
+
+	provider, ok := renderer.(MessageDelimiterProvider)
+	if !ok {
+		return nil
+	}
+
+	return provider.MessageDelimiters()
+}
+
+// chatMLMessageDelimiters returns the message delimiters shared by renderers
+// that use ChatML-style "<|im_start|>role\n" markers to open messages.
+func chatMLMessageDelimiters() []MessageDelimiter {
+	return []MessageDelimiter{
+		{Role: "system", Delimiter: imStartTag + "system\n"},
+		{Role: "user", Delimiter: imStartTag + "user\n"},
+		{Role: "assistant", Delimiter: imStartTag + "assistant\n"},
+	}
 }
 
 func rendererForName(name string) Renderer {

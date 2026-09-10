@@ -72,6 +72,10 @@ func (r *Qwen35Renderer) LeadingBOS() string {
 	return ""
 }
 
+func (r *Qwen35Renderer) MessageDelimiters() []MessageDelimiter {
+	return chatMLMessageDelimiters()
+}
+
 func (r *Qwen35Renderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	if r.useImgTags {
 		return renderContentWithImageTags(content.Content, len(content.Images), imageOffset)

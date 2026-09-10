@@ -47,6 +47,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 var grammarJSON = `
@@ -1413,6 +1414,10 @@ type llamaServerCompletionRequest struct {
 	NProbs          int             `json:"n_probs,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
 	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
+
+	// MessageDelimiters tells llama-server where each message starts so it
+	// can place context checkpoints at message boundaries.
+	MessageDelimiters []renderers.MessageDelimiter `json:"message_delimiters,omitempty"`
 }
 
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
@@ -1561,24 +1566,25 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	// Build the llama-server request
 	lsReq := llamaServerCompletionRequest{
-		Prompt:          prompt,
-		Stream:          true,
-		CachePrompt:     true,
-		NPredict:        req.Options.NumPredict,
-		NKeep:           req.Options.NumKeep,
-		Temperature:     req.Options.Temperature,
-		TopK:            req.Options.TopK,
-		TopP:            req.Options.TopP,
-		MinP:            req.Options.MinP,
-		Stop:            req.Options.Stop,
-		RepeatPenalty:   req.Options.RepeatPenalty,
-		RepeatLastN:     req.Options.RepeatLastN,
-		FreqPenalty:     req.Options.FrequencyPenalty,
-		PresPenalty:     req.Options.PresencePenalty,
-		TypicalP:        req.Options.TypicalP,
-		Seed:            req.Options.Seed,
-		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
-		TimingsPerToken: req.IncludeIntermediateMetrics,
+		Prompt:            prompt,
+		Stream:            true,
+		CachePrompt:       true,
+		NPredict:          req.Options.NumPredict,
+		NKeep:             req.Options.NumKeep,
+		Temperature:       req.Options.Temperature,
+		TopK:              req.Options.TopK,
+		TopP:              req.Options.TopP,
+		MinP:              req.Options.MinP,
+		Stop:              req.Options.Stop,
+		RepeatPenalty:     req.Options.RepeatPenalty,
+		RepeatLastN:       req.Options.RepeatLastN,
+		FreqPenalty:       req.Options.FrequencyPenalty,
+		PresPenalty:       req.Options.PresencePenalty,
+		TypicalP:          req.Options.TypicalP,
+		Seed:              req.Options.Seed,
+		PreservedTokens:   llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
+		TimingsPerToken:   req.IncludeIntermediateMetrics,
+		MessageDelimiters: req.MessageDelimiters,
 	}
 
 	if req.Logprobs {
