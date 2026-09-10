@@ -400,6 +400,7 @@
 #define mlx_gather_single mlx_gather_single_mlx_gen_orig_
 #define mlx_gather_mm mlx_gather_mm_mlx_gen_orig_
 #define mlx_gather_qmm mlx_gather_qmm_mlx_gen_orig_
+#define mlx_gather_qmm_with_global_scale mlx_gather_qmm_with_global_scale_mlx_gen_orig_
 #define mlx_gather_qqmm mlx_gather_qqmm_mlx_gen_orig_
 #define mlx_greater mlx_greater_mlx_gen_orig_
 #define mlx_greater_equal mlx_greater_equal_mlx_gen_orig_
@@ -1058,6 +1059,7 @@
 #undef mlx_gather_single
 #undef mlx_gather_mm
 #undef mlx_gather_qmm
+#undef mlx_gather_qmm_with_global_scale
 #undef mlx_gather_qqmm
 #undef mlx_greater
 #undef mlx_greater_equal
@@ -2717,6 +2719,21 @@ extern int (*mlx_gather_qmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    bool sorted_indices,
+    const mlx_stream s);
+extern int (*mlx_gather_qmm_with_global_scale_)(
+    mlx_array* res,
+    const mlx_array x,
+    const mlx_array w,
+    const mlx_array scales,
+    const mlx_array biases /* may be null */,
+    const mlx_array lhs_indices /* may be null */,
+    const mlx_array rhs_indices /* may be null */,
+    bool transpose,
+    mlx_optional_int group_size,
+    mlx_optional_int bits,
+    const char* mode,
+    const mlx_array global_scale,
     bool sorted_indices,
     const mlx_stream s);
 extern int (*mlx_gather_qqmm_)(
@@ -6048,6 +6065,23 @@ static inline int mlx_gather_qmm(
     bool sorted_indices,
     const mlx_stream s) {
     return mlx_gather_qmm_(res, x, w, scales, biases, lhs_indices, rhs_indices, transpose, group_size, bits, mode, sorted_indices, s);
+}
+static inline int mlx_gather_qmm_with_global_scale(
+    mlx_array* res,
+    const mlx_array x,
+    const mlx_array w,
+    const mlx_array scales,
+    const mlx_array biases /* may be null */,
+    const mlx_array lhs_indices /* may be null */,
+    const mlx_array rhs_indices /* may be null */,
+    bool transpose,
+    mlx_optional_int group_size,
+    mlx_optional_int bits,
+    const char* mode,
+    const mlx_array global_scale,
+    bool sorted_indices,
+    const mlx_stream s) {
+    return mlx_gather_qmm_with_global_scale_(res, x, w, scales, biases, lhs_indices, rhs_indices, transpose, group_size, bits, mode, global_scale, sorted_indices, s);
 }
 static inline int mlx_gather_qqmm(
     mlx_array* res,
