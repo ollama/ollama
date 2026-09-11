@@ -455,6 +455,7 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 	var cmd Command
 	var curr state
 	var currLine int = 1
+	var prev rune
 	var b bytes.Buffer
 	var role string
 
@@ -471,9 +472,13 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			return nil, err
 		}
 
-		if isNewline(r) {
+		// A CRLF is one line ending, not two, so do not count the \n that
+		// follows a \r again. Counting both doubled every line number a
+		// Windows-authored Modelfile reported in a parse error.
+		if isNewline(r) && !(r == '\n' && prev == '\r') {
 			currLine++
 		}
+		prev = r
 
 		next, r, err := parseRuneForState(r, curr)
 		if errors.Is(err, io.ErrUnexpectedEOF) {

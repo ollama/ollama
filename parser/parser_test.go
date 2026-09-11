@@ -1254,3 +1254,27 @@ func TestFilesForModel(t *testing.T) {
 		})
 	}
 }
+
+func TestParseFileErrorLineNumberLineEndings(t *testing.T) {
+	// The bad command sits on line 4 whichever line ending is used.
+	lines := []string{"FROM foo", "PARAMETER temperature 1", "", "BADCOMMAND x"}
+
+	cases := []struct {
+		name string
+		sep  string
+	}{
+		{"lf", "\n"},
+		{"crlf", "\r\n"},
+		{"cr", "\r"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseFile(strings.NewReader(strings.Join(lines, tt.sep)))
+
+			var pe *ParserError
+			require.ErrorAs(t, err, &pe)
+			assert.Equal(t, 4, pe.LineNumber)
+		})
+	}
+}
