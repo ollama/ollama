@@ -293,6 +293,57 @@ func TestLoadTimeout(t *testing.T) {
 	}
 }
 
+func TestCloudProxyTimeouts(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":    10 * time.Second,
+		"5s":  5 * time.Second,
+		"1m":  time.Minute,
+		"120": 2 * time.Minute,
+		"???": 10 * time.Second,
+		"1d":  10 * time.Second,
+	}
+	for tt, expect := range cases {
+		t.Run("connect/"+tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_CLOUD_PROXY_CONNECT_TIMEOUT", tt)
+			if actual := CloudProxyConnectTimeout(); actual != expect {
+				t.Errorf("expected %s, got %s", expect, actual)
+			}
+		})
+	}
+
+	ttfbCases := map[string]time.Duration{
+		"":    60 * time.Second,
+		"5s":  5 * time.Second,
+		"1m":  time.Minute,
+		"120": 2 * time.Minute,
+		"???": 60 * time.Second,
+	}
+	for tt, expect := range ttfbCases {
+		t.Run("ttfb/"+tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_CLOUD_PROXY_TTFB_TIMEOUT", tt)
+			if actual := CloudProxyTTFBTimeout(); actual != expect {
+				t.Errorf("expected %s, got %s", expect, actual)
+			}
+		})
+	}
+
+	idleCases := map[string]time.Duration{
+		"":    30 * time.Second,
+		"5s":  5 * time.Second,
+		"1m":  time.Minute,
+		"120": 2 * time.Minute,
+		"???": 30 * time.Second,
+	}
+	for tt, expect := range idleCases {
+		t.Run("idle/"+tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_CLOUD_PROXY_IDLE_CONN_TIMEOUT", tt)
+			if actual := CloudProxyIdleConnTimeout(); actual != expect {
+				t.Errorf("expected %s, got %s", expect, actual)
+			}
+		})
+	}
+}
+
 func TestVar(t *testing.T) {
 	cases := map[string]string{
 		"value":       "value",

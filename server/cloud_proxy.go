@@ -37,16 +37,6 @@ const (
 )
 
 var (
-	// cloudProxyConnectTimeout bounds the time to establish a TCP connection
-	// to the cloud proxy, including TLS handshake.
-	cloudProxyConnectTimeout = 10 * time.Second
-
-	// cloudProxyResponseHeaderTimeout bounds the time to receive the first
-	// response byte (TTFB) from the cloud proxy. Once the response starts
-	// streaming, no total timeout is enforced so long-lived generations are
-	// not cut short.
-	cloudProxyResponseHeaderTimeout = 60 * time.Second
-
 	cloudProxyBaseURL     = defaultCloudProxyBaseURL
 	cloudProxySigningHost = defaultCloudProxySigningHost
 	cloudProxySignRequest = signCloudProxyRequest
@@ -83,18 +73,21 @@ func init() {
 }
 
 // newCloudProxyHTTPClient returns the client used to forward requests to the
-// cloud proxy. Connect and response-header (TTFB) phases are bounded so a
-// stalled upstream fails fast instead of hanging the request indefinitely.
-// No total timeout is set: once a response starts streaming, long-lived
+// cloud proxy. Connect, TLS, and response-header (TTFB) phases are bounded so
+// a stalled upstream fails fast instead of hanging the request indefinitely.
+// Idle keep-alive connections are evicted after a short window so stale
+// connections silently dropped by a load balancer or NAT are not reused. No
+// total timeout is set: once a response starts streaming, long-lived
 // generations must be allowed to run to completion.
 func newCloudProxyHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = (&net.Dialer{
-		Timeout:   cloudProxyConnectTimeout,
+		Timeout:   envconfig.CloudProxyConnectTimeout(),
 		KeepAlive: 30 * time.Second,
 	}).DialContext
-	transport.TLSHandshakeTimeout = cloudProxyConnectTimeout
-	transport.ResponseHeaderTimeout = cloudProxyResponseHeaderTimeout
+	transport.TLSHandshakeTimeout = envconfig.CloudProxyConnectTimeout()
+	transport.ResponseHeaderTimeout = envconfig.CloudProxyTTFBTimeout()
+	transport.IdleConnTimeout = envconfig.CloudProxyIdleConnTimeout()
 
 	return &http.Client{Transport: transport}
 }

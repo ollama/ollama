@@ -334,14 +334,12 @@ func TestCloudProxyTTFBTimeoutFailsFast(t *testing.T) {
 	defer upstream.Close()
 
 	originalBaseURL := cloudProxyBaseURL
-	originalTimeout := cloudProxyResponseHeaderTimeout
 	originalClient := cloudProxyHTTPClient
 	cloudProxyBaseURL = upstream.URL
-	cloudProxyResponseHeaderTimeout = 200 * time.Millisecond
+	t.Setenv("OLLAMA_CLOUD_PROXY_TTFB_TIMEOUT", "200ms")
 	cloudProxyHTTPClient = newCloudProxyHTTPClient()
 	t.Cleanup(func() {
 		cloudProxyBaseURL = originalBaseURL
-		cloudProxyResponseHeaderTimeout = originalTimeout
 		cloudProxyHTTPClient = originalClient
 	})
 
@@ -375,5 +373,22 @@ func TestCloudProxyTTFBTimeoutFailsFast(t *testing.T) {
 	// The request must fail fast (bounded by the TTFB timeout), not hang.
 	if elapsed > 5*time.Second {
 		t.Fatalf("expected fast failure, took %v", elapsed)
+	}
+}
+
+// TestCloudProxyHTTPClientIdleConnTimeout verifies that the idle-connection
+// timeout is wired into the cloud proxy transport, so stale keep-alive
+// connections are evicted rather than reused.
+func TestCloudProxyHTTPClientIdleConnTimeout(t *testing.T) {
+	t.Setenv("OLLAMA_CLOUD_PROXY_IDLE_CONN_TIMEOUT", "45s")
+
+	client := newCloudProxyHTTPClient()
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+
+	if got := transport.IdleConnTimeout; got != 45*time.Second {
+		t.Fatalf("expected idle conn timeout 45s, got %v", got)
 	}
 }
