@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	stdunicode "unicode"
 
 	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
@@ -546,7 +547,20 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			curr = next
 		}
 
-		if strconv.IsPrint(r) {
+		// Inside a value, keep every rune that is not a control rune. This also
+		// drops the rune 0 that parseRuneForState returns for a delimiter it has
+		// consumed, since that is a control rune. strconv.IsPrint is false for
+		// format runes (ZWJ, ZWNJ, RLM) and non-ASCII spaces as well, and those
+		// are content the user typed.
+		//
+		// Everywhere else the old rule stands, so an invisible rune leading a
+		// directive is still ignored rather than becoming part of the command
+		// name and making the whole file unparseable.
+		keep := strconv.IsPrint(r)
+		if curr == stateValue {
+			keep = !stdunicode.IsControl(r)
+		}
+		if keep {
 			if _, err := b.WriteRune(r); err != nil {
 				return nil, err
 			}
