@@ -227,9 +227,9 @@ configure_systemd() {
 
     # Older installers wrote the unit as a regular file into /etc, where it
     # shadows the vendor unit and blocks `systemctl mask`. Migrate it out on
-    # upgrade. Leave a symlink untouched: that is an admin mask (-> /dev/null)
-    # or override that must be preserved.
-    if [ -f "$OLLAMA_UNIT_ETC" ] && [ ! -L "$OLLAMA_UNIT_ETC" ]; then
+    # upgrade. Preserve empty files (systemd masks) and symlinks (admin masks
+    # or overrides).
+    if [ -f "$OLLAMA_UNIT_ETC" ] && [ -s "$OLLAMA_UNIT_ETC" ] && [ ! -L "$OLLAMA_UNIT_ETC" ]; then
         status "Removing legacy unit from $OLLAMA_UNIT_ETC..."
         $SUDO rm -f "$OLLAMA_UNIT_ETC"
     fi
