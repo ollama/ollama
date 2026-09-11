@@ -325,9 +325,9 @@ console.log(response.message.content);
 - [Opik](https://www.comet.com/docs/opik/cookbook/ollama) - Debug, evaluate, and monitor LLM applications
 - [OpenLIT](https://github.com/openlit/openlit) - OpenTelemetry-native monitoring for Ollama and GPUs
 - [Lunary](https://lunary.ai/docs/integrations/ollama) - LLM observability with analytics and PII masking
-- [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open source LLM observability
+- [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open-source LLM observability
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) - AI observability and evaluation for agents
-- [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open source LLM observability
+- [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open-source LLM observability
 
 ### Database & Embeddings
 
