@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -545,6 +547,70 @@ Hello! 你好! 🌟 مرحبا
 				},
 			},
 		},
+		// Regression: qwen3.6 occasionally emits a spurious extra </function> close
+		// tag after an otherwise valid block (drift from the documented
+		// chat_template format). The parser anchors on the function block and
+		// discards the stray tag.
+		{
+			name:  "trailing stray </function> close tag",
+			tools: []api.Tool{},
+			rawToolCall: `<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		// Regression: qwen3.6 was trained on a <function_invocation>...</function_invocation>
+		// wrapper from an earlier generation and intermittently leaks the close
+		// tag through even when the renderer specifies <tool_call>...</tool_call>.
+		{
+			name:  "stray </function_invocation> close tag from older wrapper format",
+			tools: []api.Tool{},
+			rawToolCall: `<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function_invocation>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		// Regression: stray opening wrapper before the function block — handles
+		// the case where the model emits an unrelated container around the call.
+		{
+			name:  "stray <function_invocation> wrapper around function block",
+			tools: []api.Tool{},
+			rawToolCall: `<function_invocation>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</function_invocation>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
 	}
 
 	for i, step := range steps {
@@ -555,6 +621,465 @@ Hello! 你好! 🌟 مرحبا
 		if !toolCallEqual(gotToolCall, step.wantToolCall) {
 			t.Errorf("step %d (%s): got tool call %#v, want %#v", i, step.name, gotToolCall, step.wantToolCall)
 		}
+	}
+}
+
+func TestExtractFunctionBlock(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		want   string
+		wantOk bool
+	}{
+		{
+			name:   "passthrough — input is already a clean function block",
+			in:     `<function=foo><parameter=x>1</parameter></function>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
+		},
+		{
+			name:   "trims trailing stray closing tags",
+			in:     `<function=foo><parameter=x>1</parameter></function></function></function_invocation>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
+		},
+		{
+			name:   "trims leading wrapper",
+			in:     `<function_invocation><function=foo><parameter=x>1</parameter></function></function_invocation>`,
+			want:   `<function=foo><parameter=x>1</parameter></function>`,
+			wantOk: true,
+		},
+		{
+			name:   "no <function= anchor — empty envelope drift",
+			in:     `<parameter=x>1</parameter></function>`,
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "no </function> close — partial / truncated envelope",
+			in:     `<function=foo><parameter=x>1</parameter>`,
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "empty input — empty envelope (model emitted <tool_call></tool_call>)",
+			in:     ``,
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "whitespace only — empty envelope",
+			in:     "\n   \t \n",
+			want:   ``,
+			wantOk: false,
+		},
+		{
+			name:   "non-XML prose — empty envelope (model put narration in <tool_call> tags)",
+			in:     `let me check the files`,
+			want:   ``,
+			wantOk: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := extractFunctionBlock(tc.in)
+			if got != tc.want || ok != tc.wantOk {
+				t.Errorf("extractFunctionBlock(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.wantOk)
+			}
+		})
+	}
+}
+
+// TestQwenParserEmptyToolCallEnvelope covers the streaming behavior when
+// qwen3.6 emits a <tool_call>...</tool_call> envelope with no parseable
+// function block inside. These shapes used to return an error from
+// parseToolCall (EOF, "expected element type <function> but have
+// <parameter>", etc) which the runner surfaced as HTTP 500 — taking down
+// the entire chat request even though the rest of the stream was healthy.
+// The parser now treats these as silent no-ops so the agent loop can
+// retry or finalize on its own.
+func TestQwenParserEmptyToolCallEnvelope(t *testing.T) {
+	cases := []struct {
+		name        string
+		envelope    string
+		wantContent string
+	}{
+		{
+			name:        "completely empty envelope",
+			envelope:    `<tool_call></tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "whitespace-only envelope",
+			envelope:    "<tool_call>\n   \n</tool_call>",
+			wantContent: "",
+		},
+		{
+			name:        "prose-only envelope (model put narration in tool_call tags)",
+			envelope:    `<tool_call>let me check the files</tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "parameter-only drift (no <function= anchor)",
+			envelope:    `<tool_call><parameter=x>1</parameter></tool_call>`,
+			wantContent: "",
+		},
+		{
+			name:        "partial function block (missing </function> close)",
+			envelope:    `<tool_call><function=foo><parameter=x>1</parameter></tool_call>`,
+			wantContent: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.envelope, true)
+			if err != nil {
+				t.Fatalf("Add returned error for empty envelope %q: %v", tc.envelope, err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for empty envelope, got %d", len(calls))
+			}
+			if content != tc.wantContent {
+				t.Errorf("content = %q, want %q", content, tc.wantContent)
+			}
+		})
+	}
+}
+
+// TestQwenParserEmptyEnvelopeMixedWithRealCalls verifies that a stray
+// empty envelope doesn't poison the rest of the stream — adjacent real
+// tool calls in the same Add() invocation still get parsed.
+func TestQwenParserEmptyEnvelopeMixedWithRealCalls(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := `<tool_call></tool_call><tool_call><function=get_weather><parameter=location>Paris</parameter></function></tool_call>`
+	_, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call after skipping empty envelope, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("got call name %q, want %q", calls[0].Function.Name, "get_weather")
+	}
+}
+
+// TestQwenParserBareFunctionNoOpenTag covers
+// https://github.com/ollama/ollama/issues/16686: qwen3-coder / qwen3.6
+// sometimes emit a <function=…> block with no opening <tool_call> tag
+// (frequently leaving a stray </tool_call> behind). The parser must recognize
+// the call instead of leaking the whole block into content.
+func TestQwenParserBareFunctionNoOpenTag(t *testing.T) {
+	cases := []struct {
+		name        string
+		input       string
+		wantContent string
+		wantName    string
+		wantArg     string // expected value of the "pattern" argument
+	}{
+		{
+			name:        "bare function with stray closing tag (the #16686 case)",
+			input:       "<function=Glob>\n<parameter=pattern>\n*.md\n</parameter>\n</function>\n</tool_call>",
+			wantContent: "",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+		{
+			name:        "bare function with no closing tool tag at all",
+			input:       "<function=Glob><parameter=pattern>*.md</parameter></function>",
+			wantContent: "",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+		{
+			name:        "narration before a bare function block",
+			input:       "I'll list the markdown files.\n\n<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>",
+			wantContent: "I'll list the markdown files.",
+			wantName:    "Glob",
+			wantArg:     "*.md",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if content != tc.wantContent {
+				t.Errorf("content = %q, want %q", content, tc.wantContent)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(calls))
+			}
+			if calls[0].Function.Name != tc.wantName {
+				t.Errorf("call name = %q, want %q", calls[0].Function.Name, tc.wantName)
+			}
+			got, ok := calls[0].Function.Arguments.Get("pattern")
+			if !ok {
+				t.Fatalf("missing 'pattern' argument")
+			}
+			if fmt.Sprint(got) != tc.wantArg {
+				t.Errorf("pattern arg = %v, want %q", got, tc.wantArg)
+			}
+		})
+	}
+}
+
+// TestQwenParserBareFunctionStreaming feeds the #16686 malformation one rune at
+// a time, exercising the partial-tag withholding for the <function= trigger so
+// the block is never streamed out as content before it's recognized.
+func TestQwenParserBareFunctionStreaming(t *testing.T) {
+	input := "Here you go.\n\n<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>"
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+
+	var content strings.Builder
+	var calls []api.ToolCall
+	runes := []rune(input)
+	for i, r := range runes {
+		c, _, cl, err := p.Add(string(r), i == len(runes)-1)
+		if err != nil {
+			t.Fatalf("Add returned error at rune %d: %v", i, err)
+		}
+		content.WriteString(c)
+		calls = append(calls, cl...)
+	}
+
+	if got := content.String(); got != "Here you go." {
+		t.Errorf("content = %q, want %q", got, "Here you go.")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "Glob" {
+		t.Errorf("call name = %q, want %q", calls[0].Function.Name, "Glob")
+	}
+}
+
+// TestQwenParserBareFunctionInProse covers reviewer feedback on #16398:
+// when the model writes documentation or code-in-prose examples containing
+// "<function=…>" fragments, the parser must not consume them as real tool
+// calls. Only blocks that appear at a call boundary (start of stream or
+// after a newline / closing tag) should trigger tool-call collection.
+func TestQwenParserBareFunctionInProse(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantCalls int
+	}{
+		{
+			name:      "single inline example after a colon",
+			input:     "You would call it like this: <function=get_weather><parameter=location>Tokyo</parameter></function> and get a result.",
+			wantCalls: 0,
+		},
+		{
+			name: "reviewer's reproducer - three inline examples",
+			input: `Here are some examples:
+- Weather lookup: <function=get_weather><parameter=location>Tokyo</parameter></function>
+- Generic form: <function=function_name><parameter=arg>value</parameter></function>
+- File glob: <function=Glob><parameter=pattern>*.pdf</parameter></function>
+Those show the syntax.`,
+			wantCalls: 0,
+		},
+		{
+			name:      "inline mention with no complete block after",
+			input:     "The <function= tag opens a call, and </function> closes it.",
+			wantCalls: 0,
+		},
+		{
+			name:      "legitimate bare call after narration and newline still fires",
+			input:     "I'll check the weather now.\n<function=get_weather><parameter=location>Tokyo</parameter></function>",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			_, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Errorf("got %d tool calls, want %d (calls=%+v)", len(calls), tc.wantCalls, calls)
+			}
+		})
+	}
+}
+
+// TestQwenParserBareFunctionInProseStreaming covers @ParthSareen's second-round
+// review on #16398: the single-call prose guard passes when input arrives
+// rune-by-rune because the preceding prose is emitted in earlier Add() calls
+// and by the time <function= is recognized the local buffer only has the
+// withheld partial tag. The guard has to remember line state across calls.
+func TestQwenParserBareFunctionInProseStreaming(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantCalls int
+	}{
+		{
+			name:      "reviewer's exact streaming reproducer",
+			input:     "Use <function=get_weather><parameter=location>Tokyo</parameter></function> to get weather.",
+			wantCalls: 0,
+		},
+		{
+			name:      "prose across multiple sentences before an inline example",
+			input:     "Here is how it works. You call it like <function=Glob><parameter=pattern>*.md</parameter></function> and get files back.",
+			wantCalls: 0,
+		},
+		{
+			name:      "narration then newline then real bare call still fires",
+			input:     "I'll check the weather now.\n<function=get_weather><parameter=location>Tokyo</parameter></function>",
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			var calls []api.ToolCall
+			runes := []rune(tc.input)
+			for i, r := range runes {
+				_, _, cl, err := p.Add(string(r), i == len(runes)-1)
+				if err != nil {
+					t.Fatalf("Add returned error at rune %d (%q): %v", i, string(r), err)
+				}
+				calls = append(calls, cl...)
+			}
+			if len(calls) != tc.wantCalls {
+				t.Errorf("streaming got %d tool calls, want %d (calls=%+v)", len(calls), tc.wantCalls, calls)
+			}
+		})
+	}
+}
+
+// TestQwenParserStrayCloseTagInProse covers @ParthSareen's second-round
+// review on #16398: a stray </tool_call> that appears in prose must not
+// collide adjacent words. The bare-function feature added stray-tag
+// dropping (needed for the #16686 malformation where a real drift-mode
+// call is trailed by a stray </tool_call>), but the drop trimmed
+// whitespace from both sides, turning "the </tool_call> tag" into
+// "thetag". The tag is only dropped when it appears at a call boundary
+// (trailing a completed tool call); prose mentions are preserved.
+func TestQwenParserStrayCloseTagInProse(t *testing.T) {
+	cases := []struct {
+		name          string
+		input         string
+		wantSubstring string // must appear verbatim in emitted content
+	}{
+		{
+			name:          "single-call: stray tag in prose preserves word boundaries",
+			input:         "The closing tag is </tool_call> and that's fine.",
+			wantSubstring: "tag is </tool_call> and",
+		},
+		{
+			name:          "single-call: no adjacent word collision",
+			input:         "You end with </tool_call> after a call.",
+			wantSubstring: "with </tool_call> after",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			content, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error: %v", err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for prose mention, got %d", len(calls))
+			}
+			if !strings.Contains(content, tc.wantSubstring) {
+				t.Errorf("content = %q\n  did not contain %q", content, tc.wantSubstring)
+			}
+		})
+	}
+}
+
+// TestQwenParserStrayCloseTagAfterBareCall keeps the #16686 behavior alive:
+// when a bare drift-mode call leaves a trailing </tool_call>, it must still
+// be dropped rather than surface as content. Guards against regressing the
+// original malformation fix while adding the prose-preservation carve-out.
+func TestQwenParserStrayCloseTagAfterBareCall(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := "<function=Glob><parameter=pattern>*.md</parameter></function></tool_call>"
+	content, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if content != "" {
+		t.Errorf("expected empty content, got %q (stray </tool_call> leaked)", content)
+	}
+}
+
+// TestQwenParserMalformedBareBlockNoError covers reviewer feedback on #16398:
+// a bare <function=…></function> pair whose contents fail xml.Unmarshal must
+// not propagate the error (which would 500 the chat request). It should be
+// treated like an empty envelope — skipped silently with the streaming
+// caller returning cleanly.
+func TestQwenParserMalformedBareBlockNoError(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "unterminated parameter tag",
+			input: "<function=broken><parameter=arg>value oops</function>",
+		},
+		{
+			name:  "mismatched inner tag",
+			input: "<function=broken><parameter=arg>value</different></function>",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := Qwen3CoderParser{}
+			p.Init(nil, nil, nil)
+			_, _, calls, err := p.Add(tc.input, true)
+			if err != nil {
+				t.Fatalf("Add returned error for malformed bare block: %v", err)
+			}
+			if len(calls) != 0 {
+				t.Errorf("expected 0 tool calls for malformed block, got %d", len(calls))
+			}
+		})
+	}
+}
+
+// TestQwenParserIncompleteBareBlockFlushesAsContent covers reviewer feedback
+// on #16398: if the model opens a bare <function=…> block and the stream
+// ends before </function> arrives, the accumulated bytes must reach the
+// caller as content rather than being silently dropped.
+func TestQwenParserIncompleteBareBlockFlushesAsContent(t *testing.T) {
+	p := Qwen3CoderParser{}
+	p.Init(nil, nil, nil)
+	input := "<function=Glob><parameter=pattern>*.md</parameter>"
+	content, _, calls, err := p.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected 0 tool calls (block never closed), got %d", len(calls))
+	}
+	if !strings.Contains(content, "<function=Glob>") || !strings.Contains(content, "*.md") {
+		t.Errorf("content = %q, expected it to preserve the unterminated block", content)
 	}
 }
 
