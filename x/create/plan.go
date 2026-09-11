@@ -36,6 +36,14 @@ const (
 	// expert-index order) into one [experts, ...] tensor.
 	TransformStackExperts Transform = "stack_experts"
 
+	// TransformConcatAxis1 concatenates two 3-D source tensors [A, B, C] and
+	// [A, B, C] along axis 1, producing [A, 2*B, C]. The concatenation is done
+	// by interleaving the two halves across A outer slabs.
+	// Used to fuse separately-stored gate_proj and up_proj tensors from an
+	// mlx_lm GraniteMoe checkpoint into a single input_linear tensor at import
+	// time.
+	TransformConcatAxis1 Transform = "concat_axis1"
+
 	// TransformDecodeFP8 dequantizes a block-FP8 weight using its block scale.
 	// Its two sources are the F8_E4M3 weight and its scale companion; the
 	// result is a BF16 tensor, which Quantize (if set) then re-quantizes.

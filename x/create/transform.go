@@ -49,9 +49,62 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 	case TransformStackExperts:
 		return stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)
 
+	case TransformConcatAxis1:
+		if len(sources) != 2 {
+			return nil, fmt.Errorf("transform %s expects 2 sources, got %d", ts.Transform, len(sources))
+		}
+		return concatAxis1(ts.Name, ts.OutShape, sources[0], sources[1])
+
 	default:
 		return nil, fmt.Errorf("transform %q requires the MLX writer path", ts.Transform)
 	}
+}
+
+// concatAxis1 concatenates two 3-D source tensors [A, B, C] along axis 1,
+// producing [A, 2*B, C]. In row-major layout each outer slab has B*C elements;
+// the output slab is the lo-half slab followed immediately by the hi-half slab.
+// outShape must be [A, 2*B, C].
+func concatAxis1(name string, outShape []int32, lo, hi *safetensors.TensorData) (*safetensors.TensorData, error) {
+	if len(outShape) != 3 {
+		return nil, fmt.Errorf("concat_axis1 requires a 3-D output shape, got %v", outShape)
+	}
+	if lo.Dtype != hi.Dtype {
+		return nil, fmt.Errorf("concat_axis1: lo dtype %s != hi dtype %s", lo.Dtype, hi.Dtype)
+	}
+	elemSize, err := DTypeSize(lo.Dtype)
+	if err != nil {
+		return nil, fmt.Errorf("concat_axis1: %w", err)
+	}
+	A, twoB, C := int(outShape[0]), int(outShape[1]), int(outShape[2])
+	B := twoB / 2
+	halfBytes := B * C * elemSize
+	slabBytes := twoB * C * elemSize
+
+	loBytes, err := io.ReadAll(lo.Reader())
+	if err != nil {
+		return nil, fmt.Errorf("concat_axis1 read lo (%s): %w", lo.Name, err)
+	}
+	hiBytes, err := io.ReadAll(hi.Reader())
+	if err != nil {
+		return nil, fmt.Errorf("concat_axis1 read hi (%s): %w", hi.Name, err)
+	}
+	if len(loBytes) != A*halfBytes {
+		return nil, fmt.Errorf("concat_axis1: lo %s has %d bytes, expected %d for shape [%d %d %d] dtype %s",
+			lo.Name, len(loBytes), A*halfBytes, A, B, C, lo.Dtype)
+	}
+	if len(hiBytes) != A*halfBytes {
+		return nil, fmt.Errorf("concat_axis1: hi %s has %d bytes, expected %d for shape [%d %d %d] dtype %s",
+			hi.Name, len(hiBytes), A*halfBytes, A, B, C, hi.Dtype)
+	}
+
+	out := make([]byte, A*slabBytes)
+	for a := range A {
+		dstOff := a * slabBytes
+		srcOff := a * halfBytes
+		copy(out[dstOff:], loBytes[srcOff:srcOff+halfBytes])
+		copy(out[dstOff+halfBytes:], hiBytes[srcOff:srcOff+halfBytes])
+	}
+	return safetensors.NewTensorDataFromBytes(name, lo.Dtype, append([]int32(nil), outShape...), out), nil
 }
 
 // stackExpertTensors concatenates per-expert tensors (in the given order) into

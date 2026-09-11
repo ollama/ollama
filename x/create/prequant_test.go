@@ -181,3 +181,144 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 		t.Errorf("metadata = %v, want quant_type=nvfp4 group_size=16", w.Metadata)
 	}
 }
+
+// newInventoryWithShapes creates a test inventory where each tensor has the
+// given dtype and shape. If a name appears in shapes it uses that; otherwise
+// it falls back to a default 2-D shape.
+func newInventoryWithShapes(cfg sourceModelConfig, tensors map[string]string, shapes map[string][]int32) Inventory {
+	m := make(map[string]SourceTensor)
+	for name, dtype := range tensors {
+		shape := shapes[name]
+		if shape == nil {
+			shape = []int32{128, 128}
+		}
+		m[name] = SourceTensor{Name: name, Dtype: dtype, Shape: shape, File: "model.safetensors"}
+	}
+	return Inventory{Dir: "test", Config: cfg, Tensors: m}
+}
+
+func TestPlanPrequantizedMLXSplitGateUp(t *testing.T) {
+	// MLX-converted GraniteMoe: gate_proj and up_proj are stored separately.
+	// Plan should fuse them into a single input_linear.weight blob.
+	E, I, H := int32(4), int32(8), int32(16)
+	scaleH := int32(2) // H / group_size
+	cfg := sourceModelConfig{Quantization: sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 8}}
+	inv := newInventoryWithShapes(cfg, map[string]string{
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight":  "U32",
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.scales":  "BF16",
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.biases":  "BF16",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight":    "U32",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.scales":    "BF16",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.biases":    "BF16",
+		"model.layers.0.block_sparse_moe.switch_mlp.down_proj.weight":  "U32",
+		"model.layers.0.block_sparse_moe.switch_mlp.down_proj.scales":  "BF16",
+		"norm.weight": "BF16",
+	}, map[string][]int32{
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight": {E, I, H},
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.scales": {E, I, scaleH},
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.biases": {E, I, scaleH},
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight":   {E, I, H},
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.scales":   {E, I, scaleH},
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.biases":   {E, I, scaleH},
+		"model.layers.0.block_sparse_moe.switch_mlp.down_proj.weight": {E, H, I},
+		"model.layers.0.block_sparse_moe.switch_mlp.down_proj.scales": {E, H, 1},
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	fusedName := "model.layers.0.block_sparse_moe.input_linear.weight"
+	downName := "model.layers.0.block_sparse_moe.switch_mlp.down_proj.weight"
+
+	for _, want := range []string{fusedName, downName, "norm.weight"} {
+		if _, ok := specByName(specs, want); !ok {
+			t.Errorf("missing blob %q in %v", want, specNames(specs))
+		}
+	}
+
+	// gate_proj and up_proj must not appear as their own blobs
+	for _, unwanted := range []string{
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight",
+	} {
+		if _, ok := specByName(specs, unwanted); ok {
+			t.Errorf("blob %q must not appear after fusion", unwanted)
+		}
+	}
+
+	fusedSpec, _ := specByName(specs, fusedName)
+
+	weightTS, ok := inputByOutput(fusedSpec, fusedName)
+	if !ok {
+		t.Fatalf("fused blob missing weight tensor %q", fusedName)
+	}
+	if weightTS.Transform != TransformConcatAxis1 {
+		t.Errorf("weight transform = %q, want concat_axis1", weightTS.Transform)
+	}
+	if !slices.Equal(weightTS.OutShape, []int32{E, 2 * I, H}) {
+		t.Errorf("weight OutShape = %v, want [%d %d %d]", weightTS.OutShape, E, 2*I, H)
+	}
+	if len(weightTS.Sources) != 2 {
+		t.Fatalf("weight sources len = %d, want 2", len(weightTS.Sources))
+	}
+	if weightTS.Sources[0].Name != "model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight" {
+		t.Errorf("weight source[0] = %q, want gate_proj", weightTS.Sources[0].Name)
+	}
+	if weightTS.Sources[1].Name != "model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight" {
+		t.Errorf("weight source[1] = %q, want up_proj", weightTS.Sources[1].Name)
+	}
+
+	// Scale companions must be fused
+	scaleTS, ok := inputByOutput(fusedSpec, fusedName+".scale")
+	if !ok {
+		t.Fatal("fused blob missing scale tensor")
+	}
+	if scaleTS.Transform != TransformConcatAxis1 {
+		t.Errorf("scale transform = %q, want concat_axis1", scaleTS.Transform)
+	}
+	if !slices.Equal(scaleTS.OutShape, []int32{E, 2 * I, scaleH}) {
+		t.Errorf("scale OutShape = %v, want [%d %d %d]", scaleTS.OutShape, E, 2*I, scaleH)
+	}
+
+	// Bias companions must be fused
+	biasTS, ok := inputByOutput(fusedSpec, fusedName+".bias")
+	if !ok {
+		t.Fatal("fused blob missing bias tensor")
+	}
+	if biasTS.Transform != TransformConcatAxis1 {
+		t.Errorf("bias transform = %q, want concat_axis1", biasTS.Transform)
+	}
+}
+
+func TestPlanPrequantizedMLXSplitGateUpNoBias(t *testing.T) {
+	// No biases companion — fuse should still work.
+	E, I, H := int32(2), int32(4), int32(8)
+	cfg := sourceModelConfig{Quantization: sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 8}}
+	inv := newInventoryWithShapes(cfg, map[string]string{
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight": "U32",
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.scales": "BF16",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight":   "U32",
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.scales":   "BF16",
+	}, map[string][]int32{
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.weight": {E, I, H},
+		"model.layers.0.block_sparse_moe.switch_mlp.gate_proj.scales": {E, I, H / 8},
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.weight":   {E, I, H},
+		"model.layers.0.block_sparse_moe.switch_mlp.up_proj.scales":   {E, I, H / 8},
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	fusedName := "model.layers.0.block_sparse_moe.input_linear.weight"
+	if _, ok := specByName(specs, fusedName); !ok {
+		t.Errorf("missing fused blob %q", fusedName)
+	}
+	fusedSpec, _ := specByName(specs, fusedName)
+	if _, ok := inputByOutput(fusedSpec, fusedName+".bias"); ok {
+		t.Error("fused blob should not have a bias when source has none")
+	}
+}
