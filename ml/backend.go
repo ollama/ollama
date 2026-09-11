@@ -19,9 +19,6 @@ type Backend interface {
 
 	Load(ctx context.Context, progress func(float32)) error
 
-	// BackendMemory returns the memory allocations that were made for this model
-	BackendMemory() BackendMemory
-
 	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
@@ -65,9 +62,6 @@ type BackendParams struct {
 
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
-
-	// GPULayers is the set of layers to offload to GPUs
-	GPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention FlashAttentionType

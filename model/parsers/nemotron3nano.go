@@ -143,10 +143,11 @@ func (p *Nemotron3NanoParser) emitThinking(bufStr string) string {
 	maxOverlap := max(thinkOverlap, toolOverlap)
 
 	if maxOverlap > 0 {
-		unambiguous := bufStr[:len(bufStr)-maxOverlap]
-		unambiguous = strings.TrimRightFunc(unambiguous, unicode.IsSpace)
+		beforePartialTag := bufStr[:len(bufStr)-maxOverlap]
+		ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen(beforePartialTag)
+		unambiguous := bufStr[:ambiguousStart]
 		p.buffer.Reset()
-		p.buffer.WriteString(bufStr[len(bufStr)-maxOverlap:])
+		p.buffer.WriteString(bufStr[ambiguousStart:])
 		return unambiguous
 	}
 

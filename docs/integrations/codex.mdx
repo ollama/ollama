@@ -76,3 +76,15 @@ Then run:
 ```
 codex --profile ollama-launch
 ```
+
+## Web search
+
+Codex web-search requests sent through the Ollama profile are executed by
+Ollama for both local and cloud models. Sign in with `ollama signin` to use the
+web-search service.
+
+To disable web search for a Codex session:
+
+```shell
+codex --profile ollama-launch -c 'web_search="disabled"'
+```

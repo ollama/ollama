@@ -24,15 +24,15 @@ func launcherTestState() *launch.LauncherState {
 			},
 			"codex": {
 				Name:        "codex",
-				DisplayName: "Codex",
+				DisplayName: "Codex CLI",
 				Description: "OpenAI's open-source coding agent",
 				Selectable:  true,
 				Changeable:  true,
 			},
-			"codex-app": {
-				Name:        "codex-app",
-				DisplayName: "Codex App",
-				Description: "An AI agent you can delegate real work to, by OpenAI",
+			"chatgpt": {
+				Name:        "chatgpt",
+				DisplayName: "ChatGPT",
+				Description: "Complete work with ChatGPT",
 				Selectable:  true,
 				Changeable:  true,
 			},
@@ -104,81 +104,73 @@ func compareStrings(got, want []string) string {
 	return cmp.Diff(want, got)
 }
 
-func expectedCollapsedSequence(state *launch.LauncherState) []string {
-	sequence := []string{"run"}
-	for _, item := range pinnedIntegrationItems(state) {
-		sequence = append(sequence, item.integration)
-	}
-	if len(otherIntegrationItems(state)) > 0 {
-		sequence = append(sequence, "more")
-	}
-	return sequence
-}
-
-func expectedExpandedSequence(state *launch.LauncherState) []string {
-	sequence := []string{"run"}
-	for _, item := range pinnedIntegrationItems(state) {
-		sequence = append(sequence, item.integration)
-	}
-	for _, item := range otherIntegrationItems(state) {
-		sequence = append(sequence, item.integration)
-	}
-	return sequence
-}
-
-func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
+func TestMenuRendersRootLaunchChoices(t *testing.T) {
 	state := launcherTestState()
 	menu := newModel(state)
-	wantPrefix := []string{"run", "claude", "codex-app", "hermes", "openclaw"}
-	if findMenuCursorByIntegration(menu.items, "codex-app") == -1 {
-		wantPrefix = []string{"run", "claude", "hermes", "openclaw", "opencode"}
-	}
-	if got := integrationSequence(menu.items); len(got) < len(wantPrefix) {
-		t.Fatalf("expected at least %d menu items, got %v", len(wantPrefix), got)
-	} else if diff := compareStrings(got[:len(wantPrefix)], wantPrefix); diff != "" {
-		t.Fatalf("unexpected primary TUI order: %s", diff)
+	want := []string{"run", "claude", "opencode", "hermes", "openclaw", "more"}
+	if diff := compareStrings(integrationSequence(menu.items), want); diff != "" {
+		t.Fatalf("unexpected root launch choices: %s", diff)
 	}
 
 	view := menu.View()
-	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch Hermes Agent", "Launch OpenClaw", "More..."} {
+	for _, want := range []string{
+		"Chat, Code, & Work",
+		"Chat with models, code, search the web, and delegate real work",
+		"Launch Claude Code",
+		"Launch OpenCode",
+		"Launch Hermes Agent",
+		"Launch OpenClaw",
+		"More...",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
 	}
-	if findMenuCursorByIntegration(menu.items, "codex-app") != -1 && !strings.Contains(view, "Launch Codex App") {
-		t.Fatalf("expected menu view to contain Codex App\n%s", view)
-	}
-	if strings.Contains(view, "Launch Claude Desktop") {
-		t.Fatalf("expected hidden Claude Desktop to be absent\n%s", view)
-	}
-	wantOrder := expectedCollapsedSequence(state)
-	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
-		t.Fatalf("unexpected pinned order: %s", diff)
+	for _, hidden := range []string{"Launch ChatGPT", "Launch Codex", "Launch Droid", "Launch Pi"} {
+		if strings.Contains(view, hidden) {
+			t.Fatalf("expected root menu to omit %q\n%s", hidden, view)
+		}
 	}
 }
 
-func TestMenuExpandsOthersFromLastSelection(t *testing.T) {
+func TestMenuExpandsMoreOnDownNavigation(t *testing.T) {
+	state := launcherTestState()
+	menu := newModel(state)
+	menu.cursor = findMenuCursorByIntegration(menu.items, "openclaw")
+	if menu.cursor == -1 {
+		t.Fatal("expected openclaw menu item")
+	}
+
+	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(model)
+	if !got.showOthers {
+		t.Fatal("expected navigating down onto More to expand additional integrations")
+	}
+	if got.items[got.cursor].integration == "" {
+		t.Fatalf("expected cursor to land on the first additional integration, got %#v", got.items[got.cursor])
+	}
+	if strings.Contains(got.View(), "More...") {
+		t.Fatalf("expected expanded integrations to replace More\n%s", got.View())
+	}
+}
+
+func TestMenuStartsExpandedForPreviousOverflowSelection(t *testing.T) {
 	state := launcherTestState()
 	overflow := otherIntegrationItems(state)
-	if len(overflow) == 0 {
-		t.Fatal("expected at least one overflow integration")
+	if len(overflow) < 2 {
+		t.Fatal("expected at least two additional integrations")
 	}
-	state.LastSelection = overflow[0].integration
+	state.LastSelection = overflow[1].integration
 
 	menu := newModel(state)
 	if !menu.showOthers {
-		t.Fatal("expected others section to expand when last selection is in the overflow list")
+		t.Fatal("expected previous additional integration selection to start expanded")
 	}
-	view := menu.View()
-	if !strings.Contains(view, overflow[0].title) {
-		t.Fatalf("expected expanded view to contain overflow integration\n%s", view)
+	if got := menu.items[menu.cursor].integration; got != state.LastSelection {
+		t.Fatalf("initial cursor integration = %q, want %q", got, state.LastSelection)
 	}
-	if strings.Contains(view, "More...") {
-		t.Fatalf("expected expanded view to replace More... item\n%s", view)
-	}
-	wantOrder := expectedExpandedSequence(state)
-	if diff := compareStrings(integrationSequence(menu.items), wantOrder); diff != "" {
-		t.Fatalf("unexpected expanded order: %s", diff)
+	if strings.Contains(menu.View(), "More...") {
+		t.Fatalf("expected expanded menu to omit More\n%s", menu.View())
 	}
 }
 
@@ -273,24 +265,24 @@ func TestMenuShowsCurrentModelSuffixes(t *testing.T) {
 
 func TestMenuShowsInstallStatusAndHint(t *testing.T) {
 	state := launcherTestState()
-	codex := state.Integrations["codex"]
-	codex.Installed = false
-	codex.Selectable = false
-	codex.Changeable = false
-	codex.InstallHint = "Install from https://example.com/codex"
-	state.Integrations["codex"] = codex
+	opencode := state.Integrations["opencode"]
+	opencode.Installed = false
+	opencode.Selectable = false
+	opencode.Changeable = false
+	opencode.InstallHint = "Install from https://example.com/opencode"
+	state.Integrations["opencode"] = opencode
 
-	state.LastSelection = "codex"
+	state.LastSelection = "opencode"
 	menu := newModel(state)
-	menu.cursor = findMenuCursorByIntegration(menu.items, "codex")
+	menu.cursor = findMenuCursorByIntegration(menu.items, "opencode")
 	if menu.cursor == -1 {
-		t.Fatal("expected codex menu item in overflow section")
+		t.Fatal("expected opencode menu item")
 	}
 	view := menu.View()
 	if !strings.Contains(view, "(not installed)") {
 		t.Fatalf("expected not-installed marker\n%s", view)
 	}
-	if !strings.Contains(view, codex.InstallHint) {
+	if !strings.Contains(view, opencode.InstallHint) {
 		t.Fatalf("expected install hint in description\n%s", view)
 	}
 }

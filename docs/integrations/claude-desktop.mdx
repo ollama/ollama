@@ -1,13 +1,42 @@
 ---
 title: Claude Desktop
+description: Use Ollama models in Claude on macOS.
 ---
 
-Claude Desktop is no longer supported by `ollama launch`.
 
-Existing installations can be restored to the usual Claude profile:
+## Prerequisites
+
+- [Ollama](https://ollama.com/download/). Windows support coming soon.
+- To use a local model, [download it](/quickstart#3-start-a-chat) before setup.
+- To use a cloud model, sign in to Ollama and enable cloud models. Some models require a [paid plan](https://ollama.com/pricing).
+
+If Claude is not installed, Ollama offers to download it during setup.
+
+## Set up Claude
+
+1. Open Ollama and select **Apps**.
+2. Toggle Claude to On.
+3. If Claude is not installed, Ollama will download and finish the installation.
+
+## Switch models
+
+Open Ollama **Settings**. Under **Apps**, choose a model you want to use, then select **Restart Claude**. You can assign the same Ollama model to more than one option.
+
+## Supported features
+
+- **Subagents** - Split larger tasks across agents
+- **Web search** - Supported by default through [Ollama's web search](/capabilities/web-search)
+- **Cowork** - Complete difficult tasks with Claude Cowork 
+- **Auto mode** - Let the agent decide when to ask before making changes
+
+## Disconnect Claude
+
+Open Ollama **Apps** and turn Claude off. Ollama restores Claude's previous configuration. If Claude is open, Ollama asks to restart it so the change takes effect.
+
+You can also restore Claude from the terminal:
 
 ```shell
 ollama launch claude-desktop --restore
 ```
 
-Use [Claude Code](/integrations/claude-code) for Anthropic-compatible coding workflows with Ollama.
+Quitting Ollama while Claude is connected also restores Claude's usual configuration.

@@ -96,6 +96,14 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
 
+	if done && (p.state == glm46ParserState_ToolStartedEatingWhitespace || p.state == glm46ParserState_CollectingToolContent) {
+		event, err := p.finalizeToolCall()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("incomplete GLM tool call: %v", err)
+		}
+		events = append(events, event)
+	}
+
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
 	var thinkingSb strings.Builder
@@ -121,6 +129,66 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
+}
+
+func (p *GLM46Parser) finalizeToolCall() (glm46EventRawToolCall, error) {
+	raw := p.buffer.String()
+	if overlapLen := overlap(raw, glm46ToolCloseTag); overlapLen > 0 {
+		raw = strings.TrimRightFunc(raw[:len(raw)-overlapLen], unicode.IsSpace)
+	}
+
+	escaped := escapeGLM46Content(raw)
+	var parsed GLMToolCallXML
+	if err := xml.Unmarshal([]byte("<tool_call>"+escaped+"</tool_call>"), &parsed); err != nil {
+		return glm46EventRawToolCall{}, err
+	}
+	if err := validateFinalGLM46ToolCall(parsed, p.tools); err != nil {
+		return glm46EventRawToolCall{}, err
+	}
+
+	p.buffer.Reset()
+	p.state = glm46ParserState_CollectingContent
+	return glm46EventRawToolCall{raw: raw}, nil
+}
+
+// validateFinalGLM46ToolCall is intentionally stricter than normal GLM parsing.
+// At end-of-stream only the outer closing tag may be missing; repairing a
+// truncated argument could turn partial model output into a mutating tool call.
+func validateFinalGLM46ToolCall(parsed GLMToolCallXML, tools []api.Tool) error {
+	functionName := strings.TrimSpace(parsed.Content)
+	if functionName == "" {
+		return fmt.Errorf("empty function name")
+	}
+	if len(parsed.Keys) != len(parsed.Values) {
+		return fmt.Errorf("mismatched arg_key and arg_value counts: %d keys, %d values", len(parsed.Keys), len(parsed.Values))
+	}
+
+	var declaredTool *api.Tool
+	for i := range tools {
+		if tools[i].Function.Name == functionName {
+			declaredTool = &tools[i]
+			break
+		}
+	}
+	if declaredTool == nil {
+		return fmt.Errorf("tool %q is not declared", functionName)
+	}
+
+	seen := make(map[string]struct{}, len(parsed.Keys))
+	for _, rawKey := range parsed.Keys {
+		key := strings.TrimSpace(rawKey)
+		if key == "" {
+			return fmt.Errorf("empty argument name")
+		}
+		seen[key] = struct{}{}
+	}
+
+	for _, required := range declaredTool.Function.Parameters.Required {
+		if _, ok := seen[required]; !ok {
+			return fmt.Errorf("required argument %q is missing for tool %q", required, functionName)
+		}
+	}
+	return nil
 }
 
 func (p *GLM46Parser) parseEvents() []glm46Event {

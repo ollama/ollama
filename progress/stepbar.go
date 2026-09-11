@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// StepBar displays step-based progress (e.g., for image generation steps).
+// StepBar displays step-based progress.
 type StepBar struct {
 	message string
 	current int

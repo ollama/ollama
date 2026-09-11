@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -51,9 +52,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config := &model.ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
-		RootFS: model.RootFS{
-			Type: "layers",
-		},
 	}
 
 	var r api.CreateRequest
@@ -268,34 +266,65 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 
-			strFromInfo := func(k string) string {
+			strFromInfo := func(k string) (string, error) {
 				v, ok := r.Info[k]
 				if ok {
-					val := v.(string)
-					return val
+					val, ok := v.(string)
+					if !ok {
+						return "", fmt.Errorf("info field %q must be a string", k)
+					}
+					return val, nil
 				}
-				return ""
+				return "", nil
 			}
 
-			vFromInfo := func(k string) float64 {
+			intFromInfo := func(k string) (int, error) {
 				v, ok := r.Info[k]
 				if ok {
-					val := v.(float64)
-					return val
+					val, ok := v.(float64)
+					if !ok {
+						return 0, fmt.Errorf("info field %q must be a number", k)
+					}
+					if val < 0 || math.Trunc(val) != val || val > float64(maxCreateInfoInt()) {
+						return 0, fmt.Errorf("info field %q must be a non-negative integer", k)
+					}
+					return int(val), nil
 				}
-				return 0
+				return 0, nil
 			}
 
-			config.ModelFamily = strFromInfo("model_family")
+			if config.ModelFamily, err = strFromInfo("model_family"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 			if config.ModelFamily != "" {
 				config.ModelFamilies = []string{config.ModelFamily}
 			}
 
-			config.BaseName = strFromInfo("base_name")
-			config.FileType = strFromInfo("quantization_level")
-			config.ModelType = strFromInfo("parameter_size")
-			config.ContextLen = int(vFromInfo("context_length"))
-			config.EmbedLen = int(vFromInfo("embedding_length"))
+			if config.BaseName, err = strFromInfo("base_name"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			if config.FileType, err = strFromInfo("quantization_level"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			if config.ModelType, err = strFromInfo("parameter_size"); err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			contextLen, err := intFromInfo("context_length")
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			config.ContextLen = contextLen
+			embedLen, err := intFromInfo("embedding_length")
+			if err != nil {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
+			config.EmbedLen = embedLen
 		}
 
 		if err := createModel(r, name, baseLayers, config, fn); err != nil {
@@ -308,12 +337,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		if !envconfig.NoPrune() && oldManifest != nil {
-			if err := oldManifest.RemoveLayers(); err != nil {
+			removed, err := oldManifest.RemoveLayers()
+			removeGGUFMetadata(removed...)
+			if err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
 		}
-
-		s.refreshModelListCache(name)
 
 		ch <- api.ProgressResponse{Status: "success"}
 	}()
@@ -438,6 +467,10 @@ func convertModelFromFilesWithMediaType(files map[string]string, baseLayers []*l
 	default:
 		return nil, errUnknownType
 	}
+}
+
+func maxCreateInfoInt() int {
+	return int(^uint(0) >> 1)
 }
 
 func detectModelTypeFromFiles(files map[string]string) string {
@@ -842,7 +875,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		return err
 	}
 
-	configLayer, err := createConfigLayer(layers, *config)
+	configLayer, err := createConfigLayer(*config)
 	if err != nil {
 		return err
 	}
@@ -1388,13 +1421,7 @@ func setMessages(layers []manifest.Layer, m []api.Message) ([]manifest.Layer, er
 	return layers, nil
 }
 
-func createConfigLayer(layers []manifest.Layer, config model.ConfigV2) (*manifest.Layer, error) {
-	digests := make([]string, len(layers))
-	for i, layer := range layers {
-		digests[i] = layer.Digest
-	}
-	config.RootFS.DiffIDs = digests
-
+func createConfigLayer(config model.ConfigV2) (*manifest.Layer, error) {
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return nil, err

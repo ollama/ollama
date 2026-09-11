@@ -59,7 +59,7 @@ function(ollama_macos_major_version output)
         RESULT_VARIABLE _macos_result
         ERROR_QUIET)
     if(_macos_result EQUAL 0)
-        string(REGEX MATCH "^[0-9]+" _macos_major "${_macos_version}")
+        string(REGEX MATCH "^[0-9]+(\\.[0-9]+)?" _macos_major "${_macos_version}")
     endif()
     set(${output} "${_macos_major}" PARENT_SCOPE)
 endfunction()
@@ -72,7 +72,7 @@ function(ollama_macos_sdk_major_version output)
         RESULT_VARIABLE _sdk_result
         ERROR_QUIET)
     if(_sdk_result EQUAL 0)
-        string(REGEX MATCH "^[0-9]+" _sdk_major "${_sdk_version}")
+        string(REGEX MATCH "^[0-9]+(\\.[0-9]+)?" _sdk_major "${_sdk_version}")
     endif()
     set(${output} "${_sdk_major}" PARENT_SCOPE)
 endfunction()
@@ -83,7 +83,9 @@ function(ollama_default_mlx_backends output)
         ollama_check_metal_toolchain(_metal_version)
         ollama_macos_major_version(_macos_major)
         ollama_macos_sdk_major_version(_sdk_major)
-        if(_macos_major AND _sdk_major AND _macos_major GREATER_EQUAL 26 AND _sdk_major GREATER_EQUAL 26)
+        if(_macos_major AND _sdk_major
+            AND _macos_major VERSION_GREATER_EQUAL 26.2
+            AND _sdk_major VERSION_GREATER_EQUAL 26.2)
             set(_backends "metal_v4")
         else()
             set(_backends "metal_v3")
@@ -189,11 +191,42 @@ if(OLLAMA_MLX_BACKENDS)
             USES_TERMINAL_DOWNLOAD TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
-    add_custom_target(ollama-mlx-sources DEPENDS ${_mlx_source_targets})
+    # XGrammar has no pre-fetch: without an override each variant's build
+    # clones it via FetchContent.
+    if(DEFINED FETCHCONTENT_SOURCE_DIR_XGRAMMAR AND NOT "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" STREQUAL "")
+        get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
+            "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+        message(STATUS "Using XGrammar source override: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
+    elseif(DEFINED ENV{OLLAMA_XGRAMMAR_SOURCE})
+        get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
+            "$ENV{OLLAMA_XGRAMMAR_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+        message(STATUS "Using local XGrammar source: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
+    endif()
+
+    # Refresh the vendored MLX-C headers once the sources are present. Every MLX
+    # backend variant shares this destination in the source tree, so the copy has
+    # to happen here rather than in each variant's build.
+    add_custom_target(ollama-mlx-vendor-headers
+        COMMAND ${CMAKE_COMMAND}
+            -DMLX_C_HEADERS_DIR=${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c
+            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c
+            -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
+        DEPENDS ${_mlx_source_targets}
+        COMMENT "Vendoring MLX-C headers"
+        VERBATIM)
+    add_custom_target(ollama-mlx-sources DEPENDS ollama-mlx-vendor-headers)
+endif()
+
+set(OLLAMA_BUILD_PARALLEL "" CACHE STRING
+    "Number of parallel jobs for nested native builds (empty = use generator default)")
+
+set(_native_parallel_args --parallel)
+if(NOT OLLAMA_BUILD_PARALLEL STREQUAL "")
+    list(APPEND _native_parallel_args ${OLLAMA_BUILD_PARALLEL})
 endif()
 
 set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
-    ${CMAKE_COMMAND} --build <BINARY_DIR>)
+    ${CMAKE_COMMAND} --build <BINARY_DIR> ${_native_parallel_args})
 set(OLLAMA_NATIVE_BUILD_TARGET_ARG --target)
 if(CMAKE_GENERATOR MATCHES "Makefiles")
     set(OLLAMA_NATIVE_BUILD_TOOL_COMMAND
@@ -233,6 +266,67 @@ function(ollama_cache_arg_is_set name output)
         set(${output} TRUE PARENT_SCOPE)
     else()
         set(${output} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(ollama_backend_cuda_major backend output)
+    if("${backend}" MATCHES "^cuda_v([0-9]+)$")
+        set(${output} "${CMAKE_MATCH_1}" PARENT_SCOPE)
+    else()
+        set(${output} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
+function(ollama_find_windows_cuda_root major output)
+    if(NOT WIN32 OR "${major}" STREQUAL "")
+        set(${output} "" PARENT_SCOPE)
+        return()
+    endif()
+
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E environment
+        OUTPUT_VARIABLE _environment)
+    string(REPLACE "\r\n" "\n" _environment "${_environment}")
+    string(REPLACE "\r" "\n" _environment "${_environment}")
+    string(REGEX MATCHALL "CUDA_PATH_V${major}_[0-9]+=[^\n]*" _matches "${_environment}")
+
+    set(_best_minor -1)
+    set(_best_root "")
+    foreach(_entry IN LISTS _matches)
+        if(_entry MATCHES "^CUDA_PATH_V${major}_([0-9]+)=(.*)$")
+            set(_minor "${CMAKE_MATCH_1}")
+            set(_root "${CMAKE_MATCH_2}")
+            if(_minor GREATER _best_minor)
+                set(_best_minor ${_minor})
+                set(_best_root "${_root}")
+            endif()
+        endif()
+    endforeach()
+
+    if(_best_root STREQUAL "" AND DEFINED ENV{CUDA_PATH})
+        set(_cuda_path "$ENV{CUDA_PATH}")
+        if(EXISTS "${_cuda_path}/version.json")
+            file(READ "${_cuda_path}/version.json" _version_json)
+            if(_version_json MATCHES "\"cuda\"[ \t\r\n]*:[ \t\r\n]*\"${major}\\.")
+                set(_best_root "${_cuda_path}")
+            endif()
+        endif()
+    endif()
+
+    set(${output} "${_best_root}" PARENT_SCOPE)
+endfunction()
+
+function(ollama_append_cuda_toolkit_args output backend)
+    # If CUDAToolkit_ROOT is already explicitly set, just forward it.
+    ollama_append_cache_arg_if_set(${output} CUDAToolkit_ROOT)
+    if(NOT DEFINED CUDAToolkit_ROOT OR "${CUDAToolkit_ROOT}" STREQUAL "")
+        # Auto-discover CUDA toolkit for the requested backend version on Windows.
+        ollama_backend_cuda_major("${backend}" _cuda_major)
+        ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        if(NOT "${_cuda_root}" STREQUAL "")
+            ollama_escape_cmake_list("${_cuda_root}" _value)
+            set(${output} ${${output}} "-DCUDAToolkit_ROOT=${_value}" PARENT_SCOPE)
+        endif()
     endif()
 endfunction()
 
@@ -327,12 +421,28 @@ function(ollama_add_llama_server_build name)
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
         endif()
     endif()
+    # Visual Studio requires -T toolset override to select the correct CUDA toolkit.
+    # MSBuild's CUDA integration ignores -DCUDAToolkit_ROOT for nvcc selection.
+    # Prefer user-specified CUDAToolkit_ROOT before falling back to auto-discovery.
+    set(_generator_args)
+    if(WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
+        set(_cuda_root "${CUDAToolkit_ROOT}")
+        if("${_cuda_root}" STREQUAL "")
+            ollama_backend_cuda_major("${name}" _cuda_major)
+            ollama_find_windows_cuda_root("${_cuda_major}" _cuda_root)
+        endif()
+        if(NOT "${_cuda_root}" STREQUAL "")
+            list(APPEND _generator_args -T cuda=${_cuda_root})
+        endif()
+    endif()
     set(_configure_command ${CMAKE_COMMAND}
+        ${_generator_args}
         -S ${CMAKE_SOURCE_DIR}/llama/server
         -B <BINARY_DIR>
         ${_cmake_args})
     if(ARG_PRESET)
         set(_configure_command ${CMAKE_COMMAND}
+            ${_generator_args}
             -S ${CMAKE_SOURCE_DIR}/llama/server
             --preset ${ARG_PRESET}
             -B <BINARY_DIR>
@@ -382,6 +492,10 @@ function(ollama_add_mlx_build name)
         ${ARG_CMAKE_ARGS}
         ${_mlx_cache_args}
     )
+    if(OLLAMA_XGRAMMAR_SOURCE_DIR)
+        list(APPEND _cmake_args
+            -DFETCHCONTENT_SOURCE_DIR_XGRAMMAR=${OLLAMA_XGRAMMAR_SOURCE_DIR})
+    endif()
     foreach(_arg IN ITEMS
             BLAS_INCLUDE_DIRS
             LAPACK_INCLUDE_DIRS
@@ -423,6 +537,7 @@ function(ollama_add_mlx_build name)
             ${OLLAMA_NATIVE_CONFIG_ARG}
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
+            ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ollama_xgrammar
         INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
             ${OLLAMA_NATIVE_CONFIG_ARG}
             --component MLX
@@ -440,16 +555,45 @@ endfunction()
 
 find_program(GO_EXECUTABLE go)
 
-if(OLLAMA_MLX_BACKENDS)
-    set(_mlx_c_headers_dir "${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c")
-    set(_mlx_c_headers_dest "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c")
+if(GO_EXECUTABLE)
+    if(NOT DEFINED OLLAMA_GO_LICENSE_TARGETS)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOOS
+            OUTPUT_VARIABLE _go_license_goos
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOARCH
+            OUTPUT_VARIABLE _go_license_goarch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        set(OLLAMA_GO_LICENSE_TARGETS "${_go_license_goos}/${_go_license_goarch}" CACHE STRING
+            "Semicolon-separated GOOS/GOARCH targets included in GO_LICENSE")
+    endif()
 
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND}
+            "-DGO_EXECUTABLE=${GO_EXECUTABLE}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DOUTPUT_DIR=${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}"
+            "-DTARGETS=${OLLAMA_GO_LICENSE_TARGETS}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/generate_go_license.cmake"
+        BYPRODUCTS "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/GO_LICENSE"
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+else()
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Go executable not found. Install Go or set GO_EXECUTABLE to collect Go licenses."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+endif()
+
+if(OLLAMA_MLX_BACKENDS)
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))
         add_custom_target(ollama-mlx-generate-wrappers
-            COMMAND ${CMAKE_COMMAND}
-                -DMLX_C_HEADERS_DIR=${_mlx_c_headers_dir}
-                -DMLX_C_HEADERS_DEST=${_mlx_c_headers_dest}
-                -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
             COMMAND ${CMAKE_COMMAND} -E env
                 CC= CGO_CFLAGS= CGO_CXXFLAGS=
                 ${GO_EXECUTABLE} generate ./x/...
@@ -544,6 +688,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             set(_cuda_args)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_FLAGS)
+            ollama_append_cuda_toolkit_args(_cuda_args ${_backend})
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_cuda_preset}
                 RUNNER_DIR ${_backend}
@@ -555,6 +700,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
             set(_cuda_args)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_cuda_args CMAKE_CUDA_FLAGS)
+            ollama_append_cuda_toolkit_args(_cuda_args ${_backend})
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_cuda_preset}
                 RUNNER_DIR ${_backend}
@@ -664,14 +810,15 @@ foreach(_backend IN LISTS OLLAMA_MLX_BACKENDS)
         endif()
         ollama_check_metal_toolchain(_metal_version)
         ollama_macos_sdk_major_version(_ollama_mlx_sdk_major)
-        if(_ollama_mlx_sdk_major AND _ollama_mlx_sdk_major GREATER_EQUAL 26)
+        if(_ollama_mlx_sdk_major
+            AND _ollama_mlx_sdk_major VERSION_GREATER_EQUAL 26.2)
             ollama_add_mlx_build(metal_v4
                 PRESET mlx_metal_v4
                 RUNNER_DIR mlx_metal_v4)
             list(APPEND _mlx_targets ollama-mlx-metal_v4)
         else()
             message(FATAL_ERROR
-                "OLLAMA_MLX_BACKENDS=metal_v4 requires the macOS 26 SDK. "
+                "OLLAMA_MLX_BACKENDS=metal_v4 requires the macOS 26.2 SDK. "
                 "Install a newer Xcode or use OLLAMA_MLX_BACKENDS=metal_v3.")
         endif()
     else()

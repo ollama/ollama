@@ -1,9 +1,13 @@
 package mlx
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
+)
 
 func TestFromValue(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		for got, want := range map[*Array]DType{
 			FromValue(true):              DTypeBool,
 			FromValue(false):             DTypeBool,
@@ -20,7 +24,7 @@ func TestFromValue(t *testing.T) {
 }
 
 func TestFromValues(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		for got, want := range map[*Array]DType{
 			FromValues([]bool{true, false, true}, 3):           DTypeBool,
 			FromValues([]uint8{1, 2, 3}, 3):                    DTypeUint8,
@@ -43,38 +47,54 @@ func TestFromValues(t *testing.T) {
 }
 
 func TestComparisonOpsAndBernoulli(t *testing.T) {
-	withMLXThread(t, func() {
-		testComparisonOpsAndBernoulli(t)
+	var tests []struct {
+		name string
+		got  []int32
+		want []int32
+	}
+	withMLXThread(t, func(*mlxthreadtest.T) {
+		a := FromValues([]float32{1, 2, 3}, 3)
+		b := FromValues([]float32{1, 1, 4}, 3)
+		eq := a.Equal(b).AsType(DTypeInt32)
+		gt := a.Greater(b).AsType(DTypeInt32)
+		le := a.LessEqual(b).AsType(DTypeInt32)
+		bern := Bernoulli(FromValues([]float32{1, 0}, 2)).AsType(DTypeInt32)
+		Eval(eq, gt, le, bern)
+
+		tests = []struct {
+			name string
+			got  []int32
+			want []int32
+		}{
+			{name: "equal", got: eq.Ints(), want: []int32{1, 0, 0}},
+			{name: "greater", got: gt.Ints(), want: []int32{0, 1, 0}},
+			{name: "lessEqual", got: le.Ints(), want: []int32{1, 0, 1}},
+			{name: "bernoulli", got: bern.Ints(), want: []int32{1, 0}},
+		}
 	})
-}
 
-func testComparisonOpsAndBernoulli(t *testing.T) {
-	a := FromValues([]float32{1, 2, 3}, 3)
-	b := FromValues([]float32{1, 1, 4}, 3)
-	eq := a.Equal(b).AsType(DTypeInt32)
-	gt := a.Greater(b).AsType(DTypeInt32)
-	le := a.LessEqual(b).AsType(DTypeInt32)
-	bern := Bernoulli(FromValues([]float32{1, 0}, 2)).AsType(DTypeInt32)
-	Eval(eq, gt, le, bern)
-
-	for name, tc := range map[string]struct {
-		got  []int
-		want []int
-	}{
-		"equal":     {eq.Ints(), []int{1, 0, 0}},
-		"greater":   {gt.Ints(), []int{0, 1, 0}},
-		"lessEqual": {le.Ints(), []int{1, 0, 1}},
-		"bernoulli": {bern.Ints(), []int{1, 0}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if len(tc.got) != len(tc.want) {
-				t.Fatalf("got %v, want %v", tc.got, tc.want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if len(tt.got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", tt.got, tt.want)
 			}
-			for i := range tc.want {
-				if tc.got[i] != tc.want[i] {
-					t.Fatalf("got %v, want %v", tc.got, tc.want)
+			for i := range tt.want {
+				if tt.got[i] != tt.want[i] {
+					t.Fatalf("got %v, want %v", tt.got, tt.want)
 				}
 			}
 		})
 	}
+}
+
+// An empty array has no buffer, so its data pointer is null without an error.
+func TestEmptyArrayData(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if got := Zeros(DTypeFloat32, 0).Floats(); len(got) != 0 {
+			t.Fatalf("Floats() = %v, want empty", got)
+		}
+		if got := Zeros(DTypeInt32, 0).Ints(); len(got) != 0 {
+			t.Fatalf("Ints() = %v, want empty", got)
+		}
+	})
 }

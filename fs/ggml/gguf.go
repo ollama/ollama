@@ -14,7 +14,12 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/fs"
+	fsgguf "github.com/ollama/ollama/fs/gguf"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	maxGGUFWriteConcurrency = 2
 )
 
 type containerGGUF struct {
@@ -202,6 +207,9 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		if err != nil {
 			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
+		if dims > fsgguf.MaxTensorDims {
+			return fmt.Errorf("tensor %q dimensions %d exceeds maximum %d", name, dims, fsgguf.MaxTensorDims)
+		}
 
 		shape := make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
@@ -229,13 +237,23 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		}
 
 		llm.tensors = append(llm.tensors, &tensor)
-		llm.parameters += tensor.Elements()
+		elements, ok := tensor.elements()
+		if !ok {
+			return fmt.Errorf("tensor %q elements overflow", tensor.Name)
+		}
+		if llm.parameters > maxUint64()-elements {
+			return fmt.Errorf("parameter count overflow")
+		}
+		llm.parameters += elements
 	}
 
 	// patch KV with parameter count
 	llm.kv["general.parameter_count"] = llm.parameters
 
 	alignment := llm.kv.Uint("general.alignment", 32)
+	if alignment == 0 {
+		return fmt.Errorf("invalid GGUF alignment: 0")
+	}
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
@@ -243,6 +261,9 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	padding := ggufPadding(offset, int64(alignment))
+	if padding > int64(maxInt64())-offset {
+		return fmt.Errorf("GGUF tensor offset overflow")
+	}
 	llm.tensorOffset = uint64(offset + padding)
 
 	// get file size to validate tensor bounds
@@ -256,7 +277,15 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	}
 
 	for _, tensor := range llm.tensors {
-		tensorEnd := llm.tensorOffset + tensor.Offset + tensor.Size()
+		tensorSize, ok := tensor.size()
+		if !ok {
+			return fmt.Errorf("tensor %q size overflow", tensor.Name)
+		}
+
+		tensorEnd, ok := checkedAdd(llm.tensorOffset, tensor.Offset, tensorSize)
+		if !ok {
+			return fmt.Errorf("tensor %q offset+size overflows", tensor.Name)
+		}
 		if tensorEnd > uint64(fileSize) {
 			return fmt.Errorf("tensor %q offset+size (%d) exceeds file size (%d)", tensor.Name, tensorEnd, fileSize)
 		}
@@ -271,7 +300,10 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to seek to init padding: %w", err)
 		}
 
-		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
+		if tensorSize > maxInt64() {
+			return fmt.Errorf("tensor %q size %d exceeds maximum %d", tensor.Name, tensorSize, maxInt64())
+		}
+		if _, err := rs.Seek(int64(tensorSize), io.SeekCurrent); err != nil {
 			return fmt.Errorf("failed to seek to tensor: %w", err)
 		}
 	}
@@ -298,10 +330,21 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	if err := binary.Read(r, llm.ByteOrder, &length); err != nil {
 		return "", err
 	}
+	if length == 0 {
+		return "", fmt.Errorf("invalid GGUF v1 string length: 0")
+	}
+
+	size, err := checkGGUFLength(length, "string")
+	if err != nil {
+		return "", err
+	}
 
 	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
+	if _, err := io.CopyN(&b, r, int64(size)); err != nil {
 		return "", err
+	}
+	if b.Bytes()[b.Len()-1] != 0 {
+		return "", fmt.Errorf("invalid GGUF v1 string terminator")
 	}
 
 	// gguf v1 strings are null-terminated
@@ -320,7 +363,9 @@ func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error
 
 			a.values[i] = e
 		} else {
-			_ = discardGGUFString(llm, r)
+			if err := discardGGUFString(llm, r); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -334,7 +379,10 @@ func discardGGUFString(llm *gguf, r io.Reader) error {
 		return err
 	}
 
-	size := int(llm.ByteOrder.Uint64(buf))
+	size, err := checkGGUFLength(llm.ByteOrder.Uint64(buf), "string")
+	if err != nil {
+		return err
+	}
 	for size > 0 {
 		n, err := r.Read(llm.scratch[:min(size, cap(llm.scratch))])
 		if err != nil {
@@ -356,7 +404,10 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	length := int(llm.ByteOrder.Uint64(buf))
+	length, err := checkGGUFLength(llm.ByteOrder.Uint64(buf), "string")
+	if err != nil {
+		return "", err
+	}
 	if length > len(llm.scratch) {
 		buf = make([]byte, length)
 	} else {
@@ -394,7 +445,9 @@ func readGGUFStringsData(llm *gguf, r io.Reader, a *array[string]) (any, error) 
 
 			a.values[i] = e
 		} else {
-			discardGGUFString(llm, r)
+			if err := discardGGUFString(llm, r); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -413,12 +466,20 @@ func (a *array[T]) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.values)
 }
 
-func newArray[T any](size, maxSize int) *array[T] {
-	a := array[T]{size: size}
-	if maxSize < 0 || size <= maxSize {
-		a.values = make([]T, size)
+func newArray[T any](size uint64, maxSize int) (*array[T], error) {
+	if size > uint64(maxInt()) {
+		return nil, fmt.Errorf("GGUF array size %d exceeds maximum %d", size, maxInt())
 	}
-	return &a
+	if size > fsgguf.MaxArraySize {
+		return nil, fmt.Errorf("GGUF array size %d exceeds maximum %d", size, fsgguf.MaxArraySize)
+	}
+
+	n := int(size)
+	a := array[T]{size: n}
+	if maxSize < 0 || n <= maxSize {
+		a.values = make([]T, n)
+	}
+	return &a, nil
 }
 
 func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
@@ -434,40 +495,32 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 
 	switch t {
 	case ggufTypeUint8:
-		a := newArray[uint8](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[uint8](llm, r, n)
 	case ggufTypeInt8:
-		a := newArray[int8](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[int8](llm, r, n)
 	case ggufTypeUint16:
-		a := newArray[uint16](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[uint16](llm, r, n)
 	case ggufTypeInt16:
-		a := newArray[int16](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[int16](llm, r, n)
 	case ggufTypeUint32:
-		a := newArray[uint32](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[uint32](llm, r, n)
 	case ggufTypeInt32:
-		a := newArray[int32](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[int32](llm, r, n)
 	case ggufTypeUint64:
-		a := newArray[uint64](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[uint64](llm, r, n)
 	case ggufTypeInt64:
-		a := newArray[int64](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[int64](llm, r, n)
 	case ggufTypeFloat32:
-		a := newArray[float32](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[float32](llm, r, n)
 	case ggufTypeFloat64:
-		a := newArray[float64](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[float64](llm, r, n)
 	case ggufTypeBool:
-		a := newArray[bool](int(n), llm.maxArraySize)
-		return readGGUFArrayData(llm, r, a)
+		return readGGUFArrayOf[bool](llm, r, n)
 	case ggufTypeString:
-		a := newArray[string](int(n), llm.maxArraySize)
+		a, err := newArray[string](n, llm.maxArraySize)
+		if err != nil {
+			return nil, err
+		}
 		if llm.Version == 1 {
 			return readGGUFV1StringsData(llm, r, a)
 		}
@@ -476,6 +529,14 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 	default:
 		return nil, fmt.Errorf("invalid array type: %d", t)
 	}
+}
+
+func readGGUFArrayOf[T any](llm *gguf, r io.Reader, n uint64) (any, error) {
+	a, err := newArray[T](n, llm.maxArraySize)
+	if err != nil {
+		return nil, err
+	}
+	return readGGUFArrayData(llm, r, a)
 }
 
 func readGGUFArrayData[T any](llm *gguf, r io.Reader, a *array[T]) (any, error) {
@@ -491,6 +552,39 @@ func readGGUFArrayData[T any](llm *gguf, r io.Reader, a *array[T]) (any, error) 
 	}
 
 	return a, nil
+}
+
+func checkGGUFLength(n uint64, kind string) (int, error) {
+	if n > uint64(maxInt()) {
+		return 0, fmt.Errorf("GGUF %s length %d exceeds maximum %d", kind, n, maxInt())
+	}
+	if n > fsgguf.MaxStringLength {
+		return 0, fmt.Errorf("GGUF %s length %d exceeds maximum %d", kind, n, fsgguf.MaxStringLength)
+	}
+	return int(n), nil
+}
+
+func maxInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func maxInt64() uint64 {
+	return 1<<63 - 1
+}
+
+func maxUint64() uint64 {
+	return ^uint64(0)
+}
+
+func checkedAdd(ns ...uint64) (uint64, bool) {
+	var sum uint64
+	for _, n := range ns {
+		if sum > maxUint64()-n {
+			return 0, false
+		}
+		sum += n
+	}
+	return sum, true
 }
 
 // writeGGUFArray writes a slice s of type E to the write with a gguf type of t
@@ -580,8 +674,7 @@ func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
 	offset += ggufPadding(offset, int64(alignment))
 
 	var g errgroup.Group
-	g.SetLimit(runtime.GOMAXPROCS(0))
-	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
+	g.SetLimit(min(runtime.GOMAXPROCS(0), maxGGUFWriteConcurrency))
 	for _, t := range ts {
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {

@@ -1,10 +1,11 @@
-// Package gemma4 provides the Gemma 4 text model implementation for MLX.
+// Package gemma4 provides the Gemma 4 model implementation for MLX.
 package gemma4
 
 import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -65,7 +66,10 @@ type TextConfig struct {
 	TopKExperts            int32                  `json:"top_k_experts"`
 	ExpertIntermediateSize int32                  `json:"moe_intermediate_size"`
 	RopeParameters         map[string]*RopeParams `json:"rope_parameters"`
-	ImageTokenIDValue      int32                  `json:"image_token_id"`
+	// UseBidirectionalAttention selects the image-span mask semantics:
+	// "vision" relaxes sliding layers over soft-token runs, empty means
+	// causal even with images; the reference's "all" is rejected at load.
+	UseBidirectionalAttention string `json:"use_bidirectional_attention"`
 
 	// Quantization parameters.
 	QuantGroupSize int                               `json:"-"`
@@ -74,13 +78,14 @@ type TextConfig struct {
 	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields.
-	SlidingScale    float32    `json:"-"` // 1/sqrt(HeadDim) for sliding layers
-	FullScale       float32    `json:"-"` // 1/sqrt(GlobalHeadDim) for full layers
-	SlidingRopeDims int        `json:"-"` // HeadDim (full rotation for sliding)
-	FullRopeDims    int        `json:"-"` // GlobalHeadDim (partial rotation via custom freqs)
-	SlidingRopeBase float32    `json:"-"`
-	FullRopeBase    float32    `json:"-"`
-	FullRopeFreqs   *mlx.Array `json:"-"` // Precomputed proportional RoPE frequencies
+	BidirectionalVisionAttention bool       `json:"-"` // UseBidirectionalAttention == "vision"
+	SlidingScale                 float32    `json:"-"` // 1/sqrt(HeadDim) for sliding layers
+	FullScale                    float32    `json:"-"` // 1/sqrt(GlobalHeadDim) for full layers
+	SlidingRopeDims              int        `json:"-"` // HeadDim (full rotation for sliding)
+	FullRopeDims                 int        `json:"-"` // GlobalHeadDim (partial rotation via custom freqs)
+	SlidingRopeBase              float32    `json:"-"`
+	FullRopeBase                 float32    `json:"-"`
+	FullRopeFreqs                *mlx.Array `json:"-"` // Precomputed proportional RoPE frequencies
 
 	// Precomputed scale factors (avoid per-forward math.Sqrt/Pow).
 	EmbedScale      float32 `json:"-"` // sqrt(hidden_size)
@@ -154,6 +159,17 @@ func firstNonNil(tensors map[string]*mlx.Array, keys ...string) *mlx.Array {
 	return nil
 }
 
+// firstTensorKey returns the first key present in tensors along with its
+// tensor, or "", nil if none of the keys are present.
+func firstTensorKey(tensors map[string]*mlx.Array, keys ...string) (string, *mlx.Array) {
+	for _, k := range keys {
+		if t := tensors[k]; t != nil {
+			return k, t
+		}
+	}
+	return "", nil
+}
+
 // sliceAxis1 slices a tensor along axis 1: a[:, start:stop, ...].
 func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 	dims := a.Dims()
@@ -170,12 +186,10 @@ func sliceAxis1(a *mlx.Array, start, stop int32) *mlx.Array {
 // transposeForGatherMM transposes stacked expert weights from [experts, out, in]
 // to [experts, in, out] for use with GatherMM (which computes a @ b[group]).
 func transposeForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || !w.Valid() || w.NumDims() != 3 {
+	if w == nil || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1).Clone()
-	mlx.Eval(t)
-	return t
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // collectExpertProjection collects per-expert tensors, stacks them, and
@@ -230,17 +244,46 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	}
 
 	stacked := mlx.Stack(weights, 0).Clone()
-	mlx.Eval(stacked)
 	out := &stackedExpertResult{Weight: stacked, Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
 		out.Scales = mlx.Stack(scales, 0).Clone()
-		mlx.Eval(out.Scales)
 	}
 	if len(biases) == len(weights) {
 		out.Biases = mlx.Stack(biases, 0).Clone()
-		mlx.Eval(out.Biases)
 	}
 	return out
+}
+
+// loadFusedExperts configures an MoE block from a fused, pre-stacked gate_up
+// projection and its down projection. It keeps the fused gate_up as a single
+// tensor and chooses GatherQMM (one quantized call) when scale companions are
+// present, or GatherMM otherwise. It is name-agnostic: callers resolve the
+// tensor keys, which may or may not carry a ".weight" suffix.
+func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, gateUpKey string, gateUp *mlx.Array, downKey string, down *mlx.Array) {
+	moe.UseFusedGateUp = true
+
+	gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
+	downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
+	if gateUpScales == nil || downScales == nil {
+		// Dense: keep gate_up fused and transpose for GatherMM.
+		moe.GateUpWeight = transposeForGatherMM(gateUp)
+		moe.DownWeight = transposeForGatherMM(down)
+		return
+	}
+
+	// Quantized: keep the fused gate_up packed for a single GatherQMM call.
+	moe.UseQuantized = true
+	moe.GateUpWeightQ = gateUp
+	moe.GateUpScales = gateUpScales
+	moe.GateUpBiases = firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
+	moe.DownWeightQ = down
+	moe.DownScales = downScales
+	moe.DownBiases = firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
+
+	moe.GateUpGroupSize, moe.GateUpBits, moe.QuantMode = model.ResolveLinearQuantParams(
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, gateUpKey, gateUp, gateUpScales)
+	moe.DownGroupSize, moe.DownBits, moe.DownQuantMode = model.ResolveLinearQuantParams(
+		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, downKey, down, downScales)
 }
 
 // Router implements Gemma 4's expert routing mechanism.
@@ -345,6 +388,22 @@ type Model struct {
 	NormScaled             *mlx.Array
 	PerLayerProjNormWeight *mlx.Array
 
+	// Vision components; at most one of VisionTower and UnifiedEmbedder is
+	// set, per the checkpoint's vision_config model type.
+	VisionTower     *VisionTower
+	UnifiedEmbedder *UnifiedVisionEmbedder
+	EmbedVision     *MultimodalEmbedder
+	Vision          *VisionConfig
+
+	// Audio components.
+	AudioTower *AudioTower
+	EmbedAudio *MultimodalEmbedder
+	Audio      *AudioConfig
+
+	MM multimodalConfig
+	// Soft-token placeholder IDs of the configured media modalities.
+	mediaPlaceholderIDs []int32
+
 	tok *tokenizer.Tokenizer
 	*TextConfig
 
@@ -394,6 +453,8 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	if cfg.MaxPositionEmbeddings == 0 {
 		cfg.MaxPositionEmbeddings = 131072
 	}
+
+	cfg.BidirectionalVisionAttention = cfg.UseBidirectionalAttention == "vision"
 
 	// Gemma 4 uses scaling=1.0 (no 1/sqrt(head_dim) scaling); the Q/K norms
 	// handle magnitude control. This differs from Gemma 3 which uses
@@ -572,6 +633,12 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, err
 	}
 
+	// The reference's "all" mode makes every layer bidirectional over the
+	// whole sequence, which chunked prefill and prefix reuse cannot serve.
+	if b := cfg.UseBidirectionalAttention; b != "" && b != "vision" {
+		return nil, fmt.Errorf("unsupported use_bidirectional_attention %q", b)
+	}
+
 	if qt := root.QuantType(); qt != "" {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
 		if gs := root.GroupSize(); gs > 0 {
@@ -602,12 +669,31 @@ func newModel(root *model.Root) (base.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	mm, err := parseMultimodalConfig(configData)
+	if err != nil {
+		return nil, err
+	}
+
 	m := &Model{
 		Layers:            make([]*DecoderLayer, cfg.NumHiddenLayers),
 		TextConfig:        &cfg,
+		MM:                mm,
+		Vision:            mm.VisionConfig,
+		Audio:             mm.AudioConfig,
 		tok:               tok,
 		SuppressLogitBias: makeSuppressLogitBias(suppressTokens, cfg.VocabSize),
 	}
+
+	if m.Vision != nil {
+		if err := validateVisionSoftTokenBudget(m.visionSoftTokenBudget()); err != nil {
+			return nil, err
+		}
+		m.mediaPlaceholderIDs = append(m.mediaPlaceholderIDs, mm.ImageTokenID)
+	}
+	if m.Audio != nil {
+		m.mediaPlaceholderIDs = append(m.mediaPlaceholderIDs, mm.AudioTokenID)
+	}
+	m.validateMediaTokens()
 
 	for i := range m.Layers {
 		donor, isShared := cfg.KVShareMap[int32(i)]
@@ -761,109 +847,33 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 			moe := &MoEBlock{PerExpertScale: perExpertScale}
 
-			// Check for pre-stacked tensors (unquantized HF format).
-			// Try .experts. first (new weight drop), fall back to .moe. (old format).
-			gateUpW := tensors[layerPrefix+".experts.gate_up_proj"]
-			if gateUpW == nil {
-				gateUpW = tensors[layerPrefix+".moe.gate_up_proj"]
-			}
-			gateW := tensors[layerPrefix+".experts.gate_proj"]
-			if gateW == nil {
-				gateW = tensors[layerPrefix+".moe.gate_proj"]
-			}
-			if gateUpW != nil {
-				// Fused gate+up: split along dim 1, transpose for GatherMM.
-				dims := gateUpW.Dims()
-				half := int32(dims[1] / 2)
-				gateSlice := sliceAxis1(gateUpW, 0, half)
-				upSlice := sliceAxis1(gateUpW, half, int32(dims[1]))
-				moe.GateWeight = transposeForGatherMM(gateSlice)
-				moe.UpWeight = transposeForGatherMM(upSlice)
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
+			// Experts ship with gate+up fused into one pre-stacked tensor under
+			// a few different names: HF (.experts./.moe.) and the create
+			// pipeline (.moe.switch_mlp.), each with or without a ".weight"
+			// suffix. Resolve the gate_up projection once, then let
+			// loadFusedExperts decide quantized vs dense from its scales.
+			if gateUpKey, gateUp := firstTensorKey(tensors,
+				layerPrefix+".experts.gate_up_proj.weight", layerPrefix+".experts.gate_up_proj",
+				layerPrefix+".moe.gate_up_proj.weight", layerPrefix+".moe.gate_up_proj",
+				layerPrefix+".moe.switch_mlp.gate_up_proj.weight", layerPrefix+".moe.switch_mlp.gate_up_proj",
+			); gateUp != nil {
+				downKey := strings.Replace(gateUpKey, "gate_up_proj", "down_proj", 1)
+				down := tensors[downKey]
+				if down == nil {
+					return fmt.Errorf("layer %d: missing MoE down_proj for fused gate_up_proj %q", i, gateUpKey)
 				}
-				if downW == nil {
-					return fmt.Errorf("layer %d: missing MoE down_proj with fused gate_up_proj", i)
-				}
-				moe.DownWeight = transposeForGatherMM(downW)
-			} else if gateW != nil {
-				// Separate gate_proj and up_proj (older format). Transpose for GatherMM.
+				m.loadFusedExperts(moe, tensors, gateUpKey, gateUp, downKey, down)
+			} else if gateW := firstNonNil(tensors,
+				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
+				// Separate (non-fused) pre-stacked gate/up projections (older HF
+				// layout, dense only). Transpose for GatherMM.
 				moe.GateWeight = transposeForGatherMM(gateW)
-				upW := tensors[layerPrefix+".experts.up_proj"]
-				if upW == nil {
-					upW = tensors[layerPrefix+".moe.up_proj"]
-				}
-				downW := tensors[layerPrefix+".experts.down_proj"]
-				if downW == nil {
-					downW = tensors[layerPrefix+".moe.down_proj"]
-				}
-				moe.UpWeight = transposeForGatherMM(upW)
-				moe.DownWeight = transposeForGatherMM(downW)
+				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
+				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
+					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
 				if moe.UpWeight == nil || moe.DownWeight == nil {
 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
-				}
-			} else if switchGateUp := firstNonNil(tensors,
-				layerPrefix+".moe.switch_mlp.gate_up_proj.weight",
-				layerPrefix+".moe.switch_mlp.gate_up_proj"); switchGateUp != nil {
-				// Stacked switch_mlp format (from create pipeline with expert packing).
-				switchDown := firstNonNil(tensors,
-					layerPrefix+".moe.switch_mlp.down_proj.weight",
-					layerPrefix+".moe.switch_mlp.down_proj")
-				if switchDown == nil {
-					return fmt.Errorf("layer %d: missing switch_mlp down_proj", i)
-				}
-
-				// Check for quantized weights (scales present).
-				// The scale key depends on whether the tensor has .weight suffix.
-				gateUpKey := layerPrefix + ".moe.switch_mlp.gate_up_proj.weight"
-				if tensors[gateUpKey] == nil {
-					gateUpKey = layerPrefix + ".moe.switch_mlp.gate_up_proj"
-				}
-				downKey := layerPrefix + ".moe.switch_mlp.down_proj.weight"
-				if tensors[downKey] == nil {
-					downKey = layerPrefix + ".moe.switch_mlp.down_proj"
-				}
-				gateUpScales := firstNonNil(tensors, gateUpKey+"_scale", gateUpKey+".scale")
-				downScales := firstNonNil(tensors, downKey+"_scale", downKey+".scale")
-
-				if gateUpScales != nil && downScales != nil {
-					// Quantized: keep fused gate_up as single tensor for GatherQMM.
-					// One fused call instead of two separate gate+up calls.
-					gateUpBiases := firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
-					downBiases := firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
-
-					moe.GateUpWeightQ = switchGateUp
-					moe.GateUpScales = gateUpScales
-					moe.GateUpBiases = gateUpBiases
-					moe.DownWeightQ = switchDown
-					moe.DownScales = downScales
-					if downBiases != nil {
-						moe.DownBiases = downBiases
-					}
-
-					groupSize, bits, mode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, gateUpKey, switchGateUp, gateUpScales,
-					)
-					moe.UseQuantized = true
-					moe.UseFusedGateUp = true
-					moe.GateUpGroupSize = groupSize
-					moe.GateUpBits = bits
-					moe.QuantMode = mode
-
-					dGroupSize, dBits, dMode := model.ResolveLinearQuantParams(
-						m.QuantGroupSize, m.QuantBits, m.QuantMode,
-						m.TensorQuant, downKey, switchDown, downScales,
-					)
-					moe.DownGroupSize = dGroupSize
-					moe.DownBits = dBits
-					moe.DownQuantMode = dMode
-				} else {
-					// Unquantized switch_mlp: keep fused and transpose for GatherMM.
-					moe.GateUpWeight = transposeForGatherMM(switchGateUp)
-					moe.UseFusedGateUp = true
-					moe.DownWeight = transposeForGatherMM(switchDown)
 				}
 			} else {
 				// Per-expert tensors (from create path).
@@ -1013,21 +1023,49 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		return fmt.Errorf("missing precomputed final norm weight")
 	}
 
+	if m.Vision != nil {
+		if err := m.loadVisionWeights(tensors, linears); err != nil {
+			return err
+		}
+	}
+	if m.Audio != nil {
+		if err := m.loadAudioWeights(tensors, linears); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
-	h := m.EmbedTokens.Forward(b.InputIDs)
-	h = mlx.MulScalar(h, m.EmbedScale)
 
-	// Compute PLE inputs if configured.
+	// Media placeholder rows embed the pad token and are then overwritten
+	// by the feature scatter.
+	ids := b.InputIDs
+	if len(b.Media) > 0 {
+		for _, id := range m.mediaPlaceholderIDs {
+			ids = mlx.Where(b.InputIDs.Equal(mlx.FromValue(int(id))), mlx.FromValue(0), ids)
+		}
+	}
+
+	h := m.EmbedTokens.Forward(ids)
+	h = mlx.MulScalar(h, m.EmbedScale)
+	if len(b.Media) > 0 {
+		h = m.scatterMedia(h, b)
+	}
+
+	// PLE's token-identity component reads the masked IDs, but its
+	// projection component reads the merged hidden — media rows project
+	// their features, not the pad embedding.
 	var perLayerInputs *mlx.Array
 	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil {
-		perLayerInputs = m.computePLEInputs(b.InputIDs, h)
+		perLayerInputs = m.computePLEInputs(ids, h)
 	}
+
+	slidingMask, fullMask := m.buildMasks(b)
 
 	// KV sharing: each donor layer stores its KVHistory here so later
 	// shared layers can reuse it in lieu of their own cache update.
@@ -1056,8 +1094,13 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 			}
 		}
 
+		mask := fullMask
+		if layer.IsSliding {
+			mask = slidingMask
+		}
+
 		var donorKV *sharedHistory
-		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor)
+		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor, mask)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1065,7 +1108,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		}
 	}
 
-	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	out := mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1110,10 +1154,6 @@ func suppressTokenLogits(logits, bias *mlx.Array) *mlx.Array {
 	}
 
 	return logits.Add(bias.AsType(logits.DType()))
-}
-
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
 }
 
 func (m *Model) MaxContextLength() int {
@@ -1190,9 +1230,9 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donor *sharedHistory, mask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor)
+	attnOut, kv := l.Attention.Forward(normed, b, c, positions, B, L, l.IsSliding, cfg, donor, mask)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1240,7 +1280,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, posi
 	return h, kv
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory) (*mlx.Array, *sharedHistory) {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, isSliding bool, cfg *TextConfig, donor *sharedHistory, baseMask nn.AttentionMask) (*mlx.Array, *sharedHistory) {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1316,7 +1356,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		// kernel only handles L < 4 (generation). For prefill, we fall back
 		// to explicit matmul+softmax+matmul on CUDA.
 		var k, v *mlx.Array
-		mask := nn.CausalMask().Intersect(nn.QPaddingMask(b, q.DType()))
+		mask := baseMask.Intersect(nn.QPaddingMask(b, q.DType()))
 		if kv.history != nil {
 			k, v = kv.history.K(), kv.history.V()
 			mask = kv.history.Mask(mask)
@@ -1346,7 +1386,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
 	} else {
 		var opt nn.SDPAOption
-		mask := nn.CausalMask()
+		mask := baseMask
 		if kv.history != nil {
 			opt = nn.WithKVHistory(kv.history)
 		} else {

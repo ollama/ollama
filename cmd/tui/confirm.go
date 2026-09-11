@@ -39,7 +39,7 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasSet := m.width > 0
 		m.width = msg.Width
 		if wasSet {
-			return m, tea.EnterAltScreen
+			return m, tea.ClearScreen
 		}
 		return m, nil
 
@@ -115,7 +115,7 @@ func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) 
 		prompt:   prompt,
 		yesLabel: yesLabel,
 		noLabel:  noLabel,
-		yes:      true, // default to yes
+		yes:      options.Default != launch.ConfirmDefaultNo,
 	}
 
 	p := tea.NewProgram(m)

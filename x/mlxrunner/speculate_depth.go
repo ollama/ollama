@@ -18,10 +18,11 @@ const depthProbeInterval = 4
 const depthProbeIntervalMax = 512
 
 // depthController drafts argmax_N EV(N) where EV(N) = committed(N) / cost(N), over
-// depths from 0 (plain decode) up to one past the frontier. The depth-0 floor lets
-// it stop speculating when no draft pays; the frontier ceiling keeps it from scoring
-// a depth on the optimistic inherited rate, so it climbs outward one position at a
-// time as acceptance is measured rather than leaping deep.
+// depths from 0 (plain decode) up to one past the frontier, or the drafter's limit
+// where that is shallower. The depth-0 floor lets it stop speculating when no draft
+// pays; the frontier ceiling keeps it from scoring a depth on the optimistic
+// inherited rate, so it climbs outward one position at a time as acceptance is
+// measured rather than leaping deep.
 //
 // It holds the depth-selection state learned across requests — the target forward's
 // per-depth cost curve, the drafts' per-position acceptance rates, the probe cadence,
@@ -31,6 +32,11 @@ type depthController struct {
 	cost   *costModel
 	acc    *acceptanceModel
 	probed bool // the previous round drafted a probe
+
+	// drafterLimit is the deepest draft this model's drafter can produce, 0 when
+	// nothing bounds it. A depth the drafter never produces is never measured,
+	// and an unmeasured depth would always look best, pinning the search there.
+	drafterLimit int
 
 	// scheduled is the draft depth next() chose for the upcoming round, carried
 	// across requests so a new request's first round consumes it instead of
@@ -49,9 +55,19 @@ func newDepthController() *depthController {
 
 func (c *depthController) frontier() int { return c.acc.frontier() }
 
-// next returns the draft depth for the upcoming step: the EV-optimal depth (capped
-// at frontier+1), except periodically it probes one past the selection to refresh
-// the next position up. The probe stays within the frontier window. The cadence
+// limit is the deepest depth the search considers: one past the frontier, held
+// to what the drafter can produce.
+func (c *depthController) limit() int {
+	limit := c.frontier() + 1
+	if c.drafterLimit > 0 {
+		limit = min(limit, c.drafterLimit)
+	}
+	return limit
+}
+
+// next returns the draft depth for the upcoming step: the EV-optimal depth (held
+// to the search limit), except periodically it probes one past the selection to
+// refresh the next position up. The probe stays within that limit. The cadence
 // doubles toward its cap while probes change nothing and resets on any selection
 // change, giving the new selection a full interval to settle. The chosen depth is
 // recorded in c.scheduled for the next request's open to consume.
@@ -70,7 +86,7 @@ func (c *depthController) next() (depth int) {
 	c.probeSince++
 	if c.probeSince >= c.probeInterval {
 		c.probeSince = 0
-		if probe := min(sel+1, c.frontier()+1); probe != sel {
+		if probe := min(sel+1, c.limit()); probe != sel {
 			c.probed = true
 			return probe
 		}
@@ -87,11 +103,11 @@ func (c *depthController) next() (depth int) {
 	return sel
 }
 
-// costSeedDepth is the shallowest depth in [0, frontier+1] with no clean
-// cost sample, or -1 if all are sampled; bounding to frontier+1 keeps cost-seeding
-// from outrunning the acceptance frontier.
+// costSeedDepth is the shallowest depth within the search limit with no clean
+// cost sample, or -1 if all are sampled; the bound keeps cost-seeding from
+// outrunning the acceptance frontier or the drafter.
 func (c *depthController) costSeedDepth() int {
-	limit := c.frontier() + 1
+	limit := c.limit()
 	for n := 0; n <= limit; n++ {
 		if !c.cost.sampled(n) {
 			return n
@@ -101,14 +117,14 @@ func (c *depthController) costSeedDepth() int {
 }
 
 // selected returns the EV-optimal draft depth without mutating probe state, the
-// argmax over [0, frontier+1]. The frontier bound keeps the inherited optimistic
+// argmax within the search limit. The frontier bound keeps the inherited optimistic
 // rate from making ever-deeper depths look best; the depth-0 floor lets it stop
 // speculating. Returns 0 until the cost model can compare depths.
 func (c *depthController) selected() int {
 	if !c.cost.ready() {
 		return 0
 	}
-	limit := c.frontier() + 1
+	limit := c.limit()
 	best, bestEV := 0, c.acc.expectedCommitted(0)/c.cost.cost(0)
 	for n := 1; n <= limit; n++ {
 		if ev := c.acc.expectedCommitted(n) / c.cost.cost(n); ev > bestEV {

@@ -398,13 +398,10 @@ func supportsGatherQMM(mode string, bits int) bool {
 // weights to the [E, in, out] layout GatherMM consumes, materialized once at
 // load so the forward path avoids per-call transposes.
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || !w.Valid() || w.NumDims() != 3 {
+	if w == nil || w.NumDims() != 3 {
 		return w
 	}
-	t := mlx.Transpose(w, 0, 2, 1)
-	cloned := t.Clone()
-	mlx.Eval(cloned)
-	return cloned
+	return mlx.Transpose(w, 0, 2, 1).Clone()
 }
 
 // loadStackedProjection returns expert weights already stacked as a single 3D
@@ -439,11 +436,21 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 	}
 
 	return &stackedExpertWeights{
-		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode),
+		Weight:    mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil),
 		Bits:      bits,
 		GroupSize: groupSize,
 		Mode:      mode,
 	}
+}
+
+// loadStackedExperts resolves a stacked expert projection by its close-to-source
+// name (layers.N.mlp.experts.<proj>, which `ollama create` now writes) and falls
+// back to the legacy switch_mlp name that older imports produced.
+func loadStackedExperts(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string) *stackedExpertWeights {
+	if w := loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.experts."+proj); w != nil {
+		return w
+	}
+	return loadStackedProjection(tensors, cfg, useQuantized, layerPrefix+".mlp.switch_mlp."+proj)
 }
 
 // LoadWeights assigns tensors to model fields.
@@ -527,11 +534,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				return fmt.Errorf("layer %d: missing moe router gate", i)
 			}
 
-			gateW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.gate_proj")
-			upW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.up_proj")
-			downW := loadStackedProjection(tensors, cfg, useQuantizedExperts, layerPrefix+".mlp.switch_mlp.down_proj")
+			gateW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "gate_proj")
+			upW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "up_proj")
+			downW := loadStackedExperts(tensors, cfg, useQuantizedExperts, layerPrefix, "down_proj")
 			if gateW == nil || upW == nil || downW == nil {
-				return fmt.Errorf("layer %d: missing stacked switch_mlp expert weights (import the model with `ollama create`)", i)
+				return fmt.Errorf("layer %d: missing stacked expert weights (import the model with `ollama create`)", i)
 			}
 
 			switchMLP := &SwitchMLP{}
@@ -718,7 +725,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(x, mlx.Add(attnOut, mlpOut))
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -732,7 +739,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 		h = layer.Forward(h, b, c, positions, B, L, m.Config)
 	}
 
-	return m.Norm.Forward(h)
+	out := m.Norm.Forward(h)
+	return out, out
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -741,10 +749,6 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 		logits = mlx.MulScalar(logits, m.LogitScale)
 	}
 	return logits
-}
-
-func (m *Model) NumLayers() int {
-	return len(m.Layers)
 }
 
 func (m *Model) MaxContextLength() int {

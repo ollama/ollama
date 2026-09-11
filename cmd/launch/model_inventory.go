@@ -17,6 +17,7 @@ type LaunchModel struct {
 	Remote          bool
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
+	Thinking        *api.ModelRecommendationThinking
 	ContextLength   int
 	MaxOutputTokens int
 	EmbeddingLength int
@@ -167,6 +168,7 @@ func launchModelMatches(candidate, name string) bool {
 
 func cloneLaunchModel(model LaunchModel) LaunchModel {
 	model.Capabilities = append([]modelpkg.Capability(nil), model.Capabilities...)
+	model.Thinking = model.Thinking.Clone()
 	model.Details.Families = append([]string(nil), model.Details.Families...)
 	return model
 }

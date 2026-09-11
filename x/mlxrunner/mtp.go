@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -9,54 +10,84 @@ import (
 )
 
 // mtpPendingFlushTokens caps how many committed look-ahead tokens wait in the
-// pending buffer before a batched flush, bounding the pinned hidden states
+// pending buffer before a batched flush, bounding the held hidden states
 // regardless of what else triggers a flush.
-const mtpPendingFlushTokens = 32
+const mtpPendingFlushTokens = 256
 
-// mtpDrafter drafts with a model's multi-token-prediction head, fed through
-// the committed-stream reports. The draft KV pairs each slot S with the
-// look-ahead token at S+1 fused with the target hidden at S, so a pair
-// completes only when the next token arrives.
+// mtpDrafter drafts with a model's multi-token-prediction head. Constructed
+// at load, it fixes the trie keys' draft look-ahead for the model's lifetime
+// and opens each request's drafting session.
 type mtpDrafter struct {
 	spec *speculation
+}
+
+func newMTPDrafter(s *speculation) *mtpDrafter {
+	if len(s.draftKV) > 0 {
+		// The pairing references one token past each slot; trie keys carry
+		// that look-ahead so a match verifies it (see prefixCache.draftLookahead).
+		s.r.cache.draftLookahead = 1
+	}
+	return &mtpDrafter{spec: s}
+}
+
+// draftLimit reports no bound; the head makes one call per draft token, so
+// any depth is reachable.
+func (d *mtpDrafter) draftLimit() int { return 0 }
+
+// open returns the drafting session for one request, its pairing frontier
+// synced to the draft caches' restored offset.
+func (d *mtpDrafter) open(layout []any) draftSession {
+	s := &mtpDraftSession{drafter: d, layout: layout, scope: mlx.NewScope()}
+	if kv := d.spec.draftKV; len(kv) > 0 {
+		// A restored prefix arrives with the draft caches already written;
+		// pairing resumes from their absolute offset.
+		s.committedDraftOffset = kv[0].Offset()
+		s.frontier = s.committedDraftOffset
+	}
+	return s
+}
+
+// mtpDraftSession runs one request's drafting, fed through the
+// committed-stream reports. The draft KV pairs each slot S with the
+// look-ahead token at S+1 fused with the target hidden at S, so a pair
+// completes only when the next token arrives.
+type mtpDraftSession struct {
+	drafter *mtpDrafter
+	layout  []any
+	scope   *mlx.Scope
 
 	// frontier is the slot after the last reported token; frontierHidden is
-	// the pinned target hidden at frontier-1, fused into the next pair.
+	// the held target hidden at frontier-1, fused into the next pair.
 	frontier       int
 	frontierHidden *mlx.Array
 
 	// committedDraftOffset is the slot after the last pair written to the
-	// draft caches; later pairs wait pinned in the pending lists until
+	// draft caches; later pairs wait held in the pending lists until
 	// flushed. pendingCount is the look-ahead tokens those lists hold, summed
 	// across the buffered runs.
 	committedDraftOffset int
 	pendingTokens        []*mlx.Array
 	pendingHiddens       []*mlx.Array
 	pendingCount         int
+	pending              *mlx.Scope // holds the lists' arrays until the flush
 
-	// heldHidden is the frontier row's pre-unembed hidden and heldProjected
+	// heldHidden is the frontier row's pre-unembed hidden and heldAuxHidden
 	// its fusion hidden, carried from the last flush so the first proposal
 	// reuses them without a head call.
 	heldHidden    *mlx.Array
-	heldProjected *mlx.Array
+	heldAuxHidden *mlx.Array
+
+	// pendingMedia holds manifest rows the deferred flush may still embed,
+	// on their own handles since prefill releases them after the target's chunk;
+	// lastDelivered marks each row's newest delivered end.
+	pendingMedia  map[int]batch.MediaItem
+	lastDelivered map[int]int
 }
 
-// newMTPDrafter returns the MTP drafter cursor for this request, syncing its
-// pairing frontier to the draft caches' restored offset.
-func newMTPDrafter(s *speculation) *mtpDrafter {
-	d := &mtpDrafter{spec: s}
-	if len(s.draftKV) > 0 {
-		// A restored prefix arrives with the draft caches already written;
-		// pairing resumes from their absolute offset.
-		d.committedDraftOffset = s.draftKV[0].Offset()
-		d.frontier = d.committedDraftOffset
-	}
-	return d
-}
-
-func (d *mtpDrafter) committed(tokens, hiddens *mlx.Array, position int) {
+func (d *mtpDraftSession) committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem) {
 	n := tokens.Dim(1)
-	if len(d.spec.draftKV) > 0 {
+	d.captureMedia(media, position+n)
+	if len(d.drafter.spec.draftKV) > 0 {
 		// The pair at slot S fuses token[S+1] with hidden[S], so a run pairs its
 		// tokens with its own hiddens shifted one slot back: the first writable
 		// token takes the carried frontier hidden, each later token the row
@@ -84,45 +115,91 @@ func (d *mtpDrafter) committed(tokens, hiddens *mlx.Array, position int) {
 	d.setFrontierHidden(lastHiddenRow(hiddens))
 }
 
-// finish settles the drafter when generation ends: current completes the
-// frontier pair, leveling the draft caches with the target's resting offset.
-//
-// TODO: leveling the draft to the target writes a boundary entry whose
-// look-ahead token is outside the stored prefix (here, the never-committed
-// current). When a later request restores this prefix and diverges at the
-// boundary, that entry is stale and lowers draft acceptance. EAGLE keeps the
-// draft one slot behind the target so the unconfirmed boundary entry is never
-// written (its bigram partner token[S+1] does not exist yet); we should do the
-// same rather than level here. Regenerating hidden[S] to re-pair the boundary
-// on the next request is a separate, re-prefill-bound concern for recurrent
-// targets.
-func (d *mtpDrafter) finish(current *mlx.Array) {
-	if len(d.spec.draftKV) == 0 {
+// captureMedia holds the run's feature-bearing rows for the deferred
+// flush, which embeds them after prefill has released the features. A row
+// spanning chunks arrives once per chunk.
+func (d *mtpDraftSession) captureMedia(media []batch.MediaItem, end int) {
+	if len(d.drafter.spec.draftKV) == 0 {
 		return
 	}
-	d.settle(current)
+	for _, item := range media {
+		if item.Features == nil {
+			continue
+		}
+		if _, ok := d.pendingMedia[item.Pos]; !ok {
+			if d.pendingMedia == nil {
+				d.pendingMedia = make(map[int]batch.MediaItem)
+				d.lastDelivered = make(map[int]int)
+			}
+			item.Features = item.Features.Clone()
+			d.scope.Attach(item.Features)
+			d.pendingMedia[item.Pos] = item
+		}
+		d.lastDelivered[item.Pos] = end
+	}
 }
 
-// settle completes any open frontier pair with current, then flushes.
-func (d *mtpDrafter) settle(current *mlx.Array) {
+// flushMedia returns the held rows for a flush batch and drops rows the
+// flush finishes: fully delivered below embedEnd means never embedded
+// again.
+func (d *mtpDraftSession) flushMedia(embedEnd int) []batch.MediaItem {
+	if len(d.pendingMedia) == 0 {
+		return nil
+	}
+	manifest := make([]batch.MediaItem, 0, len(d.pendingMedia))
+	for _, item := range d.pendingMedia {
+		manifest = append(manifest, item)
+	}
+	slices.SortFunc(manifest, func(a, b batch.MediaItem) int { return a.Pos - b.Pos })
+	for pos, last := range d.lastDelivered {
+		if last <= embedEnd {
+			// The flush's forward still reads the row; it dies with the build.
+			d.scope.Detach(d.pendingMedia[pos].Features)
+			delete(d.pendingMedia, pos)
+			delete(d.lastDelivered, pos)
+		}
+	}
+	return manifest
+}
+
+func (d *mtpDraftSession) closeMedia() {
+	for pos, item := range d.pendingMedia {
+		d.scope.Discard(item.Features)
+		delete(d.pendingMedia, pos)
+		delete(d.lastDelivered, pos)
+	}
+}
+
+// settle completes any open frontier pair with next — the token after the
+// last committed slot — and flushes, leveling the draft caches with the
+// target.
+func (d *mtpDraftSession) settle(next *mlx.Array) {
+	if len(d.drafter.spec.draftKV) == 0 {
+		return
+	}
 	if d.frontierHidden != nil && d.frontier-1 == d.committedDraftOffset+d.pendingCount {
-		d.queueCacheWrites(current.ExpandDims(-1), d.frontierHidden)
+		d.queueCacheWrites(next.ExpandDims(-1), d.frontierHidden.Clone())
 	}
 	d.flush()
 }
 
-func (d *mtpDrafter) close() {
+func (d *mtpDraftSession) close() {
 	d.flush()
+	d.closeMedia()
 	d.setFrontierHidden(nil)
 	d.setHeld(nil, nil)
+	d.scope.Close()
 }
 
 // queueCacheWrites buffers completed draft-cache writes — look-ahead tokens
 // fused with their target hiddens — flushing once the buffer reaches the token
-// cap so the pinned hiddens stay bounded. flush coalesces the buffered writes
+// cap so the held hiddens stay bounded. flush coalesces the buffered writes
 // into one head forward, so a contiguous run lands in a single draft-cache extend.
-func (d *mtpDrafter) queueCacheWrites(tokens, hiddens *mlx.Array) {
-	mlx.Pin(tokens, hiddens)
+func (d *mtpDraftSession) queueCacheWrites(tokens, hiddens *mlx.Array) {
+	if d.pending == nil {
+		d.pending = mlx.NewScope()
+	}
+	d.pending.Attach(tokens, hiddens)
 	d.pendingTokens = append(d.pendingTokens, tokens)
 	d.pendingHiddens = append(d.pendingHiddens, hiddens)
 	d.pendingCount += tokens.Dim(1)
@@ -133,12 +210,13 @@ func (d *mtpDrafter) queueCacheWrites(tokens, hiddens *mlx.Array) {
 
 // flush writes the pending pairs to the draft caches in one head forward,
 // dropping speculative entries past the committed range first and holding
-// the last row's logits and projected hidden for the next proposal chain.
-func (d *mtpDrafter) flush() {
+// the last row's logits and aux hidden for the next proposal chain.
+func (d *mtpDraftSession) flush() {
 	if len(d.pendingTokens) == 0 {
 		return
 	}
-	for _, c := range d.spec.draftKV {
+	spec := d.drafter.spec
+	for _, c := range spec.draftKV {
 		if c.Offset() > d.committedDraftOffset {
 			if !c.Restore(nil, d.committedDraftOffset) {
 				panic(fmt.Sprintf("mtp: draft cache rewind to %d failed", d.committedDraftOffset))
@@ -146,109 +224,126 @@ func (d *mtpDrafter) flush() {
 		}
 	}
 
-	ids := mlx.Concatenate(d.pendingTokens, 1)
-	hiddens := mlx.Concatenate(d.pendingHiddens, 1)
-	hidden, projected := d.spec.draft.Draft(&batch.Batch{
-		InputIDs:     ids,
-		SeqOffsets:   []int32{int32(d.committedDraftOffset)},
-		SeqQueryLens: []int32{int32(ids.Dim(1))},
-		Hidden:       hiddens,
-	}, d.spec.caches)
-	d.setHeld(lastHiddenRow(hidden), lastHiddenRow(projected))
-	d.committedDraftOffset += ids.Dim(1)
-
-	// Force the draft writes: a session that never drafts would otherwise
-	// leave the flush chain unevaluated, pinning every hidden until close.
-	state := make([]*mlx.Array, 0, 2*len(d.spec.draftKV))
-	for _, c := range d.spec.draftKV {
-		state = append(state, c.State()...)
-	}
-	mlx.AsyncEval(state...)
-
-	mlx.Unpin(d.pendingTokens...)
-	mlx.Unpin(d.pendingHiddens...)
-	d.pendingTokens, d.pendingHiddens = nil, nil
-	d.pendingCount = 0
+	// Evaluating the state forces the draft writes: a session that never
+	// drafts would otherwise leave the flush chain unevaluated, holding
+	// every hidden until close.
+	n := d.pendingCount
+	out := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		ids, hiddens := d.takePending()
+		// The pair at slot S embeds the look-ahead token S+1, so this flush
+		// embeds prompt tokens up to committedDraftOffset+len+1.
+		hidden, auxHidden := spec.draft.Forward(&batch.Batch{
+			InputIDs:     ids,
+			SeqOffsets:   []int32{int32(d.committedDraftOffset)},
+			SeqQueryLens: []int32{int32(n)},
+			Hidden:       hiddens,
+			Media:        d.flushMedia(d.committedDraftOffset + n + 1),
+			Layout:       d.layout,
+		}, spec.targets, spec.draftKV)
+		out := []*mlx.Array{lastHiddenRow(hidden), lastHiddenRow(auxHidden)}
+		for _, c := range spec.draftKV {
+			out = append(out, c.State()...)
+		}
+		return out
+	})
+	d.setHeld(out[0], out[1])
+	d.committedDraftOffset += n
 }
 
-func (d *mtpDrafter) setFrontierHidden(h *mlx.Array) {
-	mlx.Pin(h)
-	mlx.Unpin(d.frontierHidden)
+// takePending returns the buffered pairs as one batch, advancing past them.
+func (d *mtpDraftSession) takePending() (ids, hiddens *mlx.Array) {
+	ids = mlx.Concatenate(d.pendingTokens, 1)
+	hiddens = mlx.Concatenate(d.pendingHiddens, 1)
+	d.pending.Close()
+	d.pending, d.pendingTokens, d.pendingHiddens, d.pendingCount = nil, nil, nil, 0
+	return ids, hiddens
+}
+
+func (d *mtpDraftSession) setFrontierHidden(h *mlx.Array) {
+	d.scope.Attach(h)
+	d.scope.Discard(d.frontierHidden)
 	d.frontierHidden = h
 }
 
-// setHeld replaces the held flush outputs, pinned until the next flush or close.
-func (d *mtpDrafter) setHeld(hidden, projected *mlx.Array) {
-	mlx.Pin(hidden, projected)
-	mlx.Unpin(d.heldHidden, d.heldProjected)
-	d.heldHidden, d.heldProjected = hidden, projected
+// setHeld replaces the held flush outputs, kept until the next flush or close.
+func (d *mtpDraftSession) setHeld(hidden, auxHidden *mlx.Array) {
+	d.scope.Attach(hidden, auxHidden)
+	d.scope.Discard(d.heldHidden, d.heldAuxHidden)
+	d.heldHidden, d.heldAuxHidden = hidden, auxHidden
 }
 
 // propose drafts a token chain after the not-yet-validated current token.
 // A head with draft caches settles the frontier pair first, so its first step
 // reuses the held frontier row with no head call; a cacheless head re-attends
 // the target caches read-only, anchored at the last committed slot.
-func (d *mtpDrafter) propose(current *mlx.Array, maxTokens int) *draftCandidates {
+func (d *mtpDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandidates {
 	if maxTokens <= 0 || d.frontierHidden == nil {
 		return nil
 	}
-	r := d.spec.r
+	spec := d.drafter.spec
+	r := spec.r
 
-	if len(d.spec.draftKV) > 0 {
+	if len(spec.draftKV) > 0 {
 		d.settle(current)
 		if d.heldHidden == nil {
 			return nil
 		}
 	}
 
-	lastToken := current.ExpandDims(-1)
-	lastHidden := d.frontierHidden
-	draftDists := make([]sampler.Distribution, 0, maxTokens)
-	var prefix *mlx.Array
+	var candidates *draftCandidates
+	mlx.ScopedArrays(func() []*mlx.Array {
+		lastToken := current.ExpandDims(-1)
+		lastHidden := d.frontierHidden
+		draftDists := make([]sampler.Distribution, 0, maxTokens)
+		var prefix *mlx.Array
 
-	for i := range maxTokens {
-		var hidden, projected *mlx.Array
-		if i == 0 && len(d.spec.draftKV) > 0 {
-			// The settle flush already produced the frontier row; reuse it
-			// instead of re-running the head.
-			hidden, projected = d.heldHidden, d.heldProjected
-		} else {
-			// A head with draft caches writes each draft token to the next
-			// draft-cache slot, advancing one per step from the last committed
-			// slot (the held i==0 step stands in for that slot). A cacheless
-			// head stays at the last committed slot every step, re-attending
-			// the committed prefix read-only ("single-position").
-			pos := d.frontier - 1
-			if len(d.spec.draftKV) > 0 {
-				pos = d.frontier - 1 + i
+		for i := range maxTokens {
+			var hidden, auxHidden *mlx.Array
+			if i == 0 && len(spec.draftKV) > 0 {
+				// The settle flush already produced the frontier row; reuse it
+				// instead of re-running the head.
+				hidden, auxHidden = d.heldHidden, d.heldAuxHidden
+			} else {
+				// A head with draft caches writes each draft token to the next
+				// draft-cache slot, advancing one per step from the last committed
+				// slot (the held i==0 step stands in for that slot). A cacheless
+				// head stays at the last committed slot every step, re-attending
+				// the committed prefix read-only ("single-position").
+				pos := d.frontier - 1
+				if len(spec.draftKV) > 0 {
+					pos = d.frontier - 1 + i
+				}
+				hidden, auxHidden = spec.draft.Forward(&batch.Batch{
+					InputIDs:     lastToken,
+					SeqOffsets:   []int32{int32(pos)},
+					SeqQueryLens: []int32{1},
+					Hidden:       lastHidden,
+					Layout:       d.layout,
+				}, spec.targets, spec.draftKV)
 			}
-			hidden, projected = d.spec.draft.Draft(&batch.Batch{
-				InputIDs:     lastToken,
-				SeqOffsets:   []int32{int32(pos)},
-				SeqQueryLens: []int32{1},
-				Hidden:       lastHidden,
-			}, d.spec.caches)
-		}
-		// Unembed only the row being sampled, never the batch.
-		stepLogits := d.spec.draft.Unembed(hidden).Squeeze(1)
-		lastHidden = projected
-		// The chain's earlier drafts ride along as the row's history, so
-		// penalties shape proposals the same way they shape validation.
-		dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
-		nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
+			// Unembed only the row being sampled, never the batch.
+			stepLogits := spec.draft.Unembed(hidden).Squeeze(1)
+			lastHidden = auxHidden
+			// The chain's earlier drafts ride along as the row's history, so
+			// penalties shape proposals the same way they shape validation.
+			dist := r.Sampler.Distribution(pipelineSlot, stepLogits, prefix)
+			nextToken := r.Sampler.SampleDistribution(pipelineSlot, dist)
 
-		lastToken = nextToken.ExpandDims(-1)
-		draftDists = append(draftDists, dist)
-		if prefix == nil {
-			prefix = lastToken
-		} else {
-			prefix = prefix.Concatenate(1, lastToken)
+			lastToken = nextToken.ExpandDims(-1)
+			draftDists = append(draftDists, dist)
+			if prefix == nil {
+				prefix = lastToken
+			} else {
+				prefix = prefix.Concatenate(1, lastToken)
+			}
 		}
-	}
-	return &draftCandidates{
-		tokens: prefix,
-		dist:   sampler.ConcatenateDistributions(draftDists),
-	}
+		candidates = &draftCandidates{
+			tokens: prefix,
+			dist:   sampler.ConcatenateDistributions(draftDists),
+		}
+		return candidates.Arrays()
+	})
+	return candidates
 }
 
 func lastHiddenRow(hidden *mlx.Array) *mlx.Array {

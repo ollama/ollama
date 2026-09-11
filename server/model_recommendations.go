@@ -199,6 +199,9 @@ func (c *modelRecommendationsCache) refresh(ctx context.Context) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
+	if err := cloudProxySignRequest(reqCtx, req); err != nil {
+		return fmt.Errorf("sign model recommendations request: %w", err)
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -360,7 +363,10 @@ func withJitter(d time.Duration) time.Duration {
 
 func cloneModelRecommendations(in []api.ModelRecommendation) []api.ModelRecommendation {
 	out := make([]api.ModelRecommendation, len(in))
-	copy(out, in)
+	for i, rec := range in {
+		out[i] = rec
+		out[i].Thinking = rec.Thinking.Clone()
+	}
 	return out
 }
 

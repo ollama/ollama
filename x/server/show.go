@@ -13,6 +13,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/quant"
 )
 
 func canonicalQuantType(quantType string) string {
@@ -267,13 +268,10 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 					shape[i] = uint64(s)
 				}
 
-				var packFactor int64
-				switch strings.ToLower(info.QuantType) {
-				case "int4", "nvfp4":
-					packFactor = 8
-				case "int8", "mxfp8":
-					packFactor = 4
-				}
+				// Quantized weights are packed into U32 words; report the
+				// logical unpacked shape. PackFactor covers every quant type
+				// the engine produces (including mxfp4) from one table.
+				packFactor := int64(quant.PackFactor(info.QuantType))
 				if packFactor > 0 && len(shape) >= 2 {
 					shape[len(shape)-1] = uint64(info.Shape[len(info.Shape)-1] * packFactor)
 				}
@@ -363,14 +361,7 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 }
 
 func quantTypePrecision(quantType string) int {
-	switch canonicalQuantType(quantType) {
-	case "int4", "nvfp4", "mxfp4":
-		return 4
-	case "int8", "mxfp8":
-		return 8
-	default:
-		return 0
-	}
+	return quant.Bits(quantType)
 }
 
 // safetensorsTensorInfo holds metadata about a tensor from a safetensors header

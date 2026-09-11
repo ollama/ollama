@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -348,6 +349,140 @@ func TestClientDo(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClientWebSearchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebSearchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebSearchResponse{
+			Results: []WebSearchResult{{Title: "Ollama", URL: "https://ollama.com", Content: "models"}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama", MaxResults: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_search" {
+		t.Fatalf("path = %q, want /api/experimental/web_search", gotPath)
+	}
+	if gotRequest.Query != "ollama" || gotRequest.MaxResults != 3 {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if len(resp.Results) != 1 || resp.Results[0].Title != "Ollama" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestClientWebSearchExperimentalErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		assertError func(*testing.T, error)
+	}{
+		{
+			name:   "unauthorized retains sign in URL",
+			status: http.StatusUnauthorized,
+			body:   `{"error":"unauthorized","signin_url":"https://ollama.com/signin/example"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var authErr AuthorizationError
+				if !errors.As(err, &authErr) {
+					t.Fatalf("error = %T, want AuthorizationError", err)
+				}
+				if authErr.StatusCode != http.StatusUnauthorized || authErr.SigninURL != "https://ollama.com/signin/example" {
+					t.Fatalf("authorization error = %#v", authErr)
+				}
+			},
+		},
+		{
+			name:   "rate limit retains status",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":"rate limit exceeded"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var statusErr StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("error = %T, want StatusError", err)
+				}
+				if statusErr.StatusCode != http.StatusTooManyRequests || statusErr.ErrorMessage != "rate limit exceeded" {
+					t.Fatalf("status error = %#v", statusErr)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			_, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama"})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			tt.assertError(t, err)
+		})
+	}
+}
+
+func TestClientWebFetchExperimentalUsesLocalRoute(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	var gotRequest WebFetchRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.NewEncoder(w).Encode(WebFetchResponse{
+			Title:   "Ollama",
+			Content: "models",
+			Links:   []string{"https://ollama.com/library"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.WebFetchExperimental(t.Context(), &WebFetchRequest{URL: "https://ollama.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/experimental/web_fetch" {
+		t.Fatalf("path = %q, want /api/experimental/web_fetch", gotPath)
+	}
+	if gotRequest.URL != "https://ollama.com" {
+		t.Fatalf("request = %#v", gotRequest)
+	}
+	if resp.Title != "Ollama" || resp.Content != "models" {
+		t.Fatalf("response = %#v", resp)
 	}
 }
 

@@ -2,12 +2,14 @@ package ggml
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math/rand/v2"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	fsgguf "github.com/ollama/ollama/fs/gguf"
 )
 
 func TestWriteGGUF(t *testing.T) {
@@ -126,4 +128,142 @@ func TestWriteGGUF(t *testing.T) {
 			t.Error("Decode should reject GGUF files where tensor data extends beyond file size")
 		}
 	})
+}
+
+func TestDecodeRejectsMalformedGGUFMetadata(t *testing.T) {
+	testCases := []struct {
+		name string
+		data func() []byte
+		err  string
+	}{
+		{
+			name: "v1_zero_length_string",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRaw(t, &b, []byte("GGUF"))
+				writeRaw(t, &b, uint32(1))
+				writeRaw(t, &b, uint32(0)) // tensors
+				writeRaw(t, &b, uint32(1)) // key-values
+				writeRaw(t, &b, uint64(0))
+				return b.Bytes()
+			},
+			err: "invalid GGUF v1 string length",
+		},
+		{
+			name: "oversized_string",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 0, 1)
+				writeRaw(t, &b, uint64(fsgguf.MaxStringLength+1))
+				return b.Bytes()
+			},
+			err: "string length",
+		},
+		{
+			name: "oversized_collected_array",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 0, 1)
+				writeRawGGUFString(t, &b, "tokenizer.ggml.tokens")
+				writeRaw(t, &b, ggufTypeArray)
+				writeRaw(t, &b, ggufTypeString)
+				writeRaw(t, &b, uint64(fsgguf.MaxArraySize+1))
+				return b.Bytes()
+			},
+			err: "array size",
+		},
+		{
+			name: "zero_alignment",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 0, 1)
+				writeRawGGUFString(t, &b, "general.alignment")
+				writeRaw(t, &b, ggufTypeUint32)
+				writeRaw(t, &b, uint32(0))
+				return b.Bytes()
+			},
+			err: "invalid GGUF alignment",
+		},
+		{
+			name: "tensor_elements_overflow",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 1, 0)
+				writeRawGGUFString(t, &b, "bad.weight")
+				writeRaw(t, &b, uint32(2))
+				writeRaw(t, &b, ^uint64(0))
+				writeRaw(t, &b, uint64(2))
+				writeRaw(t, &b, uint32(TensorTypeF32))
+				writeRaw(t, &b, uint64(0))
+				return b.Bytes()
+			},
+			err: "elements overflow",
+		},
+		{
+			name: "too_many_tensor_dimensions",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 1, 0)
+				writeRawGGUFString(t, &b, "bad.weight")
+				writeRaw(t, &b, uint32(fsgguf.MaxTensorDims+1))
+				return b.Bytes()
+			},
+			err: "dimensions",
+		},
+		{
+			name: "tensor_row_not_multiple_of_block_size",
+			data: func() []byte {
+				var b bytes.Buffer
+				writeRawGGUFHeader(t, &b, 1, 0)
+				writeRawGGUFString(t, &b, "bad.weight")
+				writeRaw(t, &b, uint32(1))
+				writeRaw(t, &b, uint64(31))
+				writeRaw(t, &b, uint32(TensorTypeQ4_0))
+				writeRaw(t, &b, uint64(0))
+				return b.Bytes()
+			},
+			err: "size overflow",
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Decode panicked: %v", r)
+				}
+			}()
+
+			_, err := Decode(bytes.NewReader(tt.data()), -1)
+			if err == nil {
+				t.Fatal("Decode unexpectedly succeeded")
+			}
+			if !strings.Contains(err.Error(), tt.err) {
+				t.Fatalf("Decode error = %q, want containing %q", err, tt.err)
+			}
+		})
+	}
+}
+
+func writeRawGGUFHeader(t *testing.T, b *bytes.Buffer, tensors, kv uint64) {
+	t.Helper()
+	writeRaw(t, b, []byte("GGUF"))
+	writeRaw(t, b, uint32(3))
+	writeRaw(t, b, tensors)
+	writeRaw(t, b, kv)
+}
+
+func writeRawGGUFString(t *testing.T, b *bytes.Buffer, s string) {
+	t.Helper()
+	writeRaw(t, b, uint64(len(s)))
+	writeRaw(t, b, []byte(s))
+}
+
+func writeRaw(t *testing.T, b *bytes.Buffer, v any) {
+	t.Helper()
+	if err := binary.Write(b, binary.LittleEndian, v); err != nil {
+		t.Fatal(err)
+	}
 }

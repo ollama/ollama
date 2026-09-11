@@ -55,36 +55,32 @@ func Compile(name string, fn CompileFunc, opts ...CompileOption) CompileFunc {
 		once.Do(func() {
 			payload := (*cgo.Handle)(C.malloc(C.size_t(unsafe.Sizeof(cgo.Handle(0)))))
 			*payload = cgo.NewHandle(fn)
-			src := C.mlx_closure_new_func_payload(
+			src := mlxCheck(C.mlx_closure_new_func_payload(
 				(*[0]byte)(C.closureCallback),
 				unsafe.Pointer(payload),
 				(*[0]byte)(C.closureDestructor),
-			)
-			defer C.mlx_closure_free(src)
+			))
+			defer freeClosure(src)
 
-			closure = C.mlx_closure_new()
-			mlxCheck(name+": compile failed", func() C.int {
-				return C.mlx_compile(&closure, src, C.bool(cfg.shapeless))
-			})
+			closure = mlxCheck(C.mlx_closure_new())
+			mlxCheck(C.mlx_compile(&closure, src, C.bool(cfg.shapeless)))
 		})
 
-		inVec := C.mlx_vector_array_new()
-		defer C.mlx_vector_array_free(inVec)
+		inVec := mlxCheck(C.mlx_vector_array_new())
+		defer freeVectorArray(inVec)
 		for _, in := range inputs {
-			C.mlx_vector_array_append_value(inVec, in.ctx)
+			mlxCheck(C.mlx_vector_array_append_value(inVec, in.ctx))
 		}
 
-		outVec := C.mlx_vector_array_new()
-		defer C.mlx_vector_array_free(outVec)
-		mlxCheck(name+": closure apply failed", func() C.int {
-			return C.mlx_closure_apply(&outVec, closure, inVec)
-		})
+		outVec := mlxCheck(C.mlx_vector_array_new())
+		defer freeVectorArray(outVec)
+		mlxCheck(C.mlx_closure_apply(&outVec, closure, inVec))
 
-		n := int(C.mlx_vector_array_size(outVec))
+		n := int(mlxCheck(C.mlx_vector_array_size(outVec)))
 		outputs := make([]*Array, n)
 		for i := range n {
 			outputs[i] = New(name)
-			C.mlx_vector_array_get(&outputs[i].ctx, outVec, C.size_t(i))
+			mlxCheck(C.mlx_vector_array_get(&outputs[i].ctx, outVec, C.size_t(i)))
 		}
 		return outputs
 	}
@@ -124,10 +120,6 @@ func Compile3(name string, fn func(*Array, *Array, *Array) *Array, opts ...Compi
 // single-threaded at this level a plain Go bool suffices.
 var tracing bool
 
-// traceScratch collects arrays created during a compile trace so they can be
-// freed as a group when the callback returns.
-var traceScratch []*Array
-
 //export closureCallback
 func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload unsafe.Pointer) (rc C.int) {
 	defer func() {
@@ -140,33 +132,26 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 	handle := *(*cgo.Handle)(payload)
 	fn := handle.Value().(CompileFunc)
 
-	// When tracing, we track all of the intermediates that are created and free them separately at the end of
-	// the process. This will give the effect of a single op - inputs are owned by the original caller (via
-	// the MLX layer) and outputs are transferred back to MLX to create a new Go side tensor.
+	// The trace runs in its own scope so its intermediates are freed as a
+	// group when the callback returns. This gives the effect of a single op:
+	// inputs are owned by the original caller (via the MLX layer) and outputs
+	// are transferred back to MLX to create a new Go side tensor.
 	if tracing {
 		panic("mlx: nested compile trace")
 	}
 	tracing = true
-	traceScratch = nil
+	s := enterScope()
+	s.noEscape = true
 	defer func() {
-		for _, a := range traceScratch {
-			if a.pinned.Load() > 0 {
-				panic("mlx: traced array was pinned during compilation")
-			}
-			if a.Valid() {
-				C.mlx_array_free(a.ctx)
-				a.ctx.ctx = nil
-			}
-		}
 		tracing = false
-		traceScratch = nil
+		exitScope(s)
 	}()
 
-	n := int(C.mlx_vector_array_size(input))
+	n := int(mlxCheck(C.mlx_vector_array_size(input)))
 	inputs := make([]*Array, n)
 	for i := range n {
 		a := New("")
-		C.mlx_vector_array_get(&a.ctx, input, C.size_t(i))
+		mlxCheck(C.mlx_vector_array_get(&a.ctx, input, C.size_t(i)))
 		inputs[i] = a
 	}
 
@@ -180,7 +165,7 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 		}
 		arrPtr = &handles[0]
 	}
-	C.mlx_vector_array_set_data(res, arrPtr, C.size_t(len(outputs)))
+	mlxCheck(C.mlx_vector_array_set_data(res, arrPtr, C.size_t(len(outputs))))
 	return 0
 }
 

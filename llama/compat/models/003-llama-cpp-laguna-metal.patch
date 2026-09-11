@@ -1,0 +1,42 @@
+diff --git a/src/models/laguna.cpp b/src/models/laguna.cpp
+index 1d705440e..7e708b144 100644
+--- a/src/models/laguna.cpp
++++ b/src/models/laguna.cpp
+@@ -275,16 +275,35 @@ llama_model_laguna::graph::graph(const llama_model & model, const llm_graph_para
+         if ((uint32_t)il >= hparams.n_layer_dense_lead) {
+             // MoE: sigmoid routing + score-correction bias + sum-norm +
+             // routed_scaling_factor (all handled by build_moe_ffn).
++            ggml_tensor * up_scale = nullptr;
++            float expert_weights_scale = hparams.expert_weights_scale;
++
++#if defined(GGML_USE_METAL)
++            const ggml_type down_type = model.layers[il].ffn_down_exps->type;
++            if (n_tokens >= 32 && (ggml_is_quantized(down_type) || down_type == GGML_TYPE_F16)) {
++                // At 32 prompt tokens, Metal switches MUL_MAT_ID from its
++                // range-safe matrix-vector kernel to FP16 matrix tiles.
++                // Laguna's routed SwiGLU activations can overflow those tiles.
++                // Generation uses one token and does not need this workaround.
++                constexpr float down_input_scale = 1.0f / 256.0f;
++                up_scale = ggml_fill(ctx0,
++                        model.layers[il].ffn_exp_probs_b, down_input_scale);
++                expert_weights_scale /= down_input_scale;
++            }
++#endif
++
+             ggml_tensor * moe_out = build_moe_ffn(cur,
+                     model.layers[il].ffn_gate_inp,
+                     model.layers[il].ffn_up_exps,
+                     model.layers[il].ffn_gate_exps,
+                     model.layers[il].ffn_down_exps,
+                     model.layers[il].ffn_exp_probs_b,
+                     n_expert, n_expert_used,
+                     LLM_FFN_SILU,
+                     hparams.expert_weights_norm,
+-                    hparams.expert_weights_scale,
++                    expert_weights_scale,
+                     (llama_expert_gating_func_type) hparams.expert_gating_func,
+-                    il);
++                    il,
++                    nullptr, nullptr,
++                    up_scale);
+             cb(moe_out, "ffn_moe_out", il);

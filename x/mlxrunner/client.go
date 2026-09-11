@@ -26,7 +26,6 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
@@ -43,12 +42,13 @@ type Client struct {
 	status            *llm.StatusWriter
 	mu                sync.Mutex
 	cmd               *exec.Cmd
+	closed            bool
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
 func NewClient(modelName string, softContextLength int) (*Client, error) {
-	if err := imagegen.CheckPlatformSupport(); err != nil {
+	if err := checkPlatformSupport(); err != nil {
 		return nil, err
 	}
 
@@ -68,9 +68,23 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 	return c, nil
 }
 
+func checkPlatformSupport() error {
+	switch runtime.GOOS {
+	case "darwin":
+		if runtime.GOARCH != "arm64" {
+			return fmt.Errorf("MLX on macOS requires Apple Silicon (arm64), got %s", runtime.GOARCH)
+		}
+		return nil
+	case "linux", "windows":
+		return nil
+	default:
+		return fmt.Errorf("MLX is not supported on %s", runtime.GOOS)
+	}
+}
+
 // WaitUntilRunning waits for the subprocess to be ready.
 func (c *Client) WaitUntilRunning(ctx context.Context) error {
-	timeout := time.After(2 * time.Minute)
+	timeout := time.After(envconfig.LoadTimeout())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -98,10 +112,13 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
-	Prompt      string
-	Options     api.Options
-	Logprobs    bool
-	TopLogprobs int
+	Prompt                     string
+	Media                      []llm.MediaData
+	Format                     json.RawMessage
+	Options                    api.Options
+	Logprobs                   bool
+	TopLogprobs                int
+	IncludeIntermediateMetrics bool
 }
 
 type CompletionResponse struct {
@@ -109,10 +126,11 @@ type CompletionResponse struct {
 	Done       bool
 	DoneReason int
 
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	PromptEvalCount       int
+	PromptEvalCachedCount *int
+	PromptEvalDuration    time.Duration
+	EvalCount             int
+	EvalDuration          time.Duration
 
 	Logprobs []llm.Logprob
 
@@ -124,26 +142,42 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.closed = true
 	if c.cmd != nil && c.cmd.Process != nil {
 		slog.Info("stopping mlx runner subprocess", "pid", c.cmd.Process.Pid)
-		c.cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-c.done:
-		case <-time.After(5 * time.Second):
-			c.cmd.Process.Kill()
-		}
+		c.cmd.Process.Kill()
+		<-c.done
 		c.cmd = nil
 	}
 	return nil
 }
 
+// requestGrammar returns the structural tag the runner decodes under: the
+// API's format wrapped into a json_schema tag.
+func requestGrammar(req llm.CompletionRequest) json.RawMessage {
+	schema := req.Format
+	switch string(schema) {
+	case ``, `null`, `""`:
+		return nil
+	case `"json"`:
+		// The API documents "json" as producing a JSON object.
+		schema = json.RawMessage(`{"type":"object"}`)
+	}
+	tag := make(json.RawMessage, 0, len(schema)+64)
+	tag = append(tag, `{"type":"structural_tag","format":{"type":"json_schema","json_schema":`...)
+	tag = append(tag, schema...)
+	return append(tag, `}}`...)
+}
+
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
-		Prompt:      req.Prompt,
-		Logprobs:    req.Logprobs,
-		TopLogprobs: req.TopLogprobs,
+		Prompt:                     req.Prompt,
+		Media:                      req.Media,
+		Format:                     requestGrammar(req),
+		Logprobs:                   req.Logprobs,
+		TopLogprobs:                req.TopLogprobs,
+		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options
@@ -188,14 +222,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 
 		cresp := llm.CompletionResponse{
-			Content:            raw.Content,
-			Done:               raw.Done,
-			DoneReason:         llm.DoneReason(raw.DoneReason),
-			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: raw.PromptEvalDuration,
-			EvalCount:          raw.EvalCount,
-			EvalDuration:       raw.EvalDuration,
-			Logprobs:           raw.Logprobs,
+			Content:               raw.Content,
+			Done:                  raw.Done,
+			DoneReason:            llm.DoneReason(raw.DoneReason),
+			PromptEvalCount:       raw.PromptEvalCount,
+			PromptEvalCachedCount: raw.PromptEvalCachedCount,
+			PromptEvalDuration:    raw.PromptEvalDuration,
+			EvalCount:             raw.EvalCount,
+			EvalDuration:          raw.EvalDuration,
+			Logprobs:              raw.Logprobs,
 		}
 
 		fn(cresp)
@@ -263,11 +298,14 @@ func (c *Client) HasExited() bool {
 }
 
 // Load checks whether the model fits in GPU memory and starts the subprocess.
-func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	if len(gpus) > 0 {
 		modelSize := c.memory.Load()
 		// We currently only use the first GPU with MLX
 		available := gpus[0].FreeMemory
+		if requireFull && gpus[0].Integrated && systemInfo.FreeMemory > 0 && systemInfo.FreeMemory < available {
+			available = systemInfo.FreeMemory
+		}
 		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
 		if available > overhead {
 			available -= overhead
@@ -364,19 +402,24 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		}
 	}
 
-	c.cmd = cmd
-
 	status := llm.NewStatusWriter(os.Stderr)
-	c.status = status
 	// os/exec serializes Write calls when shared, which keeps the status writer
 	// from seeing concurrent stdout/stderr fragments.
 	cmd.Stdout = status
 	cmd.Stderr = status
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil, errors.New("mlx runner client is closed")
+	}
+
+	c.status = status
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
+	c.cmd = cmd
 
 	// Reap subprocess when it exits
 	go func() {

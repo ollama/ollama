@@ -225,6 +225,68 @@ func TestSaveIntegration_EmptyAppName(t *testing.T) {
 	}
 }
 
+func TestSaveIntegrationAutoMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("save and load round-trip", func(t *testing.T) {
+		if err := SaveIntegrationAutoMode("claude", true); err != nil {
+			t.Fatal(err)
+		}
+		config, err := LoadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.AutoMode == nil || !*config.AutoMode {
+			t.Error("expected auto mode to be enabled")
+		}
+	})
+
+	t.Run("saveIntegration preserves auto mode", func(t *testing.T) {
+		if err := SaveIntegration("claude", []string{"model-a"}); err != nil {
+			t.Fatal(err)
+		}
+		config, err := LoadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.AutoMode == nil || !*config.AutoMode {
+			t.Error("expected auto mode to survive a model save")
+		}
+	})
+
+	t.Run("auto mode preserves models", func(t *testing.T) {
+		if err := SaveAliases("claude", map[string]string{"fast": "model-a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := MarkIntegrationOnboarded("claude"); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveIntegrationAutoMode("claude", false); err != nil {
+			t.Fatal(err)
+		}
+		config, err := LoadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.AutoMode == nil || *config.AutoMode {
+			t.Error("expected auto mode to be disabled")
+		}
+		if len(config.Models) != 1 || config.Models[0] != "model-a" {
+			t.Errorf("expected models to be preserved, got %v", config.Models)
+		}
+		if config.Aliases["fast"] != "model-a" || !config.Onboarded {
+			t.Errorf("expected aliases and onboarding state to be preserved, got %+v", config)
+		}
+	})
+
+	t.Run("empty app name", func(t *testing.T) {
+		if err := SaveIntegrationAutoMode("", true); err == nil {
+			t.Error("expected error for empty app name, got nil")
+		}
+	})
+}
+
 func TestLoadIntegration_NonexistentIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

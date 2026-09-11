@@ -520,8 +520,47 @@ func (t Tensor) Elements() uint64 {
 	return count
 }
 
+func (t Tensor) elements() (uint64, bool) {
+	var count uint64 = 1
+	for _, n := range t.Shape {
+		if n != 0 && count > ^uint64(0)/n {
+			return 0, false
+		}
+		count *= n
+	}
+	return count, true
+}
+
 func (t Tensor) Size() uint64 {
 	return t.Elements() * t.typeSize() / t.blockSize()
+}
+
+func (t Tensor) size() (uint64, bool) {
+	elements, ok := t.elements()
+	if !ok {
+		return 0, false
+	}
+
+	typeSize := t.typeSize()
+	blockSize := t.blockSize()
+	if typeSize == 0 || blockSize == 0 {
+		return 0, false
+	}
+
+	rowSize := uint64(1)
+	if len(t.Shape) > 0 {
+		rowSize = t.Shape[0]
+	}
+	if rowSize%blockSize != 0 {
+		return 0, false
+	}
+
+	blocks := elements / blockSize
+	if blocks > ^uint64(0)/typeSize {
+		return 0, false
+	}
+
+	return blocks * typeSize, true
 }
 
 func (t Tensor) Type() string {

@@ -403,7 +403,7 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
 		}
 
-		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)}
+		return &ExpertWeight{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
 	}
 
 	return &ExpertWeight{Weight: w}
@@ -416,6 +416,41 @@ type StackedExpertWeights struct {
 	Biases    *mlx.Array
 	Bits      int
 	GroupSize int
+}
+
+// loadStackedProjection loads an expert projection stored as a single stacked
+// 3D tensor, or nil if base isn't present.
+func loadStackedProjection(tensors map[string]*mlx.Array, base string, useQuantized bool, cfg *Config) *StackedExpertWeights {
+	key := base + ".weight"
+	w := tensors[key]
+	if w == nil {
+		return nil
+	}
+
+	scales := tensors[key+"_scale"]
+	if scales == nil {
+		return &StackedExpertWeights{Weight: w}
+	}
+
+	qbiases := tensors[key+"_qbias"]
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
+		key, w, scales,
+	)
+	if useQuantized && supportsGatherQMM(mode, bits) {
+		return &StackedExpertWeights{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
+	}
+
+	return &StackedExpertWeights{Weight: mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)}
+}
+
+// loadStackedExperts loads a stacked expert projection by its .experts name,
+// falling back to the switch_mlp name older imports use.
+func loadStackedExperts(tensors map[string]*mlx.Array, prefix, projName string, useQuantized bool, cfg *Config) *StackedExpertWeights {
+	if w := loadStackedProjection(tensors, prefix+".mlp.experts."+projName, useQuantized, cfg); w != nil {
+		return w
+	}
+	return loadStackedProjection(tensors, prefix+".mlp.switch_mlp."+projName, useQuantized, cfg)
 }
 
 // collectAndStackExpertWeights loads and stacks expert weights for one projection type.
@@ -462,8 +497,15 @@ func collectAndStackExpertWeights(
 	return result
 }
 
-// sanitizeExpertWeights stacks individual expert weights into tensors.
+// sanitizeExpertWeights resolves the three MoE projections, preferring the
+// stacked on-disk layout and falling back to per-expert tensors.
 func sanitizeExpertWeights(tensors map[string]*mlx.Array, prefix string, numExperts int32, useQuantized bool, cfg *Config) (gate, up, down *StackedExpertWeights) {
+	gate = loadStackedExperts(tensors, prefix, "gate_proj", useQuantized, cfg)
+	up = loadStackedExperts(tensors, prefix, "up_proj", useQuantized, cfg)
+	down = loadStackedExperts(tensors, prefix, "down_proj", useQuantized, cfg)
+	if gate != nil && up != nil && down != nil {
+		return gate, up, down
+	}
 	gate = collectAndStackExpertWeights(tensors, prefix, "gate_proj", numExperts, useQuantized, cfg)
 	up = collectAndStackExpertWeights(tensors, prefix, "up_proj", numExperts, useQuantized, cfg)
 	down = collectAndStackExpertWeights(tensors, prefix, "down_proj", numExperts, useQuantized, cfg)
@@ -490,7 +532,7 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 			w,
 			scales,
 		)
-		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode, nil)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
@@ -701,7 +743,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 // Forward computes the forward pass of the model
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
@@ -717,7 +759,7 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) *mlx.Array {
 	}
 
 	h = m.Norm.Forward(h, m.RMSNormEps)
-	return h
+	return h, h
 }
 
 // Unembed applies the LM head to get logits.
@@ -725,8 +767,14 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.LMHead.Forward(x)
 }
 
-// NumLayers returns the number of transformer layers
-func (m *Model) NumLayers() int { return len(m.Layers) }
+// NewCaches builds a KV cache per layer.
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, len(m.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
 
 // MaxContextLength returns the maximum context length
 func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }

@@ -16,7 +16,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
@@ -55,10 +54,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
-	xcmd "github.com/ollama/ollama/x/cmd"
 	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
-	"github.com/ollama/ollama/x/imagegen"
 )
 
 func init() {
@@ -96,6 +93,8 @@ func init() {
 	}
 
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
+
+	launch.DefaultSpinner = tui.RunSpinner
 }
 
 func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
@@ -192,7 +191,7 @@ func resolveExperimentalLocalModelDir(ref, filename string) string {
 	}
 
 	candidate := filepath.Join(filepath.Dir(filename), ref)
-	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+	if xcreate.IsSafetensorsModelDir(candidate) {
 		return candidate
 	}
 
@@ -230,8 +229,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid model name: %s", modelName)
 	}
 
-	// Check for --experimental flag for safetensors model creation
-	// This gates both safetensors LLM and imagegen model creation
+	// Check for --experimental flag for safetensors model creation.
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
 	if experimental {
@@ -709,6 +707,32 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 	return false
 }
 
+// showOrPullModel returns model info for name, pulling the model if it isn't
+// available locally. If the pull finds no default tag but a ":cloud" tag
+// exists, the user may be offered the cloud model instead (see
+// pullWithCloudSuggestion), in which case the returned name is the cloud
+// name the caller should continue with. verb is the user-facing command
+// ("run" or "pull") used in hint text.
+func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecure bool, verb string) (*api.ShowResponse, string, error) {
+	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+	if err == nil {
+		return info, name, nil
+	}
+
+	var se api.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusNotFound || modelref.HasExplicitCloudSource(name) {
+		return nil, name, err
+	}
+
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	if err != nil {
+		return nil, name, err
+	}
+
+	info, err = client.Show(cmd.Context(), &api.ShowRequest{Model: resolved})
+	return info, resolved, err
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -804,30 +828,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
-	requestedCloud := modelref.HasExplicitCloudSource(name)
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
 
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: name}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{name}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-		}
-		return info, err
-	}()
+	info, name, err := showOrPullModel(cmd, client, args[0], insecure, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	// The model may have been resolved to a different name (e.g. its ":cloud"
+	// variant), so make sure downstream requests use it.
+	opts.Model = name
 
 	ensureCloudStub(cmd.Context(), client, name)
 
@@ -877,18 +892,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
-	// Check if this is an image generation model
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
-		if opts.Prompt == "" && !interactive {
-			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
-		}
-		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+		return errors.New("image generation models are not currently supported")
 	}
-
-	// Check for experimental flag
-	isExperimental, _ := cmd.Flags().GetBool("experimental")
-	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
-	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -914,11 +920,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 				fmt.Println()
 				fmt.Println()
 			}
-		}
-
-		// Use experimental agent loop with tools
-		if isExperimental {
-			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
 		}
 
 		return generateInteractive(cmd, opts)
@@ -1257,6 +1258,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if slices.Contains(resp.Capabilities, model.CapabilityImage) {
+		return errors.New("image generation models are not currently supported")
+	}
+
 	if flagsSet == 1 {
 		switch showType {
 		case "license":
@@ -1518,6 +1523,15 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	return err
+}
+
+// pullModelWithProgress pulls name, rendering progress to stderr. When
+// clearNotFound is set and the pull fails because the model doesn't exist,
+// the progress display is erased rather than left behind; callers set it
+// when a ":cloud" suggestion prompt may immediately follow the failure.
+func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1578,8 +1592,13 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	request := api.PullRequest{Name: name, Insecure: insecure}
+	err := client.Pull(ctx, &request, fn)
+	if clearNotFound && isPullNotFoundErr(err) {
+		// The deferred Stop becomes a no-op after this.
+		p.StopAndClear()
+	}
+	return err
 }
 
 type generateContextKey string
@@ -2066,7 +2085,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
 			return err
 		}
-		if err := startApp(cmd.Context(), client); err != nil {
+		if err := startApp(cmd.Context(), client); err != nil { //nolint:staticcheck,nolintlint // startApp always returns non-nil on Linux (start_default.go) but can return nil on macOS/Windows
 			return err
 		}
 	}
@@ -2108,116 +2127,42 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
-// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
-func ensureServerRunning(ctx context.Context) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	// Check if server is already running
-	if err := client.Heartbeat(ctx); err == nil {
-		return nil // server is already running
-	}
-
-	// Server not running, start it in the background
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("could not find executable: %w", err)
-	}
-
-	serverCmd := exec.CommandContext(ctx, exe, "serve")
-	serverCmd.Env = os.Environ()
-	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
-	if err := serverCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start server: %w", err)
-	}
-
-	// Wait for the server to be ready
-	for {
-		time.Sleep(500 * time.Millisecond)
-		if err := client.Heartbeat(ctx); err == nil {
-			return nil // server has started
-		}
-	}
-}
-
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
-	opts := runOptions{
-		Model:       modelName,
-		WordWrap:    os.Getenv("TERM") == "xterm-256color",
-		Options:     map[string]any{},
-		ShowConnect: true,
-	}
-
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	requestedCloud := modelref.HasExplicitCloudSource(modelName)
-
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: modelName}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{modelName}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: modelName})
-		}
-		return info, err
-	}()
+	opts := agentTUIOptions{
+		Model:   modelName,
+		Options: map[string]any{},
+	}
+	info, err := prepareAgentModel(cmd, client, &opts, false)
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	opts.System = info.System
 
-	ensureCloudStub(cmd.Context(), client, modelName)
-
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
-	if err != nil {
+	if err := saveLastAgentModel(opts.Model); err != nil {
 		return err
 	}
-
-	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
-
-	// TODO: remove the projector info and vision info checks below,
-	// these are left in for backwards compatibility with older servers
-	// that don't have the capabilities field in the model info
-	if len(info.ProjectorInfo) != 0 {
-		opts.MultiModal = true
-	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
+	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
+		if handleCloudAuthorizationError(err) {
+			return nil
 		}
-	}
-
-	applyShowResponseToRunOptions(&opts, info)
-
-	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
-	}
-	if err := generateInteractive(cmd, opts); err != nil {
-		return fmt.Errorf("error running model: %w", err)
+		return fmt.Errorf("error running agent: %w", err)
 	}
 	return nil
 }
 
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
-	// Ensure the server is running before showing the TUI
-	if err := ensureServerRunning(cmd.Context()); err != nil {
-		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+	// Ensure the server is running via the shared checkServerHeartbeat path.
+	if err := checkServerHeartbeat(cmd, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return
 	}
 
@@ -2324,7 +2269,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 
 func launcherActionExitsLoop(integration string) bool {
 	switch integration {
-	case "codex-app", "vscode":
+	case "chatgpt", "codex-app", "vscode":
 		return true
 	default:
 		return false
@@ -2413,15 +2358,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
-	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
-	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
-
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2564,7 +2500,6 @@ func NewCLI() *cobra.Command {
 	} {
 		switch cmd {
 		case runCmd:
-			imagegen.AppendFlagsDocs(cmd)
 			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{
