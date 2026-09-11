@@ -3768,3 +3768,107 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+// A visible-devices filter renumbers the child's devices from zero, so
+// vramByDevice/systemFreeAtLoad are keyed by deviceLogKeys, not discovery names.
+func TestVRAMByGPUUsesChildLogKeys(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+
+	tests := []struct {
+		name          string
+		gpus          []ml.DeviceInfo
+		deviceLogKeys []string
+		vramByDevice  map[string]uint64
+		query         ml.DeviceID
+		want          uint64
+	}{
+		{
+			// Single-GPU placement: always masked to CUDA0 in the child,
+			// regardless of discovery index.
+			name: "device at discovery index 1 is charged",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}, Name: "CUDA1", TotalMemory: 24 * gib},
+			},
+			deviceLogKeys: []string{"CUDA0"},
+			vramByDevice:  map[string]uint64{"CUDA0": 2 * gib},
+			query:         ml.DeviceID{Library: "CUDA", ID: "1"},
+			want:          2 * gib,
+		},
+		{
+			// Keying on the discovery name here does not miss: it hits the
+			// entry belonging to the other device, returning 3 GiB.
+			name: "masked subset does not read the neighbouring device",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}, Name: "CUDA1", TotalMemory: 24 * gib},
+				{DeviceID: ml.DeviceID{Library: "CUDA", ID: "2"}, Name: "CUDA2", TotalMemory: 24 * gib},
+			},
+			deviceLogKeys: []string{"CUDA0", "CUDA1"},
+			vramByDevice:  map[string]uint64{"CUDA0": 2 * gib, "CUDA1": 3 * gib},
+			query:         ml.DeviceID{Library: "CUDA", ID: "1"},
+			want:          2 * gib,
+		},
+		{
+			name: "unfiltered runner keys on the discovery name",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}, Name: "CUDA1", TotalMemory: 24 * gib},
+				{DeviceID: ml.DeviceID{Library: "Vulkan", ID: "0"}, Name: "Vulkan0", TotalMemory: 24 * gib},
+			},
+			deviceLogKeys: []string{"CUDA1", "Vulkan0"},
+			vramByDevice:  map[string]uint64{"CUDA1": 2 * gib, "Vulkan0": 3 * gib},
+			query:         ml.DeviceID{Library: "Vulkan", ID: "0"},
+			want:          3 * gib,
+		},
+		{
+			// Runners without launch-time keys fall back to the discovery name.
+			name: "no log keys recorded falls back to discovery name",
+			gpus: []ml.DeviceInfo{
+				{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}, Name: "CUDA1", TotalMemory: 24 * gib},
+			},
+			deviceLogKeys: nil,
+			vramByDevice:  map[string]uint64{"CUDA1": 2 * gib},
+			query:         ml.DeviceID{Library: "CUDA", ID: "1"},
+			want:          2 * gib,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{
+				gpus:          tt.gpus,
+				deviceLogKeys: tt.deviceLogKeys,
+				vramByDevice:  tt.vramByDevice,
+			}
+			if got := runner.VRAMByGPU(tt.query); got != tt.want {
+				t.Errorf("VRAMByGPU(%v) = %d, want %d", tt.query, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetDeviceInfosUsesChildLogKeys(t *testing.T) {
+	const gib = 1024 * 1024 * 1024
+
+	// Arm B of the reproduction: a 2 GiB model on the device discovery calls
+	// CUDA1. Keyed on the discovery name the lookup misses, free memory comes
+	// back as TotalMemory, and the scheduler keeps treating the card as empty.
+	runner := &llamaServerRunner{
+		gpus: []ml.DeviceInfo{
+			{DeviceID: ml.DeviceID{Library: "CUDA", ID: "1"}, Name: "CUDA1", TotalMemory: 24 * gib},
+		},
+		deviceLogKeys:    []string{"CUDA0"},
+		vramByDevice:     map[string]uint64{"CUDA0": 2 * gib},
+		systemFreeAtLoad: map[string]uint64{"CUDA0": 23 * gib},
+	}
+
+	infos := runner.GetDeviceInfos(context.Background())
+	if len(infos) != 1 {
+		t.Fatalf("got %d device infos, want 1", len(infos))
+	}
+	// min(24 - 2, 23 - 2) = 21
+	if got, want := infos[0].FreeMemory, uint64(21*gib); got != want {
+		t.Errorf("FreeMemory = %d GiB, want %d GiB", got/gib, want/gib)
+	}
+	if infos[0].FreeMemory == infos[0].TotalMemory {
+		t.Error("device reported fully free while holding a model")
+	}
+}

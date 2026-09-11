@@ -154,6 +154,12 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
+	// deviceLogKeys[i] is the name llama-server uses for gpus[i] in its
+	// log output, may differ from gpus[i].Name when the child only sees a
+	// filtered subset of devices (zero indexed). Recorded at
+	// launch; keys match vramByDevice and systemFreeAtLoad.
+	deviceLogKeys []string
+
 	ggml          *ggml.GGML
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
@@ -920,7 +926,7 @@ func NewLlamaServerRunner(
 	memWriter := &memoryParsingWriter{inner: status}
 
 	mediaMarker := newLlamaServerMediaMarker()
-	extraEnvs := ml.GetDevicesEnv(gpus)
+	extraEnvs, deviceLogKeys := ml.GetDevicesEnvAndLogNames(gpus)
 	serverEnvs := make(map[string]string, len(extraEnvs)+1)
 	for k, v := range extraEnvs {
 		serverEnvs[k] = v
@@ -954,6 +960,7 @@ func NewLlamaServerRunner(
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
+		deviceLogKeys:    deviceLogKeys,
 		ggml:             f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
@@ -2617,7 +2624,8 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 	infos := make([]ml.DeviceInfo, len(s.gpus))
 	for i, gpu := range s.gpus {
 		infos[i] = gpu
-		used := s.vramByDevice[gpu.Name]
+		logKey := s.deviceLogKey(i, gpu)
+		used := s.vramByDevice[logKey]
 
 		// Our accounting: total minus what we allocated
 		var accountedFree uint64
@@ -2629,7 +2637,7 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 		// we've allocated since. This captures external consumers on platforms
 		// where the driver reports accurately.
 		systemFree := accountedFree // default to our accounting
-		if sysFree, ok := s.systemFreeAtLoad[gpu.Name]; ok {
+		if sysFree, ok := s.systemFreeAtLoad[logKey]; ok {
 			if used < sysFree {
 				systemFree = sysFree - used
 			} else {
@@ -2870,11 +2878,22 @@ func (s *llamaServerRunner) VRAMByGPU(id ml.DeviceID) uint64 {
 
 	// Map DeviceID to the log device name used by llama-server.
 	// Discovery stores the device name (e.g., "CUDA0", "ROCm0", "MTL0") from
-	// --list-devices stdout, which matches the buffer log prefix.
-	for _, gpu := range s.gpus {
+	// --list-devices stdout, but that only matches the child's own log prefix
+	// when nothing was filtered. See deviceLogKeys.
+	for i, gpu := range s.gpus {
 		if gpu.DeviceID == id {
-			return s.vramByDevice[gpu.Name]
+			return s.vramByDevice[s.deviceLogKey(i, gpu)]
 		}
 	}
 	return 0
+}
+
+// deviceLogKey returns the name llama-server uses for s.gpus[i] in its own
+// log output. gpu must be s.gpus[i]; falls back to gpu.Name if no log key
+// was recorded at launch.
+func (s *llamaServerRunner) deviceLogKey(i int, gpu ml.DeviceInfo) string {
+	if i < len(s.deviceLogKeys) && s.deviceLogKeys[i] != "" {
+		return s.deviceLogKeys[i]
+	}
+	return gpu.Name
 }
