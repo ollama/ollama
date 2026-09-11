@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +21,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1629,6 +1633,191 @@ func TestCreateHandlerRejectsForceForGGUF(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--force is only supported for local MLX safetensors imports") {
 		t.Fatalf("error = %v, want GGUF force error", err)
 	}
+}
+
+func TestSharedBlobStore(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	blobs, err := manifest.BlobsPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoBlobs := func(t *testing.T) {
+		t.Helper()
+		entries, err := os.ReadDir(blobs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("blob store has %d entries after the probe, want 0", len(entries))
+		}
+	}
+
+	// A server that stats the same blob directory this process writes to.
+	shared := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		blob, err := manifest.BlobsPath(strings.TrimPrefix(r.URL.Path, "/api/blobs/"))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if _, err := os.Stat(blob); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer shared.Close()
+	separate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer separate.Close()
+
+	t.Run("shared store", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", shared.URL)
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sharedBlobStore(t.Context(), client) {
+			t.Fatal("sharedBlobStore() = false, want true")
+		}
+		assertNoBlobs(t)
+	})
+
+	t.Run("separate store", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", separate.URL)
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sharedBlobStore(t.Context(), client) {
+			t.Fatal("sharedBlobStore() = true, want false")
+		}
+		assertNoBlobs(t)
+	})
+
+	t.Run("OLLAMA_CREATE_REMOTE forces upload", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", shared.URL)
+		t.Setenv("OLLAMA_CREATE_REMOTE", "1")
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sharedBlobStore(t.Context(), client) {
+			t.Fatal("sharedBlobStore() = true, want false")
+		}
+		assertNoBlobs(t)
+	})
+}
+
+// blobServer mocks the blob endpoints: HEAD reports what it has, POST stores.
+type blobServer struct {
+	mu    sync.Mutex
+	have  map[string]bool
+	posts int
+}
+
+func (s *blobServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	digest := strings.TrimPrefix(r.URL.Path, "/api/blobs/")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch r.Method {
+	case http.MethodHead:
+		if s.have[digest] {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	case http.MethodPost:
+		io.Copy(io.Discard, r.Body)
+		s.have[digest] = true
+		s.posts++
+		w.WriteHeader(http.StatusCreated)
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
+}
+
+func TestCreateBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	src := filepath.Join(t.TempDir(), "model.gguf")
+	data := []byte("blob contents")
+	if err := os.WriteFile(src, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+
+	newClient := func(t *testing.T, have ...string) (*api.Client, *blobServer) {
+		t.Helper()
+		bs := &blobServer{have: make(map[string]bool)}
+		for _, d := range have {
+			bs.have[d] = true
+		}
+		server := httptest.NewServer(bs)
+		t.Cleanup(server.Close)
+		t.Setenv("OLLAMA_HOST", server.URL)
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return client, bs
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	p := progress.NewProgress(io.Discard)
+	defer p.Stop()
+
+	t.Run("skips blobs the server already has", func(t *testing.T) {
+		client, bs := newClient(t, digest)
+		if _, err := createBlob(cmd, client, src, digest, p, false); err != nil {
+			t.Fatal(err)
+		}
+		if bs.posts != 0 {
+			t.Fatalf("posts = %d, want 0", bs.posts)
+		}
+	})
+
+	t.Run("uploads to a separate store", func(t *testing.T) {
+		client, bs := newClient(t)
+		if _, err := createBlob(cmd, client, src, digest, p, false); err != nil {
+			t.Fatal(err)
+		}
+		if bs.posts != 1 || !bs.have[digest] {
+			t.Fatalf("posts = %d, have = %v, want one upload of %s", bs.posts, bs.have, digest)
+		}
+	})
+
+	t.Run("writes directly to a shared store", func(t *testing.T) {
+		client, bs := newClient(t)
+		if _, err := createBlob(cmd, client, src, digest, p, true); err != nil {
+			t.Fatal(err)
+		}
+		if bs.posts != 0 {
+			t.Fatalf("posts = %d, want 0", bs.posts)
+		}
+		blob, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := os.ReadFile(blob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("blob contents = %q, want %q", got, data)
+		}
+	})
+
+	t.Run("rejects a file whose digest changed", func(t *testing.T) {
+		client, _ := newClient(t)
+		_, err := createBlob(cmd, client, src, "sha256:"+strings.Repeat("0", 64), p, true)
+		if err == nil || !strings.Contains(err.Error(), "changed during create") {
+			t.Fatalf("error = %v, want digest mismatch", err)
+		}
+	})
 }
 
 func TestCreateHandlerRejectsAdaptersBeforeUpload(t *testing.T) {

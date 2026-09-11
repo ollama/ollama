@@ -4,8 +4,10 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,12 +124,34 @@ func ensureMLXLibraryPath(t *testing.T) {
 // runOllamaCreate runs "ollama create" as a subprocess.
 func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 	t.Helper()
+	runOllamaCreateWithEnv(ctx, t, nil, args...)
+}
+
+// runOllamaCreateWithEnv runs "ollama create" as a subprocess with extra
+// environment variables layered over the test process environment.
+func runOllamaCreateWithEnv(ctx context.Context, t *testing.T, env []string, args ...string) {
+	t.Helper()
 	createCmd := exec.CommandContext(ctx, ollamaBin(), append([]string{"create"}, args...)...)
+	createCmd.Env = append(os.Environ(), env...)
 	createCmd.Stdout = os.Stdout
 	createCmd.Stderr = os.Stderr
 	if err := createCmd.Run(); err != nil {
 		t.Fatalf("ollama create failed: %v", err)
 	}
+}
+
+func fileDigest(t *testing.T, path string) string {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		t.Fatal(err)
+	}
+	return fmt.Sprintf("sha256:%x", h.Sum(nil))
 }
 
 func isolateCreateModelStore(t *testing.T) {
@@ -294,6 +318,103 @@ func runCreateGGUF(t *testing.T) {
 	text := output.String()
 	t.Logf("Generated output: %q", text)
 	assertCoherentOutput(t, text)
+}
+
+// runCreateGGUFBlobTransfer checks how "ollama create" gets a local GGUF into
+// the server's blob store: written directly when the CLI and server share a
+// models directory, uploaded over HTTP when they do not or when
+// OLLAMA_CREATE_REMOTE is set. The harness-started server's request log is
+// the evidence, so an external server cannot be used.
+func runCreateGGUFBlobTransfer(t *testing.T) {
+	if testModel != "" {
+		t.Skip("exercises create pipeline with a fixed source model, not applicable with model override")
+	}
+	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {
+		t.Skip("inspects the harness-started server's request log")
+	}
+	modelDir := filepath.Join(testdataModelsDir, "Llama-3.2-1B-GGUF")
+	downloadHFModel(t, llama32GGUFRepo, llama32GGUFRevision, modelDir,
+		"--include", llama32GGUFFile)
+	absGGUF, err := filepath.Abs(filepath.Join(modelDir, llama32GGUFFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fileDigest(t, absGGUF)
+	modelfile := filepath.Join(t.TempDir(), "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM "+absGGUF+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name          string
+		env           []string
+		separateStore bool
+		wantUpload    bool
+	}{
+		{name: "shared store writes directly"},
+		{name: "OLLAMA_CREATE_REMOTE forces upload", env: []string{"OLLAMA_CREATE_REMOTE=1"}, wantUpload: true},
+		{name: "separate store falls back to upload", separateStore: true, wantUpload: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCreateModelStore(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+			defer cancel()
+
+			client, _, cleanup := InitServerConnection(ctx, t)
+			stopped := false
+			stop := func() {
+				if !stopped {
+					stopped = true
+					cleanup()
+				}
+			}
+			t.Cleanup(stop)
+
+			env := tc.env
+			var cliModels string
+			if tc.separateStore {
+				cliModels = t.TempDir()
+				env = append(env, "OLLAMA_MODELS="+cliModels)
+			}
+
+			modelName := createIntegrationModelName("test-gguf-blob-transfer")
+			runOllamaCreateWithEnv(ctx, t, env, modelName, "-f", modelfile)
+
+			if _, err := client.Show(ctx, &api.ShowRequest{Model: modelName}); err != nil {
+				t.Fatalf("show after create: %v", err)
+			}
+			if exists, err := client.HeadBlob(ctx, digest); err != nil || !exists {
+				t.Fatalf("server blob %s: exists=%v err=%v, want present", digest, exists, err)
+			}
+			if cliModels != "" {
+				entries, err := os.ReadDir(filepath.Join(cliModels, "blobs"))
+				if err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if len(entries) > 0 {
+					t.Fatalf("CLI store %s has %d leftover blobs, want none", cliModels, len(entries))
+				}
+			}
+
+			// The server must have exited before its buffered request log is complete.
+			stop()
+			uploaded := false
+			var blobRequests []string
+			for _, line := range strings.Split(serverLog.String(), "\n") {
+				if !strings.Contains(line, "/api/blobs/") {
+					continue
+				}
+				blobRequests = append(blobRequests, line)
+				if strings.Contains(line, "POST") && strings.Contains(line, "/api/blobs/"+digest) {
+					uploaded = true
+				}
+			}
+			if uploaded != tc.wantUpload {
+				t.Fatalf("blob uploaded over HTTP = %v, want %v; blob requests:\n%s", uploaded, tc.wantUpload, strings.Join(blobRequests, "\n"))
+			}
+		})
+	}
 }
 
 // assertCoherentOutput checks that model output looks like real language, not
