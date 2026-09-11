@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
@@ -315,4 +316,64 @@ func (r *chunkRecorder) Write(p []byte) (int, error) {
 	cp := append([]byte(nil), p...)
 	r.chunks = append(r.chunks, cp)
 	return len(p), nil
+}
+
+// TestCloudProxyTTFBTimeoutFailsFast verifies that a cloud upstream that
+// accepts the connection but never sends a response header is aborted by the
+// response-header timeout instead of hanging the request indefinitely.
+func TestCloudProxyTTFBTimeoutFailsFast(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	// A handler that reads the request but never writes a response, simulating
+	// a stalled cloud upstream.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+
+	originalBaseURL := cloudProxyBaseURL
+	originalTimeout := cloudProxyResponseHeaderTimeout
+	originalClient := cloudProxyHTTPClient
+	cloudProxyBaseURL = upstream.URL
+	cloudProxyResponseHeaderTimeout = 200 * time.Millisecond
+	cloudProxyHTTPClient = newCloudProxyHTTPClient()
+	t.Cleanup(func() {
+		cloudProxyBaseURL = originalBaseURL
+		cloudProxyResponseHeaderTimeout = originalTimeout
+		cloudProxyHTTPClient = originalClient
+	})
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	reqBody := `{"model":"kimi-k2.5:cloud","prompt":"hello","stream":false}`
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/generate", bytes.NewBufferString(reqBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	start := time.Now()
+	resp, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	elapsed := time.Since(start)
+
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", resp.StatusCode)
+	}
+
+	// The request must fail fast (bounded by the TTFB timeout), not hang.
+	if elapsed > 5*time.Second {
+		t.Fatalf("expected fast failure, took %v", elapsed)
+	}
 }
