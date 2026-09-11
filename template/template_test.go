@@ -614,6 +614,83 @@ func TestCollate(t *testing.T) {
 	}
 }
 
+func TestCollateDoesNotMutateInput(t *testing.T) {
+	cases := []struct {
+		name string
+		msgs []api.Message
+	}{
+		{
+			name: "consecutive user messages",
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "user", Content: "How are you?"},
+			},
+		},
+		{
+			name: "consecutive system messages",
+			msgs: []api.Message{
+				{Role: "system", Content: "You are helpful"},
+				{Role: "system", Content: "Answer briefly"},
+				{Role: "user", Content: "Hello"},
+			},
+		},
+		{
+			name: "runs of several roles",
+			msgs: []api.Message{
+				{Role: "system", Content: "A"},
+				{Role: "system", Content: "B"},
+				{Role: "system", Content: "C"},
+				{Role: "user", Content: "D"},
+				{Role: "user", Content: "E"},
+				{Role: "assistant", Content: "F"},
+				{Role: "assistant", Content: "G"},
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			want := slices.Clone(tt.msgs)
+			collate(tt.msgs)
+			if diff := cmp.Diff(tt.msgs, want); diff != "" {
+				t.Errorf("collate mutated its input (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestExecuteDoesNotMutateMessages(t *testing.T) {
+	tmpl, err := Parse(`{{- range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msgs := []api.Message{
+		{Role: "system", Content: "You are helpful"},
+		{Role: "system", Content: "Answer briefly"},
+		{Role: "user", Content: "Hello"},
+		{Role: "user", Content: "Are you there?"},
+	}
+	want := slices.Clone(msgs)
+
+	// Rendering the same messages twice must produce the same output; it does
+	// not if Execute writes merged content back into the caller's slice.
+	var first, second bytes.Buffer
+	if err := tmpl.Execute(&first, Values{Messages: msgs}); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(msgs, want); diff != "" {
+		t.Errorf("Execute mutated its input messages (-got +want):\n%s", diff)
+	}
+	if err := tmpl.Execute(&second, Values{Messages: msgs}); err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(second.String(), first.String()); diff != "" {
+		t.Errorf("rendering the same messages twice differs (-second +first):\n%s", diff)
+	}
+}
+
 func TestTemplateArgumentsJSON(t *testing.T) {
 	// Test that {{ .Function.Arguments }} outputs valid JSON, not map[key:value]
 	tmpl := `{{- range .Messages }}{{- range .ToolCalls }}{{ .Function.Arguments }}{{- end }}{{- end }}`
