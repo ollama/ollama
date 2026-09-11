@@ -46,8 +46,8 @@ type menuItem struct {
 }
 
 var runModelMenuItem = menuItem{
-	title:       "Chat, Code, & Work",
-	description: "Chat with models, code, search the web, and delegate real work",
+	title:       "Chat with a model",
+	description: "Start an interactive chat with a model",
 	isRunModel:  true,
 }
 

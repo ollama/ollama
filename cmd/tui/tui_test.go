@@ -114,8 +114,8 @@ func TestMenuRendersRootLaunchChoices(t *testing.T) {
 
 	view := menu.View()
 	for _, want := range []string{
-		"Chat, Code, & Work",
-		"Chat with models, code, search the web, and delegate real work",
+		"Chat with a model",
+		"Start an interactive chat with a model",
 		"Launch Claude Code",
 		"Launch OpenCode",
 		"Launch Hermes Agent",

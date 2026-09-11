@@ -2390,3 +2390,44 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+func TestRunCommandHasNoAgentFlags(t *testing.T) {
+	root := NewCLI()
+	run, _, err := root.Find([]string{"run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"resume", "headless", "auto-approve-tools", "skill", "experimental", "experimental-yolo", "experimental-websearch"} {
+		if flag := run.Flags().Lookup(name); flag != nil {
+			t.Errorf("run command still exposes former agent flag --%s", name)
+		}
+	}
+}
+
+func TestFormerAgentEntryPointsAreRejected(t *testing.T) {
+	tests := [][]string{
+		{"run", "llama3", "--resume"},
+		{"run", "llama3", "--headless"},
+		{"run", "llama3", "--auto-approve-tools"},
+		{"run", "llama3", "--skill", "release-notes"},
+		{"run", "llama3", "--experimental"},
+		{"run", "llama3", "--experimental-yolo"},
+		{"run", "llama3", "--experimental-websearch"},
+		{"agent"},
+	}
+
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := NewCLI()
+			root.SetArgs(args)
+			err := root.Execute()
+			if err == nil {
+				t.Fatalf("former agent entry point %q succeeded", args)
+			}
+			if !strings.Contains(err.Error(), "unknown") {
+				t.Fatalf("former agent entry point %q returned %v, want unknown command or flag", args, err)
+			}
+		})
+	}
+}
