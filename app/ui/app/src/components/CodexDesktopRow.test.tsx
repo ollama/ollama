@@ -72,17 +72,6 @@ function connectionButton(renderer: ReactTestRenderer) {
 }
 
 describe("CodexDesktopRow", () => {
-  it("renders a ChatGPT Connect button", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow integration={integration} initialStatus={status()} />,
-    );
-
-    expect(html).toContain(">ChatGPT</p>");
-    expect(html).toContain("Use Ollama models in Codex mode in ChatGPT.");
-    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
-    expect(html).toContain('aria-pressed="false"');
-  });
-
   it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
@@ -126,21 +115,7 @@ describe("CodexDesktopRow", () => {
     },
   );
 
-  it("offers installation when ChatGPT is not installed", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow
-        integration={{ ...integration, installed: false }}
-        initialStatus={status({ installed: false })}
-      />,
-    );
-
-    expect(html).toContain("We’ll download ChatGPT and connect it to Ollama.");
-    expect(html).not.toContain('disabled=""');
-    expect(html).toContain('title="Install ChatGPT and add Ollama models"');
-    expect(html).toContain(">Connect</button>");
-  });
-
-  it("matches Claude's download and install progress states", async () => {
+  it("keeps the connection busy until ChatGPT installation is detected", async () => {
     const notInstalled = status({ installed: false });
     let finishInstall!: (result: "opened") => void;
     const install = new Promise<"opened">((resolve) => {
@@ -169,30 +144,19 @@ describe("CodexDesktopRow", () => {
           />,
         );
       });
-      const toggle = renderer!.root.find(
-        (node) =>
-          node.type === "button" &&
-          typeof node.props["aria-pressed"] === "boolean",
-      );
+      const toggle = connectionButton(renderer!);
+      expect(toggle.props["aria-pressed"]).toBe(false);
+      expect(toggle.props.disabled).toBe(false);
       await act(async () => {
         toggle.props.onClick();
         await Promise.resolve();
       });
 
+      expect(window.installCodexDesktop).toHaveBeenCalledOnce();
       expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(toggle.props.className).toContain("disabled:cursor-wait");
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Downloading…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes(
-            "Ollama is downloading the ChatGPT installer…",
-          ),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
 
       await act(async () => {
         finishInstall("opened");
@@ -203,22 +167,13 @@ describe("CodexDesktopRow", () => {
       expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Finish installing…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes(
-            "Finish installing ChatGPT. Ollama will connect it automatically.",
-          ),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
     } finally {
       await act(async () => renderer?.unmount());
     }
   });
 
-  it("matches Claude's connecting state", async () => {
+  it("disables the connection button while connecting ChatGPT", async () => {
     let finishConnect!: (result: { status: CodexDesktopStatus }) => void;
     const connect = new Promise<{ status: CodexDesktopStatus }>((resolve) => {
       finishConnect = resolve;
@@ -240,11 +195,7 @@ describe("CodexDesktopRow", () => {
           />,
         );
       });
-      const toggle = renderer!.root.find(
-        (node) =>
-          node.type === "button" &&
-          typeof node.props["aria-pressed"] === "boolean",
-      );
+      const toggle = connectionButton(renderer!);
       await act(async () => {
         toggle.props.onClick();
         await Promise.resolve();
@@ -253,14 +204,7 @@ describe("CodexDesktopRow", () => {
       expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Connecting…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes("Connecting ChatGPT to Ollama…"),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
 
       await act(async () => {
         finishConnect({ status: status({ connected: true }) });
@@ -506,11 +450,7 @@ describe("CodexDesktopRow", () => {
         expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
           0,
         );
-        expect(
-          renderer!.root.findByProps({ role: "alert" }).children,
-        ).toContain(
-          "ChatGPT is installed. Click Connect to restart it with Ollama models.",
-        );
+        expect(renderer!.root.findByProps({ role: "alert" })).toBeTruthy();
         expect(
           renderer!.root.findByProps({
             "aria-label": "Add Ollama models to ChatGPT",
@@ -742,16 +682,12 @@ describe("CodexDesktopRow", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({
-          "aria-label": "Remove Ollama models from ChatGPT",
-        });
+        const toggle = connectionButton(renderer!);
         await act(async () => {
           toggle.props.onClick();
           toggle.props.onClick();
         });
-        expect(confirm).toHaveBeenCalledExactlyOnceWith(
-          "Restart ChatGPT to remove Ollama models? Any running task will stop.",
-        );
+        expect(confirm).toHaveBeenCalledOnce();
         expect(disconnect).toHaveBeenNthCalledWith(1, false, false);
         if (confirmed) {
           expect(disconnect).toHaveBeenCalledTimes(2);

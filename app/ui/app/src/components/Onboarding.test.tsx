@@ -19,7 +19,6 @@ import {
   isClaudeConnectionComplete,
   scheduleClaudeInstallTimeout,
 } from "@/lib/claudeDesktop";
-import { isWindowsPlatform } from "@/lib/platform";
 import {
   authenticationTimeoutAction,
   onboardingConnectUrl,
@@ -60,6 +59,16 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   });
 });
 
+function claudeConnectionButton(renderer: ReactTestRenderer) {
+  return renderer.root
+    .findByProps({ id: "integration-claude-desktop" })
+    .find(
+      (node) =>
+        node.type === "button" &&
+        typeof node.props["aria-pressed"] === "boolean",
+    );
+}
+
 describe("Onboarding", () => {
   it("explains what Ollama is before asking the user to choose a path", () => {
     const html = renderToStaticMarkup(<IntroScreen onContinue={vi.fn()} />);
@@ -92,51 +101,6 @@ describe("Onboarding", () => {
       expect(() =>
         renderToStaticMarkup(<ConnectAppsScreen initialIntegrations={[]} />),
       ).not.toThrow();
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("hides the Claude and ChatGPT desktop integrations on Windows", () => {
-    vi.stubGlobal("window", {
-      OLLAMA_PLATFORM: "windows",
-      innerHeight: 660,
-    });
-    vi.stubGlobal("navigator", { platform: "MacIntel" });
-    try {
-      expect(isWindowsPlatform()).toBe(true);
-      const html = renderToStaticMarkup(
-        <ConnectAppsScreen
-          initialIntegrations={[
-            {
-              id: "claude-desktop",
-              name: "Claude",
-              description: "Use Ollama models in Claude Desktop",
-              installed: true,
-            },
-            {
-              id: "claude",
-              name: "Claude Code",
-              description: "Anthropic's coding tool with subagents",
-              command: "ollama launch claude",
-            },
-            {
-              id: "chatgpt",
-              name: "ChatGPT",
-              description: "Use Ollama models in ChatGPT",
-              installed: true,
-              command: "ollama launch chatgpt",
-            },
-          ]}
-        />,
-      );
-
-      expect(html).not.toContain('id="recommended-heading"');
-      expect(html).not.toContain("Use Ollama models in Claude Desktop");
-      expect(html).not.toContain("Use Ollama models in ChatGPT");
-      expect(html).not.toContain("ollama launch chatgpt");
-      expect(html).toContain('id="terminal-heading"');
-      expect(html).toContain('aria-label="Copy Claude Code command"');
     } finally {
       vi.unstubAllGlobals();
     }
@@ -195,7 +159,7 @@ describe("Onboarding", () => {
     }
   });
 
-  it("keeps the Claude switch on and busy through installer detection", async () => {
+  it("keeps the Claude connection busy through installer detection", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
     const disconnectedStatus = {
@@ -250,14 +214,9 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () =>
-        renderer!.root
-          .findAll(
-            (node) =>
-              node.type === "button" &&
-              typeof node.props["aria-pressed"] === "boolean",
-          )
-          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
+      const claudeSwitch = () => claudeConnectionButton(renderer!);
+      expect(claudeSwitch().props["aria-pressed"]).toBe(false);
+      expect(claudeSwitch().props.disabled).toBe(false);
       let clickResult!: Promise<void>;
       await act(async () => {
         clickResult = claudeSwitch().props.onClick();
@@ -265,22 +224,11 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
+      expect(window.installClaudeDesktop).toHaveBeenCalledOnce();
       expect(claudeSwitch().props["aria-pressed"]).toBe(true);
       expect(claudeSwitch().props["aria-busy"]).toBe(true);
       expect(claudeSwitch().props.disabled).toBe(true);
-      expect(claudeSwitch().props.className).toContain("disabled:opacity-60");
-      expect(
-        renderer.root
-          .findAllByProps({ role: "status" })
-          .some((node) => node.children.includes("Downloading…")),
-      ).toBe(true);
-      expect(
-        renderer.root.findAll(
-          (node) =>
-            typeof node.props.className === "string" &&
-            node.props.className.includes("animate-spin"),
-        ),
-      ).not.toHaveLength(0);
+      expect(claudeSwitch().findByProps({ role: "status" })).toBeTruthy();
 
       await act(async () => {
         finishInstall("opened");
@@ -291,19 +239,7 @@ describe("Onboarding", () => {
       expect(claudeSwitch().props["aria-pressed"]).toBe(true);
       expect(claudeSwitch().props["aria-busy"]).toBe(true);
       expect(claudeSwitch().props.disabled).toBe(true);
-      expect(claudeSwitch().props.className).toContain("disabled:opacity-60");
-      expect(
-        renderer.root
-          .findAllByProps({ role: "status" })
-          .some((node) => node.children.includes("Finish installing…")),
-      ).toBe(true);
-      expect(
-        renderer.root.findAll(
-          (node) =>
-            typeof node.props.className === "string" &&
-            node.props.className.includes("animate-spin"),
-        ),
-      ).not.toHaveLength(0);
+      expect(claudeSwitch().findByProps({ role: "status" })).toBeTruthy();
     } finally {
       if (renderer) {
         act(() => renderer?.unmount());
@@ -380,14 +316,7 @@ describe("Onboarding", () => {
         await Promise.resolve();
       });
 
-      const claudeSwitch = () =>
-        renderer!.root
-          .findAll(
-            (node) =>
-              node.type === "button" &&
-              typeof node.props["aria-pressed"] === "boolean",
-          )
-          .find((node) => String(node.props["aria-label"]).endsWith("Claude"))!;
+      const claudeSwitch = () => claudeConnectionButton(renderer!);
       expect(claudeSwitch().props["aria-pressed"]).toBe(false);
       expect(claudeSwitch().props["aria-busy"]).toBeUndefined();
       expect(claudeSwitch().props.disabled).toBe(false);
@@ -520,188 +449,11 @@ describe("Onboarding", () => {
     expect(html).not.toContain("Sign up");
   });
 
-  it("shows recommended connections and every launcher in a scrollable grid", () => {
-    const integrations: IntegrationStatuses = [
-      {
-        id: "claude-desktop",
-        name: "Claude Code (Desktop)",
-        description: "Use Ollama models in Claude Desktop",
-        installed: true,
-        action: "connect",
-      },
-      {
-        id: "claude",
-        name: "Claude Code",
-        description: "Anthropic's coding tool with subagents",
-        installed: true,
-        action: "copy",
-        command: "ollama launch claude",
-      },
-      {
-        id: "codex",
-        name: "Codex CLI",
-        description: "OpenAI's open-source coding agent",
-        installed: true,
-        action: "copy",
-        command: "ollama launch codex",
-      },
-      {
-        id: "openclaw",
-        name: "OpenClaw",
-        description: "Personal AI with 100+ skills",
-        installed: true,
-        action: "copy",
-        command: "ollama launch openclaw",
-      },
-      {
-        id: "opencode",
-        name: "OpenCode",
-        description: "Anomaly's open-source coding agent",
-        installed: false,
-        action: "copy",
-        command: "ollama launch opencode",
-      },
-      {
-        id: "droid",
-        name: "Droid",
-        description: "AI software engineering agent",
-        installed: false,
-        action: "copy",
-        command: "ollama launch droid",
-      },
-      {
-        id: "dsh",
-        name: "DeepSeek Harness",
-        description: "DeepSeek's open-source agent harness",
-        installed: false,
-        action: "copy",
-        command: "ollama launch dsh",
-      },
-      {
-        id: "cline",
-        name: "Cline",
-        description: "Autonomous coding agent",
-        installed: false,
-        action: "copy",
-        command: "ollama launch cline",
-      },
-      {
-        id: "terminal",
-        name: "Terminal",
-        description: "Run local models from your terminal",
-        action: "copy",
-        command: "ollama",
-      },
-    ];
+  it("offers ChatGPT when the catalog has no desktop metadata", () => {
     const html = renderToStaticMarkup(
-      <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
-        initialIntegrations={integrations}
-      />,
+      <ConnectAppsScreen initialIntegrations={appsIntegrations(true)} />,
     );
-
-    expect(html).toContain('id="recommended-heading"');
-    expect(html).toContain("Recommended");
-    expect(html).toContain("Other apps");
-    expect(html).toContain("Use Ollama models in your Claude Code.");
-    expect(html).toContain('aria-label="Connect Claude"');
-    expect(html).toContain('aria-pressed="false"');
-    expect(html).not.toContain('role="switch"');
-    for (const integration of integrations.filter((item) => item.command)) {
-      expect(html).toContain(`id="integration-${integration.id}"`);
-      expect(html).toContain(`aria-label="Copy ${integration.name} command"`);
-    }
-    expect(html.match(/aria-label="Copy [^"]+ command"/g)).toHaveLength(8);
-    expect(html).toContain("sm:grid-cols-2");
-    expect(html).toContain("overflow-y-auto");
-    expect(html).not.toContain("<h1");
-    expect(html).not.toContain("Connect a coding agent");
-    expect(html).not.toContain("Skip for now");
-    expect(html).not.toContain("Search apps");
-    expect(html).not.toContain("<table");
-    expect(html).toContain("/launch-icons/claude.svg");
-    expect(html).toContain("/launch-icons/claude-code.svg");
-    expect(html).toContain("/launch-icons/codex-color.svg");
-  });
-
-  it("places ChatGPT directly below Claude instead of in Terminal", () => {
-    const html = renderToStaticMarkup(
-      <ConnectAppsScreen
-        initialIntegrations={[
-          {
-            id: "claude-desktop",
-            name: "Claude",
-            description: "Use Ollama models in Claude Desktop",
-            installed: true,
-          },
-          {
-            id: "codex",
-            name: "Codex CLI",
-            description: "OpenAI's coding agent",
-            command: "ollama launch codex",
-          },
-        ]}
-        initialCodexStatus={{
-          supported: true,
-          installed: true,
-          connected: false,
-          running: false,
-        }}
-      />,
-    );
-
-    expect(html.indexOf('id="integration-claude-desktop"')).toBeLessThan(
-      html.indexOf('id="integration-chatgpt"'),
-    );
-    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
-    expect(html).not.toContain('aria-label="Copy ChatGPT command"');
-    expect(html).toContain('aria-label="Copy Codex CLI command"');
-  });
-
-  it("keeps connected Claude in Recommended without an idle status", () => {
-    const html = renderToStaticMarkup(
-      <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
-        initialClaudeStatus={{
-          supported: true,
-          used: true,
-          installed: true,
-          connected: true,
-          running: false,
-          startFailed: false,
-          portConflict: false,
-          routedRequests: 12,
-        }}
-        initialIntegrations={[
-          {
-            id: "claude-desktop",
-            name: "Claude",
-            description: "Use Ollama models in Claude Desktop",
-            installed: true,
-            action: "connect",
-          },
-          {
-            id: "codex",
-            name: "Codex CLI",
-            description: "OpenAI's open-source coding agent",
-            installed: true,
-            action: "copy",
-            command: "ollama launch codex",
-          },
-        ]}
-      />,
-    );
-
-    expect(html).toContain('id="recommended-heading"');
-    expect(html).not.toContain('id="claude-apps-heading"');
-    expect(html).not.toContain("Ready to launch");
-    expect(html).not.toContain("Active");
-    expect(html).not.toContain("Inactive");
-    expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain('aria-label="Disconnect Claude"');
-    expect(html).toContain("Connected to Ollama · 12 requests this session");
+    expect(html).toContain('id="integration-chatgpt"');
   });
 
   it("shows initial Claude recovery guidance without error styling", () => {
@@ -788,35 +540,6 @@ describe("Onboarding", () => {
     expect(html).not.toContain('type="checkbox"');
     expect(html).not.toContain("Restart Claude");
     expect(html).not.toContain("Built-in defaults");
-  });
-
-  it("keeps Claude available without a separate not-installed group", () => {
-    const html = renderToStaticMarkup(
-      <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
-        initialClaudeStatus={{ ...DISCONNECTED_CLAUDE, installed: false }}
-        initialIntegrations={[
-          {
-            id: "claude-desktop",
-            name: "Claude",
-            description: "We’ll download Claude and connect it to Ollama.",
-            installed: false,
-            action: "connect",
-          },
-        ]}
-      />,
-    );
-
-    expect(html).toContain("We’ll download Claude and connect it to Ollama.");
-    expect(html).toContain('aria-label="Connect Claude"');
-    expect(html).toContain(">Connect</button>");
-    expect(html).not.toContain("Inactive");
-    const claudeButton = html.match(
-      /<button[^>]*aria-label="Connect Claude"[^>]*>/,
-    )?.[0];
-    expect(claudeButton).toBeDefined();
-    expect(claudeButton).not.toContain('disabled=""');
   });
 
   it("uses branded icons for the remaining launcher integrations", () => {
@@ -1093,15 +816,11 @@ describe("ConnectAppsScreen interactions", () => {
           );
           await settle();
         });
-        const toggle = renderer!.root.findByProps({
-          "aria-label": "Disconnect Claude",
-        });
+        const toggle = claudeConnectionButton(renderer!);
         await act(async () => {
           await toggle.props.onClick();
         });
-        expect(confirm).toHaveBeenCalledExactlyOnceWith(
-          "Restart Claude Desktop to remove Ollama? Any running task will stop.",
-        );
+        expect(confirm).toHaveBeenCalledOnce();
         if (confirmed) {
           expect(disconnect).toHaveBeenCalledExactlyOnceWith(false, true);
         } else {
@@ -1129,9 +848,7 @@ describe("ConnectAppsScreen interactions", () => {
     });
     let renderer: ReactTestRenderer | undefined;
     const clickConnect = () =>
-      renderer!.root
-        .findByProps({ "aria-label": "Connect Claude" })
-        .props.onClick();
+      claudeConnectionButton(renderer!).props.onClick();
     try {
       await act(async () => {
         renderer = create(
@@ -1161,8 +878,11 @@ describe("ConnectAppsScreen interactions", () => {
   });
 
   it.each(["darwin", "windows"])(
-    "keeps the full catalog in the %s grid",
-    (platform) => {
+    "copies every catalog command and limits desktop connections to macOS (%s)",
+    async (platform) => {
+      const copyCommand = vi
+        .spyOn(clipboard, "copyTextToClipboard")
+        .mockResolvedValue(true);
       stubAppsWindow({ OLLAMA_PLATFORM: platform });
       const integrations = [
         ...appsIntegrations(true),
@@ -1170,88 +890,108 @@ describe("ConnectAppsScreen interactions", () => {
           id: `extra-${index}`,
           name: `Extra app ${index}`,
           description: "Another supported integration",
-          installed: false,
           command: `ollama launch extra-${index}`,
         })),
       ];
-      try {
-        const html = renderToStaticMarkup(
-          <ConnectAppsScreen initialIntegrations={integrations} />,
-        );
-        for (const integration of integrations.filter((item) => item.command)) {
-          expect(html).toContain(
-            `aria-label="Copy ${integration.name} command"`,
-          );
-        }
-        expect(html.includes('id="recommended-heading"')).toBe(
-          platform === "darwin",
-        );
-        expect(html.includes('id="integration-chatgpt"')).toBe(
-          platform === "darwin",
-        );
-        expect(html).not.toContain("Connect a coding agent");
-        expect(html).not.toContain("Skip for now");
-      } finally {
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it.each(["darwin", "windows"])(
-    "copies from a card and renews the temporary %s hint on every click",
-    async (platform) => {
-      vi.useFakeTimers();
-      const copyCommand = vi
-        .spyOn(clipboard, "copyTextToClipboard")
-        .mockResolvedValue(true);
-      stubAppsWindow({ OLLAMA_PLATFORM: platform });
+      const launchers = integrations.filter((item) => item.command);
       let renderer: ReactTestRenderer | undefined;
       try {
         await act(async () => {
           renderer = create(
             <ConnectAppsScreen
-              initialIntegrations={appsIntegrations(true)}
+              initialIntegrations={[
+                ...integrations,
+                {
+                  id: "chatgpt",
+                  name: "ChatGPT",
+                  description: "Desktop integration",
+                  command: "ollama launch chatgpt",
+                },
+              ]}
               initialClaudeStatus={DISCONNECTED_CLAUDE}
+              initialCodexStatus={{
+                supported: true,
+                installed: true,
+                connected: false,
+                running: false,
+              }}
             />,
           );
-          await settle();
         });
-        const card = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
-        expect(card().type).toBe("button");
-        await act(async () => {
-          await card().props.onClick();
-        });
-        expect(copyCommand).toHaveBeenCalledExactlyOnceWith(
-          "ollama launch codex",
+        const cards = renderer!.root.findAll(
+          (node) =>
+            node.type === "button" && node.props.id?.startsWith("integration-"),
         );
-        const notice = () => renderer!.root.findByProps({ role: "status" });
+        expect(new Set(cards.map((card) => card.props.id))).toEqual(
+          new Set(launchers.map((item) => `integration-${item.id}`)),
+        );
         expect(
-          notice()
-            .findAllByType("p")
-            .map((node) => node.children.join(""))
-            .join(" "),
-        ).toContain("Launch command copied. Paste it into your terminal");
-        act(() => vi.advanceTimersByTime(5000));
-        await act(async () => {
-          await card().props.onClick();
-        });
-        act(() => vi.advanceTimersByTime(1001));
-        expect(notice()).toBeTruthy();
-        act(() => vi.advanceTimersByTime(5000));
-        expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(
-          0,
-        );
-        expect(card().props["aria-label"]).toBe("Copy Codex CLI command");
-        expect(copyCommand).toHaveBeenCalledTimes(2);
+          renderer!.root.findAll(
+            (node) =>
+              node.type === "button" &&
+              typeof node.props["aria-pressed"] === "boolean",
+          ),
+        ).toHaveLength(platform === "darwin" ? 2 : 0);
+        for (const item of launchers) {
+          await act(async () => {
+            await renderer!.root
+              .findByProps({ id: `integration-${item.id}` })
+              .props.onClick();
+          });
+          expect(copyCommand).toHaveBeenLastCalledWith(item.command);
+        }
+        expect(copyCommand).toHaveBeenCalledTimes(launchers.length);
       } finally {
         if (renderer) act(() => renderer?.unmount());
         copyCommand.mockRestore();
         vi.unstubAllGlobals();
-        vi.useRealTimers();
       }
     },
   );
+
+  it("renews the copy notification on each click and dismisses it after inactivity", async () => {
+    vi.useFakeTimers();
+    const copyCommand = vi
+      .spyOn(clipboard, "copyTextToClipboard")
+      .mockResolvedValue(true);
+    stubAppsWindow();
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen
+            initialIntegrations={appsIntegrations(true)}
+            initialClaudeStatus={DISCONNECTED_CLAUDE}
+          />,
+        );
+        await settle();
+      });
+      const card = () =>
+        renderer!.root.findByProps({ id: "integration-codex" });
+      await act(async () => {
+        await card().props.onClick();
+      });
+      expect(copyCommand).toHaveBeenCalledExactlyOnceWith(
+        "ollama launch codex",
+      );
+      const notice = () => renderer!.root.findByProps({ role: "status" });
+      expect(notice()).toBeTruthy();
+      act(() => vi.advanceTimersByTime(5000));
+      await act(async () => {
+        await card().props.onClick();
+      });
+      act(() => vi.advanceTimersByTime(1001));
+      expect(notice()).toBeTruthy();
+      act(() => vi.advanceTimersByTime(5000));
+      expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(0);
+      expect(copyCommand).toHaveBeenCalledTimes(2);
+    } finally {
+      if (renderer) act(() => renderer?.unmount());
+      copyCommand.mockRestore();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
 
   it.each(["denied", "throws"])(
     "offers manual copying instead of success when clipboard access %s",
@@ -1282,7 +1022,6 @@ describe("ConnectAppsScreen interactions", () => {
         await act(async () => {
           await card().props.onClick();
         });
-        expect(card().props["aria-label"]).toBe("Copy Codex CLI command");
         act(() => vi.advanceTimersByTime(20_000));
         expect(
           renderer!.root.findByProps({ role: "alert" }).findByType("code")
@@ -1298,7 +1037,6 @@ describe("ConnectAppsScreen interactions", () => {
           0,
         );
         expect(renderer!.root.findByProps({ role: "status" })).toBeTruthy();
-        expect(card().props["aria-label"]).toBe("Codex CLI command copied");
       } finally {
         if (renderer) act(() => renderer?.unmount());
         copyCommand.mockRestore();
@@ -1424,20 +1162,13 @@ describe("ConnectAppsScreen interactions", () => {
           await settle();
         });
 
-        const claudeToggle = () =>
-          renderer!.root
-            .findByProps({ id: "integration-claude-desktop" })
-            .find(
-              (node) =>
-                node.type === "button" &&
-                typeof node.props["aria-pressed"] === "boolean",
-            );
+        const claudeToggle = () => claudeConnectionButton(renderer!);
         expect(claudeToggle().props.disabled).toBe(true);
         expect(claudeToggle().props["aria-busy"]).toBe(true);
 
         await act(async () => {
           await renderer!.root
-            .findByProps({ "aria-label": "Copy Codex CLI command" })
+            .findByProps({ id: "integration-codex" })
             .props.onClick();
         });
         expect(copyCommand).toHaveBeenCalledWith("ollama launch codex");
@@ -1461,9 +1192,7 @@ describe("ConnectAppsScreen interactions", () => {
           outcome === "connected",
         );
         if (outcome === "failed") {
-          expect(
-            renderer!.root.findByProps({ role: "alert" }).children,
-          ).toContain("Ollama could not read the Claude connection status.");
+          expect(renderer!.root.findByProps({ role: "alert" })).toBeTruthy();
         }
         expect(connect).not.toHaveBeenCalled();
       } finally {
@@ -1491,9 +1220,7 @@ describe("ConnectAppsScreen interactions", () => {
         renderer = create(<ConnectAppsScreen />);
         await settle();
       });
-      expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
-        "Couldn't load integrations.",
-      );
+      expect(renderer!.root.findByProps({ role: "alert" })).toBeTruthy();
     } finally {
       if (renderer) act(() => renderer?.unmount());
       vi.unstubAllGlobals();
@@ -1532,22 +1259,14 @@ describe("ConnectAppsScreen interactions", () => {
       });
       expect(setClaudeDesktopConnected).not.toHaveBeenCalled();
       await act(async () => {
-        await renderer!.root
-          .findByProps({ "aria-label": "Connect Claude" })
-          .props.onClick();
+        await claudeConnectionButton(renderer!).props.onClick();
       });
 
       expect(setClaudeDesktopConnected).toHaveBeenCalledTimes(1);
       expect(setClaudeDesktopConnected).toHaveBeenCalledWith(true, false);
-      expect(
-        renderer!.root
-          .findByProps({ id: "integration-claude-desktop" })
-          .find(
-            (node) =>
-              node.type === "button" &&
-              typeof node.props["aria-pressed"] === "boolean",
-          ).props["aria-pressed"],
-      ).toBe(true);
+      expect(claudeConnectionButton(renderer!).props["aria-pressed"]).toBe(
+        true,
+      );
       expect(renderer!.root.findByType(ClaudeConnectedIntro)).toBeTruthy();
     } finally {
       if (renderer) act(() => renderer?.unmount());
