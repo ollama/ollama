@@ -841,6 +841,15 @@ func TestCodexDesktopDefaultsForFreeAccountFollowRecommendationMetadata(t *testi
 
 func TestCodexDesktopAutomaticSelectionFollowsCurrentAccount(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	t.Cleanup(func() {
+		appStore.Close()
+		appStore = previousStore
+	})
+	if err := markCodexDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/tags" {
 			http.NotFound(w, r)
@@ -1040,6 +1049,132 @@ func TestLoadCodexDesktopRecommendationsUsesCodexQualifier(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopSettingsRecommendationEligibility(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		used        bool
+		installed   bool
+		cloud       proxy.ClaudeDesktopCloudStatus
+		account     proxy.ClaudeDesktopAccountStatus
+		empty       bool
+		accessErr   error
+		connect     bool
+		wantFetches int
+	}{
+		{name: "unused and not installed", cloud: proxy.ClaudeDesktopCloudOn},
+		{name: "installed but unused", installed: true, cloud: proxy.ClaudeDesktopCloudOn},
+		{name: "unused with empty inventory", cloud: proxy.ClaudeDesktopCloudOn, empty: true},
+		{name: "used and cloud on", used: true, installed: true, cloud: proxy.ClaudeDesktopCloudOn, account: proxy.ClaudeDesktopAccountSignedIn, wantFetches: 2},
+		{name: "used without current installation", used: true, cloud: proxy.ClaudeDesktopCloudOn, account: proxy.ClaudeDesktopAccountSignedIn, wantFetches: 2},
+		{name: "used and signed out", used: true, cloud: proxy.ClaudeDesktopCloudOn, account: proxy.ClaudeDesktopAccountSignedOut, wantFetches: 2},
+		{name: "used and cloud off", used: true, cloud: proxy.ClaudeDesktopCloudOff},
+		{name: "cloud off with empty inventory", used: true, cloud: proxy.ClaudeDesktopCloudOff, empty: true},
+		{name: "used and cloud unknown", used: true, cloud: proxy.ClaudeDesktopCloudUnknown},
+		{name: "access lookup failed", used: true, cloud: proxy.ClaudeDesktopCloudOn, accessErr: errors.New("access unavailable")},
+		{name: "first explicit connection", installed: true, cloud: proxy.ClaudeDesktopCloudOn, account: proxy.ClaudeDesktopAccountSignedIn, connect: true, wantFetches: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			previousStore := appStore
+			previousController := codexDesktop
+			previousClientFactory := codexDesktopClientFactory
+			previousCloudModels := codexDesktopCloudModels
+			previousRecommendations := codexDesktopRecommendations
+			previousAccess := codexDesktopAccessState
+			previousAttempts := codexDesktopModelLoadAttempts
+			appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			t.Cleanup(func() {
+				appStore.Close()
+				appStore = previousStore
+				codexDesktop = previousController
+				codexDesktopClientFactory = previousClientFactory
+				codexDesktopCloudModels = previousCloudModels
+				codexDesktopRecommendations = previousRecommendations
+				codexDesktopAccessState = previousAccess
+				codexDesktopModelLoadAttempts = previousAttempts
+			})
+			if tt.used {
+				if err := markCodexDesktopIntegrationUsed(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			codexDesktop = &fakeCodexDesktopController{installed: tt.installed}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					if tt.empty {
+						_, _ = w.Write([]byte(`{"models":[]}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"models":[{"name":"qwen3:8b"}]}`))
+				case "/api/show":
+					_, _ = w.Write([]byte(`{"capabilities":["completion"]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := api.NewClient(base, server.Client())
+			codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+			codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+			codexDesktopAccessState = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				return proxy.ClaudeDesktopAccessState{Cloud: tt.cloud, Account: tt.account, Plan: "free"}, tt.accessErr
+			}
+			fetches := 0
+			codexDesktopRecommendations = func(context.Context) ([]api.ModelRecommendation, error) {
+				fetches++
+				return []api.ModelRecommendation{{Model: "recommended:cloud", RequiredPlan: "free"}}, nil
+			}
+			codexDesktopModelLoadAttempts = 1
+
+			if tt.connect {
+				_, models, err := loadCodexDesktopConnectionModels(context.Background(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := codexDesktopModelNames(models); !slices.Equal(got, []string{"recommended:cloud"}) {
+					t.Fatalf("connection models = %v, want first-use recommendations", got)
+				}
+			} else {
+				saved := []string{"qwen3:8b", "saved-missing:cloud"}
+				if err := config.SaveIntegration(codexDesktopIntegrationName, saved); err != nil {
+					t.Fatal(err)
+				}
+				for range 2 {
+					settings, err := getCodexDesktopModelsSettings()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !slices.Equal(settings.Selected, saved) || settings.UsesDefaults {
+						t.Fatalf("settings = %#v, want preserved explicit selection", settings)
+					}
+					if !tt.empty && !slices.Contains(settings.Available, "qwen3:8b") {
+						t.Fatalf("available = %v, want local model even without recommendations", settings.Available)
+					}
+					if !slices.ContainsFunc(settings.Models, func(model codexDesktopModelStatus) bool {
+						return model.Name == "saved-missing:cloud" && model.Selected
+					}) {
+						t.Fatalf("models = %v, want saved unavailable model retained", settings.Models)
+					}
+				}
+				if got := config.IntegrationModels(codexDesktopIntegrationName); !slices.Equal(got, saved) {
+					t.Fatalf("saved models = %v, want %v", got, saved)
+				}
+			}
+			if fetches != tt.wantFetches {
+				t.Fatalf("recommendation fetches = %d, want %d", fetches, tt.wantFetches)
+			}
+			if hasUsedCodexDesktopIntegration() != tt.used {
+				t.Fatal("model discovery changed the integration use history")
+			}
+		})
+	}
+}
+
 func TestGetCodexDesktopModelsSettingsKeepsSelectionWhenInventoryFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
@@ -1194,7 +1329,7 @@ func TestLoadCodexDesktopModelInventoryRetriesAccountAccessDuringServerRestart(t
 	codexDesktopModelLoadAttempts = 3
 	codexDesktopModelRetryWait = time.Millisecond
 
-	inventory, err := loadCodexDesktopModelInventory(context.Background())
+	inventory, err := loadCodexDesktopModelInventory(context.Background(), true)
 	if err != nil {
 		t.Fatal(err)
 	}

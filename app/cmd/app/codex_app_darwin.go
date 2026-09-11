@@ -232,7 +232,12 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	includeRecommendations := false
+	if hasUsedCodexDesktopIntegration() {
+		access, err := codexDesktopAccessState(ctx)
+		includeRecommendations = err == nil && access.Cloud == proxy.ClaudeDesktopCloudOn
+	}
+	inventory, err := loadCodexDesktopModelInventory(ctx, includeRecommendations)
 	if err != nil {
 		return settings, err
 	}
@@ -333,7 +338,7 @@ func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhen
 }
 
 func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx, true)
 	if err != nil {
 		return "", nil, err
 	}
@@ -349,7 +354,7 @@ func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []l
 }
 
 func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx, true)
 	if err != nil {
 		return "", nil, err
 	}
@@ -389,19 +394,22 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 }
 
 func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
+	inventory, err := loadCodexDesktopModelInventory(ctx, true)
 	return inventory.Available, err
 }
 
-func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
+func loadCodexDesktopModelInventory(ctx context.Context, includeRecommendations bool) (codexDesktopModelInventory, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
 		return codexDesktopModelInventory{}, err
 	}
 
-	recommendations, recommendationsErr := codexDesktopRecommendations(ctx)
-	if recommendationsErr != nil {
-		slog.Debug("could not load ChatGPT model recommendations", "error", recommendationsErr)
+	var recommendations []api.ModelRecommendation
+	if includeRecommendations {
+		recommendations, err = codexDesktopRecommendations(ctx)
+		if err != nil {
+			slog.Debug("could not load ChatGPT model recommendations", "error", err)
+		}
 	}
 	var access proxy.ClaudeDesktopAccessState
 	accessKnown := false
@@ -431,8 +439,9 @@ func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInven
 		}
 
 		last = buildCodexDesktopModelInventory(recommendations, listed, accountCloud, access, accessKnown, listKnown, cloudKnown)
+		// Settings may have no models when recommendation discovery is disabled.
 		// Retry access lookup failures even when recommendations are available.
-		if len(last.Available) > 0 && (accessKnown || attempt+1 == codexDesktopModelLoadAttempts) {
+		if (len(last.Available) > 0 || (!includeRecommendations && listKnown && cloudKnown)) && (accessKnown || attempt+1 == codexDesktopModelLoadAttempts) {
 			return last, nil
 		}
 		if attempt+1 == codexDesktopModelLoadAttempts {
