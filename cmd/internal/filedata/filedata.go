@@ -21,7 +21,7 @@ type File struct {
 }
 
 func NormalizePath(fp string) string {
-	fp = strings.Trim(fp, "\"")
+	fp = strings.Trim(fp, "\"'")
 	fp = strings.NewReplacer(
 		"\\ ", " ",
 		"\\(", "(",
@@ -34,10 +34,21 @@ func NormalizePath(fp string) string {
 		"\\&", "&",
 		"\\;", ";",
 		"\\'", "'",
+		"\\\"", "\"",
 		"\\\\", "\\",
 		"\\*", "*",
 		"\\?", "?",
 		"\\~", "~",
+		"\\@", "@",
+		"\\#", "#",
+		"\\!", "!",
+		"\\^", "^",
+		"\\=", "=",
+		"\\%", "%",
+		"\\|", "|",
+		"\\<", "<",
+		"\\>", ">",
+		"%20", " ",
 	).Replace(fp)
 
 	if u, err := url.Parse(fp); err == nil && strings.EqualFold(u.Scheme, "file") {
