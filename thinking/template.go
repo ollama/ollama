@@ -6,6 +6,21 @@ import (
 	"text/template/parse"
 )
 
+// TemplateSupportsThinking reports whether a raw model chat template declares
+// thinking output. It recognizes templates that emit paired think tags and
+// templates that strip prior tagged reasoning; templates using a separate
+// reasoning_content field are not treated as tagged-thinking templates.
+func TemplateSupportsThinking(chatTemplate string) bool {
+	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
+		return true
+	}
+
+	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
+		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
+		!strings.Contains(chatTemplate, "reasoning_content") &&
+		!strings.Contains(chatTemplate, "<SPECIAL_12>")
+}
+
 func templateVisit(n parse.Node, enterFn func(parse.Node) bool, exitFn func(parse.Node)) {
 	if n == nil {
 		return

@@ -3,7 +3,6 @@ package create
 import (
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -94,11 +93,10 @@ func planBlockFP8(inv Inventory, target string, policy quantizePolicy) ([]BlobSp
 // planner only groups and orders the source weights and their scale companions.
 func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventory, target string, policy quantizePolicy) ([]BlobSpec, error) {
 	type expert struct {
-		idx    int
 		weight SourceTensor
 		scale  SourceTensor
 	}
-	byProj := make(map[string][]expert)
+	byProj := make(map[string]map[int]expert)
 	for _, t := range tensors {
 		idx, proj, err := parseExpertTensor(groupPrefix, t.Name)
 		if err != nil {
@@ -108,21 +106,30 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 		if !ok {
 			return nil, fmt.Errorf("fp8 expert weight %q has no scale companion", t.Name)
 		}
-		byProj[proj] = append(byProj[proj], expert{idx: idx, weight: t, scale: inv.Tensors[scaleName]})
+		if byProj[proj] == nil {
+			byProj[proj] = make(map[int]expert)
+		}
+		if _, ok := byProj[proj][idx]; ok {
+			return nil, fmt.Errorf("expert group %s projection %s has duplicate expert index %d", groupPrefix, proj, idx)
+		}
+		byProj[proj][idx] = expert{weight: t, scale: inv.Tensors[scaleName]}
 	}
 
+	expertCount, err := validateExpertProjections(groupPrefix, byProj)
+	if err != nil {
+		return nil, err
+	}
 	var tensorSpecs []TensorSpec
 	for _, proj := range sortedKeys(byProj) {
 		experts := byProj[proj]
-		sort.Slice(experts, func(i, j int) bool { return experts[i].idx < experts[j].idx })
-
 		base := experts[0].weight
 		baseScale := experts[0].scale
 		// Sources are the N weights followed by the N scales, in expert order,
 		// matching what TransformDecodeStackFP8 expects.
-		sources := make([]SourceTensor, 0, 2*len(experts))
-		scales := make([]SourceTensor, 0, len(experts))
-		for _, e := range experts {
+		sources := make([]SourceTensor, 0, 2*expertCount)
+		scales := make([]SourceTensor, 0, expertCount)
+		for i := range expertCount {
+			e := experts[i]
 			if e.weight.Dtype != base.Dtype || !slices.Equal(e.weight.Shape, base.Shape) {
 				return nil, fmt.Errorf("fp8 expert group %s projection %s has mismatched weight layout (%s %v vs %s %v)",
 					groupPrefix, proj, base.Dtype, base.Shape, e.weight.Dtype, e.weight.Shape)
@@ -137,7 +144,7 @@ func planFP8ExpertGroup(groupPrefix string, tensors []SourceTensor, inv Inventor
 		sources = append(sources, scales...)
 
 		stackedName := groupPrefix + "." + proj + ".weight"
-		stackedShape := append([]int32{int32(len(experts))}, base.Shape...)
+		stackedShape := append([]int32{int32(expertCount)}, base.Shape...)
 		tensorSpecs = append(tensorSpecs, TensorSpec{
 			Name:      stackedName,
 			Sources:   sources,

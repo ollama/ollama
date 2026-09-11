@@ -554,6 +554,9 @@ func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeo
 	if err != nil {
 		return "", 0, err
 	}
+	// Opt into manifest lists so the registry reports the digest of what
+	// pullModelManifest stores locally rather than a legacy fallback child.
+	req.Header.Set("Accept", strings.Join([]string{manifest.MediaTypeManifestList, manifest.MediaTypeManifest}, ", "))
 
 	httpClient := s.httpClient()
 	httpClient.Timeout = timeout

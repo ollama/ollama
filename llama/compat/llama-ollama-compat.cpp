@@ -44,6 +44,15 @@ void ollama_compat_log(const char * format, ...) {
 #define OLLAMA_COMPAT_LOG_ERROR(...) LLAMA_LOG_ERROR(__VA_ARGS__)
 #endif
 
+// Every handler's detection log line starts with "detected Ollama-format".
+// That prefix is load-bearing: integration/migration_test.go
+// (hasCompatPatchEvidence) greps server logs for it to prove whether a load
+// went through this compatibility layer. Keep it when adding handlers.
+//
+// The detect_ollama_* checks also mirror the Go-side NeedsMigration methods
+// in compatmigrate/ (one migrator per family); keep the two in sync so lazy
+// migration converts exactly the files this layer would patch.
+
 double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
@@ -217,20 +226,17 @@ constexpr const char * kGemma3ChatTemplate = R"jinja({{ bos_token }}{% if messag
 
 // An Ollama-format gemma3 file declares arch="gemma3" AND exhibits at
 // least one converter quirk. Different converter versions produced
-// different quirks (4B/12B/27B have embedded vision + mm KVs; 1B uses
+// different quirks (4B/12B/27B have embedded vision tensors; 1B uses
 // non-standard rope key names; all of them omit layer_norm_rms_epsilon).
 bool detect_ollama_gemma3(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma3") != 0) return false;
 
-    return has_key(meta, "gemma3.mm.tokens_per_image")
-        || any_tensor_with_prefix(ctx, "v.")
+    return any_tensor_with_prefix(ctx, "v.")
         || any_tensor_with_prefix(ctx, "mm.")
         || has_key(meta, "gemma3.rope.global.freq_base")
         || has_key(meta, "gemma3.rope.local.freq_base")
-        || has_key(meta, "tokenizer.ggml.add_padding_token")
-        || has_key(meta, "tokenizer.ggml.add_unknown_token")
         || !has_key(meta, "gemma3.attention.layer_norm_rms_epsilon");
 }
 
@@ -509,7 +515,7 @@ void handle_snowflake_arctic_embed2(gguf_context * meta) {
     }
 
     gguf_set_arr_data(meta, key, GGUF_TYPE_UINT8, decoded.data(), decoded.size());
-    OLLAMA_COMPAT_LOG_INFO("%s: converted tokenizer precompiled charsmap to byte array\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format snowflake-arctic-embed2 GGUF; converted tokenizer precompiled charsmap to byte array\n", __func__);
 }
 
 // =========================================================================
@@ -914,12 +920,10 @@ bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx
 
     // Published-model markers. llama.cpp-converted qwen35moe files have none
     // of these: vision KVs live in a separate mmproj, MTP tensors are dropped,
-    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward KVs
-    // are either absent or stored differently.
+    // head_count_kv is a scalar, and the extra rope / ssm KVs are absent.
     return has_key(meta, "qwen35moe.vision.block_count")
         || has_key(meta, "qwen35moe.image_token_id")
         || has_key(meta, "qwen35moe.ssm.v_head_reordered")
-        || has_key(meta, "qwen35moe.feed_forward_length")
         || has_key(meta, "qwen35moe.rope.mrope_interleaved")
         || any_tensor_with_prefix(ctx, "mtp.")
         || any_tensor_with_prefix(ctx, "v.");
@@ -970,7 +974,7 @@ bool detect_ollama_qwen3next(const gguf_context * meta) {
 
 void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_qwen3next(meta)) return;
-    OLLAMA_COMPAT_LOG_INFO("%s: detected qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
     collapse_u32_array_to_max(meta, "qwen3next.attention.head_count_kv", 0);
     rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 }
@@ -1334,7 +1338,7 @@ bool detect_ollama_llama3_metadata_gap(const gguf_context * meta) {
 void handle_llama3_metadata(gguf_context * meta) {
     if (!detect_ollama_llama3_metadata_gap(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected Llama 3 tokenizer metadata gap; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format llama GGUF with Llama 3 tokenizer metadata gap; applying compatibility fixes\n", __func__);
 
     if (string_kv_missing_or_default(meta, "tokenizer.ggml.pre")) {
         gguf_set_val_str(meta, "tokenizer.ggml.pre", "llama-bpe");
@@ -2782,6 +2786,10 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
     for (const auto & [from, to] : kLlama4ClipRenames) {
         rename_tensors_containing(meta, ctx, from, to);
     }
+
+    // Keep the live mmproj path aligned with converted llama.cpp projectors.
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
 // =========================================================================
@@ -3226,7 +3234,7 @@ bool needs_default_llava_projector_type(const gguf_context * meta) {
 void handle_missing_llava_projector_type(gguf_context * meta) {
     if (!needs_default_llava_projector_type(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
     gguf_set_val_str(meta, "clip.projector_type", "mlp");
 }
 

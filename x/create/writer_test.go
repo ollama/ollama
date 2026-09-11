@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
@@ -40,7 +42,7 @@ type headerEntry struct {
 	Shape []int32 `json:"shape"`
 }
 
-func blobHeader(t *testing.T, data []byte) map[string]headerEntry {
+func blobRawHeader(t *testing.T, data []byte) map[string]json.RawMessage {
 	t.Helper()
 	if len(data) < 8 {
 		t.Fatalf("blob too small: %d bytes", len(data))
@@ -50,8 +52,13 @@ func blobHeader(t *testing.T, data []byte) map[string]headerEntry {
 	if err := json.Unmarshal(data[8:8+n], &raw); err != nil {
 		t.Fatalf("parse header: %v", err)
 	}
+	return raw
+}
+
+func blobHeader(t *testing.T, data []byte) map[string]headerEntry {
+	t.Helper()
 	out := make(map[string]headerEntry)
-	for k, v := range raw {
+	for k, v := range blobRawHeader(t, data) {
 		if k == "__metadata__" {
 			continue
 		}
@@ -62,6 +69,19 @@ func blobHeader(t *testing.T, data []byte) map[string]headerEntry {
 		out[k] = e
 	}
 	return out
+}
+
+func blobMetadata(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	raw, ok := blobRawHeader(t, data)["__metadata__"]
+	if !ok {
+		return nil
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("parse metadata: %v", err)
+	}
+	return metadata
 }
 
 func f32le(v float32) []byte {
@@ -90,7 +110,7 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	}
 
 	store := newCaptureStore()
-	if _, err := WriteBlobs(specs, dir, store); err != nil {
+	if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
 		t.Fatalf("WriteBlobs() error = %v", err)
 	}
 
@@ -131,54 +151,105 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 }
 
 func TestWriteBlobsQuantizeFloat(t *testing.T) {
-	if !QuantizeSupported() {
-		t.Skip("MLX unavailable")
+	mlxtest.SkipIfUnavailable(t)
+	for _, quantize := range []string{"int4", "nvfp4", "mxfp8"} {
+		t.Run(quantize, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+			createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+				st.NewTensorDataFromBytes("model.layers.0.self_attn.q_proj.weight", "BF16", []int32{128, 128}, make([]byte, 128*128*2)),
+				st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{128}, make([]byte, 128*2)),
+			})
+
+			inv, err := ReadInventory(dir)
+			if err != nil {
+				t.Fatalf("ReadInventory() error = %v", err)
+			}
+			specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: quantize}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatalf("Plan() error = %v", err)
+			}
+			store := newCaptureStore()
+			if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+				t.Fatalf("WriteBlobs() error = %v", err)
+			}
+
+			q, ok := store.blobs["model.layers.0.self_attn.q_proj.weight"]
+			if !ok {
+				t.Fatalf("missing q_proj blob; got %v", store.names())
+			}
+			hdr := blobHeader(t, q)
+			if w := hdr["model.layers.0.self_attn.q_proj.weight"]; w.Dtype != "U32" {
+				t.Errorf("quantized weight dtype = %q, want U32 (packed %s)", w.Dtype, quantize)
+			}
+			if _, ok := hdr["model.layers.0.self_attn.q_proj.weight.scale"]; !ok {
+				t.Error("quantized blob missing scale")
+			}
+
+			norm, ok := store.blobs["model.norm.weight"]
+			if !ok {
+				t.Fatalf("missing norm blob; got %v", store.names())
+			}
+			if nh := blobHeader(t, norm)["model.norm.weight"]; nh.Dtype != "BF16" {
+				t.Errorf("norm dtype = %q, want BF16 (kept, not quantized)", nh.Dtype)
+			}
+		})
 	}
+}
+
+func TestWriteBlobsQuantizeGemma4PublisherNames(t *testing.T) {
+	mlxtest.SkipIfUnavailable(t)
+	const (
+		gateUpName = "model.language_model.layers.0.experts.gate_up_proj"
+		downName   = "model.language_model.layers.0.experts.down_proj"
+	)
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	writeConfigJSON(t, dir, `{"architectures":["Gemma4ForCausalLM"],"num_hidden_layers":30,"num_experts":128}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
-		st.NewTensorDataFromBytes("model.layers.0.self_attn.q_proj.weight", "BF16", []int32{128, 128}, make([]byte, 128*128*2)),
-		st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{128}, make([]byte, 128*2)),
+		st.NewTensorDataFromBytes(gateUpName, "BF16", []int32{8, 256, 128}, make([]byte, 8*256*128*2)),
+		st.NewTensorDataFromBytes(downName, "BF16", []int32{8, 128, 128}, make([]byte, 8*128*128*2)),
 	})
 
 	inv, err := ReadInventory(dir)
 	if err != nil {
 		t.Fatalf("ReadInventory() error = %v", err)
 	}
-	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, defaultQuantPolicy{})
+	policy, err := newTensorImportTransform(inv)
+	if err != nil {
+		t.Fatalf("newTensorImportTransform() error = %v", err)
+	}
+	specs, err := Plan(inv, Classification{Kind: SourceFloat, Quantize: "int4"}, policy)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	store := newCaptureStore()
-	if _, err := WriteBlobs(specs, dir, store); err != nil {
+	if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
 		t.Fatalf("WriteBlobs() error = %v", err)
 	}
 
-	q, ok := store.blobs["model.layers.0.self_attn.q_proj.weight"]
-	if !ok {
-		t.Fatalf("missing q_proj blob; got %v", store.names())
-	}
-	hdr := blobHeader(t, q)
-	if w := hdr["model.layers.0.self_attn.q_proj.weight"]; w.Dtype != "U32" {
-		t.Errorf("quantized weight dtype = %q, want U32 (packed int4)", w.Dtype)
-	}
-	if _, ok := hdr["model.layers.0.self_attn.q_proj.weight.scale"]; !ok {
-		t.Error("quantized blob missing scale")
-	}
-
-	norm, ok := store.blobs["model.norm.weight"]
-	if !ok {
-		t.Fatalf("missing norm blob; got %v", store.names())
-	}
-	if nh := blobHeader(t, norm)["model.norm.weight"]; nh.Dtype != "BF16" {
-		t.Errorf("norm dtype = %q, want BF16 (kept, not quantized)", nh.Dtype)
+	for name, wantQuantize := range map[string]string{gateUpName: "int4", downName: "int8"} {
+		blob, ok := store.blobs[name]
+		if !ok {
+			t.Fatalf("missing publisher-named blob %q; got %v", name, store.names())
+		}
+		header := blobHeader(t, blob)
+		if len(header) != 3 {
+			t.Errorf("blob %q has tensors %v, want weight, scale, and bias", name, header)
+		}
+		for _, tensorName := range []string{name, name + ".scale", name + ".bias"} {
+			if _, ok := header[tensorName]; !ok {
+				t.Errorf("blob %q missing exact tensor name %q", name, tensorName)
+			}
+		}
+		metadata := blobMetadata(t, blob)
+		if metadata["quant_type"] != wantQuantize || metadata["group_size"] != "64" {
+			t.Errorf("blob %q metadata = %v, want quant_type=%s group_size=64", name, metadata, wantQuantize)
+		}
 	}
 }
 
 func TestWriteBlobsBlockFP8Decode(t *testing.T) {
-	if !QuantizeSupported() {
-		t.Skip("MLX unavailable")
-	}
+	mlxtest.SkipIfUnavailable(t)
 	dir := t.TempDir()
 	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
@@ -195,7 +266,7 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	store := newCaptureStore()
-	if _, err := WriteBlobs(specs, dir, store); err != nil {
+	if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
 		t.Fatalf("WriteBlobs() error = %v", err)
 	}
 

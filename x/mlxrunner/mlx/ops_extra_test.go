@@ -2,6 +2,7 @@ package mlx
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxthreadtest"
@@ -9,6 +10,18 @@ import (
 
 // fp4Values decodes an fp4 (E2M1) code to its value.
 var fp4Values = [16]float32{0, 0.5, 1, 1.5, 2, 3, 4, 6, 0, -0.5, -1, -1.5, -2, -3, -4, -6}
+
+func TestQuantizeError(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		_, _, _, err := Quantize(Zeros(DTypeFloat32, 1, 32), 31, 4, "affine")
+		if err == nil {
+			t.Fatal("Quantize() error = nil")
+		}
+		if !strings.Contains(err.Error(), "group size 31") {
+			t.Fatalf("Quantize() error = %q, want invalid group size", err)
+		}
+	})
+}
 
 func TestDequantizeGlobalScale(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {

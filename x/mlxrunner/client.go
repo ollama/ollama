@@ -25,8 +25,10 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -45,10 +47,12 @@ type Client struct {
 	closed            bool
 }
 
+var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
+
 // NewClient prepares a new MLX runner client for LLM models.
 // The subprocess is not started until Load() is called.
 func NewClient(modelName string, softContextLength int) (*Client, error) {
-	if err := checkPlatformSupport(); err != nil {
+	if err := CheckRuntime(); err != nil {
 		return nil, err
 	}
 
@@ -59,27 +63,25 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 		client:            http.DefaultClient,
 	}
 
-	modelManifest, err := manifest.LoadManifest(modelName)
+	modelManifest, err := manifest.ParseNamedManifest(model.ParseName(modelName))
 	if err != nil {
 		return nil, err
 	}
-	c.memory.Store(uint64(modelManifest.TotalTensorSize()))
+	var tensorBytes uint64
+	for _, layer := range modelManifest.TensorLayers() {
+		tensorBytes += uint64(layer.Size)
+	}
+	c.memory.Store(tensorBytes)
 
 	return c, nil
 }
 
-func checkPlatformSupport() error {
-	switch runtime.GOOS {
-	case "darwin":
-		if runtime.GOARCH != "arm64" {
-			return fmt.Errorf("MLX on macOS requires Apple Silicon (arm64), got %s", runtime.GOARCH)
-		}
-		return nil
-	case "linux", "windows":
-		return nil
-	default:
-		return fmt.Errorf("MLX is not supported on %s", runtime.GOOS)
+// CheckRuntime reports whether an MLX dynamic library was loaded successfully.
+func CheckRuntime() error {
+	if _, err := mlx.LoadedLibraryPath(); err != nil {
+		return fmt.Errorf("%w: %v", ErrRuntimeUnavailable, err)
 	}
+	return nil
 }
 
 // WaitUntilRunning waits for the subprocess to be ready.

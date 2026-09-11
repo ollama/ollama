@@ -47,7 +47,7 @@ func TestWarnMissingThinking(t *testing.T) {
 		oldStderr := os.Stderr
 		r, w, _ := os.Pipe()
 		os.Stderr = w
-		ensureThinkingSupport(t.Context(), client, "m")
+		ensureThinkingSupport(t.Context(), client, "m", "")
 		w.Close()
 		os.Stderr = oldStderr
 		out, _ := io.ReadAll(r)

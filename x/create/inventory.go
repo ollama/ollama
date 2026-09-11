@@ -50,12 +50,7 @@ func ReadInventory(dir string) (Inventory, error) {
 		return Inventory{}, fmt.Errorf("read config: %w", err)
 	}
 
-	index, err := readSourceTensorFiles(dir)
-	if err != nil {
-		return Inventory{}, fmt.Errorf("read tensor index: %w", err)
-	}
-
-	files, err := inventoryShardFiles(dir, index)
+	index, files, err := safetensorsWeightFiles(dir)
 	if err != nil {
 		return Inventory{}, err
 	}
@@ -115,6 +110,26 @@ func ReadInventory(dir string) (Inventory, error) {
 	}
 
 	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
+}
+
+// SafetensorsWeightFiles returns the weight shards selected by the same index
+// rules used by ReadInventory. Callers that transfer a source model should use
+// this list rather than guessing shard names.
+func SafetensorsWeightFiles(dir string) ([]string, error) {
+	_, files, err := safetensorsWeightFiles(dir)
+	return files, err
+}
+
+func safetensorsWeightFiles(dir string) (map[string]string, []string, error) {
+	index, err := readSourceTensorFiles(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read tensor index: %w", err)
+	}
+	files, err := inventoryShardFiles(dir, index)
+	if err != nil {
+		return nil, nil, err
+	}
+	return index, files, nil
 }
 
 func inventoryShardFiles(dir string, index map[string]string) ([]string, error) {
