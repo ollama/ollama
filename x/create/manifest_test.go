@@ -261,6 +261,46 @@ func readSafetensorsManifestConfig(t *testing.T, name string) model.ConfigV2 {
 	return config
 }
 
+func TestLicenseStrings(t *testing.T) {
+	valid := map[string]struct {
+		in   any
+		want []string
+	}{
+		"nil":          {nil, nil},
+		"empty string": {"", nil},
+		"string":       {"MIT", []string{"MIT"}},
+		"string slice": {[]string{"MIT", "Apache-2.0"}, []string{"MIT", "Apache-2.0"}},
+		"decoded JSON": {[]any{"MIT", "Apache-2.0"}, []string{"MIT", "Apache-2.0"}},
+	}
+	for name, tt := range valid {
+		t.Run(name, func(t *testing.T) {
+			got, err := LicenseStrings(tt.in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("licenses mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+
+	invalid := map[string]any{
+		"number":     float64(42),
+		"object":     map[string]any{"name": "MIT"},
+		"mixed list": []any{"MIT", 7},
+	}
+	for name, in := range invalid {
+		t.Run(name, func(t *testing.T) {
+			if _, err := LicenseStrings(in); !errors.Is(err, ErrInvalidLicense) {
+				t.Fatalf("LicenseStrings(%#v) error = %v, want ErrInvalidLicense", in, err)
+			}
+			if _, err := ApplyModelfileLayers(nil, ModelfileLayerOptions{License: in}); !errors.Is(err, ErrInvalidLicense) {
+				t.Fatalf("ApplyModelfileLayers(License: %#v) error = %v, want ErrInvalidLicense", in, err)
+			}
+		})
+	}
+}
+
 func readManifestLayerString(t *testing.T, layer manifest.Layer) string {
 	t.Helper()
 	f, err := layer.Open()

@@ -1189,7 +1189,6 @@ If you are creating a model from a safetensors directory or from GGUF files, you
 - `model`: name of the model to create
 - `from`: (optional) name of an existing model to create the new model from
 - `files`: (optional) a dictionary of file names to SHA256 digests of blobs to create the model from
-- `adapters`: (optional) a dictionary of file names to SHA256 digests of blobs for LORA adapters
 - `template`: (optional) the prompt template for the model
 - `renderer`: (optional) the name of the renderer for the model
 - `parser`: (optional) the name of the parser for the model

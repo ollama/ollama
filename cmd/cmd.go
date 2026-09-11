@@ -288,6 +288,30 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 	}, true, nil
 }
 
+var (
+	errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
+	errForceLocalOnly      = errors.New("--force is only supported for local MLX safetensors imports")
+)
+
+// createSafetensorsModel imports in-process when the server is local and
+// otherwise uploads the source files for the server to import.
+func createSafetensorsModel(cmd *cobra.Command, args []string, opts xcreateclient.CreateOptions, p *progress.Progress) error {
+	if !envconfig.CreateRemote() && isLocalhost() {
+		return xcreateclient.CreateModel(cmd.Context(), opts, p)
+	}
+	if opts.Force {
+		return errForceLocalOnly
+	}
+	if err := checkServerHeartbeat(cmd, args); err != nil {
+		return err
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	return xcreateclient.CreateModelRemote(cmd.Context(), client, opts, p)
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -306,6 +330,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "adapter" }) {
+		return errAdaptersUnsupported
+	}
 
 	opts, isSafetensorsCreate, err := safetensorsCreateOptions(modelfile, filename, modelName)
 	if err != nil {
@@ -315,26 +342,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		opts.Quantize = quantize
 		opts.DraftQuantize = draftQuantize
 		opts.Force = force
-		if !envconfig.CreateRemote() && isLocalhost() {
-			return xcreateclient.CreateModel(cmd.Context(), opts, p)
-		}
-		if force {
-			return errors.New("--force is only supported for local MLX safetensors imports")
-		}
-	} else if quantize != "" {
-		return errors.New("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing")
-	} else if force {
-		return errors.New("--force is only supported for local MLX safetensors imports")
+		return createSafetensorsModel(cmd, args, opts, p)
 	}
-	if isSafetensorsCreate {
-		if err := checkServerHeartbeat(cmd, args); err != nil {
-			return err
-		}
-		client, err := api.ClientFromEnvironment()
-		if err != nil {
-			return err
-		}
-		return xcreateclient.CreateModelRemote(cmd.Context(), client, opts, p)
+	if quantize != "" {
+		return errors.New("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing")
+	}
+	if force {
+		return errForceLocalOnly
 	}
 
 	// Standard Modelfile + API path
@@ -379,19 +393,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	adapters := syncmap.NewSyncMap[string, string]()
-	adapterNames := createRequestFileNames(req.Adapters)
-	for f, digest := range req.Adapters {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			adapters.Store(adapterNames[f], digest)
-			return nil
-		})
-	}
-
 	draftFiles := syncmap.NewSyncMap[string, string]()
 	draftFileNames := createRequestFileNames(req.DraftFiles)
 	for f, digest := range req.DraftFiles {
@@ -410,7 +411,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req.Files = files.Items()
-	req.Adapters = adapters.Items()
 	req.DraftFiles = draftFiles.Items()
 
 	bars := make(map[string]*progress.Bar)

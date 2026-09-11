@@ -18,7 +18,6 @@ A Modelfile is the blueprint to create and share customized models using Ollama.
   - [TEMPLATE](#template)
     - [Template Variables](#template-variables)
   - [SYSTEM](#system)
-  - [ADAPTER](#adapter)
   - [LICENSE](#license)
   - [MESSAGE](#message)
 - [Notes](#notes)
@@ -38,7 +37,6 @@ INSTRUCTION arguments
 | [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.         |
 | [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.              |
 | [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
-| [`ADAPTER`](#adapter)               | Defines the (Q)LoRA adapters to apply to the model.            |
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
 | [`MESSAGE`](#message)               | Specify message history.                                       |
 | [`REQUIRES`](#requires)             | Specify the minimum version of Ollama required by the model.   |
@@ -185,14 +183,6 @@ The `SYSTEM` instruction specifies the system message to be used in the template
 
 ```
 SYSTEM """<system message>"""
-```
-
-### ADAPTER
-
-The `ADAPTER` instruction applies a GGUF LoRA adapter to the base model specified by `FROM`. The adapter must be trained from the same base model.
-
-```
-ADAPTER ./ollama-lora.gguf
 ```
 
 ### LICENSE

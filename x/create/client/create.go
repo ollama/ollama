@@ -22,14 +22,13 @@ import (
 	"github.com/ollama/ollama/x/quant"
 )
 
-var errSafetensorsAdapters = errors.New("safetensors imports do not support adapters")
+var errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
 	Template   string
 	System     string
 	Licenses   []string
-	Adapters   []string
 	Draft      string
 	Parser     string
 	Renderer   string
@@ -82,7 +81,7 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 			}
 			mfConfig.Requires = strings.TrimPrefix(requires, "v")
 		case "adapter":
-			mfConfig.Adapters = append(mfConfig.Adapters, cmd.Args)
+			return "", nil, errAdaptersUnsupported
 		case "message":
 			role, content, _ := strings.Cut(cmd.Args, ": ")
 			mfConfig.Messages = append(mfConfig.Messages, api.Message{Role: role, Content: content})
@@ -133,10 +132,6 @@ type CreateOptions struct {
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
 // Automatically detects safetensors source imports and existing safetensors base models.
 func CreateModel(ctx context.Context, opts CreateOptions, p *progress.Progress) error {
-	if opts.Modelfile != nil && len(opts.Modelfile.Adapters) > 0 {
-		return errSafetensorsAdapters
-	}
-
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""

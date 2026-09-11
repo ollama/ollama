@@ -16,8 +16,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-var intermediateBlobs map[string]string = make(map[string]string)
-
 type modelLayer struct {
 	manifest.Layer
 	GGUF           *gguf.Metadata
@@ -66,6 +64,9 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		}
 		layer.Name = srcLayer.Name
 
+		if layer.MediaType == "application/vnd.ollama.image.adapter" {
+			slog.Warn("LoRA adapters are deprecated; the adapter layer is carried over but new adapters cannot be created", "model", name.DisplayShortest(), "digest", layer.Digest)
+		}
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model",
 			"application/vnd.ollama.image.projector",
