@@ -54,7 +54,6 @@ TEMPLATE {{ .Prompt }}
 REQUIRES 0.20.0
 LICENSE MIT
 LICENSE Apache-2.0
-ADAPTER ./adapter.gguf
 MESSAGE user Hello
 PARAMETER temperature 0.7
 PARAMETER stop USER:
@@ -86,9 +85,6 @@ PARAMETER stop ASSISTANT:
 	}
 	if !slices.Equal(mfConfig.Licenses, []string{"MIT", "Apache-2.0"}) {
 		t.Fatalf("Licenses = %v, want both licenses", mfConfig.Licenses)
-	}
-	if !slices.Equal(mfConfig.Adapters, []string{"./adapter.gguf"}) {
-		t.Fatalf("Adapters = %v, want adapter reference", mfConfig.Adapters)
 	}
 	if len(mfConfig.Messages) != 1 || mfConfig.Messages[0].Role != "user" || mfConfig.Messages[0].Content != "Hello" {
 		t.Fatalf("Messages = %#v, want one user message", mfConfig.Messages)
@@ -266,18 +262,13 @@ func TestCreateModel_NotSafetensorsDir(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsSafetensorsAdaptersBeforeReadingSource(t *testing.T) {
-	opts := CreateOptions{
-		ModelDir: "missing",
-		Modelfile: &ModelfileConfig{
-			Adapters: []string{"adapter.gguf"},
-		},
+func TestConfigFromModelfileRejectsAdapters(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader("FROM ./model\nADAPTER ./adapter.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := CreateModel(t.Context(), opts, nil); !errors.Is(err, errSafetensorsAdapters) {
-		t.Fatalf("CreateModel() error = %v, want %v", err, errSafetensorsAdapters)
-	}
-	if err := CreateModelRemote(t.Context(), nil, opts, nil); !errors.Is(err, errSafetensorsAdapters) {
-		t.Fatalf("CreateModelRemote() error = %v, want %v", err, errSafetensorsAdapters)
+	if _, _, err := ConfigFromModelfile(modelfile); !errors.Is(err, errAdaptersUnsupported) {
+		t.Fatalf("ConfigFromModelfile() error = %v, want %v", err, errAdaptersUnsupported)
 	}
 }
 

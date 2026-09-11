@@ -36,18 +36,17 @@ import (
 )
 
 var (
-	errNoFilesProvided         = errors.New("no files provided to convert")
-	errOnlyOneAdapterSupported = errors.New("only one adapter is currently supported")
-	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
-	errUnknownType             = errors.New("unknown type")
-	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
-	errFilePath                = errors.New("file path must be relative")
-	errRemoteDraftUnsupported  = errors.New("DRAFT cannot be used with remote models")
-	errSafetensorsFrom         = errors.New("safetensors imports do not support FROM model overlays")
-	errSafetensorsAdapters     = errors.New("safetensors imports do not support adapters")
-	errInvalidSplitGGUF        = errors.New("invalid split GGUF")
-	errMixedModelTypes         = errors.New("mixed model file types")
-	errInvalidCreateInfo       = errors.New("invalid create info")
+	errNoFilesProvided        = errors.New("no files provided to convert")
+	errAdaptersUnsupported    = errors.New("LoRA adapters are no longer supported")
+	errOnlyGGUFSupported      = errors.New("supplied file was not in GGUF format")
+	errUnknownType            = errors.New("unknown type")
+	errNeitherFromOrFiles     = errors.New("neither 'from' or 'files' was specified")
+	errFilePath               = errors.New("file path must be relative")
+	errRemoteDraftUnsupported = errors.New("DRAFT cannot be used with remote models")
+	errSafetensorsFrom        = errors.New("safetensors imports do not support FROM model overlays")
+	errInvalidSplitGGUF       = errors.New("invalid split GGUF")
+	errMixedModelTypes        = errors.New("mixed model file types")
+	errInvalidCreateInfo      = errors.New("invalid create info")
 )
 
 const (
@@ -79,7 +78,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := validateCreateFiles(r.Adapters); err != nil {
+	if len(r.Adapters) > 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errAdaptersUnsupported.Error()})
+		return
+	}
+	if _, err := xcreate.LicenseStrings(r.License); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -102,7 +105,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 	fileType, err := detectModelTypeFromFiles(r.Files)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Mixed types and blobs the client never uploaded are request errors;
+		// anything else is the server failing to read its own blob store.
+		status := http.StatusInternalServerError
+		if errors.Is(err, errMixedModelTypes) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, manifest.ErrInvalidDigestFormat) {
+			status = http.StatusBadRequest
+		}
+		c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	if err := validateCreateOptions(r, fileType); err != nil {
@@ -195,9 +204,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 			}
 		} else if r.Files != nil {
-			baseLayers, err = convertModelFromFiles(r.Files, fn)
+			baseLayers, err = convertModelFromFiles(reqCtx, r.Files, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errInvalidSplitGGUF, errMixedModelTypes} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errInvalidSplitGGUF, errMixedModelTypes, errAdaptersUnsupported} {
 					if errors.Is(err, badReq) {
 						send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 						return
@@ -218,9 +227,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		var draftLayers []*modelLayer
 		if !remote && r.DraftFiles != nil {
-			draftLayers, err = convertDraftModelFromFiles(r.DraftFiles, fn)
+			draftLayers, err = convertDraftModelFromFiles(reqCtx, r.DraftFiles, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errFilePath, errInvalidSplitGGUF, errMixedModelTypes} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errFilePath, errInvalidSplitGGUF, errMixedModelTypes, errAdaptersUnsupported} {
 					if errors.Is(err, badReq) {
 						send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 						return
@@ -231,24 +240,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			}
 		}
 
-		var adapterLayers []*modelLayer
-		if !remote && r.Adapters != nil {
-			adapterLayers, err = convertAdapterFromFiles(r.Adapters, fn)
-			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath, errInvalidSplitGGUF, errMixedModelTypes} {
-					if errors.Is(err, badReq) {
-						send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
-						return
-					}
-				}
-				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
-				return
-			}
-		}
-
-		if len(adapterLayers) > 0 {
-			baseLayers = append(baseLayers, adapterLayers...)
-		}
 		if len(draftLayers) > 0 {
 			baseLayers = append(baseLayers, draftLayers...)
 		}
@@ -261,7 +252,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		if err := createModel(reqCtx, r, name, baseLayers, config, fn); err != nil {
-			if errors.Is(err, xcreate.ErrBadTemplate) || errors.Is(err, xcreate.ErrInvalidRequires) || errors.Is(err, errInvalidSplitGGUF) {
+			if errors.Is(err, xcreate.ErrBadTemplate) || errors.Is(err, xcreate.ErrInvalidRequires) || errors.Is(err, xcreate.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {
 				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 				return
 			}
@@ -309,9 +300,6 @@ func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model
 	}
 	if r.From != "" {
 		return errSafetensorsFrom
-	}
-	if len(r.Adapters) > 0 {
-		return errSafetensorsAdapters
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -365,7 +353,7 @@ func createSafetensorsErrorResponse(err error) gin.H {
 	}
 
 	status := http.StatusInternalServerError
-	for _, badReq := range []error{errNoFilesProvided, errFilePath, errSafetensorsFrom, errSafetensorsAdapters, errInvalidCreateInfo, manifest.ErrInvalidDigestFormat, xcreate.ErrInvalidRequires, xcreate.ErrUnsupportedMLXArchitecture, os.ErrNotExist} {
+	for _, badReq := range []error{errNoFilesProvided, errFilePath, errSafetensorsFrom, errInvalidCreateInfo, manifest.ErrInvalidDigestFormat, xcreate.ErrBadTemplate, xcreate.ErrInvalidRequires, xcreate.ErrInvalidLicense, xcreate.ErrUnsupportedMLXArchitecture, os.ErrNotExist} {
 		if errors.Is(err, badReq) {
 			status = http.StatusBadRequest
 			break
@@ -616,22 +604,15 @@ func remoteURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func convertModelFromFiles(files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
-	return convertModelFromFilesWithMediaType(files, "", true, fn)
+func convertModelFromFiles(ctx context.Context, files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	return convertModelFromFilesWithMediaType(ctx, files, "", true, fn)
 }
 
-func convertAdapterFromFiles(files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
-	if len(files) > 1 {
-		return nil, errOnlyOneAdapterSupported
-	}
-	return convertModelFromFilesWithMediaType(files, "", true, fn)
+func convertDraftModelFromFiles(ctx context.Context, files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	return convertModelFromFilesWithMediaType(ctx, files, manifest.MediaTypeImageDraft, false, fn)
 }
 
-func convertDraftModelFromFiles(files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
-	return convertModelFromFilesWithMediaType(files, manifest.MediaTypeImageDraft, false, fn)
-}
-
-func convertModelFromFilesWithMediaType(files map[string]string, mediaType string, detectTemplate bool, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+func convertModelFromFilesWithMediaType(ctx context.Context, files map[string]string, mediaType string, detectTemplate bool, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
 	modelType, err := detectModelTypeFromFiles(files)
 	if err != nil {
 		return nil, err
@@ -652,6 +633,9 @@ func convertModelFromFilesWithMediaType(files map[string]string, mediaType strin
 
 		splitCollector := newSplitGGUFCollector()
 		for _, filePath := range filePaths {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			layers, err := ggufLayersWithMediaType(files[filePath], filePath, mediaType, fn)
 			if err != nil {
 				return nil, err
@@ -767,7 +751,9 @@ func detectModelTypeFromFile(filePath, digest string) (string, error) {
 	}
 
 	f, err := os.Open(blobPath)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("blob not found for %s (digest %s): %w", filePath, digest, err)
+	} else if err != nil {
 		return "", fmt.Errorf("read %s: %w", filePath, err)
 	}
 	defer f.Close()
@@ -900,11 +886,12 @@ func ggufLayersWithMediaType(digest, sourceName, mediaType string, fn func(resp 
 		return nil, err
 	}
 
+	if metadata.Kind() == "adapter" {
+		return nil, fmt.Errorf("%w: %s is a LoRA adapter", errAdaptersUnsupported, sourceName)
+	}
 	if mediaType == "" {
 		mediaType = "application/vnd.ollama.image.model"
-		if metadata.Kind() == "adapter" {
-			mediaType = "application/vnd.ollama.image.adapter"
-		} else if isProjectorGGUF(metadata) {
+		if isProjectorGGUF(metadata) {
 			mediaType = "application/vnd.ollama.image.projector"
 		}
 	}

@@ -398,7 +398,7 @@ func TestCreateModelRetainsSplitGGUF(t *testing.T) {
 	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
 	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
 
-	baseLayers, err := convertModelFromFiles(map[string]string{
+	baseLayers, err := convertModelFromFiles(t.Context(), map[string]string{
 		"model-00001-of-00002.gguf": firstDigest,
 		"model-00002-of-00002.gguf": secondDigest,
 	}, func(api.ProgressResponse) {})
@@ -531,7 +531,7 @@ func TestCreateModelRetainsSplitDraftGGUF(t *testing.T) {
 
 	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
 	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
-	draftLayers, err := convertDraftModelFromFiles(map[string]string{
+	draftLayers, err := convertDraftModelFromFiles(t.Context(), map[string]string{
 		"draft-00001-of-00002.gguf": firstDigest,
 		"draft-00002-of-00002.gguf": secondDigest,
 	}, func(api.ProgressResponse) {})
@@ -575,7 +575,7 @@ func TestCreateModelDoesNotGroupSplitGGUFsAcrossDirectories(t *testing.T) {
 	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
 	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
 
-	_, err := convertModelFromFiles(map[string]string{
+	_, err := convertModelFromFiles(t.Context(), map[string]string{
 		"first/model-00001-of-00002.gguf":  firstDigest,
 		"second/model-00002-of-00002.gguf": secondDigest,
 	}, func(api.ProgressResponse) {})
@@ -594,7 +594,7 @@ func TestCreateModelGroupsSplitGGUFWithUnknownShardMetadata(t *testing.T) {
 		"unknown.split.tensors.count": int32(2),
 	}, "blk.1.attn_q.weight")
 
-	baseLayers, err := convertModelFromFiles(map[string]string{
+	baseLayers, err := convertModelFromFiles(t.Context(), map[string]string{
 		"model-00001-of-00002.gguf": firstDigest,
 		"model-00002-of-00002.gguf": secondDigest,
 	}, func(api.ProgressResponse) {})
@@ -613,7 +613,7 @@ func TestCreateModelRejectsMissingSplitGGUFShard(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
 
-	baseLayers, err := convertModelFromFiles(map[string]string{
+	baseLayers, err := convertModelFromFiles(t.Context(), map[string]string{
 		"model-00001-of-00002.gguf": firstDigest,
 	}, func(api.ProgressResponse) {})
 	if err == nil {
@@ -631,7 +631,7 @@ func TestCreateModelRejectsTooManySplitGGUFShards(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	digest := createSplitGGUFShard(t, 0, uint32(maxSplitGGUFParts+1), 1, "blk.0.attn_q.weight")
 
-	baseLayers, err := convertModelFromFiles(map[string]string{
+	baseLayers, err := convertModelFromFiles(t.Context(), map[string]string{
 		fmt.Sprintf("model-00001-of-%05d.gguf", maxSplitGGUFParts+1): digest,
 	}, func(api.ProgressResponse) {})
 	if err == nil {
@@ -650,7 +650,7 @@ func TestCreateModelRejectsDuplicateSplitGGUFTensors(t *testing.T) {
 	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
 	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.0.attn_q.weight")
 
-	_, err := convertModelFromFiles(map[string]string{
+	_, err := convertModelFromFiles(t.Context(), map[string]string{
 		"model-00001-of-00002.gguf": firstDigest,
 		"model-00002-of-00002.gguf": secondDigest,
 	}, func(api.ProgressResponse) {})
@@ -803,19 +803,19 @@ func TestCreateFromBin(t *testing.T) {
 		}
 	})
 
-	t.Run("empty adapter digest", func(t *testing.T) {
+	t.Run("adapters", func(t *testing.T) {
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:     "my-gguf-model",
 			Files:    map[string]string{"0.gguf": digest},
-			Adapters: map[string]string{"adapter.gguf": ""},
+			Adapters: map[string]string{"adapter.gguf": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status 400, got %d", w.Code)
 		}
-		if !strings.Contains(w.Body.String(), "invalid digest format") {
-			t.Errorf("expected invalid digest format error, got:\n%s", w.Body.String())
+		if !strings.Contains(w.Body.String(), errAdaptersUnsupported.Error()) {
+			t.Errorf("expected adapters unsupported error, got:\n%s", w.Body.String())
 		}
 	})
 }
@@ -2436,10 +2436,110 @@ func TestCreateSafetensorsRejectsUnsupportedInputs(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), errSafetensorsAdapters.Error()) {
+		if !strings.Contains(w.Body.String(), errAdaptersUnsupported.Error()) {
 			t.Fatalf("expected adapters error, got %s", w.Body.String())
 		}
 	})
+}
+
+func TestCreateRejectsInvalidLicense(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	_, digest := createBinFile(t, nil, nil)
+	for name, license := range map[string]any{
+		"number":     42,
+		"mixed list": []any{"MIT", 7},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model:   "invalid-license",
+				Files:   map[string]string{"test.gguf": digest},
+				License: license,
+				Stream:  &stream,
+			})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), xcreate.ErrInvalidLicense.Error()) {
+				t.Fatalf("response = %s, want invalid license error", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateRejectsAdapterGGUF(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	_, digest := createBinFile(t, map[string]any{"general.type": "adapter"}, nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "adapter-model",
+		Files:  map[string]string{"adapter.gguf": digest},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), errAdaptersUnsupported.Error()) {
+		t.Fatalf("response = %s, want adapters unsupported error", w.Body.String())
+	}
+}
+
+func TestCreateDetectModelTypeErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	var s Server
+
+	t.Run("missing blob is a bad request", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model:  "missing-blob",
+			Files:  map[string]string{"model": "sha256:" + strings.Repeat("0", 64)},
+			Stream: &stream,
+		})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "blob not found") {
+			t.Fatalf("response = %s, want missing blob error", w.Body.String())
+		}
+	})
+
+	t.Run("unreadable blob is a server error", func(t *testing.T) {
+		// A directory in the blob's place makes the magic-byte read fail with
+		// something other than "not found".
+		digest := "sha256:" + strings.Repeat("1", 64)
+		blobPath, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(blobPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Model:  "unreadable-blob",
+			Files:  map[string]string{"model": digest},
+			Stream: &stream,
+		})
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+		}
+	})
+}
+
+func TestConvertModelFromFilesHonorsContext(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	_, digest := createBinFile(t, nil, nil)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := convertModelFromFiles(ctx, map[string]string{"test.gguf": digest}, func(api.ProgressResponse) {})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("convertModelFromFiles() error = %v, want context.Canceled", err)
+	}
 }
 
 // createSafetensorsTestModel creates a minimal safetensors model manifest for testing.

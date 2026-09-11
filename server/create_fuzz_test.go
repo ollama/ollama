@@ -55,7 +55,7 @@ func FuzzConvertModelFromFiles(f *testing.F) {
 			return
 		}
 
-		layers, err := convertModelFromFiles(files, func(api.ProgressResponse) {})
+		layers, err := convertModelFromFiles(t.Context(), files, func(api.ProgressResponse) {})
 		if err != nil {
 			return
 		}

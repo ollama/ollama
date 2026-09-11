@@ -23,6 +23,7 @@ import (
 var (
 	ErrBadTemplate     = errors.New("template error")
 	ErrInvalidRequires = errors.New("invalid requires version")
+	ErrInvalidLicense  = errors.New("license must be a string or a list of strings")
 )
 
 // SafetensorsManifestOptions describes the config and Modelfile-derived layers
@@ -195,32 +196,14 @@ func ApplyModelfileLayers(layers []manifest.Layer, opts ModelfileLayerOptions) (
 		}
 	}
 
-	if opts.License != nil {
-		switch l := opts.License.(type) {
-		case string:
-			if l != "" {
-				var err error
-				layers, err = appendTextLayer(layers, "application/vnd.ollama.image.license", l)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create license layer: %w", err)
-				}
-			}
-		default:
-			var licenses []string
-			b, err := json.Marshal(l)
-			if err != nil {
-				return nil, fmt.Errorf("failed to encode licenses: %w", err)
-			}
-			if err := json.Unmarshal(b, &licenses); err != nil {
-				return nil, err
-			}
-			for _, v := range licenses {
-				var err error
-				layers, err = appendTextLayer(layers, "application/vnd.ollama.image.license", v)
-				if err != nil {
-					return nil, fmt.Errorf("failed to create license layer: %w", err)
-				}
-			}
+	licenses, err := LicenseStrings(opts.License)
+	if err != nil {
+		return nil, err
+	}
+	for _, v := range licenses {
+		layers, err = appendTextLayer(layers, "application/vnd.ollama.image.license", v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create license layer: %w", err)
 		}
 	}
 
@@ -277,6 +260,34 @@ func ApplyModelfileLayers(layers []manifest.Layer, opts ModelfileLayerOptions) (
 		layers = append(layers, layer)
 	}
 	return layers, nil
+}
+
+// LicenseStrings normalizes a create request license value, which may arrive
+// as a string, []string, or JSON-decoded []any, into a list of license texts.
+func LicenseStrings(license any) ([]string, error) {
+	switch l := license.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		if l == "" {
+			return nil, nil
+		}
+		return []string{l}, nil
+	case []string:
+		return l, nil
+	case []any:
+		out := make([]string, 0, len(l))
+		for i, v := range l {
+			s, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("%w: element %d is %T", ErrInvalidLicense, i, v)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("%w: got %T", ErrInvalidLicense, license)
+	}
 }
 
 func removeLayersByMediaType(layers []manifest.Layer, mediaType string) []manifest.Layer {

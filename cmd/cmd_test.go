@@ -1631,6 +1631,25 @@ func TestCreateHandlerRejectsForceForGGUF(t *testing.T) {
 	}
 }
 
+func TestCreateHandlerRejectsAdaptersBeforeUpload(t *testing.T) {
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\nADAPTER ./adapter.gguf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().Bool("force", false, "")
+	cmd.SetContext(t.Context())
+
+	if err := CreateHandler(cmd, []string{"test-model"}); !errors.Is(err, errAdaptersUnsupported) {
+		t.Fatalf("error = %v, want %v", err, errAdaptersUnsupported)
+	}
+}
+
 func TestCreateHandlerRejectsForceForRemoteSafetensors(t *testing.T) {
 	t.Setenv("OLLAMA_CREATE_REMOTE", "1")
 	dir := t.TempDir()

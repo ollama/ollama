@@ -33,9 +33,6 @@ func CreateModelRemote(ctx context.Context, client *api.Client, opts CreateOptio
 	if opts.Force {
 		return errors.New("--force is only supported for local MLX safetensors imports")
 	}
-	if opts.Modelfile != nil && len(opts.Modelfile.Adapters) > 0 {
-		return errSafetensorsAdapters
-	}
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
 	if err := validateSafetensorsQuantization(opts); err != nil {
