@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +28,27 @@ import (
 type chunkedSession struct {
 	mu       sync.Mutex
 	sessions map[string]*bytes.Buffer
+}
+
+type transferRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f transferRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func stubLookupNetIP(t *testing.T, addrs map[string][]netip.Addr) {
+	t.Helper()
+
+	previous := lookupNetIP
+	lookupNetIP = func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		if ips, ok := addrs[host]; ok {
+			return ips, nil
+		}
+		return nil, fmt.Errorf("unexpected lookup for %q", host)
+	}
+	t.Cleanup(func() {
+		lookupNetIP = previous
+	})
 }
 
 func newChunkedSession() *chunkedSession {
@@ -184,6 +208,325 @@ func TestDownloadWithRedirect(t *testing.T) {
 	}
 
 	verifyBlob(t, clientDir, blob, data)
+}
+
+func TestDownloadRejectsPublicRegistryRedirectToLocalAddress(t *testing.T) {
+	var internalHits atomic.Int32
+	blob := Blob{
+		Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:   1,
+	}
+
+	client := &http.Client{
+		Transport: transferRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Host {
+			case "registry.example":
+				header := http.Header{}
+				header.Set("Location", "http://169.254.169.254/latest/meta-data/")
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case "169.254.169.254":
+				internalHits.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("x")),
+					Request:    req,
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected host %q", req.URL.Host)
+			}
+		}),
+	}
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: "http://registry.example",
+		DestDir: t.TempDir(),
+		Client:  client,
+	})
+	if err == nil {
+		t.Fatal("Download succeeded; want local redirect rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing redirect") {
+		t.Fatalf("Download error = %v, want refusing redirect", err)
+	}
+	if internalHits.Load() != 0 {
+		t.Fatalf("internal redirect target was requested %d times", internalHits.Load())
+	}
+}
+
+func TestDownloadDoesNotFollowSecondHopRedirectFromCDN(t *testing.T) {
+	stubLookupNetIP(t, map[string][]netip.Addr{
+		"registry.example": {netip.MustParseAddr("203.0.113.10")},
+		"cdn.example":      {netip.MustParseAddr("203.0.113.20")},
+	})
+
+	var internalHits atomic.Int32
+	blob := Blob{
+		Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:   1,
+	}
+
+	client := &http.Client{
+		Transport: transferRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Host {
+			case "registry.example":
+				header := http.Header{}
+				header.Set("Location", "https://cdn.example/v2/library/_/blobs/"+blob.Digest)
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case "cdn.example":
+				header := http.Header{}
+				header.Set("Location", "http://169.254.169.254/latest/meta-data/")
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case "169.254.169.254":
+				internalHits.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("x")),
+					Request:    req,
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected host %q", req.URL.Host)
+			}
+		}),
+	}
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: "http://registry.example",
+		DestDir: t.TempDir(),
+		Client:  client,
+	})
+	if err == nil {
+		t.Fatal("Download succeeded; want redirected CDN response to fail")
+	}
+	if !strings.Contains(err.Error(), "status 307") {
+		t.Fatalf("Download error = %v, want status 307", err)
+	}
+	if internalHits.Load() != 0 {
+		t.Fatalf("internal redirect target was requested %d times", internalHits.Load())
+	}
+}
+
+func TestDownloadRejectsPublicRegistryRedirectToPrivateDNSName(t *testing.T) {
+	stubLookupNetIP(t, map[string][]netip.Addr{
+		"registry.example": {netip.MustParseAddr("203.0.113.10")},
+		"metadata.example": {netip.MustParseAddr("169.254.169.254")},
+	})
+
+	var internalHits atomic.Int32
+	blob := Blob{
+		Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:   1,
+	}
+
+	client := &http.Client{
+		Transport: transferRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Host {
+			case "registry.example":
+				header := http.Header{}
+				header.Set("Location", "http://metadata.example/latest/meta-data/")
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			case "metadata.example":
+				internalHits.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("x")),
+					Request:    req,
+				}, nil
+			default:
+				return nil, fmt.Errorf("unexpected host %q", req.URL.Host)
+			}
+		}),
+	}
+
+	err := Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: "http://registry.example",
+		DestDir: t.TempDir(),
+		Client:  client,
+	})
+	if err == nil {
+		t.Fatal("Download succeeded; want private DNS redirect rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing redirect") {
+		t.Fatalf("Download error = %v, want refusing redirect", err)
+	}
+	if internalHits.Load() != 0 {
+		t.Fatalf("private redirect target was requested %d times", internalHits.Load())
+	}
+}
+
+func TestDownloadRejectsPublicRegistryRedirectThroughProxy(t *testing.T) {
+	stubLookupNetIP(t, map[string][]netip.Addr{
+		"cdn.example": {netip.MustParseAddr("203.0.113.20")},
+	})
+
+	blob := Blob{
+		Digest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:   1,
+	}
+
+	var registryProxyHits atomic.Int32
+	var cdnProxyHits atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Host {
+		case "registry.example":
+			registryProxyHits.Add(1)
+			http.Redirect(w, r, "https://cdn.example/v2/library/_/blobs/"+blob.Digest, http.StatusTemporaryRedirect)
+		case "cdn.example":
+			cdnProxyHits.Add(1)
+			http.Error(w, "cdn should not be requested through proxy", http.StatusBadGateway)
+		default:
+			http.Error(w, fmt.Sprintf("unexpected proxied host %q", r.URL.Host), http.StatusBadGateway)
+		}
+	}))
+	defer proxy.Close()
+
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = Download(context.Background(), DownloadOptions{
+		Blobs:   []Blob{blob},
+		BaseURL: "http://registry.example",
+		DestDir: t.TempDir(),
+		Client: &http.Client{
+			Transport: &http.Transport{
+				Proxy: http.ProxyURL(proxyURL),
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("Download succeeded; want proxied cross-host redirect rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing redirect through proxy") {
+		t.Fatalf("Download error = %v, want proxy redirect rejection", err)
+	}
+	if registryProxyHits.Load() != 1 {
+		t.Fatalf("proxy received %d registry requests, want one non-retried rejection", registryProxyHits.Load())
+	}
+	if cdnProxyHits.Load() != 0 {
+		t.Fatalf("proxy received %d CDN requests after redirect rejection", cdnProxyHits.Load())
+	}
+}
+
+func TestRedirectValidationAndDialRejectDNSRebind(t *testing.T) {
+	var lookupCalls atomic.Int32
+	previous := lookupNetIP
+	lookupNetIP = func(ctx context.Context, network, host string) ([]netip.Addr, error) {
+		if host != "cdn.example" {
+			return nil, fmt.Errorf("unexpected lookup for %q", host)
+		}
+		if lookupCalls.Add(1) == 1 {
+			return []netip.Addr{netip.MustParseAddr("203.0.113.20")}, nil
+		}
+		return []netip.Addr{netip.MustParseAddr("169.254.169.254")}, nil
+	}
+	t.Cleanup(func() {
+		lookupNetIP = previous
+	})
+
+	baseURL, err := url.Parse("http://registry.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirectURL, err := url.Parse("https://cdn.example/v2/library/_/blobs/sha256:abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRedirectURL(context.Background(), baseURL, redirectURL, nil); err != nil {
+		t.Fatalf("validateRedirectURL returned error before rebind: %v", err)
+	}
+
+	var dialed atomic.Bool
+	_, err = dialResolved(
+		context.Background(),
+		"tcp",
+		"cdn.example:443",
+		false,
+		func(context.Context, string, string) (net.Conn, error) {
+			dialed.Store(true)
+			return nil, errors.New("dialed")
+		},
+	)
+	if err == nil {
+		t.Fatal("dialResolved succeeded; want local address rejection")
+	}
+	if !strings.Contains(err.Error(), "refusing connection") {
+		t.Fatalf("dialResolved error = %v, want refusing connection", err)
+	}
+	if dialed.Load() {
+		t.Fatal("dialer was called after DNS rebinding to a local address")
+	}
+}
+
+func TestGuardedTransportUsesGuardedDialForCustomTLSTransport(t *testing.T) {
+	baseURL, err := url.Parse("https://registry.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rt := guardedTransport(&http.Transport{
+		DialTLSContext: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("custom TLS dialer should not run")
+		},
+	}, baseURL)
+
+	tr, ok := rt.(*http.Transport)
+	if !ok {
+		t.Fatalf("guardedTransport returned %T, want *http.Transport", rt)
+	}
+	if tr.DialTLSContext != nil {
+		t.Fatal("guarded transport kept custom DialTLSContext")
+	}
+	if tr.DialContext == nil {
+		t.Fatal("guarded transport did not install DialContext")
+	}
+}
+
+func TestIsLocalHost(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{host: "localhost", want: true},
+		{host: "metadata.localhost.", want: true},
+		{host: "127.0.0.1", want: true},
+		{host: "::ffff:127.0.0.1", want: true},
+		{host: "10.0.0.1", want: true},
+		{host: "169.254.169.254", want: true},
+		{host: "registry.example", want: false},
+		{host: "cdn.example", want: false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.host, func(t *testing.T) {
+			if got := isLocalHost(tt.host); got != tt.want {
+				t.Fatalf("isLocalHost(%q) = %v, want %v", tt.host, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestDownloadWithRetry(t *testing.T) {
