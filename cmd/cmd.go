@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -46,6 +47,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
@@ -376,6 +378,8 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// A FROM-only create has nothing to transfer, so skip the store probe.
+	local := len(req.Files)+len(req.DraftFiles) > 0 && sharedBlobStore(cmd.Context(), client)
 
 	var g errgroup.Group
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
@@ -384,7 +388,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	fileNames := createRequestFileNames(req.Files)
 	for f, digest := range req.Files {
 		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
 				return err
 			}
 
@@ -397,7 +401,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	draftFileNames := createRequestFileNames(req.DraftFiles)
 	for f, digest := range req.DraftFiles {
 		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
 				return err
 			}
 
@@ -508,7 +512,42 @@ func commonFileRoot(files map[string]string) (string, bool) {
 	return root, root != ""
 }
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
+// sharedBlobStore reports whether the server reads blobs from this process's
+// models directory, in which case create can write blobs there directly
+// instead of streaming them over HTTP. A throwaway blob is written and the
+// server asked whether it can see it, so a server with a different
+// OLLAMA_MODELS (a systemd-managed install, for example) falls back to upload.
+func sharedBlobStore(ctx context.Context, client *api.Client) bool {
+	if envconfig.CreateRemote() || !isLocalhost() {
+		return false
+	}
+	probe := make([]byte, 32)
+	if _, err := rand.Read(probe); err != nil {
+		return false
+	}
+	layer, err := manifest.NewLayer(bytes.NewReader(probe), "")
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if blob, err := manifest.BlobsPath(layer.Digest); err == nil {
+			os.Remove(blob)
+		}
+	}()
+	exists, err := client.HeadBlob(ctx, layer.Digest)
+	return err == nil && exists
+}
+
+// createBlob makes the file at path available to the server under digest,
+// writing it straight into the shared blob store when local is set and
+// uploading it otherwise. Blobs the server already has are skipped.
+func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress, local bool) (string, error) {
+	if exists, err := client.HeadBlob(cmd.Context(), digest); err != nil {
+		return "", err
+	} else if exists {
+		return digest, nil
+	}
+
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
@@ -550,7 +589,18 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		}
 	}()
 
-	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
+	reader := io.TeeReader(bin, &pw)
+	if local {
+		layer, err := manifest.NewLayer(reader, "")
+		if err != nil {
+			return "", err
+		}
+		if layer.Digest != digest {
+			return "", fmt.Errorf("%s changed during create: expected digest %s, got %s", path, digest, layer.Digest)
+		}
+		return digest, nil
+	}
+	if err := client.CreateBlob(cmd.Context(), digest, reader); err != nil {
 		return "", err
 	}
 	return digest, nil
