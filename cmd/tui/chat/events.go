@@ -75,15 +75,18 @@ func (m *chatModel) applyAgentEvent(event coreagent.Event) {
 	case coreagent.EventThinkingDelta:
 		m.awaitingModel = false
 		if event.Thinking != "" {
-			m.thinking = true
 			if event.Tokens > 0 {
 				m.thinkingTokens = max(m.thinkingTokens, event.Tokens)
 			} else {
 				m.thinkingTokens += approximateTokenCount(event.Thinking)
 			}
 			idx := m.ensureLiveAssistantMessage()
+			if !m.thinking {
+				m.thinkingPhaseStart = len(m.liveMessages[idx].Thinking)
+			}
+			m.thinking = true
 			m.liveMessages[idx].Thinking += event.Thinking
-			m.syncThinkingEntry()
+			m.syncThinkingEntry(m.liveMessages[idx].Thinking[m.thinkingPhaseStart:])
 			contextChanged = true
 		}
 	case coreagent.EventMessageDelta:

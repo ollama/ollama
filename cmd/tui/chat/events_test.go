@@ -22,6 +22,84 @@ func TestApplyAgentEventStreamsAssistantContent(t *testing.T) {
 	}
 }
 
+func TestApplyAgentEventStreamsThinkingThenCollapsesOnAssistantOrTool(t *testing.T) {
+	m := chatModel{running: true}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "first "})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "second", Tokens: 7})
+	if len(m.entries) != 1 || m.entries[0].role != "thinking" || !m.entries[0].expanded || m.entries[0].content != "first second" {
+		t.Fatalf("live thinking entry = %#v", m.entries)
+	}
+	if got := m.liveMessages[0].Thinking; got != "first second" {
+		t.Fatalf("live message thinking = %q, want full streamed value", got)
+	}
+	if view := stripANSI(m.renderTranscript(100)); !strings.Contains(view, "Thinking ↓ 7 tokens") || !strings.Contains(view, "first second") {
+		t.Fatalf("live thinking trace missing from transcript:\n%s", view)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"})
+	if m.entries[0].status != "done" || m.entries[0].expanded {
+		t.Fatalf("assistant content should collapse thinking: %#v", m.entries[0])
+	}
+	collapsed := stripANSI(m.renderTranscript(100))
+	if !strings.Contains(collapsed, "Thought") || strings.Contains(collapsed, "7 tokens") || strings.Contains(collapsed, "first second") {
+		t.Fatalf("collapsed thinking should remain as a thought row without trace content:\n%s", collapsed)
+	}
+	if got := m.liveMessages[0].Thinking; got != "first second" {
+		t.Fatalf("collapsing display must not change request history: %q", got)
+	}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "tool plan"})
+	if entry := m.entries[len(m.entries)-1]; entry.role != "thinking" || entry.content != "tool plan" {
+		t.Fatalf("second thinking phase should contain only its own deltas: %#v", entry)
+	}
+	if got := m.liveMessages[0].Thinking; got != "first secondtool plan" {
+		t.Fatalf("message history should retain both thinking phases exactly: %q", got)
+	}
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolStarted, ToolCallID: "call-1", ToolName: "bash"})
+	if entry := m.entries[len(m.entries)-2]; entry.role != "thinking" || entry.status != "done" || entry.expanded {
+		t.Fatalf("tool transition should collapse thinking: %#v", entry)
+	}
+}
+
+func TestApplyAgentEventDoesNotCreateThinkingEntryWithoutThinking(t *testing.T) {
+	m := chatModel{running: true}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Tokens: 12})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventMessageDelta, Content: "answer"})
+	if len(m.entries) != 1 || m.entries[0].role != "assistant" {
+		t.Fatalf("empty thinking event should not create a trace: %#v", m.entries)
+	}
+	if len(m.liveMessages) != 1 || m.liveMessages[0].Thinking != "" {
+		t.Fatalf("empty thinking event should not alter message history: %#v", m.liveMessages)
+	}
+}
+
+func TestApplyAgentEventPreservesCollapsedThoughtsAcrossToolGrouping(t *testing.T) {
+	m := chatModel{running: true}
+
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "first plan", Tokens: 1})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolStarted, ToolCallID: "call-1", ToolName: "bash"})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolCallID: "call-1", ToolName: "bash", Content: "one"})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventThinkingDelta, Thinking: "second plan", Tokens: 1})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolStarted, ToolCallID: "call-2", ToolName: "bash"})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolFinished, ToolCallID: "call-2", ToolName: "bash", Content: "two"})
+	m.applyAgentEvent(coreagent.Event{Type: coreagent.EventToolStarted, ToolCallID: "call-3", ToolName: "bash"})
+
+	if len(m.entries) != 5 {
+		t.Fatalf("entries = %#v, want two thought rows and three tool rows", m.entries)
+	}
+	for _, index := range []int{0, 2} {
+		entry := m.entries[index]
+		if entry.role != "thinking" || entry.status != "done" || entry.expanded {
+			t.Fatalf("collapsed thought %d = %#v", index, entry)
+		}
+	}
+	if transcript := stripANSI(m.renderTranscript(100)); strings.Count(transcript, "Thought") != 2 || strings.Contains(transcript, "1 token") {
+		t.Fatalf("transcript should retain both thought rows:\n%s", transcript)
+	}
+}
+
 func TestApplyAgentEventTracksToolLifecycle(t *testing.T) {
 	m := chatModel{running: true}
 	args := map[string]any{"command": "pwd"}

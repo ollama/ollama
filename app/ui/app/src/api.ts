@@ -32,6 +32,24 @@ export interface CloudStatusResponse {
   disabled: boolean;
   source: CloudStatusSource;
 }
+
+export interface IntegrationStatus {
+  id: string;
+  name: string;
+  description: string;
+  installed?: boolean;
+  command?: string;
+}
+
+export type IntegrationStatuses = IntegrationStatus[];
+
+export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
+  const response = await fetch(`${API_BASE}/api/v1/integrations`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch integration statuses: ${response.status}`);
+  }
+  return response.json();
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -81,7 +99,9 @@ export async function fetchConnectUrl(): Promise<string> {
   if (response.status === 401) {
     const data = await response.json();
     if (data.signin_url) {
-      return data.signin_url;
+      const connectUrl = new URL(data.signin_url);
+      connectUrl.searchParams.set("launch", "true");
+      return connectUrl.toString();
     }
   }
 
@@ -173,6 +193,84 @@ export async function getModels(query?: string): Promise<Model[]> {
     return models;
   } catch (err) {
     throw new Error(`Failed to fetch models: ${err}`);
+  }
+}
+
+export async function getClaudeDesktopAvailableModels(
+  includeCloudModels = false,
+): Promise<Model[]> {
+  try {
+    const [localResult, cloudResult] = await Promise.all([
+      ollama.list(),
+      includeCloudModels
+        ? fetch(`${API_BASE}/api/v1/models/cloud`)
+            .then(async (response) => {
+              if (!response.ok) {
+                throw new Error(`cloud model list returned ${response.status}`);
+              }
+              return (await response.json()) as { models?: ModelResponse[] };
+            })
+            .catch((error) => {
+              console.warn("Failed to fetch cloud models:", error);
+              return { models: [] };
+            })
+        : Promise.resolve({ models: [] as ModelResponse[] }),
+    ]);
+
+    const localModels = localResult.models.filter((model: ModelResponse) => {
+      const response = model as ModelResponse & {
+        remote_model?: string;
+        remote_host?: string;
+      };
+      const name = model.name.replace(/:latest$/, "");
+      return (
+        !response.remote_model &&
+        !response.remote_host &&
+        !name.endsWith("cloud")
+      );
+    });
+    const cloudModels = (cloudResult.models ?? []).map((model) => {
+      const name = model.name.replace(/:latest$/, "");
+      const tag = name.slice(name.lastIndexOf(":") + 1).toLowerCase();
+      const explicitCloud =
+        name.endsWith(":cloud") ||
+        (name.includes(":") && tag.endsWith("-cloud"));
+      return {
+        ...model,
+        name: explicitCloud ? name : `${name}:cloud`,
+      };
+    });
+
+    const seen = new Set<string>();
+    return [...localModels, ...cloudModels]
+      .filter((model: ModelResponse) => {
+        const base = model.name
+          .replace(/:latest$/, "")
+          .replace(/:cloud$/, "");
+        if (!base || seen.has(base)) return false;
+
+        const families = model.details?.families;
+        const supported =
+          !families ||
+          families.length === 0 ||
+          !families.every((family: string) =>
+            family.toLowerCase().includes("bert"),
+          );
+        if (supported) seen.add(base);
+        return supported;
+      })
+      .map(
+        (model: ModelResponse) =>
+          new Model({
+            model: model.name.replace(/:latest$/, ""),
+            digest: model.digest,
+            modified_at: model.modified_at
+              ? new Date(model.modified_at)
+              : undefined,
+          }),
+      );
+  } catch (err) {
+    throw new Error(`Failed to fetch Ollama models: ${err}`);
   }
 }
 
@@ -418,7 +516,9 @@ export interface ModelRecommendationsResponse {
   recommendations: ModelRecommendation[];
 }
 
-export async function getModelRecommendations(): Promise<ModelRecommendation[]> {
+export async function getModelRecommendations(): Promise<
+  ModelRecommendation[]
+> {
   const response = await fetch(
     `${API_BASE}/api/experimental/model-recommendations`,
   );

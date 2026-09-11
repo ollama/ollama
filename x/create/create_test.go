@@ -15,50 +15,6 @@ import (
 	st "github.com/ollama/ollama/x/safetensors"
 )
 
-func TestIsTensorModelDir(t *testing.T) {
-	tests := []struct {
-		name     string
-		setup    func(dir string) error
-		expected bool
-	}{
-		{
-			name: "valid diffusers model with model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "model_index.json"), []byte(`{"_class_name": "FluxPipeline"}`), 0o644)
-			},
-			expected: true,
-		},
-		{
-			name: "empty directory",
-			setup: func(dir string) error {
-				return nil
-			},
-			expected: false,
-		},
-		{
-			name: "directory with other files but no model_index.json",
-			setup: func(dir string) error {
-				return os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{}`), 0o644)
-			},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := tt.setup(dir); err != nil {
-				t.Fatalf("setup failed: %v", err)
-			}
-
-			got := IsTensorModelDir(dir)
-			if got != tt.expected {
-				t.Errorf("IsTensorModelDir() = %v, want %v", got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidateScalarFloat32TensorData(t *testing.T) {
 	td := st.NewTensorDataFromBytes("linear.weight_scale_2", "F32", []int32{}, encodeFloat32s(2))
 
@@ -435,6 +391,30 @@ func TestExpertGroupPrefix(t *testing.T) {
 		{"language_model.model.layers.3.mlp.switch_mlp.up_proj.weight", "language_model.model.layers.3.mlp.switch_mlp"},
 		{"model.language_model.layers.4.mlp.switch_mlp.gate_proj.weight", "model.language_model.layers.4.mlp.switch_mlp"},
 
+		// Nemotron-style expert tensors (backbone.layers.N.mixer.experts.M)
+		{"backbone.layers.1.mixer.experts.0.down_proj.weight", "backbone.layers.1.mixer.experts"},
+		{"backbone.layers.2.mixer.experts.127.up_proj.weight", "backbone.layers.2.mixer.experts"},
+		{"language_model.backbone.layers.3.mixer.experts.42.down_proj.weight", "language_model.backbone.layers.3.mixer.experts"},
+		{"model.language_model.backbone.layers.4.mixer.experts.7.up_proj.weight", "model.language_model.backbone.layers.4.mixer.experts"},
+
+		// Nemotron-style shared expert tensors
+		{"backbone.layers.1.mixer.shared_experts.down_proj.weight", "backbone.layers.1.mixer.shared_experts"},
+		{"backbone.layers.2.mixer.shared_experts.up_proj.weight", "backbone.layers.2.mixer.shared_experts"},
+
+		// Nemotron routing gate is not an expert
+		{"backbone.layers.1.mixer.gate.weight", ""},
+
+		// MTP expert tensors (mtp.layers.N.mixer.experts.M)
+		{"mtp.layers.1.mixer.experts.0.up_proj.weight", "mtp.layers.1.mixer.experts"},
+		{"mtp.layers.1.mixer.experts.127.down_proj.weight", "mtp.layers.1.mixer.experts"},
+
+		// MTP shared expert tensors
+		{"mtp.layers.1.mixer.shared_experts.up_proj.weight", "mtp.layers.1.mixer.shared_experts"},
+		{"mtp.layers.1.mixer.shared_experts.down_proj.weight", "mtp.layers.1.mixer.shared_experts"},
+
+		// MTP routing gate is not an expert
+		{"mtp.layers.1.mixer.gate.weight", ""},
+
 		// Non-expert tensors should return empty string
 		{"model.layers.0.mlp.down_proj.weight", ""},    // dense layer, no experts
 		{"model.layers.1.mlp.gate.weight", ""},         // routing gate, not an expert
@@ -598,10 +578,10 @@ func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
 		// int8: already 8-bit, no promotion
 		{"v_proj int8 stays", "model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
 
-		// lm_head stays at source precision for fp modes, quantizes for affine
-		{"lm_head nvfp4 kept", "lm_head.weight", aligned, "nvfp4", ""},
-		{"lm_head mxfp8 kept", "lm_head.weight", aligned, "mxfp8", ""},
-		{"lm_head int4 stays", "lm_head.weight", aligned, "int4", "int4"},
+		// lm_head resolves to the 8-bit type in the requested family
+		{"lm_head nvfp4 to mxfp8", "lm_head.weight", aligned, "nvfp4", "mxfp8"},
+		{"lm_head mxfp8 uniform", "lm_head.weight", aligned, "mxfp8", "mxfp8"},
+		{"lm_head int4 promoted", "lm_head.weight", aligned, "int4", "int8"},
 
 		// Expert tensors: down_proj also promoted for int4
 		{"expert down_proj int4", "model.layers.0.mlp.experts.down_proj.weight", []int32{128, 4096, 2816}, "int4", "int8"},

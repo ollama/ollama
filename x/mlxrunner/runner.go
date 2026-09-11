@@ -4,14 +4,18 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/internal/mlxthread"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -30,88 +34,194 @@ type Request struct {
 
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
+	MediaItems  []mediaItem
+	Layout      any // opaque PrepareMedia layout state, stamped on every batch
 	SamplerOpts sample.Options
+	Grammar     *grammarCompilation
 }
 
 type Runner struct {
 	Model         base.Model
+	weights       *mlx.Scope
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         *prefixCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
+	// grammarEngine is the structured-output subsystem; nil when the grammar
+	// library or vocabulary failed to load.
+	grammarEngine *grammarEngine
 	// spec is the speculative-decoding subsystem. Nil when the model ships no
 	// draft head.
 	spec *speculation
 }
 
 func (r *Runner) Load(modelName string) error {
-	root, err := model.Open(modelName)
+	weights, err := r.loadModel(modelName)
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-
-	m, err := base.New(root)
-	if err != nil {
-		return err
-	}
-
-	// Load all tensor blobs from manifest
-	tensors, err := loadTensorsFromManifest(root)
-	if err != nil {
-		return err
-	}
-
-	// Assign weights to model (model-specific logic). Target and draft weights
-	// must be loaded before sweeping so tensors from a combined manifest are
-	// not discarded before the draft model can retain them.
-	if err := m.LoadWeights(tensors); err != nil {
-		return err
-	}
-
-	var draftModel base.DraftModel
-	draft, err := base.NewDraft(root, m)
-	if err != nil {
-		return err
-	}
-	if draft != nil {
-		if err := draft.LoadWeights(tensors); err != nil {
-			return err
-		}
-		draftModel = draft
-	} else if sd, ok := m.(base.SelfDraft); ok {
-		// Inline draft head: already loaded with the target; nil if none shipped.
-		draftModel = sd.SelfDraft()
-	}
-
-	collected := mlx.Collect(m)
-	if draft != nil {
-		draftArrays := mlx.Collect(draft)
-		collected = append(collected, draftArrays...)
-		if root.Draft != nil {
-			slog.Info("Loaded draft model", "tensor_prefix", root.Draft.TensorPrefix, "config", root.Draft.Config, "arrays", len(draftArrays))
-		} else {
-			slog.Info("Loaded draft model", "arrays", len(draftArrays))
-		}
-	}
-	for _, arr := range collected {
-		mlx.Pin(arr)
-	}
-	mlx.Sweep()
-	mlx.Eval(collected...)
-
-	r.Model = m
-	r.Tokenizer = m.Tokenizer()
-	r.contextLength = m.MaxContextLength()
-	r.cache = newPrefixCache(m)
-	r.Sampler = sample.New(r.contextLength)
-	r.spec = newSpeculation(r, draftModel)
-
-	mlx.EnableCompile()
-
+	mlx.Eval(weights...)
+	mlx.ClearCache()
+	r.weights = mlx.NewScope()
+	r.weights.Attach(weights...)
+	configureWiredMemory()
 	return nil
+}
+
+func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
+	weights = mlx.ScopedArrays(func() []*mlx.Array {
+		root, e := model.Open(modelName)
+		if e != nil {
+			err = e
+			return nil
+		}
+		defer root.Close()
+
+		m, e := base.New(root)
+		if e != nil {
+			err = e
+			return nil
+		}
+
+		// Load all tensor blobs from manifest
+		tensors, e := loadTensorsFromManifest(root)
+		if e != nil {
+			err = e
+			return nil
+		}
+
+		// On Metal, materialize the loaded tensors with CPU reads before any
+		// weight graph exists, so the weight eval never commits a command buffer
+		// that waits on file data. CUDA loads read at dispatch and need no pre-pass.
+		if mlx.MetalIsAvailable() {
+			mlx.Eval(slices.Collect(maps.Values(tensors))...)
+		}
+
+		// Assign weights to model (model-specific logic). Target and draft weights
+		// must be loaded before the load scope ends so tensors from a combined
+		// manifest are not discarded before the draft model can retain them.
+		if err = m.LoadWeights(tensors); err != nil {
+			return nil
+		}
+
+		var draftModel base.DraftModel
+		draft, e := base.NewDraft(root, m)
+		if e != nil {
+			err = e
+			return nil
+		}
+		if draft != nil {
+			if err = draft.LoadWeights(tensors); err != nil {
+				return nil
+			}
+			draftModel = draft
+		} else if sd, ok := m.(base.SelfDraft); ok {
+			// Inline draft head: already loaded with the target; nil if none shipped.
+			draftModel = sd.SelfDraft()
+		}
+
+		w := mlx.Collect(m)
+		if draft != nil {
+			draftArrays := mlx.Collect(draft)
+			w = append(w, draftArrays...)
+			if root.Draft != nil {
+				slog.Info("Loaded draft model", "tensor_prefix", root.Draft.TensorPrefix, "config", root.Draft.Config, "arrays", len(draftArrays))
+			} else {
+				slog.Info("Loaded draft model", "arrays", len(draftArrays))
+			}
+		}
+
+		r.Model = m
+		r.Tokenizer = m.Tokenizer()
+		r.contextLength = m.MaxContextLength()
+		caches := m.NewCaches()
+		draftCaches := newDraftCaches(draftModel)
+		r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
+		r.Sampler = sample.New(r.contextLength)
+		r.spec = newSpeculation(r, draftModel, caches, draftCaches)
+		r.grammarEngine = newGrammarEngine(logitsWidth(m), r.Tokenizer)
+
+		mlx.EnableCompile()
+
+		return w
+	})
+	return weights, err
+}
+
+func (r *Runner) Close() {
+	if r.grammarEngine != nil {
+		r.grammarEngine.close()
+		r.grammarEngine = nil
+	}
+	r.weights.Close()
+	r.weights = nil
+}
+
+// newDraftCaches returns nil when the model ships no draft.
+func newDraftCaches(draft base.DraftModel) []cache.Cache {
+	if draft == nil {
+		return nil
+	}
+	return draft.NewCaches()
+}
+
+// logitsWidth reads a model's logits width off a one-token forward's static
+// shape — the same Forward and Unembed path decode logits take. Nothing is
+// evaluated.
+func logitsWidth(m base.Model) (width int) {
+	mlx.Scoped(func() {
+		caches := m.NewCaches()
+		hidden, _ := m.Forward(&batch.Batch{
+			InputIDs:     mlx.FromValues([]int32{0}, 1, 1),
+			SeqOffsets:   []int32{0},
+			SeqQueryLens: []int32{1},
+		}, caches)
+		logits := m.Unembed(hidden)
+		width = logits.Dim(logits.NumDims() - 1)
+		for _, c := range caches {
+			if c != nil {
+				c.Free()
+			}
+		}
+	})
+	return width
+}
+
+func configureWiredMemory() {
+	if !mlx.GPUIsAvailable() {
+		return
+	}
+
+	active := mlx.ActiveMemory()
+	maxRecommended, err := mlx.MaxRecommendedWorkingSetSize()
+	if err != nil {
+		slog.Warn("Unable to query MLX recommended working set; using pageable memory", "error", err)
+		return
+	}
+
+	limit := min(active, maxRecommended)
+	previous, err := mlx.SetWiredLimit(limit)
+	if err != nil {
+		slog.Warn("Unable to configure MLX wired memory; using pageable memory",
+			"active", mlx.PrettyBytes(active),
+			"limit", mlx.PrettyBytes(limit),
+			"error", err)
+		return
+	}
+
+	if active > maxRecommended {
+		slog.Warn("MLX model exceeds the recommended working set; performance may be degraded",
+			"active", mlx.PrettyBytes(active),
+			"recommended", mlx.PrettyBytes(maxRecommended))
+	}
+	// Limiting residency to the loaded model's active allocations avoids
+	// reserving the remaining capacity for growing KV caches.
+	slog.Debug("Configured MLX wired memory",
+		"active", mlx.PrettyBytes(active),
+		"limit", mlx.PrettyBytes(limit),
+		"previous", mlx.PrettyBytes(previous))
 }
 
 // loadTensorsFromManifest loads all tensor blobs from the manifest into a
@@ -207,6 +317,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 }
 
 func (r *Runner) runRequest(request Request) error {
+	defer request.Grammar.close()
 	if r.mlxThread == nil {
 		return request.Pipeline(request.Ctx, request)
 	}

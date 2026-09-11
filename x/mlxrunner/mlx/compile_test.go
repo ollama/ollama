@@ -2,15 +2,17 @@ package mlx
 
 import (
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestCompileFusion(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileFusion(t)
 	})
 }
 
-func testCompileFusion(t *testing.T) {
+func testCompileFusion(t *mlxthreadtest.T) {
 	// Compile fuses the ops inside a function body into a single kernel,
 	// eliminating intermediate buffers. Use a diamond-shaped graph where
 	// two branches must be materialized simultaneously without fusion,
@@ -31,29 +33,27 @@ func testCompileFusion(t *testing.T) {
 
 	a := FromValues(data, n)
 	b := FromValues(data, n)
-	Pin(a, b)
-	defer Unpin(a, b)
 
 	// Compiled: ops fused into a single kernel.
 	EnableCompile()
 	fn := Compile2("diamond", body, Shapeless())
-	warm := fn(a, b)
-	Eval(warm)
-	Sweep()
+	Scoped(func() { Eval(fn(a, b)) })
 	ClearCache()
 	ResetPeakMemory()
-	y := fn(a, b)
-	Eval(y)
-	compiledPeak := PeakMemory()
-	Sweep()
+	var compiledPeak int
+	Scoped(func() {
+		Eval(fn(a, b))
+		compiledPeak = PeakMemory()
+	})
 
 	// Uncompiled: ops evaluated individually, intermediates materialized.
 	ClearCache()
 	ResetPeakMemory()
-	z := body(a, b)
-	Eval(z)
-	uncompiledPeak := PeakMemory()
-	Sweep()
+	var uncompiledPeak int
+	Scoped(func() {
+		Eval(body(a, b))
+		uncompiledPeak = PeakMemory()
+	})
 
 	if compiledPeak == 0 && uncompiledPeak == 0 {
 		t.Skip("peak memory tracking not available")
@@ -67,12 +67,12 @@ func testCompileFusion(t *testing.T) {
 }
 
 func TestCompileNested(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileNested(t)
 	})
 }
 
-func testCompileNested(t *testing.T) {
+func testCompileNested(t *mlxthreadtest.T) {
 	// A compiled function that calls another compiled function should
 	// produce correct results. The inner function inlines via isTracing()
 	// during the outer's trace.
@@ -86,8 +86,6 @@ func testCompileNested(t *testing.T) {
 
 	gate := FromValues([]float32{0, 1, 2}, 3)
 	up := FromValues([]float32{1, 1, 1}, 3)
-	Pin(gate, up)
-	defer Unpin(gate, up)
 
 	y := outer(gate, up)
 	Eval(y)
@@ -103,60 +101,54 @@ func testCompileNested(t *testing.T) {
 }
 
 func TestCompileCallbackPanicRecovers(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileCallbackPanicRecovers(t)
 	})
 }
 
-func testCompileCallbackPanicRecovers(t *testing.T) {
+func testCompileCallbackPanicRecovers(t *mlxthreadtest.T) {
 	boom := Compile1("boom", func(a *Array) *Array {
 		panic("intentional test panic")
 	})
 
 	x := FromValues([]float32{1}, 1)
-	Pin(x)
-	defer Unpin(x)
 
 	defer func() {
 		r := recover()
 		if r == nil {
 			t.Fatal("expected panic from Call, got none")
 		}
-		if _, ok := r.(string); !ok {
-			t.Fatalf("expected string panic, got %T: %v", r, r)
+		if _, ok := r.(error); !ok {
+			t.Fatalf("expected error panic, got %T: %v", r, r)
 		}
 	}()
 	boom(x)
 }
 
 func TestCompileNoTrackingGrowth(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileNoTrackingGrowth(t)
 	})
 }
 
-func testCompileNoTrackingGrowth(t *testing.T) {
+func testCompileNoTrackingGrowth(t *mlxthreadtest.T) {
 	// Repeated invocations of a compiled kernel should not grow the
-	// tracked-arrays list; the callback's traceScratch collects
-	// intermediates during tracing and frees them when the callback returns.
+	// tracked-arrays list; the callback's scope collects intermediates
+	// during tracing and frees them when the callback returns.
 	fn := Compile2("mul_add", func(a, b *Array) *Array {
 		return a.Multiply(b).Add(b)
 	})
 
 	a := FromValues([]float32{1, 2}, 2)
 	b := FromValues([]float32{3, 4}, 2)
-	Pin(a, b)
-	defer Unpin(a, b)
 
-	Sweep()
-	before := len(arrays)
+	before := len(currentScope.arrays)
 
 	for range 100 {
-		_ = fn(a, b)
-		Sweep()
+		Scoped(func() { _ = fn(a, b) })
 	}
 
-	after := len(arrays)
+	after := len(currentScope.arrays)
 	if after > before+2 {
 		t.Fatalf("tracked arrays grew from %d to %d across 100 calls (includes initial trace)", before, after)
 	}

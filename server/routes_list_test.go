@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -36,11 +35,7 @@ func TestList(t *testing.T) {
 		"myhost/mynamespace/lips:code",
 	}
 
-	s := Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
-	s.modelCaches.modelList.Start(context.Background())
-	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	var s Server
 
 	for _, n := range expectNames {
 		_, digest := createBinFile(t, nil, nil)
@@ -88,12 +83,7 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
-	cache := newModelListCache()
-	s := Server{modelCaches: &modelCaches{modelList: cache}}
-	cache.Start(context.Background())
-	if err := cache.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	var s Server
 
 	createModel := func(name string) {
 		t.Helper()
@@ -122,9 +112,6 @@ func TestOpenAIListMatchesTagsModels(t *testing.T) {
 		}
 		if err := os.Chtimes(path, modified, modified); err != nil {
 			t.Fatalf("set manifest time for %s: %v", name, err)
-		}
-		if err := cache.RefreshModel(parsed); err != nil {
-			t.Fatalf("refresh %s: %v", name, err)
 		}
 	}
 

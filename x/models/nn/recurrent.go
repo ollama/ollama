@@ -7,7 +7,7 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
-// RecurrentOption configures a call to CausalConv1D or GatedDelta.
+// RecurrentOption configures a call to CausalConv1D, GatedDelta or Mamba2Scan.
 type RecurrentOption func(*recurrentConfig)
 
 // recurrentConfig is the resolved set of inputs supplied via
@@ -18,6 +18,7 @@ type recurrentConfig struct {
 	convState  *mlx.Array
 	deltaState *mlx.Array
 	splits     []int
+	convSiLU   bool
 }
 
 // WithRecurrentHistory supplies a cache's per-layer view of conv and
@@ -37,11 +38,17 @@ func WithRecurrentState(convState, deltaState *mlx.Array) RecurrentOption {
 	}
 }
 
+// WithConvSiLU applies SiLU to the conv output inside CausalConv1D, fused
+// into the conv kernel when the conv fits its contract. The scan wrappers
+// ignore it, so it can ride a shared option list.
+func WithConvSiLU() RecurrentOption {
+	return func(c *recurrentConfig) { c.convSiLU = true }
+}
+
 // WithSnapshotSplits requests that the scan run in segments cut at the given
 // offsets within this forward (0 < offset < L), capturing the recurrent state
 // at each boundary. The wrapper returns those per-boundary states to the
-// caller. Offsets must be sorted ascending and strictly interior; out-of-range
-// or duplicate offsets are ignored.
+// caller. Offsets must be sorted ascending, unique, and strictly interior.
 func WithSnapshotSplits(offsets []int) RecurrentOption {
 	return func(c *recurrentConfig) { c.splits = offsets }
 }
@@ -64,7 +71,7 @@ func segmentRanges(splits []int, L int32) []seg {
 
 // sliceSeg slices x to the segment's window [s.start, s.end) along the L axis
 // (axis 1), keeping all other axes whole. Works for any rank — [B, L],
-// [B, L, H], [B, L, H, D] — so the padding mask, gate/beta, and q/k/v all
+// [B, L, H], [B, L, H, D] — so the padding mask and the packed projections
 // slice the same L range and stay aligned. Returns nil when x is nil (the
 // no-padding-mask fast path). Slicing the full-forward mask this way yields
 // the segment's own mask, so masks are built once per forward and reused
@@ -105,7 +112,7 @@ func resolveRecurrentConfig(opts []RecurrentOption) recurrentConfig {
 
 // CausalConv1D runs a depthwise causal 1D convolution with recurrent
 // state management. Prepends the prior conv state along axis 1 and runs
-// conv.Forward over the combined window.
+// the conv over the combined window.
 //
 // Shapes: input [B, L, D]; prior state [B, convTail, D]; output
 // [B, L, D] (the causal conv strips the prepended state).
@@ -137,7 +144,15 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		input = mlx.Where(mlx.ExpandDims(mask, 2), input, zero)
 	}
 	concat := mlx.Concatenate([]*mlx.Array{prior, input}, 1)
-	out = conv.Forward(concat)
+	if cfg.convSiLU {
+		if w := depthwiseConvWeight(conv); w != nil {
+			out = mlx.DepthwiseConvSiLU(concat, w, conv.Bias, int(L))
+		} else {
+			out = mlx.SiLU(conv.Forward(concat))
+		}
+	} else {
+		out = conv.Forward(concat)
+	}
 
 	// Snapshot the conv tail at each segment boundary: interior splits in
 	// ascending order, then the forward end at L. Each boundary at offset O
@@ -154,6 +169,18 @@ func CausalConv1D(b *batch.Batch, input *mlx.Array, conv *Conv1d, convTail int, 
 		states = append(states, st)
 	}
 	return out, states
+}
+
+// depthwiseConvWeight returns the [C, K] weight view the fused conv kernel
+// takes, or nil when the conv is not a plain depthwise causal conv.
+func depthwiseConvWeight(c *Conv1d) *mlx.Array {
+	if c.Stride != 1 || c.Padding != 0 || c.Dilation != 1 {
+		return nil
+	}
+	if c.Weight.NumDims() != 3 || c.Weight.Dim(2) != 1 || int(c.Groups) != c.Weight.Dim(0) {
+		return nil
+	}
+	return mlx.Reshape(c.Weight, int32(c.Weight.Dim(0)), int32(c.Weight.Dim(1)))
 }
 
 // convStateAt returns the conv state to cache at boundary: the trailing convTail
@@ -187,57 +214,81 @@ func convStateAt(concat *mlx.Array, queryLens []int32, convTail int, boundary in
 		[]int32{B, boundary + int32(convTail), D})
 }
 
-// GatedDelta wraps mlx.FastGatedDelta with recurrent state management.
-// Reads prior delta state from the supplied option and returns the output
-// and the delta states at each boundary. The boundary states end with the
-// forward-end state. Without WithSnapshotSplits there is one boundary (the
-// end), so states has length 1.
-//
-// Shape conventions:
-//
-//	q:     [B, L, numKeyHeads,   headKDim]
-//	k:     [B, L, numKeyHeads,   headKDim]
-//	v:     [B, L, numValueHeads, headVDim]
-//	state: [B, numValueHeads,    headVDim, headKDim]
-//
-// Prior state comes from exactly one of WithRecurrentHistory (cache
-// path) or WithRecurrentState (no-cache path).
-//
-// When WithSnapshotSplits supplies interior offsets, the scan runs in
-// segments cut at those offsets, threading delta state between them; states
-// holds the delta state at each interior split and at the end. out is
-// identical to the unsegmented scan.
-func GatedDelta(b *batch.Batch, q, k, v, gDecay, beta *mlx.Array, opts ...RecurrentOption) (out *mlx.Array, states []*mlx.Array) {
+// GatedDelta runs the whole gated-delta step over the activated causal-conv
+// output: q/k norms, decay gate, and the scan. convOut rows are packed
+// [q | k | v]; ba is the packed [beta | alpha] projection output. Per-token
+// splits map to the kernels' captureAll shape — one launch emitting every
+// interior state — and any other split pattern composes mlx.GatedDelta per
+// segment, threading the delta state, so each segment runs the fused kernel
+// when it fits. Returns the output and the delta states at each boundary,
+// ending with the forward-end state; without WithSnapshotSplits there is one
+// boundary (the end), so states has length 1.
+func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...RecurrentOption) (*mlx.Array, []*mlx.Array) {
 	cfg := resolveRecurrentConfig(opts)
-	var prior *mlx.Array
+	prior := cfg.deltaState
 	if cfg.history != nil {
 		prior = cfg.history.DeltaState()
-	} else {
-		prior = cfg.deltaState
 	}
 
-	L := int32(q.Dim(1))
-	mask := paddingMask(b, L) // built once per forward, sliced per segment
+	L := int32(convOut.Dim(1))
+	mask := paddingMask(b, L)
+
+	// No splits and per-token splits are both a single whole-forward call:
+	// len(splits) == L-1 means the sorted interior offsets are exactly
+	// 1..L-1, the kernels' captureAll shape.
+	if n := len(cfg.splits); n == 0 || n == int(L)-1 {
+		y, end, interior := mlx.GatedDelta(convOut, ba, dtBias, aExp, prior, mask, n > 0)
+		return y, append(interior, end)
+	}
+
 	segs := segmentRanges(cfg.splits, L)
-	if len(segs) <= 1 {
-		out, end := mlx.FastGatedDelta(q, k, v, gDecay, beta, prior, mask)
-		return out, []*mlx.Array{end}
-	}
-
-	// Segmented scan: run each [a,c) piece with the prior segment's state,
-	// recording the delta state at every boundary (interior splits + end).
 	outs := make([]*mlx.Array, 0, len(segs))
-	states = make([]*mlx.Array, 0, len(segs))
+	states := make([]*mlx.Array, 0, len(segs))
 	state := prior
 	for _, seg := range segs {
-		segOut, segState := mlx.FastGatedDelta(
-			sliceSeg(q, seg), sliceSeg(k, seg), sliceSeg(v, seg),
-			sliceSeg(gDecay, seg), sliceSeg(beta, seg),
-			state, sliceSeg(mask, seg),
-		)
-		outs = append(outs, segOut)
-		state = segState
-		states = append(states, segState)
+		var y *mlx.Array
+		y, state, _ = mlx.GatedDelta(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
+		outs = append(outs, y)
+		states = append(states, state)
+	}
+	return mlx.Concatenate(outs, 1), states
+}
+
+// Mamba2Scan runs the Mamba2 selective-scan step with recurrent state
+// management. hidden is [B, L, H, D], bState/cState are [B, L, G, S] with
+// H%G == 0, dt is [B, L, H], and a/d/dtBias are [H]. Prior state comes from
+// exactly one of WithRecurrentHistory or WithRecurrentState.
+//
+// Splits behave as in GatedDelta. Returns the delta state at each boundary,
+// ending with the forward-end state.
+func Mamba2Scan(b *batch.Batch, hidden, bState, cState, dt, a, d, dtBias *mlx.Array, opts ...RecurrentOption) (*mlx.Array, []*mlx.Array) {
+	cfg := resolveRecurrentConfig(opts)
+	prior := cfg.deltaState
+	if cfg.history != nil {
+		prior = cfg.history.DeltaState()
+	}
+
+	L := int32(hidden.Dim(1))
+	mask := paddingMask(b, L)
+
+	// len(splits) == L-1 means the offsets are exactly 1..L-1, the kernels'
+	// captureAll shape, so both it and the no-split case are one call.
+	if n := len(cfg.splits); n == 0 || n == int(L)-1 {
+		y, end, interior := mlx.Mamba2Scan(hidden, bState, cState, dt, prior, a, d, dtBias, mask, n > 0)
+		return y, append(interior, end)
+	}
+
+	segs := segmentRanges(cfg.splits, L)
+	outs := make([]*mlx.Array, 0, len(segs))
+	states := make([]*mlx.Array, 0, len(segs))
+	state := prior
+	for _, seg := range segs {
+		var y *mlx.Array
+		y, state, _ = mlx.Mamba2Scan(
+			sliceSeg(hidden, seg), sliceSeg(bState, seg), sliceSeg(cState, seg), sliceSeg(dt, seg),
+			state, a, d, dtBias, sliceSeg(mask, seg), false)
+		outs = append(outs, y)
+		states = append(states, state)
 	}
 	return mlx.Concatenate(outs, 1), states
 }

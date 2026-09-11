@@ -46,6 +46,33 @@ func (r *launcherEditorRunner) Models() []string {
 	return append([]string(nil), r.models...)
 }
 
+func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"deepseek-v4-flash:cloud","description":"Coding","context_length":1048576,"max_output_tokens":65536,"thinking":{"values":[false,true,"max"],"default":true}}]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"deepseek-v4-flash:cloud","remote_model":"deepseek-v4-flash"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := client.resolveRunModels(context.Background(), []string{"deepseek-v4-flash:cloud"})
+	if len(models) != 1 || models[0].Thinking == nil {
+		t.Fatalf("resolved models = %#v, want recommendation thinking metadata", models)
+	}
+	if !slices.Equal(models[0].Thinking.Values, []any{false, true, "max"}) || models[0].Thinking.Default != true {
+		t.Fatalf("thinking = %#v, want exact endpoint values/default", models[0].Thinking)
+	}
+}
+
 type launcherSingleRunner struct {
 	ranModel string
 }
@@ -149,6 +176,21 @@ type launcherManagedListRunner struct {
 func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
 	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
 	return r.Configure(primary)
+}
+
+type launcherCanonicalManagedListRunner struct {
+	launcherManagedListRunner
+}
+
+func (r *launcherCanonicalManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
+	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
+	r.configured = append(r.configured, primary)
+	if selected, ok := findLaunchModel(models, primary); ok {
+		r.currentModel = selected.Name
+	} else {
+		r.currentModel = primary
+	}
+	return nil
 }
 
 type launcherManagedAutodiscoveryRunner struct {
@@ -1086,6 +1128,51 @@ func TestLaunchIntegration_ManagedSingleIntegrationCanConfigureWithModelList(t *
 	}
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("configured primary mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationSavesCanonicalModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:latest"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherCanonicalManagedListRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	request := IntegrationLaunchRequest{Name: "stubmanaged", ModelOverride: "qwen3.5"}
+	if err := LaunchIntegration(context.Background(), request); err != nil {
+		t.Fatalf("first LaunchIntegration returned error: %v", err)
+	}
+
+	saved, err := config.LoadIntegration("stubmanaged")
+	if err != nil {
+		t.Fatalf("failed to reload managed integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"qwen3.5:latest"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("second LaunchIntegration returned error: %v", err)
+	}
+	if diff := compareStrings(runner.configured, []string{"qwen3.5"}); diff != "" {
+		t.Fatalf("expected second launch to skip configuration: %s", diff)
 	}
 }
 

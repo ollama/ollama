@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -25,8 +26,8 @@ func TestParseSuppressTokens(t *testing.T) {
 }
 
 func TestParseTextConfigE2B(t *testing.T) {
-	skipIfNoMLX(t)
-	data := []byte(`{
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
 			"hidden_size": 1536,
@@ -71,78 +72,79 @@ func TestParseTextConfigE2B(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := parseTextConfig(data)
-	if err != nil {
-		t.Fatalf("parseTextConfig failed: %v", err)
-	}
+		cfg, err := parseTextConfig(data)
+		if err != nil {
+			t.Fatalf("parseTextConfig failed: %v", err)
+		}
 
-	// Basic fields.
-	if cfg.HiddenSize != 1536 {
-		t.Errorf("HiddenSize = %d, want 1536", cfg.HiddenSize)
-	}
-	if cfg.NumHiddenLayers != 35 {
-		t.Errorf("NumHiddenLayers = %d, want 35", cfg.NumHiddenLayers)
-	}
-	if cfg.GlobalHeadDim != 512 {
-		t.Errorf("GlobalHeadDim = %d, want 512", cfg.GlobalHeadDim)
-	}
-	if cfg.FinalLogitSoftcapping != 30.0 {
-		t.Errorf("FinalLogitSoftcapping = %f, want 30.0", cfg.FinalLogitSoftcapping)
-	}
-	if cfg.NumKVSharedLayers != 20 {
-		t.Errorf("NumKVSharedLayers = %d, want 20", cfg.NumKVSharedLayers)
-	}
-	if cfg.HiddenSizePerLayer != 256 {
-		t.Errorf("HiddenSizePerLayer = %d, want 256", cfg.HiddenSizePerLayer)
-	}
+		// Basic fields.
+		if cfg.HiddenSize != 1536 {
+			t.Errorf("HiddenSize = %d, want 1536", cfg.HiddenSize)
+		}
+		if cfg.NumHiddenLayers != 35 {
+			t.Errorf("NumHiddenLayers = %d, want 35", cfg.NumHiddenLayers)
+		}
+		if cfg.GlobalHeadDim != 512 {
+			t.Errorf("GlobalHeadDim = %d, want 512", cfg.GlobalHeadDim)
+		}
+		if cfg.FinalLogitSoftcapping != 30.0 {
+			t.Errorf("FinalLogitSoftcapping = %f, want 30.0", cfg.FinalLogitSoftcapping)
+		}
+		if cfg.NumKVSharedLayers != 20 {
+			t.Errorf("NumKVSharedLayers = %d, want 20", cfg.NumKVSharedLayers)
+		}
+		if cfg.HiddenSizePerLayer != 256 {
+			t.Errorf("HiddenSizePerLayer = %d, want 256", cfg.HiddenSizePerLayer)
+		}
 
-	// RoPE settings.
-	if cfg.SlidingRopeDims != 256 {
-		t.Errorf("SlidingRopeDims = %d, want 256", cfg.SlidingRopeDims)
-	}
-	if cfg.FullRopeDims != 512 {
-		t.Errorf("FullRopeDims = %d, want 512 (GlobalHeadDim, partial rotation handled via custom freqs)", cfg.FullRopeDims)
-	}
-	if cfg.SlidingRopeBase != 10000 {
-		t.Errorf("SlidingRopeBase = %f, want 10000", cfg.SlidingRopeBase)
-	}
-	if cfg.FullRopeBase != 1000000 {
-		t.Errorf("FullRopeBase = %f, want 1000000", cfg.FullRopeBase)
-	}
+		// RoPE settings.
+		if cfg.SlidingRopeDims != 256 {
+			t.Errorf("SlidingRopeDims = %d, want 256", cfg.SlidingRopeDims)
+		}
+		if cfg.FullRopeDims != 512 {
+			t.Errorf("FullRopeDims = %d, want 512 (GlobalHeadDim, partial rotation handled via custom freqs)", cfg.FullRopeDims)
+		}
+		if cfg.SlidingRopeBase != 10000 {
+			t.Errorf("SlidingRopeBase = %f, want 10000", cfg.SlidingRopeBase)
+		}
+		if cfg.FullRopeBase != 1000000 {
+			t.Errorf("FullRopeBase = %f, want 1000000", cfg.FullRopeBase)
+		}
 
-	// Attention scale.
-	if cfg.SlidingScale == 0 || cfg.FullScale == 0 {
-		t.Error("attention scales should be non-zero")
-	}
+		// Attention scale.
+		if cfg.SlidingScale == 0 || cfg.FullScale == 0 {
+			t.Error("attention scales should be non-zero")
+		}
 
-	// KV sharing map.
-	// First shared layer is 35 - 20 = 15.
-	if donor, ok := cfg.KVShareMap[15]; !ok || donor != 13 {
-		t.Errorf("KVShareMap[15] = %d, ok=%v; want 13, true", donor, ok)
-	}
-	if donor, ok := cfg.KVShareMap[19]; !ok || donor != 14 {
-		t.Errorf("KVShareMap[19] = %d, ok=%v; want 14, true (full attn donor)", donor, ok)
-	}
-	if donor, ok := cfg.KVShareMap[34]; !ok || donor != 14 {
-		t.Errorf("KVShareMap[34] = %d, ok=%v; want 14, true (full attn donor)", donor, ok)
-	}
-	// Layer 14 should not be shared.
-	if _, ok := cfg.KVShareMap[14]; ok {
-		t.Error("layer 14 should not be in KVShareMap (non-shared)")
-	}
+		// KV sharing map.
+		// First shared layer is 35 - 20 = 15.
+		if donor, ok := cfg.KVShareMap[15]; !ok || donor != 13 {
+			t.Errorf("KVShareMap[15] = %d, ok=%v; want 13, true", donor, ok)
+		}
+		if donor, ok := cfg.KVShareMap[19]; !ok || donor != 14 {
+			t.Errorf("KVShareMap[19] = %d, ok=%v; want 14, true (full attn donor)", donor, ok)
+		}
+		if donor, ok := cfg.KVShareMap[34]; !ok || donor != 14 {
+			t.Errorf("KVShareMap[34] = %d, ok=%v; want 14, true (full attn donor)", donor, ok)
+		}
+		// Layer 14 should not be shared.
+		if _, ok := cfg.KVShareMap[14]; ok {
+			t.Error("layer 14 should not be in KVShareMap (non-shared)")
+		}
 
-	// Donors.
-	if !cfg.KVDonors[13] {
-		t.Error("layer 13 should be a KV donor")
-	}
-	if !cfg.KVDonors[14] {
-		t.Error("layer 14 should be a KV donor")
-	}
+		// Donors.
+		if !cfg.KVDonors[13] {
+			t.Error("layer 13 should be a KV donor")
+		}
+		if !cfg.KVDonors[14] {
+			t.Error("layer 14 should be a KV donor")
+		}
+	})
 }
 
 func TestParseTextConfig26B(t *testing.T) {
-	skipIfNoMLX(t)
-	data := []byte(`{
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
 			"hidden_size": 2816,
@@ -188,40 +190,41 @@ func TestParseTextConfig26B(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := parseTextConfig(data)
-	if err != nil {
-		t.Fatalf("parseTextConfig failed: %v", err)
-	}
+		cfg, err := parseTextConfig(data)
+		if err != nil {
+			t.Fatalf("parseTextConfig failed: %v", err)
+		}
 
-	if cfg.HiddenSize != 2816 {
-		t.Errorf("HiddenSize = %d, want 2816", cfg.HiddenSize)
-	}
-	if !cfg.AttentionKEqV {
-		t.Error("AttentionKEqV should be true")
-	}
-	if cfg.NumGlobalKeyValueHeads != 2 {
-		t.Errorf("NumGlobalKeyValueHeads = %d, want 2", cfg.NumGlobalKeyValueHeads)
-	}
-	if !cfg.EnableMoeBlock {
-		t.Error("EnableMoeBlock should be true")
-	}
-	if cfg.NumExperts != 128 {
-		t.Errorf("NumExperts = %d, want 128", cfg.NumExperts)
-	}
-	if cfg.TopKExperts != 8 {
-		t.Errorf("TopKExperts = %d, want 8", cfg.TopKExperts)
-	}
-	if cfg.ExpertIntermediateSize != 704 {
-		t.Errorf("ExpertIntermediateSize = %d, want 704", cfg.ExpertIntermediateSize)
-	}
-	if cfg.HiddenSizePerLayer != 0 {
-		t.Errorf("HiddenSizePerLayer = %d, want 0 (no PLE)", cfg.HiddenSizePerLayer)
-	}
+		if cfg.HiddenSize != 2816 {
+			t.Errorf("HiddenSize = %d, want 2816", cfg.HiddenSize)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV should be true")
+		}
+		if cfg.NumGlobalKeyValueHeads != 2 {
+			t.Errorf("NumGlobalKeyValueHeads = %d, want 2", cfg.NumGlobalKeyValueHeads)
+		}
+		if !cfg.EnableMoeBlock {
+			t.Error("EnableMoeBlock should be true")
+		}
+		if cfg.NumExperts != 128 {
+			t.Errorf("NumExperts = %d, want 128", cfg.NumExperts)
+		}
+		if cfg.TopKExperts != 8 {
+			t.Errorf("TopKExperts = %d, want 8", cfg.TopKExperts)
+		}
+		if cfg.ExpertIntermediateSize != 704 {
+			t.Errorf("ExpertIntermediateSize = %d, want 704", cfg.ExpertIntermediateSize)
+		}
+		if cfg.HiddenSizePerLayer != 0 {
+			t.Errorf("HiddenSizePerLayer = %d, want 0 (no PLE)", cfg.HiddenSizePerLayer)
+		}
+	})
 }
 
 func TestParseTextConfig31B(t *testing.T) {
-	skipIfNoMLX(t)
-	data := []byte(`{
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
 			"hidden_size": 5376,
@@ -268,168 +271,169 @@ func TestParseTextConfig31B(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := parseTextConfig(data)
-	if err != nil {
-		t.Fatalf("parseTextConfig failed: %v", err)
-	}
+		cfg, err := parseTextConfig(data)
+		if err != nil {
+			t.Fatalf("parseTextConfig failed: %v", err)
+		}
 
-	if cfg.HiddenSize != 5376 {
-		t.Errorf("HiddenSize = %d, want 5376", cfg.HiddenSize)
-	}
-	if cfg.NumHiddenLayers != 60 {
-		t.Errorf("NumHiddenLayers = %d, want 60", cfg.NumHiddenLayers)
-	}
-	if !cfg.AttentionKEqV {
-		t.Error("AttentionKEqV should be true")
-	}
-	if cfg.NumGlobalKeyValueHeads != 4 {
-		t.Errorf("NumGlobalKeyValueHeads = %d, want 4", cfg.NumGlobalKeyValueHeads)
-	}
-	if cfg.NumKeyValueHeads != 16 {
-		t.Errorf("NumKeyValueHeads = %d, want 16", cfg.NumKeyValueHeads)
-	}
-	if cfg.NumKVSharedLayers != 0 {
-		t.Errorf("NumKVSharedLayers = %d, want 0", cfg.NumKVSharedLayers)
-	}
-	if cfg.HiddenSizePerLayer != 0 {
-		t.Errorf("HiddenSizePerLayer = %d, want 0 (no PLE)", cfg.HiddenSizePerLayer)
-	}
-	if cfg.SlidingWindow != 1024 {
-		t.Errorf("SlidingWindow = %d, want 1024", cfg.SlidingWindow)
-	}
+		if cfg.HiddenSize != 5376 {
+			t.Errorf("HiddenSize = %d, want 5376", cfg.HiddenSize)
+		}
+		if cfg.NumHiddenLayers != 60 {
+			t.Errorf("NumHiddenLayers = %d, want 60", cfg.NumHiddenLayers)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV should be true")
+		}
+		if cfg.NumGlobalKeyValueHeads != 4 {
+			t.Errorf("NumGlobalKeyValueHeads = %d, want 4", cfg.NumGlobalKeyValueHeads)
+		}
+		if cfg.NumKeyValueHeads != 16 {
+			t.Errorf("NumKeyValueHeads = %d, want 16", cfg.NumKeyValueHeads)
+		}
+		if cfg.NumKVSharedLayers != 0 {
+			t.Errorf("NumKVSharedLayers = %d, want 0", cfg.NumKVSharedLayers)
+		}
+		if cfg.HiddenSizePerLayer != 0 {
+			t.Errorf("HiddenSizePerLayer = %d, want 0 (no PLE)", cfg.HiddenSizePerLayer)
+		}
+		if cfg.SlidingWindow != 1024 {
+			t.Errorf("SlidingWindow = %d, want 1024", cfg.SlidingWindow)
+		}
 
-	// KV sharing should be empty (no shared layers).
-	if len(cfg.KVShareMap) != 0 {
-		t.Errorf("KVShareMap should be empty, got %d entries", len(cfg.KVShareMap))
-	}
+		// KV sharing should be empty (no shared layers).
+		if len(cfg.KVShareMap) != 0 {
+			t.Errorf("KVShareMap should be empty, got %d entries", len(cfg.KVShareMap))
+		}
 
-	// Layer types: pattern is 5 sliding + 1 full, repeating 10 times.
-	if !isLayerSliding(0, &cfg) {
-		t.Error("layer 0 should be sliding")
-	}
-	if isLayerSliding(5, &cfg) {
-		t.Error("layer 5 should be full attention")
-	}
-	if !isLayerSliding(6, &cfg) {
-		t.Error("layer 6 should be sliding")
-	}
-	if isLayerSliding(59, &cfg) {
-		t.Error("layer 59 should be full attention")
-	}
+		// Layer types: pattern is 5 sliding + 1 full, repeating 10 times.
+		if !isLayerSliding(0, &cfg) {
+			t.Error("layer 0 should be sliding")
+		}
+		if isLayerSliding(5, &cfg) {
+			t.Error("layer 5 should be full attention")
+		}
+		if !isLayerSliding(6, &cfg) {
+			t.Error("layer 6 should be sliding")
+		}
+		if isLayerSliding(59, &cfg) {
+			t.Error("layer 59 should be full attention")
+		}
+	})
 }
 
 func TestParseTextConfig12BUnified(t *testing.T) {
-	skipIfNoMLX(t)
-
-	layerTypes := make([]string, 0, 48)
-	for i := range 48 {
-		if i%6 == 5 {
-			layerTypes = append(layerTypes, "full_attention")
-		} else {
-			layerTypes = append(layerTypes, "sliding_attention")
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		layerTypes := make([]string, 0, 48)
+		for i := range 48 {
+			if i%6 == 5 {
+				layerTypes = append(layerTypes, "full_attention")
+			} else {
+				layerTypes = append(layerTypes, "sliding_attention")
+			}
 		}
-	}
 
-	data, err := json.Marshal(map[string]any{
-		"architectures": []string{"Gemma4UnifiedForConditionalGeneration"},
-		"model_type":    "gemma4_unified",
-		"text_config": map[string]any{
-			"hidden_size":                 3840,
-			"num_hidden_layers":           48,
-			"intermediate_size":           15360,
-			"num_attention_heads":         16,
-			"num_key_value_heads":         8,
-			"num_global_key_value_heads":  1,
-			"head_dim":                    256,
-			"global_head_dim":             512,
-			"vocab_size":                  262144,
-			"rms_norm_eps":                1e-6,
-			"max_position_embeddings":     131072,
-			"sliding_window":              1024,
-			"final_logit_softcapping":     30.0,
-			"use_double_wide_mlp":         false,
-			"num_kv_shared_layers":        0,
-			"hidden_size_per_layer_input": 0,
-			"vocab_size_per_layer_input":  262144,
-			"attention_k_eq_v":            true,
-			"enable_moe_block":            false,
-			"tie_word_embeddings":         true,
-			"layer_types":                 layerTypes,
-			"rope_parameters": map[string]any{
-				"full_attention": map[string]any{
-					"partial_rotary_factor": 0.25,
-					"rope_theta":            1000000.0,
-					"rope_type":             "proportional",
-				},
-				"sliding_attention": map[string]any{
-					"rope_theta": 10000.0,
-					"rope_type":  "default",
+		data, err := json.Marshal(map[string]any{
+			"architectures": []string{"Gemma4UnifiedForConditionalGeneration"},
+			"model_type":    "gemma4_unified",
+			"text_config": map[string]any{
+				"hidden_size":                 3840,
+				"num_hidden_layers":           48,
+				"intermediate_size":           15360,
+				"num_attention_heads":         16,
+				"num_key_value_heads":         8,
+				"num_global_key_value_heads":  1,
+				"head_dim":                    256,
+				"global_head_dim":             512,
+				"vocab_size":                  262144,
+				"rms_norm_eps":                1e-6,
+				"max_position_embeddings":     131072,
+				"sliding_window":              1024,
+				"final_logit_softcapping":     30.0,
+				"use_double_wide_mlp":         false,
+				"num_kv_shared_layers":        0,
+				"hidden_size_per_layer_input": 0,
+				"vocab_size_per_layer_input":  262144,
+				"attention_k_eq_v":            true,
+				"enable_moe_block":            false,
+				"tie_word_embeddings":         true,
+				"layer_types":                 layerTypes,
+				"rope_parameters": map[string]any{
+					"full_attention": map[string]any{
+						"partial_rotary_factor": 0.25,
+						"rope_theta":            1000000.0,
+						"rope_type":             "proportional",
+					},
+					"sliding_attention": map[string]any{
+						"rope_theta": 10000.0,
+						"rope_type":  "default",
+					},
 				},
 			},
-		},
+		})
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+
+		cfg, err := parseTextConfig(data)
+		if err != nil {
+			t.Fatalf("parseTextConfig failed: %v", err)
+		}
+
+		if cfg.HiddenSize != 3840 {
+			t.Errorf("HiddenSize = %d, want 3840", cfg.HiddenSize)
+		}
+		if cfg.NumHiddenLayers != 48 {
+			t.Errorf("NumHiddenLayers = %d, want 48", cfg.NumHiddenLayers)
+		}
+		if cfg.IntermediateSize != 15360 {
+			t.Errorf("IntermediateSize = %d, want 15360", cfg.IntermediateSize)
+		}
+		if cfg.NumAttentionHeads != 16 {
+			t.Errorf("NumAttentionHeads = %d, want 16", cfg.NumAttentionHeads)
+		}
+		if cfg.NumKeyValueHeads != 8 {
+			t.Errorf("NumKeyValueHeads = %d, want 8", cfg.NumKeyValueHeads)
+		}
+		if cfg.NumGlobalKeyValueHeads != 1 {
+			t.Errorf("NumGlobalKeyValueHeads = %d, want 1", cfg.NumGlobalKeyValueHeads)
+		}
+		if !cfg.AttentionKEqV {
+			t.Error("AttentionKEqV should be true")
+		}
+		if cfg.EnableMoeBlock {
+			t.Error("EnableMoeBlock should be false")
+		}
+		if cfg.HiddenSizePerLayer != 0 {
+			t.Errorf("HiddenSizePerLayer = %d, want 0", cfg.HiddenSizePerLayer)
+		}
+		if cfg.NumKVSharedLayers != 0 {
+			t.Errorf("NumKVSharedLayers = %d, want 0", cfg.NumKVSharedLayers)
+		}
+		if len(cfg.KVShareMap) != 0 {
+			t.Errorf("KVShareMap should be empty, got %d entries", len(cfg.KVShareMap))
+		}
+		if cfg.FullRopeDims != 512 {
+			t.Errorf("FullRopeDims = %d, want 512", cfg.FullRopeDims)
+		}
+		if cfg.FullRopeFreqs == nil {
+			t.Error("FullRopeFreqs should be precomputed for proportional RoPE")
+		}
+		if isLayerSliding(5, &cfg) {
+			t.Error("layer 5 should be full attention")
+		}
+		if !isLayerSliding(6, &cfg) {
+			t.Error("layer 6 should be sliding")
+		}
+		if isLayerSliding(47, &cfg) {
+			t.Error("layer 47 should be full attention")
+		}
 	})
-	if err != nil {
-		t.Fatalf("json.Marshal failed: %v", err)
-	}
-
-	cfg, err := parseTextConfig(data)
-	if err != nil {
-		t.Fatalf("parseTextConfig failed: %v", err)
-	}
-
-	if cfg.HiddenSize != 3840 {
-		t.Errorf("HiddenSize = %d, want 3840", cfg.HiddenSize)
-	}
-	if cfg.NumHiddenLayers != 48 {
-		t.Errorf("NumHiddenLayers = %d, want 48", cfg.NumHiddenLayers)
-	}
-	if cfg.IntermediateSize != 15360 {
-		t.Errorf("IntermediateSize = %d, want 15360", cfg.IntermediateSize)
-	}
-	if cfg.NumAttentionHeads != 16 {
-		t.Errorf("NumAttentionHeads = %d, want 16", cfg.NumAttentionHeads)
-	}
-	if cfg.NumKeyValueHeads != 8 {
-		t.Errorf("NumKeyValueHeads = %d, want 8", cfg.NumKeyValueHeads)
-	}
-	if cfg.NumGlobalKeyValueHeads != 1 {
-		t.Errorf("NumGlobalKeyValueHeads = %d, want 1", cfg.NumGlobalKeyValueHeads)
-	}
-	if !cfg.AttentionKEqV {
-		t.Error("AttentionKEqV should be true")
-	}
-	if cfg.EnableMoeBlock {
-		t.Error("EnableMoeBlock should be false")
-	}
-	if cfg.HiddenSizePerLayer != 0 {
-		t.Errorf("HiddenSizePerLayer = %d, want 0", cfg.HiddenSizePerLayer)
-	}
-	if cfg.NumKVSharedLayers != 0 {
-		t.Errorf("NumKVSharedLayers = %d, want 0", cfg.NumKVSharedLayers)
-	}
-	if len(cfg.KVShareMap) != 0 {
-		t.Errorf("KVShareMap should be empty, got %d entries", len(cfg.KVShareMap))
-	}
-	if cfg.FullRopeDims != 512 {
-		t.Errorf("FullRopeDims = %d, want 512", cfg.FullRopeDims)
-	}
-	if cfg.FullRopeFreqs == nil {
-		t.Error("FullRopeFreqs should be precomputed for proportional RoPE")
-	}
-	if isLayerSliding(5, &cfg) {
-		t.Error("layer 5 should be full attention")
-	}
-	if !isLayerSliding(6, &cfg) {
-		t.Error("layer 6 should be sliding")
-	}
-	if isLayerSliding(47, &cfg) {
-		t.Error("layer 47 should be full attention")
-	}
 }
 
 func TestParseTextConfigE4B(t *testing.T) {
-	skipIfNoMLX(t)
-	data := []byte(`{
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		data := []byte(`{
 		"architectures": ["Gemma4ForConditionalGeneration"],
 		"text_config": {
 			"hidden_size": 2560,
@@ -474,73 +478,74 @@ func TestParseTextConfigE4B(t *testing.T) {
 		}
 	}`)
 
-	cfg, err := parseTextConfig(data)
-	if err != nil {
-		t.Fatalf("parseTextConfig failed: %v", err)
-	}
+		cfg, err := parseTextConfig(data)
+		if err != nil {
+			t.Fatalf("parseTextConfig failed: %v", err)
+		}
 
-	if cfg.HiddenSize != 2560 {
-		t.Errorf("HiddenSize = %d, want 2560", cfg.HiddenSize)
-	}
-	if cfg.NumHiddenLayers != 42 {
-		t.Errorf("NumHiddenLayers = %d, want 42", cfg.NumHiddenLayers)
-	}
-	if cfg.IntermediateSize != 10240 {
-		t.Errorf("IntermediateSize = %d, want 10240", cfg.IntermediateSize)
-	}
-	if cfg.NumKeyValueHeads != 2 {
-		t.Errorf("NumKeyValueHeads = %d, want 2", cfg.NumKeyValueHeads)
-	}
-	if cfg.UseDoubleWideMLP {
-		t.Error("UseDoubleWideMLP should be false")
-	}
-	if cfg.NumKVSharedLayers != 18 {
-		t.Errorf("NumKVSharedLayers = %d, want 18", cfg.NumKVSharedLayers)
-	}
-	if cfg.HiddenSizePerLayer != 256 {
-		t.Errorf("HiddenSizePerLayer = %d, want 256 (has PLE)", cfg.HiddenSizePerLayer)
-	}
-	if cfg.AttentionKEqV {
-		t.Error("AttentionKEqV should be false")
-	}
-	if cfg.EnableMoeBlock {
-		t.Error("EnableMoeBlock should be false")
-	}
-	if cfg.SlidingWindow != 512 {
-		t.Errorf("SlidingWindow = %d, want 512", cfg.SlidingWindow)
-	}
+		if cfg.HiddenSize != 2560 {
+			t.Errorf("HiddenSize = %d, want 2560", cfg.HiddenSize)
+		}
+		if cfg.NumHiddenLayers != 42 {
+			t.Errorf("NumHiddenLayers = %d, want 42", cfg.NumHiddenLayers)
+		}
+		if cfg.IntermediateSize != 10240 {
+			t.Errorf("IntermediateSize = %d, want 10240", cfg.IntermediateSize)
+		}
+		if cfg.NumKeyValueHeads != 2 {
+			t.Errorf("NumKeyValueHeads = %d, want 2", cfg.NumKeyValueHeads)
+		}
+		if cfg.UseDoubleWideMLP {
+			t.Error("UseDoubleWideMLP should be false")
+		}
+		if cfg.NumKVSharedLayers != 18 {
+			t.Errorf("NumKVSharedLayers = %d, want 18", cfg.NumKVSharedLayers)
+		}
+		if cfg.HiddenSizePerLayer != 256 {
+			t.Errorf("HiddenSizePerLayer = %d, want 256 (has PLE)", cfg.HiddenSizePerLayer)
+		}
+		if cfg.AttentionKEqV {
+			t.Error("AttentionKEqV should be false")
+		}
+		if cfg.EnableMoeBlock {
+			t.Error("EnableMoeBlock should be false")
+		}
+		if cfg.SlidingWindow != 512 {
+			t.Errorf("SlidingWindow = %d, want 512", cfg.SlidingWindow)
+		}
 
-	// Layer types: pattern is 5 sliding + 1 full, repeating 7 times = 42 layers.
-	if !isLayerSliding(0, &cfg) {
-		t.Error("layer 0 should be sliding")
-	}
-	if isLayerSliding(5, &cfg) {
-		t.Error("layer 5 should be full attention")
-	}
-	if !isLayerSliding(6, &cfg) {
-		t.Error("layer 6 should be sliding")
-	}
-	if isLayerSliding(41, &cfg) {
-		t.Error("layer 41 should be full attention")
-	}
+		// Layer types: pattern is 5 sliding + 1 full, repeating 7 times = 42 layers.
+		if !isLayerSliding(0, &cfg) {
+			t.Error("layer 0 should be sliding")
+		}
+		if isLayerSliding(5, &cfg) {
+			t.Error("layer 5 should be full attention")
+		}
+		if !isLayerSliding(6, &cfg) {
+			t.Error("layer 6 should be sliding")
+		}
+		if isLayerSliding(41, &cfg) {
+			t.Error("layer 41 should be full attention")
+		}
 
-	// KV sharing: first shared = 42 - 18 = 24.
-	// Layer 24 is sliding, its donor should be the last non-shared sliding layer.
-	// Non-shared layers: 0-23. Last sliding in 0-23 is layer 22 (23=full).
-	if donor, ok := cfg.KVShareMap[24]; !ok {
-		t.Error("layer 24 should be in KVShareMap")
-	} else {
-		t.Logf("layer 24 donor = %d", donor)
-	}
-	// Layer 29 is full_attention (5th full), donor should be the last non-shared full layer.
-	// Non-shared full layers: 5, 11, 17, 23.
-	if donor, ok := cfg.KVShareMap[29]; !ok || donor != 23 {
-		t.Errorf("KVShareMap[29] = %d, ok=%v; want 23, true (full attn donor)", donor, ok)
-	}
-	// Layer 23 should NOT be shared (it's the last non-shared layer).
-	if _, ok := cfg.KVShareMap[23]; ok {
-		t.Error("layer 23 should not be in KVShareMap (non-shared)")
-	}
+		// KV sharing: first shared = 42 - 18 = 24.
+		// Layer 24 is sliding, its donor should be the last non-shared sliding layer.
+		// Non-shared layers: 0-23. Last sliding in 0-23 is layer 22 (23=full).
+		if donor, ok := cfg.KVShareMap[24]; !ok {
+			t.Error("layer 24 should be in KVShareMap")
+		} else {
+			t.Logf("layer 24 donor = %d", donor)
+		}
+		// Layer 29 is full_attention (5th full), donor should be the last non-shared full layer.
+		// Non-shared full layers: 5, 11, 17, 23.
+		if donor, ok := cfg.KVShareMap[29]; !ok || donor != 23 {
+			t.Errorf("KVShareMap[29] = %d, ok=%v; want 23, true (full attn donor)", donor, ok)
+		}
+		// Layer 23 should NOT be shared (it's the last non-shared layer).
+		if _, ok := cfg.KVShareMap[23]; ok {
+			t.Error("layer 23 should not be in KVShareMap (non-shared)")
+		}
+	})
 }
 
 func TestLayerTypeDetection(t *testing.T) {
@@ -644,9 +649,7 @@ func TestNewCachesAssistantSharedHistoryOrdering(t *testing.T) {
 }
 
 func TestResolveWeightPrefix(t *testing.T) {
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
-	}
+	mlxtest.SkipIfUnavailable(t)
 
 	tests := []struct {
 		name    string
@@ -659,7 +662,7 @@ func TestResolveWeightPrefix(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			dummy := mlx.FromValue(float32(1.0))
 			mlx.Eval(dummy)
 			tensors := map[string]*mlx.Array{tt.key: dummy}
@@ -668,12 +671,5 @@ func TestResolveWeightPrefix(t *testing.T) {
 				t.Errorf("resolveWeightPrefix(%q) = %q, want %q", tt.key, got, tt.wantPfx)
 			}
 		})
-	}
-}
-
-func skipIfNoMLX(t *testing.T) {
-	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
-		t.Skipf("MLX not available: %v", err)
 	}
 }

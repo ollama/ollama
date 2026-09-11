@@ -27,35 +27,51 @@ type Progress struct {
 
 	pos int
 
-	ticker *time.Ticker
 	states []State
+
+	stopOnce sync.Once
+	// done is closed to tell the render loop to exit.
+	done chan struct{}
+	// loopDone is closed by the render loop when it exits; stop waits on it so
+	// no in-flight render can race the writes in Stop and StopAndClear.
+	loopDone chan struct{}
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w)}
+	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{}), loopDone: make(chan struct{})}
 	go p.start()
 	return p
 }
 
-func (p *Progress) stop() bool {
+// stop halts the render loop, stopping any spinners first. It reports whether
+// rendering was active and how many lines were last rendered.
+func (p *Progress) stop() (bool, int) {
+	var stopped bool
+	p.stopOnce.Do(func() {
+		close(p.done)
+		stopped = true
+	})
+
+	// Wait for the render loop to exit so no render can race the writes below.
+	<-p.loopDone
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	for _, state := range p.states {
 		if spinner, ok := state.(*Spinner); ok {
 			spinner.Stop()
 		}
 	}
 
-	if p.ticker != nil {
-		p.ticker.Stop()
-		p.ticker = nil
-		p.render()
-		return true
+	if stopped {
+		p.renderLocked()
 	}
-
-	return false
+	return stopped, p.pos
 }
 
 func (p *Progress) Stop() bool {
-	stopped := p.stop()
+	stopped, _ := p.stop()
 	if stopped {
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
@@ -64,15 +80,15 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
+	stopped, pos := p.stop()
 	defer p.w.Flush()
 
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := range p.pos {
+		for i := range pos {
 			if i > 0 {
 				fmt.Fprint(p.w, "\033[A")
 			}
@@ -91,13 +107,18 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.renderLocked()
+}
+
+// renderLocked renders with p.mu held.
+func (p *Progress) renderLocked() {
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	defer p.w.Flush()
 
@@ -127,8 +148,16 @@ func (p *Progress) render() {
 }
 
 func (p *Progress) start() {
-	p.ticker = time.NewTicker(100 * time.Millisecond)
-	for range p.ticker.C {
-		p.render()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	defer close(p.loopDone)
+
+	for {
+		select {
+		case <-p.done:
+			return
+		case <-ticker.C:
+			p.render()
+		}
 	}
 }

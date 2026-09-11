@@ -1,12 +1,14 @@
 package mlx
 
 // #include "generated.h"
+// #include <stdlib.h>
 import "C"
 
 import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"unsafe"
 )
 
 func (b Byte) String() string {
@@ -46,24 +48,62 @@ func PrettyBytes(n int) fmt.Stringer {
 
 func ActiveMemory() int {
 	var active C.size_t
-	C.mlx_get_active_memory(&active)
+	mlxCheck(C.mlx_get_active_memory(&active))
 	return int(active)
 }
 
 func CacheMemory() int {
 	var cache C.size_t
-	C.mlx_get_cache_memory(&cache)
+	mlxCheck(C.mlx_get_cache_memory(&cache))
 	return int(cache)
 }
 
 func PeakMemory() int {
 	var peak C.size_t
-	C.mlx_get_peak_memory(&peak)
+	mlxCheck(C.mlx_get_peak_memory(&peak))
 	return int(peak)
 }
 
 func ResetPeakMemory() {
-	C.mlx_reset_peak_memory()
+	mlxCheck(C.mlx_reset_peak_memory())
+}
+
+// MaxRecommendedWorkingSetSize returns the device's recommended upper bound
+// for resident Metal allocations.
+func MaxRecommendedWorkingSetSize() (int, error) {
+	info := mlxCheck(C.mlx_device_info_new())
+	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
+		return 0, err
+	}
+	defer freeDeviceInfo(info)
+
+	key := C.CString("max_recommended_working_set_size")
+	defer C.free(unsafe.Pointer(key))
+
+	var size C.size_t
+	rc := C.mlx_device_info_get_size(&size, info, key)
+	if err := lastError(); err != nil {
+		return 0, err
+	}
+	if rc != 0 {
+		// mlx-c reports a missing key with a non-zero return and no message.
+		return 0, fmt.Errorf("mlx: no max_recommended_working_set_size in device info")
+	}
+	return int(size), nil
+}
+
+// SetWiredLimit sets the maximum amount of Metal memory MLX keeps resident and
+// returns the previous limit.
+func SetWiredLimit(limit int) (int, error) {
+	if limit < 0 {
+		return 0, fmt.Errorf("mlx: wired limit must be non-negative")
+	}
+
+	var previous C.size_t
+	if err := mlxError(C.mlx_set_wired_limit(&previous, C.size_t(limit))); err != nil {
+		return 0, err
+	}
+	return int(previous), nil
 }
 
 type Memory struct{}
@@ -85,5 +125,5 @@ type (
 )
 
 func ClearCache() {
-	C.mlx_clear_cache()
+	mlxCheck(C.mlx_clear_cache())
 }

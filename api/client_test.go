@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -385,6 +386,64 @@ func TestClientWebSearchExperimentalUsesLocalRoute(t *testing.T) {
 	}
 	if len(resp.Results) != 1 || resp.Results[0].Title != "Ollama" {
 		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestClientWebSearchExperimentalErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		assertError func(*testing.T, error)
+	}{
+		{
+			name:   "unauthorized retains sign in URL",
+			status: http.StatusUnauthorized,
+			body:   `{"error":"unauthorized","signin_url":"https://ollama.com/signin/example"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var authErr AuthorizationError
+				if !errors.As(err, &authErr) {
+					t.Fatalf("error = %T, want AuthorizationError", err)
+				}
+				if authErr.StatusCode != http.StatusUnauthorized || authErr.SigninURL != "https://ollama.com/signin/example" {
+					t.Fatalf("authorization error = %#v", authErr)
+				}
+			},
+		},
+		{
+			name:   "rate limit retains status",
+			status: http.StatusTooManyRequests,
+			body:   `{"error":"rate limit exceeded"}`,
+			assertError: func(t *testing.T, err error) {
+				t.Helper()
+				var statusErr StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("error = %T, want StatusError", err)
+				}
+				if statusErr.StatusCode != http.StatusTooManyRequests || statusErr.ErrorMessage != "rate limit exceeded" {
+					t.Fatalf("status error = %#v", statusErr)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer ts.Close()
+
+			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			_, err := client.WebSearchExperimental(t.Context(), &WebSearchRequest{Query: "ollama"})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			tt.assertError(t, err)
+		})
 	}
 }
 

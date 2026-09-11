@@ -105,7 +105,8 @@ func TestPlanFloat(t *testing.T) {
 func TestPlanFloatExpertGroup(t *testing.T) {
 	// A float MoE layer that ships per-expert tensors: two experts, two
 	// projections. Each projection is stacked into one [experts, out, in]
-	// tensor in a single packed blob; the routing gate and norm stay plain.
+	// tensor. Different quantization types use separate homogeneous blobs; the
+	// routing gate and norm stay plain.
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"model.layers.0.mlp.experts.0.gate_proj.weight": "BF16",
 		"model.layers.0.mlp.experts.1.gate_proj.weight": "BF16",
@@ -120,17 +121,17 @@ func TestPlanFloatExpertGroup(t *testing.T) {
 		t.Fatalf("Plan() error = %v", err)
 	}
 
-	group, ok := specByName(specs, "model.layers.0.mlp.experts")
+	gateBlob, ok := specByName(specs, "model.layers.0.mlp.experts.gate_proj.weight")
 	if !ok {
-		t.Fatalf("missing packed expert blob; got %v", specNames(specs))
+		t.Fatalf("missing stacked gate projection blob; got %v", specNames(specs))
 	}
-	if len(group.Tensors) != 2 {
-		t.Fatalf("packed blob has %d tensors, want 2 (gate_proj, down_proj)", len(group.Tensors))
+	if len(gateBlob.Tensors) != 1 {
+		t.Fatalf("gate projection blob has %d tensors, want 1", len(gateBlob.Tensors))
 	}
 
-	gate, ok := inputByOutput(group, "model.layers.0.mlp.experts.gate_proj.weight")
+	gate, ok := inputByOutput(gateBlob, "model.layers.0.mlp.experts.gate_proj.weight")
 	if !ok {
-		t.Fatal("packed blob missing stacked gate_proj")
+		t.Fatal("gate projection blob missing stacked gate_proj")
 	}
 	if gate.Transform != TransformStackExperts || len(gate.Sources) != 2 {
 		t.Errorf("gate_proj = %+v, want stack of 2 experts", gate)
@@ -146,9 +147,16 @@ func TestPlanFloatExpertGroup(t *testing.T) {
 		t.Errorf("gate_proj quantize = %q, want int4", gate.Quantize)
 	}
 
-	down, _ := inputByOutput(group, "model.layers.0.mlp.experts.down_proj.weight")
+	downBlob, ok := specByName(specs, "model.layers.0.mlp.experts.down_proj.weight")
+	if !ok || len(downBlob.Tensors) != 1 {
+		t.Fatalf("missing homogeneous stacked down projection blob; got %v", specNames(specs))
+	}
+	down, _ := inputByOutput(downBlob, "model.layers.0.mlp.experts.down_proj.weight")
 	if down.Quantize != "int8" {
 		t.Errorf("down_proj quantize = %q, want int8 (promoted)", down.Quantize)
+	}
+	if _, ok := specByName(specs, "model.layers.0.mlp.experts"); ok {
+		t.Error("mixed expert projections must not share a blob")
 	}
 
 	// Routing gate and norm are not expert tensors; they stay as their own blobs.

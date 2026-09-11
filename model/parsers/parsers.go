@@ -76,7 +76,7 @@ func ParserForName(name string) Parser {
 		return &Olmo3Parser{}
 	case "olmo3-think":
 		return &Olmo3ThinkParser{}
-	case "nemotron-3-nano":
+	case "nemotron-3-nano", "nemotron-3.5-nano":
 		return &Nemotron3NanoParser{}
 	case "functiongemma":
 		return &FunctionGemmaParser{}
@@ -98,6 +98,8 @@ func ParserForName(name string) Parser {
 		return &LagunaV8Parser{}
 	case "cohere":
 		return &CohereParser{}
+	case "glimmer":
+		return &GlimmerParser{}
 	default:
 		return nil
 	}

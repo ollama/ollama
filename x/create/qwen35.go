@@ -12,11 +12,9 @@ func newQwen35ImportTransform(json.RawMessage) (quantizePolicy, error) {
 }
 
 func (qwen35ImportTransform) quantizationType(name string, shape []int32, quantize string) string {
-	// The vision tower is not yet supported and the low-rank linear-attention
-	// projections are sensitive; keep both at source precision. Everything else
-	// follows the generic policy, which already keeps embeddings, norms, biases,
-	// and routing gates unquantized.
-	if isVisionTower(name) || qwen35IsLowRankProjection(name) {
+	// The low-rank linear-attention projections are sensitive; keep them
+	// at source precision.
+	if qwen35IsLowRankProjection(name) {
 		return ""
 	}
 	return GetTensorQuantization(name, shape, quantize)

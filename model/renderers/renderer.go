@@ -69,6 +69,8 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.8":
+		return newQwen38Renderer()
 	case "ornith":
 		return newOrnithRenderer()
 	case "cogito":
@@ -93,6 +95,8 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "nemotron-3.5-nano":
+		return &Nemotron3NanoRenderer{v35: true}
 	case "gemma4", "gemma4-small":
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "gemma4-large":
@@ -113,6 +117,8 @@ func rendererForName(name string) Renderer {
 		return &LagunaV8Renderer{}
 	case "cohere":
 		return &CohereRenderer{}
+	case "glimmer":
+		return &GlimmerRenderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

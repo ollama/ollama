@@ -294,7 +294,10 @@ func parseValue(raw string, paramType api.PropertyType) any {
 	// they exist). This follows the reference implementation
 	raw = strings.TrimPrefix(raw, "\n")
 	raw = strings.TrimSuffix(raw, "\n")
+	return parseTypedToolValue(raw, paramType)
+}
 
+func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 	// Check for null first (case-insensitive) - this takes precedence over any type
 	if strings.ToLower(raw) == "null" {
 		return nil

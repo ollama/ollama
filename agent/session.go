@@ -474,7 +474,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
 	}
-	projectedMessages := append([]api.Message(nil), messages...)
 	// Pre-compute the full-history token estimate once per batch instead of
 	// re-marshaling the entire history for each tool call. Per-call deltas
 	// (tool messages already appended this batch) are tracked in batchTokens
@@ -530,7 +529,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			for _, plan := range plans {
 				msg := s.toolMessageForContext(plan.toolName, plan.call.ID, content, opts, historyTokens+batchTokens)
 				batch.messages = append(batch.messages, msg)
-				projectedMessages = append(projectedMessages, msg)
 				batchTokens += estimateMessagesTokens([]api.Message{msg})
 				deniedContent := msg.Content
 				if emitErr := s.emit(newToolFinished(meta, "denied", plan.call.ID, plan.toolName, "", plan.args, deniedContent, deniedContent)); emitErr != nil {
@@ -559,7 +557,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			content := fmt.Sprintf("Error: unknown tool: %s", toolName)
 			msg := s.toolMessageForContext(toolName, call.ID, content, opts, historyTokens+batchTokens)
 			batch.messages = append(batch.messages, msg)
-			projectedMessages = append(projectedMessages, msg)
 			batchTokens += estimateMessagesTokens([]api.Message{msg})
 			content = msg.Content
 			if toolOutputFullyOmitted(content) {
@@ -580,7 +577,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 			rawContent := fmt.Sprintf("Error: %v", err)
 			msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, historyTokens+batchTokens)
 			batch.messages = append(batch.messages, msg)
-			projectedMessages = append(projectedMessages, msg)
 			batchTokens += estimateMessagesTokens([]api.Message{msg})
 			content := msg.Content
 			if toolOutputFullyOmitted(content) {
@@ -609,7 +605,6 @@ func (s *Session) executeToolCalls(ctx context.Context, runID string, opts RunOp
 
 		msg := s.toolMessageForContext(toolName, call.ID, rawContent, opts, historyTokens+batchTokens)
 		batch.messages = append(batch.messages, msg)
-		projectedMessages = append(projectedMessages, msg)
 		batchTokens += estimateMessagesTokens([]api.Message{msg})
 		content := msg.Content
 
@@ -637,7 +632,6 @@ func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunO
 	batch := toolBatchResult{
 		messages: make([]api.Message, 0, len(calls)),
 	}
-	projectedMessages := append([]api.Message(nil), messages...)
 	historyTokens := s.estimateRunPromptTokens(opts, messages)
 	batchTokens := 0
 	for _, call := range calls {
@@ -645,7 +639,6 @@ func (s *Session) disabledToolCalls(ctx context.Context, runID string, opts RunO
 		args := call.Function.Arguments.ToMap()
 		msg := s.toolMessageForContext(toolName, call.ID, toolExecutionDisabledMessage, opts, historyTokens+batchTokens)
 		batch.messages = append(batch.messages, msg)
-		projectedMessages = append(projectedMessages, msg)
 		batchTokens += estimateMessagesTokens([]api.Message{msg})
 		if emitErr := s.emitIgnoringCanceled(ctx, newToolFinished(meta, "disabled", call.ID, toolName, "", args, msg.Content, msg.Content)); emitErr != nil {
 			return toolBatchResult{}, emitErr
