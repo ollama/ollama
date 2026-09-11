@@ -954,6 +954,35 @@ func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
 	require.True(t, runner.needsReload(ctx, req))
 }
 
+// TestSchedNeedsReloadKeepsExplicitContextForAutoRequest guards against a
+// regression where a request that omits num_ctx (e.g. a warm-up call) forced
+// a reload down to the automatic default even though the runner was already
+// loaded with a larger, explicitly requested context.
+func TestSchedNeedsReloadKeepsExplicitContextForAutoRequest(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
+	opts := api.DefaultOptions()
+	opts.NumCtx = 8192
+	model := &Model{}
+	runner := &runnerRef{
+		model:       model,
+		Options:     &opts,
+		llama:       llm,
+		numParallel: 1,
+		numCtxAuto:  false,
+	}
+	req := &LlmRequest{
+		model:      model,
+		opts:       api.DefaultOptions(),
+		numCtxAuto: true,
+	}
+	req.opts.NumCtx = 4096
+
+	require.False(t, runner.needsReload(ctx, req))
+}
+
 func TestSchedNeedsReloadUsesEffectiveAutomaticContextShift(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
