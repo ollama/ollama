@@ -349,8 +349,9 @@ func parseTypedToolValue(raw string, paramType api.PropertyType) any {
 	// Try number (float)
 	if typeSet["number"] {
 		if f, err := strconv.ParseFloat(raw, 64); err == nil {
-			// If the number has no decimal part, return as int (matching reference)
-			if f == math.Trunc(f) {
+			// Convert whole numbers only when they fit in int64. The upper bound
+			// is exclusive because float64(math.MaxInt64) rounds up to 1<<63.
+			if f == math.Trunc(f) && f >= math.MinInt64 && f < -math.MinInt64 {
 				i := int64(f)
 				if i >= math.MinInt32 && i <= math.MaxInt32 {
 					return int(i)
