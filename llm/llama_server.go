@@ -914,7 +914,9 @@ func NewLlamaServerRunner(
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
-	status := NewStatusWriter(os.Stderr)
+	// The filter is the last hop before stderr so the parsers above it still
+	// see llama-server's full output.
+	status := NewStatusWriter(newRunnerLogFilter(os.Stderr))
 
 	// memWriter wraps the status writer and parses buffer size lines from llama-server logs
 	memWriter := &memoryParsingWriter{inner: status}
