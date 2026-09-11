@@ -140,7 +140,6 @@ describe.each(["darwin", "windows"] as const)(
           });
           expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
             to: "/connect",
-            search: {},
           });
         } finally {
           await onboarding.unmount();
@@ -184,7 +183,6 @@ describe.each(["darwin", "windows"] as const)(
           expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
           expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
             to: "/connect",
-            search: {},
           });
         } finally {
           await onboarding.unmount();

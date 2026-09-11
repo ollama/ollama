@@ -74,7 +74,7 @@ function OnboardingRoute() {
 
   const openApps = useCallback(async (): Promise<boolean> => {
     if (!(await completeOnboarding())) return false;
-    await navigate({ to: "/connect", search: {} });
+    await navigate({ to: "/connect" });
     return true;
   }, [completeOnboarding, navigate]);
 

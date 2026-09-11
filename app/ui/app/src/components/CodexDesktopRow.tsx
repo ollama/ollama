@@ -47,8 +47,6 @@ type CodexConnectPhase = keyof typeof connectionProgress;
 interface CodexDesktopRowProps {
   integration: IntegrationStatus;
   initialStatus?: CodexDesktopStatus;
-  autoConnect?: boolean;
-  onAutoConnectHandled?: () => void;
 }
 
 function CodexIcon({ integration }: { integration: IntegrationStatus }) {
@@ -89,8 +87,6 @@ function codexDesktopDescription(
 export function CodexDesktopRow({
   integration,
   initialStatus,
-  autoConnect,
-  onAutoConnectHandled,
 }: CodexDesktopRowProps) {
   const [status, setStatus] = useState<CodexDesktopStatus | null>(
     initialStatus ?? null,
@@ -103,7 +99,6 @@ export function CodexDesktopRow({
   const used = useRef(false);
   const mounted = useRef(true);
   const operationInFlight = useRef(false);
-  const autoConnectHandled = useRef(false);
   const statusRequest = useRef(0);
   const queryClient = useQueryClient();
   const acknowledgment = useMutation({
@@ -426,7 +421,6 @@ export function CodexDesktopRow({
       if (!mounted.current) return;
       setStatus(result.status);
       if (result.restartConfirmationRequired) {
-        if (!mounted.current) return;
         // Keep focus-driven status refreshes from discarding this operation
         // while the native confirmation dialog temporarily owns focus.
         if (
@@ -479,26 +473,11 @@ export function CodexDesktopRow({
     }
   };
 
-  const toggleConnectionRef = useRef(toggleConnection);
-  useEffect(() => {
-    toggleConnectionRef.current = toggleConnection;
-  });
-
-  useEffect(() => {
-    if (!autoConnect) {
-      autoConnectHandled.current = false;
-      return;
-    }
-    if (!status || autoConnectHandled.current) return;
-    autoConnectHandled.current = true;
-    // This action enables the integration; it must never toggle an existing
-    // connection off when onboarding is opened again.
-    if (!status.connected) void toggleConnectionRef.current();
-    onAutoConnectHandled?.();
-  }, [autoConnect, status, onAutoConnectHandled]);
-
   return (
-    <div className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-700 dark:bg-neutral-800/50">
+    <div
+      id="integration-chatgpt"
+      className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-700 dark:bg-neutral-800/50"
+    >
       <div className="flex min-w-0 flex-1 items-center gap-4">
         <CodexIcon integration={integration} />
         <div className="min-w-0">

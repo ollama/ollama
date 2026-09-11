@@ -7,7 +7,6 @@ import {
   ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
   ConnectAppsScreen,
-  INTEGRATION_SCROLL_MS,
   IntroScreen,
   default as Onboarding,
   RunOllamaScreen,
@@ -1047,7 +1046,7 @@ describe("Onboarding handoff", () => {
   });
 });
 
-describe("ConnectAppsScreen loading and deep links", () => {
+describe("ConnectAppsScreen interactions", () => {
   function stubAppsWindow(overrides: Record<string, unknown> = {}) {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -1117,112 +1116,46 @@ describe("ConnectAppsScreen loading and deep links", () => {
     },
   );
 
-  // Rows sit 500px below the top of a 660px-tall scroll container, so
-  // centering a 72px row lands the container at 206px.
-  function scrollMocks() {
-    const container = {
-      scrollTop: 0,
-      clientHeight: 660,
-      scrollHeight: 2000,
-      getBoundingClientRect: () => ({ top: 0 }),
-    };
-    const row = { getBoundingClientRect: () => ({ top: 500, height: 72 }) };
-    const createNodeMock = (element: { props: { className?: string } }) =>
-      element.props.className?.includes("overflow-y-auto") ? container : row;
-    return { container, createNodeMock };
-  }
-  const CENTERED_SCROLL_TOP = 206;
-
-  it("retries a cancelled Claude connection from the same link", async () => {
+  it("lets the user retry Connect after cancelling the native confirmation", async () => {
     const running = { ...DISCONNECTED_CLAUDE, running: true, used: true };
     const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
-    const handled = vi.fn();
     const connect = vi.fn().mockResolvedValue({
       status: { ...running, configured: true, connected: true },
     });
-    const integrations = appsIntegrations(true);
     stubAppsWindow({
       getClaudeDesktopConnectionSummary: vi.fn().mockResolvedValue(running),
       setClaudeDesktopConnected: connect,
       confirm,
-      matchMedia: vi.fn().mockReturnValue({ matches: true }),
     });
     let renderer: ReactTestRenderer | undefined;
-    const element = (autoConnectClaude: boolean) => (
-      <StrictMode>
-        <ConnectAppsScreen
-          initialIntegrations={integrations}
-          initialClaudeStatus={running}
-          autoConnectClaude={autoConnectClaude}
-          onDeepLinkHandled={handled}
-        />
-      </StrictMode>
-    );
+    const clickConnect = () =>
+      renderer!.root
+        .findByProps({ "aria-label": "Connect Claude" })
+        .props.onClick();
     try {
       await act(async () => {
-        renderer = create(element(true));
+        renderer = create(
+          <StrictMode>
+            <ConnectAppsScreen
+              initialIntegrations={appsIntegrations(true)}
+              initialClaudeStatus={running}
+            />
+          </StrictMode>,
+        );
         await settle();
+      });
+      await act(async () => {
+        await clickConnect();
       });
       expect(confirm).toHaveBeenCalledTimes(1);
       expect(connect).not.toHaveBeenCalled();
-      await act(async () => renderer!.update(element(false)));
       await act(async () => {
-        renderer!.update(element(true));
-        await settle();
+        await clickConnect();
       });
       expect(confirm).toHaveBeenCalledTimes(2);
-      expect(handled).toHaveBeenCalledTimes(2);
       expect(connect).toHaveBeenCalledExactlyOnceWith(true, true);
     } finally {
       if (renderer) act(() => renderer?.unmount());
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("handles the same integration link again after copying", async () => {
-    const handled = vi.fn();
-    const integrations = appsIntegrations(true);
-    const copied = vi
-      .spyOn(clipboard, "copyTextToClipboard")
-      .mockResolvedValue(true);
-    const { container, createNodeMock } = scrollMocks();
-    stubAppsWindow({ matchMedia: vi.fn().mockReturnValue({ matches: true }) });
-    let renderer: ReactTestRenderer | undefined;
-    const element = (highlightIntegrationId?: string) => (
-      <StrictMode>
-        <ConnectAppsScreen
-          initialIntegrations={integrations}
-          initialClaudeStatus={DISCONNECTED_CLAUDE}
-          highlightIntegrationId={highlightIntegrationId}
-          onDeepLinkHandled={handled}
-        />
-      </StrictMode>
-    );
-    try {
-      await act(async () => {
-        renderer = create(element("codex"), { createNodeMock });
-        await settle();
-      });
-      expect(handled).toHaveBeenCalledTimes(1);
-      await act(async () => renderer!.update(element()));
-      await act(async () => {
-        await renderer!.root
-          .findByProps({ "aria-label": "Copy Codex CLI command" })
-          .props.onClick();
-      });
-      expect(
-        renderer!.root.findByProps({ id: "integration-codex" }).props.className,
-      ).not.toContain("bg-neutral-100");
-      container.scrollTop = 0;
-      await act(async () => renderer!.update(element("codex")));
-      expect(handled).toHaveBeenCalledTimes(2);
-      expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
-      expect(
-        renderer!.root.findByProps({ id: "integration-codex" }).props.className,
-      ).toContain("bg-neutral-100");
-    } finally {
-      if (renderer) act(() => renderer?.unmount());
-      copied.mockRestore();
       vi.unstubAllGlobals();
     }
   });
@@ -1456,125 +1389,8 @@ describe("ConnectAppsScreen loading and deep links", () => {
     },
   );
 
-  function animationFrames() {
-    let nextId = 0;
-    const pending = new Map<number, FrameRequestCallback>();
-    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
-      const id = ++nextId;
-      pending.set(id, callback);
-      return id;
-    });
-    const cancelAnimationFrame = vi.fn((id: number) => pending.delete(id));
-    const paint = (now: number) => {
-      const callbacks = [...pending.values()];
-      pending.clear();
-      act(() => callbacks.forEach((callback) => callback(now)));
-    };
-    return { requestAnimationFrame, cancelAnimationFrame, paint, pending };
-  }
-
-  it("paints the Apps page before scrolling, even when the first frames are delayed", async () => {
-    const frames = animationFrames();
-    const { container, createNodeMock } = scrollMocks();
-    const integrations = appsIntegrations(true);
-    const onDeepLinkHandled = vi.fn();
-    stubAppsWindow({
-      ...frames,
-      getClaudeDesktopConnectionSummary: vi
-        .fn()
-        .mockReturnValue(new Promise(() => {})),
-    });
-
-    let renderer: ReactTestRenderer | undefined;
-    try {
-      await act(async () => {
-        renderer = create(
-          <StrictMode>
-            <ConnectAppsScreen
-              initialIntegrations={integrations}
-              highlightIntegrationId="codex"
-              onDeepLinkHandled={onDeepLinkHandled}
-            />
-          </StrictMode>,
-          { createNodeMock },
-        );
-        await settle();
-      });
-      expect(onDeepLinkHandled).toHaveBeenCalledOnce();
-      expect(container.scrollTop).toBe(0);
-
-      // Clearing the handled URL must not cancel the in-progress handoff.
-      await act(async () => {
-        renderer!.update(
-          <StrictMode>
-            <ConnectAppsScreen
-              initialIntegrations={integrations}
-              onDeepLinkHandled={onDeepLinkHandled}
-            />
-          </StrictMode>,
-        );
-      });
-
-      const firstPaint = performance.now() + 2000;
-      frames.paint(firstPaint);
-      expect(container.scrollTop).toBe(0);
-      expect(frames.pending.size).toBe(1);
-
-      // Native work can delay either frame; neither delay consumes the scroll.
-      const scrollStart = firstPaint + 2000;
-      frames.paint(scrollStart);
-      expect(container.scrollTop).toBe(0);
-      frames.paint(scrollStart + INTEGRATION_SCROLL_MS / 2);
-      expect(container.scrollTop).toBeGreaterThan(0);
-      expect(container.scrollTop).toBeLessThan(CENTERED_SCROLL_TOP);
-      frames.paint(scrollStart + INTEGRATION_SCROLL_MS);
-      expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
-      expect(frames.pending.size).toBe(0);
-      expect(
-        renderer!.root.findByProps({ id: "integration-codex" }).props.className,
-      ).toContain("bg-neutral-100");
-      expect(onDeepLinkHandled).toHaveBeenCalledOnce();
-    } finally {
-      if (renderer) act(() => renderer?.unmount());
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it.each([0, 1, 3])(
-    "stops the handoff scroll when leaving Apps after %s frames",
-    async (paintedFrames) => {
-      const frames = animationFrames();
-      const { container, createNodeMock } = scrollMocks();
-      stubAppsWindow(frames);
-
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            <ConnectAppsScreen
-              initialIntegrations={appsIntegrations(true)}
-              highlightIntegrationId="codex"
-            />,
-            { createNodeMock },
-          );
-          await settle();
-        });
-        for (let i = 0; i < paintedFrames; i++) frames.paint(i * 16);
-        const scrollTop = container.scrollTop;
-        act(() => renderer!.unmount());
-        renderer = undefined;
-        expect(frames.pending.size).toBe(0);
-        frames.paint(INTEGRATION_SCROLL_MS + 1000);
-        expect(container.scrollTop).toBe(scrollTop);
-      } finally {
-        if (renderer) act(() => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it.each(["connected", "failed"])(
-    "shows and highlights apps while Claude status is still loading (%s)",
+  it.each(["connected", "disconnected", "failed"])(
+    "lets users copy commands while Claude status is still loading (%s)",
     async (outcome) => {
       let resolveClaude!: (status: typeof DISCONNECTED_CLAUDE) => void;
       let rejectClaude!: (error: Error) => void;
@@ -1587,11 +1403,10 @@ describe("ConnectAppsScreen loading and deep links", () => {
       const copyCommand = vi
         .spyOn(clipboard, "copyTextToClipboard")
         .mockResolvedValue(true);
-      const onDeepLinkHandled = vi.fn();
-      const { container, createNodeMock } = scrollMocks();
+      const connect = vi.fn();
       stubAppsWindow({
         getClaudeDesktopConnectionSummary: vi.fn().mockReturnValue(claude),
-        matchMedia: vi.fn().mockReturnValue({ matches: true }),
+        setClaudeDesktopConnected: connect,
       });
       vi.stubGlobal(
         "fetch",
@@ -1605,18 +1420,10 @@ describe("ConnectAppsScreen loading and deep links", () => {
       let renderer: ReactTestRenderer | undefined;
       try {
         await act(async () => {
-          renderer = create(
-            <ConnectAppsScreen
-              highlightIntegrationId="codex"
-              onDeepLinkHandled={onDeepLinkHandled}
-            />,
-            { createNodeMock },
-          );
+          renderer = create(<ConnectAppsScreen />);
           await settle();
         });
 
-        const row = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
         const claudeToggle = () =>
           renderer!.root
             .findByProps({ id: "integration-claude-desktop" })
@@ -1625,9 +1432,6 @@ describe("ConnectAppsScreen loading and deep links", () => {
                 node.type === "button" &&
                 typeof node.props["aria-pressed"] === "boolean",
             );
-        expect(row().props.className).toContain("bg-neutral-100");
-        expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
-        expect(onDeepLinkHandled).toHaveBeenCalledOnce();
         expect(claudeToggle().props.disabled).toBe(true);
         expect(claudeToggle().props["aria-busy"]).toBe(true);
 
@@ -1637,18 +1441,18 @@ describe("ConnectAppsScreen loading and deep links", () => {
             .props.onClick();
         });
         expect(copyCommand).toHaveBeenCalledWith("ollama launch codex");
-        expect(row().props.className).not.toContain("bg-neutral-100");
+        expect(connect).not.toHaveBeenCalled();
 
         await act(async () => {
-          if (outcome === "connected") {
+          if (outcome === "failed") {
+            rejectClaude(new Error("Claude status unavailable"));
+          } else {
             resolveClaude({
               ...DISCONNECTED_CLAUDE,
               used: true,
-              configured: true,
-              connected: true,
+              configured: outcome === "connected",
+              connected: outcome === "connected",
             });
-          } else {
-            rejectClaude(new Error("Claude status unavailable"));
           }
           await settle();
         });
@@ -1661,8 +1465,7 @@ describe("ConnectAppsScreen loading and deep links", () => {
             renderer!.root.findByProps({ role: "alert" }).children,
           ).toContain("Ollama could not read the Claude connection status.");
         }
-        expect(row().props.className).not.toContain("bg-neutral-100");
-        expect(onDeepLinkHandled).toHaveBeenCalledOnce();
+        expect(connect).not.toHaveBeenCalled();
       } finally {
         if (renderer) act(() => renderer?.unmount());
         copyCommand.mockRestore();
@@ -1697,85 +1500,7 @@ describe("ConnectAppsScreen loading and deep links", () => {
     }
   });
 
-  it.each([false, true])(
-    "waits for Claude status before handling its onboarding connection (connected: %s)",
-    async (connected) => {
-      const status = {
-        ...DISCONNECTED_CLAUDE,
-        used: true,
-        configured: connected,
-        connected,
-      };
-      let resolveClaude!: (value: typeof status) => void;
-      const claude = new Promise<typeof status>((resolve) => {
-        resolveClaude = resolve;
-      });
-      const getStatus = vi
-        .fn()
-        .mockReturnValueOnce(claude)
-        .mockResolvedValue(status);
-      const setClaudeDesktopConnected = vi.fn().mockResolvedValue({
-        status: { ...status, configured: true, connected: true },
-      });
-      const onDeepLinkHandled = vi.fn();
-      stubAppsWindow({
-        getClaudeDesktopConnectionSummary: getStatus,
-        setClaudeDesktopConnected,
-        matchMedia: vi.fn().mockReturnValue({ matches: true }),
-      });
-
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            <ConnectAppsScreen
-              autoConnectClaude
-              initialIntegrations={appsIntegrations(true)}
-              onDeepLinkHandled={onDeepLinkHandled}
-            />,
-            { createNodeMock: scrollMocks().createNodeMock },
-          );
-          await settle();
-        });
-        expect(
-          renderer!.root.findByProps({
-            "aria-label": "Copy Codex CLI command",
-          }),
-        ).toBeTruthy();
-        expect(onDeepLinkHandled).not.toHaveBeenCalled();
-        expect(getStatus).toHaveBeenCalledOnce();
-        expect(setClaudeDesktopConnected).not.toHaveBeenCalled();
-
-        await act(async () => {
-          resolveClaude(status);
-          await settle();
-        });
-        expect(onDeepLinkHandled).toHaveBeenCalledOnce();
-        if (connected) {
-          expect(setClaudeDesktopConnected).not.toHaveBeenCalled();
-        } else {
-          expect(setClaudeDesktopConnected).toHaveBeenCalledExactlyOnceWith(
-            true,
-            false,
-          );
-        }
-        expect(
-          renderer!.root
-            .findByProps({ id: "integration-claude-desktop" })
-            .find(
-              (node) =>
-                node.type === "button" &&
-                typeof node.props["aria-pressed"] === "boolean",
-            ).props["aria-pressed"],
-        ).toBe(true);
-      } finally {
-        if (renderer) act(() => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
-  it("starts the Claude toggle once when opened from onboarding", async () => {
+  it("shows the first-use intro after the user connects Claude", async () => {
     const connectedStatus = {
       ...DISCONNECTED_CLAUDE,
       configured: true,
@@ -1784,16 +1509,12 @@ describe("ConnectAppsScreen loading and deep links", () => {
     const setClaudeDesktopConnected = vi
       .fn()
       .mockResolvedValue({ status: connectedStatus });
-    const { container, createNodeMock } = scrollMocks();
-    const frames = animationFrames();
-    const onDeepLinkHandled = vi.fn();
     stubAppsWindow({
       getClaudeDesktopConnectionSummary: vi
         .fn()
         .mockResolvedValue(DISCONNECTED_CLAUDE),
       setClaudeDesktopConnected,
       activateOllama: vi.fn(),
-      ...frames,
     });
 
     let renderer: ReactTestRenderer | undefined;
@@ -1802,31 +1523,22 @@ describe("ConnectAppsScreen loading and deep links", () => {
         renderer = create(
           <StrictMode>
             <ConnectAppsScreen
-              autoConnectClaude
               initialClaudeStatus={DISCONNECTED_CLAUDE}
               initialIntegrations={appsIntegrations(true)}
-              onDeepLinkHandled={onDeepLinkHandled}
             />
           </StrictMode>,
-          { createNodeMock },
         );
         await settle();
       });
+      expect(setClaudeDesktopConnected).not.toHaveBeenCalled();
       await act(async () => {
-        await settle();
+        await renderer!.root
+          .findByProps({ "aria-label": "Connect Claude" })
+          .props.onClick();
       });
 
       expect(setClaudeDesktopConnected).toHaveBeenCalledTimes(1);
       expect(setClaudeDesktopConnected).toHaveBeenCalledWith(true, false);
-      frames.paint(0);
-      frames.paint(16);
-      frames.paint(16 + INTEGRATION_SCROLL_MS);
-      expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
-      expect(onDeepLinkHandled).toHaveBeenCalledTimes(1);
-      expect(
-        renderer!.root.findByProps({ id: "integration-claude-desktop" }).props
-          .className,
-      ).toContain("bg-neutral-100 dark:bg-neutral-700/60");
       expect(
         renderer!.root
           .findByProps({ id: "integration-claude-desktop" })
@@ -1840,143 +1552,6 @@ describe("ConnectAppsScreen loading and deep links", () => {
     } finally {
       if (renderer) act(() => renderer?.unmount());
       vi.unstubAllGlobals();
-    }
-  });
-
-  it("does not disconnect a Claude that is already connected", async () => {
-    const connectedStatus = {
-      ...DISCONNECTED_CLAUDE,
-      used: true,
-      configured: true,
-      connected: true,
-    };
-    const setClaudeDesktopConnected = vi.fn();
-    const onDeepLinkHandled = vi.fn();
-    stubAppsWindow({
-      getClaudeDesktopConnectionSummary: vi
-        .fn()
-        .mockResolvedValue(connectedStatus),
-      setClaudeDesktopConnected,
-    });
-
-    let renderer: ReactTestRenderer | undefined;
-    try {
-      await act(async () => {
-        renderer = create(
-          <ConnectAppsScreen
-            autoConnectClaude
-            initialClaudeStatus={connectedStatus}
-            initialIntegrations={appsIntegrations(true)}
-            onDeepLinkHandled={onDeepLinkHandled}
-          />,
-          { createNodeMock: scrollMocks().createNodeMock },
-        );
-        await settle();
-      });
-
-      expect(setClaudeDesktopConnected).not.toHaveBeenCalled();
-      expect(onDeepLinkHandled).toHaveBeenCalledTimes(1);
-      expect(
-        renderer!.root.findByProps({ id: "integration-claude-desktop" }).props
-          .className,
-      ).toContain("bg-neutral-100 dark:bg-neutral-700/60");
-    } finally {
-      if (renderer) act(() => renderer?.unmount());
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("keeps an app highlighted until its command is successfully copied", async () => {
-    vi.useFakeTimers();
-    const copyCommand = vi
-      .spyOn(clipboard, "copyTextToClipboard")
-      .mockResolvedValueOnce(false)
-      .mockResolvedValue(true);
-    const { container, createNodeMock } = scrollMocks();
-    const requestAnimationFrame = vi.fn();
-    const onDeepLinkHandled = vi.fn();
-    stubAppsWindow({
-      getClaudeDesktopConnectionSummary: vi
-        .fn()
-        .mockResolvedValue(DISCONNECTED_CLAUDE),
-      matchMedia: vi.fn().mockReturnValue({ matches: true }),
-      requestAnimationFrame,
-    });
-
-    let renderer: ReactTestRenderer | undefined;
-    try {
-      await act(async () => {
-        renderer = create(
-          <ConnectAppsScreen
-            highlightIntegrationId="codex"
-            initialClaudeStatus={DISCONNECTED_CLAUDE}
-            initialIntegrations={appsIntegrations(true)}
-            onDeepLinkHandled={onDeepLinkHandled}
-          />,
-          { createNodeMock },
-        );
-        await settle();
-      });
-      const row = () => renderer!.root.findByProps({ id: "integration-codex" });
-
-      expect(row().props.className).toContain(
-        "bg-neutral-100 dark:bg-neutral-700/60",
-      );
-      // Reduced motion jumps straight to the row without animating.
-      expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
-      expect(requestAnimationFrame).not.toHaveBeenCalled();
-      expect(onDeepLinkHandled).toHaveBeenCalledTimes(1);
-
-      // Handling the deep link clears the URL, but the row stays highlighted.
-      await act(async () => {
-        renderer!.update(
-          <ConnectAppsScreen
-            initialClaudeStatus={DISCONNECTED_CLAUDE}
-            initialIntegrations={appsIntegrations(true)}
-            onDeepLinkHandled={onDeepLinkHandled}
-          />,
-        );
-      });
-      await act(async () => {
-        vi.advanceTimersByTime(60_000);
-      });
-      expect(row().props.className).toContain("bg-neutral-100");
-
-      // A failed copy leaves the user's selected app highlighted for retry.
-      const copyCodex = () =>
-        renderer!.root
-          .findByProps({ "aria-label": "Copy Codex CLI command" })
-          .props.onClick();
-      await act(async () => {
-        await copyCodex();
-      });
-      expect(copyCommand).toHaveBeenNthCalledWith(1, "ollama launch codex");
-      expect(row().props.className).toContain("bg-neutral-100");
-
-      await act(async () => {
-        await renderer!.root
-          .findByProps({ "aria-label": "Copy OpenCode command" })
-          .props.onClick();
-      });
-      expect(copyCommand).toHaveBeenNthCalledWith(2, "ollama launch opencode");
-      expect(row().props.className).toContain("bg-neutral-100");
-
-      await act(async () => {
-        await copyCodex();
-      });
-      expect(copyCommand).toHaveBeenNthCalledWith(3, "ollama launch codex");
-      expect(row().props.className).toContain("bg-white dark:bg-neutral-900");
-      expect(row().props.className).not.toContain("bg-neutral-100");
-      expect(
-        renderer!.root.findByProps({
-          "aria-label": "Codex CLI command copied",
-        }),
-      ).toBeTruthy();
-    } finally {
-      if (renderer) act(() => renderer?.unmount());
-      copyCommand.mockRestore();
-      vi.unstubAllGlobals();
-      vi.useRealTimers();
     }
   });
 });

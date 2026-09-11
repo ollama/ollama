@@ -42,57 +42,6 @@ import {
 } from "react";
 
 export const FIRST_MODEL_COMMAND = "ollama";
-export const INTEGRATION_HIGHLIGHT_MS = 2000;
-// Slower than the browser's built-in smooth scroll so the handoff from
-// onboarding does not feel like a jump cut.
-export const INTEGRATION_SCROLL_MS = 700;
-
-function prefersReducedMotion() {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
-function scrollRowIntoView(container: HTMLElement, row: HTMLElement) {
-  const targetScrollTop = () => {
-    const rowRect = row.getBoundingClientRect();
-    const offset = rowRect.top - container.getBoundingClientRect().top;
-    const centered =
-      container.scrollTop +
-      offset -
-      (container.clientHeight - rowRect.height) / 2;
-    return Math.max(
-      0,
-      Math.min(centered, container.scrollHeight - container.clientHeight),
-    );
-  };
-  if (
-    prefersReducedMotion() ||
-    typeof window.requestAnimationFrame !== "function"
-  ) {
-    container.scrollTop = targetScrollTop();
-    return;
-  }
-
-  // Let the Apps page paint before measuring and starting the scroll. Time
-  // spent waiting for native window work must not consume the animation.
-  let frame = window.requestAnimationFrame(() => {
-    frame = window.requestAnimationFrame((startedAt) => {
-      const start = container.scrollTop;
-      const end = targetScrollTop();
-      const step = (now: number) => {
-        const progress = Math.min(1, (now - startedAt) / INTEGRATION_SCROLL_MS);
-        const eased = 1 - Math.pow(1 - progress, 3);
-        container.scrollTop = start + (end - start) * eased;
-        if (progress < 1) frame = window.requestAnimationFrame(step);
-      };
-      step(startedAt);
-    });
-  });
-  return () => window.cancelAnimationFrame(frame);
-}
 
 type ClaudeConnectPhase =
   | "idle"
@@ -150,10 +99,6 @@ interface ConnectAppsScreenProps {
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
   initialCodexStatus?: CodexDesktopStatus;
-  autoConnectClaude?: boolean;
-  autoConnectChatGPT?: boolean;
-  highlightIntegrationId?: string;
-  onDeepLinkHandled?: () => void;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -501,10 +446,6 @@ export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
   initialCodexStatus,
-  autoConnectClaude,
-  autoConnectChatGPT,
-  highlightIntegrationId,
-  onDeepLinkHandled,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
   const [copyNotice, setCopyNotice] = useState<{
@@ -518,16 +459,9 @@ export function ConnectAppsScreen({
   const copyInFlight = useRef(false);
   const copySequence = useRef(0);
   const copyNoticeRef = useRef<HTMLDivElement>(null);
-  const [highlightedId, setHighlightedId] = useState<string | null>(null);
-  const [initialIntegrationsSettled, setInitialIntegrationsSettled] =
-    useState(false);
   const [initialClaudeStatusSettled, setInitialClaudeStatusSettled] = useState(
     Boolean(initialClaudeStatus),
   );
-  const rowRefs = useRef(new Map<string, HTMLElement>());
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const cancelScrollRef = useRef<(() => void) | undefined>(undefined);
-  const handledDeepLinkRef = useRef<string | null>(null);
   const [claudeError, setClaudeError] = useState<string | null>(null);
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(
     initialClaudeStatus ?? null,
@@ -546,7 +480,6 @@ export function ConnectAppsScreen({
     screenMounted.current = true;
     return () => {
       screenMounted.current = false;
-      cancelScrollRef.current?.();
     };
   }, []);
 
@@ -612,12 +545,10 @@ export function ConnectAppsScreen({
       (statuses) => {
         if (!active) return;
         setIntegrationStatuses(statuses);
-        setInitialIntegrationsSettled(true);
       },
       () => {
         if (!active) return;
         setStatusError(true);
-        setInitialIntegrationsSettled(true);
       },
     );
 
@@ -904,9 +835,6 @@ export function ConnectAppsScreen({
       copied,
       visible: true,
     });
-    if (copied) {
-      setHighlightedId((current) => (current === item.id ? null : current));
-    }
   };
 
   const connectClaude = async () => {
@@ -1075,96 +1003,6 @@ export function ConnectAppsScreen({
   const claudeInstalled =
     claudeStatus?.installed ?? claudeIntegration?.installed ?? false;
   const isConnectingClaude = claudePhase !== "idle";
-
-  // connectClaude is a fresh closure every render; the deep-link effect reads
-  // the latest one through a ref so it does not re-run on each render.
-  const connectClaudeRef = useRef(connectClaude);
-  useEffect(() => {
-    connectClaudeRef.current = connectClaude;
-  });
-
-  const deepLinkIntent = autoConnectClaude
-    ? "connect"
-    : highlightIntegrationId
-      ? `highlight:${highlightIntegrationId}`
-      : null;
-  useEffect(() => {
-    if (!deepLinkIntent) {
-      // The URL was cleared; a later visit to the same link is a new intent.
-      handledDeepLinkRef.current = null;
-      return;
-    }
-    if (!initialIntegrationsSettled) return;
-    if (autoConnectClaude && !initialClaudeStatusSettled) return;
-    // Refs survive StrictMode's simulated remount, so the intent runs once.
-    if (handledDeepLinkRef.current === deepLinkIntent) return;
-    handledDeepLinkRef.current = deepLinkIntent;
-    cancelScrollRef.current?.();
-
-    const targetId = autoConnectClaude
-      ? "claude-desktop"
-      : highlightIntegrationId;
-    const row = targetId ? rowRefs.current.get(targetId) : undefined;
-    if (targetId && row) {
-      setHighlightedId(targetId);
-      if (scrollContainerRef.current) {
-        // Keep scrolling when handling the intent clears its URL parameters.
-        cancelScrollRef.current = scrollRowIntoView(
-          scrollContainerRef.current,
-          row,
-        );
-      }
-    }
-    // connectClaude toggles, so it must not run when Claude is already
-    // configured (for example from the menu bar) or it would disconnect.
-    if (autoConnectClaude && claudeIntegration && !claudeConfigured) {
-      void connectClaudeRef.current();
-    }
-    onDeepLinkHandled?.();
-  }, [
-    autoConnectClaude,
-    claudeConfigured,
-    claudeIntegration,
-    deepLinkIntent,
-    highlightIntegrationId,
-    initialClaudeStatusSettled,
-    initialIntegrationsSettled,
-    onDeepLinkHandled,
-  ]);
-
-  useEffect(() => {
-    if (!highlightedId) return;
-    // Command rows stay highlighted until copied or this screen is left.
-    if (
-      integrationStatuses?.some(
-        (item) => item.id === highlightedId && item.command,
-      )
-    ) {
-      return;
-    }
-
-    const timeout = window.setTimeout(() => {
-      setHighlightedId(null);
-    }, INTEGRATION_HIGHLIGHT_MS);
-
-    return () => window.clearTimeout(timeout);
-  }, [highlightedId, integrationStatuses]);
-
-  const registerRow = (id: string) => (node: HTMLElement | null) => {
-    if (node) {
-      rowRefs.current.set(id, node);
-    } else {
-      rowRefs.current.delete(id);
-    }
-  };
-  const rowClass = (id: string, recommended = false) =>
-    `rounded-2xl border border-neutral-200 transition-colors duration-700 motion-reduce:transition-none dark:border-neutral-700 ${
-      highlightedId === id
-        ? "bg-neutral-100 dark:bg-neutral-700/60"
-        : recommended
-          ? "bg-neutral-50 dark:bg-neutral-800/50"
-          : "bg-white dark:bg-neutral-900"
-    }`;
   const claudeStatusLabel =
     claudePhase === "installing"
       ? "Downloading…"
@@ -1188,14 +1026,13 @@ export function ConnectAppsScreen({
       <button
         key={item.id}
         id={`integration-${item.id}`}
-        ref={registerRow(item.id)}
         type="button"
         onClick={() => copyLaunchCommand(item)}
         aria-label={
           copied ? `${item.name} command copied` : `Copy ${item.name} command`
         }
         title={item.description}
-        className={`${rowClass(item.id)} relative isolate flex min-w-0 items-center gap-3 px-4 py-3 text-left hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 dark:hover:bg-neutral-800`}
+        className="relative isolate flex min-w-0 items-center gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-left transition-colors duration-700 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 motion-reduce:transition-none dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800"
       >
         {copied && (
           <span
@@ -1214,8 +1051,7 @@ export function ConnectAppsScreen({
   const claudeRow = claudeIntegration ? (
     <div
       id={`integration-${claudeIntegration.id}`}
-      ref={registerRow(claudeIntegration.id)}
-      className={`${rowClass(claudeIntegration.id, true)} flex items-center gap-4 px-5 py-3`}
+      className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 transition-colors duration-700 motion-reduce:transition-none dark:border-neutral-700 dark:bg-neutral-800/50"
     >
       <div className="flex min-w-0 flex-1 items-center gap-4">
         <LaunchCommandIcon id={claudeIntegration.id} />
@@ -1266,10 +1102,7 @@ export function ConnectAppsScreen({
 
   return (
     <main className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
-      <div
-        ref={scrollContainerRef}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 pt-4"
-      >
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pb-6 pt-4">
         <section className="min-h-0 flex-1">
           <div className="mx-auto w-full max-w-[620px] text-left">
             {integrationStatuses ? (
@@ -1285,17 +1118,10 @@ export function ConnectAppsScreen({
                     <div className="mt-2 space-y-2 bg-white dark:bg-neutral-900">
                       {claudeRow}
                       {codexIntegration && (
-                        <div
-                          id="integration-chatgpt"
-                          ref={registerRow("chatgpt")}
-                        >
-                          <CodexDesktopRow
-                            integration={codexIntegration}
-                            initialStatus={initialCodexStatus}
-                            autoConnect={autoConnectChatGPT}
-                            onAutoConnectHandled={onDeepLinkHandled}
-                          />
-                        </div>
+                        <CodexDesktopRow
+                          integration={codexIntegration}
+                          initialStatus={initialCodexStatus}
+                        />
                       )}
                     </div>
                   </section>

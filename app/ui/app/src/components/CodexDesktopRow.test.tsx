@@ -72,43 +72,6 @@ function connectionButton(renderer: ReactTestRenderer) {
 }
 
 describe("CodexDesktopRow", () => {
-  it.each([false, true])(
-    "handles onboarding once when connected=%s",
-    async (connected) => {
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      const setConnected = vi
-        .fn()
-        .mockResolvedValue({ status: status({ connected: true }) });
-      const handled = vi.fn();
-      vi.stubGlobal("window", {
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        setCodexDesktopConnected: setConnected,
-      });
-      let renderer;
-      try {
-        await act(async () => {
-          renderer = create(
-            <CodexDesktopRow
-              integration={integration}
-              initialStatus={status({ connected })}
-              autoConnect
-              onAutoConnectHandled={handled}
-            />,
-          );
-        });
-        expect(handled).toHaveBeenCalledTimes(1);
-        if (connected) {
-          expect(setConnected).not.toHaveBeenCalled();
-        } else {
-          expect(setConnected).toHaveBeenCalledExactlyOnceWith(true, false);
-        }
-      } finally {
-        await act(async () => renderer?.unmount());
-      }
-    },
-  );
-
   it("renders a ChatGPT Connect button", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow integration={integration} initialStatus={status()} />,
@@ -851,17 +814,11 @@ describe("CodexDesktopRow", () => {
 });
 
 describe("ChatGPT first connection intro", () => {
-  it.each([
-    { running: false, autoConnect: false },
-    { running: true, autoConnect: false },
-    { running: false, autoConnect: true },
-    { running: true, autoConnect: true },
-  ])(
-    "confirms before the intro and waits for Continue to launch (running: $running, deep link: $autoConnect)",
-    async ({ running, autoConnect }) => {
+  it.each([false, true])(
+    "confirms before the intro and waits for Continue to launch (running: %s)",
+    async (running) => {
       const firstUseStatus = status({ running, used: false });
       const confirm = vi.fn(() => true);
-      const handled = vi.fn();
       const save = vi.fn().mockResolvedValue("");
       const connect = vi
         .fn()
@@ -882,16 +839,12 @@ describe("ChatGPT first connection intro", () => {
             <CodexDesktopRow
               integration={integration}
               initialStatus={firstUseStatus}
-              autoConnect={autoConnect}
-              onAutoConnectHandled={handled}
             />,
           );
         });
-        if (!autoConnect) {
-          await act(async () => {
-            connectionButton(renderer!).props.onClick();
-          });
-        }
+        await act(async () => {
+          connectionButton(renderer!).props.onClick();
+        });
         expect(connect).not.toHaveBeenCalled();
         expect(save).not.toHaveBeenCalled();
         expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
@@ -906,7 +859,6 @@ describe("ChatGPT first connection intro", () => {
         expect(connect).toHaveBeenCalledWith(true, running);
         expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
         expect(save).toHaveBeenCalledOnce();
-        expect(handled).toHaveBeenCalledTimes(autoConnect ? 1 : 0);
         expect(toggle.props.disabled).toBe(false);
         expect(toggle.props["aria-pressed"]).toBe(true);
         expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
