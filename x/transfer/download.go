@@ -219,6 +219,14 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		d.logger.Debug("downloading blob", "digest", blob.Digest, "size", blob.Size)
 	}
 
+	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+	tmp := dest + ".tmp"
+	if blob.Size >= resumeThreshold {
+		if fi, statErr := os.Stat(tmp); statErr == nil && fi.Size() == blob.Size && d.finishTmp(blob, tmp, dest) {
+			return blob.Size, nil
+		}
+	}
+
 	// Hold a body slot for the duration of the GET — released when the body
 	// has been read and the response closed.
 	release, err := d.holdBody(ctx)
@@ -234,18 +242,15 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	}
 
 	// Check for existing partial .tmp file for resume
-	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
-	tmp := dest + ".tmp"
 	var existingSize int64
 	if blob.Size >= resumeThreshold {
 		if fi, statErr := os.Stat(tmp); statErr == nil {
 			if fi.Size() < blob.Size {
 				existingSize = fi.Size()
-			} else if fi.Size() > blob.Size {
-				// .tmp larger than expected — discard
+			} else {
+				// .tmp at or over the full size and not the blob — discard
 				os.Remove(tmp)
 			}
-			// fi.Size() == blob.Size handled in save (hash check + rename)
 		}
 	}
 
@@ -278,6 +283,28 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	}
 
 	return d.save(ctx, blob, resp.Body, existingSize)
+}
+
+// finishTmp handles a .tmp that already holds the blob's full size: a transfer
+// that completed but was not renamed. It is hashed in place and moved to dest
+// if it is the blob, so nothing is fetched again. Anything else is left for the
+// caller to discard.
+func (d *downloader) finishTmp(blob Blob, tmp, dest string) bool {
+	f, err := os.Open(tmp)
+	if err != nil {
+		return false
+	}
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	f.Close()
+	if err != nil || fmt.Sprintf("sha256:%x", h.Sum(nil)) != blob.Digest {
+		return false
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		return false
+	}
+	d.progress.add(blob.Size)
+	return true
 }
 
 func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
