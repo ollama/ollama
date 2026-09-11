@@ -302,6 +302,40 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // Set aside VRAM per GPU
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
+// Duration returns a function that reads a duration-valued environment
+// variable, accepting Go duration strings ("30s", "1m") or a bare integer
+// (interpreted as seconds), falling back to defaultValue when unset or
+// invalid.
+func Duration(key string, defaultValue time.Duration) func() time.Duration {
+	return func() time.Duration {
+		if s := Var(key); s != "" {
+			if d, err := time.ParseDuration(s); err == nil {
+				return d
+			} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+				return time.Duration(n) * time.Second
+			}
+			slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+		}
+		return defaultValue
+	}
+}
+
+var (
+	// CloudProxyConnectTimeout bounds the time to establish a TCP connection
+	// and complete the TLS handshake to the cloud proxy.
+	CloudProxyConnectTimeout = Duration("OLLAMA_CLOUD_PROXY_CONNECT_TIMEOUT", 10*time.Second)
+	// CloudProxyTTFBTimeout bounds the time to receive the first response byte
+	// (time-to-first-byte) from the cloud proxy. Once a response starts
+	// streaming, no total timeout is enforced so long-lived generations are
+	// not cut short.
+	CloudProxyTTFBTimeout = Duration("OLLAMA_CLOUD_PROXY_TTFB_TIMEOUT", 60*time.Second)
+	// CloudProxyIdleConnTimeout bounds how long an idle keep-alive connection
+	// to the cloud proxy is retained before being closed. A short value
+	// proactively evicts stale connections that a load balancer or NAT may
+	// have silently dropped, preventing reuse of half-open connections.
+	CloudProxyIdleConnTimeout = Duration("OLLAMA_CLOUD_PROXY_IDLE_CONN_TIMEOUT", 30*time.Second)
+)
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -310,32 +344,35 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":                {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_DEBUG_LOG_REQUESTS":   {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
-		"OLLAMA_GO_TEMPLATE":          {"OLLAMA_GO_TEMPLATE", GoTemplate(true), "Enable Modelfile TEMPLATE based rendering when available"},
-		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
-		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
-		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
-		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
-		"LLAMA_ARG_FIT":               {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
-		"LLAMA_ARG_FIT_TARGET":        {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
-		"OLLAMA_HOST":                 {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":           {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":          {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_LOAD_TIMEOUT":         {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
-		"OLLAMA_MAX_LOADED_MODELS":    {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_TRANSFER_STREAMS": {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
-		"OLLAMA_MAX_QUEUE":            {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":               {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NO_CLOUD":             {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
-		"OLLAMA_NOHISTORY":            {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":              {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
-		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
-		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
-		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_DEBUG":                         {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_DEBUG_LOG_REQUESTS":            {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
+		"OLLAMA_GO_TEMPLATE":                   {"OLLAMA_GO_TEMPLATE", GoTemplate(true), "Enable Modelfile TEMPLATE based rendering when available"},
+		"OLLAMA_FLASH_ATTENTION":               {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
+		"OLLAMA_KV_CACHE_TYPE":                 {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
+		"OLLAMA_GPU_OVERHEAD":                  {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_IGPU_ENABLE":                   {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
+		"LLAMA_ARG_FIT":                        {"LLAMA_ARG_FIT", String("LLAMA_ARG_FIT")(), "Enable llama.cpp automatic fit of unset memory options (default \"on\")"},
+		"LLAMA_ARG_FIT_TARGET":                 {"LLAMA_ARG_FIT_TARGET", String("LLAMA_ARG_FIT_TARGET")(), "Target free VRAM margin per device for llama.cpp fit (MiB)"},
+		"OLLAMA_HOST":                          {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":                    {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":                   {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
+		"OLLAMA_LOAD_TIMEOUT":                  {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
+		"OLLAMA_MAX_LOADED_MODELS":             {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_TRANSFER_STREAMS":          {"OLLAMA_MAX_TRANSFER_STREAMS", MaxTransferStreams(), "Maximum parallel transfer streams for safetensors model pulls/pushes (default 4)"},
+		"OLLAMA_MAX_QUEUE":                     {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
+		"OLLAMA_MODELS":                        {"OLLAMA_MODELS", Models(), "The path to the models directory"},
+		"OLLAMA_NO_CLOUD":                      {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
+		"OLLAMA_NOHISTORY":                     {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":                       {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":                  {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
+		"OLLAMA_ORIGINS":                       {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
+		"OLLAMA_SCHED_SPREAD":                  {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
+		"OLLAMA_CONTEXT_LENGTH":                {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
+		"OLLAMA_CLOUD_PROXY_CONNECT_TIMEOUT":   {"OLLAMA_CLOUD_PROXY_CONNECT_TIMEOUT", CloudProxyConnectTimeout(), "Timeout for establishing a connection to the cloud proxy (default \"10s\")"},
+		"OLLAMA_CLOUD_PROXY_TTFB_TIMEOUT":      {"OLLAMA_CLOUD_PROXY_TTFB_TIMEOUT", CloudProxyTTFBTimeout(), "Timeout for the first response byte from the cloud proxy (default \"60s\")"},
+		"OLLAMA_CLOUD_PROXY_IDLE_CONN_TIMEOUT": {"OLLAMA_CLOUD_PROXY_IDLE_CONN_TIMEOUT", CloudProxyIdleConnTimeout(), "How long an idle cloud proxy connection is kept alive (default \"30s\")"},
+		"OLLAMA_EDITOR":                        {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
+		"OLLAMA_REMOTES":                       {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
