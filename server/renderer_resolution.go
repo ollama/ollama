@@ -99,12 +99,3 @@ func parseHumanParameterCount(s string) (uint64, bool) {
 
 	return uint64(value * multiplier), true
 }
-
-func isGemma4Renderer(renderer string) bool {
-	switch renderer {
-	case gemma4RendererLegacy, gemma4RendererSmall, gemma4RendererLarge:
-		return true
-	default:
-		return false
-	}
-}

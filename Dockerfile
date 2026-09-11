@@ -220,7 +220,6 @@ ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY cmake cmake
-COPY mlx mlx
 COPY x/mlxrunner/mlx x/mlxrunner/mlx
 COPY x/mlxrunner/xgrammar/native x/mlxrunner/xgrammar/native
 COPY go.mod go.sum .
@@ -262,9 +261,15 @@ ENV CGO_CFLAGS="${CGO_CFLAGS}"
 ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    cmake -S . -B build/go-license \
+        -DOLLAMA_LLAMA_BACKENDS= \
+        -DOLLAMA_MLX_BACKENDS= \
+    && cmake --build build/go-license --target ollama-go-license
 
 FROM scratch AS publish-go
 COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 #
 # Assembly stages — combine llama-server variants + GPU runtime libs
@@ -297,9 +302,11 @@ COPY --from=arm64 /lib/ollama /lib/ollama/
 
 FROM ${TARGETARCH}-archive AS archive
 COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 FROM ${FLAVOR} AS image-archive
 COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 FROM ubuntu:24.04
 ARG APT_MIRROR=http://archive.ubuntu.com/ubuntu

@@ -227,8 +227,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
 		}
-		// Sort baseLayers here to ensure that split model will be correctly ordered
-		if !remote {
+		// Sort baseLayers here to ensure that split model will be correctly
+		// ordered. Only files just converted from GGUF/safetensors need this:
+		// a model derived with `From` may still carry pre-GGUF layers (e.g. a
+		// safetensors source not yet converted), which legitimately have no
+		// GGML metadata to sort or validate.
+		if !remote && r.Files != nil {
 			err := baseLayerSortNCheckSan(&baseLayers)
 			if err != nil {
 				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}

@@ -169,17 +169,6 @@ if(OLLAMA_MLX_BACKENDS)
         list(APPEND _mlx_source_targets ollama-mlx-source)
     endif()
 
-    # Temporary MLX-C carry patch: regenerated bindings for force_fused and the
-    # thread-local compile cache, carried until they merge upstream into
-    # ml-explore/mlx-c. Then bump MLX_C_VERSION and delete mlx/compat/.
-    find_package(Git REQUIRED)
-    set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
-        ${CMAKE_COMMAND}
-            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat
-            -DPATCH_LABEL=mlx/compat
-            -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
-        CACHE INTERNAL "MLX-C carry patch")
-
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX-C}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
@@ -199,9 +188,7 @@ if(OLLAMA_MLX_BACKENDS)
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            PATCH_COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
-            USES_TERMINAL_DOWNLOAD TRUE
-            USES_TERMINAL_PATCH TRUE)
+            USES_TERMINAL_DOWNLOAD TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
     # XGrammar has no pre-fetch: without an override each variant's build
@@ -567,6 +554,42 @@ function(ollama_add_mlx_build name)
 endfunction()
 
 find_program(GO_EXECUTABLE go)
+
+if(GO_EXECUTABLE)
+    if(NOT DEFINED OLLAMA_GO_LICENSE_TARGETS)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOOS
+            OUTPUT_VARIABLE _go_license_goos
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOARCH
+            OUTPUT_VARIABLE _go_license_goarch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        set(OLLAMA_GO_LICENSE_TARGETS "${_go_license_goos}/${_go_license_goarch}" CACHE STRING
+            "Semicolon-separated GOOS/GOARCH targets included in GO_LICENSE")
+    endif()
+
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND}
+            "-DGO_EXECUTABLE=${GO_EXECUTABLE}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DOUTPUT_DIR=${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}"
+            "-DTARGETS=${OLLAMA_GO_LICENSE_TARGETS}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/generate_go_license.cmake"
+        BYPRODUCTS "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/GO_LICENSE"
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+else()
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Go executable not found. Install Go or set GO_EXECUTABLE to collect Go licenses."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+endif()
 
 if(OLLAMA_MLX_BACKENDS)
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))

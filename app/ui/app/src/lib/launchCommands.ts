@@ -15,6 +15,9 @@ export const INTEGRATION_ICONS: Record<string, IntegrationIcon> = {
     className: "h-7 w-7 rounded",
   },
   codex: {
+    src: "/launch-icons/codex-color.svg",
+  },
+  chatgpt: {
     src: "/launch-icons/codex.svg",
     darkSrc: "/launch-icons/codex-dark.svg",
   },

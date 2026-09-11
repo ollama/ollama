@@ -21,14 +21,9 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
-const maxGrammarVocabSize = 1 << 20
-
 const (
-	maxGrammarSchemaBytes = 1 << 20
-	maxGrammarSchemaDepth = 128
-	// The token cap bounds grammar compile cost, which the serial runner
-	// pays as head-of-line blocking of the request queue.
-	maxGrammarSchemaTokens = 1 << 14
+	maxGrammarBytes = 1 << 20
+	maxGrammarDepth = 128
 )
 
 const (
@@ -92,9 +87,6 @@ func validateGrammarVocab(logitsWidth, tokenizerSize int) error {
 	if logitsWidth <= 0 {
 		return fmt.Errorf("invalid model logits width %d", logitsWidth)
 	}
-	if logitsWidth > maxGrammarVocabSize {
-		return fmt.Errorf("model logits width %d exceeds structured output limit %d", logitsWidth, maxGrammarVocabSize)
-	}
 	return nil
 }
 
@@ -133,81 +125,64 @@ func (e *grammarEngine) close() {
 // returns nil. Safe on a nil subsystem, which reports structured output
 // unavailable.
 func (e *grammarEngine) prepare(format json.RawMessage) (*grammarCompilation, error) {
-	spec, err := parseGrammar(format)
-	if err != nil || spec == nil {
+	source, err := parseGrammar(format)
+	if err != nil || source == "" {
 		return nil, err
 	}
 	if e == nil {
 		return nil, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "structured output is unavailable"}
 	}
-	return e.compile(spec), nil
+	return e.compile(source), nil
 }
 
-type grammarSpec struct {
-	kind   xgrammar.Kind
-	source string
-}
-
-func parseGrammar(format json.RawMessage) (*grammarSpec, error) {
-	if len(format) > 0 {
-		switch string(format) {
-		case `null`, `""`:
-			return nil, nil
-		case `"json"`:
-			// The API documents "json" as producing a JSON object; the engine's
-			// builtin JSON grammar would also admit arrays and bare values.
-			return &grammarSpec{kind: xgrammar.JSONSchema, source: `{"type":"object"}`}, nil
-		default:
-			if format[0] != '{' {
-				return nil, errors.New("invalid format: expected \"json\" or a valid JSON Schema object")
-			}
-			if err := validateGrammarSchema(format); err != nil {
-				return nil, fmt.Errorf("invalid JSON Schema: %w", err)
-			}
-			return &grammarSpec{kind: xgrammar.JSONSchema, source: string(format)}, nil
-		}
+// parseGrammar returns the format's structural tag, or "" when the format
+// asks for no structured output.
+func parseGrammar(format json.RawMessage) (string, error) {
+	switch string(format) {
+	case ``, `null`, `""`:
+		return "", nil
 	}
-	return nil, nil
-}
-
-func validateGrammarSchema(schema []byte) error {
-	if len(schema) > maxGrammarSchemaBytes {
-		return fmt.Errorf("schema is %d bytes; limit is %d", len(schema), maxGrammarSchemaBytes)
+	if len(format) > maxGrammarBytes {
+		return "", fmt.Errorf("invalid format: grammar is %d bytes; limit is %d", len(format), maxGrammarBytes)
 	}
-	if !utf8.Valid(schema) {
-		return errors.New("schema is not valid UTF-8")
+	if !utf8.Valid(format) {
+		return "", errors.New("invalid format: grammar is not valid UTF-8")
+	}
+	if format[0] != '{' {
+		return "", errors.New("invalid format: expected a structural tag")
 	}
 
-	decoder := json.NewDecoder(bytes.NewReader(schema))
+	decoder := json.NewDecoder(bytes.NewReader(format))
 	decoder.UseNumber()
-	first, err := decoder.Token()
-	if err != nil {
-		return fmt.Errorf("invalid JSON: %w", err)
-	}
-	if first != json.Delim('{') {
-		return errors.New("schema must be a JSON object")
+	if _, err := decoder.Token(); err != nil {
+		return "", fmt.Errorf("invalid format: %w", err)
 	}
 
-	tokens, depth := 1, 1
+	depth, wantKey, key, structuralTag := 1, true, "", false
 	for depth > 0 {
 		token, err := decoder.Token()
 		if err != nil {
 			if err == io.EOF {
-				return errors.New("unexpected end of JSON")
+				return "", errors.New("invalid format: unexpected end of JSON")
 			}
-			return fmt.Errorf("invalid JSON: %w", err)
+			return "", fmt.Errorf("invalid format: %w", err)
 		}
-		tokens++
-		if tokens > maxGrammarSchemaTokens {
-			return fmt.Errorf("schema contains more than %d JSON tokens", maxGrammarSchemaTokens)
+		delim, isDelim := token.(json.Delim)
+		if depth == 1 && !(isDelim && (delim == '}' || delim == ']')) {
+			if wantKey {
+				key, _ = token.(string)
+			} else if key == "type" {
+				value, _ := token.(string)
+				structuralTag = value == "structural_tag"
+			}
+			wantKey = !wantKey
 		}
-
-		if delim, ok := token.(json.Delim); ok {
+		if isDelim {
 			switch delim {
 			case '{', '[':
 				depth++
-				if depth > maxGrammarSchemaDepth {
-					return fmt.Errorf("schema nesting exceeds %d levels", maxGrammarSchemaDepth)
+				if depth > maxGrammarDepth {
+					return "", fmt.Errorf("invalid format: grammar nesting exceeds %d levels", maxGrammarDepth)
 				}
 			case '}', ']':
 				depth--
@@ -217,14 +192,17 @@ func validateGrammarSchema(schema []byte) error {
 
 	if _, err := decoder.Token(); err != io.EOF {
 		if err != nil {
-			return fmt.Errorf("invalid JSON after schema object: %w", err)
+			return "", fmt.Errorf("invalid format: %w", err)
 		}
-		return errors.New("schema contains more than one JSON value")
+		return "", errors.New("invalid format: grammar contains more than one JSON value")
 	}
-	return nil
+	if !structuralTag {
+		return "", errors.New("invalid format: expected a structural tag")
+	}
+	return string(format), nil
 }
 
-func (e *grammarEngine) compile(spec *grammarSpec) *grammarCompilation {
+func (e *grammarEngine) compile(source string) *grammarCompilation {
 	c := &grammarCompilation{done: make(chan struct{})}
 	go func() {
 		defer close(c.done)
@@ -242,10 +220,10 @@ func (e *grammarEngine) compile(spec *grammarSpec) *grammarCompilation {
 			c.err = errors.New("grammar engine closed")
 			return
 		}
-		matcher, err := e.compiler.Compile(spec.kind, spec.source)
+		matcher, err := e.compiler.Compile(source)
 		if err != nil {
-			// A schema can pass validateGrammarSchema yet be rejected by
-			// the engine (e.g. an empty enum); that is still a request error.
+			// A grammar can pass parseGrammar yet be rejected by the engine
+			// (e.g. an empty enum); that is still a request error.
 			c.err = api.StatusError{
 				StatusCode:   http.StatusBadRequest,
 				ErrorMessage: fmt.Sprintf("invalid structured output grammar: %v", err),
@@ -340,16 +318,14 @@ func (e *grammarEngine) hasGrammar(grammars []*grammar) bool {
 	return false
 }
 
-// accept advances a batch's grammars over its newly committed tokens —
-// every row's grammar accepts the row's token, constraining or not, with
-// grammars[i] and committed[i] aligned. Each token was sampled under its
-// own matcher's mask, so a rejection is an engine fault; errs[i] carries
-// row i's fault, which ends that request rather than the runner, and errs
-// is nil when every row succeeded.
+// accept advances each constraining row grammar over the row's newly
+// committed token, grammars[i] and committed[i] aligned. errs[i] carries a
+// row's rejection or fault, which ends that request rather than the runner;
+// errs is nil when every row succeeded.
 func (e *grammarEngine) accept(grammars []*grammar, committed []int32) []error {
 	var errs []error
 	for i, g := range grammars {
-		if g == nil {
+		if !g.constraining() {
 			continue
 		}
 		if err := g.m.Accept(committed[i]); err != nil {
@@ -362,44 +338,95 @@ func (e *grammarEngine) accept(grammars []*grammar, committed []int32) []error {
 	return errs
 }
 
-// mask fills each constraining row's packed token mask and applies them to
-// the batch's logits in one device op, logits row i masked under
-// grammars[i]. Unconstrained, terminated, and failed rows keep their logits
-// (all-ones mask rows add zero). errs as in accept.
-func (e *grammarEngine) mask(grammars []*grammar, logits *mlx.Array) (*mlx.Array, []error) {
-	var errs []error
-	packed := make([]int32, len(grammars)*e.words)
+// mask fills and applies each constraining row grammar's token masks over
+// the batch's [B, L, V] logits: row b's position i constrains the token
+// after drafts[b][:i], with nil drafts masking one position per row from
+// the current state. Each matcher advances through its drafts as the
+// positions fill and is rolled back before returning, so its state is
+// unchanged; positions past a rejected draft stay unmasked.
+func (e *grammarEngine) mask(grammars []*grammar, logits *mlx.Array, drafts [][]int32) (*mlx.Array, []error) {
+	positions := 1
+	for _, ids := range drafts {
+		positions = max(positions, len(ids)+1)
+	}
+	packed := make([]int32, len(grammars)*positions*e.words)
 	for i := range packed {
 		packed[i] = -1
 	}
+	var errs []error
 	apply := false
-	for i, g := range grammars {
+	for b, g := range grammars {
 		if !g.constraining() {
 			continue
 		}
-		row := packed[i*e.words : (i+1)*e.words]
-		constrained, err := g.m.Fill(row)
+		var ids []int32
+		if drafts != nil {
+			ids = drafts[b]
+		}
+		block := packed[b*positions*e.words : (b+1)*positions*e.words]
+		constrains, err := e.fill(g, block, ids)
 		if err != nil {
 			if errs == nil {
 				errs = make([]error, len(grammars))
 			}
-			errs[i] = fmt.Errorf("grammar: fill token mask: %w", err)
-			continue
-		}
-		// An all-zero mask would send every logit to -inf and sampling to NaN.
-		if constrained && !slices.ContainsFunc(row, func(w int32) bool { return w != 0 }) {
-			if errs == nil {
-				errs = make([]error, len(grammars))
+			errs[b] = err
+			// Nothing from a faulted row may constrain.
+			for j := range block {
+				block[j] = -1
 			}
-			errs[i] = errors.New("grammar: token mask rejects every vocabulary token")
 			continue
 		}
-		apply = apply || constrained
+		apply = apply || constrains
 	}
 	if !apply {
 		return logits, errs
 	}
-	return e.apply(logits, mlx.FromValues(packed, len(grammars), e.words)), errs
+	rows := len(grammars) * positions
+	masked := e.apply(logits.Reshape(rows, logits.Dim(2)), mlx.FromValues(packed, rows, e.words))
+	return masked.Reshape(len(grammars), positions, logits.Dim(2)), errs
+}
+
+// fill fills one row's per-position masks, advancing the matcher through
+// the drafts and rolling the whole advance back before returning.
+func (e *grammarEngine) fill(g *grammar, packed []int32, ids []int32) (bool, error) {
+	constrains := false
+	advanced := 0
+	var walkErr error
+	for i := range len(ids) + 1 {
+		row := packed[i*e.words : (i+1)*e.words]
+		constrained, err := g.m.Fill(row)
+		if err != nil {
+			walkErr = fmt.Errorf("grammar: fill token mask: %w", err)
+			break
+		}
+		if constrained && !slices.ContainsFunc(row, func(w int32) bool { return w != 0 }) {
+			// No token continues this state: fatal at position 0, whose state
+			// is committed; a later position is left unmasked, and a run kept
+			// into it fails at its accept.
+			if i == 0 {
+				walkErr = errors.New("grammar: token mask rejects every vocabulary token")
+			} else {
+				for j := range row {
+					row[j] = -1
+				}
+			}
+			break
+		}
+		constrains = constrains || constrained
+		if i == len(ids) {
+			break
+		}
+		if g.m.Accept(ids[i]) != nil {
+			// A rejected draft ends the walk; a fault resurfaces at the
+			// committed run's accept.
+			break
+		}
+		advanced++
+	}
+	if err := g.m.Rollback(advanced); err != nil && walkErr == nil {
+		walkErr = fmt.Errorf("grammar: rollback draft tokens: %w", err)
+	}
+	return constrains, walkErr
 }
 
 // apply masks logits under packed token masks, one row per sequence: logits

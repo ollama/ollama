@@ -46,6 +46,33 @@ func (r *launcherEditorRunner) Models() []string {
 	return append([]string(nil), r.models...)
 }
 
+func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[{"model":"deepseek-v4-flash:cloud","description":"Coding","context_length":1048576,"max_output_tokens":65536,"thinking":{"values":[false,true,"max"],"default":true}}]}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"deepseek-v4-flash:cloud","remote_model":"deepseek-v4-flash"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := client.resolveRunModels(context.Background(), []string{"deepseek-v4-flash:cloud"})
+	if len(models) != 1 || models[0].Thinking == nil {
+		t.Fatalf("resolved models = %#v, want recommendation thinking metadata", models)
+	}
+	if !slices.Equal(models[0].Thinking.Values, []any{false, true, "max"}) || models[0].Thinking.Default != true {
+		t.Fatalf("thinking = %#v, want exact endpoint values/default", models[0].Thinking)
+	}
+}
+
 type launcherSingleRunner struct {
 	ranModel string
 }

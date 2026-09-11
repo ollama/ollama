@@ -39,6 +39,12 @@ func testLibraryDir(t testing.TB) string {
 	return filepath.Dir(path)
 }
 
+// schemaTag wraps a JSON Schema into the structural tag the MLX client
+// sends for a schema format.
+func schemaTag(schema string) string {
+	return `{"type":"structural_tag","format":{"type":"json_schema","json_schema":` + schema + `}}`
+}
+
 func testGrammarCompiler(t testing.TB) *xgrammar.Compiler {
 	t.Helper()
 	compiler, err := xgrammar.New(testLibraryDir(t), testVocabulary(), testVocabSize, []int32{testEOS}, 8, 128<<20)
@@ -72,7 +78,7 @@ func FuzzJSONSchemaMatcher(f *testing.F) {
 		if len(schema) > 1<<20 || len(tokens) > 256 {
 			return
 		}
-		matcher, err := compiler.Compile(xgrammar.JSONSchema, schema)
+		matcher, err := compiler.Compile(schemaTag(schema))
 		if err != nil {
 			return
 		}
@@ -127,7 +133,7 @@ func acceptPieces(t *testing.T, matcher *xgrammar.Matcher, pieces ...string) {
 func TestJSONSchemaMatcher(t *testing.T) {
 	compiler := testGrammarCompiler(t)
 	schema := `{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}`
-	matcher, err := compiler.Compile(xgrammar.JSONSchema, schema)
+	matcher, err := compiler.Compile(schemaTag(schema))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +162,7 @@ func TestJSONSchemaMatcher(t *testing.T) {
 // a decoder can sample past the grammar's end.
 func TestFillAfterTermination(t *testing.T) {
 	compiler := testGrammarCompiler(t)
-	matcher, err := compiler.Compile(xgrammar.JSONSchema, "{}")
+	matcher, err := compiler.Compile(schemaTag("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,6 +174,55 @@ func TestFillAfterTermination(t *testing.T) {
 	}
 }
 
+// Rollback restores earlier matcher state exactly: the refilled mask equals
+// the one filled before the rolled-back accepts, and the replay proceeds.
+func TestRollbackRestoresState(t *testing.T) {
+	compiler := testGrammarCompiler(t)
+	schema := `{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}`
+	matcher, err := compiler.Compile(schemaTag(schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer matcher.Close()
+
+	acceptPieces(t, matcher, "{", `"`)
+	before, _ := fillMask(t, matcher)
+	acceptPieces(t, matcher, "answer", `"`, ":")
+	if err := matcher.Rollback(3); err != nil {
+		t.Fatal(err)
+	}
+	after, constrained := fillMask(t, matcher)
+	if !constrained || !slices.Equal(before, after) {
+		t.Fatal("mask after rollback does not match the pre-accept mask")
+	}
+	acceptPieces(t, matcher, "answer", `"`, ":", `"`, "ok", `"`, "}")
+
+	// Rollback across the stop token resumes constraining.
+	acceptPieces(t, matcher, "<eos>")
+	if !matcher.Terminated() {
+		t.Fatal("matcher not terminated after the stop token")
+	}
+	if err := matcher.Rollback(1); err != nil {
+		t.Fatal(err)
+	}
+	if matcher.Terminated() {
+		t.Fatal("matcher still terminated after rolling back the stop token")
+	}
+	acceptPieces(t, matcher, "<eos>")
+
+	if err := matcher.Rollback(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := matcher.Rollback(1000); err == nil {
+		t.Fatal("rollback past history unexpectedly succeeded")
+	}
+
+	matcher.Close()
+	if err := matcher.Rollback(1); err == nil {
+		t.Fatal("rollback on closed matcher unexpectedly succeeded")
+	}
+}
+
 func TestInvalidGrammarReturnsError(t *testing.T) {
 	compiler := testGrammarCompiler(t)
 	for _, tt := range []struct {
@@ -176,9 +231,11 @@ func TestInvalidGrammarReturnsError(t *testing.T) {
 	}{
 		{name: "empty", source: ""},
 		{name: "malformed", source: `{"type":`},
+		{name: "bare schema", source: `{"type":"object"}`},
+		{name: "empty enum", source: schemaTag(`{"enum":[]}`)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			matcher, err := compiler.Compile(xgrammar.JSONSchema, tt.source)
+			matcher, err := compiler.Compile(tt.source)
 			if matcher != nil {
 				matcher.Close()
 			}
@@ -216,7 +273,7 @@ func TestCompilerValidationAndClosedState(t *testing.T) {
 		})
 	}
 
-	matcher, err := loaded.Compile(xgrammar.JSONSchema, "{}")
+	matcher, err := loaded.Compile(schemaTag("{}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +287,45 @@ func TestCompilerValidationAndClosedState(t *testing.T) {
 	}
 	loaded.Close()
 	loaded.Close()
-	if matcher, err := loaded.Compile(xgrammar.JSONSchema, "{}"); err == nil || matcher != nil {
+	if matcher, err := loaded.Compile(schemaTag("{}")); err == nil || matcher != nil {
 		t.Fatalf("Compile on closed compiler = %v, %v; want error", matcher, err)
+	}
+}
+
+// A structural-tag grammar leaves text free until a trigger opens a tag,
+// constrains the tag body to its schema (EOS masked until the tag closes),
+// and frees the text again after the end tag.
+func TestStructuralTagMatcher(t *testing.T) {
+	compiler := testGrammarCompiler(t)
+	tag := `{"type":"structural_tag","format":{"type":"triggered_tags","triggers":["["],` +
+		`"tags":[{"begin":"[","content":{"type":"json_schema","json_schema":` +
+		`{"type":"object","properties":{"answer":{"type":"string","enum":["ok"]}},"required":["answer"],"additionalProperties":false}},"end":"]"}]}}`
+	matcher, err := compiler.Compile(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer matcher.Close()
+
+	if mask, constrained := fillMask(t, matcher); constrained && !allowed(mask, testEOS) {
+		t.Fatal("EOS is masked in free text before any tag")
+	}
+	acceptPieces(t, matcher, "answer", " ")
+
+	acceptPieces(t, matcher, "[")
+	mask, constrained := fillMask(t, matcher)
+	if !constrained {
+		t.Fatal("an open tag does not constrain sampling")
+	}
+	if allowed(mask, testEOS) {
+		t.Fatal("EOS is allowed inside an open tag")
+	}
+	acceptPieces(t, matcher, "{", `"`, "answer", `"`, ":", `"`, "ok", `"`, "}", "]")
+
+	if mask, constrained := fillMask(t, matcher); constrained && !allowed(mask, testEOS) {
+		t.Fatal("EOS is masked in free text after the tag closes")
+	}
+	acceptPieces(t, matcher, "ok", "<eos>")
+	if !matcher.Terminated() {
+		t.Fatal("matcher not terminated after EOS")
 	}
 }

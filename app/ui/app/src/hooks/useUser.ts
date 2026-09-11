@@ -35,8 +35,15 @@ export function useUser() {
 
   const disconnectMutation = useMutation({
     mutationFn: disconnectUser,
-    onSuccess: () => {
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: ["user"] });
+      const previousUser = queryClient.getQueryData(["user"]);
       queryClient.setQueryData(["user"], null);
+
+      return { previousUser };
+    },
+    onError: (_error, _variables, context) => {
+      queryClient.setQueryData(["user"], context?.previousUser);
     },
   });
 
@@ -54,6 +61,6 @@ export function useUser() {
     refetchUser: userQuery.refetch,
     fetchConnectUrl: connectUrlQuery.refetch,
     connectUrl: connectUrlQuery.data,
-    disconnectUser: disconnectMutation.mutate,
+    disconnectUser: disconnectMutation.mutateAsync,
   };
 }

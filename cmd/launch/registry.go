@@ -98,7 +98,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        chatGPTIntegrationName,
 		Runner:      &CodexApp{},
 		Aliases:     []string{codexAppIntegrationName, "codex-desktop", "codex-gui"},
-		Description: "Complete work with ChatGPT",
+		Description: "Use Ollama models in ChatGPT",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return codexAppInstalled()

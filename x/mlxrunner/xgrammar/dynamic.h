@@ -16,10 +16,11 @@ int ollama_xgrammar_dynamic_compiler_new(
     const int32_t*, size_t, int32_t, int64_t, ollama_xgrammar_compiler**, char**);
 void ollama_xgrammar_dynamic_compiler_free(ollama_xgrammar_compiler*);
 int ollama_xgrammar_dynamic_matcher_new(
-    ollama_xgrammar_compiler*, ollama_xgrammar_kind, const char*, size_t,
-    ollama_xgrammar_matcher**, char**);
+    ollama_xgrammar_compiler*, const char*, size_t, ollama_xgrammar_matcher**, char**);
 void ollama_xgrammar_dynamic_matcher_free(ollama_xgrammar_matcher*);
 int ollama_xgrammar_dynamic_matcher_fill(ollama_xgrammar_matcher*, int32_t*, size_t, int*, char**);
 int ollama_xgrammar_dynamic_matcher_accept(ollama_xgrammar_matcher*, int32_t, int*, char**);
+int ollama_xgrammar_dynamic_matcher_rollback(ollama_xgrammar_matcher*, int32_t, char**);
+int ollama_xgrammar_dynamic_matcher_is_terminated(ollama_xgrammar_matcher*, int*, char**);
 
 #endif

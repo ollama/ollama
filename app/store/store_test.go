@@ -279,6 +279,61 @@ func TestClaudeDesktopUsedRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopUsedPreservedBySettings(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Browser = true
+	settings.ClaudeDesktopUsed = true
+	settings.CodexDesktopUsed = true
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CodexDesktopUsed {
+		t.Fatal("ordinary settings save acknowledged the intro")
+	}
+	settings.CodexDesktopUsed = false
+	if saved != settings {
+		t.Fatal("ordinary settings save lost unrelated settings")
+	}
+
+	for range 2 {
+		if err := s.MarkCodexDesktopUsed(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := settings
+	want.CodexDesktopUsed = true
+	if saved != want {
+		t.Fatal("acknowledgment did not preserve unrelated settings")
+	}
+
+	settings.Browser = false
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	saved, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.Browser = false
+	if saved != want {
+		t.Fatal("stale settings save lost acknowledgment or the requested setting")
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()

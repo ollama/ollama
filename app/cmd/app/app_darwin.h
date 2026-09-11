@@ -55,6 +55,11 @@ bool RestoreClaudeGatewayForShutdown(void);
 bool IsClaudeGatewayConfigured(void);
 bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
+bool IsCodexDesktopInstalled(void);
+bool IsCodexDesktopConnected(void);
+bool IsCodexDesktopRunning(void);
+unsigned long long CodexDesktopRequestCount(void);
+bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
 char *ClaudeGatewayErrorMessage(void);
@@ -70,5 +75,7 @@ enum ClaudeInstallResult
     ClaudeInstallFailed,
 };
 enum ClaudeInstallResult installClaudeDesktop(void);
+enum ClaudeInstallResult installCodexDesktop(void);
 char *ClaudeDesktopDownloadRequest(char **authorization);
 bool InstallClaudeDesktopArchive(const char *archivePath);
+bool InstallCodexDesktopDiskImage(const char *imagePath);

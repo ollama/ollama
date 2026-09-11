@@ -2,15 +2,17 @@ package mlx
 
 import (
 	"testing"
+
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 )
 
 func TestCompileFusion(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileFusion(t)
 	})
 }
 
-func testCompileFusion(t *testing.T) {
+func testCompileFusion(t *mlxthreadtest.T) {
 	// Compile fuses the ops inside a function body into a single kernel,
 	// eliminating intermediate buffers. Use a diamond-shaped graph where
 	// two branches must be materialized simultaneously without fusion,
@@ -67,12 +69,12 @@ func testCompileFusion(t *testing.T) {
 }
 
 func TestCompileNested(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileNested(t)
 	})
 }
 
-func testCompileNested(t *testing.T) {
+func testCompileNested(t *mlxthreadtest.T) {
 	// A compiled function that calls another compiled function should
 	// produce correct results. The inner function inlines via isTracing()
 	// during the outer's trace.
@@ -103,12 +105,12 @@ func testCompileNested(t *testing.T) {
 }
 
 func TestCompileCallbackPanicRecovers(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileCallbackPanicRecovers(t)
 	})
 }
 
-func testCompileCallbackPanicRecovers(t *testing.T) {
+func testCompileCallbackPanicRecovers(t *mlxthreadtest.T) {
 	boom := Compile1("boom", func(a *Array) *Array {
 		panic("intentional test panic")
 	})
@@ -122,20 +124,20 @@ func testCompileCallbackPanicRecovers(t *testing.T) {
 		if r == nil {
 			t.Fatal("expected panic from Call, got none")
 		}
-		if _, ok := r.(string); !ok {
-			t.Fatalf("expected string panic, got %T: %v", r, r)
+		if _, ok := r.(error); !ok {
+			t.Fatalf("expected error panic, got %T: %v", r, r)
 		}
 	}()
 	boom(x)
 }
 
 func TestCompileNoTrackingGrowth(t *testing.T) {
-	withMLXThread(t, func() {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testCompileNoTrackingGrowth(t)
 	})
 }
 
-func testCompileNoTrackingGrowth(t *testing.T) {
+func testCompileNoTrackingGrowth(t *mlxthreadtest.T) {
 	// Repeated invocations of a compiled kernel should not grow the
 	// tracked-arrays list; the callback's traceScratch collects
 	// intermediates during tracing and frees them when the callback returns.

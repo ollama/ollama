@@ -3,39 +3,51 @@
 package mlxtest
 
 import (
-	"runtime"
+	"sync"
 	"testing"
 
+	"github.com/ollama/ollama/x/internal/mlxthreadtest"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
+
+var testThread = sync.OnceValues(func() (*mlxthreadtest.Thread, error) {
+	return mlxthreadtest.Start("mlx-test", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return err
+		}
+		if mlx.GPUIsAvailable() {
+			mlx.SetDefaultDeviceGPU()
+		}
+		return nil
+	})
+})
+
+// T is the test state available to callbacks running on the MLX thread.
+type T = mlxthreadtest.T
 
 // SkipIfUnavailable skips the test when the MLX dynamic library cannot be
 // loaded (e.g. no MLX backend built for this platform).
 func SkipIfUnavailable(t *testing.T) {
 	t.Helper()
-	if err := mlx.CheckInit(); err != nil {
+	if _, err := testThread(); err != nil {
 		t.Skipf("MLX not available: %v", err)
 	}
 }
 
-// Setup prepares a test that calls into MLX natively: it skips when MLX is
-// unavailable and pins the test goroutine to its OS thread for the duration
-// of the test.
-//
-// The thread pin is load-bearing, not defensive: MLX's default stream cache
-// is thread-local, and anything that migrates the goroutine mid-test (the
-// race detector's scheduler in particular) otherwise panics with
-// "There is no Stream(gpu, 0) in current thread".
-//
-// Setup deliberately does not switch devices or sweep caches: switching the
-// default device re-creates the process-wide default stream, and sweeping the
-// allocator cache between tests changes allocator reuse — both perturbed
-// tests that share lazy arrays with subtests running on other threads.
-func Setup(t *testing.T) {
+// Run executes fn on the MLX thread shared by the package's test binary.
+func Run(t *testing.T, fn func(*T)) {
 	t.Helper()
 
-	SkipIfUnavailable(t)
+	thread, err := testThread()
+	if err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
 
-	runtime.LockOSThread()
-	t.Cleanup(runtime.UnlockOSThread)
+	mlxthreadtest.Run(t, thread, fn)
+}
+
+// RunSubtest runs a named subtest on the shared MLX test thread.
+func RunSubtest(t *testing.T, name string, fn func(*T)) {
+	t.Helper()
+	t.Run(name, func(t *testing.T) { Run(t, fn) })
 }

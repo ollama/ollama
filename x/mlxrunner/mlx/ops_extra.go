@@ -15,19 +15,19 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
-	res := C.mlx_vector_array_new()
-	defer C.mlx_vector_array_free(res)
+	res := mlxCheck(C.mlx_vector_array_new())
+	defer freeVectorArray(res)
 	var globalScale C.mlx_array
-	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
+	mlxCheck(C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx))
 
-	vecSize := int(C.mlx_vector_array_size(res))
+	vecSize := int(mlxCheck(C.mlx_vector_array_size(res)))
 	w0 := New("QUANTIZE_W")
-	C.mlx_vector_array_get(&w0.ctx, res, 0)
+	mlxCheck(C.mlx_vector_array_get(&w0.ctx, res, 0))
 	w1 := New("QUANTIZE_S")
-	C.mlx_vector_array_get(&w1.ctx, res, 1)
+	mlxCheck(C.mlx_vector_array_get(&w1.ctx, res, 1))
 	if vecSize >= 3 {
 		w2 := New("QUANTIZE_B")
-		C.mlx_vector_array_get(&w2.ctx, res, 2)
+		mlxCheck(C.mlx_vector_array_get(&w2.ctx, res, 2))
 		return w0, w1, w2
 	}
 	return w0, w1, nil
@@ -35,13 +35,13 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 
 func FromFP8(x *Array, dtype DType) *Array {
 	out := New("FROM_FP8")
-	C.mlx_from_fp8(&out.ctx, x.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
+	mlxCheck(C.mlx_from_fp8(&out.ctx, x.ctx, C.mlx_dtype(dtype), DefaultStream().ctx))
 	return out
 }
 
 func ToFP8(x *Array) *Array {
 	out := New("TO_FP8")
-	C.mlx_to_fp8(&out.ctx, x.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_to_fp8(&out.ctx, x.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -59,7 +59,7 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, glob
 
 	out := New("DEQUANTIZE")
 	var noGlobalScale C.mlx_array
-	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, noGlobalScale, optDtype, DefaultStream().ctx)
+	mlxCheck(C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, noGlobalScale, optDtype, DefaultStream().ctx))
 	if globalScale != nil {
 		// The C-level global_scale argument is rejected on Metal; apply it on top.
 		gs := globalScale
@@ -85,7 +85,7 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 	}
 
 	out := New("QUANTIZED_MATMUL")
-	C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx)
+	mlxCheck(C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx))
 	return out
 }
 
@@ -107,7 +107,7 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	}
 
 	out := New("GATHER_QMM")
-	C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx)
+	mlxCheck(C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx))
 	return out
 }
 
@@ -115,7 +115,7 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 
 func Arange(start, stop, step float64, dtype DType) *Array {
 	out := New("ARANGE")
-	C.mlx_arange(&out.ctx, C.double(start), C.double(stop), C.double(step), C.mlx_dtype(dtype), DefaultStream().ctx)
+	mlxCheck(C.mlx_arange(&out.ctx, C.double(start), C.double(stop), C.double(step), C.mlx_dtype(dtype), DefaultStream().ctx))
 	return out
 }
 
@@ -125,25 +125,25 @@ func Tile(a *Array, reps []int32) *Array {
 		cReps[i] = C.int(r)
 	}
 	out := New("TILE")
-	C.mlx_tile(&out.ctx, a.ctx, unsafe.SliceData(cReps), C.size_t(len(reps)), DefaultStream().ctx)
+	mlxCheck(C.mlx_tile(&out.ctx, a.ctx, unsafe.SliceData(cReps), C.size_t(len(reps)), DefaultStream().ctx))
 	return out
 }
 
 func Tri(n, m int32, k int) *Array {
 	out := New("TRI")
-	C.mlx_tri(&out.ctx, C.int(n), C.int(m), C.int(k), C.mlx_dtype(DTypeFloat32), DefaultStream().ctx)
+	mlxCheck(C.mlx_tri(&out.ctx, C.int(n), C.int(m), C.int(k), C.mlx_dtype(DTypeFloat32), DefaultStream().ctx))
 	return out
 }
 
 func Where(condition, a, b *Array) *Array {
 	out := New("WHERE")
-	C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int32) *Array {
 	out := New("CONV1D")
-	C.mlx_conv1d(
+	mlxCheck(C.mlx_conv1d(
 		&out.ctx,
 		x.ctx,
 		weight.ctx,
@@ -152,7 +152,7 @@ func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int
 		C.int(dilation),
 		C.int(groups),
 		DefaultStream().ctx,
-	)
+	))
 	if bias != nil && bias.Valid() {
 		out = Add(out, bias)
 	}
@@ -161,7 +161,7 @@ func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int
 
 func Contiguous(a *Array, allowColMajor bool) *Array {
 	out := New("CONTIGUOUS")
-	C.mlx_contiguous(&out.ctx, a.ctx, C.bool(allowColMajor), DefaultStream().ctx)
+	mlxCheck(C.mlx_contiguous(&out.ctx, a.ctx, C.bool(allowColMajor), DefaultStream().ctx))
 	return out
 }
 
@@ -169,7 +169,7 @@ func Contiguous(a *Array, allowColMajor bool) *Array {
 // MLX uses NHWC layout.
 func Conv2d(x, weight *Array, strideH, strideW, padH, padW, dilationH, dilationW, groups int32) *Array {
 	out := New("CONV2D")
-	C.mlx_conv2d(
+	mlxCheck(C.mlx_conv2d(
 		&out.ctx,
 		x.ctx,
 		weight.ctx,
@@ -178,7 +178,7 @@ func Conv2d(x, weight *Array, strideH, strideW, padH, padW, dilationH, dilationW
 		C.int(dilationH), C.int(dilationW),
 		C.int(groups),
 		DefaultStream().ctx,
-	)
+	))
 	return out
 }
 
@@ -196,7 +196,7 @@ func Pad(a *Array, axes []int, lowPad, highPad []int, padValue *Array, mode stri
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	out := New("PAD")
-	C.mlx_pad(
+	mlxCheck(C.mlx_pad(
 		&out.ctx,
 		a.ctx,
 		unsafe.SliceData(cAxes), C.size_t(len(cAxes)),
@@ -205,7 +205,7 @@ func Pad(a *Array, axes []int, lowPad, highPad []int, padValue *Array, mode stri
 		padValue.ctx,
 		cMode,
 		DefaultStream().ctx,
-	)
+	))
 	return out
 }
 
@@ -223,14 +223,14 @@ func DepthwiseConv1d(x, weight *Array, bias *Array) *Array {
 // Maximum returns element-wise maximum of two arrays.
 func Maximum(a, b *Array) *Array {
 	out := New("MAXIMUM")
-	C.mlx_maximum(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_maximum(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx))
 	return out
 }
 
 // Minimum returns element-wise minimum of two arrays.
 func Minimum(a, b *Array) *Array {
 	out := New("MINIMUM")
-	C.mlx_minimum(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_minimum(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -298,11 +298,11 @@ func Stack(arrays []*Array, axis int) *Array {
 	for i := range arrays {
 		vectorData[i] = arrays[i].ctx
 	}
-	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
-	defer C.mlx_vector_array_free(vector)
+	vector := mlxCheck(C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData))))
+	defer freeVectorArray(vector)
 
 	out := New("STACK")
-	C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
+	mlxCheck(C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx))
 	return out
 }
 
@@ -324,13 +324,13 @@ func Take(a *Array, indices *Array, axis int) *Array {
 
 func RSqrt(a *Array) *Array {
 	out := New("RSQRT")
-	C.mlx_rsqrt(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_rsqrt(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Mean(a *Array, axis int, keepDims bool) *Array {
 	out := New("MEAN_AXIS")
-	C.mlx_mean_axis(&out.ctx, a.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	mlxCheck(C.mlx_mean_axis(&out.ctx, a.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx))
 	return out
 }
 
@@ -409,7 +409,7 @@ func SliceStartStop(a *Array, start, stop []int32) *Array {
 		cStrides[i] = 1
 	}
 	out := New("SLICE")
-	C.mlx_slice(&out.ctx, a.ctx, unsafe.SliceData(cStart), C.size_t(n), unsafe.SliceData(cStop), C.size_t(n), unsafe.SliceData(cStrides), C.size_t(n), DefaultStream().ctx)
+	mlxCheck(C.mlx_slice(&out.ctx, a.ctx, unsafe.SliceData(cStart), C.size_t(n), unsafe.SliceData(cStop), C.size_t(n), unsafe.SliceData(cStrides), C.size_t(n), DefaultStream().ctx))
 	return out
 }
 
@@ -449,7 +449,7 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		}
 	}
 	out := New("FAST_ROPE")
-	C.mlx_fast_rope_dynamic(
+	mlxCheck(C.mlx_fast_rope_dynamic(
 		&out.ctx,
 		x.ctx,
 		C.int(dims),
@@ -459,7 +459,7 @@ func RoPEWithFreqs(x *Array, dims int, traditional bool, base, scale float32, of
 		offsets.ctx,
 		freqsCtx,
 		DefaultStream().ctx,
-	)
+	))
 	return out
 }
 
@@ -469,55 +469,55 @@ func Sigmoid(a *Array) *Array {
 
 func Erf(a *Array) *Array {
 	out := New("ERF")
-	C.mlx_erf(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_erf(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Exp(a *Array) *Array {
 	out := New("EXP")
-	C.mlx_exp(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_exp(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Log(a *Array) *Array {
 	out := New("LOG")
-	C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Sin(a *Array) *Array {
 	out := New("SIN")
-	C.mlx_sin(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_sin(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Cos(a *Array) *Array {
 	out := New("COS")
-	C.mlx_cos(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_cos(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func erf(a *Array) *Array {
 	out := New("ERF")
-	C.mlx_erf(&out.ctx, a.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_erf(&out.ctx, a.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Clip(a, aMin, aMax *Array) *Array {
 	out := New("CLIP")
-	C.mlx_clip(&out.ctx, a.ctx, aMin.ctx, aMax.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_clip(&out.ctx, a.ctx, aMin.ctx, aMax.ctx, DefaultStream().ctx))
 	return out
 }
 
 func Logaddexp(a, b *Array) *Array {
 	out := New("LOGADDEXP")
-	C.mlx_logaddexp(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_logaddexp(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx))
 	return out
 }
 
 func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	out := New("SOFTMAX_AXIS")
-	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
+	mlxCheck(C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx))
 	return out
 }
 
@@ -530,7 +530,7 @@ func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
 	if bias != nil {
 		b = bias.ctx
 	}
-	C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx)
+	mlxCheck(C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx))
 	return out
 }
 
@@ -540,7 +540,7 @@ func RMSNormFn(x, weight *Array, eps float32) *Array {
 	if weight != nil {
 		w = weight.ctx
 	}
-	C.mlx_fast_rms_norm(&out.ctx, x.ctx, w, C.float(eps), DefaultStream().ctx)
+	mlxCheck(C.mlx_fast_rms_norm(&out.ctx, x.ctx, w, C.float(eps), DefaultStream().ctx))
 	return out
 }
 
@@ -553,38 +553,38 @@ func AddMM(c, a, b *Array, alpha, beta float32) *Array {
 // scalarWithDtype creates a scalar array matching the dtype of a.
 // Matching dtype is important for graph fusion and avoiding implicit casts.
 func scalarWithDtype(s float32, a *Array) C.mlx_array {
-	f32 := C.mlx_array_new_float(C.float(s))
 	dtype := a.DType()
+	f32 := mlxCheck(C.mlx_array_new_float(C.float(s)))
 	if dtype == DTypeFloat32 {
 		return f32
 	}
-	casted := C.mlx_array_new()
-	C.mlx_astype(&casted, f32, C.mlx_dtype(dtype), DefaultStream().ctx)
-	C.mlx_array_free(f32)
+	defer freeArray(f32)
+	casted := mlxCheck(C.mlx_array_new())
+	mlxCheck(C.mlx_astype(&casted, f32, C.mlx_dtype(dtype), DefaultStream().ctx))
 	return casted
 }
 
 func AddScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
+	defer freeArray(scalar)
 	out := New("ADD_SCALAR")
-	C.mlx_add(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
-	C.mlx_array_free(scalar)
+	mlxCheck(C.mlx_add(&out.ctx, a.ctx, scalar, DefaultStream().ctx))
 	return out
 }
 
 func MulScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
+	defer freeArray(scalar)
 	out := New("MUL_SCALAR")
-	C.mlx_multiply(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
-	C.mlx_array_free(scalar)
+	mlxCheck(C.mlx_multiply(&out.ctx, a.ctx, scalar, DefaultStream().ctx))
 	return out
 }
 
 func DivScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
+	defer freeArray(scalar)
 	out := New("DIV_SCALAR")
-	C.mlx_divide(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
-	C.mlx_array_free(scalar)
+	mlxCheck(C.mlx_divide(&out.ctx, a.ctx, scalar, DefaultStream().ctx))
 	return out
 }
 
@@ -601,13 +601,13 @@ func NewArrayInt32(data []int32, shape []int32) *Array {
 		cShape[i] = C.int(s)
 	}
 	out := New("NEW_ARRAY_INT32")
-	out.ctx = C.mlx_array_new_data(unsafe.Pointer(&data[0]), unsafe.SliceData(cShape), C.int(len(shape)), C.mlx_dtype(DTypeInt32))
+	out.ctx = mlxCheck(C.mlx_array_new_data(unsafe.Pointer(&data[0]), unsafe.SliceData(cShape), C.int(len(shape)), C.mlx_dtype(DTypeInt32)))
 	return out
 }
 
 func NewScalarArray(value float32) *Array {
 	out := New("SCALAR")
-	out.ctx = C.mlx_array_new_float32(C.float(value))
+	out.ctx = mlxCheck(C.mlx_array_new_float32(C.float(value)))
 	return out
 }
 
@@ -686,9 +686,9 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 }
 
 func EnableCompile() {
-	C.mlx_enable_compile()
+	mlxCheck(C.mlx_enable_compile())
 }
 
 func DisableCompile() {
-	C.mlx_disable_compile()
+	mlxCheck(C.mlx_disable_compile())
 }
