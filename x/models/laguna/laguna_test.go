@@ -2,13 +2,13 @@ package laguna
 
 import (
 	"math"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
@@ -482,10 +482,7 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 		}
 
 		xFlat := mlx.FromValues([]float32{1}, 1, int(cfg.HiddenSize)).AsType(mlx.DTypeBFloat16)
-		scores, inds, scalesFolded := moe.route(xFlat, cfg)
-		if scalesFolded {
-			t.Fatal("route folded scales without expert projection scales")
-		}
+		scores, inds := moe.route(xFlat, cfg)
 		scores = scores.AsType(mlx.DTypeFloat32)
 		inds = inds.AsType(mlx.DTypeInt32)
 		mlx.Eval(scores, inds)
@@ -506,76 +503,6 @@ func TestSparseMoERouteBiasAffectsSelectionNotRoutingWeights(t *testing.T) {
 		if got := scores.Floats(); len(got) != 1 || math.Abs(float64(got[0]-probVals[0])) > 1e-6 {
 			t.Fatalf("routing weights = %v, want [%v] using unbiased sigmoid scores", got, probVals[0])
 		}
-	})
-}
-
-func TestLagunaSigmoidTopK8CompiledMatchesEager(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		gates := make([]float32, 2*16)
-		for i := range gates {
-			gates[i] = float32((i%13)-6) * 0.2
-		}
-		bias := make([]float32, 16)
-		scaleA := make([]float32, 16)
-		scaleB := make([]float32, 16)
-		for i := range bias {
-			bias[i] = float32((i%5)-2) * 0.03
-			scaleA[i] = 0.5 + float32(i)*0.01
-			scaleB[i] = 0.75 + float32(i)*0.005
-		}
-
-		gatesArray := mlx.FromValues(gates, 2, 16).AsType(mlx.DTypeBFloat16)
-		biasArray := mlx.FromValues(bias, 16)
-		scaleAArray := mlx.FromValues(scaleA, 16)
-		scaleBArray := mlx.FromValues(scaleB, 16)
-		got := lagunaSigmoidTopK8ScaledNormalized(gatesArray, biasArray, scaleAArray, scaleBArray)
-
-		probs, neg := mlx.SigmoidRouter(gatesArray.AsType(mlx.DTypeFloat32), biasArray)
-		wantIndices := mlx.Argpartition(neg, 7, -1)
-		wantIndices = mlx.SliceStartStop(wantIndices, []int32{0, 0}, []int32{2, 8})
-		wantScores := mlx.TakeAlongAxis(probs, wantIndices, -1)
-		wantScores = mlx.Div(wantScores, mlx.Sum(wantScores, -1, true))
-		wantScores = scaleScoresByExpert(wantScores, wantIndices, scaleAArray)
-		wantScores = scaleScoresByExpert(wantScores, wantIndices, scaleBArray)
-
-		gotScores := got[0].AsType(mlx.DTypeFloat32)
-		gotIndices := got[1].AsType(mlx.DTypeInt32)
-		wantScores = wantScores.AsType(mlx.DTypeFloat32)
-		wantIndices = wantIndices.AsType(mlx.DTypeInt32)
-		mlx.Eval(gotScores, gotIndices, wantScores, wantIndices)
-		assertFloatSlicesClose(t, gotScores.Floats(), wantScores.Floats(), 1e-6)
-		if got, want := gotIndices.Ints(), wantIndices.Ints(); !slices.Equal(got, want) {
-			t.Fatalf("indices = %v, want %v", got, want)
-		}
-	})
-}
-
-func TestLagunaSwiGLUGatheredGateScaleCompiledMatchesEager(t *testing.T) {
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		gateValues := make([]float32, 2*8*4)
-		upValues := make([]float32, len(gateValues))
-		for i := range gateValues {
-			gateValues[i] = float32((i%17)-8) * 0.04
-			upValues[i] = float32((i%11)-5) * 0.03
-		}
-		scaleValues := make([]float32, 16)
-		for i := range scaleValues {
-			scaleValues[i] = 0.5 + float32(i)*0.025
-		}
-		indices := mlx.FromValues([]int32{
-			0, 3, 6, 9, 12, 15, 2, 5,
-			1, 4, 7, 10, 13, 14, 8, 11,
-		}, 2, 8)
-		gate := mlx.FromValues(gateValues, 2, 8, 1, 4).AsType(mlx.DTypeBFloat16)
-		up := mlx.FromValues(upValues, 2, 8, 1, 4).AsType(mlx.DTypeBFloat16)
-		scales := mlx.FromValues(scaleValues, 16)
-
-		got := lagunaSwiGLUGatheredGateScale(gate, up, scales, indices)[0]
-		want := mlx.SwiGLU(applyExpertGlobalScale(gate, scales, indices), up)
-		got = got.AsType(mlx.DTypeFloat32)
-		want = want.AsType(mlx.DTypeFloat32)
-		mlx.Eval(got, want)
-		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 1e-6)
 	})
 }
 
@@ -687,6 +614,67 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 		want := dense.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
 		mlx.Eval(got, want)
 		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 0.02)
+	})
+}
+
+// Routed gate and up fuse into one nvfp4 bank only when their per-expert
+// global scales agree. gather_qmm applies one scale per expert across the
+// whole bank row, so the fused bank carries that scale and has to match
+// running the two projections separately.
+func TestSwitchMLPFusedGateUpGlobalScaleMatchesSeparate(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("gather_qmm global scales require a GPU backend")
+		}
+		cfg := &Config{HiddenSize: 32, NumExpertsPerTok: 2}
+		x := makePatternExpertWeight(1, 2, int(cfg.HiddenSize), 0.013)
+		indices := mlx.FromValues([]int32{0, 1, 1, 0}, 2, int(cfg.NumExpertsPerTok))
+
+		gateWeight := makePatternExpertWeight(2, 32, 32, 0.011)
+		upWeight := makePatternExpertWeight(2, 32, 32, 0.017)
+		downWeight := makePatternExpertWeight(2, 32, 32, 0.013)
+		gateQ, gateScales, _ := mlx.Quantize(gateWeight, 16, 4, "nvfp4")
+		upQ, upScales, _ := mlx.Quantize(upWeight, 16, 4, "nvfp4")
+		mlx.Eval(gateQ, gateScales, upQ, upScales)
+
+		shared := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{0.5, 2}, 2), 2)
+		differing := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{2, 0.5}, 2), 2)
+
+		gateW := &stackedExpertWeights{
+			Weight: gateQ, Scales: gateScales, GlobalScales: shared,
+			Bits: 4, GroupSize: 16, Mode: "nvfp4",
+		}
+		upW := &stackedExpertWeights{
+			Weight: upQ, Scales: upScales, GlobalScales: shared,
+			Bits: 4, GroupSize: 16, Mode: "nvfp4",
+		}
+		if !canFuseQuantizedGateUp(gateW, upW) {
+			t.Fatal("gate and up sharing a global scale did not fuse")
+		}
+		upW.GlobalScales = differing
+		if canFuseQuantizedGateUp(gateW, upW) {
+			t.Fatal("gate and up with differing global scales fused")
+		}
+
+		fused := &SwitchMLP{
+			GateUpWeightQ:     fuseExpertStacks(gateQ, upQ, 1),
+			GateUpScales:      fuseExpertStacks(gateScales, upScales, 1),
+			GateUpGlobalScale: shared,
+			GateUpBits:        4, GateUpGroupSize: 16, GateUpMode: "nvfp4",
+			DownWeight: downWeight, DownWeightSourceLayout: true,
+		}
+		separate := &SwitchMLP{
+			GateWeightQ: gateQ, GateScales: gateScales, GateGlobalScale: shared,
+			GateBits: 4, GateGroupSize: 16, GateMode: "nvfp4",
+			UpWeightQ: upQ, UpScales: upScales, UpGlobalScale: shared,
+			UpBits: 4, UpGroupSize: 16, UpMode: "nvfp4",
+			DownWeight: downWeight, DownWeightSourceLayout: true,
+		}
+
+		got := fused.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
+		want := separate.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got, want)
+		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 1e-4)
 	})
 }
 

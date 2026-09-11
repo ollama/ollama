@@ -1,6 +1,7 @@
 package gemma4
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxtest"
@@ -166,6 +167,36 @@ func TestLoadFusedExpertsQuantized(t *testing.T) {
 	}
 }
 
+func TestLoadFusedExpertsGlobalScale(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const experts, intermediate, hidden = 4, 32, 64
+		m := &Model{TextConfig: &TextConfig{QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}}
+		gateUpKey := "model.language_model.layers.0.experts.gate_up_proj.weight"
+		downKey := "model.language_model.layers.0.experts.down_proj.weight"
+		tensors := map[string]*mlx.Array{
+			gateUpKey:                   mlx.Zeros(mlx.DTypeUint32, experts, 2*intermediate, hidden/8),
+			gateUpKey + "_scale":        mlx.Zeros(mlx.DTypeUint8, experts, 2*intermediate, hidden/16),
+			gateUpKey + ".global_scale": mlx.FromValues([]float32{0.5, 1, 2, 4}, experts),
+			downKey:                     mlx.Zeros(mlx.DTypeUint32, experts, hidden, intermediate/8),
+			downKey + "_scale":          mlx.Zeros(mlx.DTypeUint8, experts, hidden, intermediate/16),
+			downKey + ".global_scale":   mlx.FromValues([]float32{4, 2, 1, 0.5}, experts),
+		}
+
+		moe := &MoEBlock{}
+		m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
+
+		if !moe.UseQuantized || moe.GateUpGlobalScales == nil || moe.DownGlobalScales == nil {
+			t.Fatal("global-scale experts did not stay quantized")
+		}
+		if got := moe.GateUpGlobalScales.Dims(); len(got) != 1 || got[0] != experts {
+			t.Fatalf("gate_up kernel scale shape = %v, want [%d]", got, experts)
+		}
+		if got := moe.DownGlobalScales.Dims(); len(got) != 1 || got[0] != experts {
+			t.Fatalf("down kernel scale shape = %v, want [%d]", got, experts)
+		}
+	})
+}
+
 // TestLoadFusedExpertsDense verifies that a fused gate_up projection with no
 // scale companions is loaded onto the dense GatherMM path, kept fused.
 func TestLoadFusedExpertsDense(t *testing.T) {
@@ -194,6 +225,53 @@ func TestLoadFusedExpertsDense(t *testing.T) {
 		}
 		if moe.GateUpWeightQ != nil || moe.DownWeightQ != nil {
 			t.Error("quantized weights set on a dense block")
+		}
+	})
+}
+
+func TestCollectExpertProjectionsPrefixes(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const experts, intermediate, hidden = 2, 16, 32
+		cfg := &TextConfig{QuantGroupSize: 16, QuantBits: 4, QuantMode: "nvfp4"}
+		prefix := "model.language_model.layers.0.experts"
+		tensors := make(map[string]*mlx.Array)
+		for expert := range experts {
+			for _, projection := range []struct {
+				name string
+				rows int
+				cols int
+			}{
+				{name: "gate_proj", rows: intermediate, cols: hidden},
+				{name: "up_proj", rows: intermediate, cols: hidden},
+				{name: "down_proj", rows: hidden, cols: intermediate},
+			} {
+				key := fmt.Sprintf("%s.%d.%s.weight", prefix, expert, projection.name)
+				tensors[key] = mlx.Zeros(mlx.DTypeUint32, projection.rows, projection.cols/8)
+				tensors[key+"_scale"] = mlx.Zeros(mlx.DTypeUint8, projection.rows, projection.cols/16)
+			}
+		}
+
+		gate, up, down := collectExpertProjections(
+			tensors, cfg,
+			[]string{"model.language_model.layers.0.moe.experts", prefix},
+			experts,
+		)
+		for name, projection := range map[string]*stackedExpertResult{
+			"gate": gate,
+			"up":   up,
+			"down": down,
+		} {
+			if projection == nil || projection.Scales == nil {
+				t.Fatalf("%s projection was not collected as quantized", name)
+			}
+			if got := projection.Weight.Dim(0); got != experts {
+				t.Fatalf("%s expert count = %d, want %d", name, got, experts)
+			}
+		}
+
+		tensors[prefix+".0.gate_proj.weight.global_scale"] = mlx.FromValue(float32(1))
+		if got := collectExpertProjection(tensors, cfg, prefix, "gate_proj", experts); got != nil {
+			t.Fatal("collectExpertProjection accepted an incomplete global-scale set")
 		}
 	})
 }

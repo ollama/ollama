@@ -5,6 +5,47 @@ import (
 	"github.com/ollama/ollama/x/quant"
 )
 
+// PrepareGatherQMMGlobalScale converts a checkpoint's NVFP4 multiplier into
+// the one-float32-per-expert form gather_qmm wants, broadcasting a
+// checkpoint-wide scalar to the expert count. Materialized dense: the kernel
+// indexes it by raw offset, and a broadcast view is one element of storage.
+func PrepareGatherQMMGlobalScale(globalScale *mlx.Array, numExperts int) *mlx.Array {
+	if globalScale == nil {
+		return nil
+	}
+	globalScale = mlx.Reshape(globalScale.AsType(mlx.DTypeFloat32), int32(globalScale.Size()))
+	globalScale = mlx.BroadcastTo(globalScale, int32(numExperts))
+	return mlx.Contiguous(mlx.MulScalar(globalScale, mlx.Nvfp4MaxProduct), false)
+}
+
+// GatherQMMIdentityScale is the scale that leaves an expert bank unscaled,
+// for rows folded into a scaled bank without a scale of their own.
+func GatherQMMIdentityScale() *mlx.Array {
+	return mlx.NewScalarArray(float32(mlx.Nvfp4MaxProduct))
+}
+
+// SameGlobalScales reports whether two prepared banks hold the same scale for
+// every expert, which is what lets two projections share one fused bank.
+func SameGlobalScales(a, b *mlx.Array) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a == b {
+		return true
+	}
+	if a.Size() != b.Size() {
+		return false
+	}
+	mlx.Eval(a, b)
+	aValues, bValues := a.Floats(), b.Floats()
+	for i := range aValues {
+		if aValues[i] != bValues[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // QuantizationParams returns default groupSize, bits, and mode for a
 // quantization type. The values live in the shared x/quant package so the
 // importer, the runtime loader, and `ollama show` agree on them.
