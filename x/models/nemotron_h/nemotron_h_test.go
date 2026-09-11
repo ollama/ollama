@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/models/nn"
 )
 
 func TestParseConfigNestedWrapper(t *testing.T) {
@@ -426,4 +427,112 @@ func assertAllClose(t *mlxtest.T, name string, got, want []float32, tol float64)
 			t.Fatalf("%s[%d] = %v, want %v", name, i, got[i], want[i])
 		}
 	}
+}
+
+// Folding shared experts into the routed banks must keep the global scale
+// banks aligned with the weight banks: rows are added, so scales are added
+// too — the shared expert's own scale when it has one, MLX's identity scale
+// when it does not.
+func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const routed, inter, sharedInter, hidden = 3, 16, 32, 32
+		cfg := &Config{
+			NSharedExperts:                  1,
+			MoEIntermediateSize:             inter,
+			MoESharedExpertIntermediateSize: sharedInter,
+			HiddenSize:                      hidden,
+		}
+
+		newMoE := func(routedKernelScales []float32, sharedGlobalScale *mlx.Array) *SparseMoE {
+			m := &SparseMoE{
+				UseQuantized:  true,
+				UpWeightQ:     mlx.Zeros(mlx.DTypeUint32, routed, inter, hidden/8),
+				UpScales:      mlx.Zeros(mlx.DTypeUint8, routed, inter, hidden/16),
+				UpGroupSize:   16,
+				UpBits:        4,
+				UpMode:        "nvfp4",
+				DownWeightQ:   mlx.Zeros(mlx.DTypeUint32, routed, hidden, inter/8),
+				DownScales:    mlx.Zeros(mlx.DTypeUint8, routed, hidden, inter/16),
+				DownGroupSize: 16,
+				DownBits:      4,
+				DownMode:      "nvfp4",
+				SharedUp: &nn.QuantizedLinear{
+					Weight:      mlx.Zeros(mlx.DTypeUint32, sharedInter, hidden/8),
+					Scales:      mlx.Zeros(mlx.DTypeUint8, sharedInter, hidden/16),
+					GroupSize:   16,
+					Bits:        4,
+					Mode:        "nvfp4",
+					GlobalScale: sharedGlobalScale,
+				},
+				SharedDown: &nn.QuantizedLinear{
+					Weight:      mlx.Zeros(mlx.DTypeUint32, hidden, sharedInter/8),
+					Scales:      mlx.Zeros(mlx.DTypeUint8, hidden, sharedInter/16),
+					GroupSize:   16,
+					Bits:        4,
+					Mode:        "nvfp4",
+					GlobalScale: sharedGlobalScale,
+				},
+			}
+			if routedKernelScales != nil {
+				m.UpGlobalScales = mlx.FromValues(routedKernelScales, routed)
+				m.DownGlobalScales = mlx.FromValues(routedKernelScales, routed)
+			}
+			return m
+		}
+
+		checkScales := func(name string, m *SparseMoE, want []float32) {
+			t.Helper()
+			for _, gs := range []*mlx.Array{m.UpGlobalScales, m.DownGlobalScales} {
+				mlx.Eval(gs)
+				if dims := gs.Dims(); len(dims) != 1 || dims[0] != len(want) {
+					t.Fatalf("%s dims = %v, want [%d]", name, dims, len(want))
+				}
+				assertAllClose(t, name, gs.Floats(), want, 1e-5)
+			}
+		}
+
+		// Routed experts carry kernel scales; the scaleless shared expert folds
+		// as the identity scale.
+		m := newMoE([]float32{1, 2, 3}, nil)
+		if !foldSharedExperts(m, cfg) {
+			t.Fatal("foldSharedExperts failed with routed global scales and a scaleless shared expert")
+		}
+		checkScales("identity extension", m, []float32{1, 2, 3, mlx.Nvfp4MaxProduct, mlx.Nvfp4MaxProduct})
+
+		// The shared expert's own per-tensor scale folds as a routed expert's.
+		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{0.25}, 1))
+		if !foldSharedExperts(m, cfg) {
+			t.Fatal("foldSharedExperts failed with a per-tensor shared expert scale")
+		}
+		shared := float32(0.25 * mlx.Nvfp4MaxProduct)
+		checkScales("shared scale extension", m, []float32{1, 2, 3, shared, shared})
+
+		// Scaleless routed experts fold against an identity bank when the
+		// shared expert carries a scale.
+		m = newMoE(nil, mlx.FromValues([]float32{0.25}, 1))
+		if !foldSharedExperts(m, cfg) {
+			t.Fatal("foldSharedExperts failed with a scaleless routed bank")
+		}
+		identity := float32(mlx.Nvfp4MaxProduct)
+		checkScales("identity bank", m, []float32{identity, identity, identity, shared, shared})
+
+		// Nothing to scale: the banks stay nil.
+		m = newMoE(nil, nil)
+		if !foldSharedExperts(m, cfg) {
+			t.Fatal("foldSharedExperts failed without global scales")
+		}
+		if m.UpGlobalScales != nil || m.DownGlobalScales != nil {
+			t.Fatal("fold without global scales materialized a scale bank")
+		}
+
+		// A per-row shared expert scale cannot be represented per expert bank
+		// row, so the fold is skipped.
+		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{1, 2}, 2))
+		if foldSharedExperts(m, cfg) {
+			t.Fatal("foldSharedExperts accepted a per-row shared expert scale")
+		}
+		if dims := m.UpWeightQ.Dims(); dims[0] != routed {
+			t.Fatalf("skipped fold mutated the weight bank: dims = %v", dims)
+		}
+	})
 }

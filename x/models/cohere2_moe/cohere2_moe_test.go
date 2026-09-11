@@ -29,11 +29,7 @@ func TestLoadPerExpertGlobalScale(t *testing.T) {
 		if got == nil {
 			t.Fatal("loadStackedExperts returned nil")
 		}
-		if !mlx.MetalIsAvailable() {
-			if got.Scales != nil {
-				t.Fatal("per-expert weights did not use the dense fallback off Metal")
-			}
-		} else if got.Scales == nil || got.GlobalScales == nil {
+		if got.Scales == nil || got.GlobalScales == nil {
 			t.Fatal("per-expert weights did not use the quantized global-scale path")
 		} else if dims := got.GlobalScales.Dims(); len(dims) != 1 || dims[0] != experts {
 			t.Fatalf("global scale dims = %v, want [%d]", dims, experts)

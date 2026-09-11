@@ -499,6 +499,9 @@ func foldSharedExperts(m *SparseMoE, cfg *Config) bool {
 	return true
 }
 
+// foldQuantizedSharedExperts appends the shared expert's quantized weights to
+// the routed banks so one gather covers both, slicing the shared projections
+// into routed-expert-sized parts.
 func foldQuantizedSharedExperts(m *SparseMoE, cfg *Config, parts int32) bool {
 	up, ok := m.SharedUp.(*nn.QuantizedLinear)
 	if !ok || up == nil {
@@ -508,7 +511,7 @@ func foldQuantizedSharedExperts(m *SparseMoE, cfg *Config, parts int32) bool {
 	if !ok || down == nil {
 		return false
 	}
-	if up.Bias != nil || up.GlobalScale != nil || down.Bias != nil || down.GlobalScale != nil {
+	if up.Bias != nil || down.Bias != nil {
 		return false
 	}
 	if m.UpWeightQ == nil || m.UpScales == nil || m.DownWeightQ == nil || m.DownScales == nil {
@@ -526,6 +529,15 @@ func foldQuantizedSharedExperts(m *SparseMoE, cfg *Config, parts int32) bool {
 	if up.Weight.Dim(0) != int(cfg.MoESharedExpertIntermediateSize) || down.Weight.Dim(0) != int(cfg.HiddenSize) {
 		return false
 	}
+	upSharedScale, upFoldable := foldSharedExpertGlobalScale(up.GlobalScale)
+	if !upFoldable {
+		return false
+	}
+	downSharedScale, downFoldable := foldSharedExpertGlobalScale(down.GlobalScale)
+	if !downFoldable {
+		return false
+	}
+	routed := int32(m.UpWeightQ.Dim(0))
 
 	upWeightStack := stackQuantizedUpParts(up.Weight, cfg.MoEIntermediateSize, parts)
 	upScaleStack := stackQuantizedUpParts(up.Scales, cfg.MoEIntermediateSize, parts)
@@ -575,8 +587,39 @@ func foldQuantizedSharedExperts(m *SparseMoE, cfg *Config, parts int32) bool {
 	if downBiasStack != nil {
 		m.DownBiases = appendAndClone(m.DownBiases, downBiasStack)
 	}
+	// The weight banks grew by parts, so the scale banks must too.
+	m.UpGlobalScales = extendFoldedGlobalScales(m.UpGlobalScales, upSharedScale, routed, parts)
+	m.DownGlobalScales = extendFoldedGlobalScales(m.DownGlobalScales, downSharedScale, routed, parts)
 
 	return true
+}
+
+// foldSharedExpertGlobalScale prepares a shared expert's global scale for the
+// folded bank. Per-row scales do not fit one-scale-per-expert, so folding is
+// skipped for them.
+func foldSharedExpertGlobalScale(globalScale *mlx.Array) (*mlx.Array, bool) {
+	if globalScale == nil {
+		return nil, true
+	}
+	if globalScale.Size() != 1 {
+		return nil, false
+	}
+	return model.PrepareGatherQMMGlobalScale(globalScale, 1), true
+}
+
+// extendFoldedGlobalScales appends the folded shared expert's per-part scales,
+// substituting the identity for whichever side has no scale of its own.
+func extendFoldedGlobalScales(bank, sharedScale *mlx.Array, routed, parts int32) *mlx.Array {
+	if bank == nil && sharedScale == nil {
+		return nil
+	}
+	if bank == nil {
+		bank = mlx.BroadcastTo(model.GatherQMMIdentityScale(), routed)
+	}
+	if sharedScale == nil {
+		sharedScale = model.GatherQMMIdentityScale()
+	}
+	return appendAndClone(bank, mlx.BroadcastTo(sharedScale, parts))
 }
 
 func stackQuantizedUpParts(a *mlx.Array, partSize int32, parts int32) *mlx.Array {
@@ -645,8 +688,8 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 		freeTensorKeys(tensors, key+"_qbias")
 	}
 
-	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
+	kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+	if useQuantized && supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:       w,
 			Scales:       scales,
@@ -671,7 +714,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
 	globalScales := make([]*mlx.Array, 0, numExperts)
-	dequantGlobalScales := make([]*mlx.Array, 0, numExperts)
 	consumed := make([]string, 0, numExperts*3)
 	bits := 0
 	groupSize := 0
@@ -727,8 +769,8 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			groupSize = gs
 			mode = m
 		}
-		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, m, 1)
-		keepQuantized := useQuantized && supportsGatherQMM(m, b) && supportsGlobalScale
+		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
+		keepQuantized := useQuantized && supportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
 		} else if quantized != keepQuantized ||
@@ -737,9 +779,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 		}
 		if qbias != nil {
 			biases = append(biases, qbias)
-		}
-		if globalScale != nil {
-			dequantGlobalScales = append(dequantGlobalScales, globalScale)
 		}
 		if keepQuantized {
 			weights = append(weights, w)
@@ -754,8 +793,7 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 	}
 
 	if (len(biases) != 0 && len(biases) != len(weights)) ||
-		(len(globalScales) != 0 && len(globalScales) != len(weights)) ||
-		(len(dequantGlobalScales) != 0 && len(dequantGlobalScales) != len(weights)) {
+		(len(globalScales) != 0 && len(globalScales) != len(weights)) {
 		return nil
 	}
 	out := &stackedExpertWeights{
@@ -1210,7 +1248,7 @@ func shouldSortMoEExperts(tokens int32) bool {
 
 func (m *SparseMoE) gatherExpertUp(xFlat, idxFlat *mlx.Array, doSort bool) *mlx.Array {
 	if m.UpWeightQ != nil {
-		return mlx.GatherQMMWithGlobalScale(
+		return mlx.GatherQMM(
 			xFlat,
 			m.UpWeightQ,
 			m.UpScales,
@@ -1230,7 +1268,7 @@ func (m *SparseMoE) gatherExpertUp(xFlat, idxFlat *mlx.Array, doSort bool) *mlx.
 
 func (m *SparseMoE) gatherExpertDown(hidden, idxFlat *mlx.Array, doSort bool) *mlx.Array {
 	if m.DownWeightQ != nil {
-		return mlx.GatherQMMWithGlobalScale(
+		return mlx.GatherQMM(
 			hidden,
 			m.DownWeightQ,
 			m.DownScales,

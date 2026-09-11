@@ -204,7 +204,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 		globalScale, kernelGlobalScale *mlx.Array
 		groupSize, bits                int
 		mode                           string
-		gatherGlobalScaleSupported     bool
 	}
 	parts := make([]expertPart, 0, numExperts)
 
@@ -236,12 +235,11 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 			cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
 			cfg.TensorQuant, key, w, s,
 		)
-		kernelGlobalScale, supported := model.PrepareGatherQMMGlobalScale(globalScale, m, 1)
+		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
 		parts = append(parts, expertPart{
 			weight: w, scales: s, biases: qb,
 			globalScale: globalScale, kernelGlobalScale: kernelGlobalScale,
 			groupSize: gs, bits: b, mode: m,
-			gatherGlobalScaleSupported: supported,
 		})
 	}
 
@@ -257,9 +255,9 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 		}
 	}
 
-	allQuantized := parts[0].scales != nil && parts[0].gatherGlobalScaleSupported
+	allQuantized := parts[0].scales != nil
 	for _, part := range parts[1:] {
-		allQuantized = allQuantized && part.scales != nil && part.gatherGlobalScaleSupported &&
+		allQuantized = allQuantized && part.scales != nil &&
 			part.groupSize == parts[0].groupSize && part.bits == parts[0].bits && part.mode == parts[0].mode
 	}
 	if !allQuantized {
@@ -355,15 +353,8 @@ func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, g
 		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, gateUpKey, gateUp, gateUpScales)
 	downGroupSize, downBits, downMode := model.ResolveLinearQuantParams(
 		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, downKey, down, downScales)
-	gateUpKernelScale, gateUpScaleSupported := model.PrepareGatherQMMGlobalScale(gateUpGlobalScale, gateUpMode, gateUp.Dim(0))
-	downKernelScale, downScaleSupported := model.PrepareGatherQMMGlobalScale(downGlobalScale, downMode, down.Dim(0))
-	if !gateUpScaleSupported || !downScaleSupported {
-		gateUp = mlx.Dequantize(gateUp, gateUpScales, gateUpBiases, gateUpGroupSize, gateUpBits, gateUpMode, gateUpGlobalScale)
-		down = mlx.Dequantize(down, downScales, downBiases, downGroupSize, downBits, downMode, downGlobalScale)
-		moe.GateUpWeight = transposeForGatherMM(gateUp)
-		moe.DownWeight = transposeForGatherMM(down)
-		return
-	}
+	gateUpKernelScale := model.PrepareGatherQMMGlobalScale(gateUpGlobalScale, gateUp.Dim(0))
+	downKernelScale := model.PrepareGatherQMMGlobalScale(downGlobalScale, down.Dim(0))
 
 	// Quantized: keep the fused gate_up packed for a single GatherQMM call.
 	moe.UseQuantized = true
@@ -1580,7 +1571,7 @@ func (m *MoEBlock) Forward(x *mlx.Array, scores, inds *mlx.Array, cfg *TextConfi
 	if m.UseQuantized {
 		if m.UseFusedGateUp {
 			// Fused gate+up: single GatherQMM produces [B*L*topK, 1, 1, 2*intermediate]
-			gateUp := mlx.GatherQMMWithGlobalScale(xFlat, m.GateUpWeightQ, m.GateUpScales, m.GateUpBiases,
+			gateUp := mlx.GatherQMM(xFlat, m.GateUpWeightQ, m.GateUpScales, m.GateUpBiases,
 				nil, idxFlat, true, m.GateUpGroupSize, m.GateUpBits, m.QuantMode,
 				m.GateUpGlobalScales, doSort)
 			// Split along last dim into gate and up
@@ -1594,9 +1585,9 @@ func (m *MoEBlock) Forward(x *mlx.Array, scores, inds *mlx.Array, cfg *TextConfi
 				[]int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
 			hidden = mlx.GeGLU(gate, up)
 		} else {
-			gate := mlx.GatherQMMWithGlobalScale(xFlat, m.GateWeightQ, m.GateScales, m.GateBiases,
+			gate := mlx.GatherQMM(xFlat, m.GateWeightQ, m.GateScales, m.GateBiases,
 				nil, idxFlat, true, m.GateGroupSize, m.GateBits, m.QuantMode, m.GateGlobalScales, doSort)
-			up := mlx.GatherQMMWithGlobalScale(xFlat, m.UpWeightQ, m.UpScales, m.UpBiases,
+			up := mlx.GatherQMM(xFlat, m.UpWeightQ, m.UpScales, m.UpBiases,
 				nil, idxFlat, true, m.UpGroupSize, m.UpBits, m.QuantMode, m.UpGlobalScales, doSort)
 			hidden = mlx.GeGLU(gate, up)
 		}
@@ -1604,7 +1595,7 @@ func (m *MoEBlock) Forward(x *mlx.Array, scores, inds *mlx.Array, cfg *TextConfi
 		if downMode == "" {
 			downMode = m.QuantMode
 		}
-		down = mlx.GatherQMMWithGlobalScale(hidden, m.DownWeightQ, m.DownScales, m.DownBiases,
+		down = mlx.GatherQMM(hidden, m.DownWeightQ, m.DownScales, m.DownBiases,
 			nil, idxFlat, true, m.DownGroupSize, m.DownBits, downMode, m.DownGlobalScales, doSort)
 	} else {
 		if m.UseFusedGateUp && m.GateUpWeight != nil {

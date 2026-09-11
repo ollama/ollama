@@ -216,3 +216,55 @@ func TestQuantizedEmbeddingAsLinearPreservesGlobalScale(t *testing.T) {
 		t.Fatalf("AsLinear quant params = (%d, %d, %q), want (16, 4, %q)", linear.GroupSize, linear.Bits, linear.Mode, "nvfp4")
 	}
 }
+
+// A dense nvfp4 projection carries the checkpoint's global scale through
+// QuantizedMatmul, which applies it to the output in a single fused kernel.
+// The dequantized weights are the reference.
+func TestQuantizedLinearGlobalScaleMatchesDequantized(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("nvfp4 quantized_matmul requires a GPU backend")
+		}
+		const rows, cols, group = 64, 64, 16
+
+		weightValues := make([]float32, rows*cols)
+		for i := range weightValues {
+			weightValues[i] = float32((i%23)-11) * 0.011
+		}
+		weight := mlx.FromValues(weightValues, rows, cols).AsType(mlx.DTypeBFloat16)
+		packed, scales, _ := mlx.Quantize(weight, group, 4, "nvfp4")
+		mlx.Eval(packed, scales)
+
+		globalScale := mlx.FromValues([]float32{0.375}, 1)
+		linear := &QuantizedLinear{
+			Weight: packed, Scales: scales, GlobalScale: globalScale,
+			GroupSize: group, Bits: 4, Mode: "nvfp4",
+		}
+
+		xValues := make([]float32, cols)
+		for i := range xValues {
+			xValues[i] = float32(i%7-3) / 8
+		}
+		x := mlx.FromValues(xValues, 1, cols).AsType(mlx.DTypeBFloat16)
+
+		got := linear.Forward(x).AsType(mlx.DTypeFloat32)
+		dense := mlx.Dequantize(packed, scales, nil, group, 4, "nvfp4", globalScale)
+		want := mlx.Matmul(x.AsType(mlx.DTypeFloat32), mlx.Transpose(dense.AsType(mlx.DTypeFloat32), 1, 0))
+		mlx.Eval(got, want)
+
+		gotValues, wantValues := got.Floats(), want.Floats()
+		if len(gotValues) != len(wantValues) {
+			t.Fatalf("output length = %d, want %d", len(gotValues), len(wantValues))
+		}
+		for i := range gotValues {
+			if math.IsNaN(float64(gotValues[i])) || math.IsInf(float64(gotValues[i]), 0) {
+				t.Fatalf("output[%d] = %v, want finite", i, gotValues[i])
+			}
+			delta := math.Abs(float64(gotValues[i] - wantValues[i]))
+			tolerance := 0.02 * math.Max(math.Abs(float64(wantValues[i])), 1)
+			if delta > tolerance {
+				t.Fatalf("output[%d] = %v, want %v (delta %v > %v)", i, gotValues[i], wantValues[i], delta, tolerance)
+			}
+		}
+	})
+}

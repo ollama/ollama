@@ -5,30 +5,45 @@ import (
 	"github.com/ollama/ollama/x/quant"
 )
 
-// nvfp4MaxProduct is the product of the maximum E4M3 and E2M1 values.
-const nvfp4MaxProduct = 448 * 6
-
-// PrepareGatherQMMGlobalScale converts a ModelOpt NVFP4 dequantization
-// multiplier to the amax convention that MLX's gather_qmm expects. MLX requires
-// one global scale per expert, so a checkpoint-wide scalar is expanded to the
-// expert count. The native global-scale path is currently available only on
-// Metal.
-func PrepareGatherQMMGlobalScale(globalScale *mlx.Array, mode string, numExperts int) (*mlx.Array, bool) {
+// PrepareGatherQMMGlobalScale converts a checkpoint's NVFP4 multiplier into
+// the one-float32-per-expert form gather_qmm wants, broadcasting a
+// checkpoint-wide scalar to the expert count. Materialized dense: the kernel
+// indexes it by raw offset, and a broadcast view is one element of storage.
+func PrepareGatherQMMGlobalScale(globalScale *mlx.Array, numExperts int) *mlx.Array {
 	if globalScale == nil {
-		return nil, true
+		return nil
 	}
-	if mode != "nvfp4" || !mlx.MetalIsAvailable() || numExperts <= 0 {
-		return nil, false
-	}
-	if globalScale.Size() != 1 && globalScale.Size() != numExperts {
-		return nil, false
-	}
-
 	globalScale = mlx.Reshape(globalScale.AsType(mlx.DTypeFloat32), int32(globalScale.Size()))
-	if globalScale.Size() == 1 && numExperts > 1 {
-		globalScale = mlx.Add(mlx.Zeros(mlx.DTypeFloat32, numExperts), globalScale)
+	globalScale = mlx.BroadcastTo(globalScale, int32(numExperts))
+	return mlx.Contiguous(mlx.MulScalar(globalScale, mlx.Nvfp4MaxProduct), false)
+}
+
+// GatherQMMIdentityScale is the scale that leaves an expert bank unscaled,
+// for rows folded into a scaled bank without a scale of their own.
+func GatherQMMIdentityScale() *mlx.Array {
+	return mlx.NewScalarArray(float32(mlx.Nvfp4MaxProduct))
+}
+
+// SameGlobalScales reports whether two prepared banks hold the same scale for
+// every expert, which is what lets two projections share one fused bank.
+func SameGlobalScales(a, b *mlx.Array) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
 	}
-	return mlx.MulScalar(globalScale, nvfp4MaxProduct), true
+	if a == b {
+		return true
+	}
+	if a.Size() != b.Size() {
+		return false
+	}
+	mlx.Eval(a, b)
+	aValues, bValues := a.Floats(), b.Floats()
+	for i := range aValues {
+		if aValues[i] != bValues[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // QuantizationParams returns default groupSize, bits, and mode for a

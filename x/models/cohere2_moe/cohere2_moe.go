@@ -432,8 +432,8 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
 		key, w, scales,
 	)
-	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, w.Dim(0))
-	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
+	kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+	if useQuantized && supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:             w,
 			Scales:             scales,
@@ -488,8 +488,8 @@ func loadExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantiz
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant,
 		key, w, scales,
 	)
-	kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, mode, 1)
-	if useQuantized && supportsGatherQMM(mode, bits) && supportsGlobalScale {
+	kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
+	if useQuantized && supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:             w,
 			Scales:             scales,
@@ -832,14 +832,14 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 
 	var gate, up, hidden, down *mlx.Array
 	if s.UseQuantized {
-		gate = mlx.GatherQMMWithGlobalScale(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
+		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases,
 			nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode,
 			s.GateGlobalScales, doSort)
-		up = mlx.GatherQMMWithGlobalScale(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
+		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
 			nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode,
 			s.UpGlobalScales, doSort)
 		hidden = mlx.SwiGLU(gate, up)
-		down = mlx.GatherQMMWithGlobalScale(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
+		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode,
 			s.DownGlobalScales, doSort)
 	} else {
