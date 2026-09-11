@@ -232,18 +232,18 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	includeRecommendations := false
-	if hasUsedCodexDesktopIntegration() {
-		access, err := codexDesktopAccessState(ctx)
-		includeRecommendations = err == nil && access.Cloud == proxy.ClaudeDesktopCloudOn
-	}
-	inventory, err := loadCodexDesktopModelInventory(ctx, includeRecommendations)
+	inventory, err := loadCodexDesktopModelInventory(ctx, false)
 	if err != nil {
 		return settings, err
 	}
 	settings.Available = codexDesktopModelNames(inventory.Available)
 	if len(settings.Selected) == 0 {
 		settings.Selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
+		// Start must send a displayed fallback explicitly, since its recommendation
+		// discovery may produce different defaults than this Settings inventory.
+		settings.UsesDefaults = slices.ContainsFunc(inventory.Catalog, func(model codexDesktopCatalogModel) bool {
+			return model.Recommended
+		})
 	}
 	settings.Models = codexDesktopModelStatuses(inventory, settings.Selected)
 	return settings, nil
@@ -398,19 +398,20 @@ func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel,
 	return inventory.Available, err
 }
 
-func loadCodexDesktopModelInventory(ctx context.Context, includeRecommendations bool) (codexDesktopModelInventory, error) {
+// Explicit connection and apply flows force recommendations; Settings requires
+// prior integration use and a successful Cloud On access lookup.
+func loadCodexDesktopModelInventory(ctx context.Context, forceRecommendations bool) (codexDesktopModelInventory, error) {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
 		return codexDesktopModelInventory{}, err
 	}
 
-	var recommendations []api.ModelRecommendation
-	if includeRecommendations {
-		recommendations, err = codexDesktopRecommendations(ctx)
-		if err != nil {
-			slog.Debug("could not load ChatGPT model recommendations", "error", err)
-		}
+	used := false
+	if !forceRecommendations {
+		used = hasUsedCodexDesktopIntegration()
 	}
+	var recommendations []api.ModelRecommendation
+	recommendationsRequested := false
 	var access proxy.ClaudeDesktopAccessState
 	accessKnown := false
 	var last codexDesktopModelInventory
@@ -422,6 +423,15 @@ func loadCodexDesktopModelInventory(ctx context.Context, includeRecommendations 
 				accessKnown = true
 			} else {
 				slog.Debug("could not determine ChatGPT model access", "error", accessErr)
+			}
+		}
+
+		includeRecommendations := forceRecommendations || (used && accessKnown && access.Cloud == proxy.ClaudeDesktopCloudOn)
+		if includeRecommendations && !recommendationsRequested {
+			recommendationsRequested = true
+			recommendations, err = codexDesktopRecommendations(ctx)
+			if err != nil {
+				slog.Debug("could not load ChatGPT model recommendations", "error", err)
 			}
 		}
 

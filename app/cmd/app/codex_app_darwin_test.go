@@ -1175,6 +1175,133 @@ func TestCodexDesktopSettingsRecommendationEligibility(t *testing.T) {
 	}
 }
 
+func TestCodexDesktopSettingsStartSelectionAndAccessRecovery(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		used           bool
+		empty          bool
+		running        bool
+		cloud          proxy.ClaudeDesktopCloudStatus
+		accessFailures int
+		wantSelected   []string
+		wantDefaults   bool
+		wantFetches    int
+	}{
+		{name: "unused local fallback", cloud: proxy.ClaudeDesktopCloudOn, wantSelected: []string{"qwen3:8b"}},
+		{name: "cloud off local fallback", used: true, cloud: proxy.ClaudeDesktopCloudOff, wantSelected: []string{"qwen3:8b"}},
+		{name: "cloud on after access recovery", used: true, empty: true, cloud: proxy.ClaudeDesktopCloudOn, accessFailures: 1, wantSelected: []string{"recommended:cloud"}, wantDefaults: true, wantFetches: 1},
+		{name: "restart after access recovery", used: true, running: true, empty: true, cloud: proxy.ClaudeDesktopCloudOn, accessFailures: 1, wantSelected: []string{"recommended:cloud"}, wantDefaults: true, wantFetches: 1},
+		{name: "cloud off after access recovery", used: true, empty: true, cloud: proxy.ClaudeDesktopCloudOff, accessFailures: 1},
+		{name: "unused after access recovery", empty: true, cloud: proxy.ClaudeDesktopCloudOn, accessFailures: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			previousStore := appStore
+			previousController := codexDesktop
+			previousClientFactory := codexDesktopClientFactory
+			previousCloudModels := codexDesktopCloudModels
+			previousAttempts := codexDesktopModelLoadAttempts
+			previousWait := codexDesktopModelRetryWait
+			appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			t.Cleanup(func() {
+				appStore.Close()
+				appStore = previousStore
+				codexDesktop = previousController
+				codexDesktopClientFactory = previousClientFactory
+				codexDesktopCloudModels = previousCloudModels
+				codexDesktopModelLoadAttempts = previousAttempts
+				codexDesktopModelRetryWait = previousWait
+			})
+			if tt.used {
+				if err := markCodexDesktopIntegrationUsed(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			controller := &fakeCodexDesktopController{installed: true, configured: tt.running, running: tt.running}
+			codexDesktop = controller
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					if tt.empty {
+						_, _ = w.Write([]byte(`{"models":[]}`))
+					} else {
+						_, _ = w.Write([]byte(`{"models":[{"name":"qwen3:8b"}]}`))
+					}
+				case "/api/show":
+					_, _ = w.Write([]byte(`{"capabilities":["completion"]}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := api.NewClient(base, server.Client())
+			codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+			codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+			access := proxy.ClaudeDesktopAccessState{Cloud: tt.cloud, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}
+			stubCodexDesktopCatalogSources(t, nil, access)
+			accessRequests := 0
+			codexDesktopAccessState = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				accessRequests++
+				if accessRequests <= tt.accessFailures {
+					return proxy.ClaudeDesktopAccessState{}, errors.New("server restarting")
+				}
+				return access, nil
+			}
+			fetches := 0
+			codexDesktopRecommendations = func(context.Context) ([]api.ModelRecommendation, error) {
+				fetches++
+				return []api.ModelRecommendation{{Model: "recommended:cloud", RequiredPlan: "free"}}, nil
+			}
+			codexDesktopModelLoadAttempts = 2
+			codexDesktopModelRetryWait = time.Millisecond
+
+			settings, err := getCodexDesktopModelsSettings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(settings.Selected, tt.wantSelected) || settings.UsesDefaults != tt.wantDefaults {
+				t.Fatalf("selected = %v, usesDefaults = %v; want %v, %v", settings.Selected, settings.UsesDefaults, tt.wantSelected, tt.wantDefaults)
+			}
+			if fetches != tt.wantFetches {
+				t.Fatalf("Settings recommendation fetches = %d, want %d", fetches, tt.wantFetches)
+			}
+			if len(config.IntegrationModels(codexDesktopIntegrationName)) != 0 || hasUsedCodexDesktopIntegration() != tt.used {
+				t.Fatal("Settings changed saved selection or integration history")
+			}
+			if len(settings.Selected) == 0 {
+				return
+			}
+			// Match Settings' unchanged Start payload: only recommendations stay implicit.
+			selected := settings.Selected
+			if settings.UsesDefaults {
+				selected = nil
+			}
+			wantFetches := tt.wantFetches + 1
+			err = applyCodexDesktopModels(selected, false)
+			if tt.running {
+				if !errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
+					t.Fatalf("Restart error = %v, want confirmation required", err)
+				}
+				err = applyCodexDesktopModels(selected, true)
+				wantFetches++
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(controller.models, settings.Selected) {
+				t.Fatalf("started models = %v, want displayed selection %v", controller.models, settings.Selected)
+			}
+			if fetches != wantFetches {
+				t.Fatalf("explicit Start did not fetch recommendations: fetches = %d", fetches)
+			}
+		})
+	}
+}
+
 func TestGetCodexDesktopModelsSettingsKeepsSelectionWhenInventoryFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
