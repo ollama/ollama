@@ -32,6 +32,7 @@ var toolsMinVRAM = map[string]uint64{
 	"nemotron3:33b": 32,
 	"qwen3.5:2b":    4,
 	"qwen3.6:27b":   20,
+	"qwen3.8:27b":   20,
 	"qwen3-vl":      16,
 	"gpt-oss:20b":   16,
 	"gpt-oss:120b":  70,

@@ -161,7 +161,7 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 			desc: "partial thinking incomplete",
 			steps: []step{
 				{
-					input:      "abc<think>unfinished<", // when something is ambiguious, we dont emit anything
+					input:      "abc<think>unfinished<", // when something is ambiguous, we dont emit anything
 					wantEvents: []qwenEvent{qwenEventContent{content: "abc<think>unfinished"}},
 				},
 			},
@@ -170,7 +170,7 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 			desc: "test with split tool and content",
 			steps: []step{
 				{
-					input: "abc<tool_call>unfinished</", // when something is ambiguious, we dont emit anything
+					input: "abc<tool_call>unfinished</", // when something is ambiguous, we dont emit anything
 					wantEvents: []qwenEvent{
 						qwenEventContent{content: "abc"},
 					},

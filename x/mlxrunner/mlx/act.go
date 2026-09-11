@@ -25,11 +25,33 @@ var GELUApprox = Compile1(
 	Shapeless(),
 )
 
+func gelu(x *Array) *Array {
+	dt := x.DType()
+	half := FromValue[float32](0.5).AsType(dt)
+	one := FromValue[float32](1).AsType(dt)
+	invSqrt2 := FromValue(float32(1 / math.Sqrt2)).AsType(dt)
+	return half.Multiply(x).Multiply(one.Add(erf(x.Multiply(invSqrt2))))
+}
+
+// GELU returns the exact erf formulation used by torch.nn.functional.gelu.
+var GELU = Compile1("GELU", gelu, Shapeless())
+
 // SiLU returns a * sigmoid(a) as a fused kernel.
 var SiLU = Compile1(
 	"SiLU",
 	func(a *Array) *Array {
 		return a.Multiply(a.Sigmoid())
+	},
+	Shapeless(),
+)
+
+// ReLUSquared returns relu(x)^2 as a fused kernel.
+var ReLUSquared = Compile1(
+	"ReLUSquared",
+	func(x *Array) *Array {
+		zero := FromValue[float32](0).AsType(x.DType())
+		x = Maximum(x, zero)
+		return x.Multiply(x)
 	},
 	Shapeless(),
 )

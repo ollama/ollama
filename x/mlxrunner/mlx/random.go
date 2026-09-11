@@ -7,7 +7,7 @@ import "unsafe"
 
 func RandomKey(seed uint64) *Array {
 	out := New("RANDOM_KEY")
-	C.mlx_random_key(&out.ctx, C.uint64_t(seed))
+	mlxCheck(C.mlx_random_key(&out.ctx, C.uint64_t(seed)))
 	return out
 }
 
@@ -20,7 +20,7 @@ func (t *Array) CategoricalWithKey(axis int, key *Array) *Array {
 		key = New("")
 	}
 	out := New("")
-	C.mlx_random_categorical(&out.ctx, t.ctx, C.int(axis), key.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_random_categorical(&out.ctx, t.ctx, C.int(axis), key.ctx, DefaultStream().ctx))
 	return out
 }
 
@@ -39,6 +39,6 @@ func BernoulliWithKey(p *Array, key *Array) *Array {
 		key = New("")
 	}
 	out := New("BERNOULLI")
-	C.mlx_random_bernoulli(&out.ctx, p.ctx, unsafe.SliceData(shape), C.size_t(len(shape)), key.ctx, DefaultStream().ctx)
+	mlxCheck(C.mlx_random_bernoulli(&out.ctx, p.ctx, unsafe.SliceData(shape), C.size_t(len(shape)), key.ctx, DefaultStream().ctx))
 	return out
 }

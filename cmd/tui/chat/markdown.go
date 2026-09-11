@@ -387,8 +387,10 @@ func isMarkdownTableSeparator(line string) bool {
 		return false
 	}
 	for _, cell := range cells {
-		cell = strings.Trim(cell, " :-")
-		if cell != "" {
+		cell = strings.TrimSpace(cell)
+		cell = strings.TrimPrefix(cell, ":")
+		cell = strings.TrimSuffix(cell, ":")
+		if cell == "" || strings.Trim(cell, "-") != "" {
 			return false
 		}
 	}

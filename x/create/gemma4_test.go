@@ -159,11 +159,12 @@ func TestGemma4QuantizationType(t *testing.T) {
 		// Audio tower v_proj — must NOT be promoted despite containing .v_proj
 		{"audio v_proj int4", transform26B, "model.audio_tower.layers.0.self_attn.v_proj.linear.weight", aligned, "int4", ""},
 		{"audio v_proj nvfp4", transform26B, "model.audio_tower.layers.0.self_attn.v_proj.linear.weight", aligned, "nvfp4", ""},
-		// Vision tower v_proj — vision tower IS quantized (unlike audio tower),
-		// but not intercepted by gemma4's layer-position heuristic.
-		// Falls through to GetTensorQuantization which applies uniform promotion.
-		{"vision v_proj int4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "int4", "int8"},
-		{"vision v_proj nvfp4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "nvfp4", "mxfp8"},
+		// Vision tower — source precision for every quant family.
+		{"vision v_proj int4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "int4", ""},
+		{"vision v_proj nvfp4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.v_proj.linear.weight", aligned, "nvfp4", ""},
+		{"vision q_proj nvfp4", transform26B, "model.vision_tower.encoder.layers.0.self_attn.q_proj.linear.weight", aligned, "nvfp4", ""},
+		{"unified vision embedder nvfp4", transform26B, "model.vision_embedder.patch_dense.weight", aligned, "nvfp4", ""},
+		{"vision projection nvfp4", transform26B, "model.embed_vision.embedding_projection.linear.weight", aligned, "nvfp4", ""},
 		// Audio tower down_proj
 		{"audio down_proj int4", transform26B, "model.audio_tower.layers.0.mlp.down_proj.linear.weight", aligned, "int4", ""},
 		{"audio down_proj nvfp4", transform26B, "model.audio_tower.layers.0.mlp.down_proj.linear.weight", aligned, "nvfp4", ""},

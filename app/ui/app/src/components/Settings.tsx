@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { Input } from "@/components/ui/input";
@@ -7,23 +7,34 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import {
+  ClaudeDesktopModelsSettings,
+  type ClaudeDesktopModelsSettingsHandle,
+} from "@/components/ClaudeDesktopModelsSettings";
+import {
+  CodexDesktopModelsSettings,
+  type CodexDesktopModelsSettingsHandle,
+} from "@/components/CodexDesktopModelsSettings";
+import {
   WifiIcon,
   FolderIcon,
   BoltIcon,
   WrenchIcon,
   CloudIcon,
-  XMarkIcon,
   CogIcon,
-  ArrowLeftIcon,
   ArrowDownTrayIcon,
+  ArrowPathIcon,
+  Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { useNavigate } from "@tanstack/react-router";
+import { isWindowsPlatform } from "@/lib/platform";
+import { settingsMutationScope } from "@/lib/settingsMutationScope";
 import { useUser } from "@/hooks/useUser";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
 import {
   getSettings,
+  type CloudStatusSource,
   type CloudStatusResponse,
   updateCloudSetting,
   updateSettings,
@@ -44,10 +55,109 @@ function AnimatedDots() {
   );
 }
 
+interface SettingsDefaultsActions {
+  updateSettings: (settings: SettingsType) => Promise<unknown>;
+  updateCloud: (enabled: boolean) => Promise<unknown>;
+  updateShowAppsInMenu: (visible: boolean) => Promise<unknown>;
+  resetChatGPTModels: () => Promise<boolean>;
+  resetClaudeMappings: () => Promise<boolean>;
+  currentSettings: SettingsType;
+  currentShowAppsInMenu: boolean;
+  cloudSource: CloudStatusSource;
+  onSaved: () => void;
+}
+
+interface CloudUpdateRequest {
+  enabled: boolean;
+  requestId: number;
+}
+
+let latestCloudRequestId = 0;
+const savedConfirmationDuration = 3000;
+
+export async function applySettingsDefaults({
+  updateSettings,
+  updateCloud,
+  updateShowAppsInMenu,
+  resetChatGPTModels,
+  resetClaudeMappings,
+  currentSettings,
+  currentShowAppsInMenu,
+  cloudSource,
+  onSaved,
+}: SettingsDefaultsActions): Promise<void> {
+  const cloudNeedsReset = cloudSource === "config" || cloudSource === "both";
+  const rollbacks: Array<() => Promise<unknown>> = [];
+
+  try {
+    if (cloudNeedsReset) {
+      await updateCloud(true);
+      rollbacks.push(() => updateCloud(false));
+    }
+
+    await updateSettings(
+      new SettingsType({
+        Expose: false,
+        Browser: false,
+        Models: "",
+        Agent: false,
+        Tools: false,
+        ContextLength: currentSettings.ContextLength,
+        AutoUpdateEnabled: true,
+      }),
+    );
+    rollbacks.push(() => updateSettings(currentSettings));
+
+    await updateShowAppsInMenu(true);
+    rollbacks.push(() => updateShowAppsInMenu(currentShowAppsInMenu));
+
+    // Reset app-specific model settings only after the rest of the page has
+    // succeeded, because those native profile changes cannot be rolled back
+    // with the settings API.
+    if (!(await resetChatGPTModels())) {
+      throw new Error("ChatGPT models could not be reset");
+    }
+    if (!(await resetClaudeMappings())) {
+      throw new Error("Claude model mappings could not be reset");
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const rollback of rollbacks.reverse()) {
+      try {
+        await rollback();
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      console.error("Failed to roll back settings reset:", rollbackErrors);
+    }
+    throw error;
+  }
+
+  onSaved();
+}
+
 export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
+  const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
+  const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
+  const [resettingToDefaults, setResettingToDefaults] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [hasClaudeDraftChanges, setHasClaudeDraftChanges] = useState(false);
+  const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
+  const claudeModelsSettingsRef =
+    useRef<ClaudeDesktopModelsSettingsHandle>(null);
+  const codexModelsSettingsRef = useRef<CodexDesktopModelsSettingsHandle>(null);
+  const savedConfirmationTimeoutRef = useRef<number | null>(null);
+  useBlocker({
+    shouldBlockFn: () =>
+      !window.confirm("Discard unapplied app model changes?"),
+    enableBeforeUnload: hasClaudeDraftChanges || hasCodexDraftChanges,
+    disabled: !hasClaudeDraftChanges && !hasCodexDraftChanges,
+  });
   const {
     user,
     isAuthenticated,
@@ -61,12 +171,31 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const navigate = useNavigate();
   const {
     cloudDisabled,
     cloudStatus,
-    isLoading: cloudStatusLoading,
+    isKnown: cloudStatusKnown,
   } = useCloudStatus();
+
+  const showSavedConfirmation = useCallback(() => {
+    if (savedConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(savedConfirmationTimeoutRef.current);
+    }
+    setShowSaved(true);
+    savedConfirmationTimeoutRef.current = window.setTimeout(() => {
+      setShowSaved(false);
+      savedConfirmationTimeoutRef.current = null;
+    }, savedConfirmationDuration);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (savedConfirmationTimeoutRef.current !== null) {
+        window.clearTimeout(savedConfirmationTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   const {
     data: settingsData,
@@ -87,22 +216,24 @@ export default function Settings() {
   const defaultContextLength = inferenceComputeResponse?.defaultContextLength;
 
   const updateSettingsMutation = useMutation({
+    scope: settingsMutationScope,
     mutationFn: updateSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1500);
     },
   });
 
   const updateCloudMutation = useMutation({
-    mutationFn: (enabled: boolean) => updateCloudSetting(enabled),
-    onMutate: async (enabled: boolean) => {
+    scope: settingsMutationScope,
+    mutationFn: ({ enabled }: CloudUpdateRequest) =>
+      updateCloudSetting(enabled),
+    onMutate: async ({ enabled, requestId }: CloudUpdateRequest) => {
       await queryClient.cancelQueries({ queryKey: ["cloudStatus"] });
 
       const previous = queryClient.getQueryData<CloudStatusResponse | null>([
         "cloudStatus",
       ]);
+      if (requestId !== latestCloudRequestId) return { previous };
       const envForcesDisabled =
         previous?.source === "env" || previous?.source === "both";
 
@@ -121,27 +252,43 @@ export default function Settings() {
 
       return { previous };
     },
-    onError: (_error, _enabled, context) => {
+    onError: (_error, request, context) => {
+      if (request.requestId !== latestCloudRequestId) return;
       if (context?.previous !== undefined) {
         queryClient.setQueryData(["cloudStatus"], context.previous);
       }
     },
-    onSuccess: (status) => {
+    onSuccess: (status, request) => {
+      if (request.requestId !== latestCloudRequestId) return;
       queryClient.setQueryData<CloudStatusResponse | null>(
         ["cloudStatus"],
         status,
       );
+    },
+    onSettled: (_status, _error, request) => {
+      if (request.requestId !== latestCloudRequestId) return;
       queryClient.invalidateQueries({ queryKey: ["models"] });
       queryClient.invalidateQueries({ queryKey: ["cloudStatus"] });
-
-      setShowSaved(true);
-      setTimeout(() => setShowSaved(false), 1500);
     },
   });
+
+  const requestCloudUpdate = (enabled: boolean) => {
+    const requestId = ++latestCloudRequestId;
+    return updateCloudMutation.mutateAsync({ enabled, requestId });
+  };
 
   useEffect(() => {
     refetchUser();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    window
+      .getShowAppsInMenu?.()
+      .then(setShowAppsInMenuState)
+      .catch((error) =>
+        console.error("Failed to load menu app visibility:", error),
+      );
+  }, []);
 
   useEffect(() => {
     const handleFocus = () => {
@@ -196,34 +343,90 @@ export default function Settings() {
         if (field === "ContextLength" && value !== settings.ContextLength) {
           setRestartMessage(true);
           // Hide restart message after 3 seconds
-          setTimeout(() => setRestartMessage(false), 3000);
+          window.setTimeout(
+            () => setRestartMessage(false),
+            savedConfirmationDuration,
+          );
         }
 
-        updateSettingsMutation.mutate(updatedSettings);
+        updateSettingsMutation.mutate(updatedSettings, {
+          onSuccess: showSavedConfirmation,
+        });
       }
     },
-    [settings, updateSettingsMutation],
+    [settings, showSavedConfirmation, updateSettingsMutation],
   );
 
-  const handleResetToDefaults = () => {
-    if (settings) {
-      const defaultSettings = new SettingsType({
-        Expose: false,
-        Browser: false,
-        Models: "",
-        Agent: false,
-        Tools: false,
-        ContextLength: 0,
-        AutoUpdateEnabled: true,
-      });
-      updateSettingsMutation.mutate(defaultSettings);
+  const updateShowAppsInMenuVisibility = async (checked: boolean) => {
+    const previous = showAppsInMenu;
+    setShowAppsInMenuState(checked);
+    setShowAppsInMenuPending(true);
+    try {
+      await window.setShowAppsInMenu?.(checked);
+    } catch (error) {
+      setShowAppsInMenuState(previous);
+      throw error;
+    } finally {
+      setShowAppsInMenuPending(false);
     }
+  };
+
+  const handleShowAppsInMenu = (checked: boolean) => {
+    void updateShowAppsInMenuVisibility(checked)
+      .then(showSavedConfirmation)
+      .catch((error) =>
+        console.error("Failed to update menu app visibility:", error),
+      );
+  };
+
+  const handleCloudUpdate = (enabled: boolean) => {
+    void requestCloudUpdate(enabled)
+      .then(showSavedConfirmation)
+      .catch((error) =>
+        console.error("Failed to update cloud setting:", error),
+      );
   };
 
   const cloudOverriddenByEnv =
     cloudStatus?.source === "env" || cloudStatus?.source === "both";
-  const cloudToggleDisabled =
-    cloudStatusLoading || updateCloudMutation.isPending || cloudOverriddenByEnv;
+  const cloudToggleDisabled = cloudOverriddenByEnv;
+
+  const handleResetToDefaults = async () => {
+    const cloudSource = cloudStatus?.source;
+    if (!settings || resettingToDefaults || !cloudSource) return;
+
+    setResettingToDefaults(true);
+    if (savedConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(savedConfirmationTimeoutRef.current);
+      savedConfirmationTimeoutRef.current = null;
+    }
+    setShowSaved(false);
+    setRestartMessage(false);
+    setResetError(null);
+    try {
+      await applySettingsDefaults({
+        updateSettings: (defaultSettings) =>
+          updateSettingsMutation.mutateAsync(defaultSettings),
+        updateCloud: requestCloudUpdate,
+        updateShowAppsInMenu: updateShowAppsInMenuVisibility,
+        resetChatGPTModels: async () =>
+          (await codexModelsSettingsRef.current?.resetToDefaults()) ?? true,
+        resetClaudeMappings: async () =>
+          (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
+        currentSettings: settings,
+        currentShowAppsInMenu: showAppsInMenu,
+        cloudSource,
+        onSaved: showSavedConfirmation,
+      });
+    } catch (error) {
+      console.error("Failed to reset settings:", error);
+      setResetError(
+        "Ollama could not reset every setting. Check the settings above and try again.",
+      );
+    } finally {
+      setResettingToDefaults(false);
+    }
+  };
 
   const handleConnectOllamaAccount = async () => {
     setConnectionError(null);
@@ -260,55 +463,38 @@ export default function Settings() {
     }
   };
 
+  const handleDisconnectOllamaAccount = async () => {
+    setConnectionError(null);
+    try {
+      await disconnectUser();
+      window.location.reload();
+    } catch {
+      setConnectionError("Failed to disconnect Ollama account");
+    }
+  };
+
   if (loading) {
     return null;
   }
 
   if (error || !settings) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-red-500">Failed to load settings</div>
       </div>
     );
   }
 
-  const isWindows = navigator.platform.toLowerCase().includes("win");
-  const handleCloseSettings = () => {
-    const chatId = settings.LastHomeView === "chat" ? "new" : "launch";
-    navigate({ to: "/c/$chatId", params: { chatId } });
-  };
+  const isWindows = isWindowsPlatform();
 
   return (
-    <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
-      <header
-        className="w-full flex flex-none justify-between h-[52px] py-2.5 items-center border-b border-neutral-200 dark:border-neutral-800 select-none"
-        onMouseDown={() => window.drag && window.drag()}
-        onDoubleClick={() => window.doubleClick && window.doubleClick()}
-      >
-        <h1
-          className={`${isWindows ? "pl-4" : "pl-24"} flex items-center font-rounded text-md font-medium dark:text-white`}
-        >
-          {isWindows && (
-            <button
-              onClick={handleCloseSettings}
-              className="hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full p-1.5"
-            >
-              <ArrowLeftIcon className="w-5 h-5 dark:text-white" />
-            </button>
-          )}
-          Settings
-        </h1>
-        {!isWindows && (
-          <button
-            onClick={handleCloseSettings}
-            className="p-1 hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full"
-          >
-            <XMarkIcon className="w-6 h-6 dark:text-white" />
-          </button>
-        )}
-      </header>
+    <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
-        <div className="space-y-4 max-w-2xl mx-auto">
+        <fieldset
+          disabled={resettingToDefaults}
+          aria-busy={resettingToDefaults}
+          className="mx-auto max-w-4xl space-y-4 border-0 p-0"
+        >
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="p-4">
@@ -367,7 +553,7 @@ export default function Settings() {
                           type="button"
                           color="zinc"
                           className="px-3 py-2 text-sm"
-                          onClick={() => disconnectUser()}
+                          onClick={() => void handleDisconnectOllamaAccount()}
                         >
                           Sign out
                         </Button>
@@ -439,12 +625,35 @@ export default function Settings() {
                         if (cloudOverriddenByEnv) {
                           return;
                         }
-                        updateCloudMutation.mutate(checked);
+                        handleCloudUpdate(checked);
                       }}
                     />
                   </div>
                 </div>
               </Field>
+
+              {!isWindows && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-1 items-start space-x-3">
+                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Show apps in menu</Label>
+                        <Description>
+                          Show connected apps at the top of the Ollama menu.
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        checked={showAppsInMenu}
+                        disabled={showAppsInMenuPending}
+                        onChange={handleShowAppsInMenu}
+                      />
+                    </div>
+                  </div>
+                </Field>
+              )}
 
               {/* Auto Update */}
               <Field>
@@ -463,7 +672,9 @@ export default function Settings() {
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                      onChange={(checked) =>
+                        handleChange("AutoUpdateEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
@@ -544,7 +755,9 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
+                        value={
+                          settings.ContextLength || defaultContextLength || 0
+                        }
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
@@ -565,6 +778,33 @@ export default function Settings() {
               </Field>
             </div>
           </div>
+
+          {!isWindows && (
+            <section
+              aria-labelledby="apps-settings-heading"
+              className="space-y-2"
+            >
+              <h2
+                id="apps-settings-heading"
+                className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+              >
+                Apps
+              </h2>
+              <ClaudeDesktopModelsSettings
+                ref={claudeModelsSettingsRef}
+                includeCloudModels={
+                  isAuthenticated && cloudStatusKnown && !cloudDisabled
+                }
+                onDraftChange={setHasClaudeDraftChanges}
+                showSectionHeading={false}
+              />
+              <CodexDesktopModelsSettings
+                ref={codexModelsSettingsRef}
+                accountKey={`${user?.id ?? "signed-out"}:${user?.plan ?? ""}:${cloudDisabled ? "cloud-off" : "cloud-on"}`}
+                onDraftChange={setHasCodexDraftChanges}
+              />
+            </section>
+          )}
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
@@ -611,17 +851,31 @@ export default function Settings() {
           )}
 
           {/* Reset button */}
-          <div className="mt-6 flex justify-end px-4">
+          <div className="flex items-center justify-between gap-4 px-4">
+            {resetError ? (
+              <p
+                role="alert"
+                className="text-xs text-red-600 dark:text-red-400"
+              >
+                {resetError}
+              </p>
+            ) : (
+              <span />
+            )}
             <Button
               type="button"
               color="white"
               className="px-3"
-              onClick={handleResetToDefaults}
+              disabled={resettingToDefaults || !cloudStatusKnown}
+              onClick={() => void handleResetToDefaults()}
             >
-              Reset to defaults
+              {resettingToDefaults && (
+                <ArrowPathIcon data-slot="icon" className="animate-spin" />
+              )}
+              {resettingToDefaults ? "Resetting…" : "Reset to defaults"}
             </Button>
           </div>
-        </div>
+        </fieldset>
 
         {/* Saved indicator */}
         {(showSaved || restartMessage) && (

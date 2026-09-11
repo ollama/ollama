@@ -6,9 +6,11 @@ Use Ollama models in VS Code Chat with the [Ollama extension](https://marketplac
 
 ## Requirements
 
-- [Visual Studio Code 1.120 or newer](https://code.visualstudio.com/download)
+- [Visual Studio Code 1.127 or newer](https://code.visualstudio.com/download)
 - Ollama installed and running
 - At least one local or cloud model available in Ollama
+
+Earlier VS Code versions do not reliably cancel requests from language model providers.
 
 Ollama 0.17.6 or newer is recommended for cloud model sign-in and richer model metadata. Older versions may still work with local models.
 
@@ -37,6 +39,12 @@ ollama signin
 ```
 
 Local models do not require sign-in.
+
+## Context length
+
+VS Code may show a model's maximum supported context length even when Ollama allocates a smaller context at runtime.
+
+For local models, open Ollama **Settings**, set the context length to at least 64k, reload the VS Code window, and resend your prompt. See [Context length](/context-length) for more information.
 
 ## Troubleshooting
 

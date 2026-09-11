@@ -30,6 +30,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"**Commands**",
 		"- `/model`: switch models",
 		"- `/think`: set thinking mode",
+		"- `/system [on|off]`: show or set the built-in system prompt",
 		"- `/compact`: summarize older context",
 		"- `/help`: show commands",
 		"- `/bye`: exit",
@@ -38,6 +39,7 @@ func TestChatHelpCommandShowsV1Commands(t *testing.T) {
 		"**Shortcuts**",
 		"- `shift+enter`: insert a newline",
 		"- `shift+tab`: toggle permission mode",
+		"- `ctrl+o`: toggle transcript details",
 	} {
 		if !strings.Contains(fm.entries[0].content, want) {
 			t.Fatalf("help output missing %q:\n%s", want, fm.entries[0].content)
@@ -370,6 +372,36 @@ func TestChatPromptDebugMouseWheelScrolls(t *testing.T) {
 	}
 }
 
+func TestChatPromptDebugCachesLinesByWidth(t *testing.T) {
+	m := chatModel{
+		promptDebug: &chatPromptDebug{
+			request: api.ChatRequest{
+				Model: "llama3.2",
+				Messages: []api.Message{{
+					Role:    "user",
+					Content: strings.Repeat("a long prompt line ", 20),
+				}},
+			},
+		},
+	}
+
+	first := m.promptDebugLines(80)
+	if len(first) == 0 || m.promptDebug.linesWidth != 80 {
+		t.Fatalf("prompt cache = %#v, want lines cached at width 80", m.promptDebug)
+	}
+	if &first[0] != &m.promptDebugLines(80)[0] {
+		t.Fatal("prompt debug should reuse cached lines at the same width")
+	}
+
+	resized := m.promptDebugLines(120)
+	if m.promptDebug.linesWidth != 120 {
+		t.Fatalf("prompt cache width = %d, want 120", m.promptDebug.linesWidth)
+	}
+	if &first[0] == &resized[0] {
+		t.Fatal("prompt debug should rebuild lines after a width change")
+	}
+}
+
 func TestTruncateInputLineUsesDisplayWidth(t *testing.T) {
 	line := truncateInputLine(strings.Repeat("界", 10), 10)
 	if got := lipgloss.Width(line); got > 10 {
@@ -570,6 +602,76 @@ func TestSkillCommandsListAndPersistSyntheticToolCall(t *testing.T) {
 	}
 }
 
+func TestSkillsImportReloadsCatalogRegistryAndSystemPrompt(t *testing.T) {
+	before := writeTestSkillCatalog(t)
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "from-codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "from-codex", "SKILL.md"), []byte("---\nname: from-codex\ndescription: Imported skill.\n---\nImported instructions."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := coreagent.DiscoverSkills(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := &coreagent.Registry{}
+	var reloaded, rebuilt, prompted bool
+	m := chatModel{
+		ctx: context.Background(),
+		opts: Options{
+			Model:  "test",
+			Skills: before,
+			ImportSkills: func(source string) (coreagent.SkillImportResult, error) {
+				if source != "codex" {
+					t.Fatalf("source = %q", source)
+				}
+				return coreagent.SkillImportResult{Source: source, SourceDir: "/source", Imported: []string{"from-codex"}}, nil
+			},
+			ReloadSkills: func() (*coreagent.SkillCatalog, error) {
+				reloaded = true
+				return after, nil
+			},
+			ToolRegistryForModel: func(context.Context, string) *coreagent.Registry {
+				rebuilt = true
+				return registry
+			},
+			SystemPromptForModel: func(_ context.Context, _ string, got *coreagent.Registry, _ bool) string {
+				prompted = got == registry
+				return after.SystemContext()
+			},
+		},
+		input: []rune("/skills import codex"),
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("skills import should not start a model run")
+	}
+	m = updated.(chatModel)
+	if !reloaded || !rebuilt || !prompted {
+		t.Fatalf("reload=%v rebuilt=%v prompted=%v", reloaded, rebuilt, prompted)
+	}
+	if m.opts.Skills != after || m.opts.Tools != registry || !strings.Contains(m.opts.SystemPrompt, "from-codex") {
+		t.Fatalf("reloaded options = %#v", m.opts)
+	}
+	if m.status != "skills reloaded" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "Imported 1 skill") {
+		t.Fatalf("import result = status %q entries %#v", m.status, m.entries)
+	}
+}
+
+func TestSkillsImportUsage(t *testing.T) {
+	m := chatModel{input: []rune("/skills import")}
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("invalid skills import should not start a model run")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "error" || !strings.Contains(m.entries[0].content, "usage: /skills [import codex|claude|pi]") {
+		t.Fatalf("entries = %#v", m.entries)
+	}
+}
+
 func TestSkillSlashCommandPromptBecomesUserMessage(t *testing.T) {
 	catalog := writeTestSkillCatalog(t)
 	m := chatModel{ctx: context.Background(), opts: Options{Model: "test", Skills: catalog, Client: chatTestClient{}}, input: []rune("/release-notes draft the v1.2 notes")}
@@ -665,6 +767,31 @@ func TestSkillSlashCommandAppearsInCompletions(t *testing.T) {
 	}
 }
 
+func TestSkillsImportSlashCompletions(t *testing.T) {
+	for _, test := range []struct {
+		input string
+		want  []string
+	}{
+		{input: "/skills", want: []string{"/skills", "/skills import"}},
+		{input: "/skills impo", want: []string{"/skills import"}},
+		{input: "/skills import ", want: []string{"/skills import codex", "/skills import claude", "/skills import pi"}},
+		{input: "/skills import c", want: []string{"/skills import codex", "/skills import claude"}},
+		{input: "/skills import pi", want: []string{"/skills import pi"}},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			m := chatModel{input: []rune(test.input)}
+			completions := m.slashCompletions()
+			got := make([]string, 0, len(completions))
+			for _, completion := range completions {
+				got = append(got, completion.value)
+			}
+			if strings.Join(got, "\n") != strings.Join(test.want, "\n") {
+				t.Fatalf("completions = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSkillSlashPromptHidesCommandCompletions(t *testing.T) {
 	catalog := writeTestSkillCatalog(t)
 	for _, input := range []string{"/release-notes ", "/release-notes draft the release notes"} {
@@ -708,7 +835,7 @@ func TestSkillSlashNameResolvesAndRejectsArgsAndUnknown(t *testing.T) {
 }
 
 func TestChatDeletedSlashCommandsAreUnknown(t *testing.T) {
-	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/system", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
+	for _, command := range []string{"/clear", "/copy", "/copy-all", "/launch", "/history", "/load", "/raw", "/resume", "/set", "/show", "/verbose"} {
 		t.Run(command, func(t *testing.T) {
 			m := chatModel{input: []rune(command)}
 
@@ -732,7 +859,7 @@ func TestChatViewRendersSlashCommandSuggestions(t *testing.T) {
 	}
 
 	view := stripANSI(m.View())
-	for _, want := range []string{"/model", "/new", "/think", "/tools", "/skills"} {
+	for _, want := range []string{"/model", "/new", "/think", "/tools", "/system"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %s suggestion: %q", want, view)
 		}
@@ -840,6 +967,127 @@ func TestChatToolsCommandUsage(t *testing.T) {
 	m = updated.(chatModel)
 	if m.status != "error" || len(m.entries) != 1 || !strings.Contains(m.entries[0].content, "usage: /tools") {
 		t.Fatalf("invalid /tools result = status:%q entries:%#v", m.status, m.entries)
+	}
+}
+
+func TestChatSystemCommandControlsBuiltInSystemPrompt(t *testing.T) {
+	client := &chatCaptureClient{}
+	m := chatModel{
+		ctx:   context.Background(),
+		input: []rune("/system"),
+		opts: Options{
+			Model:        "test",
+			Client:       client,
+			SystemPrompt: "canonical agent prompt",
+		},
+	}
+
+	updated, cmd := m.handleSubmit()
+	if cmd != nil {
+		t.Fatal("/system should not start a run")
+	}
+	m = updated.(chatModel)
+	if len(m.entries) != 1 || m.entries[0].role != "slash" || m.entries[0].content != "Built-in system prompt is on.\n\ncanonical agent prompt\n\nWarning: Changing the system prompt during a session breaks the prompt cache." {
+		t.Fatalf("/system entry = %#v", m.entries)
+	}
+
+	m.input = []rune("/system off")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if !m.systemPromptDisabled || m.status != "system prompt off" {
+		t.Fatalf("/system off state = disabled:%v status:%q", m.systemPromptDisabled, m.status)
+	}
+	m.input = []rune("/system")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if got := m.entries[len(m.entries)-1].content; got != "Built-in system prompt is off.\n\ncanonical agent prompt\n\nWarning: Changing the system prompt during a session breaks the prompt cache." {
+		t.Fatalf("/system off entry = %q", got)
+	}
+	updated, cmd = m.startRun("hello")
+	if cmd == nil {
+		t.Fatal("run after /system off should start")
+	}
+	m = updated.(chatModel)
+	if done := waitForRunDone(t, m.events); done.err != nil {
+		t.Fatalf("run after /system off: %v", done.err)
+	}
+	if len(client.requests) != 1 || len(client.requests[0].Messages) != 1 || client.requests[0].Messages[0].Role != "user" {
+		t.Fatalf("request after /system off = %#v", client.requests)
+	}
+
+	m.input = []rune("/system ON")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if m.systemPromptDisabled || m.status != "system prompt on" {
+		t.Fatalf("/system on state = disabled:%v status:%q", m.systemPromptDisabled, m.status)
+	}
+	updated, cmd = m.startRun("hello again")
+	if cmd == nil {
+		t.Fatal("run after /system on should start")
+	}
+	m = updated.(chatModel)
+	if done := waitForRunDone(t, m.events); done.err != nil {
+		t.Fatalf("run after /system on: %v", done.err)
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("client requests = %d, want 2", len(client.requests))
+	}
+	request := client.requests[1]
+	if len(request.Messages) != 2 || request.Messages[0].Role != "system" || request.Messages[0].Content != "canonical agent prompt" {
+		t.Fatalf("request after /system on = %#v", request.Messages)
+	}
+
+	m.input = []rune("/system sometimes")
+	updated, _ = m.handleSubmit()
+	m = updated.(chatModel)
+	if m.status != "error" || len(m.entries) == 0 || m.entries[len(m.entries)-1].content != "usage: /system [on|off]" {
+		t.Fatalf("invalid /system result = status:%q entries:%#v", m.status, m.entries)
+	}
+}
+
+func TestChatSystemCommandArgumentCompletions(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		want  []string
+	}{
+		{input: "/system ", want: []string{"/system on", "/system off"}},
+		{input: "/system o", want: []string{"/system on", "/system off"}},
+		{input: "/system on", want: []string{"/system on"}},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			m := chatModel{input: []rune(tt.input)}
+			completions := m.slashCompletions()
+			if len(completions) != len(tt.want) {
+				t.Fatalf("completions = %#v, want %d", completions, len(tt.want))
+			}
+			for i, want := range tt.want {
+				if completions[i].value != want {
+					t.Fatalf("completion %d = %q, want %q", i, completions[i].value, want)
+				}
+			}
+		})
+	}
+
+	m := chatModel{input: []rune("/system ")}
+	lines := stripANSI(strings.Join(m.slashCommandLines(80), "\n"))
+	for _, want := range []string{"on", "enable the built-in system prompt", "off", "disable the built-in system prompt"} {
+		if !strings.Contains(lines, want) {
+			t.Fatalf("/system option suggestions missing %q: %q", want, lines)
+		}
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("selecting /system on should not submit the command")
+	}
+	m = updated.(chatModel)
+	if got := string(m.input); got != "/system on" {
+		t.Fatalf("input = %q, want /system on", got)
+	}
+
+	m.input = []rune("/system maybe")
+	completions := m.slashCompletions()
+	if len(completions) != 1 || completions[0].label != "No matching options" {
+		t.Fatalf("invalid argument completions = %#v", completions)
 	}
 }
 
@@ -1058,5 +1306,46 @@ func TestChatFileMentionSuggestionsFilterAndComplete(t *testing.T) {
 	m.applyCompletion()
 	if got := string(m.input); got != "open @README.md " {
 		t.Fatalf("completed input = %q", got)
+	}
+}
+
+func TestChatEnterCompletesHighlightedFileMentionWithoutSubmitting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alpha.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "target.md"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := chatModel{
+		workingDir:     dir,
+		input:          []rune("review @ after this"),
+		inputCursor:    len([]rune("review @")),
+		inputCursorSet: true,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(chatModel)
+	if got, want := m.complete, 1; got != want {
+		t.Fatalf("selected completion = %d, want %d", got, want)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatal("selecting a file mention should not submit the prompt")
+	}
+	m = updated.(chatModel)
+	if got, want := string(m.input), "review @target.md after this"; got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if got, want := m.inputCursor, len([]rune("review @target.md ")); got != want || !m.inputCursorSet {
+		t.Fatalf("cursor = %d (set=%v), want %d after the inserted mention", got, m.inputCursorSet, want)
+	}
+	if len(m.entries) != 0 || len(m.messages) != 0 {
+		t.Fatalf("selecting a file mention submitted the prompt: entries=%#v messages=%#v", m.entries, m.messages)
+	}
+	if completions := m.mentionCompletions(); completions != nil {
+		t.Fatalf("mention selector remained visible after selection: %#v", completions)
 	}
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -280,13 +279,14 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	mock := mockRunner{
 		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
 			fn(llm.ChatResponse{
-				Message:            api.Message{Role: "assistant", Content: "chat template response"},
-				Done:               true,
-				DoneReason:         llm.DoneReasonStop,
-				PromptEvalCount:    1,
-				PromptEvalDuration: time.Millisecond,
-				EvalCount:          2,
-				EvalDuration:       2 * time.Millisecond,
+				Message:               api.Message{Role: "assistant", Content: "chat template response"},
+				Done:                  true,
+				DoneReason:            llm.DoneReasonStop,
+				PromptEvalCount:       2,
+				PromptEvalCachedCount: testIntPtr(1),
+				PromptEvalDuration:    time.Millisecond,
+				EvalCount:             2,
+				EvalDuration:          2 * time.Millisecond,
 			})
 			return nil
 		},
@@ -314,6 +314,9 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	}
 	if actual.Message.Content != "chat template response" {
 		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
+	}
+	if actual.PromptEvalCount != 2 || actual.PromptEvalCachedCount == nil || *actual.PromptEvalCachedCount != 1 {
+		t.Errorf("prompt counts = (%d, %v), want (2, 1)", actual.PromptEvalCount, actual.PromptEvalCachedCount)
 	}
 	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
 		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
@@ -754,12 +757,13 @@ func TestGenerateChat(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Done:               true,
-			DoneReason:         llm.DoneReasonStop,
-			PromptEvalCount:    1,
-			PromptEvalDuration: 1,
-			EvalCount:          1,
-			EvalDuration:       1,
+			Done:                  true,
+			DoneReason:            llm.DoneReasonStop,
+			PromptEvalCount:       2,
+			PromptEvalCachedCount: testIntPtr(1),
+			PromptEvalDuration:    1,
+			EvalCount:             1,
+			EvalDuration:          1,
 		},
 	}
 
@@ -970,6 +974,9 @@ func TestGenerateChat(t *testing.T) {
 
 		if actual.PromptEvalCount == 0 {
 			t.Errorf("expected prompt eval count > 0, got 0")
+		}
+		if actual.PromptEvalCachedCount == nil || *actual.PromptEvalCachedCount != 1 {
+			t.Errorf("expected cached prompt eval count 1, got %v", actual.PromptEvalCachedCount)
 		}
 
 		if actual.PromptEvalDuration == 0 {
@@ -2575,6 +2582,35 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 	})
 
+	earlyFirstPassMetrics := api.Metrics{
+		PromptEvalCount:       4,
+		PromptEvalCachedCount: testIntPtr(1),
+		PromptEvalDuration:    5 * time.Millisecond,
+		EvalCount:             6,
+		EvalDuration:          7 * time.Millisecond,
+	}
+	firstPassMetrics := api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: testIntPtr(4),
+		PromptEvalDuration:    11 * time.Millisecond,
+		EvalCount:             12,
+		EvalDuration:          13 * time.Millisecond,
+	}
+	secondPassMetrics := api.Metrics{
+		PromptEvalCount:       20_000,
+		PromptEvalCachedCount: testIntPtr(19_000),
+		PromptEvalDuration:    21 * time.Millisecond,
+		EvalCount:             22,
+		EvalDuration:          23 * time.Millisecond,
+	}
+	wantMetrics := api.Metrics{
+		PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+		PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+		PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+		EvalCount:             firstPassMetrics.EvalCount + secondPassMetrics.EvalCount,
+		EvalDuration:          firstPassMetrics.EvalDuration + secondPassMetrics.PromptEvalDuration + secondPassMetrics.EvalDuration,
+	}
+
 	t.Run("structured outputs restart non-stream", func(t *testing.T) {
 		var (
 			requestsMu sync.Mutex
@@ -2597,10 +2633,22 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			switch callNum {
 			case 1:
 				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
+					Content:               " I am thinking through this problem.",
+					Done:                  false,
+					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
+					EvalCount:             earlyFirstPassMetrics.EvalCount,
+					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
+				})
+				fn(llm.CompletionResponse{
+					Content:               " </think> {\"answer\":\"42\"}",
+					Done:                  false,
+					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+					EvalCount:             firstPassMetrics.EvalCount,
+					EvalDuration:          firstPassMetrics.EvalDuration,
 				})
 
 				select {
@@ -2612,13 +2660,14 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				}
 			case 2:
 				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
+					Content:               `{"answer":"42"}`,
+					Done:                  true,
+					DoneReason:            llm.DoneReasonStop,
+					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
+					EvalCount:             secondPassMetrics.EvalCount,
+					EvalDuration:          secondPassMetrics.EvalDuration,
 				})
 				return nil
 			default:
@@ -2651,9 +2700,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if requests[0].Format != nil {
 			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
 		}
+		if !requests[0].IncludeIntermediateMetrics {
+			t.Error("expected first completion to request per-token metrics")
+		}
 
 		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
 			t.Errorf("expected second completion format to match original format")
+		}
+		if requests[1].IncludeIntermediateMetrics {
+			t.Error("expected second completion to use terminal metrics")
 		}
 
 		var resp api.ChatResponse
@@ -2675,6 +2730,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if resp.DoneReason != "stop" {
 			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+		}
+		if resp.PromptEvalCount != wantMetrics.PromptEvalCount || resp.EvalCount != wantMetrics.EvalCount {
+			t.Errorf("response counts = (%d, %d), want (%d, %d)", resp.PromptEvalCount, resp.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
+		}
+		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, resp.PromptEvalCachedCount); diff != "" {
+			t.Errorf("response cached prompt count mismatch (-want +got):\n%s", diff)
+		}
+		if resp.PromptEvalDuration != wantMetrics.PromptEvalDuration || resp.EvalDuration != wantMetrics.EvalDuration {
+			t.Errorf("response durations = (%s, %s), want (%s, %s)", resp.PromptEvalDuration, resp.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
 
@@ -2700,10 +2764,22 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			switch callNum {
 			case 1:
 				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
+					Content:               " I am thinking through this problem.",
+					Done:                  false,
+					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
+					EvalCount:             earlyFirstPassMetrics.EvalCount,
+					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
+				})
+				fn(llm.CompletionResponse{
+					Content:               " </think> {\"answer\":\"42\"}",
+					Done:                  false,
+					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
+					EvalCount:             firstPassMetrics.EvalCount,
+					EvalDuration:          firstPassMetrics.EvalDuration,
 				})
 
 				select {
@@ -2715,13 +2791,14 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				}
 			case 2:
 				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
+					Content:               `{"answer":"42"}`,
+					Done:                  true,
+					DoneReason:            llm.DoneReasonStop,
+					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
+					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
+					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
+					EvalCount:             secondPassMetrics.EvalCount,
+					EvalDuration:          secondPassMetrics.EvalDuration,
 				})
 				return nil
 			default:
@@ -2754,9 +2831,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if requests[0].Format != nil {
 			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
 		}
+		if !requests[0].IncludeIntermediateMetrics {
+			t.Error("expected first completion to request per-token metrics")
+		}
 
 		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
 			t.Errorf("expected second completion format to match original format")
+		}
+		if requests[1].IncludeIntermediateMetrics {
+			t.Error("expected second completion to use terminal metrics")
 		}
 
 		decoder := json.NewDecoder(w.Body)
@@ -2779,8 +2862,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 
 		first := events[0]
-		if first.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected first event thinking %q, got %q", "I am thinking through this problem. ", first.Message.Thinking)
+		var thinking strings.Builder
+		for _, event := range events {
+			thinking.WriteString(event.Message.Thinking)
+			if !event.Done && (event.PromptEvalCount != 0 || event.PromptEvalCachedCount != nil || event.PromptEvalDuration != 0 || event.EvalCount != 0 || event.EvalDuration != 0) {
+				t.Errorf("non-terminal event unexpectedly exposed metrics: %+v", event.Metrics)
+			}
+		}
+		if got := thinking.String(); got != "I am thinking through this problem. " {
+			t.Errorf("thinking = %q, want %q", got, "I am thinking through this problem. ")
 		}
 
 		if first.Message.Content != "" {
@@ -2790,7 +2880,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if first.Done {
 			t.Error("expected first event to be non-terminal")
 		}
-
 		last := events[len(events)-1]
 		if last.Message.Thinking != "" {
 			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
@@ -2806,6 +2895,15 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 		if last.DoneReason != "stop" {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
+		}
+		if last.PromptEvalCount != wantMetrics.PromptEvalCount || last.EvalCount != wantMetrics.EvalCount {
+			t.Errorf("final counts = (%d, %d), want (%d, %d)", last.PromptEvalCount, last.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
+		}
+		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, last.PromptEvalCachedCount); diff != "" {
+			t.Errorf("final cached prompt count mismatch (-want +got):\n%s", diff)
+		}
+		if last.PromptEvalDuration != wantMetrics.PromptEvalDuration || last.EvalDuration != wantMetrics.EvalDuration {
+			t.Errorf("final durations = (%s, %s), want (%s, %s)", last.PromptEvalDuration, last.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
 		}
 	})
 }
@@ -3185,108 +3283,7 @@ func TestGenerateWithImages(t *testing.T) {
 	})
 }
 
-// TestImageGenerateStreamFalse tests that image generation respects stream=false
-// and returns a single JSON response instead of streaming ndjson.
-func TestImageGenerateStreamFalse(t *testing.T) {
-	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
-	gin.SetMode(gin.TestMode)
-
-	p := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", p)
-
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		fn(llm.CompletionResponse{Step: 2, TotalSteps: 3, Done: false})
-		fn(llm.CompletionResponse{Step: 3, TotalSteps: 3, Done: true, DoneReason: llm.DoneReasonStop, Image: "base64image"})
-		return nil
-	}
-
-	// Create model manifest with image capability
-	n := model.ParseName("test-image")
-	cfg := model.ConfigV2{Capabilities: []string{"image"}}
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	configLayer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	loadedModel, err := GetModel("test-image")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts, err := (&Server{}).modelOptions(loadedModel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				schedulerModelKey(loadedModel): {
-					llama:       &mock,
-					Options:     &opts,
-					model:       loadedModel,
-					isImagegen:  true,
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(&mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-
-	streamFalse := false
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-		Model:  "test-image",
-		Prompt: "test prompt",
-		Stream: &streamFalse,
-	})
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
-		t.Errorf("expected Content-Type 'application/json; charset=utf-8', got %q", ct)
-	}
-
-	body := w.Body.String()
-	lines := strings.Split(strings.TrimSpace(body), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 response line, got %d:\n%s", len(lines), body)
-	}
-
-	var resp api.GenerateResponse
-	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-
-	if resp.Image != "base64image" {
-		t.Errorf("expected image 'base64image', got %q", resp.Image)
-	}
-
-	if !resp.Done {
-		t.Errorf("expected done=true")
-	}
-}
-
-func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
-	t.Helper()
-
+func TestImageGenerateUnsupported(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
@@ -3307,99 +3304,15 @@ func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
 		t.Fatal(err)
 	}
 
-	loadedModel, err := GetModel("test-image")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts, err := (&Server{}).modelOptions(loadedModel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				schedulerModelKey(loadedModel): {
-					llama:       mock,
-					Options:     &opts,
-					model:       loadedModel,
-					isImagegen:  true,
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-	return s
-}
-
-func TestImageGenerateStreamFalseErrorAfterProgress(t *testing.T) {
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		return errors.New("runner died")
-	}
-	s := newImageGenerateTestServer(t, &mock)
-
-	streamFalse := false
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-		Model:  "test-image",
-		Prompt: "test prompt",
-		Stream: &streamFalse,
-	})
-
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500, got %d: %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "runner died") {
-		t.Fatalf("expected runner error in body, got %q", w.Body.String())
-	}
-}
-
-func TestImageGenerateStreamingErrorAfterProgress(t *testing.T) {
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		return errors.New("runner died")
-	}
-	s := newImageGenerateTestServer(t, &mock)
-
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+	w := createRequest(t, (&Server{}).GenerateHandler, api.GenerateRequest{
 		Model:  "test-image",
 		Prompt: "test prompt",
 	})
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200 after streaming started, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
-	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected progress and error lines, got %d:\n%s", len(lines), w.Body.String())
-	}
-
-	var progress api.GenerateResponse
-	if err := json.Unmarshal([]byte(lines[0]), &progress); err != nil {
-		t.Fatalf("failed to parse progress response: %v", err)
-	}
-	if progress.Completed != 1 || progress.Total != 3 || progress.Done {
-		t.Fatalf("progress response = %+v", progress)
-	}
-
-	var errorResponse struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(lines[1]), &errorResponse); err != nil {
-		t.Fatalf("failed to parse error response: %v", err)
-	}
-	if errorResponse.Error != "runner died" {
-		t.Fatalf("error = %q, want runner died", errorResponse.Error)
+	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
+		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }

@@ -191,7 +191,30 @@ if(OLLAMA_MLX_BACKENDS)
             USES_TERMINAL_DOWNLOAD TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
-    add_custom_target(ollama-mlx-sources DEPENDS ${_mlx_source_targets})
+    # XGrammar has no pre-fetch: without an override each variant's build
+    # clones it via FetchContent.
+    if(DEFINED FETCHCONTENT_SOURCE_DIR_XGRAMMAR AND NOT "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" STREQUAL "")
+        get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
+            "${FETCHCONTENT_SOURCE_DIR_XGRAMMAR}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+        message(STATUS "Using XGrammar source override: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
+    elseif(DEFINED ENV{OLLAMA_XGRAMMAR_SOURCE})
+        get_filename_component(OLLAMA_XGRAMMAR_SOURCE_DIR
+            "$ENV{OLLAMA_XGRAMMAR_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
+        message(STATUS "Using local XGrammar source: ${OLLAMA_XGRAMMAR_SOURCE_DIR}")
+    endif()
+
+    # Refresh the vendored MLX-C headers once the sources are present. Every MLX
+    # backend variant shares this destination in the source tree, so the copy has
+    # to happen here rather than in each variant's build.
+    add_custom_target(ollama-mlx-vendor-headers
+        COMMAND ${CMAKE_COMMAND}
+            -DMLX_C_HEADERS_DIR=${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c
+            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c
+            -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
+        DEPENDS ${_mlx_source_targets}
+        COMMENT "Vendoring MLX-C headers"
+        VERBATIM)
+    add_custom_target(ollama-mlx-sources DEPENDS ollama-mlx-vendor-headers)
 endif()
 
 set(OLLAMA_BUILD_PARALLEL "" CACHE STRING
@@ -469,6 +492,10 @@ function(ollama_add_mlx_build name)
         ${ARG_CMAKE_ARGS}
         ${_mlx_cache_args}
     )
+    if(OLLAMA_XGRAMMAR_SOURCE_DIR)
+        list(APPEND _cmake_args
+            -DFETCHCONTENT_SOURCE_DIR_XGRAMMAR=${OLLAMA_XGRAMMAR_SOURCE_DIR})
+    endif()
     foreach(_arg IN ITEMS
             BLAS_INCLUDE_DIRS
             LAPACK_INCLUDE_DIRS
@@ -510,6 +537,7 @@ function(ollama_add_mlx_build name)
             ${OLLAMA_NATIVE_CONFIG_ARG}
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
+            ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ollama_xgrammar
         INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
             ${OLLAMA_NATIVE_CONFIG_ARG}
             --component MLX
@@ -527,16 +555,45 @@ endfunction()
 
 find_program(GO_EXECUTABLE go)
 
-if(OLLAMA_MLX_BACKENDS)
-    set(_mlx_c_headers_dir "${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c")
-    set(_mlx_c_headers_dest "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c")
+if(GO_EXECUTABLE)
+    if(NOT DEFINED OLLAMA_GO_LICENSE_TARGETS)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOOS
+            OUTPUT_VARIABLE _go_license_goos
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        execute_process(
+            COMMAND "${GO_EXECUTABLE}" env GOARCH
+            OUTPUT_VARIABLE _go_license_goarch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY)
+        set(OLLAMA_GO_LICENSE_TARGETS "${_go_license_goos}/${_go_license_goarch}" CACHE STRING
+            "Semicolon-separated GOOS/GOARCH targets included in GO_LICENSE")
+    endif()
 
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND}
+            "-DGO_EXECUTABLE=${GO_EXECUTABLE}"
+            "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+            "-DBINARY_DIR=${CMAKE_BINARY_DIR}"
+            "-DOUTPUT_DIR=${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}"
+            "-DTARGETS=${OLLAMA_GO_LICENSE_TARGETS}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/generate_go_license.cmake"
+        BYPRODUCTS "${OLLAMA_PAYLOAD_INSTALL_PREFIX}/${OLLAMA_LIB_DIR}/GO_LICENSE"
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+else()
+    add_custom_target(ollama-go-license
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "Go executable not found. Install Go or set GO_EXECUTABLE to collect Go licenses."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "Collecting Go licenses"
+        VERBATIM)
+endif()
+
+if(OLLAMA_MLX_BACKENDS)
     if(GO_EXECUTABLE AND (NOT APPLE OR CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR))
         add_custom_target(ollama-mlx-generate-wrappers
-            COMMAND ${CMAKE_COMMAND}
-                -DMLX_C_HEADERS_DIR=${_mlx_c_headers_dir}
-                -DMLX_C_HEADERS_DEST=${_mlx_c_headers_dest}
-                -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
             COMMAND ${CMAKE_COMMAND} -E env
                 CC= CGO_CFLAGS= CGO_CXXFLAGS=
                 ${GO_EXECUTABLE} generate ./x/...

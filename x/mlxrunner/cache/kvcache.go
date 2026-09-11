@@ -23,6 +23,7 @@ type Attention interface {
 
 type KVCache struct {
 	keys, values *mlx.Array
+	scope        *mlx.Scope
 	offset       int
 	step         int
 
@@ -32,15 +33,10 @@ type KVCache struct {
 	// copy (see kvSnapshot); the cache copies them out before overwriting or
 	// freeing the slots they name.
 	lazySnapshots []*kvSnapshot
-
-	// rewound is set when a restore moves offset backward. The buffer is
-	// append-only, so only an append after a rewind can clobber a still-lazy
-	// snapshot.
-	rewound bool
 }
 
 func NewKVCache() *KVCache {
-	return &KVCache{step: 256}
+	return &KVCache{step: 256, scope: mlx.NewScope()}
 }
 
 // Assumes B = 1; heterogeneous batches are not supported.
@@ -57,18 +53,15 @@ func (c *KVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 
 	prev := c.offset
 
-	// This write fills slots [prev, prev+L). Only an append after a rewind can
-	// land on slots a still-lazy snapshot names and overwrite its data, so copy
-	// the overlapping snapshots out first. copyOut removes the snapshot from
-	// c.lazySnapshots, so range over a clone to avoid skipping entries as the
-	// slice shrinks.
-	if c.rewound {
-		for _, s := range slices.Clone(c.lazySnapshots) {
-			if s.fromOffset < prev+L && s.toOffset > prev {
-				s.copyOut()
-			}
+	// This write fills slots [prev, prev+L). Copy out any still-lazy snapshot
+	// whose slots it would overwrite — only appends refilling after a rewind
+	// find any, since ordinary appends stay above every snapshot. copyOut
+	// removes the snapshot from c.lazySnapshots, so range over a clone to
+	// avoid skipping entries as the slice shrinks.
+	for _, s := range slices.Clone(c.lazySnapshots) {
+		if s.fromOffset < prev+L && s.toOffset > prev {
+			s.copyOut()
 		}
-		c.rewound = false
 	}
 
 	// Grow buffer if needed
@@ -86,7 +79,7 @@ func (c *KVCache) appendKV(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 			c.values.Set(c.values.Concatenate(2, newValues))
 		} else {
 			c.keys, c.values = newKeys, newValues
-			mlx.Pin(c.keys, c.values)
+			c.scope.Attach(c.keys, c.values)
 		}
 	}
 
@@ -141,6 +134,7 @@ func (c *KVCache) captureLazySnapshots(start, end int) {
 // and cache is nil.
 type kvSnapshot struct {
 	keys, values         *mlx.Array
+	scope                *mlx.Scope // holds keys and values once copied out
 	fromOffset, toOffset int
 	cache                *KVCache // issuer while lazy; nil once copied out
 
@@ -162,7 +156,7 @@ func (s *kvSnapshot) Size() int {
 func (s *kvSnapshot) SetMaterializeHook(fn func(delta int)) { s.onMaterialize = fn }
 
 func (s *kvSnapshot) Close() {
-	mlx.Unpin(s.keys, s.values)
+	s.scope.Close()
 	if s.cache != nil {
 		s.cache.dropLazySnapshot(s)
 		s.cache = nil
@@ -178,14 +172,15 @@ func (s *kvSnapshot) copyOut() {
 		return
 	}
 	c := s.cache
-	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.fromOffset, s.toOffset), mlx.Slice())
-	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.fromOffset, s.toOffset), mlx.Slice())
-	kCopy := mlx.Contiguous(kSlice, false)
-	vCopy := mlx.Contiguous(vSlice, false)
-	mlx.Pin(kCopy, vCopy)
-	mlx.AsyncEval(kCopy, vCopy)
+	copies := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.fromOffset, s.toOffset), mlx.Slice())
+		vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(s.fromOffset, s.toOffset), mlx.Slice())
+		return []*mlx.Array{mlx.Contiguous(kSlice, false), mlx.Contiguous(vSlice, false)}
+	})
+	s.scope = mlx.NewScope()
+	s.scope.Attach(copies...)
 
-	s.keys, s.values = kCopy, vCopy
+	s.keys, s.values = copies[0], copies[1]
 	c.dropLazySnapshot(s)
 	s.cache = nil
 
@@ -233,7 +228,6 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 			return false
 		}
 		c.offset = target
-		c.rewound = true
 		return true
 	}
 
@@ -249,7 +243,6 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 	// never clobbered.
 	if snap.cache == c && snap.keys == nil {
 		c.offset = min(target, snap.toOffset)
-		c.rewound = true
 		return true
 	}
 
@@ -257,11 +250,9 @@ func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
 	// may still index into, so copy out first (no-op if already owned).
 	snap.copyOut()
 
-	// Rewind to snapshot start, then feed snapshot. The rewind may expose other
-	// outstanding lazy snapshots to the appendKV write, so flag it for the scan.
+	// Rewind to snapshot start, then feed snapshot.
 	c.offset = snap.fromOffset
-	c.rewound = true
-	c.appendKV(snap.keys, snap.values)
+	mlx.Scoped(func() { c.appendKV(snap.keys, snap.values) })
 
 	// Clamp to target if needed (target may be less than full snapshot).
 	if target < c.offset {
@@ -299,20 +290,21 @@ func (c *KVCache) Merge(parent, child Snapshot) Snapshot {
 	p.copyOut()
 	ch.copyOut()
 
-	mk := p.keys.Concatenate(2, ch.keys)
-	mv := p.values.Concatenate(2, ch.values)
-	mlx.Pin(mk, mv)
-	mlx.AsyncEval(mk, mv)
-
-	p.Close()
-	ch.Close()
-
-	return &kvSnapshot{
-		keys:       mk,
-		values:     mv,
+	merged := &kvSnapshot{
+		scope:      mlx.NewScope(),
 		fromOffset: p.fromOffset,
 		toOffset:   ch.toOffset,
 	}
+	joined := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		joined := []*mlx.Array{p.keys.Concatenate(2, ch.keys), p.values.Concatenate(2, ch.values)}
+		p.Close()
+		ch.Close()
+		return joined
+	})
+	merged.scope.Attach(joined...)
+	merged.keys, merged.values = joined[0], joined[1]
+
+	return merged
 }
 
 func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
@@ -339,27 +331,23 @@ func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
 		return p, ch
 	}
 
-	pk := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
-	pv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
-	ck := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
-	cv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
-	mlx.Pin(pk, pv, ck, cv)
-	mlx.AsyncEval(pk, pv, ck, cv)
+	p := &kvSnapshot{scope: mlx.NewScope(), fromOffset: snap.fromOffset, toOffset: at}
+	ch := &kvSnapshot{scope: mlx.NewScope(), fromOffset: at, toOffset: snap.toOffset}
+	halves := mlx.ScopedAsyncEval(func() []*mlx.Array {
+		halves := []*mlx.Array{
+			mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false),
+			mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false),
+			mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false),
+			mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false),
+		}
+		snap.Close()
+		return halves
+	})
+	p.scope.Attach(halves[0], halves[1])
+	ch.scope.Attach(halves[2], halves[3])
+	p.keys, p.values = halves[0], halves[1]
+	ch.keys, ch.values = halves[2], halves[3]
 
-	snap.Close()
-
-	p := &kvSnapshot{
-		keys:       pk,
-		values:     pv,
-		fromOffset: snap.fromOffset,
-		toOffset:   at,
-	}
-	ch := &kvSnapshot{
-		keys:       ck,
-		values:     cv,
-		fromOffset: at,
-		toOffset:   snap.toOffset,
-	}
 	return p, ch
 }
 
@@ -370,10 +358,9 @@ func (c *KVCache) Free() {
 	for _, s := range slices.Clone(c.lazySnapshots) {
 		s.copyOut()
 	}
-	mlx.Unpin(c.keys, c.values)
+	c.scope.Close()
 	c.keys, c.values = nil, nil
 	c.offset = 0
-	c.rewound = false
 	c.snapshots = pendingSnapshots{}
 }
 

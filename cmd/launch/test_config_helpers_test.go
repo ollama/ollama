@@ -39,6 +39,13 @@ func buildTestIntegrationAliases() map[string]bool {
 func setTestHome(t *testing.T, dir string) {
 	t.Helper()
 	setLaunchTestHome(t, dir)
+	oldNativeCatalog := codexAppNativeCatalog
+	codexAppNativeCatalog = func(string) ([]byte, error) {
+		return []byte(`{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol","description":"Native Codex test model","priority":10,"supported_in_api":true,"base_instructions":"You are Codex, an agent based on GPT-5. Work carefully."}]}`), nil
+	}
+	t.Cleanup(func() {
+		codexAppNativeCatalog = oldNativeCatalog
+	})
 }
 
 func testLaunchModels(names ...string) []LaunchModel {

@@ -14,7 +14,7 @@ import (
 // server-side entry point — the caller supplies blob storage (store) and
 // manifest assembly (writeManifest).
 func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest ManifestWriter, fn func(status string)) error {
-	defer sweepMLX()
+	defer releaseMLXCache()
 
 	inv, err := ReadInventory(modelDir)
 	if err != nil {
@@ -50,7 +50,7 @@ func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest
 	}
 
 	fn(fmt.Sprintf("writing manifest for %s", modelName))
-	if err := writeManifest(modelName, configLayer, layers); err != nil {
+	if err := writeManifest(modelName, configLayer, layers, class); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	fn(fmt.Sprintf("successfully imported %s with %d layers", modelName, len(layers)))

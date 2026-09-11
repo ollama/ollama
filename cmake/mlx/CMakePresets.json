@@ -17,6 +17,8 @@
       "inherits": [ "default" ],
       "cacheVariables": {
         "CMAKE_CUDA_FLAGS": "-t 2",
+        "MLX_BUILD_CUDA": "ON",
+        "MLX_BUILD_METAL": "OFF",
         "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
       }
     },

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -263,11 +264,8 @@ func approvalToolCallDetail(call coreagent.ApprovalToolCall, width int) string {
 		}
 		var lines []string
 		lines = append(lines, "path: "+path)
-		if oldText, ok := rawStringArg(call.Args, "old_text"); ok {
-			lines = append(lines, fmt.Sprintf("old_text: %d chars", len([]rune(oldText))))
-		}
-		if newText, ok := rawStringArg(call.Args, "new_text"); ok {
-			lines = append(lines, fmt.Sprintf("new_text: %d chars", len([]rune(newText))))
+		if summary := editApprovalSummary(call.Args); summary != "" {
+			lines = append(lines, strings.Split(summary, "\n")...)
 		}
 		return chatMetaStyle.Render(strings.Join(lines, "\n"))
 	default:
@@ -276,6 +274,77 @@ func approvalToolCallDetail(call coreagent.ApprovalToolCall, width int) string {
 		}
 		return strings.Join(renderToolCallArgs(call.Args, width), "\n")
 	}
+}
+
+// editApprovalSummary summarizes edit tool arguments for the approval dialog:
+// the edit count and total sizes for the edits array form, or the legacy
+// top-level old_text/new_text sizes.
+func editApprovalSummary(args map[string]any) string {
+	edits := rawEditEntries(args)
+	if len(edits) > 0 {
+		oldChars, newChars := 0, 0
+		for _, entry := range edits {
+			if oldText, ok := editEntryText(entry, "old_text"); ok {
+				oldChars += len([]rune(oldText))
+			}
+			if newText, ok := editEntryText(entry, "new_text"); ok {
+				newChars += len([]rune(newText))
+			}
+		}
+		return fmt.Sprintf("edits: %d (old: %d chars, new: %d chars)", len(edits), oldChars, newChars)
+	}
+	if raw, ok := args["edits"]; ok {
+		if s, ok := raw.(string); ok {
+			return fmt.Sprintf("edits: %d chars", len([]rune(s)))
+		}
+	}
+
+	var lines []string
+	if oldText, ok := rawStringArg(args, "old_text"); ok {
+		lines = append(lines, fmt.Sprintf("old_text: %d chars", len([]rune(oldText))))
+	}
+	if newText, ok := rawStringArg(args, "new_text"); ok {
+		lines = append(lines, fmt.Sprintf("new_text: %d chars", len([]rune(newText))))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rawEditEntries extracts the edits array entries from tool arguments,
+// tolerating a JSON string encoding and camelCase keys.
+func rawEditEntries(args map[string]any) []map[string]any {
+	raw, ok := args["edits"]
+	if !ok {
+		return nil
+	}
+	if s, ok := raw.(string); ok {
+		var decoded []map[string]any
+		if err := json.Unmarshal([]byte(s), &decoded); err != nil {
+			return nil
+		}
+		return decoded
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	entries := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if entry, ok := item.(map[string]any); ok {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func editEntryText(entry map[string]any, snake string) (string, bool) {
+	if value, ok := entry[snake].(string); ok {
+		return value, true
+	}
+	camel := strings.TrimSuffix(snake, "_text") + "Text"
+	if value, ok := entry[camel].(string); ok {
+		return value, true
+	}
+	return "", false
 }
 
 func renderApprovalChoices(request coreagent.ApprovalRequest, cursor int, width int) []string {

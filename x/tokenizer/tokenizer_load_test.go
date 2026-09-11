@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -48,5 +49,58 @@ func TestExtractPretokenizerSkipsUnsupportedSequenceSplit(t *testing.T) {
 	}
 	if strings.Contains(pattern, `(?!\r?\n)`) {
 		t.Fatalf("selected unsupported newline splitter: %q", pattern)
+	}
+}
+
+func TestLoadPretokenizerOptionalPunctuationSpace(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    []string
+	}{
+		{
+			name:    "o200k optional space",
+			pattern: ` ?[^\s\p{L}\p{N}]+[\r\n/]*|\s+(?!\S)|\s+`,
+			want:    []string{"   ", " }\n"},
+		},
+		{
+			name:    "punctuation without optional space",
+			pattern: `[^\s\p{L}\p{N}]+[\r\n/]*|\s+(?!\S)|\s+`,
+			want:    []string{"    ", "}\n"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{
+				"model": map[string]any{
+					"type":   "BPE",
+					"vocab":  map[string]int{"}": 0},
+					"merges": []string{},
+				},
+				"pre_tokenizer": map[string]any{
+					"type": "Split",
+					"pattern": map[string]string{
+						"Regex": tt.pattern,
+					},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tok, err := LoadFromBytes(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got []string
+			tok.forEachPartChunk("    }\n", func(chunk encodeChunk) {
+				got = append(got, chunk.text)
+			})
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Fatalf("chunks = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

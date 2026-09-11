@@ -59,6 +59,239 @@ func TestEditRequiresUniqueMatchByDefault(t *testing.T) {
 	}
 }
 
+func TestEditAppliesMultipleEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("alpha beta gamma delta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "beta", "new_text": "BETA"},
+			map[string]any{"old_text": "delta", "new_text": "DELTA"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "2 edits, 2 replacements") {
+		t.Fatalf("result = %q", result.Content)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "alpha BETA gamma DELTA\n" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestEditMatchesEditsAgainstOriginalContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("abc def\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// edits[1] must target the original "def", not the one introduced by edits[0].
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "abc", "new_text": "def"},
+			map[string]any{"old_text": "def", "new_text": "ghi"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "def ghi\n" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestEditRejectsOverlappingEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("abc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "ab", "new_text": "x"},
+			map[string]any{"old_text": "bc", "new_text": "y"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected overlapping edits to fail")
+	}
+	if !strings.Contains(err.Error(), "overlap") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEditMultipleEditsNotFoundIndexed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "hello", "new_text": "hi"},
+			map[string]any{"old_text": "missing", "new_text": "x"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected missing edit to fail")
+	}
+	if !strings.Contains(err.Error(), "edits[1]") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEditMultipleEditsAmbiguousIndexed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello same same\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "hello", "new_text": "hi"},
+			map[string]any{"old_text": "same", "new_text": "x"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected ambiguous edit to fail")
+	}
+	if !strings.Contains(err.Error(), "edits[1]") || !strings.Contains(err.Error(), "matched 2 times") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEditRejectsEmptyEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, args := range map[string]map[string]any{
+		"missing edits": {"path": "note.txt"},
+		"empty edits":   {"path": "note.txt", "edits": []any{}},
+	} {
+		if _, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, args); err == nil {
+			t.Fatalf("%s: expected error", name)
+		} else if !strings.Contains(err.Error(), "edits parameter is required") {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestEditRejectsEmptyOldTextInArray(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path": "note.txt",
+		"edits": []any{
+			map[string]any{"old_text": "hello", "new_text": "hi"},
+			map[string]any{"old_text": "", "new_text": "x"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected empty old_text to fail")
+	}
+	if !strings.Contains(err.Error(), "edits[1].old_text must not be empty") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEditAcceptsJSONStringEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Some models serialize array arguments as a JSON string.
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":  "note.txt",
+		"edits": `[{"oldText": "hello", "newText": "hi"}, {"oldText": "world", "newText": "earth"}]`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "hi earth\n" {
+		t.Fatalf("content = %q", content)
+	}
+}
+
+func TestEditRejectsReplaceAllWithMultipleEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("a b c\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":        "note.txt",
+		"replace_all": true,
+		"edits": []any{
+			map[string]any{"old_text": "a", "new_text": "x"},
+			map[string]any{"old_text": "b", "new_text": "y"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected replace_all with multiple edits to fail")
+	}
+	if !strings.Contains(err.Error(), "replace_all") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEditRejectsNoChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{
+		"path":     "note.txt",
+		"old_text": "hello",
+		"new_text": "hello",
+	})
+	if err == nil {
+		t.Fatal("expected no-change edit to fail")
+	}
+	if !strings.Contains(err.Error(), "no changes") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestEditRejectsEscapingPath(t *testing.T) {
 	dir := t.TempDir()
 	_, err := (&Edit{}).Execute(context.Background(), agent.ToolContext{WorkingDir: dir}, map[string]any{

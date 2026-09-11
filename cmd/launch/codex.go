@@ -18,7 +18,7 @@ import (
 // Codex implements Runner for Codex integration
 type Codex struct{}
 
-func (c *Codex) String() string { return "Codex" }
+func (c *Codex) String() string { return "Codex CLI" }
 
 const (
 	codexProfileName           = "ollama-launch"
@@ -30,6 +30,7 @@ const (
 	codexRootModelKey            = "model"
 	codexRootModelProviderKey    = "model_provider"
 	codexRootModelCatalogJSONKey = "model_catalog_json"
+	codexRootOpenAIBaseURLKey    = "openai_base_url"
 )
 
 func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
@@ -387,24 +388,6 @@ func codexValidateProfileConfigText(config codexParsedConfig, profileName, model
 		}
 	}
 	return nil
-}
-
-func codexUpsertSection(text, header string, lines []string) string {
-	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
-
-	if targetPath, ok := codexTableHeaderPath(header); ok {
-		if start, end, found := codexSectionRange(text, targetPath); found {
-			return text[:start] + block + text[end:]
-		}
-	}
-
-	if text != "" && !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if text != "" {
-		text += "\n"
-	}
-	return text + block
 }
 
 func codexRemoveSection(text, header string) string {

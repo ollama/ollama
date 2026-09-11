@@ -14,20 +14,6 @@ var (
 	benchmarkSinkTok *Tokenizer
 )
 
-const benchmarkWordPieceJSON = `{
-  "model": {
-    "type": "WordPiece",
-    "vocab": {
-      "[UNK]": 0,
-      "hello": 1,
-      "##world": 2,
-      "##ly": 3,
-      "##hello": 4
-    }
-  },
-  "added_tokens": []
-}`
-
 const benchmarkSentencePieceJSON = `{
   "model": {
     "type": "BPE",
@@ -66,7 +52,7 @@ func benchmarkMiniLlamaPath(tb testing.TB) string {
 		tb.Fatal("failed to resolve benchmark file path")
 	}
 
-	return filepath.Join(filepath.Dir(filename), "..", "imagegen", "tokenizer", "testdata", "mini_llama.json")
+	return filepath.Join(filepath.Dir(filename), "testdata", "mini_llama.json")
 }
 
 func benchmarkLoadMiniLlama(tb testing.TB) *Tokenizer {
@@ -192,33 +178,6 @@ func BenchmarkTokenizerLoadFromBytes(b *testing.B) {
 			benchmarkSinkTok = tok
 		}
 	})
-}
-
-func BenchmarkTokenizerEncodeWordPiece(b *testing.B) {
-	tok := benchmarkLoadFromBytes(b, []byte(benchmarkWordPieceJSON))
-	text := strings.Repeat("helloworldly", 16)
-
-	b.ReportAllocs()
-	b.SetBytes(int64(len(text)))
-	b.ResetTimer()
-
-	for range b.N {
-		benchmarkSinkIDs = tok.Encode(text, false)
-	}
-}
-
-func BenchmarkTokenizerDecodeWordPiece(b *testing.B) {
-	tok := benchmarkLoadFromBytes(b, []byte(benchmarkWordPieceJSON))
-	text := strings.Repeat("helloworldly", 16)
-	ids := tok.Encode(text, false)
-
-	b.ReportAllocs()
-	b.SetBytes(int64(len(text)))
-	b.ResetTimer()
-
-	for range b.N {
-		benchmarkSinkStr = tok.Decode(ids)
-	}
 }
 
 func BenchmarkTokenizerEncodeSentencePiece(b *testing.B) {

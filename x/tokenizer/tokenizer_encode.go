@@ -89,7 +89,7 @@ func (t *Tokenizer) splitBySpecialTokens(s string) []string {
 	return result
 }
 
-func adjustWhitespaceBoundary(part string, curr, next *tokenMatch) {
+func adjustWhitespaceBoundary(part string, curr, next *tokenMatch, spaceBeforePunct bool) {
 	m := part[curr.start:curr.end]
 	nextText := part[next.start:next.end]
 
@@ -98,7 +98,8 @@ func adjustWhitespaceBoundary(part string, curr, next *tokenMatch) {
 	}
 
 	firstRune, _ := utf8.DecodeRuneInString(nextText)
-	if !unicode.IsLetter(firstRune) {
+	shiftASCIIOnly := !unicode.IsLetter(firstRune)
+	if shiftASCIIOnly && (!spaceBeforePunct || unicode.IsNumber(firstRune) || unicode.IsSpace(firstRune)) {
 		return
 	}
 
@@ -106,6 +107,9 @@ func adjustWhitespaceBoundary(part string, curr, next *tokenMatch) {
 	for j := curr.end; j > curr.start; {
 		r, size := utf8.DecodeLastRuneInString(part[curr.start:j])
 		if unicode.IsSpace(r) {
+			if shiftASCIIOnly && r != ' ' {
+				return
+			}
 			lastSpaceStart = j - size
 			break
 		}
@@ -153,7 +157,7 @@ func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
 		next := tokenMatch{start: offset + loc[0], end: offset + loc[1]}
 		offset += loc[1]
 
-		adjustWhitespaceBoundary(part, &curr, &next)
+		adjustWhitespaceBoundary(part, &curr, &next, t.pretokenizerSpaceBeforePunctuation)
 
 		if curr.end > curr.start {
 			fn(encodeChunk{text: part[curr.start:curr.end], isSpecial: false})
