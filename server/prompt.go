@@ -19,7 +19,7 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 
 // chatPrompt accepts a list of messages and returns the prompt and media that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
-// latest message and 2) system messages
+// latest message, 2) system messages, and 3) the most recent user message
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, media []llm.MediaData, _ error) {
 	var system []api.Message
 
@@ -32,18 +32,34 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	lastMsgIdx := len(msgs) - 1
 	currMsgIdx := 0
 
+	// Never truncate past the most recent user message. Renderers (e.g. qwen3.8)
+	// reject transcripts without a user query, and multi-step tool loops that
+	// overflow the context window must not lose the original question.
+	lastUserMsgIdx := -1
+	for i := lastMsgIdx; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			lastUserMsgIdx = i
+			break
+		}
+	}
+
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
 		for i := 0; i <= lastMsgIdx; i++ {
+			startIdx := i
+			if lastUserMsgIdx >= 0 && startIdx > lastUserMsgIdx {
+				startIdx = lastUserMsgIdx
+			}
+
 			// Collect system messages from the portion we're about to skip
 			system = make([]api.Message, 0)
-			for j := range i {
+			for j := range startIdx {
 				if msgs[j].Role == "system" {
 					system = append(system, msgs[j])
 				}
 			}
 
-			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			p, err := renderPrompt(m, append(system, msgs[startIdx:]...), tools, think)
 			if err != nil {
 				return "", nil, err
 			}
@@ -55,19 +71,20 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			ctxLen := len(s)
 			if m.ProjectorPaths != nil {
-				for _, msg := range msgs[i:] {
+				for _, msg := range msgs[startIdx:] {
 					ctxLen += imageNumTokens * len(msg.Images)
 				}
 			}
 
 			if ctxLen <= opts.NumCtx {
-				currMsgIdx = i
+				currMsgIdx = startIdx
 				break
 			}
 
-			// Must always include at least the last message
-			if i == lastMsgIdx {
-				currMsgIdx = lastMsgIdx
+			// Must always include at least the last message; never drop the
+			// most recent user message even if the prompt still overflows.
+			if i == lastMsgIdx || startIdx == lastUserMsgIdx {
+				currMsgIdx = startIdx
 				break
 			}
 		}
