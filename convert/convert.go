@@ -338,6 +338,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &gptossModel{}
 	case "DeepseekOCRForCausalLM":
 		conv = &deepseekocr{}
+	case "DeepseekOCR2ForCausalLM":
+		conv = &deepseekocr2{}
 	case "DeepseekV3ForCausalLM":
 		conv = &deepseek2Model{}
 	case "Glm4MoeLiteForCausalLM":
