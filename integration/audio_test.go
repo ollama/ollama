@@ -18,6 +18,10 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// audioNumPredict leaves room for models that emit thinking tokens before
+// the transcription/answer content.
+const audioNumPredict = 512
+
 // decodeTestAudio returns the test audio clip ("Why is the sky blue?", 16kHz mono WAV).
 func decodeTestAudio(t *testing.T) api.ImageData {
 	t.Helper()
@@ -68,9 +72,7 @@ func runAudioTranscriptionModel(t *testing.T, model string) {
 		},
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-			"num_predict": 50,
+			"num_predict": audioNumPredict,
 		},
 	}
 
@@ -103,9 +105,7 @@ func runAudioResponse(t *testing.T, models []string) {
 				},
 				Stream: &stream,
 				Options: map[string]any{
-					"temperature": 0,
-					"seed":        123,
-					"num_predict": 200,
+					"num_predict": audioNumPredict,
 				},
 			}
 
@@ -191,11 +191,9 @@ func runOpenAIChatWithAudio(t *testing.T, models []string) {
 						{"type": "input_audio", "input_audio": {"data": %q, "format": "wav"}}
 					]
 				}],
-				"temperature": 0,
-				"seed": 123,
-				"max_tokens": 200,
+				"max_tokens": %d,
 				"think": false
-			}`, model, strings.TrimSpace(audioB64))
+			}`, model, strings.TrimSpace(audioB64), audioNumPredict)
 
 			url := fmt.Sprintf("http://%s/v1/chat/completions", endpoint)
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(reqBody))

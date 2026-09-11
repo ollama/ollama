@@ -42,8 +42,8 @@ func runConcurrentChat(t *testing.T) {
 	for i := range numParallel {
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < iterLimit; j++ {
-				if time.Now().Sub(started) > softTimeout {
+			for j := range iterLimit {
+				if time.Since(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}
@@ -172,8 +172,8 @@ chooseModels:
 		go func(i int) {
 			defer wg.Done()
 			reqs, resps := ChatRequests()
-			for j := 0; j < 3; j++ {
-				if time.Now().Sub(started) > softTimeout {
+			for j := range 3 {
+				if time.Since(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}

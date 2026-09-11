@@ -136,13 +136,9 @@ func TestGenerateNativeJinjaImages(t *testing.T) {
 				}()
 
 				req := api.GenerateRequest{
-					Model:  modelName,
-					Prompt: "Describe what you see in this image briefly.",
-					Images: []api.ImageData{ollamaHome},
-					Options: map[string]any{
-						"seed":        42,
-						"temperature": 0.0,
-					},
+					Model:     modelName,
+					Prompt:    "Describe what you see in this image briefly.",
+					Images:    []api.ImageData{ollamaHome},
 					KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				}
 

@@ -49,10 +49,6 @@ func runAPIGenerate(t *testing.T) {
 	req := api.GenerateRequest{
 		Model:  smol,
 		Prompt: blueSkyPrompt,
-		Options: map[string]interface{}{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -110,7 +106,6 @@ func runAPIGenerate(t *testing.T) {
 					// if response.Metrics.PromptEvalCount == 0 {
 					// 	t.Errorf("final response missing prompt_eval_count: %#v", response)
 					// }
-
 				} // else incremental response, nothing to check right now...
 				buf.Write([]byte(response.Response))
 				if !stallTimer.Reset(apiStreamResponseTimeout) {
@@ -123,6 +118,9 @@ func runAPIGenerate(t *testing.T) {
 			var genErr error
 			go func() {
 				req.Stream = &test.stream
+				if req.Options == nil {
+					req.Options = map[string]any{}
+				}
 				req.Options["seed"] = rand.Int() // bust cache for prompt eval results
 				genErr = client.Generate(ctx, &req, fn)
 				done <- 0
@@ -212,10 +210,6 @@ func runAPIChat(t *testing.T) {
 				Content: blueSkyPrompt,
 			},
 		},
-		Options: map[string]interface{}{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -284,6 +278,9 @@ func runAPIChat(t *testing.T) {
 			var genErr error
 			go func() {
 				req.Stream = &test.stream
+				if req.Options == nil {
+					req.Options = map[string]any{}
+				}
 				req.Options["seed"] = rand.Int() // bust cache for prompt eval results
 				genErr = client.Chat(ctx, &req, fn)
 				done <- 0

@@ -19,17 +19,6 @@ func registerToolStressCases(models []string) {
 	registerModelIntegrationCases("tools-stress", models, runAPIToolCallingStressModel)
 }
 
-var toolStressSkipModels = map[string]string{
-	"lfm2.5-thinking": "returns text instead of tool calls with complex system prompts",
-	"qwen3.5:2b":      "2B model too small for reliable multi-tool agent prompts",
-	"qwen3-vl":        "vision model, extremely slow with complex tool prompts",
-	"llama3.2":        "3B model too small for reliable multi-tool agent prompts",
-	"mistral":         "7B v0.3 returns text instead of tool calls with complex prompts",
-	"mixtral:8x22b":   "returns text instead of tool calls with complex prompts",
-	"qwen2":           "returns text instead of tool calls with complex prompts",
-	"granite3.3":      "returns text instead of tool calls with complex prompts",
-}
-
 func runAPIToolCallingStressModel(t *testing.T, model string) {
 	initialTimeout := 120 * time.Second
 	streamTimeout := 120 * time.Second
@@ -43,16 +32,13 @@ func runAPIToolCallingStressModel(t *testing.T, model string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	runAPIToolCallingStressModelWithClient(t, ctx, client, model, initialTimeout, streamTimeout, toolsMinVRAM, toolStressSkipModels)
+	runAPIToolCallingStressModelWithClient(t, ctx, client, model, initialTimeout, streamTimeout, toolsMinVRAM)
 }
 
-func runAPIToolCallingStressModelWithClient(t *testing.T, ctx context.Context, client *api.Client, model string, initialTimeout, streamTimeout time.Duration, minVRAM map[string]uint64, skipModels map[string]string) {
+func runAPIToolCallingStressModelWithClient(t *testing.T, ctx context.Context, client *api.Client, model string, initialTimeout, streamTimeout time.Duration, minVRAM map[string]uint64) {
 	t.Helper()
 
-	// Skip known-bad models unless explicitly requested via env var
-	if reason, ok := skipModels[model]; ok && testModel == "" {
-		t.Skipf("skipping: %s", reason)
-	}
+	skipKnownIntegrationFlake(t, "tools-stress", model)
 	if v, ok := minVRAM[model]; ok {
 		skipUnderMinVRAM(t, v)
 	}

@@ -130,10 +130,6 @@ func runEmbeddingModel(t *testing.T, model string, expected []float64) {
 		Model:     model,
 		Prompt:    "why is the sky blue?",
 		KeepAlive: &api.Duration{Duration: 10 * time.Second},
-		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-		},
 	}
 	resp, err := client.Embeddings(ctx, &req)
 	if err != nil {
