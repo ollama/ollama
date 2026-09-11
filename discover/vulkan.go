@@ -52,7 +52,7 @@ var probeLlamaServerVulkanDevices = func(_ []string) ([]vulkanPhysicalDevice, er
 
 func refineLlamaServerDevices(devices []ml.DeviceInfo, libDirs []string) []ml.DeviceInfo {
 	devices = refineLinuxROCmDevices(devices)
-	return refineWindowsVulkanDevices(devices, libDirs)
+	return refineIntelVulkanDevices(refineWindowsVulkanDevices(devices, libDirs))
 }
 
 func refineWindowsVulkanDevices(devices []ml.DeviceInfo, libDirs []string) []ml.DeviceInfo {
