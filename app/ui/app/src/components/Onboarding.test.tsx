@@ -1133,6 +1133,100 @@ describe("ConnectAppsScreen loading and deep links", () => {
   }
   const CENTERED_SCROLL_TOP = 206;
 
+  it("retries a cancelled Claude connection from the same link", async () => {
+    const running = { ...DISCONNECTED_CLAUDE, running: true, used: true };
+    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const handled = vi.fn();
+    const connect = vi.fn().mockResolvedValue({
+      status: { ...running, configured: true, connected: true },
+    });
+    const integrations = appsIntegrations(true);
+    stubAppsWindow({
+      getClaudeDesktopConnectionSummary: vi.fn().mockResolvedValue(running),
+      setClaudeDesktopConnected: connect,
+      confirm,
+      matchMedia: vi.fn().mockReturnValue({ matches: true }),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    const element = (autoConnectClaude: boolean) => (
+      <StrictMode>
+        <ConnectAppsScreen
+          initialIntegrations={integrations}
+          initialClaudeStatus={running}
+          autoConnectClaude={autoConnectClaude}
+          onDeepLinkHandled={handled}
+        />
+      </StrictMode>
+    );
+    try {
+      await act(async () => {
+        renderer = create(element(true));
+        await settle();
+      });
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(connect).not.toHaveBeenCalled();
+      await act(async () => renderer!.update(element(false)));
+      await act(async () => {
+        renderer!.update(element(true));
+        await settle();
+      });
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(handled).toHaveBeenCalledTimes(2);
+      expect(connect).toHaveBeenCalledExactlyOnceWith(true, true);
+    } finally {
+      if (renderer) act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("handles the same integration link again after copying", async () => {
+    const handled = vi.fn();
+    const integrations = appsIntegrations(true);
+    const copied = vi
+      .spyOn(clipboard, "copyTextToClipboard")
+      .mockResolvedValue(true);
+    const { container, createNodeMock } = scrollMocks();
+    stubAppsWindow({ matchMedia: vi.fn().mockReturnValue({ matches: true }) });
+    let renderer: ReactTestRenderer | undefined;
+    const element = (highlightIntegrationId?: string) => (
+      <StrictMode>
+        <ConnectAppsScreen
+          initialIntegrations={integrations}
+          initialClaudeStatus={DISCONNECTED_CLAUDE}
+          highlightIntegrationId={highlightIntegrationId}
+          onDeepLinkHandled={handled}
+        />
+      </StrictMode>
+    );
+    try {
+      await act(async () => {
+        renderer = create(element("codex"), { createNodeMock });
+        await settle();
+      });
+      expect(handled).toHaveBeenCalledTimes(1);
+      await act(async () => renderer!.update(element()));
+      await act(async () => {
+        await renderer!.root
+          .findByProps({ "aria-label": "Copy Codex CLI command" })
+          .props.onClick();
+      });
+      expect(
+        renderer!.root.findByProps({ id: "integration-codex" }).props.className,
+      ).not.toContain("bg-neutral-100");
+      container.scrollTop = 0;
+      await act(async () => renderer!.update(element("codex")));
+      expect(handled).toHaveBeenCalledTimes(2);
+      expect(container.scrollTop).toBe(CENTERED_SCROLL_TOP);
+      expect(
+        renderer!.root.findByProps({ id: "integration-codex" }).props.className,
+      ).toContain("bg-neutral-100");
+    } finally {
+      if (renderer) act(() => renderer?.unmount());
+      copied.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each(["darwin", "windows"])(
     "keeps the full catalog in the %s grid",
     (platform) => {
@@ -1277,6 +1371,87 @@ describe("ConnectAppsScreen loading and deep links", () => {
         copyCommand.mockRestore();
         vi.unstubAllGlobals();
         vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["Escape", "outside pointer"])(
+    "dismisses a copy error with %s while preserving manual copying",
+    async (dismissal) => {
+      const events = new EventTarget();
+      const commandNode = {};
+      const noticeNode = {
+        contains: (target: unknown) => target === commandNode,
+      };
+      const copyCommand = vi
+        .spyOn(clipboard, "copyTextToClipboard")
+        .mockResolvedValueOnce(false)
+        .mockResolvedValue(true);
+      stubAppsWindow({
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ConnectAppsScreen
+              initialIntegrations={appsIntegrations(true)}
+              initialClaudeStatus={DISCONNECTED_CLAUDE}
+            />,
+            {
+              createNodeMock: (element) =>
+                element.props.role === "alert" ? noticeNode : null,
+            },
+          );
+          await settle();
+        });
+        const card = () =>
+          renderer!.root.findByProps({ id: "integration-codex" });
+        await act(async () => {
+          await card().props.onClick();
+        });
+
+        // Selecting the command and unrelated keys must keep it available.
+        const selection = new Event("pointerdown");
+        Object.defineProperty(selection, "target", { value: commandNode });
+        act(() => {
+          events.dispatchEvent(selection);
+          events.dispatchEvent(
+            Object.assign(new Event("keydown"), { key: "c" }),
+          );
+        });
+        expect(
+          renderer!.root.findByProps({ role: "alert" }).findByType("code")
+            .children,
+        ).toEqual(["ollama launch codex"]);
+
+        act(() => {
+          events.dispatchEvent(
+            dismissal === "Escape"
+              ? Object.assign(new Event("keydown"), { key: "Escape" })
+              : new Event("pointerdown"),
+          );
+        });
+        expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(
+          0,
+        );
+
+        // A later successful copy keeps its usual notification lifetime.
+        await act(async () => {
+          await card().props.onClick();
+        });
+        act(() => {
+          events.dispatchEvent(
+            Object.assign(new Event("keydown"), { key: "Escape" }),
+          );
+          events.dispatchEvent(new Event("pointerdown"));
+        });
+        expect(renderer!.root.findByProps({ role: "status" })).toBeTruthy();
+      } finally {
+        if (renderer) act(() => renderer?.unmount());
+        copyCommand.mockRestore();
+        vi.unstubAllGlobals();
       }
     },
   );

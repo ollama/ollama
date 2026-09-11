@@ -517,6 +517,7 @@ export function ConnectAppsScreen({
   } | null>(null);
   const copyInFlight = useRef(false);
   const copySequence = useRef(0);
+  const copyNoticeRef = useRef<HTMLDivElement>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [initialIntegrationsSettled, setInitialIntegrationsSettled] =
     useState(false);
@@ -556,6 +557,28 @@ export function ConnectAppsScreen({
     }, 6000);
     return () => window.clearTimeout(timeout);
   }, [copyNotice?.sequence, copyNotice?.copied]);
+
+  useEffect(() => {
+    if (!copyNotice?.visible || copyNotice.copied) return;
+
+    const dismiss = () => {
+      setCopyNotice((current) =>
+        current && !current.copied ? { ...current, visible: false } : current,
+      );
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!copyNoticeRef.current?.contains(event.target as Node)) dismiss();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) dismiss();
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [copyNotice?.copied, copyNotice?.visible]);
 
   const refreshClaudeStatus = useCallback(async () => {
     if (isWindows) return null;
@@ -1066,7 +1089,12 @@ export function ConnectAppsScreen({
       ? `highlight:${highlightIntegrationId}`
       : null;
   useEffect(() => {
-    if (!deepLinkIntent || !initialIntegrationsSettled) return;
+    if (!deepLinkIntent) {
+      // The URL was cleared; a later visit to the same link is a new intent.
+      handledDeepLinkRef.current = null;
+      return;
+    }
+    if (!initialIntegrationsSettled) return;
     if (autoConnectClaude && !initialClaudeStatusSettled) return;
     // Refs survive StrictMode's simulated remount, so the intent runs once.
     if (handledDeepLinkRef.current === deepLinkIntent) return;
@@ -1315,10 +1343,11 @@ export function ConnectAppsScreen({
           className="apps-copy-hint pointer-events-none absolute right-4 top-4 z-30 w-[360px] max-w-[calc(100%-2rem)]"
         >
           <div
+            ref={copyNoticeRef}
             role={copyNotice.copied ? "status" : "alert"}
             aria-live={copyNotice.copied ? "polite" : "assertive"}
             aria-atomic="true"
-            className={`flex items-start gap-3 rounded-2xl border border-neutral-200/80 bg-neutral-100/95 p-4 text-[13px] shadow-lg shadow-black/10 backdrop-blur-xl dark:border-white/10 dark:bg-neutral-700/90 dark:shadow-black/30 ${copyNotice.copied ? "" : "pointer-events-auto"}`}
+            className={`flex items-start gap-3 rounded-2xl border border-neutral-200/80 bg-neutral-100/95 p-4 text-[13px] shadow-lg shadow-black/10 backdrop-blur-xl dark:border-white/10 dark:bg-neutral-700/90 dark:shadow-black/30 ${!copyNotice.copied && copyNotice.visible ? "pointer-events-auto" : ""}`}
           >
             <div aria-hidden="true" className="shrink-0">
               <LaunchCommandIcon id={copyNotice.id} />
