@@ -64,6 +64,40 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesEscapedPaths(t *testing.T) {
+	// macOS drag-and-drop: backslash-escaped spaces and tildes
+	input := `/Users/ollama/Library/Mobile\ Documents/com\~apple\~CloudDocs/screenshots/CleanShot\ 2025-04-17\ at\ 21.26.40@2x.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Contains(t, res[0], "CleanShot")
+	assert.Contains(t, res[0], ".png")
+	nfp := normalizeFilePath(res[0])
+	assert.Equal(t, "/Users/ollama/Library/Mobile Documents/com~apple~CloudDocs/screenshots/CleanShot 2025-04-17 at 21.26.40@2x.png", nfp)
+
+	// Linux drag-and-drop: single-quoted path with spaces
+	input = `'/home/rick/filename with spaces.jpg'`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	nfp = normalizeFilePath(res[0])
+	assert.Equal(t, "/home/rick/filename with spaces.jpg", nfp)
+
+	// Linux drag-and-drop: single-quoted path with embedded single quote
+	input = `'/home/rick/file'\''name.jpg'`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	nfp = normalizeFilePath(res[0])
+	assert.Equal(t, "/home/rick/file'name.jpg", nfp)
+
+	// Tilde home directory paths are matched and expanded
+	input = `~/Desktop/photo.png`
+	res = extractFileNames(input)
+	assert.Len(t, res, 1)
+	assert.Equal(t, "~/Desktop/photo.png", res[0])
+	nfp = normalizeFilePath(res[0])
+	home, _ := os.UserHomeDir()
+	assert.Equal(t, home+"/Desktop/photo.png", nfp)
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()

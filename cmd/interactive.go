@@ -583,7 +583,11 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
+	// Handle shell-escaped single quotes: '\'' (end quote, escaped quote, start quote)
+	// This pattern appears in Linux drag-and-drop paths with embedded single quotes
+	fp = strings.ReplaceAll(fp, "'\\''", "'")
+
+	fp = strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
@@ -600,13 +604,22 @@ func normalizeFilePath(fp string) string {
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
 	).Replace(fp)
+
+	// Expand tilde to user's home directory
+	if strings.HasPrefix(fp, "~/") || fp == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = home + fp[1:]
+		}
+	}
+
+	return fp
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, / ./ ~ or ~/ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:~/?|\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
