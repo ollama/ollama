@@ -1,0 +1,77 @@
+Portable AI 續作狀態
+====================
+
+更新時間：2026-09-07
+
+目前硬體
+--------
+CPU：Intel Core i7-12700KF
+RAM：31.82 GB
+GPU：NVIDIA GeForce RTX 5070 Ti，16 GB
+NVIDIA 驅動：616.64 WHQL
+CUDA UMD：13.3
+
+外接 SSD
+--------
+Volume Label：Crucial X9
+實體型號：Micron CT1000X9SSD9
+連接介面：USB
+目前磁碟機代號：H:
+
+已完成項目
+----------
+1. AKB0700/ollama 已 clone 到 SSD 的 ollama 資料夾。
+2. Ollama 0.33.3 可攜式版本已部署，未執行 Ollama 安裝程式。
+3. 模型路徑固定為 SSD 的 ollama\models。
+4. qwen2.5:7b 已下載完成，大小約 4.68 GB。
+5. qwen2.5:7b 已完成中文推論測試。
+6. 測試時 VRAM 基準為 339 MiB，峰值為 5108 MiB，
+   增加 4769 MiB；Ollama 回報模型佔用 4528 MiB。
+7. Portable Python 3.12.14、Git 2.55.0、Git LFS 3.7.1、
+   CMake 4.4.3、uv 0.12.10 均位於 ollama\env。
+8. NVIDIA 616.64 官方驅動安裝包保存在 ollama\env\drivers。
+9. Ollama 已在拔除 SSD 前停止。
+
+重開機後
+--------
+1. 插入 Crucial X9 SSD。
+2. 從檔案總管開啟 SSD 的 ollama 資料夾。
+3. 雙擊 Launch-Portable-AI.cmd。
+4. 若網咖還原了 NVIDIA 驅動，允許系統管理員權限，
+   腳本會從 SSD 重新安裝 616.64。
+5. 雙擊 Run-Qwen-Test.cmd 確認模型與 GPU。
+6. 若要互動使用模型，雙擊 Open-Portable-AI-Shell.cmd，
+   再執行 ollama run qwen2.5:7b。
+
+下一步
+------
+等待使用者提供其他要部署的完整 Ollama 模型名稱與標籤。
+目前只有 qwen2.5:7b 已明確指定並完成部署。
+
+GitHub 續作位置
+---------------
+Repository：AKB0700/ollama
+Pull Request：#63
+PR URL：https://github.com/AKB0700/ollama/pull/63
+Base branch：main
+PR branch：akb0700-reliable-ai-collaboration
+建立 PR 時的 commit：cf230de1
+
+若需要從 GitHub 取得 PR：
+
+  git fetch origin pull/63/head:pr-63-portable-ai
+  git switch pr-63-portable-ai
+
+若 PR 的來源分支仍存在，也可執行：
+
+  git fetch origin akb0700-reliable-ai-collaboration
+  git switch --track origin/akb0700-reliable-ai-collaboration
+
+給後續 Copilot 的指示：
+先閱讀 SSD 根目錄的「續作狀態.txt」與「使用說明.txt」，再查看
+AKB0700/ollama#63。大型模型與可攜式執行檔只存在 SSD，不在 GitHub PR。
+
+注意
+----
+ANTHROPIC_API_KEY 與 OPENAI_API_KEY 尚未設定，因此 Claude/OpenAI
+雙 API 協作流程尚未呼叫。不要將任何 API 金鑰寫入此檔案。

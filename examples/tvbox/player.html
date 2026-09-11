@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TVBox 直播播放器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #fff;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: rgba(0, 0, 0, 0.8);
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .sidebar h2 {
+            margin-bottom: 20px;
+            font-size: 24px;
+            color: #4CAF50;
+        }
+
+        .channel-group {
+            margin-bottom: 30px;
+        }
+
+        .group-title {
+            font-size: 18px;
+            color: #FFD700;
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid #FFD700;
+        }
+
+        .channel-item {
+            padding: 12px;
+            margin: 8px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .channel-item:hover,
+        .channel-item:focus {
+            background: rgba(76, 175, 80, 0.3);
+            border-color: #4CAF50;
+            transform: translateX(5px);
+        }
+
+        .channel-item.active {
+            background: rgba(76, 175, 80, 0.5);
+            border-color: #4CAF50;
+        }
+
+        .player-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .player-header {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .player-header h1 {
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+
+        .player-header p {
+            font-size: 14px;
+            color: #ccc;
+        }
+
+        #video-player {
+            flex: 1;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        .loading {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #4CAF50;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .error-message {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(244, 67, 54, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        /* TV Remote Control Friendly */
+        .channel-item:focus-visible {
+            outline: 3px solid #4CAF50;
+            outline-offset: 2px;
+        }
+
+        /* Scrollbar styling */
+        .sidebar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: rgba(76, 175, 80, 0.5);
+            border-radius: 4px;
+        }
+
+        .controls {
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .control-btn {
+            background: rgba(76, 175, 80, 0.8);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            margin: 0 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        .control-btn:hover {
+            background: rgba(76, 175, 80, 1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>📺 直播頻道</h2>
+            <div id="channel-list"></div>
+        </div>
+        
+        <div class="player-container">
+            <div class="player-header">
+                <h1 id="channel-name">選擇一個頻道開始播放</h1>
+                <p id="channel-info">請從左側選擇直播源</p>
+            </div>
+            
+            <div id="video-player" style="position: relative;">
+                <video id="video" controls autoplay></video>
+                <div class="loading" id="loading">⏳ 加載中...</div>
+                <div class="error-message" id="error">
+                    <h3>❌ 播放失敗</h3>
+                    <p id="error-text"></p>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="control-btn" onclick="reloadChannel()">🔄 重新加載</button>
+                <button class="control-btn" onclick="toggleFullscreen()">⛶ 全螢幕</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const channels = {
+            "直播源倉庫": [
+                { name: "IPv6 直播 (范明明)", url: "https://live.fanmingming.com/tv/m3u/ipv6.m3u", type: "m3u" },
+                { name: "Global 直播 (范明明)", url: "https://live.fanmingming.com/tv/m3u/global.m3u", type: "m3u" },
+                { name: "Radio 直播 (范明明)", url: "https://live.fanmingming.com/radio/m3u/index.m3u", type: "m3u" },
+                { name: "YueChan IPTV", url: "https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u", type: "m3u" },
+                { name: "1986 直播", url: "https://since1986.online/epg/live.m3u", type: "m3u" },
+                { name: "PTV研究所 (綜合)", url: "https://smart.pendy.dpdns.org/m3u/merged_judy.m3u", type: "m3u" },
+                { name: "PTV研究所 (體育)", url: "https://smart.pendy.dpdns.org/m3u/gongyi_judy.m3u", type: "m3u" },
+                { name: "AKTV 直播", url: "https://aktv.space/live.m3u", type: "m3u" },
+                { name: "夢澤河 (TiviMate專用)", url: "https://ghproxy.net/https://raw.githubusercontent.com/mengzehe/tvbox/main/live.m3u", type: "m3u" }
+            ],
+            "單線直播": [
+                { name: "雲星家庭", url: "http://itvbox.cc/tvbox/云星日记/1.m3u8", type: "direct" },
+                { name: "雲星嗶哩", url: "http://itvbox.cc/tvbox/云星日记/bili.m3u8", type: "direct" },
+                { name: "螞蟻論壇接口", url: "https://download.kstore.space/download/2883/m3u8/dsj/guochan/mp1/1.m3u8", type: "direct" },
+                { name: "不良帥源", url: "https://notabug.org/qizhen15800/My9394/raw/master/ProfessionalEdition.m3u8", type: "direct" }
+            ]
+        };
+
+        let currentChannel = null;
+        const video = document.getElementById('video');
+        const loading = document.getElementById('loading');
+        const errorDiv = document.getElementById('error');
+        const errorText = document.getElementById('error-text');
+
+        // Render channel list
+        function renderChannels() {
+            const channelList = document.getElementById('channel-list');
+            
+            Object.keys(channels).forEach(groupName => {
+                const group = document.createElement('div');
+                group.className = 'channel-group';
+                
+                const title = document.createElement('div');
+                title.className = 'group-title';
+                title.textContent = groupName;
+                group.appendChild(title);
+                
+                channels[groupName].forEach((channel, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'channel-item';
+                    item.textContent = channel.name;
+                    item.tabIndex = 0;
+                    item.onclick = () => playChannel(channel, item);
+                    item.onkeypress = (e) => {
+                        if (e.key === 'Enter') playChannel(channel, item);
+                    };
+                    group.appendChild(item);
+                });
+                
+                channelList.appendChild(group);
+            });
+        }
+
+        // Try stream with fallback
+        function tryStream(streams, index) {
+            if (index >= streams.length) {
+                handleError(new Error('所有流媒體源均無法播放'));
+                return;
+            }
+            
+            const stream = streams[index];
+            video.src = stream.url;
+            video.load();
+            
+            // Set up one-time error handler for this stream
+            const errorHandler = () => {
+                console.log(`Stream ${index + 1} failed, trying next...`);
+                video.removeEventListener('error', errorHandler);
+                tryStream(streams, index + 1);
+            };
+            
+            video.addEventListener('error', errorHandler, { once: true });
+            video.play().catch(() => {
+                video.removeEventListener('error', errorHandler);
+                tryStream(streams, index + 1);
+            });
+        }
+
+        // Play channel
+        function playChannel(channel, element) {
+            // Remove active class from all items
+            document.querySelectorAll('.channel-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            element.classList.add('active');
+            
+            currentChannel = channel;
+            document.getElementById('channel-name').textContent = channel.name;
+            document.getElementById('channel-info').textContent = `正在播放: ${channel.type === 'm3u' ? 'M3U播放列表' : '直播流'}`;
+            
+            loading.classList.add('show');
+            errorDiv.classList.remove('show');
+            
+            if (channel.type === 'direct') {
+                // Direct stream
+                video.src = channel.url;
+                video.load();
+                video.play().catch(handleError);
+            } else if (channel.type === 'm3u') {
+                // M3U playlist - fetch and try streams with fallback
+                fetch(channel.url)
+                    .then(response => response.text())
+                    .then(m3uContent => {
+                        const streams = parseM3U(m3uContent);
+                        if (streams.length > 0) {
+                            // Try first stream with fallback to next streams
+                            tryStream(streams, 0);
+                        } else {
+                            throw new Error('未找到可用的流媒體');
+                        }
+                    })
+                    .catch(handleError);
+            }
+        }
+
+        // Parse M3U content
+        function parseM3U(content) {
+            const lines = content.split('\n');
+            const streams = [];
+            let currentStream = {};
+            
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('#EXTINF:')) {
+                    // Handle malformed EXTINF entries
+                    const parts = line.split(',');
+                    const name = parts.length > 1 ? parts[1].trim() : 'Unknown Channel';
+                    currentStream = { name: name };
+                } else if (line && !line.startsWith('#') && currentStream.name) {
+                    currentStream.url = line;
+                    streams.push(currentStream);
+                    currentStream = {};
+                }
+            });
+            
+            return streams;
+        }
+
+        // Handle errors
+        function handleError(error) {
+            loading.classList.remove('show');
+            errorDiv.classList.add('show');
+            errorText.textContent = error.message || '無法播放此頻道，請嘗試其他頻道';
+            console.error('Playback error:', error);
+        }
+
+        // Video event listeners
+        video.addEventListener('loadstart', () => {
+            loading.classList.add('show');
+            errorDiv.classList.remove('show');
+        });
+
+        video.addEventListener('canplay', () => {
+            loading.classList.remove('show');
+        });
+
+        video.addEventListener('error', () => {
+            handleError(new Error('視頻加載失敗'));
+        });
+
+        // Reload current channel
+        function reloadChannel() {
+            if (currentChannel) {
+                const activeItem = document.querySelector('.channel-item.active');
+                if (activeItem) {
+                    playChannel(currentChannel, activeItem);
+                }
+            }
+        }
+
+        // Toggle fullscreen
+        function toggleFullscreen() {
+            const playerContainer = document.getElementById('video-player');
+            if (!document.fullscreenElement) {
+                playerContainer.requestFullscreen().catch(err => {
+                    console.error('Error attempting to enable fullscreen:', err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Keyboard navigation for TV remote
+        document.addEventListener('keydown', (e) => {
+            const focused = document.activeElement;
+            
+            if (e.key === 'ArrowDown' && focused.classList.contains('channel-item')) {
+                let next = focused.nextElementSibling;
+                // Skip group titles
+                while (next && !next.classList.contains('channel-item')) {
+                    next = next.nextElementSibling;
+                }
+                // If no next item in current group, find first item in next group
+                if (!next) {
+                    const currentGroup = focused.closest('.channel-group');
+                    const nextGroup = currentGroup.nextElementSibling;
+                    if (nextGroup) {
+                        next = nextGroup.querySelector('.channel-item');
+                    }
+                }
+                if (next) {
+                    next.focus();
+                }
+            } else if (e.key === 'ArrowUp' && focused.classList.contains('channel-item')) {
+                let prev = focused.previousElementSibling;
+                // Skip group titles
+                while (prev && !prev.classList.contains('channel-item')) {
+                    prev = prev.previousElementSibling;
+                }
+                // If no prev item in current group, find last item in previous group
+                if (!prev) {
+                    const currentGroup = focused.closest('.channel-group');
+                    const prevGroup = currentGroup.previousElementSibling;
+                    if (prevGroup) {
+                        const items = prevGroup.querySelectorAll('.channel-item');
+                        prev = items[items.length - 1];
+                    }
+                }
+                if (prev) {
+                    prev.focus();
+                }
+            }
+        });
+
+        // Initialize
+        renderChannels();
+    </script>
+</body>
+</html>
