@@ -23,13 +23,13 @@ typedef uint16_t float16_t;
 typedef uint16_t bfloat16_t;
 #endif
 
-// Undef ERROR to avoid conflict with wingdi.h on Windows
-#ifdef ERROR
-#undef ERROR
-#endif
-#define MLX_ERROR(fmt, ...) fprintf(stderr, "%s %s - ERROR - %s:%d - " fmt "\n", __DATE__, __TIME__, __FILE__, __LINE__, ##__VA_ARGS__); return 1
-#define CHECK(x) if (!(x)) { MLX_ERROR("CHECK failed: " #x); }
-#define CHECK_LOAD(handle, x) *(void**)(&x##_) = DLSYM(handle, #x); CHECK(x##_)
+// Symbol load failures must not print to stderr here: this loader runs at
+// startup in every process (including machines where MLX is not applicable),
+// so a missing symbol is recorded and surfaced through the Go side (see
+// CheckInit in dynamic.go) only when MLX is actually requested.
+void mlx_dynamic_record_load_error(const char* symbol);
+const char* mlx_dynamic_load_error(void);
+#define CHECK_LOAD(handle, x) *(void**)(&x##_) = DLSYM(handle, #x); if (!(x##_)) { mlx_dynamic_record_load_error(#x); return 1; }
 // OPTIONAL_LOAD: load symbol if available, leave function pointer NULL otherwise
 #define OPTIONAL_LOAD(handle, x) *(void**)(&x##_) = DLSYM(handle, #x)
 
