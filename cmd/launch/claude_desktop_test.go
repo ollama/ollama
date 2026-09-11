@@ -14,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ollama/ollama/cmd/config"
 )
 
 func withClaudeDesktopPlatform(t *testing.T, goos string) {
@@ -384,132 +382,57 @@ func TestClaudeDesktopConfigureAutodiscoveryRemovesExistingModelCatalog(t *testi
 	}
 }
 
-func TestClaudeDesktopConfigureWritesSavedAutoModePreference(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-	t.Setenv("OLLAMA_API_KEY", "test-api-key")
-
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
+func TestClaudeDesktopConfigureAlwaysEnablesAutoMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		legacyConfig string
+	}{
+		{name: "fresh setup"},
+		{name: "legacy enabled", legacyConfig: `{"integrations":{"claude-desktop":{"models":["model-a"],"automode":true}}}`},
+		{name: "legacy disabled", legacyConfig: `{"integrations":{"claude-desktop":{"models":["model-a"],"automode":false}}}`},
+		{name: "legacy preference absent", legacyConfig: `{"integrations":{"claude-desktop":{"models":["model-a"]}}}`},
 	}
 
-	if enabled, err := ClaudeDesktopAutoModeEnabled(); err != nil || !enabled {
-		t.Fatal("auto mode should default to enabled")
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			setTestHome(t, tmpDir)
+			withClaudeDesktopPlatform(t, "darwin")
 
-	if err := SaveClaudeDesktopAutoMode(true); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
-		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["autoModeEnabled"] != true {
-		t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
-	}
+			var original []byte
+			if tt.legacyConfig != "" {
+				original = []byte(tt.legacyConfig)
+				configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+				if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(configPath, original, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	if err := SaveClaudeDesktopAutoMode(false); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
-		t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
-	}
-	profile = claudeDesktopReadJSON(t, paths.profile)
-	if profile["autoModeEnabled"] != false {
-		t.Fatalf("autoModeEnabled = %v, want false", profile["autoModeEnabled"])
-	}
-}
+			if err := (&ClaudeDesktop{}).ConfigureAutodiscovery(); err != nil {
+				t.Fatalf("ConfigureAutodiscovery returned error: %v", err)
+			}
+			paths, err := claudeDesktopConfigPaths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := claudeDesktopReadJSON(t, paths.profile)
+			if profile["autoModeEnabled"] != true {
+				t.Fatalf("autoModeEnabled = %v, want true", profile["autoModeEnabled"])
+			}
 
-func TestClaudeDesktopAutoModeDefaultsEnabledForLegacyIntegrationConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	if err := config.SaveIntegration(claudeDesktopIntegrationName, []string{"model-a"}); err != nil {
-		t.Fatal(err)
-	}
-
-	enabled, err := ClaudeDesktopAutoModeEnabled()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !enabled {
-		t.Fatal("auto mode should default to enabled when a legacy integration has no saved preference")
-	}
-}
-
-func TestClaudeDesktopEffectiveAutoModeDoesNotChangeSavedPreference(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-	t.Setenv("OLLAMA_API_KEY", "test-api-key")
-
-	if err := SaveClaudeDesktopAutoMode(true); err != nil {
-		t.Fatal(err)
-	}
-	c := &ClaudeDesktop{}
-	if err := c.ConfigureAutodiscoveryWithAutoMode(false); err != nil {
-		t.Fatal(err)
-	}
-
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	profile := claudeDesktopReadJSON(t, paths.profile)
-	if profile["autoModeEnabled"] != false {
-		t.Fatalf("autoModeEnabled = %v, want effective false", profile["autoModeEnabled"])
-	}
-	if !c.AutodiscoveryConfiguredWithAutoMode(false) {
-		t.Fatal("expected profile to match the effective Auto mode state")
-	}
-	if c.AutodiscoveryConfigured() {
-		t.Fatal("saved preference check must detect the temporary effective state")
-	}
-	enabled, err := ClaudeDesktopAutoModeEnabled()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !enabled {
-		t.Fatal("effective Auto mode state changed the saved preference")
-	}
-}
-
-func TestClaudeDesktopConfigurePreservesProfileWhenAutoModePreferenceIsUnreadable(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withClaudeDesktopPlatform(t, "darwin")
-
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(paths.profile), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	original := []byte(`{"autoModeEnabled":true,"userOwned":"keep"}`)
-	if err := os.WriteFile(paths.profile, original, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(configPath, []byte(`{invalid`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	err = (&ClaudeDesktop{}).ConfigureAutodiscovery()
-	if err == nil || !strings.Contains(err.Error(), "load Claude Desktop auto mode preference") {
-		t.Fatalf("ConfigureAutodiscovery error = %v, want unreadable preference error", err)
-	}
-	got, readErr := os.ReadFile(paths.profile)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if !slices.Equal(got, original) {
-		t.Fatalf("profile changed after preference read failure:\ngot:  %s\nwant: %s", got, original)
+			if tt.legacyConfig != "" {
+				got, err := os.ReadFile(filepath.Join(tmpDir, ".ollama", "config.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(got, original) {
+					t.Fatalf("configuration changed during profile migration:\ngot:  %s\nwant: %s", got, original)
+				}
+			}
+		})
 	}
 }
 
@@ -864,15 +787,12 @@ func TestClaudeDesktopAutodiscoveryConfiguredRequiresTelemetryDisabled(t *testin
 	}
 }
 
-func TestClaudeDesktopAutodiscoveryConfiguredRequiresSavedAutoModePreference(t *testing.T) {
+func TestClaudeDesktopAutodiscoveryConfiguredRequiresAutoMode(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
 
 	c := &ClaudeDesktop{}
-	if err := SaveClaudeDesktopAutoMode(true); err != nil {
-		t.Fatal(err)
-	}
 	if err := c.ConfigureAutodiscovery(); err != nil {
 		t.Fatalf("Configure returned error: %v", err)
 	}
@@ -888,7 +808,7 @@ func TestClaudeDesktopAutodiscoveryConfiguredRequiresSavedAutoModePreference(t *
 	}
 
 	if c.AutodiscoveryConfigured() {
-		t.Fatal("expected Auto mode preference drift to force Claude Desktop profile repair")
+		t.Fatal("expected disabled Auto mode to force Claude Desktop profile repair")
 	}
 	if !c.UsesOllamaGateway() {
 		t.Fatal("expected Auto mode drift to leave Ollama routing active")
@@ -1390,9 +1310,17 @@ func TestClaudeDesktopSetInstalledFromDesktopOmitsInferenceModelsWithoutMappedID
 	}
 }
 
-func TestClaudeDesktopSetInstalledFromDesktopOpensStoppedAppWhenEnabled(t *testing.T) {
-	setTestHome(t, t.TempDir())
+func TestClaudeDesktopReconnectAlwaysEnablesAutoMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
 	withClaudeDesktopPlatform(t, "darwin")
+	configPath := filepath.Join(tmpDir, ".ollama", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"integrations":{"claude-desktop":{"automode":false}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	openCalls := 0
 	withClaudeDesktopProcessHooks(t,
 		func() bool { return false },
@@ -1406,6 +1334,14 @@ func TestClaudeDesktopSetInstalledFromDesktopOpensStoppedAppWhenEnabled(t *testi
 	}
 	if openCalls != 1 || !c.AutodiscoveryConfigured() {
 		t.Fatalf("open calls/configured = %d/%v, want 1/true", openCalls, c.AutodiscoveryConfigured())
+	}
+	paths, err := claudeDesktopConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := claudeDesktopReadJSON(t, paths.profile)
+	if profile["autoModeEnabled"] != true {
+		t.Fatalf("autoModeEnabled after reconnect = %v, want true", profile["autoModeEnabled"])
 	}
 }
 

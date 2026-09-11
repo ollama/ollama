@@ -12,7 +12,6 @@ import {
   type ReactNode,
 } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { Switch } from "./ui/switch";
 import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
@@ -108,7 +107,6 @@ function testStatus(model = "glm-5.2:cloud", running = false) {
     running,
     startFailed: false,
     portConflict: false,
-    autoMode: false,
     modelSource: "user" as const,
     mappings: [{ ...fableRoute, model }],
     models: [
@@ -171,7 +169,7 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
-  it("opens below without scrolling and disables auto mode for draft changes", async () => {
+  it("opens the model picker below without scrolling", async () => {
     class TestHTMLElement {
       focus() {}
     }
@@ -201,7 +199,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
               running: false,
               startFailed: false,
               portConflict: false,
-              autoMode: true,
               modelSource: "user",
               mappings: [
                 {
@@ -216,14 +213,12 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
                   displayName: "glm-5.2:cloud",
                   cloud: true,
                   selected: true,
-                  autoMode: true,
                 },
                 {
                   name: "kimi-k3:cloud",
                   displayName: "kimi-k3:cloud",
                   cloud: true,
                   selected: false,
-                  autoMode: true,
                 },
               ],
             }}
@@ -235,11 +230,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         );
         await Promise.resolve();
       });
-
-      const autoModeSwitch = () =>
-        renderer!.root.findByProps({ role: "switch" });
-      expect(autoModeSwitch().props.disabled).not.toBe(true);
-      expect(autoModeSwitch().props["aria-checked"]).toBe(true);
 
       await act(async () => {
         pickerButton(renderer!).props.onClick();
@@ -260,20 +250,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         options[1].props.onClick();
         await Promise.resolve();
       });
-
-      expect(autoModeSwitch().props.disabled).toBe(true);
-      expect(autoModeSwitch().props["aria-checked"]).toBe(true);
-      expect(
-        renderer!.root
-          .findAllByType("p")
-          .some((node) =>
-            node.children
-              .join("")
-              .includes(
-                "Start or restart Claude to apply model changes before changing auto mode.",
-              ),
-          ),
-      ).toBe(true);
     } finally {
       await act(async () => {
         renderer?.unmount();
@@ -344,72 +320,6 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         { "claude-fable-5": "kimi-k3:cloud" },
         true,
       );
-    } finally {
-      await act(async () => {
-        renderer?.unmount();
-        await Promise.resolve();
-      });
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("restores Auto mode when restart confirmation is canceled", async () => {
-    class TestHTMLElement {
-      focus() {}
-    }
-    const runningStatus = {
-      ...testStatus("glm-5.2:cloud", true),
-      autoMode: true,
-      models: testStatus().models.map((model) => ({
-        ...model,
-        autoMode: true,
-      })),
-    };
-    const setAutoMode = vi.fn().mockResolvedValue({
-      status: runningStatus,
-      error:
-        "Claude Desktop restart confirmation is required before changing its profile",
-      restartConfirmationRequired: true,
-    });
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal("window", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      HTMLElement: TestHTMLElement,
-      setClaudeDesktopAutoMode: setAutoMode,
-      confirm,
-    });
-    vi.stubGlobal("document", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-
-    let renderer: ReactTestRenderer | undefined;
-    try {
-      await act(async () => {
-        renderer = create(
-          <ClaudeDesktopModelsSettings
-            initialLocalModels={[]}
-            initialStatus={runningStatus}
-          />,
-        );
-        await Promise.resolve();
-      });
-      await act(async () => {
-        renderer!.root.findByType(Switch).props.onChange(false);
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
-      expect(setAutoMode).toHaveBeenCalledTimes(1);
-      expect(setAutoMode).toHaveBeenCalledWith(false, false);
-      expect(confirm).toHaveBeenCalledWith(
-        "Restart Claude to change auto mode? Any running task will stop.",
-      );
-      expect(
-        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
-      ).toBe(true);
     } finally {
       await act(async () => {
         renderer?.unmount();
