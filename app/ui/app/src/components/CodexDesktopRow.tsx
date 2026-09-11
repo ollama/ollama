@@ -5,7 +5,8 @@ import type {
   CodexDesktopActionResult,
   CodexDesktopStatus,
 } from "@/types/webview";
-import { ArrowPathIcon, CommandLineIcon } from "@heroicons/react/24/outline";
+import { CommandLineIcon } from "@heroicons/react/24/outline";
+import { IntegrationConnectButton } from "@/components/IntegrationConnectButton";
 import {
   useMutation,
   useMutationState,
@@ -254,7 +255,7 @@ export function CodexDesktopRow({
 
         if (next.running) {
           setError(
-            "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
+            "ChatGPT is installed. Click Connect to restart it with Ollama models.",
           );
           return;
         }
@@ -270,7 +271,7 @@ export function CodexDesktopRow({
         setStatus(result.status);
         if (result.restartConfirmationRequired) {
           setError(
-            "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
+            "ChatGPT is installed. Click Connect to restart it with Ollama models.",
           );
         } else if (result.error || !result.status.connected) {
           setError(
@@ -316,8 +317,7 @@ export function CodexDesktopRow({
         phase === "waiting-for-install" ||
         phase === "connecting";
   const progress = connectionProgress[savingAcknowledgment ? "saving" : phase];
-  const statusLabel =
-    progress?.label ?? (!connected && !installed ? "Download & connect" : null);
+  const statusLabel = progress?.label ?? null;
   const actionError =
     error ??
     (acknowledgmentFailed
@@ -327,7 +327,12 @@ export function CodexDesktopRow({
     actionError ??
     notice ??
     progress?.description ??
-    codexDesktopDescription(status, integration.description);
+    codexDesktopDescription(
+      status,
+      installed
+        ? "Use Ollama models in Codex mode in ChatGPT."
+        : "We’ll download ChatGPT and connect it to Ollama.",
+    );
 
   const saveAcknowledgment = async (): Promise<boolean> => {
     if (queryClient.isMutating({ mutationKey: acknowledgmentKey }))
@@ -413,9 +418,9 @@ export function CodexDesktopRow({
       let result: CodexDesktopActionResult =
         await window.setCodexDesktopConnected(enabled, restartConfirmed);
 
+      if (!mounted.current) return;
       setStatus(result.status);
       if (result.restartConfirmationRequired) {
-        if (!mounted.current) return;
         // Keep focus-driven status refreshes from discarding this operation
         // while the native confirmation dialog temporarily owns focus.
         if (
@@ -423,11 +428,13 @@ export function CodexDesktopRow({
             enabled
               ? "Restart ChatGPT to add Ollama models? Any running task will stop."
               : "Restart ChatGPT to remove Ollama models? Any running task will stop.",
-          )
+          ) ||
+          !mounted.current
         ) {
           return;
         }
         result = await window.setCodexDesktopConnected(enabled, true);
+        if (!mounted.current) return;
         setStatus(result.status);
       }
 
@@ -467,16 +474,19 @@ export function CodexDesktopRow({
   };
 
   return (
-    <div className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 dark:bg-neutral-900">
-      <div className="flex min-w-0 items-center gap-3">
+    <div
+      id="integration-chatgpt"
+      className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-700 dark:bg-neutral-800/50"
+    >
+      <div className="flex min-w-0 flex-1 items-center gap-4">
         <CodexIcon integration={integration} />
         <div className="min-w-0">
-          <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
-            ChatGPT (Desktop)
+          <p className="text-base font-medium text-neutral-950 dark:text-neutral-100">
+            ChatGPT
           </p>
           <p
             role={actionError ? "alert" : notice ? "status" : undefined}
-            className="truncate text-xs leading-5 text-neutral-500 dark:text-neutral-400"
+            className="mt-1 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {description}
           </p>
@@ -494,22 +504,11 @@ export function CodexDesktopRow({
             Retry
           </button>
         )}
-        {statusLabel && (
-          <span
-            role="status"
-            aria-live="polite"
-            className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
-          >
-            {pending && <ArrowPathIcon className="h-3.5 w-3.5 animate-spin" />}
-            {statusLabel}
-          </span>
-        )}
-        <button
-          type="button"
-          role="switch"
-          aria-checked={displayedConnected}
-          aria-busy={pending || undefined}
-          aria-label={
+        <IntegrationConnectButton
+          connected={displayedConnected}
+          busy={pending}
+          progress={statusLabel}
+          label={
             showIntro
               ? "Finish connecting ChatGPT"
               : connected
@@ -527,13 +526,7 @@ export function CodexDesktopRow({
           }
           disabled={pending || showIntro}
           onClick={() => void toggleConnection()}
-          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-50 ${displayedConnected ? "bg-neutral-950 dark:bg-white" : "bg-neutral-300 dark:bg-neutral-700"}`}
-        >
-          <span
-            aria-hidden="true"
-            className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${pending ? "animate-pulse" : ""} ${displayedConnected ? "translate-x-4.5 dark:bg-neutral-900" : "translate-x-0.5"}`}
-          />
-        </button>
+        />
       </div>
       {showIntro && (
         <CodexConnectedIntro onDone={() => void toggleConnection(true)} />
