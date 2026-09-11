@@ -67,7 +67,13 @@ func rendererForName(name string) Renderer {
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3.5":
-		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
+		// The qwen3.5 assistant prefill always contains a think block: a
+		// thinking request renders the block and a no-think request renders
+		// an empty one (emitEmptyThinkOnNoThink). History assistant turns
+		// must reproduce it, otherwise the prompt cache common prefix breaks
+		// at the first assistant turn and every follow-up request
+		// re-processes the full prompt. Matches the qwen3.8 behavior.
+		renderer := &Qwen35Renderer{isThinking: true, alwaysRenderAssistantThinkBlock: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3.8":
 		return newQwen38Renderer()

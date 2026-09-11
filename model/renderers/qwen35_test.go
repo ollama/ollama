@@ -90,6 +90,60 @@ func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 	}
 }
 
+func TestQwen35RendererReplaysAssistantThinkBlock(t *testing.T) {
+	renderer := rendererForName("qwen3.5")
+
+	// Thinking request: the generation turn prefill ends with an explicit
+	// think block, so the replayed assistant turn must reproduce it to keep
+	// the prompt cache common prefix intact.
+	first, err := renderer.Render([]api.Message{{Role: "user", Content: "What is 2+2?"}}, nil, &api.ThinkValue{Value: true})
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	// Multi-turn replay with a thinking assistant turn.
+	multiWithThink, err := renderer.Render([]api.Message{
+		{Role: "user", Content: "What is 2+2?"},
+		{
+			Role:     "assistant",
+			Thinking: "Simple addition.",
+			Content:  "4",
+		},
+		{Role: "user", Content: "And 3+3?"},
+	}, nil, &api.ThinkValue{Value: true})
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	// The multi-turn render must start with the single-turn prefix.
+	// Without alwaysRenderAssistantThinkBlock this breaks at the assistant
+	// turn because history replay omits the think block that was present in
+	// the generation prefill.
+	if !strings.HasPrefix(multiWithThink, first) {
+		t.Fatalf("multi-turn render must replay the generation-turn assistant think block to keep the prompt cache prefix intact\ngeneration:\n%s\nreplay:\n%s", first, multiWithThink)
+	}
+
+	// No-think request: the generation prefill emits an empty think block;
+	// history replay must reproduce it so the KV cache is not invalidated.
+	firstNoThink, err := renderer.Render([]api.Message{{Role: "user", Content: "hi"}}, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	multiNoThink, err := renderer.Render([]api.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: "bye"},
+	}, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	if !strings.HasPrefix(multiNoThink, firstNoThink) {
+		t.Fatalf("multi-turn no-think render must replay the empty think block\ngeneration:\n%s\nreplay:\n%s", firstNoThink, multiNoThink)
+	}
+}
+
 func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 
