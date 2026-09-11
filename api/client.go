@@ -510,3 +510,13 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	}
 	return &resp, nil
 }
+
+// Usage returns the authenticated user's recent activity and included-usage
+// limits.
+func (c *Client) Usage(ctx context.Context) (*UsageResponse, error) {
+	var resp UsageResponse
+	if err := c.do(ctx, http.MethodGet, "/api/usage", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
