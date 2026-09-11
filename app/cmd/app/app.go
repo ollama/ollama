@@ -61,7 +61,10 @@ func main() {
 	startHidden := false
 	var urlSchemeRequest string
 	if len(os.Args) > 1 {
-		for _, arg := range os.Args {
+		args := os.Args[1:]
+		for i := 0; i < len(args); i++ {
+			arg := args[i]
+
 			// Handle URL scheme requests (Windows)
 			if strings.HasPrefix(arg, "ollama://") {
 				urlSchemeRequest = arg
