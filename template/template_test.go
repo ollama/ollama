@@ -699,6 +699,80 @@ func TestTemplatePropertiesJSON(t *testing.T) {
 	}
 }
 
+func TestTemplateToolFunctionJSON(t *testing.T) {
+	// Test that {{ .Function }} and {{ .Function.Parameters }} output valid JSON,
+	// not Go struct syntax like "{get_weather ... {object <nil> <nil> [city] ...}}"
+	props := api.NewToolPropertiesMap()
+	props.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "City name"})
+
+	values := Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get current weather for a city",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"city"},
+					Properties: props,
+				},
+			},
+		}},
+	}
+
+	render := func(t *testing.T, s string) string {
+		t.Helper()
+		// Note: template must reference .Messages to trigger the modern code path that converts Tools
+		tmpl, err := Parse(`{{- range .Messages }}{{- end }}{{- range .Tools }}` + s + `{{- end }}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var buf bytes.Buffer
+		if err := tmpl.Execute(&buf, values); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+
+	parameters := `{"type":"object","required":["city"],"properties":{"city":{"type":"string","description":"City name"}}}`
+	function := `{"name":"get_weather","description":"Get current weather for a city","parameters":` + parameters + `}`
+
+	cases := []struct {
+		name     string
+		template string
+		expected string
+	}{
+		{"function", `{{ .Function }}`, function},
+		{"function parameters", `{{ .Function.Parameters }}`, parameters},
+		{"json function", `{{ json .Function }}`, function},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := render(t, tt.template)
+
+			var gotJSON, expectedJSON any
+			if err := json.Unmarshal([]byte(got), &gotJSON); err != nil {
+				t.Fatalf("not valid JSON: %s, error: %v", got, err)
+			}
+			if err := json.Unmarshal([]byte(tt.expected), &expectedJSON); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(gotJSON, expectedJSON); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+
+	t.Run("function name", func(t *testing.T) {
+		if got := render(t, `{{ .Function.Name }}`); got != "get_weather" {
+			t.Errorf("got %q, want %q", got, "get_weather")
+		}
+	})
+}
+
 func TestTemplateArgumentsRange(t *testing.T) {
 	// Test that we can range over Arguments in templates
 	tmpl := `{{- range .Messages }}{{- range .ToolCalls }}{{- range $k, $v := .Function.Arguments }}{{ $k }}={{ $v }};{{- end }}{{- end }}{{- end }}`
