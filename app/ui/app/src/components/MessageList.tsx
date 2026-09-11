@@ -23,7 +23,7 @@ export default function MessageList({
   onEditMessage?: (content: string, index: number) => void | Promise<void>;
   editingMessageIndex?: number;
   error?: ErrorEvent | null;
-  browserToolResult?: any;
+  browserToolResult?: { page_stack: string[] };
 }) {
   const [showDots, setShowDots] = React.useState(false);
   const isDownloadingModel = downloadProgress && !downloadProgress.done;
@@ -54,9 +54,9 @@ export default function MessageList({
     const queries: (string | undefined)[] = [];
     let lastQuery: string | undefined = undefined;
     for (let i = 0; i < messages.length; i++) {
-      const m: any = messages[i] as any;
-      const toolCalls: any[] | undefined = Array.isArray(m?.tool_calls)
-        ? (m.tool_calls as any[])
+      const m = messages[i];
+      const toolCalls = Array.isArray(m?.tool_calls)
+        ? m.tool_calls
         : m?.tool_call
           ? [m.tool_call]
           : undefined;
