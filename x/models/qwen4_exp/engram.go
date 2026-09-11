@@ -62,6 +62,10 @@ func (p *PLE) hashes(b *batch.Batch, history *mlx.Array, cfg *Config) (*mlx.Arra
 }
 
 func (p *PLE) lookup(globalIDs *mlx.Array) *mlx.Array {
+	if p.hostEmbedding != nil {
+		return p.hostEmbedding.lookup(globalIDs)
+	}
+
 	rows := mlx.FromValues([]int64{int64(p.ShardRows)}, 1)
 	shardIDs := globalIDs.FloorDivide(rows)
 	localIDs := globalIDs.Remainder(rows)
