@@ -412,6 +412,8 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
+	} else if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
 	}
 	if r.Thinking != nil && r.Thinking.Type == "disabled" {
 		think = &api.ThinkValue{Value: false}
