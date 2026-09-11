@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
@@ -66,7 +66,7 @@ func TestGenerationDefaultsFromMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ggml.WriteGGUF(file, ggml.KV{
+	if err := gguftest.Write(file, gguftest.KV{
 		"general.architecture":             "llama",
 		"general.sampling.top_k":           uint32(40),
 		"general.sampling.top_p":           int32(1),
@@ -123,7 +123,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{{ bos_token }}{{ messages[0]['content'] }}",
 		}, nil)
@@ -148,7 +148,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -170,7 +170,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}",
 		}, nil)
@@ -195,7 +195,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
 {% for message in messages %}
@@ -226,7 +226,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{%- if tools and not available_tools -%}
 {{- set available_tools = tools -}}
@@ -264,7 +264,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -286,7 +286,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "0")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -308,7 +308,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 		}, nil)
 		writeTestModelManifest(t, "missing-chat-template", digest, customTemplate)
@@ -376,48 +376,48 @@ func loadTestMetadata(t *testing.T, m *Model) {
 
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
-	completionModelPath, _ := createBinFile(t, ggml.KV{
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	ggufToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
+	ggufToolTemplateModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": `{% if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+	audioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "pixtral",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	nemotronOmniModelPath, _ := createBinFile(t, ggml.KV{
+	nemotronOmniModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":                 "nemotron_h_omni",
 		"nemotron_h_omni.vision.block_count":   uint32(1),
 		"nemotron_h_omni.audio.block_count":    uint32(1),
 		"nemotron_h_omni.embedding_length":     uint32(1),
 		"nemotron_h_omni.attention.head_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	suppressedAudioProjectorPath, _ := createBinFile(t, ggml.KV{
+	suppressedAudioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "gemma4v",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
@@ -651,21 +651,21 @@ func TestModelCapabilities(t *testing.T) {
 
 func TestModelCheckCapabilities(t *testing.T) {
 	// Create simple model file for tests that don't depend on GGUF content
-	completionModelPath, _ := createBinFile(t, ggml.KV{
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {

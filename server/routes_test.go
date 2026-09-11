@@ -25,7 +25,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
@@ -76,9 +77,11 @@ func createTestFile(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
 		t.Fatal(err)
 	}
+	linkOrCopyTestBlob(t, f.Name(), blobPath)
 
 	return f.Name(), digest
 }
@@ -118,17 +121,14 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, "test.gguf", fn)
+		baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		config := &model.ConfigV2{
-			OS:           "linux",
-			Architecture: "amd64",
-		}
+		config := new(model.ConfigV2)
 
-		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
+		if err := createModel(t.Context(), r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -557,9 +557,9 @@ func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
 func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-		"general.file_type":    uint32(ggml.FileTypeQ4_K_M),
+		"general.file_type":    uint32(gguf.FileTypeQ4_K_M),
 	}, nil)
 	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
 	if err != nil {
@@ -769,8 +769,8 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	_, digest1 := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
-	_, digest2 := createBinFile(t, ggml.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+	_, digest1 := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, gguftest.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "show-model",
@@ -805,7 +805,7 @@ func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
 
 	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
 	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": chatTemplate,
 	}, nil)

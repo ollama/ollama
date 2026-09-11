@@ -45,7 +45,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -154,12 +154,13 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
-	ggml          *ggml.GGML
+	metadata      *gguf.Model
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
 	loadActivity  atomic.Int64
 	loadTracking  atomic.Bool
 	rawEmbeddings bool
+	splitDirs     []string
 
 	sem *semaphore.Weighted
 
@@ -255,11 +256,11 @@ func (s *llamaServerRunner) completionPrompt(prompt, leadingBOS string) string {
 }
 
 func (s *llamaServerRunner) tokenizerAddsBOS() bool {
-	if s.ggml == nil {
+	if s.metadata == nil {
 		return false
 	}
 
-	kv := s.ggml.KV()
+	kv := s.metadata.KV()
 
 	if kv.String("tokenizer.ggml.pre") == "lfm2" {
 		return true
@@ -383,8 +384,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 
-	// LoRA adapters
 	for _, adapter := range launch.adapters {
+		slog.Warn("LoRA adapters are deprecated and will be removed in a future release", "adapter", adapter)
 		params = append(params, "--lora", adapter)
 	}
 
@@ -732,7 +733,7 @@ func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
 }
 
 // mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
-func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string) (uint64, error) {
+func mmprojMemoryRequirement(modelPath string, f *gguf.Model, projectors []string) (uint64, error) {
 	if len(projectors) == 0 {
 		return 0, nil
 	}
@@ -741,32 +742,18 @@ func mmprojMemoryRequirement(modelPath string, f *ggml.GGML, projectors []string
 		if f == nil {
 			return 0, errors.New("read inline mmproj metadata: missing model metadata")
 		}
-		var size uint64
-		for _, prefix := range []string{"v.", "mm.", "a."} {
-			for _, tensor := range f.Tensors().Items(prefix) {
-				size += tensor.Size()
-			}
-		}
+		size := f.Tensors().Size("v.", "mm.", "a.")
 		if size == 0 {
 			return 0, errors.New("read inline mmproj metadata: no projector tensors found")
 		}
 		return size, nil
 	}
 
-	file, err := os.Open(projectors[0])
+	projector, err := LoadModel(projectors[0], 1024)
 	if err != nil {
 		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
 	}
-	defer file.Close()
-
-	projector, err := ggml.Decode(file, 1024)
-	if err != nil {
-		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
-	}
-	var size uint64
-	for _, tensor := range projector.Tensors().Items() {
-		size += tensor.Size()
-	}
+	size := projector.Tensors().Size()
 	if size == 0 {
 		return 0, fmt.Errorf("read mmproj metadata %q: no projector tensors found", projectors[0])
 	}
@@ -834,14 +821,14 @@ func externalDraftType(path string) (string, error) {
 	return draftTypeMTP, nil
 }
 
-func hasMTPDraft(f *ggml.GGML) bool {
+func hasMTPDraft(f *gguf.Model) bool {
 	if f.KV().Uint("nextn_predict_layers") > 0 {
 		return true
 	}
 	return hasLegacyQwenMTPDraft(f.KV().Architecture(), f.Tensors().Items("mtp."))
 }
 
-func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
+func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
 	switch arch {
 	case "qwen35", "qwen35moe":
 		return len(tensors) > 0
@@ -854,7 +841,7 @@ func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
 	modelPath string,
-	f *ggml.GGML,
+	f *gguf.Model,
 	adapters, projectors []string,
 	opts api.Options,
 	numParallel int,
@@ -863,7 +850,7 @@ func NewLlamaServerRunner(
 ) (LlamaServer, error) {
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
-	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", arch)]
+	isEmbedding := f.KV().Has("pooling_type")
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -912,6 +899,11 @@ func NewLlamaServerRunner(
 			return nil, err
 		}
 	}
+	splitModel, err := materializeSplitModels(f.Files(), projectors, config)
+	if err != nil {
+		return nil, err
+	}
+	config.DraftModelPath = splitModel.draftModelPath
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
@@ -928,10 +920,10 @@ func NewLlamaServerRunner(
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
 
 	launch := llamaServerLaunchConfig{
-		modelPath:    modelPath,
+		modelPath:    splitModel.modelPath,
 		modelArch:    arch,
 		draftType:    draftType,
-		projectors:   slices.Clone(projectors),
+		projectors:   slices.Clone(splitModel.projectors),
 		mmprojMemory: mmprojMemory,
 		modelLayers:  f.KV().BlockCount() + 1,
 		adapters:     slices.Clone(adapters),
@@ -950,11 +942,12 @@ func NewLlamaServerRunner(
 		status:           status,
 		options:          opts,
 		modelPath:        modelPath,
+		splitDirs:        splitModel.dirs,
 		mediaMarker:      mediaMarker,
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
-		ggml:             f,
+		metadata:         f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
 		sem:              semaphore.NewWeighted(int64(numParallel)),
@@ -965,6 +958,7 @@ func NewLlamaServerRunner(
 	memWriter.runner = s
 
 	if err := s.startProcess(); err != nil {
+		_ = s.removeSplitDirs()
 		msg := s.lastErrMsg()
 		return nil, fmt.Errorf("error starting llama-server: %v %s", err, msg)
 	}
@@ -980,9 +974,9 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return dst
 }
 
-func legacyEmbeddingsWereRaw(kv ggml.KV) bool {
+func legacyEmbeddingsWereRaw(kv *gguf.Metadata) bool {
 	arch := kv.Architecture()
-	if _, ok := kv[fmt.Sprintf("%s.pooling_type", arch)]; !ok {
+	if !kv.Has("pooling_type") {
 		return false
 	}
 
@@ -1058,6 +1052,9 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 		if err := s.WaitUntilRunning(ctx); err != nil {
 			return nil, fmt.Errorf("llama-server startup failed after projector CPU offload retry: %w", err)
 		}
+	}
+	if err := s.removeSplitDirs(); err != nil {
+		slog.Debug("split GGUF alias cleanup deferred until runner shutdown", "error", err)
 	}
 
 	// Verify that buffer size parsing captured GPU allocations.
@@ -2579,7 +2576,7 @@ func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (strin
 }
 
 func (s *llamaServerRunner) Close() error {
-	return s.stopProcess()
+	return errors.Join(s.stopProcess(), s.removeSplitDirs())
 }
 
 func (s *llamaServerRunner) stopProcess() error {
@@ -2667,8 +2664,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 		// must be left intact. Weights cannot exceed the model file on disk, so
 		// trim that overlap from the mmap-backed (reclaimable page cache) portion.
 		if memCPUMappedModel > 0 {
-			if info, err := os.Stat(s.modelPath); err == nil && memModelFileBacked > uint64(info.Size()) {
-				total -= min(memCPUMappedModel, memModelFileBacked-uint64(info.Size()))
+			if modelSize := modelFileSize(s.modelPath, s.metadata); modelSize > 0 && memModelFileBacked > modelSize {
+				total -= min(memCPUMappedModel, memModelFileBacked-modelSize)
 			}
 		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
@@ -2678,8 +2675,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	}
 	// Fallback: use model file size as a rough proxy
 	slog.Debug("llama-server buffer sizes not available, falling back to file size estimate", "model", s.modelPath)
-	if info, err := os.Stat(s.modelPath); err == nil {
-		total = uint64(info.Size())
+	if modelSize := modelFileSize(s.modelPath, s.metadata); modelSize > 0 {
+		total = modelSize
 		vram = total
 	}
 	return total, vram
@@ -2688,11 +2685,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Uses model file size as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
-	var weights uint64
-	if info, err := os.Stat(modelPath); err == nil {
-		weights = uint64(info.Size())
-	}
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
+	weights := modelFileSize(modelPath, f)
 
 	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
 	layers := f.KV().BlockCount()

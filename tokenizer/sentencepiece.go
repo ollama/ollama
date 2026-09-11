@@ -19,10 +19,6 @@ type SentencePiece struct {
 
 var _ Tokenizer = (*SentencePiece)(nil)
 
-func (spm SentencePiece) Vocabulary() *Vocabulary {
-	return spm.vocab
-}
-
 func NewSentencePiece(vocab *Vocabulary) SentencePiece {
 	logutil.Trace("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
@@ -46,10 +42,6 @@ func NewSentencePiece(vocab *Vocabulary) SentencePiece {
 		maxTokenLen: maxTokenLen,
 		vocab:       vocab,
 	}
-}
-
-func (spm SentencePiece) Is(id int32, special Special) bool {
-	return spm.vocab.Is(id, special)
 }
 
 func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
