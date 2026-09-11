@@ -9,8 +9,10 @@
 // its json_schema field (avoiding the CGO SchemaToGrammar dependency). Raw BNF
 // grammars are passed via the grammar field.
 //
-// llama-server auto-detects GPU layers (-ngl), thread count (-t), and flash
-// attention (--flash-attn).
+// llama-server auto-detects GPU layers (-ngl) and flash attention
+// (--flash-attn). Thread count (-t) is derived by Ollama itself
+// (see defaultNumThreads) rather than left to llama-server's own
+// auto-detection, which ignores cgroup CPU limits.
 package llm
 
 import (
@@ -409,11 +411,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	}
 	// NumGPU == -1 (default): don't pass -ngl, let llama-server auto-detect
 
-	// Thread count — only pass if user explicitly set it.
-	// Default behavior: let llama-server auto-detect.
-	if launch.opts.NumThread > 0 {
-		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
-	}
+	params = appendThreadArgs(params, launch.opts)
 
 	params = appendMainGPUArgs(params, launch.opts)
 
@@ -635,6 +633,21 @@ func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo)
 		return append(params, "--load-mode", "none")
 	}
 
+	return params
+}
+
+// appendThreadArgs adds -t using the caller's explicit thread count if set,
+// otherwise a cgroup/affinity-aware default (see defaultNumThreads) in
+// place of llama-server's own auto-detection, which uses the raw host core
+// count and ignores CFS quota throttling in containers.
+func appendThreadArgs(params []string, opts api.Options) []string {
+	n := opts.NumThread
+	if n <= 0 {
+		n = defaultNumThreads()
+	}
+	if n > 0 {
+		params = append(params, "-t", strconv.Itoa(n))
+	}
 	return params
 }
 
