@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/install.sh'
+      - 'scripts/install_test.sh'
       - '.github/workflows/test-install.yaml'
 
 jobs:
@@ -14,6 +15,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Test systemd unit migration
+        if: runner.os == 'Linux'
+        run: sh ./scripts/install_test.sh
       - name: Run install script
         run: sh ./scripts/install.sh
         env:
