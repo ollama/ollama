@@ -180,14 +180,17 @@ if(OLLAMA_MLX_BACKENDS)
             -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
         CACHE INTERNAL "MLX-C carry patch")
 
+    set(_mlx_c_source_override FALSE)
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX-C}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using MLX-C source override: ${OLLAMA_MLX_C_SOURCE_DIR}")
+        set(_mlx_c_source_override TRUE)
     elseif(DEFINED ENV{OLLAMA_MLX_C_SOURCE})
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "$ENV{OLLAMA_MLX_C_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local MLX-C source: ${OLLAMA_MLX_C_SOURCE_DIR}")
+        set(_mlx_c_source_override TRUE)
     else()
         set(OLLAMA_MLX_C_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/mlx-c-src")
         ExternalProject_Add(ollama-mlx-c-source
@@ -203,6 +206,17 @@ if(OLLAMA_MLX_BACKENDS)
             USES_TERMINAL_DOWNLOAD TRUE
             USES_TERMINAL_PATCH TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
+    endif()
+    if(_mlx_c_source_override)
+        # Source overrides bypass the ExternalProject patch step, so the carry
+        # patch has to be applied to the override checkout as well. The
+        # applier is idempotent, which keeps repeated builds safe.
+        add_custom_target(ollama-mlx-c-override-patch
+            COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
+            WORKING_DIRECTORY ${OLLAMA_MLX_C_SOURCE_DIR}
+            COMMENT "Applying MLX-C compat patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
+            VERBATIM)
+        list(APPEND _mlx_source_targets ollama-mlx-c-override-patch)
     endif()
     # XGrammar has no pre-fetch: without an override each variant's build
     # clones it via FetchContent.

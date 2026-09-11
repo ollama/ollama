@@ -1,6 +1,7 @@
 package qwen3_5
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ollama/ollama/x/internal/mlxtest"
@@ -121,52 +122,125 @@ func TestSupportsGatherQMM(t *testing.T) {
 	}
 }
 
-func TestLoadSwitchMLPKeepsSeparateGlobalScales(t *testing.T) {
+// Gate and up fuse into one quantized bank when their global scales agree,
+// since gather_qmm applies one scale per expert across the whole bank row.
+// Scales that disagree cannot share a bank and stay on separate projections.
+// Either way the result has to match the dequantized weights.
+func TestLoadSwitchMLPGlobalScaleFusion(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
-		const experts, width = 4, 64
+		const experts, width, group = 4, 64, 16
 		cfg := &Config{
 			HiddenSize:       width,
 			NumExperts:       experts,
-			QuantGroupSize:   16,
+			QuantGroupSize:   group,
 			QuantBits:        4,
 			QuantMode:        "nvfp4",
 			NumExpertsPerTok: 2,
 		}
 		prefix := "model.layers.0"
-		tensors := make(map[string]*mlx.Array)
-		for _, proj := range []string{"gate_proj", "up_proj", "down_proj"} {
-			key := prefix + ".mlp.experts." + proj + ".weight"
-			tensors[key] = mlx.Zeros(mlx.DTypeUint32, experts, width, width/8)
-			tensors[key+"_scale"] = mlx.Zeros(mlx.DTypeUint8, experts, width, width/16)
-			tensors[key+".global_scale"] = mlx.FromValues([]float32{0.5, 1, 2, 4}, experts)
-		}
 
-		switchMLP, err := loadSwitchMLP(tensors, cfg, true, prefix)
-		if err != nil {
-			t.Fatalf("loadSwitchMLP() failed: %v", err)
-		}
-		if !mlx.MetalIsAvailable() {
-			if switchMLP.GateUpWeight == nil || switchMLP.DownWeight == nil {
-				t.Fatal("global-scale experts did not use the dense fallback off Metal")
+		// Nonzero nvfp4 payloads: packed fp4 codes cycle through all 16 values
+		// and every group scale is a power of two, so the dequantized weights
+		// are exact and the dense path is a faithful reference.
+		packed := make([]uint32, width*width/8)
+		for i := range packed {
+			for j := range 8 {
+				packed[i] |= uint32((i*8+j)%16) << (4 * j)
 			}
-			return
 		}
-		if switchMLP.GateUpWeightQ != nil {
-			t.Fatal("gate and up with independent global scales were fused")
-		}
-		if switchMLP.GateWeightQ == nil || switchMLP.UpWeightQ == nil || switchMLP.DownWeightQ == nil {
-			t.Fatal("separate expert projections did not remain quantized")
-		}
-		if switchMLP.GateGlobalScales == nil || switchMLP.UpGlobalScales == nil || switchMLP.DownGlobalScales == nil {
-			t.Fatal("separate expert global scales were not retained")
+		scaleBits := make([]uint8, width*width/group)
+		for i := range scaleBits {
+			exp := (i/(width/group)+i%(width/group))%4 - 1
+			scaleBits[i] = uint8((exp + 7) << 3)
 		}
 
-		x := mlx.Zeros(mlx.DTypeBFloat16, 1, 1, width)
-		indices := mlx.FromValues([]int32{0, 1}, 1, 1, int(cfg.NumExpertsPerTok))
-		out := switchMLP.Forward(x, indices, cfg)
-		mlx.Eval(out)
-		if dims := out.Dims(); len(dims) != 4 || dims[0] != 1 || dims[1] != 1 || dims[2] != int(cfg.NumExpertsPerTok) || dims[3] != width {
-			t.Fatalf("output shape = %v, want [1 1 %d %d]", dims, cfg.NumExpertsPerTok, width)
+		for _, tt := range []struct {
+			name      string
+			upScales  []float32
+			wantFused bool
+		}{
+			{"matching scales fuse", []float32{0.5, 1, 2, 4}, true},
+			{"differing scales stay separate", []float32{4, 2, 1, 0.5}, false},
+		} {
+			func() {
+				buildTensors := func() map[string]*mlx.Array {
+					tensors := make(map[string]*mlx.Array)
+					for _, proj := range []string{"gate_proj", "up_proj", "down_proj"} {
+						globalScales := []float32{0.5, 1, 2, 4}
+						if proj == "up_proj" {
+							globalScales = tt.upScales
+						}
+						key := prefix + ".mlp.experts." + proj + ".weight"
+						tensors[key] = mlx.FromValues(packed, experts, width, width/8)
+						tensors[key+"_scale"] = mlx.FromValues(scaleBits, experts, width, width/group)
+						tensors[key+".global_scale"] = mlx.FromValues(globalScales, experts)
+					}
+					return tensors
+				}
+
+				switchMLP, err := loadSwitchMLP(buildTensors(), cfg, true, prefix)
+				if err != nil {
+					t.Fatalf("%s: loadSwitchMLP() failed: %v", tt.name, err)
+				}
+				if tt.wantFused {
+					if switchMLP.GateUpWeightQ == nil {
+						t.Fatalf("%s: gate and up sharing a global scale were not fused", tt.name)
+					}
+					if switchMLP.GateUpGlobalScales == nil {
+						t.Fatalf("%s: the fused bank dropped its global scale", tt.name)
+					}
+				} else {
+					if switchMLP.GateUpWeightQ != nil {
+						t.Fatalf("%s: gate and up with differing global scales were fused", tt.name)
+					}
+					if switchMLP.GateWeightQ == nil || switchMLP.UpWeightQ == nil {
+						t.Fatalf("%s: separate expert projections did not remain quantized", tt.name)
+					}
+					if switchMLP.GateGlobalScales == nil || switchMLP.UpGlobalScales == nil {
+						t.Fatalf("%s: separate expert global scales were not retained", tt.name)
+					}
+				}
+				if switchMLP.DownWeightQ == nil || switchMLP.DownGlobalScales == nil {
+					t.Fatalf("%s: the down projection lost its quantized bank or global scale", tt.name)
+				}
+
+				xValues := make([]float32, width)
+				for i := range xValues {
+					xValues[i] = float32(i%7-3) / 8
+				}
+				x := mlx.FromValues(xValues, 1, 1, width).AsType(mlx.DTypeBFloat16)
+				indices := mlx.FromValues([]int32{0, 3}, 1, 1, int(cfg.NumExpertsPerTok))
+				out := switchMLP.Forward(x, indices, cfg)
+
+				// The dense path dequantizes the same weights (global scales
+				// included) at load, giving a reference for the quantized
+				// path's rounding.
+				dense, err := loadSwitchMLP(buildTensors(), cfg, false, prefix)
+				if err != nil {
+					t.Fatalf("%s: loadSwitchMLP(useQuantized=false) failed: %v", tt.name, err)
+				}
+				if dense.GateWeightQ != nil || dense.UpWeightQ != nil || dense.DownWeightQ != nil {
+					t.Fatalf("%s: dense load kept quantized expert banks", tt.name)
+				}
+				ref := dense.Forward(x, indices, cfg)
+
+				mlx.Eval(out, ref)
+				gotVals := out.AsType(mlx.DTypeFloat32).Floats()
+				wantVals := ref.AsType(mlx.DTypeFloat32).Floats()
+				if len(gotVals) != len(wantVals) {
+					t.Fatalf("%s: output length = %d, want %d", tt.name, len(gotVals), len(wantVals))
+				}
+				for i, got := range gotVals {
+					if math.IsNaN(float64(got)) || math.IsInf(float64(got), 0) {
+						t.Fatalf("%s: output[%d] = %v, want finite", tt.name, i, got)
+					}
+					delta := math.Abs(float64(got - wantVals[i]))
+					tolerance := 0.02 * math.Max(math.Abs(float64(wantVals[i])), 1)
+					if delta > tolerance {
+						t.Fatalf("%s: output[%d] = %v, want %v (delta %v > %v)", tt.name, i, got, wantVals[i], delta, tolerance)
+					}
+				}
+			}()
 		}
 	})
 }

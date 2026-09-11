@@ -8,6 +8,7 @@ import (
 	"github.com/ollama/ollama/x/internal/mlxtest"
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/models/nn"
 )
 
@@ -613,6 +614,67 @@ func TestSwitchMLPMixedQuantizedGateUpDenseDownMatchesDense(t *testing.T) {
 		want := dense.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
 		mlx.Eval(got, want)
 		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 0.02)
+	})
+}
+
+// Routed gate and up fuse into one nvfp4 bank only when their per-expert
+// global scales agree. gather_qmm applies one scale per expert across the
+// whole bank row, so the fused bank carries that scale and has to match
+// running the two projections separately.
+func TestSwitchMLPFusedGateUpGlobalScaleMatchesSeparate(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		if !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+			t.Skip("gather_qmm global scales require a GPU backend")
+		}
+		cfg := &Config{HiddenSize: 32, NumExpertsPerTok: 2}
+		x := makePatternExpertWeight(1, 2, int(cfg.HiddenSize), 0.013)
+		indices := mlx.FromValues([]int32{0, 1, 1, 0}, 2, int(cfg.NumExpertsPerTok))
+
+		gateWeight := makePatternExpertWeight(2, 32, 32, 0.011)
+		upWeight := makePatternExpertWeight(2, 32, 32, 0.017)
+		downWeight := makePatternExpertWeight(2, 32, 32, 0.013)
+		gateQ, gateScales, _ := mlx.Quantize(gateWeight, 16, 4, "nvfp4")
+		upQ, upScales, _ := mlx.Quantize(upWeight, 16, 4, "nvfp4")
+		mlx.Eval(gateQ, gateScales, upQ, upScales)
+
+		shared := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{0.5, 2}, 2), 2)
+		differing := model.PrepareGatherQMMGlobalScale(mlx.FromValues([]float32{2, 0.5}, 2), 2)
+
+		gateW := &stackedExpertWeights{
+			Weight: gateQ, Scales: gateScales, GlobalScales: shared,
+			Bits: 4, GroupSize: 16, Mode: "nvfp4",
+		}
+		upW := &stackedExpertWeights{
+			Weight: upQ, Scales: upScales, GlobalScales: shared,
+			Bits: 4, GroupSize: 16, Mode: "nvfp4",
+		}
+		if !canFuseQuantizedGateUp(gateW, upW) {
+			t.Fatal("gate and up sharing a global scale did not fuse")
+		}
+		upW.GlobalScales = differing
+		if canFuseQuantizedGateUp(gateW, upW) {
+			t.Fatal("gate and up with differing global scales fused")
+		}
+
+		fused := &SwitchMLP{
+			GateUpWeightQ:     fuseExpertStacks(gateQ, upQ, 1),
+			GateUpScales:      fuseExpertStacks(gateScales, upScales, 1),
+			GateUpGlobalScale: shared,
+			GateUpBits:        4, GateUpGroupSize: 16, GateUpMode: "nvfp4",
+			DownWeight: downWeight, DownWeightSourceLayout: true,
+		}
+		separate := &SwitchMLP{
+			GateWeightQ: gateQ, GateScales: gateScales, GateGlobalScale: shared,
+			GateBits: 4, GateGroupSize: 16, GateMode: "nvfp4",
+			UpWeightQ: upQ, UpScales: upScales, UpGlobalScale: shared,
+			UpBits: 4, UpGroupSize: 16, UpMode: "nvfp4",
+			DownWeight: downWeight, DownWeightSourceLayout: true,
+		}
+
+		got := fused.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
+		want := separate.Forward(x, indices, cfg).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got, want)
+		assertFloatSlicesClose(t, got.Floats(), want.Floats(), 1e-4)
 	})
 }
 

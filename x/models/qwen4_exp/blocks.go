@@ -176,7 +176,7 @@ func (m *sparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	var gateUp *mlx.Array
 	if m.GateUpScales != nil {
 		gateUp = mlx.GatherQMM(xFlat, m.GateUpExperts, m.GateUpScales, m.GateUpBiases,
-			nil, indexFlat, true, m.GateUpGroup, m.GateUpBits, m.GateUpMode, doSort)
+			nil, indexFlat, true, m.GateUpGroup, m.GateUpBits, m.GateUpMode, nil, doSort)
 	} else {
 		gateUp = mlx.GatherMM(xFlat, m.GateUpExperts, nil, indexFlat, doSort)
 	}
@@ -185,7 +185,7 @@ func (m *sparseMoE) Forward(x *mlx.Array, cfg *Config) *mlx.Array {
 	var down *mlx.Array
 	if m.DownScales != nil {
 		down = mlx.GatherQMM(hidden, m.DownExperts, m.DownScales, m.DownBiases,
-			nil, indexFlat, true, m.DownGroup, m.DownBits, m.DownMode, doSort)
+			nil, indexFlat, true, m.DownGroup, m.DownBits, m.DownMode, nil, doSort)
 	} else {
 		down = mlx.GatherMM(hidden, m.DownExperts, nil, indexFlat, doSort)
 	}

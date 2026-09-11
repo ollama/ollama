@@ -185,14 +185,8 @@ func TestLoadFusedExpertsGlobalScale(t *testing.T) {
 		moe := &MoEBlock{}
 		m.loadFusedExperts(moe, tensors, gateUpKey, tensors[gateUpKey], downKey, tensors[downKey])
 
-		if !mlx.MetalIsAvailable() {
-			if moe.UseQuantized || moe.GateUpWeight == nil || moe.DownWeight == nil {
-				t.Fatal("global-scale experts did not use the dense fallback off Metal")
-			}
-			return
-		}
 		if !moe.UseQuantized || moe.GateUpGlobalScales == nil || moe.DownGlobalScales == nil {
-			t.Fatal("global-scale experts did not use the native Metal path")
+			t.Fatal("global-scale experts did not stay quantized")
 		}
 		if got := moe.GateUpGlobalScales.Dims(); len(got) != 1 || got[0] != experts {
 			t.Fatalf("gate_up kernel scale shape = %v, want [%d]", got, experts)

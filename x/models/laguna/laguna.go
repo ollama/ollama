@@ -154,6 +154,7 @@ type SwitchMLP struct {
 	GateWeightQ, GateScales, GateBiases       *mlx.Array
 	UpWeightQ, UpScales, UpBiases             *mlx.Array
 	DownWeightQ, DownScales, DownBiases       *mlx.Array
+	GateUpGlobalScale                         *mlx.Array
 	GateGlobalScale, UpGlobalScale            *mlx.Array
 	DownGlobalScale                           *mlx.Array
 
@@ -647,7 +648,9 @@ func canFuseQuantizedGateUp(gateW, upW *stackedExpertWeights) bool {
 	if gateW == nil || upW == nil || gateW.Scales == nil || upW.Scales == nil {
 		return false
 	}
-	if gateW.GlobalScales != nil || upW.GlobalScales != nil {
+	// One scale per expert covers the whole bank row, so gate and up can share
+	// a fused bank when their scales agree.
+	if !model.SameGlobalScales(gateW.GlobalScales, upW.GlobalScales) {
 		return false
 	}
 	if gateW.Bits != upW.Bits || gateW.GroupSize != upW.GroupSize || gateW.Mode != upW.Mode {
@@ -875,8 +878,8 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, m, 1)
-		keepQuantized := useQuantized && supportsGatherQMM(m, b) && supportsGlobalScale
+		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
+		keepQuantized := useQuantized && supportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
 		} else if quantized != keepQuantized ||
@@ -957,8 +960,8 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
 		consumedKeys = append(consumedKeys, globalScaleKeys...)
 		gs, b, m := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, s)
-		kernelGlobalScale, supportsGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, m, w.Dim(0))
-		if useQuantized && supportsGatherQMM(m, b) && supportsGlobalScale {
+		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+		if useQuantized && supportsGatherQMM(m, b) {
 			freeTensorKeys(tensors, consumedKeys...)
 			return &stackedExpertWeights{
 				Weight: w, Scales: s, Biases: qb,
@@ -1089,6 +1092,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 					sw.GateUpWeightQ = fuseExpertStacks(gateW.Weight, upW.Weight, 1)
 					sw.GateUpScales = fuseExpertStacks(gateW.Scales, upW.Scales, 1)
 					sw.GateUpBiases = fuseExpertStacks(gateW.Biases, upW.Biases, 1)
+					sw.GateUpGlobalScale = gateW.GlobalScales
 					sw.GateUpBits, sw.GateUpGroupSize, sw.GateUpMode = gateW.Bits, gateW.GroupSize, gateW.Mode
 				} else {
 					sw.GateWeightQ, sw.GateScales, sw.GateBiases = gateW.Weight, gateW.Scales, gateW.Biases
@@ -1239,16 +1243,16 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 	var gate, up, hidden *mlx.Array
 	switch {
 	case s.GateUpWeightQ != nil:
-		gateUp := mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBiases, nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, doSort)
+		gateUp := mlx.GatherQMM(xFlat, s.GateUpWeightQ, s.GateUpScales, s.GateUpBiases, nil, idxFlat, true, s.GateUpGroupSize, s.GateUpBits, s.GateUpMode, s.GateUpGlobalScale, doSort)
 		guDims := gateUp.Dims()
 		mid := int32(guDims[len(guDims)-1] / 2)
 		gate = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, 0}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), mid})
 		up = mlx.SliceStartStop(gateUp, []int32{0, 0, 0, mid}, []int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
 		hidden = mlx.SwiGLU(gate, up)
 	case s.GateWeightQ != nil && s.UpWeightQ != nil:
-		gate = mlx.GatherQMMWithGlobalScale(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases, nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode,
+		gate = mlx.GatherQMM(xFlat, s.GateWeightQ, s.GateScales, s.GateBiases, nil, idxFlat, true, s.GateGroupSize, s.GateBits, s.GateMode,
 			s.GateGlobalScale, doSort)
-		up = mlx.GatherQMMWithGlobalScale(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases, nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode,
+		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases, nil, idxFlat, true, s.UpGroupSize, s.UpBits, s.UpMode,
 			s.UpGlobalScale, doSort)
 		hidden = mlx.SwiGLU(gate, up)
 	case s.GateUpWeight != nil:
@@ -1266,7 +1270,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 
 	var down *mlx.Array
 	if s.DownWeightQ != nil {
-		down = mlx.GatherQMMWithGlobalScale(hidden, s.DownWeightQ, s.DownScales, s.DownBiases, nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode,
+		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases, nil, idxFlat, true, s.DownGroupSize, s.DownBits, s.DownMode,
 			s.DownGlobalScale, doSort)
 	} else {
 		down = mlx.GatherMM(hidden, weightForGatherMM(s.DownWeight, s.DownWeightSourceLayout), nil, idxFlat, doSort)
