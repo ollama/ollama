@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [protoAgent](https://github.com/protoLabsAI/protoAgent) - LangGraph agent runtime with an operator console, A2A, and drop-in plugins; runs any Ollama model via its OpenAI endpoint
 
 ### Productivity & Apps
 
