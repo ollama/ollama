@@ -8,7 +8,79 @@ import {
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
   getIntegrationStatuses,
+  sendMessage,
 } from "./api";
+import { Model } from "@/gotypes";
+
+describe("sendMessage", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function readEvents() {
+    const events = [];
+    for await (const event of sendMessage(
+      "test",
+      "hello",
+      new Model({ model: "test" }),
+    )) {
+      events.push(event);
+    }
+    return events;
+  }
+
+  it.each([
+    "",
+    '{"eventName":"chat_created","chatId":"test"}\n',
+    '{"eventName":"chat","content":"partial"}\n',
+    '{"eventName":"download","done":true}\n',
+  ])(
+    "reports a stream that ends without a terminal chat event",
+    async (body) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+      await expect(readEvents()).rejects.toThrow("response was complete");
+    },
+  );
+
+  it("accepts a completed response with a final event without a newline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            '{"eventName":"chat","content":"hello"}\n{"eventName":"done"}',
+          ),
+        ),
+    );
+    await expect(readEvents()).resolves.toMatchObject([
+      { eventName: "chat", content: "hello" },
+      { eventName: "done" },
+    ]);
+  });
+
+  it("preserves a server error and its code as the terminal event", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              eventName: "error",
+              error: "Sign in required",
+              code: "cloud_unauthorized",
+            }),
+          ),
+        ),
+    );
+    await expect(readEvents()).resolves.toMatchObject([
+      {
+        eventName: "error",
+        error: "Sign in required",
+        code: "cloud_unauthorized",
+      },
+    ]);
+  });
+});
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {

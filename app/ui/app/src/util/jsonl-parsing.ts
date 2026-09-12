@@ -11,12 +11,9 @@ export async function* parseJsonlFromStream<T>(
 
       if (done) {
         // Process any remaining data in buffer
+        buffer += decoder.decode();
         if (buffer.trim()) {
-          try {
-            yield JSON.parse(buffer.trim());
-          } catch (error) {
-            console.error(`Failed to parse final buffer: ${buffer}`, error);
-          }
+          yield JSON.parse(buffer.trim());
         }
         break;
       }
@@ -31,15 +28,13 @@ export async function* parseJsonlFromStream<T>(
       for (const line of lines) {
         const trimmed = line.trim();
         if (trimmed) {
-          try {
-            yield JSON.parse(trimmed);
-          } catch (error) {
-            console.error(`Failed to parse line: ${trimmed}`, error);
-          }
+          yield JSON.parse(trimmed);
         }
       }
     }
   } finally {
+    // Release unread data if parsing fails or the consumer stops early.
+    await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
@@ -50,6 +45,18 @@ export async function* parseJsonlFromStream<T>(
 export async function* parseJsonlFromResponse<T>(
   response: Response,
 ): AsyncGenerator<T, void, unknown> {
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === "string" && body.error) {
+        message = body.error;
+      }
+    } catch {
+      // Non-JSON error responses still need to report the HTTP status.
+    }
+    throw new Error(message);
+  }
   if (!response.body) {
     throw new Error("Response body is null");
   }
