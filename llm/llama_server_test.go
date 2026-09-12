@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -1652,7 +1653,7 @@ func TestLlamaServerTokenize(t *testing.T) {
 	}
 }
 
-func TestLlamaServerTokenizeDoesNotReuseIdleConnections(t *testing.T) {
+func TestLlamaServerTokenizeReusesIdleConnections(t *testing.T) {
 	var newConns atomic.Int64
 
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1674,14 +1675,67 @@ func TestLlamaServerTokenizeDoesNotReuseIdleConnections(t *testing.T) {
 	var portInt int
 	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
 
-	runner := &llamaServerRunner{port: portInt, cmd: fakeRunningCmd()}
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		client: newLlamaServerHTTPClient(),
+	}
 	for range 2 {
 		if _, err := runner.Tokenize(t.Context(), "hello world"); err != nil {
 			t.Fatalf("Tokenize error: %v", err)
 		}
 	}
-	if got := newConns.Load(); got < 2 {
-		t.Fatalf("Tokenize reused an idle llama-server connection, new connections = %d", got)
+	if got := newConns.Load(); got != 1 {
+		t.Fatalf("Tokenize should reuse an idle keep-alive connection, new connections = %d, want 1", got)
+	}
+}
+
+func TestLlamaServerStopProcessClosesIdleConnections(t *testing.T) {
+	var newConns atomic.Int64
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tokenize" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		fmt.Fprint(w, `{"tokens":[1,2,3]}`)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		client: newLlamaServerHTTPClient(),
+	}
+	if _, err := runner.Tokenize(t.Context(), "hello world"); err != nil {
+		t.Fatalf("Tokenize error: %v", err)
+	}
+	if got := newConns.Load(); got != 1 {
+		t.Fatalf("new connections after first Tokenize = %d, want 1", got)
+	}
+
+	// Mimic runner restart: drop idle keep-alives so the next dial cannot hit a
+	// socket still bound to a previous llama-server port/process.
+	if err := runner.stopProcess(); err != nil {
+		t.Fatalf("stopProcess: %v", err)
+	}
+	runner.cmd = fakeRunningCmd()
+
+	if _, err := runner.Tokenize(t.Context(), "hello world"); err != nil {
+		t.Fatalf("Tokenize after stopProcess: %v", err)
+	}
+	if got := newConns.Load(); got != 2 {
+		t.Fatalf("after stopProcess idle close, Tokenize should open a new connection; new connections = %d, want 2", got)
 	}
 }
 
@@ -1706,6 +1760,76 @@ func TestLlamaServerDetokenize(t *testing.T) {
 	}
 	if content != "hello world" {
 		t.Errorf("content = %q, want %q", content, "hello world")
+	}
+}
+
+func TestNewLlamaServerHTTPClientKeepAlive(t *testing.T) {
+	client := newLlamaServerHTTPClient()
+	tr, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport type = %T, want *http.Transport", client.Transport)
+	}
+	if tr.DisableKeepAlives {
+		t.Fatal("DisableKeepAlives = true; llama-server client must reuse connections under sustained /api/embed load")
+	}
+	if tr.MaxIdleConnsPerHost < 1 {
+		t.Fatalf("MaxIdleConnsPerHost = %d, want >= 1", tr.MaxIdleConnsPerHost)
+	}
+	if tr.Proxy != nil {
+		t.Fatal("Proxy should be nil so loopback llama-server traffic ignores HTTP_PROXY")
+	}
+}
+
+func TestLlamaServerHTTPClientReusesConnections(t *testing.T) {
+	var (
+		mu    sync.Mutex
+		addrs = map[string]int{}
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		addrs[r.RemoteAddr]++
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/embeddings":
+			fmt.Fprint(w, `{"data":[{"embedding":[0.1],"tokens_evaluated":1}],"usage":{"prompt_tokens":1}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:   portInt,
+		cmd:    fakeRunningCmd(),
+		sem:    semaphore.NewWeighted(1),
+		client: newLlamaServerHTTPClient(),
+	}
+
+	const n = 32
+	for i := 0; i < n; i++ {
+		if _, _, err := runner.Embedding(t.Context(), "hello"); err != nil {
+			t.Fatalf("Embedding(%d): %v", i, err)
+		}
+	}
+
+	mu.Lock()
+	unique := len(addrs)
+	mu.Unlock()
+
+	// Each Embedding issues /health + /v1/embeddings. Without keep-alive that is
+	// 2*n distinct client ports; with keep-alive sequential calls share one.
+	if unique > 2 {
+		t.Fatalf("unique client addresses = %d after %d embeddings; want connection reuse (unique <= 2)", unique, n)
+	}
+
+	if err := runner.stopProcess(); err != nil {
+		t.Fatalf("stopProcess: %v", err)
 	}
 }
 
