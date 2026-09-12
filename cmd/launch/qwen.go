@@ -18,7 +18,9 @@ const qwenOllamaEnvKey = "OLLAMA_API_KEY"
 
 var qwenGOOS = runtime.GOOS
 
-type Qwen struct{}
+type Qwen struct {
+	resolveContext func(LaunchModel, bool) contextWindowResolution
+}
 
 func (q *Qwen) String() string { return "Qwen Code" }
 
@@ -222,10 +224,21 @@ func qwenInstallerCommand(goos string) (string, []string, error) {
 	}
 }
 
-func (q *Qwen) Run(model string, _ []LaunchModel, args []string) error {
+func (q *Qwen) Run(model string, models []LaunchModel, args []string) error {
 	qwenPath, err := q.findPath()
 	if err != nil {
 		return fmt.Errorf("qwen is not installed: %w", err)
+	}
+
+	model = qwenEffectiveModel(model, args)
+	launchModel, ok := findLaunchModel(models, model)
+	if !ok {
+		launchModel = fallbackLaunchModel(model)
+	}
+	resolution := q.contextWindow(launchModel, true)
+	qwenWarnUnverifiedContext(model, resolution, false)
+	if err := q.writeConfig(model, resolution.ContextLength); err != nil {
+		return fmt.Errorf("refresh qwen context: %w", err)
 	}
 
 	cmd := exec.Command(qwenPath, qwenLaunchArgs(model, args)...)
@@ -248,7 +261,30 @@ func (q *Qwen) Configure(model string) error {
 	if model == "" {
 		return nil
 	}
+	return q.writeConfig(model, 0)
+}
 
+func (q *Qwen) ConfigureWithModels(model string, models []LaunchModel) error {
+	if model == "" {
+		return nil
+	}
+	launchModel, ok := findLaunchModel(models, model)
+	if !ok {
+		launchModel = fallbackLaunchModel(model)
+	}
+	resolution := q.contextWindow(launchModel, false)
+	qwenWarnUnverifiedContext(model, resolution, true)
+	return q.writeConfig(model, resolution.ContextLength)
+}
+
+func (q *Qwen) contextWindow(model LaunchModel, load bool) contextWindowResolution {
+	if q != nil && q.resolveContext != nil {
+		return q.resolveContext(model, load)
+	}
+	return resolveLaunchContextFromEnvironment(model, load)
+}
+
+func (q *Qwen) writeConfig(model string, contextWindow int) error {
 	configPath, err := q.configPath()
 	if err != nil {
 		return err
@@ -262,7 +298,7 @@ func (q *Qwen) Configure(model string) error {
 		return err
 	}
 
-	applyQwenOllamaConfig(cfg, model)
+	applyQwenOllamaConfig(cfg, model, contextWindow)
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
@@ -272,13 +308,13 @@ func (q *Qwen) Configure(model string) error {
 	return fileutil.WriteWithBackup(configPath, data, "qwen")
 }
 
-func applyQwenOllamaConfig(cfg map[string]any, model string) {
+func applyQwenOllamaConfig(cfg map[string]any, model string, contextWindow int) {
 	envCfg := qwenMap(cfg["env"])
 	envCfg[qwenOllamaEnvKey] = "ollama"
 	cfg["env"] = envCfg
 
 	modelProviders := qwenMap(cfg["modelProviders"])
-	modelProviders["openai"] = qwenMergeOpenAIProviders(modelProviders["openai"], qwenProvider(model))
+	modelProviders["openai"] = qwenMergeOpenAIProviders(modelProviders["openai"], qwenProvider(model, contextWindow))
 	cfg["modelProviders"] = modelProviders
 
 	security := qwenMap(cfg["security"])
@@ -301,6 +337,33 @@ func qwenMap(value any) map[string]any {
 }
 
 func qwenMergeOpenAIProviders(value any, provider map[string]any) []any {
+	providerID, _ := provider["id"].(string)
+	for _, existing := range qwenProviderList(value) {
+		existingProvider, ok := existing.(map[string]any)
+		if !ok || !qwenIsOllamaProvider(existingProvider) || existingProvider["id"] != providerID {
+			continue
+		}
+		preserved := make(map[string]any, len(existingProvider)+len(provider))
+		for key, item := range existingProvider {
+			preserved[key] = item
+		}
+		for key, item := range provider {
+			preserved[key] = item
+		}
+		generation := qwenMap(existingProvider["generationConfig"])
+		generation = cloneQwenMap(generation)
+		if desired := qwenMap(provider["generationConfig"]); len(desired) > 0 {
+			for key, item := range desired {
+				generation[key] = item
+			}
+		}
+		if len(generation) > 0 {
+			preserved["generationConfig"] = generation
+		}
+		provider = preserved
+		break
+	}
+
 	merged := []any{provider}
 	for _, existing := range qwenProviderList(value) {
 		if qwenIsOllamaProvider(existing) {
@@ -309,6 +372,14 @@ func qwenMergeOpenAIProviders(value any, provider map[string]any) []any {
 		merged = append(merged, existing)
 	}
 	return merged
+}
+
+func cloneQwenMap(value map[string]any) map[string]any {
+	cloned := make(map[string]any, len(value))
+	for key, item := range value {
+		cloned[key] = item
+	}
+	return cloned
 }
 
 func qwenProviderList(value any) []any {
@@ -407,13 +478,53 @@ func qwenBaseURL() string {
 	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1"
 }
 
-func qwenProvider(model string) map[string]any {
-	return map[string]any{
+func qwenProvider(model string, contextWindow int) map[string]any {
+	provider := map[string]any{
 		"id":      model,
 		"name":    fmt.Sprintf("%s (Ollama)", model),
 		"baseUrl": qwenBaseURL(),
 		"envKey":  qwenOllamaEnvKey,
 	}
+	if contextWindow > 0 {
+		provider["generationConfig"] = map[string]any{"contextWindowSize": contextWindow}
+	}
+	return provider
+}
+
+func qwenEffectiveModel(model string, args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--model" || args[i] == "-m":
+			if i+1 < len(args) && strings.TrimSpace(args[i+1]) != "" {
+				model = strings.TrimSpace(args[i+1])
+				i++
+			}
+		case strings.HasPrefix(args[i], "--model="):
+			if value := strings.TrimSpace(strings.TrimPrefix(args[i], "--model=")); value != "" {
+				model = value
+			}
+		case strings.HasPrefix(args[i], "-m="):
+			if value := strings.TrimSpace(strings.TrimPrefix(args[i], "-m=")); value != "" {
+				model = value
+			}
+		}
+	}
+	return model
+}
+
+func qwenWarnUnverifiedContext(model string, resolution contextWindowResolution, refreshOnLaunch bool) {
+	if resolution.RuntimeVerified || isCloudModelName(model) {
+		return
+	}
+	suffix := ""
+	if refreshOnLaunch {
+		suffix = "; it will be runtime-verified when Qwen Code launches"
+	}
+	if resolution.ContextLength > 0 {
+		fmt.Fprintf(os.Stderr, "%s  Warning: %s's loaded context is not yet verified; using %d from %s%s%s\n", ansiYellow, model, resolution.ContextLength, resolution.Source, suffix, ansiReset)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%s  Warning: could not determine %s's context; Qwen Code will use its fallback%s%s\n", ansiYellow, model, suffix, ansiReset)
 }
 
 func qwenLaunchArgs(model string, args []string) []string {
