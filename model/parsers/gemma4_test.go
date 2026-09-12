@@ -857,6 +857,16 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			expected: `{"name":"test","count":5,"active":true,"tags":["a"]}`,
 		},
 		{
+			name:     "bare_key_with_equals_separator",
+			input:    `{save_as=<|"|>report.docx<|"|>}`,
+			expected: `{"save_as":"report.docx"}`,
+		},
+		{
+			name:     "mixed_colon_and_equals_separators",
+			input:    `{save_as=<|"|>report.docx<|"|>,format:<|"|>docx<|"|>}`,
+			expected: `{"save_as":"report.docx","format":"docx"}`,
+		},
+		{
 			name:     "null_value",
 			input:    `{value:null}`,
 			expected: `{"value":null}`,
@@ -1070,6 +1080,11 @@ func TestRepairGemma4SingleQuotedValues(t *testing.T) {
 			name:     "preserves_unterminated_single_quote",
 			input:    `{pattern:'abc}`,
 			expected: `{pattern:'abc}`,
+		},
+		{
+			name:     "converts_single_quoted_value_with_equals_separator",
+			input:    `{save_as='report.docx'}`,
+			expected: `{save_as=<|"|>report.docx<|"|>}`,
 		},
 	}
 
