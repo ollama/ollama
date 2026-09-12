@@ -1855,7 +1855,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 // processToolCalls, this does not set toolCallsSent, so subsequent text
 // content can still be processed.
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return c.emitFunctionCallEvents(toolCalls)
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {
