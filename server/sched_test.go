@@ -2384,3 +2384,55 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+func TestResolveContextShiftEnv(t *testing.T) {
+	trueValue := true
+	falseValue := false
+
+	tests := []struct {
+		name  string
+		env   string
+		shift *bool
+		model *Model
+		want  bool
+	}{
+		{name: "env unset keeps shifting", want: true},
+		{name: "env off refuses instead of shifting", env: "false", want: false},
+		{name: "env on keeps shifting", env: "true", want: true},
+		{name: "request wins over env off", env: "false", shift: &trueValue, want: true},
+		{name: "request wins over env on", env: "true", shift: &falseValue, want: false},
+		{name: "env off and deepseek2 still off", env: "false", model: &Model{Config: model.ConfigV2{ModelFamily: "deepseek2"}}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_SHIFT", tt.env)
+			require.Equal(t, tt.want, resolveContextShift(tt.shift, tt.model))
+		})
+	}
+}
+
+func TestRequestContextShiftEnv(t *testing.T) {
+	trueValue := true
+	falseValue := false
+
+	tests := []struct {
+		name  string
+		env   string
+		shift *bool
+		want  bool
+	}{
+		{name: "env unset and request unset shifts", want: true},
+		{name: "env off and request unset refuses", env: "false", want: false},
+		{name: "env on and request unset shifts", env: "true", want: true},
+		{name: "request true wins over env off", env: "false", shift: &trueValue, want: true},
+		{name: "request false wins over env on", env: "true", shift: &falseValue, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_SHIFT", tt.env)
+			require.Equal(t, tt.want, requestContextShift(tt.shift))
+		})
+	}
+}
