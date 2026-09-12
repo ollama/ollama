@@ -199,6 +199,12 @@ configure_systemd() {
         status "Creating ollama user..."
         $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
     fi
+    # Ensure the ollama user's home directory exists and is owned by ollama:ollama,
+    # even if the user already existed (re-running the script) or the directory
+    # was pre-created by the system before useradd ran. Without this, on systems
+    # where /usr/share/ollama exists with root ownership the service fails at
+    # startup with "could not create directory mkdir /usr/share/ollama: permission denied".
+    $SUDO install -d -o ollama -g ollama -m 0755 /usr/share/ollama
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
         $SUDO usermod -a -G render ollama
