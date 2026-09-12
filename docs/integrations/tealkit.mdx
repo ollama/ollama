@@ -1,0 +1,147 @@
+---
+title: TealKit
+---
+
+TealKit is a cross-platform AI agent framework and runner available as both an interactive application (Desktop and Mobile) and a headless terminal CLI (`tealkit`). It enables local LLMs to execute complex multi-step workflows, interact with Model Context Protocol (MCP) tools, and run standardized AgentSkills (`SKILL.md`) with complete privacy.
+
+![TealKit with Ollama](/images/tealkit.png)
+
+## Quick start
+
+Run TealKit directly connected to your local Ollama instance:
+
+```bash
+ollama launch tealkit
+```
+
+Ollama handles everything automatically:
+
+1. **Detect / Install** — Checks if the `tealkit` CLI or TealKit Desktop is installed
+2. **Model Selection** — Select your preferred local or cloud model (such as `qwen2.5-coder` or `llama3.1`)
+3. **Configuration** — Automatically writes the Ollama provider endpoint (`http://127.0.0.1:11434/v1`) to `llm.yaml`
+4. **Launch** — Launches the interactive TealKit agent terminal session with your local MCP tools
+
+---
+
+## TealKit CLI (`tealkit`)
+
+TealKit CLI is a lightweight, standalone agent binary for terminal chats, automated scripting, and CI/CD pipelines.
+
+### Installation
+
+Download the precompiled binary from the [TealKit Releases](https://github.com/lschaffer/tealkit/releases) page or build with Dart:
+
+```bash
+dart pub global activate --source path ./cli
+```
+
+### Configure with Ollama
+
+Create or update `llm.yaml` in your workspace or home directory (`~/.tealkit/llm.yaml`):
+
+```yaml
+provider: "ollama"
+model: "qwen2.5-coder:14b"
+base_url: "http://localhost:11434"
+temperature: 0.2
+max_tokens: 4096
+```
+
+Alternatively, you can point to Ollama's OpenAI-compatible endpoint:
+
+```yaml
+provider: "openai_compatible"
+model: "llama3.1:8b"
+base_url: "http://127.0.0.1:11434/v1"
+```
+
+### Usage Examples
+
+#### 1. Interactive Agent Chat
+Start a multi-turn chat session with access to configured MCP tools:
+
+```bash
+tealkit chat
+```
+
+Inside the chat, you can execute prompts, view connected tools with `/tools`, clear context with `/clear`, or exit with `/exit`.
+
+#### 2. One-off Prompt Execution
+Execute a single instruction headless, letting the local Ollama model invoke MCP tools autonomously:
+
+```bash
+tealkit prompt run "Inspect the git status and summarize the most recent 3 commits"
+```
+
+#### 3. AgentSkills (`SKILL.md`) Execution
+Run reproducible skills from your `.agents/skills` repository or `agentskills.io`:
+
+```bash
+tealkit skill run code-review
+```
+
+---
+
+## TealKit UI (Desktop & Mobile)
+
+TealKit Desktop and Mobile (Android / iOS) provide a visual canvas for node-based workflow orchestration, multi-agent chaining, and visual MCP tool management.
+
+### Connecting TealKit UI to Ollama
+
+1. Open TealKit and navigate to **Settings** → **LLM / Models**.
+2. Select **Ollama** as the LLM provider.
+3. Set the **Base URL**:
+   - For Desktop (same machine): `http://localhost:11434`
+   - For Mobile (connected via Wi-Fi or Tailscale): `http://<YOUR_WORKSTATION_IP>:11434`
+4. TealKit automatically queries `/api/tags` to fetch all installed models on your Ollama server.
+5. Select your default model (e.g., `qwen2.5-coder:14b`) and save.
+
+---
+
+## Model Context Protocol (MCP) Integration
+
+TealKit connects Ollama models to any Model Context Protocol (MCP) server. Define tools in `mcp.yaml`:
+
+```yaml
+mcpServers:
+  # Local CLI tool (stdio)
+  filesystem:
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./"]
+
+  # Python / UVX tool
+  git-tools:
+    command: "uvx"
+    args: ["mcp-server-git"]
+
+  # Remote MCP server (SSE or HTTP)
+  remote-db:
+    url: "https://mcp.internal.company.com/sse"
+```
+
+When you ask a question or run a prompt, TealKit exposes these tools directly to Ollama for zero-leakage local execution.
+
+---
+
+## Recommended Models
+
+For the best agentic tool calling and multi-step reasoning with TealKit:
+
+**Local Models (Offline & Private)**:
+- `qwen2.5-coder:7b` / `qwen2.5-coder:14b` / `qwen2.5-coder:32b` — Top choice for code intelligence, terminal commands, and tool calling
+- `llama3.1:8b` / `llama3.1:70b` — Excellent general-purpose reasoning and agent workflows
+- `deepseek-r1:8b` / `deepseek-r1:14b` — Step-by-step reasoning and complex problem solving
+- `mistral-nemo:12b` — 128k context support, ideal for analyzing large repositories
+
+**Cloud Models (via Ollama Cloud)**:
+- `qwen3.5:cloud` — High-capacity agentic reasoning with vision
+- `kimi-k2.5:cloud` — Long context multimodal reasoning
+
+---
+
+## Why TealKit + Ollama?
+
+1. **100% Air-Gapped & Private**: Your source code, local filesystem, databases, and prompts never leave your local environment.
+2. **Zero Inference Costs**: Run automated scheduled tasks, multi-iteration code refinement, and unit testing agents 24/7 without API usage fees.
+3. **Cross-Device Agent Control**: Host heavy LLMs on a workstation or homelab GPU server while driving workflows from your mobile phone or laptop.
+4. **Standardized Tool Ecosystem**: Works out of the box with the Model Context Protocol (MCP) and AgentSkills specification.
