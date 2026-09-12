@@ -269,11 +269,16 @@ function checkEnv {
     }
 
     # Locate ROCm installations
-    $rocm7Dir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
-    if ($null -ne $rocm7Dir) {
-        $script:HIP_PATH_V7=$rocm7Dir.FullName
-    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]7\.') {
-        $script:HIP_PATH_V7=$env:HIP_PATH
+    if ($env:OLLAMA_ROCM_PATH -and (Test-Path $env:OLLAMA_ROCM_PATH)) {
+        $script:HIP_PATH_V7=$env:OLLAMA_ROCM_PATH
+    } else {
+        $rocmEnv = Get-ChildItem -Path "${script:SRC_DIR}\.cache\rocm\windows-*\ollama-rocm-env.ps1" -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+        if ($rocmEnv) {
+            $script:ROCM_ENV=$rocmEnv.FullName
+            $script:HIP_PATH_V7=$rocmEnv.Directory.FullName
+        }
     }
     $rocm6Dir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
     if ($null -ne $rocm6Dir) {
@@ -286,7 +291,7 @@ function checkEnv {
     if (-not $script:HIP_PATH) {
         $script:HIP_PATH=$script:HIP_PATH_V6
     }
-    
+
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
     if ($inoSetup.length -gt 0) {
         $script:INNO_SETUP_DIR=$inoSetup[0]
@@ -735,35 +740,48 @@ function rocm7 {
     if ($script:ARCH -ne "arm64") {
         if ($script:HIP_PATH_V7) {
             Write-Output "Building llama-server ROCm v7 backend $script:HIP_PATH_V7"
-            $rocmVersion = Split-Path -Leaf $script:HIP_PATH_V7
-            if ($rocmVersion -notmatch '^(\d+)\.(\d+)') {
-                Write-Output "Unable to determine ROCm version from $script:HIP_PATH_V7"
-                exit(1)
-            }
-            $rocmBackend = "rocm_v$($Matches[1])_$($Matches[2])"
+            $rocmBackend = "rocm_v7_14"
             $rocmPreset = "${rocmBackend}_windows"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
+            $oldHIP_PATH = $env:HIP_PATH
+            $oldROCM_PATH = $env:ROCM_PATH
             $oldHIPCXX = $env:HIPCXX
             $oldHIP_PLATFORM = $env:HIP_PLATFORM
             $oldCMAKE_PREFIX_PATH = $env:CMAKE_PREFIX_PATH
             $oldCC = $env:CC
             $oldCXX = $env:CXX
-            $env:HIPCXX="${script:HIP_PATH_V7}\bin\clang++.exe"
-            $env:HIP_PLATFORM="amd"
-            $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
-            $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
-            $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
+            $oldPATH = $env:PATH
+            if ($script:ROCM_ENV) {
+                . $script:ROCM_ENV
+            } else {
+                $hipBin="${script:HIP_PATH_V7}\bin"
+                $hipClangBin="${script:HIP_PATH_V7}\lib\llvm\bin"
+                if (!(Test-Path "$hipClangBin\clang.exe")) {
+                    $hipClangBin=$hipBin
+                }
+                $env:HIP_PATH=$script:HIP_PATH_V7
+                $env:ROCM_PATH=$script:HIP_PATH_V7
+                $env:HIPCXX="$hipClangBin\clang++.exe"
+                $env:HIP_PLATFORM="amd"
+                $env:CMAKE_PREFIX_PATH=$script:HIP_PATH_V7
+                $env:CC="$hipClangBin\clang.exe"
+                $env:CXX="$hipClangBin\clang++.exe"
+                $env:PATH="$hipClangBin;$hipBin;$env:PATH"
+            }
             & cmake -S llama\server --preset $rocmPreset -G Ninja `
                 --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            $env:HIP_PATH=$oldHIP_PATH
+            $env:ROCM_PATH=$oldROCM_PATH
             $env:HIPCXX=$oldHIPCXX
             $env:HIP_PLATFORM=$oldHIP_PLATFORM
             $env:CMAKE_PREFIX_PATH=$oldCMAKE_PREFIX_PATH
             $env:CC=$oldCC
             $env:CXX=$oldCXX
+            $env:PATH=$oldPATH
             & cmake --build "build\llama-server-$rocmBackend" --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install "build\llama-server-$rocmBackend" --component llama-server --strip
