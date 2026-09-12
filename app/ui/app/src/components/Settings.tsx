@@ -770,6 +770,8 @@ export default function Settings() {
                           { value: 65536, label: "64k" },
                           { value: 131072, label: "128k" },
                           { value: 262144, label: "256k" },
+                          { value: 524288, label: "512k" },
+                          { value: 1048576, label: "1m" },
                         ]}
                       />
                     </div>
