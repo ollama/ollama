@@ -1098,6 +1098,17 @@ func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
 			want:      "mcp__codex_apps__notion_search",
 			withTools: true,
 		},
+		{
+			name: "legacy colon call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Name:      "mcp__codex_apps__notion:_search",
+				Arguments: `{}`,
+			},
+			want:      "mcp__codex_apps__notion_search",
+			withTools: true,
+		},
 	}
 
 	for _, tt := range tests {
