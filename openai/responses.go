@@ -1017,8 +1017,8 @@ func (r *responsesToolResolver) internalName(namespace, name string) string {
 		return internal
 	}
 	if namespace == "" {
-		if _, ok := r.byInternal[name]; ok {
-			return name
+		if external, ok := r.byInternal[name]; ok {
+			return r.byExternal[external]
 		}
 	}
 	return qualifyNamespaceToolName(namespace, name)
