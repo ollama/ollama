@@ -26,6 +26,12 @@ func TensorQuantParams(
 			if tq.GroupSize > 0 {
 				groupSize = tq.GroupSize
 			}
+			if tq.Bits != 0 {
+				bits = tq.Bits
+			}
+			if tq.Mode != "" {
+				mode = tq.Mode
+			}
 			return groupSize, bits, mode, true
 		}
 	}

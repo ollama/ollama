@@ -15,9 +15,12 @@ import (
 )
 
 // TensorQuantInfo describes per-tensor quantization metadata.
+// Bits and Mode default to the QuantType lookup when zero.
 type TensorQuantInfo struct {
 	QuantType string
 	GroupSize int
+	Bits      int
+	Mode      string
 }
 
 // Root wraps a ModelManifest with pre-scanned quantization metadata.
@@ -40,12 +43,26 @@ func Open(modelName string) (*Root, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openFromManifest(m)
+}
 
+// openFromManifest builds a Root from an already-loaded manifest. Split from
+// Open so tests can inject a fake manifest.
+func openFromManifest(m *manifest.ModelManifest) (*Root, error) {
 	root := &Root{
 		Manifest:    m,
 		tensorQuant: make(map[string]*TensorQuantInfo),
 	}
 	root.Draft = readDraftConfig(m)
+
+	configDefaults, configOverrides, _ := readConfigQuantOverrides(m)
+	if configDefaults.QuantType != "" {
+		root.quantType = configDefaults.QuantType
+		root.groupSize = configDefaults.GroupSize
+		if root.groupSize == 0 {
+			root.groupSize = defaultGroupSize(root.quantType)
+		}
+	}
 
 	for _, layer := range m.GetTensorLayers("") {
 		blobPath := m.BlobPath(layer.Digest)
@@ -66,6 +83,13 @@ func Open(modelName string) (*Root, error) {
 				root.groupSize = defaultGroupSize(root.quantType)
 			}
 		}
+	}
+
+	// config.json overrides are authoritative for paths they specify: ollama
+	// create fills each blob's __metadata__ from the config.json *globals*,
+	// so blob entries for override paths are definitionally wrong.
+	for name, info := range configOverrides {
+		root.tensorQuant[name] = info
 	}
 
 	return root, nil
@@ -231,7 +255,12 @@ func parseGlobalQuantMetadata(header map[string]json.RawMessage) (quantType stri
 func mainTensorNames(header map[string]json.RawMessage) []string {
 	names := make([]string, 0, len(header))
 	for name := range header {
-		if name == "__metadata__" || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") {
+		// Skip metadata + both aux-naming conventions:
+		//   Ollama-native dot-child singular: ".scale" / ".bias"
+		//   mlx-lm sibling plural: ".scales" / ".biases"
+		if name == "__metadata__" ||
+			strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") ||
+			strings.HasSuffix(name, ".scales") || strings.HasSuffix(name, ".biases") {
 			continue
 		}
 		names = append(names, name)
