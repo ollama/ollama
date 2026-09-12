@@ -131,6 +131,13 @@ func resolveContextShift(shift *bool, m *Model) bool {
 		return *shift
 	}
 
+	// An operator can turn shifting off for the whole server. Without this, every client
+	// has to remember to send \"shift\": false, and one that forgets gets an answer built
+	// from part of its prompt with nothing to say so.
+	if !envconfig.ContextShift(true) {
+		return false
+	}
+
 	return supportsContextShift(m)
 }
 
