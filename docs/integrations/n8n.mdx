@@ -27,10 +27,10 @@ Install [n8n](https://docs.n8n.io/choose-n8n/).
 </div>
 3. Confirm Base URL is set to `http://localhost:11434` if running locally or `http://host.docker.internal:11434` if running through docker and click **Save**
 
-<Note> 
-In environments that don't use Docker Desktop (ie, Linux server installations), `host.docker.internal` is not automatically added. 
+<Note>
+In environments that don't use Docker Desktop (ie, Linux server installations), `host.docker.internal` is not automatically added.
 
-Run n8n in docker with `--add-host=host.docker.internal:host-gateway` 
+Run n8n in docker with `--add-host=host.docker.internal:host-gateway`
 
 or add the following to a docker compose file:
 
@@ -42,7 +42,7 @@ extra_hosts:
 
 You should see a `Connection tested successfully` message.
 
-4. When creating a new workflow, select **Add a first step** and select an **Ollama node** 
+4. When creating a new workflow, select **Add a first step** and select an **Ollama node**
 <div style={{ display: 'flex', justifyContent: 'center' }}>
   <img 
     src="/images/n8n-chat-node.png" 
@@ -50,7 +50,7 @@ You should see a `Connection tested successfully` message.
     width="75%"
   />
 </div>
-5. Select your model of choice (e.g. `qwen3-coder`) 
+5. Select your model of choice (e.g. `qwen3-coder`)
 <div style={{ display: 'flex', justifyContent: 'center' }}>
   <img 
     src="/images/n8n-models.png" 
