@@ -217,6 +217,11 @@ func TestParse(t *testing.T) {
 {{- end -}}`,
 			vars: []string{"content", "messages", "prompt", "response", "role", "system"},
 		},
+		{
+			name:     "SmallStaticIntegerRange",
+			template: "{{ range 3 }}x{{ end }}",
+			vars:     []string{"response"},
+		},
 	}
 
 	for _, tt := range validCases {
@@ -255,6 +260,36 @@ func TestParseError(t *testing.T) {
 			"Template",
 			`{{define "x"}}{{template "x"}}{{end}}{{template "x"}}`,
 			"undefined template specified",
+		},
+		{
+			"LargeStaticIntegerRange",
+			"{{ range 100001 }}{{ end }}",
+			"static integer range exceeds maximum",
+		},
+		{
+			"ParenthesizedLargeStaticIntegerRange",
+			"{{ range (100001) }}{{ end }}",
+			"static integer range exceeds maximum",
+		},
+		{
+			"ExponentLargeStaticIntegerRange",
+			"{{ range 1e6 }}{{ end }}",
+			"static integer range exceeds maximum",
+		},
+		{
+			"NestedStaticIntegerRange",
+			"{{ range 1000 }}{{ range 101 }}{{ end }}{{ end }}",
+			"static integer range exceeds maximum",
+		},
+		{
+			"ParenthesizedNestedStaticIntegerRange",
+			"{{ range (1000) }}{{ range 101 }}{{ end }}{{ end }}",
+			"static integer range exceeds maximum",
+		},
+		{
+			"DefinedTemplateLargeStaticIntegerRange",
+			`{{ define "x" }}{{ range 100001 }}{{ end }}{{ end }}`,
+			"static integer range exceeds maximum",
 		},
 	}
 

@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"math"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 )
+
+const maxStaticRangeIterations = 100000
 
 //go:embed index.json
 var indexBytes []byte
@@ -150,6 +153,12 @@ func Parse(s string) (*Template, error) {
 		return nil, err
 	}
 
+	for _, tt := range tmpl.Templates() {
+		if err := validateStaticRangeLimits(tt.Tree.Root); err != nil {
+			return nil, err
+		}
+	}
+
 	t := Template{Template: tmpl, raw: s}
 	vars, err := t.Vars()
 	if err != nil {
@@ -162,6 +171,92 @@ func Parse(s string) (*Template, error) {
 	}
 
 	return &t, nil
+}
+
+func validateStaticRangeLimits(n parse.Node) error {
+	return validateStaticRangeLimitsWithMultiplier(n, 1)
+}
+
+func validateStaticRangeLimitsWithMultiplier(n parse.Node, multiplier uint64) error {
+	switch n := n.(type) {
+	case *parse.ListNode:
+		if n == nil {
+			return nil
+		}
+
+		for _, c := range n.Nodes {
+			if err := validateStaticRangeLimitsWithMultiplier(c, multiplier); err != nil {
+				return err
+			}
+		}
+	case *parse.RangeNode:
+		nestedMultiplier := multiplier
+		if iterations, ok := staticRangeIterations(n.Pipe); ok {
+			if iterations != 0 && multiplier > maxStaticRangeIterations/iterations {
+				return fmt.Errorf("static integer range exceeds maximum of %d iterations", maxStaticRangeIterations)
+			}
+			nestedMultiplier *= iterations
+		}
+
+		if err := validateStaticRangeLimitsWithMultiplier(n.List, nestedMultiplier); err != nil {
+			return err
+		}
+
+		if err := validateStaticRangeLimitsWithMultiplier(n.ElseList, multiplier); err != nil {
+			return err
+		}
+	case *parse.IfNode:
+		if err := validateStaticRangeLimitsWithMultiplier(n.List, multiplier); err != nil {
+			return err
+		}
+
+		if err := validateStaticRangeLimitsWithMultiplier(n.ElseList, multiplier); err != nil {
+			return err
+		}
+	case *parse.WithNode:
+		if err := validateStaticRangeLimitsWithMultiplier(n.List, multiplier); err != nil {
+			return err
+		}
+
+		if err := validateStaticRangeLimitsWithMultiplier(n.ElseList, multiplier); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func staticRangeIterations(pipe *parse.PipeNode) (uint64, bool) {
+	if pipe == nil || len(pipe.Cmds) != 1 {
+		return 0, false
+	}
+
+	cmd := pipe.Cmds[0]
+	if len(cmd.Args) != 1 {
+		return 0, false
+	}
+
+	return staticRangeIterationsNode(cmd.Args[0])
+}
+
+func staticRangeIterationsNode(n parse.Node) (uint64, bool) {
+	switch n := n.(type) {
+	case *parse.NumberNode:
+		if n.IsInt {
+			if n.Int64 < 0 {
+				return 0, true
+			}
+			return uint64(n.Int64), true
+		}
+
+		if n.IsUint {
+			return n.Uint64, true
+		}
+	case *parse.PipeNode:
+		return staticRangeIterations(n)
+	}
+
+	return 0, false
 }
 
 func (t *Template) String() string {
