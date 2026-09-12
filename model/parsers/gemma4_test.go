@@ -784,6 +784,90 @@ func TestGemma4Parser_StreamingSplitThinkingTag(t *testing.T) {
 	}
 }
 
+// A tool call opened while the thinking channel is still open.
+//
+// The model is supposed to close the channel first, and usually does. When it
+// does not, this state used to scan for `<channel|>` alone and the entire call
+// was collected as reasoning -- the caller saw a turn with no tool calls, ended
+// the run, and the edit was never made. Captured live on a local Gemma 4:
+//
+//	Let's go.<|tool_call>call:editor{...}<tool_call|><|tool_response>
+//
+// Content state has always checked for both tags; thinking state now matches.
+func TestGemma4Parser_ToolCallInsideThinking(t *testing.T) {
+	tests := []struct {
+		name             string
+		chunks           []string
+		expectedThinking string
+		expectedName     string
+		expectedArgs     map[string]any
+	}{
+		{
+			name: "no_close_tag_before_the_call",
+			chunks: []string{
+				"<|channel>thought\nLet's go.<|tool_call>call:get_weather{location:<|\"|>Paris<|\"|>}<tool_call|>",
+			},
+			expectedThinking: "Let's go.",
+			expectedName:     "get_weather",
+			expectedArgs:     map[string]any{"location": "Paris"},
+		},
+		{
+			name: "open_tag_split_across_chunks",
+			chunks: []string{
+				"<|channel>thought\nLet's go.<|tool",
+				`_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|>`,
+			},
+			expectedThinking: "Let's go.",
+			expectedName:     "get_weather",
+			expectedArgs:     map[string]any{"location": "Paris"},
+		},
+		{
+			// The ordinary path must be untouched: a close tag before the call
+			// still ends thinking and the call is read from content.
+			name: "close_tag_first_still_wins",
+			chunks: []string{
+				"<|channel>thought\nthinking<channel|><|tool_call>call:get_weather{location:<|\"|>Paris<|\"|>}<tool_call|>",
+			},
+			expectedThinking: "thinking",
+			expectedName:     "get_weather",
+			expectedArgs:     map[string]any{"location": "Paris"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			var finalContent, finalThinking strings.Builder
+			var finalToolCalls []api.ToolCall
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, thinking, toolCalls, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+				finalContent.WriteString(content)
+				finalThinking.WriteString(thinking)
+				finalToolCalls = append(finalToolCalls, toolCalls...)
+			}
+
+			if finalThinking.String() != tt.expectedThinking {
+				t.Errorf("expected thinking %q, got %q", tt.expectedThinking, finalThinking.String())
+			}
+			if finalContent.String() != "" {
+				t.Errorf("expected no content, got %q", finalContent.String())
+			}
+			expected := []api.ToolCall{
+				{Function: api.ToolCallFunction{Name: tt.expectedName, Arguments: testArgs(tt.expectedArgs)}},
+			}
+			if diff := cmp.Diff(expected, finalToolCalls, argsComparer); diff != "" {
+				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4ArgsToJSON(t *testing.T) {
 	tests := []struct {
 		name     string
