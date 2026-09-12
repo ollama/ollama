@@ -739,8 +739,14 @@ func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
 	if len(content) != 1 || content[0]["name"] != "lookup_order" || content[0]["x_client_field"] != "preserved" {
 		t.Fatalf("content = %#v", content)
 	}
-	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
-		t.Fatalf("native tools = %#v; discovered tool must remain content-only", chat.Tools)
+	if len(chat.Tools) != 2 {
+		t.Fatalf("native tools = %#v; expected tool_search and discovered tool", chat.Tools)
+	}
+	if chat.Tools[0].Function.Name != "tool_search" || chat.Tools[1].Function.Name != "lookup_order" {
+		t.Fatalf("native tools = %#v; expected tool_search and lookup_order", chat.Tools)
+	}
+	if chat.Tools[1].Function.Description != "Look up an order" {
+		t.Fatalf("discovered tool description = %q", chat.Tools[1].Function.Description)
 	}
 }
 
@@ -828,8 +834,46 @@ func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testin
 	if got := string(request.Input.Items[1].(ResponsesToolSearchOutput).Tools[0]); got != string(namespace) {
 		t.Fatalf("Responses tool_search_output was mutated: %s", got)
 	}
-	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
-		t.Fatalf("native tools = %#v; discovered tools must remain content-only", chat.Tools)
+	if len(chat.Tools) != 4 {
+		t.Fatalf("native tools = %#v; expected tool_search and three discovered tools", chat.Tools)
+	}
+	for i, want := range []string{"tool_search", "mcp__openaiDeveloperDocs.search_openai_docs", "mcp__codex_apps__github_search", "plain"} {
+		if got := chat.Tools[i].Function.Name; got != want {
+			t.Fatalf("chat.Tools[%d].Function.Name = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputDoesNotDuplicateTools(t *testing.T) {
+	description := "Find tools."
+	requestToolDescription := "request declaration"
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{
+			{Type: "tool_search", Execution: "client", Description: &description},
+			{Type: "function", Name: "lookup_order", Description: &requestToolDescription},
+		},
+		Input: ResponsesInput{Items: []ResponsesInputItem{
+			ResponsesToolSearchOutput{Tools: []json.RawMessage{
+				json.RawMessage(`{"type":"function","name":"lookup_order","description":"search result"}`),
+				json.RawMessage(`{"type":"function","name":"lookup_customer"}`),
+			}},
+		}},
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Tools) != 3 {
+		t.Fatalf("tools = %#v, want one built-in and two unique functions", chat.Tools)
+	}
+	for i, want := range []string{"tool_search", "lookup_order", "lookup_customer"} {
+		if got := chat.Tools[i].Function.Name; got != want {
+			t.Fatalf("chat.Tools[%d].Function.Name = %q, want %q", i, got, want)
+		}
+	}
+	if got := chat.Tools[1].Function.Description; got != "request declaration" {
+		t.Fatalf("duplicate tool should preserve the first declaration, got %q", got)
 	}
 }
 
