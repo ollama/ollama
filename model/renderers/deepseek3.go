@@ -131,11 +131,19 @@ func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thi
 					sb.WriteString(content + "<｜end▁of▁sentence｜>")
 					isTool = false
 				} else {
-					if strings.Contains(content, "</think>") {
-						parts := strings.SplitN(content, "</think>", 2)
-						if len(parts) > 1 {
-							content = parts[1]
-						}
+					// Strip a thinking preamble the model leaked into its own
+					// content so it is not replayed back as text. While the
+					// current assistant turn is still being continued, the
+					// preamble is everything up to the first </think>. In
+					// replayed history only an opening <think> marks one: a
+					// closing tag that opens nothing is ordinary content, and
+					// cutting there dropped the head of earlier assistant
+					// messages. A conversation with no user message has no
+					// history boundary, so every assistant message is a
+					// continuation.
+					if closeAt := strings.Index(content, "</think>"); closeAt >= 0 &&
+						(i > lastUserIndex || strings.HasPrefix(content, "<think>")) {
+						content = content[closeAt+len("</think>"):]
 					}
 					sb.WriteString(content + "<｜end▁of▁sentence｜>")
 				}

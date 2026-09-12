@@ -1026,6 +1026,45 @@ He found the key, unlocking a door to forgotten memories.<｜end▁of▁sentence
 			thinkValue: &api.ThinkValue{Value: true},
 			expected:   `<｜begin▁of▁sentence｜><｜User｜>Who are you?<｜Assistant｜></think>I am DeepSeek<｜end▁of▁sentence｜><｜User｜>Thanks! Can you tell me a 10 word story?<｜Assistant｜><think>`,
 		},
+		{
+			name: "stray closing think tag in assistant history is not truncated",
+			messages: []api.Message{
+				{Role: "user", Content: "Who are you?"},
+				{Role: "assistant", Content: "ink</think>rath"},
+				{Role: "user", Content: "What did you say?"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Who are you?<｜Assistant｜></think>ink</think>rath<｜end▁of▁sentence｜><｜User｜>What did you say?<｜Assistant｜></think>`,
+		},
+		{
+			name: "history close-before-open think tags stay verbatim",
+			messages: []api.Message{
+				{Role: "user", Content: "Complex question"},
+				{Role: "assistant", Content: "x</think>y<think>z</think>w"},
+				{Role: "user", Content: "And now?"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Complex question<｜Assistant｜></think>x</think>y<think>z</think>w<｜end▁of▁sentence｜><｜User｜>And now?<｜Assistant｜></think>`,
+		},
+		{
+			name: "no user message - every assistant is continuation",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant."},
+				{Role: "assistant", Content: "ink</think>rath"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜>You are a helpful assistant.rath<｜end▁of▁sentence｜>`,
+		},
+		{
+			name: "history text before a leaked preamble is kept",
+			messages: []api.Message{
+				{Role: "user", Content: "Who are you?"},
+				{Role: "assistant", Content: "Sure.<think>reasoning</think>I am DeepSeek"},
+				{Role: "user", Content: "What did you say?"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Who are you?<｜Assistant｜></think>Sure.<think>reasoning</think>I am DeepSeek<｜end▁of▁sentence｜><｜User｜>What did you say?<｜Assistant｜></think>`,
+		},
 	}
 
 	renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
