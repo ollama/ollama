@@ -190,9 +190,42 @@ func (i *Instance) Readline() (string, error) {
 					buf.Delete()
 				}
 				metaDel = true
-			case MetaStart:
+			case KeyModifier:
+				// Keys arriving as CSI 1 ... : modified arrow/Home/End come as
+				// 1 ; <modifier> <final> (e.g. Ctrl+Left = ESC [ 1 ; 5 D), and the
+				// VT-style Home key is 1 ~. Read the byte after '1' and branch; any
+				// modifier moves word-wise for Left/Right so Ctrl/Alt (and Shift,
+				// which has no selection here) behave consistently instead of
+				// leaking the unparsed tail into the line as literal input.
+				sep, err := i.Terminal.Read()
+				if err != nil {
+					return "", io.EOF
+				}
+				switch sep {
+				case ';':
+					if _, err := i.Terminal.Read(); err != nil { // modifier digit
+						return "", io.EOF
+					}
+					final, err := i.Terminal.Read()
+					if err != nil {
+						return "", io.EOF
+					}
+					switch final {
+					case KeyLeft:
+						buf.MoveLeftWord()
+					case KeyRight:
+						buf.MoveRightWord()
+					case KeyHome:
+						buf.MoveToStart()
+					case KeyEnd:
+						buf.MoveToEnd()
+					}
+				case '~':
+					buf.MoveToStart()
+				}
+			case KeyHome:
 				buf.MoveToStart()
-			case MetaEnd:
+			case KeyEnd:
 				buf.MoveToEnd()
 			default:
 				// skip any keys we don't know about
