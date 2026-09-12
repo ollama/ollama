@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/api"
 )
 
 func TestCopilotIntegration(t *testing.T) {
@@ -113,6 +115,54 @@ func TestCopilotArgs(t *testing.T) {
 	}
 }
 
+func TestCopilotRunPassesTokenEnvVars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell stub uses /bin/sh")
+	}
+
+	tmpDir := t.TempDir()
+	capturePath := filepath.Join(tmpDir, "capture")
+	fakeBin := filepath.Join(tmpDir, "copilot")
+	script := `#!/bin/sh
+{
+  echo "ARGS:$*"
+  echo "COPILOT_MODEL=$COPILOT_MODEL"
+  echo "COPILOT_PROVIDER_MAX_PROMPT_TOKENS=$COPILOT_PROVIDER_MAX_PROMPT_TOKENS"
+  echo "COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=$COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"
+} > "$COPILOT_CAPTURE"
+`
+	if err := os.WriteFile(fakeBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("COPILOT_CAPTURE", capturePath)
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+
+	c := &Copilot{}
+	err := c.Run("gemma4:31b-nvfp4", []LaunchModel{
+		{Name: "gemma4:31b-nvfp4", ContextLength: 262_144},
+	}, []string{"-p", "hello"})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"ARGS:--model gemma4:31b-nvfp4 -p hello",
+		"COPILOT_MODEL=gemma4:31b-nvfp4",
+		"COPILOT_PROVIDER_MAX_PROMPT_TOKENS=262144",
+		"COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=64000",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("captured output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestCopilotEnvVars(t *testing.T) {
 	c := &Copilot{}
 
@@ -126,7 +176,10 @@ func TestCopilotEnvVars(t *testing.T) {
 	}
 
 	t.Run("sets required provider env vars with model", func(t *testing.T) {
-		got := envMap(c.envVars("llama3.2"))
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("llama3.2", []LaunchModel{
+			{Name: "llama3.2:latest", ContextLength: 65_536, MaxOutputTokens: 4_096},
+		}))
 		if got["COPILOT_PROVIDER_BASE_URL"] == "" {
 			t.Error("COPILOT_PROVIDER_BASE_URL should be set")
 		}
@@ -139,13 +192,20 @@ func TestCopilotEnvVars(t *testing.T) {
 		if got["COPILOT_PROVIDER_WIRE_API"] != "responses" {
 			t.Errorf("COPILOT_PROVIDER_WIRE_API = %q, want %q", got["COPILOT_PROVIDER_WIRE_API"], "responses")
 		}
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "65536" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "65536")
+		}
+		if got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"] != "4096" {
+			t.Errorf("COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"], "4096")
+		}
 		if got["COPILOT_MODEL"] != "llama3.2" {
 			t.Errorf("COPILOT_MODEL = %q, want %q", got["COPILOT_MODEL"], "llama3.2")
 		}
 	})
 
 	t.Run("omits COPILOT_MODEL when model is empty", func(t *testing.T) {
-		got := envMap(c.envVars(""))
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("", nil))
 		if _, ok := got["COPILOT_MODEL"]; ok {
 			t.Errorf("COPILOT_MODEL should not be set for empty model, got %q", got["COPILOT_MODEL"])
 		}
@@ -153,9 +213,68 @@ func TestCopilotEnvVars(t *testing.T) {
 
 	t.Run("uses custom OLLAMA_HOST", func(t *testing.T) {
 		t.Setenv("OLLAMA_HOST", "http://myhost:9999")
-		got := envMap(c.envVars("test"))
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("test", nil))
 		if !strings.Contains(got["COPILOT_PROVIDER_BASE_URL"], "myhost:9999") {
 			t.Errorf("COPILOT_PROVIDER_BASE_URL = %q, want custom host", got["COPILOT_PROVIDER_BASE_URL"])
+		}
+	})
+
+	t.Run("uses details context length when direct context is absent", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("llama3.2", []LaunchModel{
+			{Name: "llama3.2", Details: api.ModelDetails{ContextLength: 32_768}},
+		}))
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "32768" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "32768")
+		}
+		if got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"] != "64000" {
+			t.Errorf("COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"], "64000")
+		}
+	})
+
+	t.Run("uses default output tokens for custom model metadata", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("gemma4:31b-nvfp4", []LaunchModel{
+			{Name: "gemma4:31b-nvfp4", ContextLength: 262_144},
+		}))
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "262144" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "262144")
+		}
+		if got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"] != "64000" {
+			t.Errorf("COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"], "64000")
+		}
+	})
+
+	t.Run("uses known cloud limits when inventory metadata is absent", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "64000")
+		got := envMap(c.envVars("qwen3.5:cloud", nil))
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "262144" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "262144")
+		}
+		if got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"] != "32768" {
+			t.Errorf("COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"], "32768")
+		}
+	})
+
+	t.Run("uses fallback limits when metadata is absent", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+		got := envMap(c.envVars("custom-model", nil))
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "4096" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "4096")
+		}
+		if got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"] != "64000" {
+			t.Errorf("COPILOT_PROVIDER_MAX_OUTPUT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_OUTPUT_TOKENS"], "64000")
+		}
+	})
+
+	t.Run("uses explicit local context override", func(t *testing.T) {
+		t.Setenv("OLLAMA_CONTEXT_LENGTH", "64000")
+		got := envMap(c.envVars("llama3.2", []LaunchModel{
+			{Name: "llama3.2", ContextLength: 131_072, Details: api.ModelDetails{Format: "gguf"}},
+		}))
+		if got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"] != "64000" {
+			t.Errorf("COPILOT_PROVIDER_MAX_PROMPT_TOKENS = %q, want %q", got["COPILOT_PROVIDER_MAX_PROMPT_TOKENS"], "64000")
 		}
 	})
 }
