@@ -2229,6 +2229,16 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 	converted := map[string]any{
 		"role": msg.Role,
 	}
+	// Thinking has to reach the chat template, not just the client. A template
+	// that replays an assistant think block reads `reasoning_content`, and the
+	// Qwen-family templates gate that replay on the message being newer than
+	// the last real user query -- which, in an agentic tool loop, is every
+	// assistant turn since the task was set. Dropping the field here leaves
+	// those blocks empty, so a model re-derives each turn what it already
+	// worked out, and describes its own earlier turns as someone else's.
+	if msg.Thinking != "" {
+		converted["reasoning_content"] = msg.Thinking
+	}
 	if msg.ToolCallID != "" {
 		converted["tool_call_id"] = msg.ToolCallID
 	}

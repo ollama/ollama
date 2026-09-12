@@ -3819,3 +3819,30 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestLlamaServerChatMessageCarriesThinking(t *testing.T) {
+	msg, err := llamaServerChatMessage(Message{
+		Role:     "assistant",
+		Content:  "OK",
+		Thinking: "the secret number is 7413",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := msg["reasoning_content"]; got != "the secret number is 7413" {
+		t.Fatalf("reasoning_content = %#v, want the thinking to reach the template", got)
+	}
+	if got := msg["content"]; got != "OK" {
+		t.Fatalf("content = %#v, want the visible reply untouched", got)
+	}
+
+	// A message that never carried thinking must not gain an empty field: a
+	// template that only checks for presence would render a blank think block.
+	plain, err := llamaServerChatMessage(Message{Role: "assistant", Content: "OK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plain["reasoning_content"]; ok {
+		t.Fatalf("reasoning_content present on a message with no thinking: %#v", plain)
+	}
+}
