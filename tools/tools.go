@@ -389,16 +389,14 @@ func (p *Parser) done() bool {
 }
 
 // Content returns any remaining content that
-// should be sent to the user. This should be the empty string
-// string unless the tag is { or [ and a tool call was not found
+// should be sent to the user. If no tool call was parsed,
+// the buffered output is returned so it is not silently
+// dropped; otherwise any leftover is template scaffolding
+// (e.g. a closing tag) and is discarded
 func (p *Parser) Content() string {
 	if p.n > 0 {
 		return ""
 	}
 
-	if p.tag == "{" || p.tag == "[" {
-		return string(p.buffer)
-	}
-
-	return ""
+	return string(p.buffer)
 }
