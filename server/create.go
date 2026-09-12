@@ -1039,6 +1039,20 @@ func rewriteLayerWithLlamaQuantize(layer *layerGGML, typeName string, fn func(re
 		in = splitInput
 	}
 
+	if typeName == "COPY" && len(layer.splitParts) == 0 {
+		// Validate the tensor data without replacing the original blob. COPY
+		// can rewrite metadata even when the tensor values are unchanged.
+		out, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			return nil, err
+		}
+		defer out.Close()
+		if err := rewrite(in, out, fnWrap); err != nil {
+			return nil, err
+		}
+		return layer, nil
+	}
+
 	temp, err := os.CreateTemp(filepath.Dir(blob), typeName)
 	if err != nil {
 		return nil, err

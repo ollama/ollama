@@ -245,7 +245,14 @@ func TestCreateModelValidatesTextOnlyFileGGUFWithoutQuantization(t *testing.T) {
 	oldRun := runLlamaQuantize
 	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
 		gotTypeName = typeName
-		return copyLlamaQuantizeInput(in, out, orig, fileType, typeName, progressFn)
+		// COPY can change metadata even though it does not quantize tensors.
+		kv := maps.Clone(orig.KV())
+		kv["general.quantization_version"] = uint32(2)
+		var tensors []*ggml.Tensor
+		for _, tensor := range orig.Tensors().Items() {
+			tensors = append(tensors, tensorFromFile(in, orig.Tensors().Offset+tensor.Offset, tensor))
+		}
+		return ggml.WriteGGUF(out, kv, tensors)
 	}
 	t.Cleanup(func() {
 		runLlamaQuantize = oldRun
@@ -280,6 +287,18 @@ func TestCreateModelValidatesTextOnlyFileGGUFWithoutQuantization(t *testing.T) {
 	if gotTypeName != "COPY" {
 		t.Fatalf("llama-quantize type = %q, want COPY", gotTypeName)
 	}
+
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mf.Layers) != 1 || mf.Layers[0].Digest != digest {
+		t.Fatalf("model layers = %+v, want original digest %q", mf.Layers, digest)
+	}
+	checkFileExists(t, filepath.Join(envconfig.Models(), "blobs", "*"), []string{
+		filepath.Join(envconfig.Models(), "blobs", strings.ReplaceAll(digest, ":", "-")),
+		filepath.Join(envconfig.Models(), "blobs", strings.ReplaceAll(mf.Config.Digest, ":", "-")),
+	})
 }
 
 func TestCreateModelValidatesSplitGGUFWithOriginalShardNames(t *testing.T) {
