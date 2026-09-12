@@ -248,7 +248,7 @@ console.log(response.message.content);
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j) - Java SDK
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel) - Laravel integration
 - [Ollama for Swift](https://github.com/mattt/ollama-swift) - Swift SDK
-- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama) - Data framework for LLM apps
+- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://developers.llamaindex.ai/typescript/framework/modules/models/llms/ollama/) - Data framework for LLM apps
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md) - AI pipeline framework
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama) - Google AI framework
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp) - C++ SDK
