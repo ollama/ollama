@@ -201,6 +201,7 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
+- [OpenHuman](https://github.com/tinyhumansai/openhuman) - Local-first AI desktop app with agents, workflows, and MCP for Mac, Windows, and Linux
 
 #### Mobile
 
