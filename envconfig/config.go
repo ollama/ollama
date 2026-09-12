@@ -228,6 +228,10 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 0)
+	// ContextShift sets the default for shifting a prompt that is longer than the context.
+	// A request that sets \"shift\" itself still wins. When off, such a prompt is refused
+	// instead of being silently truncated to part of what was sent.
+	ContextShift = BoolWithDefault("OLLAMA_CONTEXT_SHIFT")
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
 	// EnableVulkan controls Vulkan backend discovery.
@@ -314,6 +318,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG_LOG_REQUESTS":   {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
 		"OLLAMA_GO_TEMPLATE":          {"OLLAMA_GO_TEMPLATE", GoTemplate(true), "Enable Modelfile TEMPLATE based rendering when available"},
 		"OLLAMA_FLASH_ATTENTION":      {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
+		"OLLAMA_CONTEXT_SHIFT":        {"OLLAMA_CONTEXT_SHIFT", ContextShift(true), "Shift a prompt longer than the context instead of refusing it (default true)"},
 		"OLLAMA_KV_CACHE_TYPE":        {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":         {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_IGPU_ENABLE":          {"OLLAMA_IGPU_ENABLE", String("OLLAMA_IGPU_ENABLE")(), "Enable integrated GPUs"},
