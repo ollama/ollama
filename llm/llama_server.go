@@ -188,10 +188,19 @@ type llamaServerLaunchConfig struct {
 }
 
 func newLlamaServerHTTPClient() *http.Client {
+	// Keep-alives must stay enabled: sustained /api/embed traffic issues a
+	// health check plus an embeddings POST per input. With DisableKeepAlives,
+	// each call burns new loopback sockets and can exhaust ephemeral ports
+	// (especially on Windows, where TIME_WAIT is long). Bound idle conns so a
+	// busy runner still reuses sockets without retaining an unbounded pool.
+	// stopProcess closes idle conns so runner restarts on a new port cannot
+	// reuse sockets still pointed at the previous llama-server instance.
 	return &http.Client{
 		Transport: &http.Transport{
-			DisableKeepAlives: true,
-			Proxy:             nil,
+			Proxy:               nil,
+			MaxIdleConns:        128,
+			MaxIdleConnsPerHost: 128,
+			IdleConnTimeout:     90 * time.Second,
 		},
 	}
 }
@@ -2596,6 +2605,9 @@ func (s *llamaServerRunner) Close() error {
 }
 
 func (s *llamaServerRunner) stopProcess() error {
+	if s.client != nil {
+		s.client.CloseIdleConnections()
+	}
 	if s.cmd != nil && s.cmd.Process != nil {
 		if s.cmd.ProcessState != nil {
 			return nil
