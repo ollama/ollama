@@ -107,6 +107,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 					continue
 				} else if !envconfig.EnableVulkan(true) && strings.Contains(filepath.Base(dir), "vulkan") {
 					continue
+				} else if !envconfig.EnableSYCL(false) && strings.Contains(filepath.Base(dir), "sycl") {
+					// SYCL backend discovery is opt-in via OLLAMA_SYCL=1
+					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}
 			} else {
