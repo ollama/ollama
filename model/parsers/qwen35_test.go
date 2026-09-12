@@ -513,3 +513,35 @@ func TestQwen35ParserThinkingTruncatedWithoutCloseTag(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen35ParserToolCallAsPlainTextFallback(t *testing.T) {
+	// When a user prompt asks the model to emit <tool_call> XML as plain text
+	// (without registering native Ollama tools), the parser must not return an
+	// error. Instead it should surface the unparseable content as regular text
+	// so the server returns HTTP 200 instead of HTTP 500.
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	// Initialise with no tools – matches the /api/generate code path.
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Malformed tool call that cannot be parsed as valid XML (mirrors the
+	// user-reported reproduction case from issue #14986).
+	input := "<tool_call>{\"name\": \"get_weather\", \"parameters\": {\"location\": \"Shanghai\"}}</tool_call>"
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected no error for unparseable tool call, got: %v", err)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	// The raw text (including the wrapping tags) must be returned as content.
+	if content == "" {
+		t.Fatalf("expected non-empty content fallback, got empty string")
+	}
+}
