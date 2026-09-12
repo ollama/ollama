@@ -422,6 +422,86 @@ func TestWebSearchResponsesWriterStreamingPreservesThinkingBeforeToolCall(t *tes
 	}
 }
 
+func TestWebSearchResponsesWriterStreamingReasoningBeforeClientTool(t *testing.T) {
+	for _, followUp := range []bool{false, true} {
+		t.Run(fmt.Sprintf("follow_up_%t", followUp), func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			stream := true
+			request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}, {Type: "function", Name: "get_weather", Parameters: map[string]any{"type": "object"}}}}
+			inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+			chunks := []api.ChatResponse{
+				{Message: api.Message{Role: "assistant", Thinking: "Check the weather.", ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}}},
+				{Done: true},
+			}
+			writer := &WebSearchResponsesWriter{
+				BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+				chat:   &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+				search: func(context.Context, string) (*api.WebSearchResponse, error) { return &api.WebSearchResponse{}, nil },
+				followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+					for _, chunk := range chunks {
+						if err := yield(chunk); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+			}
+			initial := chunks
+			wantTypes := []string{"reasoning", "function_call"}
+			if followUp {
+				// A client tool in a search follow-up must not suppress later text.
+				chunks[1].Message = api.Message{Role: "assistant", Content: "The forecast is ready."}
+				initial = []api.ChatResponse{{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}}}}}}
+				wantTypes = []string{"web_search_call", "reasoning", "function_call", "message"}
+			}
+			for _, chunk := range initial {
+				data, err := json.Marshal(chunk)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(data); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			body := recorder.Body.String()
+			var lifecycle []string
+			for _, event := range parseSSEEvents(t, body) {
+				if event.event != "response.output_item.added" && event.event != "response.output_item.done" {
+					continue
+				}
+				var payload struct {
+					OutputIndex int `json:"output_index"`
+					Item        struct {
+						Type string `json:"type"`
+					} `json:"item"`
+				}
+				if err := json.Unmarshal([]byte(event.data), &payload); err != nil {
+					t.Fatal(err)
+				}
+				lifecycle = append(lifecycle, fmt.Sprintf("%s %s %d", event.event, payload.Item.Type, payload.OutputIndex))
+			}
+			var wantLifecycle []string
+			for i, typ := range wantTypes {
+				wantLifecycle = append(wantLifecycle, fmt.Sprintf("response.output_item.added %s %d", typ, i), fmt.Sprintf("response.output_item.done %s %d", typ, i))
+			}
+			if !reflect.DeepEqual(lifecycle, wantLifecycle) {
+				t.Errorf("item lifecycle = %v, want %v", lifecycle, wantLifecycle)
+			}
+			output := completedResponseOutput(t, body)
+			var gotTypes []string
+			for _, item := range output {
+				gotTypes = append(gotTypes, item["type"].(string))
+			}
+			if !reflect.DeepEqual(gotTypes, wantTypes) {
+				t.Errorf("terminal output types = %v, want %v", gotTypes, wantTypes)
+			}
+		})
+	}
+}
+
 func TestWebSearchResponsesWriterStreamingContentAndToolCallInSameChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
