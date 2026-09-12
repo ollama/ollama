@@ -76,6 +76,7 @@ ws ::= ([ \t\n] ws)?
 // when neither the model nor the request specifies num_batch.
 const (
 	DefaultEmbeddingNumBatch             = 2048
+	LlamaServerDefaultFitTargetMiB       = 1024
 	openEndedGenerationContextMultiplier = 10
 )
 
