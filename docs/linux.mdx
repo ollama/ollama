@@ -24,6 +24,26 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
     | sudo tar x -C /usr
 ```
 
+### Non-root install
+
+If you don't have root or sudo access (e.g. on shared or managed machines),
+you can install into user space instead. Substitute any directory you have
+write access to for `~/.local`:
+
+```shell
+mkdir -p ~/.local
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+    | tar x -C ~/.local
+```
+
+Add the binary and libraries to your environment (persist this in your
+`~/.bashrc`):
+
+```shell
+export PATH=$HOME/.local/bin:$PATH
+export LD_LIBRARY_PATH=$HOME/.local/lib/ollama:$LD_LIBRARY_PATH
+```
+
 Start Ollama:
 
 ```shell
