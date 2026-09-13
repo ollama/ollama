@@ -101,7 +101,7 @@ TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
 
 Keep the following tips and best practices in mind when working with Go templates:
 
-- **Be mindful of dot**: Control flow structures like `range` and `with` changes the value `.`
+- **Be mindful of dot**: Control flow structures like `range` and `with` change the value `.`
 - **Out-of-scope variables**: Use `$.` to reference variables not currently in scope, starting from the root
 - **Whitespace control**: Use `-` to trim leading (`{{-`) and trailing (`-}}`) whitespace
 
@@ -121,7 +121,7 @@ ChatML is a popular template format. It can be used for models such as Databrick
 
 ### Example Tools
 
-Tools support can be added to a model by adding a `{{ .Tools }}` node to the template. This feature is useful for models trained to call external tools and can a powerful tool for retrieving real-time data or performing complex tasks.
+Tools support can be added to a model by adding a `{{ .Tools }}` node to the template. This feature is useful for models trained to call external tools and can be a powerful tool for retrieving real-time data or performing complex tasks.
 
 #### Mistral
 
