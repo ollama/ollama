@@ -454,6 +454,21 @@ San Francisco
 			},
 		},
 		{
+			name: "tool call with a number outside int64 range",
+			tools: []api.Tool{tool("calculate", map[string]api.ToolProperty{
+				"x": {Type: api.PropertyType{"number"}},
+			})},
+			rawToolCall: `<function=calculate>
+<parameter=x>
+1e20
+</parameter>
+</function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "calculate",
+				Arguments: testArgs(map[string]any{"x": float64(1e20)}),
+			}},
+		},
+		{
 			name: "tool call with typed parameters",
 			tools: []api.Tool{
 				tool("calculate", map[string]api.ToolProperty{
@@ -698,6 +713,42 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 			paramType: api.PropertyType{"number"},
 			raw:       "0.00000001",
 			want:      0.00000001,
+		},
+		{
+			desc:      "number above int64 maximum",
+			paramType: api.PropertyType{"number"},
+			raw:       "1e20",
+			want:      float64(1e20),
+		},
+		{
+			desc:      "number below int64 minimum",
+			paramType: api.PropertyType{"number"},
+			raw:       "-1e20",
+			want:      float64(-1e20),
+		},
+		{
+			desc:      "number at rounded int64 maximum",
+			paramType: api.PropertyType{"number"},
+			raw:       "9223372036854775808",
+			want:      float64(9223372036854775808),
+		},
+		{
+			desc:      "number below int64 maximum",
+			paramType: api.PropertyType{"number"},
+			raw:       "9223372036854774784",
+			want:      int64(9223372036854774784),
+		},
+		{
+			desc:      "number at int64 minimum",
+			paramType: api.PropertyType{"number"},
+			raw:       "-9223372036854775808",
+			want:      int64(-9223372036854775808),
+		},
+		{
+			desc:      "number just below int64 minimum",
+			paramType: api.PropertyType{"number"},
+			raw:       "-9223372036854777856",
+			want:      float64(-9223372036854777856),
 		},
 		// String parsing tests
 		{
