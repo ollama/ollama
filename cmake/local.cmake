@@ -5,6 +5,7 @@
 # llama/server CMake project and building the Go binary into a matching layout.
 
 include(ExternalProject)
+include(${CMAKE_CURRENT_LIST_DIR}/mlx-backend-order.cmake)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
     "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
@@ -854,6 +855,8 @@ foreach(_backend IN LISTS OLLAMA_MLX_BACKENDS)
             "Unknown OLLAMA_MLX_BACKENDS entry '${_backend}'")
     endif()
 endforeach()
+
+ollama_order_mlx_metal_builds()
 
 if(_mlx_targets)
     add_custom_target(ollama-mlx-backends ALL
