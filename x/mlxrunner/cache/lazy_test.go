@@ -31,10 +31,10 @@ func firstKeyAt(arr *mlx.Array, p, D int) float32 {
 	return arr.Floats()[p*D]
 }
 
-// settledActiveMemory drains unpinned arrays and the allocator cache, then
-// reports active (allocated, in-use) bytes.
+// settledActiveMemory drains the allocator cache, then reports active
+// (allocated, in-use) bytes. The work between two readings runs in a scope
+// so its intermediates are gone by the second one.
 func settledActiveMemory() int {
-	mlx.Sweep()
 	mlx.ClearCache()
 	return mlx.ActiveMemory()
 }
@@ -62,26 +62,28 @@ func TestKVSpeculationCaptureAllocatesNothing(t *testing.T) {
 
 		baseline := settledActiveMemory()
 
-		snaps := c.TakeSnapshots()
-		// Every captured snapshot is a lazy snapshot (no owned buffer).
-		for i, s := range snaps {
-			if s == nil {
-				continue
+		mlx.Scoped(func() {
+			snaps := c.TakeSnapshots()
+			// Every captured snapshot is a lazy snapshot (no owned buffer).
+			for i, s := range snaps {
+				if s == nil {
+					continue
+				}
+				if ks := s.(*kvSnapshot); ks.keys != nil {
+					t.Fatalf("snaps[%d] owns a buffer at capture; want a lazy snapshot", i)
+				}
 			}
-			if ks := s.(*kvSnapshot); ks.keys != nil {
-				t.Fatalf("snaps[%d] owns a buffer at capture; want a lazy snapshot", i)
-			}
-		}
 
-		// MTP commit: rewind to a partial accept, then discard all snapshots.
-		if !c.Restore(nil, before+draft/2) {
-			t.Fatal("live rewind failed")
-		}
-		for _, s := range snaps {
-			if s != nil {
-				s.Close()
+			// MTP commit: rewind to a partial accept, then discard all snapshots.
+			if !c.Restore(nil, before+draft/2) {
+				t.Fatal("live rewind failed")
 			}
-		}
+			for _, s := range snaps {
+				if s != nil {
+					s.Close()
+				}
+			}
+		})
 
 		after := settledActiveMemory()
 		// Lazy snapshots allocate nothing; allow a tiny slack for allocator noise but
@@ -219,25 +221,28 @@ func TestKVLazySnapshotSplitMergeNoCopy(t *testing.T) {
 
 		base := settledActiveMemory()
 
-		// Lazy snapshot [2,10), split at 5.
-		snap := c.Snapshot(2)
-		p, ch := c.Split(snap, 5)
-		ps, cs := p.(*kvSnapshot), ch.(*kvSnapshot)
-		if ps.keys != nil || cs.keys != nil {
-			t.Fatal("Split of a lazy snapshot should yield lazy snapshots (no copy)")
-		}
-		if ps.fromOffset != 2 || ps.toOffset != 5 || cs.fromOffset != 5 || cs.toOffset != 10 {
-			t.Fatalf("split ranges = [%d,%d)/[%d,%d), want [2,5)/[5,10)", ps.fromOffset, ps.toOffset, cs.fromOffset, cs.toOffset)
-		}
+		var merged *kvSnapshot
+		mlx.Scoped(func() {
+			// Lazy snapshot [2,10), split at 5.
+			snap := c.Snapshot(2)
+			p, ch := c.Split(snap, 5)
+			ps, cs := p.(*kvSnapshot), ch.(*kvSnapshot)
+			if ps.keys != nil || cs.keys != nil {
+				t.Fatal("Split of a lazy snapshot should yield lazy snapshots (no copy)")
+			}
+			if ps.fromOffset != 2 || ps.toOffset != 5 || cs.fromOffset != 5 || cs.toOffset != 10 {
+				t.Fatalf("split ranges = [%d,%d)/[%d,%d), want [2,5)/[5,10)", ps.fromOffset, ps.toOffset, cs.fromOffset, cs.toOffset)
+			}
 
-		// Merge them back into [2,10).
-		merged := c.Merge(p, ch).(*kvSnapshot)
-		if merged.keys != nil {
-			t.Fatal("Merge of adjacent lazy snapshots should yield a lazy snapshot (no Concatenate)")
-		}
-		if merged.fromOffset != 2 || merged.toOffset != 10 {
-			t.Fatalf("merged range = [%d,%d), want [2,10)", merged.fromOffset, merged.toOffset)
-		}
+			// Merge them back into [2,10).
+			merged = c.Merge(p, ch).(*kvSnapshot)
+			if merged.keys != nil {
+				t.Fatal("Merge of adjacent lazy snapshots should yield a lazy snapshot (no Concatenate)")
+			}
+			if merged.fromOffset != 2 || merged.toOffset != 10 {
+				t.Fatalf("merged range = [%d,%d), want [2,10)", merged.fromOffset, merged.toOffset)
+			}
+		})
 
 		if after := settledActiveMemory(); after > base {
 			t.Fatalf("Split/Merge of lazy snapshots allocated %d bytes; want 0", after-base)
@@ -313,15 +318,17 @@ func TestKVRestoreLiveLazySnapshotIsOffsetMove(t *testing.T) {
 		// Restore the snapshot back to 10. Its slots [5,10) were never overwritten,
 		// so it is still lazy and the data is already in the buffer — a pure offset
 		// move, no allocation.
-		if !c.Restore(snap, 10) {
-			t.Fatal("restore failed")
-		}
-		if snap.keys != nil {
-			t.Fatal("snapshot was copied out; expected the offset-move fast path")
-		}
-		if c.Offset() != 10 {
-			t.Fatalf("offset after restore = %d, want 10", c.Offset())
-		}
+		mlx.Scoped(func() {
+			if !c.Restore(snap, 10) {
+				t.Fatal("restore failed")
+			}
+			if snap.keys != nil {
+				t.Fatal("snapshot was copied out; expected the offset-move fast path")
+			}
+			if c.Offset() != 10 {
+				t.Fatalf("offset after restore = %d, want 10", c.Offset())
+			}
+		})
 		if after := settledActiveMemory(); after > base {
 			t.Fatalf("restore of a live lazy snapshot allocated %d bytes; want 0 (offset move)", after-base)
 		}

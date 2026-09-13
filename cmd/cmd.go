@@ -2128,32 +2128,52 @@ Environment Variables:
 }
 
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
+	opts := runOptions{
+		Model:       modelName,
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	opts := agentTUIOptions{
-		Model:   modelName,
-		Options: map[string]any{},
-	}
-	info, err := prepareAgentModel(cmd, client, &opts, false)
+	info, resolvedModel, err := showOrPullModel(cmd, client, modelName, false, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
-	opts.System = info.System
+	opts.Model = resolvedModel
+	ensureCloudStub(cmd.Context(), client, opts.Model)
 
-	if err := saveLastAgentModel(opts.Model); err != nil {
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	if err != nil {
 		return err
 	}
-	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
-		if handleCloudAuthorizationError(err) {
-			return nil
+
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for key := range info.ModelInfo {
+		if strings.Contains(key, ".vision.") {
+			opts.MultiModal = true
+			break
 		}
-		return fmt.Errorf("error running agent: %w", err)
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
+	if err := loadOrUnloadModel(cmd, &opts); err != nil {
+		return fmt.Errorf("error loading model: %w", err)
+	}
+	if err := generateInteractive(cmd, opts); err != nil {
+		return fmt.Errorf("error running model: %w", err)
 	}
 	return nil
 }

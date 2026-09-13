@@ -2195,6 +2195,7 @@ func TestAppendMMProjArgs(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		modelArch    string
 		projectors   []string
 		opts         api.Options
 		gpus         []ml.DeviceInfo
@@ -2299,12 +2300,23 @@ func TestAppendMMProjArgs(t *testing.T) {
 			retry:        true,
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
+		{
+			name:         "gemma3n keeps projector offload under partial text offload",
+			modelArch:    "gemma3n",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
 				modelPath:            "model.gguf",
+				modelArch:            tt.modelArch,
 				projectors:           tt.projectors,
 				mmprojMemory:         tt.mmprojMemory,
 				opts:                 tt.opts,
@@ -2314,6 +2326,45 @@ func TestAppendMMProjArgs(t *testing.T) {
 			})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRetryMMProjCPUOffload(t *testing.T) {
+	launch := func(modelArch string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			modelArch:    modelArch,
+			projectors:   []string{"mmproj.gguf"},
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		launch llamaServerLaunchConfig
+		want   bool
+	}{
+		{
+			name:   "oom retries with projector on cpu",
+			launch: launch("qwen3vl"),
+			want:   true,
+		},
+		{
+			name:   "gemma3n oom does not retry with projector on cpu",
+			launch: launch("gemma3n"),
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{launch: tt.launch}
+			if got := s.shouldRetryMMProjCPUOffload(errors.New("out of memory")); got != tt.want {
+				t.Fatalf("shouldRetryMMProjCPUOffload = %v, want %v", got, tt.want)
 			}
 		})
 	}

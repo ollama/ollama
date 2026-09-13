@@ -31,6 +31,7 @@ const (
 	codexAppIntegrationName        = "codex-app"
 	codexAppProfileName            = "ollama-launch-codex-app"
 	codexAppBundleID               = "com.openai.codex"
+	codexAppLaunchURL              = "codex://threads/new?mode=codex"
 	codexAppModelCatalogFilename   = proxy.CodexDesktopModelCatalogFilename
 	codexAppRoutingCatalogFilename = proxy.CodexDesktopRoutingCatalogFilename
 	codexAppAutoReviewModelEnv     = "OLLAMA_CODEX_AUTO_REVIEW_MODEL"
@@ -159,7 +160,9 @@ func (c *CodexApp) CurrentModel() string {
 	if err != nil {
 		return ""
 	}
-	if codexAppRootUsesProxy(parsed) && codexAppCatalogHealthy(parsed, "") {
+	if codexAppRootUsesProxy(parsed) &&
+		codexNormalizeURL(parsed.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+		codexAppCatalogHealthy(parsed, "") {
 		model := strings.TrimSpace(parsed.RootString(codexRootModelKey))
 		if codexAppCatalogContainsModel(model) {
 			return model
@@ -2076,13 +2079,7 @@ func defaultCodexAppOpenApp(args []string) error {
 		}
 		return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
 	case "darwin":
-		if path := codexAppAppPath(); path != "" {
-			cmd := exec.Command("open", path)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			return cmd.Run()
-		}
-		cmd := exec.Command("open", "-b", codexAppBundleID)
+		cmd := exec.Command("open", codexAppDarwinOpenArgs(codexAppAppPath())...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -2091,12 +2088,26 @@ func defaultCodexAppOpenApp(args []string) error {
 	}
 }
 
+func codexAppDarwinOpenArgs(path string) []string {
+	args := []string{"-b", codexAppBundleID}
+	if path != "" {
+		args = []string{path}
+	}
+	if (&CodexApp{}).OllamaConfigured() {
+		if path != "" {
+			args = []string{"-a", path}
+		}
+		args = append(args, codexAppLaunchURL)
+	}
+	return args
+}
+
 func defaultCodexAppOpenAppPath(path string) error {
 	switch codexAppGOOS {
 	case "windows":
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
 	case "darwin":
-		cmd := exec.Command("open", path)
+		cmd := exec.Command("open", codexAppDarwinOpenArgs(path)...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -2307,7 +2318,8 @@ func codexAppManagedProxyURL(raw string) bool {
 			return false
 		}
 	}
-	return strings.TrimSuffix(u.Path, "/") == proxy.CodexDesktopPathPrefix+"/v1"
+	// ConnectableHost preserves proxy path prefixes from OLLAMA_HOST.
+	return strings.HasSuffix(strings.TrimSuffix(u.Path, "/"), proxy.CodexDesktopPathPrefix+"/v1")
 }
 
 func codexAppRootReferencesCatalog(text string) bool {

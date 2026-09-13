@@ -3,11 +3,249 @@ package openai
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestCompactionTrimPreservesProtectedState(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+		{"type":"message","role":"system","content":"system instructions"},
+		{"type":"message","role":"developer","content":"developer instructions"},
+		{"type":"message","role":"user","content":"original goal"},
+		{"type":"tool_search_call","call_id":"old","arguments":{"query":"find a tool"}},
+		{"type":"tool_search_output","call_id":"old","tools":[{"type":"namespace","name":"example","tools":[{"type":"function","name":"shell","description":"` + strings.Repeat("old output ", 1000) + `","parameters":{"type":"object"}}]}]},
+		{"type":"message","role":"assistant","content":"old result processed"},
+		{"type":"message","role":"user","content":"latest request"},
+		{"type":"function_call","call_id":"pending","name":"shell","arguments":"{}"},
+		{"type":"function_call","call_id":"latest","name":"read_image","arguments":"{}"},
+		{"type":"function_call_output","call_id":"latest","output":[{"type":"input_image","image_url":"` + compactionTestPNG + `"}]}
+	]}`)
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 2 {
+		t.Fatalf("removed %d items, want the old call/result pair", removed)
+	}
+	var refs []string
+	for _, item := range plan.items {
+		refs = append(refs, item.Ref)
+	}
+	want := []string{"item_000001", "item_000002", "item_000003", "item_000006", "item_000007", "item_000008", "item_000009", "item_000010"}
+	if !slices.Equal(refs, want) {
+		t.Fatalf("remaining references = %v, want %v", refs, want)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"system instructions", "developer instructions", "original goal", "latest request", compactionTestPNG, "2 older transcript items were omitted"} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("retry prompt missing %q", marker)
+		}
+	}
+	if bytes.Contains(request, []byte("old output")) {
+		t.Fatal("old tool output remains in retry prompt")
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "Continue the task.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if !strings.Contains(payload.Summary, "2 older transcript items were omitted") {
+		t.Fatal("summary does not disclose omitted history")
+	}
+	if len(payload.Retained) != 3 || payload.Retained[0].ToolCalls[0].ID != "pending" || payload.Retained[1].ToolCalls[0].ID != "latest" || len(payload.Retained[2].Images) != 1 {
+		t.Fatalf("active tool state changed: %+v", payload.Retained)
+	}
+	if _, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "invalid selection", "retain_item_ids": []string{"item_000004"},
+	})); err == nil {
+		t.Fatal("accepted a reference removed before summarization")
+	}
+}
+
+func TestCompactionTrimPreservesPriorSummaryAndLatestItem(t *testing.T) {
+	old, err := json.Marshal(OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: "prior summary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": "test", "input": []any{
+			ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(old)},
+			map[string]any{"type": "message", "role": "user", "content": "user request"},
+			map[string]any{"type": "message", "role": "assistant", "content": strings.Repeat("older assistant text ", 500)},
+			map[string]any{"type": "message", "role": "assistant", "content": "latest assistant text"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 1 {
+		t.Fatalf("removed=%d, want 1", removed)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"prior summary", "user request", "latest assistant text"} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("retry prompt missing %q", marker)
+		}
+	}
+	if removed := plan.TrimForContextLimit(); removed != 0 {
+		t.Fatalf("removed %d protected items", removed)
+	}
+}
+
+func TestCompactionTrimKeepsToolPairsAcrossInterleavedResults(t *testing.T) {
+	plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[
+		{"type":"function_call","call_id":"a","name":"shell","arguments":"{}"},
+		{"type":"function_call","call_id":"b","name":"shell","arguments":"{}"},
+		{"type":"function_call_output","call_id":"b","output":"b output"},
+		{"type":"function_call_output","call_id":"a","output":"` + strings.Repeat("a output ", 1000) + `"},
+		{"type":"message","role":"assistant","content":"processed both results"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 2 {
+		t.Fatalf("removed=%d, want 2", removed)
+	}
+	if len(plan.items) != 3 || plan.items[0].Message.ToolCalls[0].ID != "b" || plan.items[1].Message.ToolCallID != "b" {
+		t.Fatal("did not preserve the other complete tool pair")
+	}
+	if _, _, err := analyzeCompactionToolState(plan.items); err != nil {
+		t.Fatalf("trim left invalid tool state: %v", err)
+	}
+}
+
+func TestCompactionPreservesStandaloneOutputs(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+		{"type":"message","role":"user","content":"Continue the task."},
+		{"type":"function_call_output","name":"handoff","namespace":"workspace.tools","output":[
+			{"type":"input_text","text":"Keep the original task instructions."},
+			{"type":"input_image","image_url":"` + compactionTestPNG + `"}
+		]},
+		{"type":"function_call_output","call_id":null,"name":"tool_search","output":"A standalone function can have this name."},
+		{"type":"message","role":"assistant","content":"` + strings.Repeat("old reasoning ", 1000) + `"},
+		{"type":"message","role":"user","content":"Latest request."}
+	]}`)
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed := plan.TrimForContextLimit(); removed != 1 {
+		t.Fatalf("removed %d items, want only the old assistant message", removed)
+	}
+	request, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"Keep the original task instructions.", "workspace.tools", "handoff", compactionTestPNG} {
+		if !bytes.Contains(request, []byte(marker)) {
+			t.Errorf("summary request lost %q", marker)
+		}
+	}
+	for cycle := range 2 {
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "Continue the work.", "retain_item_ids": []string{},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := decodeResultPayload(t, result)
+		if len(payload.Retained) != 2 {
+			t.Fatalf("cycle %d: retained %d messages, want both standalone outputs", cycle, len(payload.Retained))
+		}
+		handoff, search := payload.Retained[0], payload.Retained[1]
+		if handoff.ToolName != "workspace.tools.handoff" || handoff.Content != "Keep the original task instructions." || len(handoff.Images) != 1 {
+			t.Fatalf("cycle %d: handoff changed: %+v", cycle, handoff)
+		}
+		if search.ToolName != "tool_search" || search.Content != "A standalone function can have this name." {
+			t.Fatalf("cycle %d: standalone tool_search changed: %+v", cycle, search)
+		}
+		replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expanded, changed, err := ExpandResponsesCompactionInput(replay)
+		if err != nil || !changed {
+			t.Fatalf("cycle %d: changed=%v err=%v", cycle, changed, err)
+		}
+		var decoded ResponsesRequest
+		if err := json.Unmarshal(expanded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded.Input.Items) != 4 {
+			t.Fatalf("cycle %d: want summary pair and two standalone outputs, got %d items", cycle, len(decoded.Input.Items))
+		}
+		for i, want := range []api.Message{handoff, search} {
+			output, ok := decoded.Input.Items[i+2].(ResponsesFunctionCallOutput)
+			name := payload.StandaloneNames[i]
+			if !ok || output.CallID != "" || output.Name != name.Name || output.Namespace != name.Namespace || output.Output != want.Content {
+				t.Fatalf("cycle %d: standalone output %d lost identity or gained a call: %+v", cycle, i, decoded.Input.Items[i+2])
+			}
+		}
+		chat, err := FromResponsesRequest(decoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chat.Messages) != 4 || chat.Messages[2].ToolName != "workspace.tools.handoff" || !bytes.Equal(chat.Messages[2].Images[0], handoff.Images[0]) {
+			t.Fatalf("cycle %d: replay changed standalone content or images: %+v", cycle, chat.Messages)
+		}
+		plan, err = PrepareStandaloneCompaction(expanded)
+		if err != nil {
+			t.Fatalf("cycle %d: cannot compact replay: %v", cycle, err)
+		}
+	}
+}
+
+func TestCompactionStandaloneOutputsDoNotRelaxPairing(t *testing.T) {
+	for _, item := range []string{
+		`{"type":"function_call_output","name":"handoff","call_id":"missing","output":"unmatched"}`,
+		`{"type":"tool_search_output","tools":[]}`,
+		`{"type":"tool_search_output","call_id":null,"tools":[]}`,
+		`{"type":"function_call_output","name":"handoff","call_id":"","output":"empty ID"}`,
+		`{"type":"function_call_output","output":"anonymous"}`,
+	} {
+		t.Run(item, func(t *testing.T) {
+			if _, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[` + item + `]}`)); err == nil {
+				t.Fatal("accepted invalid or unmatched output")
+			}
+		})
+	}
+	// A name on a result with a call ID does not turn it into a standalone output.
+	plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[
+		{"type":"function_call","call_id":"paired","name":"read","arguments":"{}"},
+		{"type":"function_call_output","call_id":"paired","name":"read","output":"ok"},
+		{"type":"message","role":"assistant","content":"Read completed."}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "Finished reading.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained := decodeResultPayload(t, result).Retained; len(retained) != 0 {
+		t.Fatalf("completed pair was forced as standalone state: %+v", retained)
+	}
+}
 
 func compactionResponseBody(t *testing.T, selection map[string]any) []byte {
 	t.Helper()
@@ -666,5 +904,31 @@ func TestCompactionStreamContainsExactlyOneCompletedItem(t *testing.T) {
 	}
 	if done != 1 || completed != 1 {
 		t.Fatalf("done=%d completed=%d events=%+v", done, completed, events)
+	}
+}
+
+func TestCompactionMessageAgentMessage(t *testing.T) {
+	var item ResponsesAgentMessageInput
+	err := json.Unmarshal([]byte(`{
+		"type": "agent_message",
+		"author": "/root",
+		"recipient": "/root/worker",
+		"content": [
+			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+			{"type": "encrypted_content", "encrypted_content": "analyze the parser"}
+		]
+	}`), &item)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	msg, kind, err := compactionMessage(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
+	want = fmt.Sprintf(want, "/root", "/root/worker")
+	if kind != "message" || msg.Role != "user" || msg.Content != want {
+		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }

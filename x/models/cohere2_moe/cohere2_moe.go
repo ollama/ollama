@@ -398,7 +398,7 @@ func supportsGatherQMM(mode string, bits int) bool {
 // weights to the [E, in, out] layout GatherMM consumes, materialized once at
 // load so the forward path avoids per-call transposes.
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
-	if w == nil || !w.Valid() || w.NumDims() != 3 {
+	if w == nil || w.NumDims() != 3 {
 		return w
 	}
 	return mlx.Transpose(w, 0, 2, 1).Clone()

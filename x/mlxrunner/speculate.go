@@ -24,7 +24,7 @@ type draftSession interface {
 	// hidden state at that slot. Runs arrive in slot order — prefill
 	// chunks, the decode seed, then each round's validated tokens. media is
 	// the run's manifest (feature-bearing for items the run overlaps), valid
-	// only for the call; a session that defers its forward pins what it
+	// only for the call; a session that defers its forward holds what it
 	// keeps. Nil outside prefill.
 	committed(tokens, hiddens *mlx.Array, position int, media []batch.MediaItem)
 
@@ -201,6 +201,7 @@ type speculativeDecoder struct {
 	current  sampler.Result    // emitted (or the seed), not yet forwarded
 	inner    *pipelinedDecoder // pipelines plain tokens while parked; nil while drafting
 	grammar  *grammar
+	scope    *mlx.Scope // holds current across rounds
 }
 
 // decoder returns the decoder for this engine's session. A speculationSession that
@@ -208,8 +209,9 @@ type speculativeDecoder struct {
 // running the inner pipelined decoder whose reports keep the draft KV level.
 func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) decoder {
 	current := sampler.Result{Token: seed}
-	mlx.Pin(current.Arrays()...)
-	return &speculativeDecoder{s: s, position: position, current: current, grammar: grammar}
+	scope := mlx.NewScope()
+	scope.Attach(current.Arrays()...)
+	return &speculativeDecoder{s: s, position: position, current: current, grammar: grammar, scope: scope}
 }
 
 func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
@@ -231,16 +233,13 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 			// land that extra token within it rather than overshooting. At
 			// remaining 1 the cap is 0 and the last token decodes plainly.
 			candidates = s.drafter.propose(st.current.Token, min(s.limit, remaining-1))
+			mlx.AsyncEval(candidates.Arrays()...)
 		}
 		var accepted, observed int
 		var err error
 		if candidates == nil {
 			results, err = st.park(remaining)
 		} else {
-			// candidates stays pinned across accept's internal sweep and the
-			// draft-count read below; accept pins only its own intermediates.
-			mlx.Pin(candidates.tokens)
-			defer mlx.Unpin(candidates.tokens)
 			results, accepted, observed, err = st.s.accept(&st.position, st.current, candidates, st.grammar)
 		}
 		if err != nil {
@@ -257,11 +256,11 @@ func (st *speculativeDecoder) next(remaining int) ([]sampler.Result, error) {
 	return results, nil
 }
 
-// advance retires the last returned token as the next call's current, pinned
-// across the sweeps the next call runs before reading it. Nothing is forced here.
+// advance retires the last returned token as the next call's current, held
+// until the next call reads it. Nothing is forced here.
 func (st *speculativeDecoder) advance(next sampler.Result) {
-	mlx.Pin(next.Arrays()...)
-	mlx.Unpin(st.current.Arrays()...)
+	st.scope.Attach(next.Arrays()...)
+	st.scope.Discard(st.current.Arrays()...)
 	st.current = next
 }
 
@@ -314,7 +313,7 @@ func (st *speculativeDecoder) close() {
 		// the drafter level with the caches' resting offset.
 		st.s.settle(st.current.Token)
 	}
-	mlx.Unpin(st.current.Arrays()...)
+	st.scope.Close()
 	st.s.logStats()
 }
 
@@ -388,10 +387,6 @@ func commitSpeculation(caches []cache.Cache, accepted, draftCount, before int) {
 // acceptance model learns from, capped at the EOS (a terminator, not a target
 // rejection). NumPredict is the decode loop's to enforce, so a token past the
 // budget is left for decode to drop, not cut here.
-//
-// The caller keeps current and the candidate tokens pinned across the call,
-// since accept sweeps before its eval and reads both afterward; accept pins
-// only the intermediates it produces.
 func (s *speculationSession) accept(position *int, current sampler.Result, candidates *draftCandidates, g *grammar) (results []sampler.Result, accepted, observed int, err error) {
 	r := s.spec.r
 	before := *position
@@ -412,54 +407,51 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	}
 	defer commit(0)
 
-	dist := candidates.dist.Arrays()
-	mlx.Pin(dist...)
-	mlx.Sweep()
-	mlx.AsyncEval(candidates.tokens)
-	mlx.Unpin(dist...)
+	var auxHiddenSeq, acceptedMask, residualTokens, bonusToken *mlx.Array
+	var draftIDs []int32
+	var constrained bool
+	var maskErr error
+	mlx.ScopedEval(func() []*mlx.Array {
+		var hiddenSeq *mlx.Array
+		hiddenSeq, auxHiddenSeq = r.Model.Forward(&batch.Batch{
+			InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
+			SeqOffsets:   []int32{int32(before)},
+			SeqQueryLens: []int32{int32(draftCount + 1)},
+			Layout:       s.layout,
+		}, s.spec.targets)
 
-	hiddenSeq, auxHiddenSeq := r.Model.Forward(&batch.Batch{
-		InputIDs:     current.Token.ExpandDims(-1).Concatenate(1, candidates.tokens),
-		SeqOffsets:   []int32{int32(before)},
-		SeqQueryLens: []int32{int32(draftCount + 1)},
-		Layout:       s.layout,
-	}, s.spec.targets)
+		// Row i of the fused hidden is the state after the token at before+i, so
+		// the rows already line up with the drafts: row 0 (current's state)
+		// predicts draft 0, and the row after the last accepted draft is the
+		// bonus row. No separate base-logits forward exists on this path.
+		logits := r.Model.Unembed(hiddenSeq)
 
-	// Row i of the fused hidden is the state after the token at before+i, so
-	// the rows already line up with the drafts: row 0 (current's state)
-	// predicts draft 0, and the row after the last accepted draft is the
-	// bonus row. No separate base-logits forward exists on this path.
-	logits := r.Model.Unembed(hiddenSeq)
-
-	draftIDs := candidates.tokens.Ints()
-	constrained := g.constraining()
-	if constrained {
-		var errs []error
-		logits, errs = r.grammarEngine.mask([]*grammar{g}, logits, [][]int32{draftIDs})
-		if err := errors.Join(errs...); err != nil {
-			return nil, 0, 0, err
+		draftIDs = candidates.tokens.Ints()
+		constrained = g.constraining()
+		if constrained {
+			var errs []error
+			logits, errs = r.grammarEngine.mask([]*grammar{g}, logits, [][]int32{draftIDs})
+			if maskErr = errors.Join(errs...); maskErr != nil {
+				return nil
+			}
 		}
+
+		targetDist := r.Sampler.Distribution(pipelineSlot, logits, candidates.tokens)
+		draftDist := candidates.dist
+		acceptedMask = r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
+
+		// The next token is sampled for every possible outcome before anything
+		// is evaluated — the residual at each rejection point in one batched
+		// draw, plus the bonus row — so a single Eval covers acceptance and the
+		// next token instead of a second host round trip after the rejection
+		// point is known.
+		residualTokens = r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
+		bonusToken = r.sampleTokenAt(targetDist, draftCount)
+		return []*mlx.Array{auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
+	})
+	if maskErr != nil {
+		return nil, 0, 0, maskErr
 	}
-
-	targetDist := r.Sampler.Distribution(pipelineSlot, logits, candidates.tokens)
-	draftDist := candidates.dist
-	acceptedMask := r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
-
-	// The next token is sampled for every possible outcome before anything
-	// is evaluated — the residual at each rejection point in one batched
-	// draw, plus the bonus row — so a single Eval covers acceptance and the
-	// next token instead of a second host round trip after the rejection
-	// point is known.
-	residualTokens := r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
-	bonusToken := r.sampleTokenAt(targetDist, draftCount)
-
-	// Pin the arrays read after the eval; current and the candidate tokens
-	// stay pinned by the caller across the call.
-	live := []*mlx.Array{hiddenSeq, auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
-	mlx.Pin(live...)
-	defer mlx.Unpin(live...)
-	mlx.Sweep()
-	mlx.Eval(candidates.tokens, acceptedMask, residualTokens, bonusToken)
 
 	acceptedFlags := acceptedMask.Ints()
 	for _, ok := range acceptedFlags {

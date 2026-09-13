@@ -337,12 +337,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		if !envconfig.NoPrune() && oldManifest != nil {
-			if err := oldManifest.RemoveLayers(); err != nil {
+			removed, err := oldManifest.RemoveLayers()
+			removeGGUFMetadata(removed...)
+			if err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
 		}
-
-		s.refreshModelListCache(name)
 
 		ch <- api.ProgressResponse{Status: "success"}
 	}()

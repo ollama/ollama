@@ -43,11 +43,8 @@ func quantizeBlob(items []quantizeItem) ([]byte, error) {
 
 func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 	allArrays := make(map[string]*mlx.Array)
-	var pinned []*mlx.Array
-	defer func() {
-		mlx.Unpin(pinned...)
-		mlx.Sweep()
-	}()
+	held := mlx.NewScope()
+	defer held.Close()
 
 	tmpDir, err := os.MkdirTemp("", "ollama-quantize-*")
 	if err != nil {
@@ -81,35 +78,20 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 	}
 
 	for _, it := range items {
-		if err := func() error {
-			defer mlx.Sweep()
-			tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, allArrays, tmpDir)
-			if tmpPath != "" {
-				defer os.Remove(tmpPath)
-			}
-			if err != nil {
-				return err
-			}
-			if st != nil {
-				defer st.Free()
-			}
-			mlx.Eval(toEval...)
-			final := arraysForItem(allArrays, it)
-			mlx.Pin(final...)
-			pinned = append(pinned, final...)
-
-			if mixed && it.quantize != "" {
-				if gs, _, _ := quant.Params(it.quantize); gs > 0 {
-					if metadata == nil {
-						metadata = make(map[string]string)
-					}
-					metadata[it.name+".quant_type"] = it.quantize
-					metadata[it.name+".group_size"] = strconv.Itoa(gs)
-				}
-			}
-			return nil
-		}(); err != nil {
+		if err := quantizeItemArrays(it, allArrays, tmpDir, held); err != nil {
 			return nil, err
+		}
+		// The item's intermediates are free; hand their buffers back before
+		// the next item, which may never reuse those sizes.
+		mlx.ClearCache()
+		if mixed && it.quantize != "" {
+			if gs, _, _ := quant.Params(it.quantize); gs > 0 {
+				if metadata == nil {
+					metadata = make(map[string]string)
+				}
+				metadata[it.name+".quant_type"] = it.quantize
+				metadata[it.name+".group_size"] = strconv.Itoa(gs)
+			}
 		}
 	}
 
@@ -120,18 +102,20 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 	return os.ReadFile(outPath)
 }
 
-func arraysForItem(all map[string]*mlx.Array, it quantizeItem) []*mlx.Array {
-	keys := []string{it.name}
-	if it.quantize != "" {
-		keys = append(keys, it.name+".scale", it.name+".bias")
+// quantizeItemArrays loads and quantizes one item into arrays and holds its
+// finished arrays in held.
+func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir string, held *mlx.Scope) error {
+	tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, arrays, tmpDir)
+	if tmpPath != "" {
+		defer os.Remove(tmpPath)
 	}
-	out := make([]*mlx.Array, 0, len(keys))
-	for _, k := range keys {
-		if a := all[k]; a != nil {
-			out = append(out, a)
-		}
+	if err != nil {
+		return err
 	}
-	return out
+	defer st.Free()
+	mlx.Eval(toEval...)
+	held.Attach(toEval...)
+	return nil
 }
 
 // loadAndQuantizeArray writes a safetensors reader to a temp file, loads it
@@ -164,65 +148,69 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		return tmpPath, nil, nil, fmt.Errorf("failed to load safetensors for %s: %w", name, err)
 	}
 
-	arr := st.Get(name)
-	if arr == nil {
-		st.Free()
-		return tmpPath, nil, nil, fmt.Errorf("tensor %q not found in safetensors", name)
-	}
-
-	// Decode an FP8 source tensor (using its block scale) before quantizing,
-	// so a decode-only request (quantize == "") still yields usable float data.
-	if decodeFP8 {
-		scaleKey := name + ".scale_inv"
-		scaleInv := st.Get(scaleKey)
-		if scaleInv == nil {
-			scaleKey = name + ".scale"
-			scaleInv = st.Get(scaleKey)
+	toEval = mlx.ScopedArrays(func() []*mlx.Array {
+		arr := st.Get(name)
+		if arr == nil {
+			err = fmt.Errorf("tensor %q not found in safetensors", name)
+			return nil
 		}
-		if scaleInv == nil {
-			st.Free()
-			return tmpPath, nil, nil, fmt.Errorf("missing companion tensor %q or %q for fp8 source tensor %q", name+".scale_inv", name+".scale", name)
+
+		// Decode an FP8 source tensor (using its block scale) before quantizing,
+		// so a decode-only request (quantize == "") still yields usable float data.
+		if decodeFP8 {
+			scaleKey := name + ".scale_inv"
+			scaleInv := st.Get(scaleKey)
+			if scaleInv == nil {
+				scaleKey = name + ".scale"
+				scaleInv = st.Get(scaleKey)
+			}
+			if scaleInv == nil {
+				err = fmt.Errorf("missing companion tensor %q or %q for fp8 source tensor %q", name+".scale_inv", name+".scale", name)
+				return nil
+			}
+			arr, err = decodeSourceFP8Tensor(arr, scaleInv)
+			if err != nil {
+				err = fmt.Errorf("failed to decode fp8 tensor %s: %w", name, err)
+				return nil
+			}
 		}
-		arr, err = decodeSourceFP8Tensor(arr, scaleInv)
-		if err != nil {
-			st.Free()
-			return tmpPath, nil, nil, fmt.Errorf("failed to decode fp8 tensor %s: %w", name, err)
+
+		if quantize == "" {
+			arr = mlx.Contiguous(arr, false)
+			arrays[name] = arr
+			return []*mlx.Array{arr}
 		}
-		mlx.Eval(arr)
-	}
 
-	if quantize == "" {
-		arr = mlx.Contiguous(arr, false)
-		arrays[name] = arr
-		return tmpPath, []*mlx.Array{arr}, st, nil
-	}
+		if arr.DType() != mlx.DTypeBFloat16 && arr.DType() != mlx.DTypeFloat32 && arr.DType() != mlx.DTypeFloat16 {
+			arr = arr.AsType(mlx.DTypeBFloat16)
+		}
 
-	if arr.DType() != mlx.DTypeBFloat16 && arr.DType() != mlx.DTypeFloat32 && arr.DType() != mlx.DTypeFloat16 {
-		arr = arr.AsType(mlx.DTypeBFloat16)
-		mlx.Eval(arr)
-	}
+		groupSize, bits, mode := quant.Params(quantize)
+		qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
+		if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
+			err = fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
+			return nil
+		}
+		if len(scales.Dims()) == 0 || scales.Dims()[0] == 0 {
+			err = fmt.Errorf("mlx.Quantize produced empty scales for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
+			return nil
+		}
 
-	groupSize, bits, mode := quant.Params(quantize)
-	qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
-	mlx.Eval(qweight, scales)
-	if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
+		qweight = mlx.Contiguous(qweight, false)
+		scales = mlx.Contiguous(scales, false)
+		arrays[name] = qweight
+		arrays[name+".scale"] = scales
+		out := []*mlx.Array{qweight, scales}
+		if qbiases != nil {
+			qbiases = mlx.Contiguous(qbiases, false)
+			arrays[name+".bias"] = qbiases
+			out = append(out, qbiases)
+		}
+		return out
+	})
+	if err != nil {
 		st.Free()
-		return tmpPath, nil, nil, fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
-	}
-	if len(scales.Dims()) == 0 || scales.Dims()[0] == 0 {
-		st.Free()
-		return tmpPath, nil, nil, fmt.Errorf("mlx.Quantize produced empty scales for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
-	}
-
-	qweight = mlx.Contiguous(qweight, false)
-	scales = mlx.Contiguous(scales, false)
-	arrays[name] = qweight
-	arrays[name+".scale"] = scales
-	toEval = append(toEval, qweight, scales)
-	if qbiases != nil {
-		qbiases = mlx.Contiguous(qbiases, false)
-		arrays[name+".bias"] = qbiases
-		toEval = append(toEval, qbiases)
+		return tmpPath, nil, nil, err
 	}
 	return tmpPath, toEval, st, nil
 }

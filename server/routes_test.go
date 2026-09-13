@@ -95,11 +95,7 @@ func TestRoutes(t *testing.T) {
 		Expected func(t *testing.T, resp *http.Response)
 	}
 
-	s := &Server{modelCaches: &modelCaches{modelList: newModelListCache()}}
-	s.modelCaches.modelList.Start(context.Background())
-	if err := s.modelCaches.modelList.Wait(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	s := &Server{}
 
 	createTestModel := func(t *testing.T, name string) {
 		t.Helper()
@@ -135,7 +131,6 @@ func TestRoutes(t *testing.T) {
 		if err := createModel(r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
-		s.refreshModelListCache(modelName)
 	}
 
 	testCases := []testCase{

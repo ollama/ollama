@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -98,7 +100,8 @@ func resetResponsesRequestBody(r *http.Request, body []byte) {
 
 func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.ResponsesCompactionPlan, stream bool) {
 	var validationErr error
-	for range 2 {
+	overflowRetried := false
+	for {
 		repair := ""
 		if validationErr != nil {
 			repair = validationErr.Error()
@@ -111,12 +114,22 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 
 		response := s.runResponsesCompactionInference(c, request)
 		if response.status < http.StatusOK || response.status >= http.StatusMultipleChoices {
+			if !overflowRetried && c.Request.Context().Err() == nil && isCompactionContextLimit(response) {
+				if removed := plan.TrimForContextLimit(); removed > 0 {
+					overflowRetried = true
+					slog.WarnContext(c.Request.Context(), "retrying compaction after context overflow", "model", plan.Model, "omitted_items", removed)
+					continue
+				}
+			}
 			copyResponsesCompactionResponse(c, response)
 			return
 		}
 
 		result, err := plan.Complete(response.body.Bytes())
 		if err != nil {
+			if validationErr != nil {
+				break
+			}
 			validationErr = err
 			continue
 		}
@@ -131,6 +144,22 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 	}
 
 	writeResponsesCompactionError(c, http.StatusInternalServerError, "compaction_failed", "compaction failed; the selected model did not return a valid summary and the original conversation is unchanged")
+}
+
+var compactionContextLimitPattern = regexp.MustCompile(`^The prompt is too long: [0-9]+, model maximum context length: [0-9]+(?: \(ref: [^()]+\))?$`)
+
+func isCompactionContextLimit(response *responsesInferenceRecorder) bool {
+	if response.status != http.StatusBadRequest && response.status != http.StatusRequestEntityTooLarge {
+		return false
+	}
+	var body openai.ErrorResponse
+	if json.Unmarshal(response.body.Bytes(), &body) != nil {
+		return false
+	}
+	if body.Error.Code != nil && *body.Error.Code == "context_length_exceeded" {
+		return true
+	}
+	return compactionContextLimitPattern.MatchString(body.Error.Message)
 }
 
 // runResponsesCompactionInference uses the normal Responses stack without the

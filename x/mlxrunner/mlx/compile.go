@@ -120,10 +120,6 @@ func Compile3(name string, fn func(*Array, *Array, *Array) *Array, opts ...Compi
 // single-threaded at this level a plain Go bool suffices.
 var tracing bool
 
-// traceScratch collects arrays created during a compile trace so they can be
-// freed as a group when the callback returns.
-var traceScratch []*Array
-
 //export closureCallback
 func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload unsafe.Pointer) (rc C.int) {
 	defer func() {
@@ -136,26 +132,19 @@ func closureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload 
 	handle := *(*cgo.Handle)(payload)
 	fn := handle.Value().(CompileFunc)
 
-	// When tracing, we track all of the intermediates that are created and free them separately at the end of
-	// the process. This will give the effect of a single op - inputs are owned by the original caller (via
-	// the MLX layer) and outputs are transferred back to MLX to create a new Go side tensor.
+	// The trace runs in its own scope so its intermediates are freed as a
+	// group when the callback returns. This gives the effect of a single op:
+	// inputs are owned by the original caller (via the MLX layer) and outputs
+	// are transferred back to MLX to create a new Go side tensor.
 	if tracing {
 		panic("mlx: nested compile trace")
 	}
 	tracing = true
-	traceScratch = nil
+	s := enterScope()
+	s.noEscape = true
 	defer func() {
-		for _, a := range traceScratch {
-			if a.pinned.Load() > 0 {
-				panic("mlx: traced array was pinned during compilation")
-			}
-			if a.Valid() {
-				mlxCheck(C.mlx_array_free(a.ctx))
-				a.ctx.ctx = nil
-			}
-		}
 		tracing = false
-		traceScratch = nil
+		exitScope(s)
 	}()
 
 	n := int(mlxCheck(C.mlx_vector_array_size(input)))

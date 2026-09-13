@@ -38,8 +38,8 @@ type Result struct {
 }
 
 // Arrays returns the tensor fields as a slice so callers can drive the mlx
-// lifecycle verbs (Pin, Unpin, Eval, AsyncEval) over the whole group. Unset
-// fields stay nil; the mlx helpers skip them.
+// lifecycle verbs (Eval, AsyncEval, a held scope's Attach) over the whole
+// group. Unset fields stay nil; the mlx helpers skip them.
 func (r Result) Arrays() []*mlx.Array {
 	return []*mlx.Array{r.Token, r.Logprob, r.TopTokens, r.TopLogprobs}
 }
@@ -174,6 +174,7 @@ type Sampler struct {
 	// belongs to slots[i]; W is max(RepeatLastN) across penalty slots.
 	// Allocated on the first penalty slot, rebuilt only in Add/Remove.
 	history *mlx.Array
+	scope   *mlx.Scope
 
 	// allSameOpts: every registered slot shares Options. When true the
 	// canonical shared value is s.slots[0].opts.
@@ -209,6 +210,7 @@ func New(numCtx int) *Sampler {
 		byID:        make(map[int]*slotState),
 		allSameOpts: true,
 		numCtx:      numCtx,
+		scope:       mlx.NewScope(),
 	}
 }
 
@@ -270,29 +272,32 @@ func (s *Sampler) Add(seqID int, opts Options, priorTokens []int32) {
 	// Grow the pool to hold this slot's row. The pool is lazy — the first
 	// penalty slot allocates it — and thereafter every registered slot
 	// gets a row (rows for non-penalty slots are zero and never read).
-	// Invariant: s.history is pinned whenever non-nil.
 	if s.history != nil || opts.usesHistory() {
-		targetWidth := max(opts.RepeatLastN, s.historyWidth())
-		newRow := makeHistoryRow(priorTokens, opts.RepeatLastN, targetWidth)
+		pool := mlx.ScopedArrays(func() []*mlx.Array {
+			targetWidth := max(opts.RepeatLastN, s.historyWidth())
+			newRow := makeHistoryRow(priorTokens, opts.RepeatLastN, targetWidth)
 
-		var pool *mlx.Array
-		switch {
-		case s.history == nil && len(s.slots) == 0:
-			pool = newRow
-		case s.history == nil:
-			// First penalty slot with non-penalty slots already registered;
-			// seed zero rows so s.slots and pool row indices stay aligned.
-			zeros := mlx.Zeros(mlx.DTypeInt32, len(s.slots), targetWidth)
-			pool = zeros.Concatenate(0, newRow)
-		case targetWidth > s.historyWidth():
-			pad := mlx.Zeros(mlx.DTypeInt32, s.history.Dim(0), targetWidth-s.historyWidth())
-			pool = s.history.Concatenate(1, pad).Concatenate(0, newRow)
-		default:
-			pool = s.history.Concatenate(0, newRow)
-		}
+			var pool *mlx.Array
+			switch {
+			case s.history == nil && len(s.slots) == 0:
+				pool = newRow
+			case s.history == nil:
+				// First penalty slot with non-penalty slots already registered;
+				// seed zero rows so s.slots and pool row indices stay aligned.
+				zeros := mlx.Zeros(mlx.DTypeInt32, len(s.slots), targetWidth)
+				pool = zeros.Concatenate(0, newRow)
+			case targetWidth > s.historyWidth():
+				pad := mlx.Zeros(mlx.DTypeInt32, s.history.Dim(0), targetWidth-s.historyWidth())
+				pool = s.history.Concatenate(1, pad).Concatenate(0, newRow)
+			default:
+				pool = s.history.Concatenate(0, newRow)
+			}
 
-		mlx.Pin(pool)
-		mlx.Unpin(s.history)
+			// The concatenation still reads the old pool.
+			s.scope.Discard(s.history)
+			return []*mlx.Array{pool}
+		})[0]
+		s.scope.Attach(pool)
 		s.history = pool
 
 		if opts.usesHistory() {
@@ -363,34 +368,38 @@ func (s *Sampler) Remove(seqID int) {
 		return
 	}
 
-	n := s.history.Dim(0)
-	var newHistory *mlx.Array
-	switch {
-	case n == 1:
-		newHistory = nil
-	case row == 0:
-		newHistory = s.history.Slice(mlx.Slice(1, n), mlx.Slice())
-	case row == n-1:
-		newHistory = s.history.Slice(mlx.Slice(0, row), mlx.Slice())
-	default:
-		before := s.history.Slice(mlx.Slice(0, row), mlx.Slice())
-		after := s.history.Slice(mlx.Slice(row+1, n), mlx.Slice())
-		newHistory = before.Concatenate(0, after)
-	}
+	newHistory := mlx.ScopedArrays(func() []*mlx.Array {
+		n := s.history.Dim(0)
+		var newHistory *mlx.Array
+		switch {
+		case n == 1:
+			newHistory = nil
+		case row == 0:
+			newHistory = s.history.Slice(mlx.Slice(1, n), mlx.Slice())
+		case row == n-1:
+			newHistory = s.history.Slice(mlx.Slice(0, row), mlx.Slice())
+		default:
+			before := s.history.Slice(mlx.Slice(0, row), mlx.Slice())
+			after := s.history.Slice(mlx.Slice(row+1, n), mlx.Slice())
+			newHistory = before.Concatenate(0, after)
+		}
 
-	mlx.Pin(newHistory)
-	mlx.Unpin(s.history)
+		s.scope.Discard(s.history)
+		return []*mlx.Array{newHistory}
+	})[0]
+	s.scope.Attach(newHistory)
 	s.history = newHistory
 }
 
 // Free releases the pooled history tensor and resets the sampler to the
 // New-equivalent state so it may be reused.
 func (s *Sampler) Free() {
-	mlx.Unpin(s.history)
+	s.scope.Close()
 	*s = Sampler{
 		byID:        make(map[int]*slotState),
 		allSameOpts: true,
 		numCtx:      s.numCtx,
+		scope:       mlx.NewScope(),
 	}
 }
 
@@ -411,34 +420,38 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 		slots[i] = slot
 	}
 
-	var token *mlx.Array
-	if opts0, ok := s.canBatch(slots); ok {
-		token = s.sampleTokensUniform(slots, opts0, logits)
-	} else {
-		token = s.sampleTokensSerial(slots, logits)
-	}
-
-	res := Result{Token: token}
-	if s.anyLogprobs {
-		// Log-softmax over original logits so every row holds a truthful
-		// value (compute-for-all; consumers filter per-slot). Subtract
-		// max first for numerical stability in the logsumexp.
-		lp := logits.AsType(mlx.DTypeFloat32)
-		lp = lp.Subtract(lp.MaxAxis(-1, true))
-		lp = lp.Subtract(lp.LogsumexpAxis(-1, true))
-		res.Logprob = lp.TakeAlongAxis(token.ExpandDims(-1), -1)
-		if s.maxTopLogprobs > 0 {
-			k := s.maxTopLogprobs
-			if vocab := lp.Dim(lp.NumDims() - 1); k > vocab {
-				k = vocab
-			}
-			// Argpartition on the negated values places the K largest
-			// (unsorted) in positions [0:K].
-			idx := lp.Negative().ArgpartitionAxis(k-1, -1).Slice(mlx.Slice(), mlx.Slice(0, k))
-			res.TopTokens = idx.AsType(mlx.DTypeInt32)
-			res.TopLogprobs = lp.TakeAlongAxis(idx, -1)
+	var res Result
+	mlx.ScopedArrays(func() []*mlx.Array {
+		var token *mlx.Array
+		if opts0, ok := s.canBatch(slots); ok {
+			token = s.sampleTokensUniform(slots, opts0, logits)
+		} else {
+			token = s.sampleTokensSerial(slots, logits)
 		}
-	}
+
+		res = Result{Token: token}
+		if s.anyLogprobs {
+			// Log-softmax over original logits so every row holds a truthful
+			// value (compute-for-all; consumers filter per-slot). Subtract
+			// max first for numerical stability in the logsumexp.
+			lp := logits.AsType(mlx.DTypeFloat32)
+			lp = lp.Subtract(lp.MaxAxis(-1, true))
+			lp = lp.Subtract(lp.LogsumexpAxis(-1, true))
+			res.Logprob = lp.TakeAlongAxis(token.ExpandDims(-1), -1)
+			if s.maxTopLogprobs > 0 {
+				k := s.maxTopLogprobs
+				if vocab := lp.Dim(lp.NumDims() - 1); k > vocab {
+					k = vocab
+				}
+				// Argpartition on the negated values places the K largest
+				// (unsorted) in positions [0:K].
+				idx := lp.Negative().ArgpartitionAxis(k-1, -1).Slice(mlx.Slice(), mlx.Slice(0, k))
+				res.TopTokens = idx.AsType(mlx.DTypeInt32)
+				res.TopLogprobs = lp.TakeAlongAxis(idx, -1)
+			}
+		}
+		return res.Arrays()
+	})
 	return res
 }
 

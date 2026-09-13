@@ -63,16 +63,53 @@ func normalizeFullAccessExecTool(body []byte) ([]byte, error) {
 	if !ok {
 		return body, nil
 	}
+	encodedTools, changed, err := normalizeFullAccessTools(rawTools)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return body, nil
+	}
+	payload["tools"] = encodedTools
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode request: %w", err)
+	}
+	return encoded, nil
+}
+
+// normalizeFullAccessTools preserves namespace declarations while rewriting
+// their member functions using the same contract as top-level functions.
+func normalizeFullAccessTools(rawTools json.RawMessage) (json.RawMessage, bool, error) {
+	if len(rawTools) == 0 {
+		return rawTools, false, nil
+	}
 	var tools []json.RawMessage
 	if err := json.Unmarshal(rawTools, &tools); err != nil {
-		return nil, fmt.Errorf("decode tools: %w", err)
+		return nil, false, fmt.Errorf("decode tools: %w", err)
 	}
 
 	changed := false
 	for i, rawTool := range tools {
 		var tool map[string]json.RawMessage
 		if err := json.Unmarshal(rawTool, &tool); err != nil {
-			return nil, fmt.Errorf("decode tool: %w", err)
+			return nil, false, fmt.Errorf("decode tool: %w", err)
+		}
+		var toolType string
+		if err := json.Unmarshal(tool["type"], &toolType); err == nil && toolType == "namespace" {
+			members, membersChanged, err := normalizeFullAccessTools(tool["tools"])
+			if err != nil {
+				return nil, false, fmt.Errorf("normalize namespace tools: %w", err)
+			}
+			if membersChanged {
+				tool["tools"] = members
+				tools[i], err = json.Marshal(tool)
+				if err != nil {
+					return nil, false, fmt.Errorf("encode namespace tool: %w", err)
+				}
+				changed = true
+			}
+			continue
 		}
 		var name string
 		if err := json.Unmarshal(tool["name"], &name); err != nil || name != "exec_command" {
@@ -81,11 +118,11 @@ func normalizeFullAccessExecTool(body []byte) ([]byte, error) {
 
 		var parameters map[string]json.RawMessage
 		if err := json.Unmarshal(tool["parameters"], &parameters); err != nil {
-			return nil, fmt.Errorf("decode exec_command parameters: %w", err)
+			return nil, false, fmt.Errorf("decode exec_command parameters: %w", err)
 		}
 		var properties map[string]json.RawMessage
 		if err := json.Unmarshal(parameters["properties"], &properties); err != nil {
-			return nil, fmt.Errorf("decode exec_command properties: %w", err)
+			return nil, false, fmt.Errorf("decode exec_command properties: %w", err)
 		}
 		toolChanged := false
 		for _, property := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
@@ -101,45 +138,40 @@ func normalizeFullAccessExecTool(body []byte) ([]byte, error) {
 
 		encodedProperties, err := json.Marshal(properties)
 		if err != nil {
-			return nil, fmt.Errorf("encode exec_command properties: %w", err)
+			return nil, false, fmt.Errorf("encode exec_command properties: %w", err)
 		}
 		parameters["properties"] = encodedProperties
 		if rawRequired, ok := parameters["required"]; ok {
 			var required []string
 			if err := json.Unmarshal(rawRequired, &required); err != nil {
-				return nil, fmt.Errorf("decode exec_command required properties: %w", err)
+				return nil, false, fmt.Errorf("decode exec_command required properties: %w", err)
 			}
 			required = slices.DeleteFunc(required, func(property string) bool {
 				return property == "sandbox_permissions" || property == "justification" || property == "prefix_rule"
 			})
 			parameters["required"], err = json.Marshal(required)
 			if err != nil {
-				return nil, fmt.Errorf("encode exec_command required properties: %w", err)
+				return nil, false, fmt.Errorf("encode exec_command required properties: %w", err)
 			}
 		}
 		tool["parameters"], err = json.Marshal(parameters)
 		if err != nil {
-			return nil, fmt.Errorf("encode exec_command parameters: %w", err)
+			return nil, false, fmt.Errorf("encode exec_command parameters: %w", err)
 		}
 		tools[i], err = json.Marshal(tool)
 		if err != nil {
-			return nil, fmt.Errorf("encode exec_command tool: %w", err)
+			return nil, false, fmt.Errorf("encode exec_command tool: %w", err)
 		}
 	}
 	if !changed {
-		return body, nil
+		return rawTools, false, nil
 	}
 
 	encodedTools, err := json.Marshal(tools)
 	if err != nil {
-		return nil, fmt.Errorf("encode tools: %w", err)
+		return nil, false, fmt.Errorf("encode tools: %w", err)
 	}
-	payload["tools"] = encodedTools
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-	return encoded, nil
+	return encodedTools, true, nil
 }
 
 func codexSandboxMode(body []byte) string {
@@ -344,6 +376,74 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 			return nil, false, fmt.Errorf("encode system message: %w", err)
 		}
 		return converted, true, nil
+	case "agent_message":
+		var message struct {
+			Author    string            `json:"author"`
+			Recipient string            `json:"recipient"`
+			Content   []json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(item, &message); err != nil {
+			return nil, false, fmt.Errorf("decode Codex agent message: %w", err)
+		}
+		if message.Author == "" || message.Recipient == "" || len(message.Content) == 0 {
+			return nil, false, fmt.Errorf("Codex agent message requires author, recipient, and content")
+		}
+		parts := make([]json.RawMessage, 0, len(message.Content))
+		for _, raw := range message.Content {
+			var content struct {
+				Type             string  `json:"type"`
+				Text             *string `json:"text"`
+				EncryptedContent *string `json:"encrypted_content"`
+			}
+			if err := json.Unmarshal(raw, &content); err != nil {
+				return nil, false, fmt.Errorf("decode Codex agent message content: %w", err)
+			}
+			switch content.Type {
+			case "input_text":
+				if content.Text == nil {
+					return nil, false, fmt.Errorf("Codex agent message input_text requires text")
+				}
+				parts = append(parts, raw)
+			case "encrypted_content":
+				// Codex labels these payloads encrypted even when they are plain text.
+				if content.EncryptedContent == nil {
+					return nil, false, fmt.Errorf("Codex agent message encrypted_content requires a value")
+				}
+				text, err := json.Marshal(map[string]string{
+					"type": "input_text",
+					"text": *content.EncryptedContent,
+				})
+				if err != nil {
+					return nil, false, fmt.Errorf("encode Codex agent message text: %w", err)
+				}
+				parts = append(parts, text)
+			default:
+				return nil, false, fmt.Errorf("unsupported Codex agent message content type %q", content.Type)
+			}
+		}
+
+		// Keep the envelope in sync with openai.AgentMessageEnvelopeFormat.
+		envelope, err := json.Marshal(map[string]string{
+			"type": "input_text",
+			"text": fmt.Sprintf("Agent message from %q to %q:\n", message.Author, message.Recipient),
+		})
+		if err != nil {
+			return nil, false, fmt.Errorf("encode Codex agent message envelope: %w", err)
+		}
+		var converted map[string]json.RawMessage
+		if err := json.Unmarshal(item, &converted); err != nil {
+			return nil, false, fmt.Errorf("decode Codex agent message: %w", err)
+		}
+		converted["type"] = json.RawMessage(`"message"`)
+		converted["role"] = json.RawMessage(`"user"`)
+		delete(converted, "author")
+		delete(converted, "recipient")
+		converted["content"], err = json.Marshal(append([]json.RawMessage{envelope}, parts...))
+		if err != nil {
+			return nil, false, fmt.Errorf("encode Codex agent message content: %w", err)
+		}
+		body, err := json.Marshal(converted)
+		return body, true, err
 	case "function_call", "function_call_output":
 		return item, true, nil
 	case "tool_search_call", "tool_search_output", "compaction_trigger":

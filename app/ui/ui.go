@@ -1561,6 +1561,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := s.Store.SetSettings(settings); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
+	saved, err := s.Store.Settings()
+	if err != nil {
+		return fmt.Errorf("failed to load saved settings: %w", err)
+	}
+	settings.CodexDesktopUsed = saved.CodexDesktopUsed
 
 	// Handle auto-update toggle changes
 	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {

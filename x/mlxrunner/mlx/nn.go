@@ -8,7 +8,7 @@ type Linear struct {
 // Forward computes the linear transformation: x @ Weight.T + Bias
 func (m *Linear) Forward(x *Array) *Array {
 	w := m.Weight.Transpose(1, 0)
-	if m.Bias.Valid() {
+	if m.Bias != nil {
 		return m.Bias.Addmm(x, w, 1.0, 1.0)
 	}
 

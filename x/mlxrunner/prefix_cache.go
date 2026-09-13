@@ -3,14 +3,24 @@
 // optional per-layer snapshots that can be paged in/out of the live MLX cache
 // arrays.
 //
-// Key properties:
+// Invariants:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
 //     at a time. Switching paths pages in the new path from its snapshots.
-//   - Every node carries its snapshots from creation: prefill captures for
-//     prompt segments, a page-out at close for generated ones. Sliceable
-//     (KV) layers always span exactly the node's edge; whole-state layers
-//     (recurrent, rotating) keep entries only at node ends.
+//   - Sliceable (KV) layers: every node holds a snapshot covering exactly its
+//     edge, so the layer's history is complete along any path from the root.
+//   - Whole-state (recurrent, rotating) layers: what a node holds is the
+//     state at its end offset. A node may hold none.
+//   - Whole-state is captured only while the live caches sit at that offset
+//     (prefill captures, the page-out at close) and is never rebuilt later. A
+//     node split out of an existing edge afterward therefore holds none.
+//   - A request resumes at the deepest node at or below its match that holds
+//     whole-state. begin schedules a capture at the match, so any node a
+//     request resumes at holds whole-state afterward.
 //   - All cache layers must stay at the same token offset.
+//   - Draft caches are settled whenever the trie captures, pages out, or
+//     rewinds: no entry is still waiting on the next token.
+//   - A non-causal media item's tokens are evaluated in one batch: no node
+//     boundary or resume point lies strictly inside them.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
 //   - begin() always re-evaluates at least one token so the pipeline can seed
@@ -56,6 +66,7 @@ type cacheSession struct {
 	cache     *prefixCache
 	inputs    []int32
 	effInputs []uint32 // inputs' key alphabet, media folds applied
+	items     []mediaItem
 	outputs   []int32
 
 	caches    []cache.Cache
@@ -96,6 +107,10 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	if matched == len(inputs) && matched > 0 {
 		matchPath, matched = findBestMatch(c.root, keys[:matched-1])
 	}
+	// A match ending inside a non-causal media item resumes before it.
+	if item := insideAtomicItem(items, matched); item != nil {
+		matchPath, matched = findBestMatch(c.root, keys[:item.pos])
+	}
 
 	// Switch to the matched path, paging in/out as needed.
 	c.switchToPath(matchPath, matched)
@@ -108,6 +123,7 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 		cache:     c,
 		inputs:    inputs,
 		effInputs: effInputs,
+		items:     items,
 		caches:    c.caches,
 		remaining: remaining,
 	}
@@ -125,6 +141,18 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
 	return session
+}
+
+// insideAtomicItem returns the non-causal media item that offset lies strictly
+// inside, or nil.
+func insideAtomicItem(items []mediaItem, offset int) *mediaItem {
+	for i := range items {
+		item := &items[i]
+		if item.atomic() && item.pos < offset && offset < item.pos+item.length {
+			return item
+		}
+	}
+	return nil
 }
 
 // effectiveKeyTokens returns the per-position key alphabet: the token ID
@@ -255,11 +283,19 @@ pageIn:
 			}
 		}
 	}
+
+	// If the live offset falls inside the last node, split it so the reused
+	// head stays on the active path and only the unused tail can be evicted.
 	for i := len(c.activePath) - 1; i >= 0; i-- {
-		if c.activePath[i].endOffset <= minOff {
-			c.activePath = c.activePath[:i+1]
-			break
+		node := c.activePath[i]
+		if i > 0 && node.startOffset() >= minOff {
+			continue
 		}
+		if node.endOffset > minOff {
+			node = splitNode(node, minOff-node.startOffset(), c.caches, &c.pagedOutBytes)
+		}
+		c.activePath = append(c.activePath[:i], node)
+		break
 	}
 
 	// Update last-used time on only the final used node. For recurrent
@@ -279,9 +315,10 @@ pageIn:
 // prefill records interior states without the caller breaking the batch. A
 // passed offset names a token prefix; the capture lands at the deepest
 // state that prefix alone determines (offset - draftLookahead), which is where
-// a prompt sharing exactly that prefix restores. The offsets are merged with
+// a prompt sharing exactly that prefix restores. An offset inside a non-causal
+// media item's tokens moves past them. The offsets are merged with
 // any snapshots begin already scheduled (e.g. a branch point), with coinciding
-// offsets upgraded to user so eviction preserves them.
+// offsets upgraded to user so compaction keeps them.
 //
 // Offsets at or before the current cache position, or past the end of the
 // prompt, are dropped: callers only request offsets ahead of the prefill base,
@@ -291,6 +328,9 @@ func (s *cacheSession) schedulePrefillSnapshots(offsets []int) {
 	base := c.minCacheOffset()
 	for _, offset := range offsets {
 		offset -= c.draftLookahead
+		if item := insideAtomicItem(s.items, offset); item != nil {
+			offset = item.pos + item.length
+		}
 		if offset <= base || offset > len(s.inputs) {
 			continue
 		}
@@ -471,20 +511,21 @@ func (c *prefixCache) compactPath() {
 	c.activePath = c.activePath[:n-1]
 }
 
-// pageOut captures a fresh node's state from the live caches, which rest
-// exactly at its end. Nodes reached by traversal already carry snapshots.
+// pageOut captures the snapshots a node is missing from the live caches, which
+// rest exactly at its end.
 func (c *prefixCache) pageOut(node *trieNode) {
-	if node.hasSnapshots() {
+	if hasAllSnapshots(node, c.caches) {
 		return
 	}
 	snaps := make([]cache.Snapshot, len(c.caches))
+	copy(snaps, node.snapshots)
 	for i, kv := range c.caches {
-		if kv == nil {
+		if kv == nil || snaps[i] != nil {
 			continue
 		}
 		snaps[i] = kv.Snapshot(node.startOffset())
 	}
-	node.setSnapshots(snaps, &c.pagedOutBytes)
+	node.swapSnapshots(snaps, &c.pagedOutBytes)
 	logutil.Trace(fmt.Sprintf("page out: [%d, %d)", node.startOffset(), node.endOffset))
 	c.enforceEvictionPolicy()
 }
@@ -565,15 +606,13 @@ func (c *prefixCache) enforceEvictionPolicy() {
 		return
 	}
 
-	activeSet := make(map[*trieNode]bool, len(c.activePath))
-	for _, n := range c.activePath {
-		activeSet[n] = true
-	}
-
 	for c.pagedOutBytes > maxPagedOutBytes {
+		// Evicting the frontier's parent merges the frontier into it, so
+		// resolve the frontier again after every eviction.
+		frontier := c.activePath[len(c.activePath)-1]
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n == c.root || activeSet[n] || len(n.children) > 1 {
+			if n == c.root || n == frontier || len(n.children) > 1 {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -603,7 +642,11 @@ func (c *prefixCache) evictNode(node *trieNode) {
 		// Interior node with one child: merge with child.
 		before := c.pagedOutBytes
 		tokens := len(node.tokens)
+		child := node.children[0]
 		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		if i := slices.Index(c.activePath, child); i >= 0 {
+			c.activePath = slices.Delete(c.activePath, i, i+1)
+		}
 		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
 	} else {
 		panic("evictNode called on multi-child branch point")
@@ -613,16 +656,18 @@ func (c *prefixCache) evictNode(node *trieNode) {
 func (c *prefixCache) dumpTree() {
 	// Summary stats
 	var cacheBytes int
-	for _, kv := range c.caches {
-		if kv == nil {
-			continue
-		}
-		for _, a := range kv.State() {
-			if a != nil {
-				cacheBytes += a.NumBytes()
+	mlx.Scoped(func() {
+		for _, kv := range c.caches {
+			if kv == nil {
+				continue
+			}
+			for _, a := range kv.State() {
+				if a != nil {
+					cacheBytes += a.NumBytes()
+				}
 			}
 		}
-	}
+	})
 
 	// Build active path set for marking.
 	active := make(map[*trieNode]bool, len(c.activePath))

@@ -97,7 +97,7 @@ type visionLayout struct {
 // The publisher uses the same tensor layout, image preprocessing, and MRoPE
 // layout for both families.
 type VisionAdapter struct {
-	// Model is exported so mlx.Collect traverses and pins every tower weight.
+	// Model is exported so mlx.Collect reaches every tower weight.
 	// An unexported wrapper field is invisible to the reflection collector.
 	Model *Model
 }

@@ -55,11 +55,12 @@ func TestThreadedMLXOperations(t *testing.T) {
 
 			for range iterations {
 				if err := thread.Do(context.Background(), func() error {
-					a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
-					b := Matmul(a, a)
-					AsyncEval(b)
-					Eval(b)
-					Sweep()
+					Scoped(func() {
+						a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
+						b := Matmul(a, a)
+						AsyncEval(b)
+						Eval(b)
+					})
 					ClearCache()
 					return nil
 				}); err != nil {

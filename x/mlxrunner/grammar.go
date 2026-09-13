@@ -32,7 +32,7 @@ const (
 )
 
 // grammarEngine is the runner's structured-output subsystem: xgrammar bound
-// to the model's vocabulary, plus the pinned lookup table for expanding
+// to the model's vocabulary, plus the held lookup table for expanding
 // packed token masks on the device.
 type grammarEngine struct {
 	// compileMu is the single compile slot: one native compile at a time
@@ -46,6 +46,7 @@ type grammarEngine struct {
 
 	maskTable  *mlx.Array
 	byteShifts *mlx.Array
+	scope      *mlx.Scope
 }
 
 func newGrammarEngine(logitsWidth int, tokenizer *tokenizer.Tokenizer) *grammarEngine {
@@ -91,7 +92,7 @@ func validateGrammarVocab(logitsWidth, tokenizerSize int) error {
 }
 
 // initMask builds the byte-to-mask lookup table for expanding packed token
-// masks on the device, pinned for the runner's lifetime: row v holds, for
+// masks on the device, held for the runner's lifetime: row v holds, for
 // each of the byte value v's eight bits low to high, 0 where the bit is set
 // (token allowed) and -inf where it is clear.
 func (e *grammarEngine) initMask(vocabSize int) {
@@ -106,7 +107,8 @@ func (e *grammarEngine) initMask(vocabSize int) {
 	}
 	e.maskTable = mlx.FromValues(vals, 256, 8)
 	e.byteShifts = mlx.FromValues([]int32{0, 8, 16, 24}, 4)
-	mlx.Pin(e.maskTable, e.byteShifts)
+	e.scope = mlx.NewScope()
+	e.scope.Attach(e.maskTable, e.byteShifts)
 }
 
 func (e *grammarEngine) close() {
@@ -116,7 +118,7 @@ func (e *grammarEngine) close() {
 		e.compiler.Close()
 		e.compiler = nil
 	}
-	mlx.Unpin(e.maskTable, e.byteShifts)
+	e.scope.Close()
 	e.maskTable, e.byteShifts = nil, nil
 }
 

@@ -20,6 +20,7 @@ import (
 type RecurrentCache struct {
 	convState  *mlx.Array
 	deltaState *mlx.Array
+	scope      *mlx.Scope
 	offset     int
 
 	convTail  int
@@ -77,13 +78,14 @@ func (c *RecurrentCache) captureBoundary(reached int, conv, delta *mlx.Array) {
 
 func (c *RecurrentCache) setState(old, v *mlx.Array) *mlx.Array {
 	v = v.Clone()
-	mlx.Pin(v)
-	mlx.Unpin(old)
+	c.scope.Attach(v)
+	c.scope.Discard(old)
 	return v
 }
 
 func NewRecurrentCache(convTail, convDim, numVHeads, headVDim, headKDim int32) *RecurrentCache {
 	return &RecurrentCache{
+		scope:     mlx.NewScope(),
 		convTail:  int(convTail),
 		convDim:   int(convDim),
 		numVHeads: int(numVHeads),
@@ -174,26 +176,28 @@ func (c *RecurrentCache) State() []*mlx.Array {
 // does not depend on any parent state.
 type recurrentSnapshot struct {
 	convState, deltaState *mlx.Array
+	scope                 *mlx.Scope
 	offset                int
 }
 
 func (s *recurrentSnapshot) Size() int { return s.convState.NumBytes() + s.deltaState.NumBytes() }
-func (s *recurrentSnapshot) Close()    { mlx.Unpin(s.convState, s.deltaState) }
+func (s *recurrentSnapshot) Close()    { s.scope.Close() }
 
 // SetMaterializeHook is a no-op: recurrent snapshots own their compact copy from
 // construction.
 func (s *recurrentSnapshot) SetMaterializeHook(func(int)) {}
 
-// newRecurrentSnapshot clones and pins conv/delta into an owned snapshot at
+// newRecurrentSnapshot clones conv/delta into an owned snapshot at
 // offset. It does not schedule the eval — capture-path snapshots ride the
 // cache's State into the caller's batched eval.
 func newRecurrentSnapshot(conv, delta *mlx.Array, offset int) *recurrentSnapshot {
 	snap := &recurrentSnapshot{
 		convState:  conv.Clone(),
 		deltaState: delta.Clone(),
+		scope:      mlx.NewScope(),
 		offset:     offset,
 	}
-	mlx.Pin(snap.convState, snap.deltaState)
+	snap.scope.Attach(snap.convState, snap.deltaState)
 	return snap
 }
 
@@ -226,8 +230,10 @@ func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
 		return false
 	}
 
-	c.convState = c.setState(c.convState, snap.convState)
-	c.deltaState = c.setState(c.deltaState, snap.deltaState)
+	mlx.Scoped(func() {
+		c.convState = c.setState(c.convState, snap.convState)
+		c.deltaState = c.setState(c.deltaState, snap.deltaState)
+	})
 	c.offset = snap.offset
 
 	return true
@@ -248,7 +254,7 @@ func (c *RecurrentCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
 }
 
 func (c *RecurrentCache) Free() {
-	mlx.Unpin(c.convState, c.deltaState)
+	c.scope.Close()
 	c.convState, c.deltaState = nil, nil
 	c.offset = 0
 	c.snapshots = pendingSnapshots{}

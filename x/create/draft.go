@@ -22,7 +22,7 @@ func CreateDraftLayers(modelDir, tensorPrefix, configPrefix, quantize string, st
 	if configPrefix == "" {
 		return nil, fmt.Errorf("draft config prefix must not be empty")
 	}
-	defer sweepMLX()
+	defer releaseMLXCache()
 
 	inv, err := ReadInventory(modelDir)
 	if err != nil {

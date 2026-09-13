@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient } from "@tanstack/react-query";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ClaudeConnectedIntro,
   FIRST_MODEL_COMMAND,
@@ -24,6 +25,24 @@ import {
   onboardingConnectUrl,
 } from "@/lib/onboarding";
 import type { IntegrationStatuses } from "@/api";
+
+let queryClient: QueryClient;
+beforeEach(() => {
+  queryClient = new QueryClient();
+});
+afterEach(() => queryClient.clear());
+
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return Object.assign({}, actual, {
+    useQueryClient: () => queryClient,
+    useMutation: (options: Parameters<typeof actual.useMutation>[0]) =>
+      actual.useMutation(options, queryClient),
+    useMutationState: (
+      options: Parameters<typeof actual.useMutationState>[0],
+    ) => actual.useMutationState(options, queryClient),
+  });
+});
 
 describe("Onboarding", () => {
   it("explains what Ollama is before asking the user to choose a path", () => {

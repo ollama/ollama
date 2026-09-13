@@ -274,8 +274,6 @@ func TestAcceptMTPDraftsGreedyAcceptAll(t *testing.T) {
 
 		spec := testSpeculationSession(r, caches)
 		current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-		unpin := pinAcceptInputs(current, candidates)
-		defer unpin()
 		results, accepted, observed, err := spec.accept(&position, current, candidates, nil)
 		if err != nil {
 			t.Fatalf("accept: %v", err)
@@ -311,8 +309,6 @@ func TestAcceptMTPDraftsGreedyMismatch(t *testing.T) {
 
 		spec := testSpeculationSession(r, caches)
 		current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-		unpin := pinAcceptInputs(current, candidates)
-		defer unpin()
 		results, accepted, observed, err := spec.accept(&position, current, candidates, nil)
 		if err != nil {
 			t.Fatalf("accept: %v", err)
@@ -350,8 +346,6 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 
 		spec := testSpeculationSession(r, caches)
 		current := sampler.Result{Token: mlx.FromValues([]int32{1}, 1)}
-		unpin := pinAcceptInputs(current, candidates)
-		defer unpin()
 		results, accepted, observed, err := spec.accept(&position, current, candidates, nil)
 		if err != nil {
 			t.Fatalf("accept: %v", err)
@@ -1376,13 +1370,4 @@ func scriptedCandidates(r *Runner, tokens []int32) *draftCandidates {
 	d := (&mtpDrafter{spec: s}).open(nil)
 	d.committed(mlx.FromValues([]int32{0}, 1, 1), mlx.Zeros(mlx.DTypeFloat32, 1, 1, mtpTestVocab), 0, nil)
 	return d.propose(mlx.FromValues([]int32{0}, 1), len(tokens))
-}
-
-// pinAcceptInputs pins the arrays accept's caller must keep alive across
-// accept's internal sweep — current and the candidate tokens — as the decoder
-// and next do in the live engine. It returns the matching unpin.
-func pinAcceptInputs(current sampler.Result, candidates *draftCandidates) func() {
-	arrays := append(current.Arrays(), candidates.tokens)
-	mlx.Pin(arrays...)
-	return func() { mlx.Unpin(arrays...) }
 }

@@ -14,7 +14,7 @@ import (
 // server-side entry point — the caller supplies blob storage (store) and
 // manifest assembly (writeManifest).
 func Create(modelName, modelDir, quantize string, store BlobStore, writeManifest ManifestWriter, fn func(status string)) error {
-	defer sweepMLX()
+	defer releaseMLXCache()
 
 	inv, err := ReadInventory(modelDir)
 	if err != nil {

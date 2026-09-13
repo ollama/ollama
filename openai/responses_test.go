@@ -250,7 +250,7 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 	})
 
 	t.Run("tool_search_call item", func(t *testing.T) {
-		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,6 +331,57 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 	})
 }
 
+func TestResponsesStandaloneFunctionOutput(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		fields    string
+		wantName  string
+		wantError bool
+	}{
+		{"omitted call ID", `"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"null call ID", `"call_id":null,"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"no namespace", `"name":"handoff",`, "handoff", false},
+		{"null namespace", `"name":"handoff","namespace":null,`, "handoff", false},
+		{"empty call ID", `"call_id":"","name":"handoff",`, "", true},
+		{"blank call ID", `"call_id":"  ","name":"handoff",`, "", true},
+		{"missing name", ``, "", true},
+		{"null name", `"name":null,`, "", true},
+		{"empty name", `"name":"",`, "", true},
+		{"blank name", `"name":"  ",`, "", true},
+		{"namespace only", `"namespace":"workspace",`, "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"function_call_output","id":"fco_handoff",` + tt.fields + `"output":[{"type":"input_text","text":"Continue the task."}]}]}`)
+			var request ResponsesRequest
+			err := json.Unmarshal(body, &request)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("accepted invalid standalone output")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := request.Input.Items[0].(ResponsesFunctionCallOutput)
+			if output.ID != "fco_handoff" || output.Name != "handoff" || output.CallID != "" || len(output.OutputItems) != 1 {
+				t.Fatalf("standalone identity or content changed: %+v", output)
+			}
+			chat, err := FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chat.Messages) != 1 {
+				t.Fatalf("got %d messages, want the standalone output only", len(chat.Messages))
+			}
+			message := chat.Messages[0]
+			if message.Role != "tool" || message.ToolName != tt.wantName || message.ToolCallID != "" || len(message.ToolCalls) != 0 || message.Content != "Continue the task." {
+				t.Fatalf("standalone output lost its name/content or gained a call: %+v", message)
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequestIgnoresReplayedWebSearchCall(t *testing.T) {
 	req := ResponsesRequest{
 		Model: "test",
@@ -389,6 +440,41 @@ func TestFromResponsesRequestMergesMessageAfterFunctionCall(t *testing.T) {
 	tool := chat.Messages[2]
 	if tool.Role != "tool" || tool.ToolCallID != "call_test" || tool.Content != "/tmp" {
 		t.Fatalf("tool message = %#v", tool)
+	}
+}
+
+func TestFromResponsesRequestAgentMessage(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [
+			{"role": "user", "content": "Delegate the parser analysis."},
+			{"type": "function_call", "call_id": "call_spawn", "namespace": "collaboration", "name": "spawn_agent", "arguments": "{\"task_name\":\"worker\"}"},
+			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
+			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
+				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+			]}
+		]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 4 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+
+	agentMsg := chat.Messages[3]
+	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
+		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+		"Analyze the parser module and report issues."
+	if agentMsg.Role != "user" || agentMsg.Content != want {
+		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
 
@@ -619,7 +705,7 @@ func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
 			"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
 		}],
 		"input":[
-			{"type":"tool_search_call","id":"ts_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
+			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
 			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[
 				{"type":"function","name":"lookup_order","description":"Look up an order","defer_loading":true,"x_client_field":"preserved","parameters":{"type":"object"}}
 			]}
@@ -1014,7 +1100,8 @@ func TestToResponseEmitsClientToolSearchCall(t *testing.T) {
 		t.Fatalf("output = %#v", response.Output)
 	}
 	item := response.Output[0]
-	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" {
+	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" ||
+		!strings.HasPrefix(item.ID, "tsc_") {
 		t.Fatalf("item = %#v", item)
 	}
 	encoded, err := json.Marshal(item)
@@ -1271,7 +1358,7 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 		"input": [
 			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
 			{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
-			{"type": "function_call_output", "call_id": "call_abc123", "output": "sunny, 72F"}
+			{"type": "function_call_output", "call_id": "call_abc123", "name": "stale_name", "namespace": "stale_namespace", "output": "sunny, 72F"}
 		]
 	}`
 
@@ -1344,6 +1431,9 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	}
 	if toolMsg.ToolCallID != "call_abc123" {
 		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
+	}
+	if toolMsg.ToolName != "" {
+		t.Errorf("paired output name %q would override the original call's name", toolMsg.ToolName)
 	}
 }
 
@@ -1946,7 +2036,8 @@ func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 		t.Fatalf("events = %#v", events)
 	}
 	item := events[3].Data.(map[string]any)["item"].(map[string]any)
-	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" {
+	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" ||
+		!strings.HasPrefix(item["id"].(string), "tsc_") {
 		t.Fatalf("item = %#v", item)
 	}
 	encoded, err := json.Marshal(item)
@@ -3050,5 +3141,52 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 		if got, want := item["id"], doneIDs[outputIndex]; got != want {
 			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
 		}
+	}
+}
+
+func TestFromResponsesRequestAgentMessageWithoutRouting(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "agent_message", "content": [
+			{"type": "encrypted_content", "encrypted_content": "bare payload"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	// No routing fields: payload passes through without an envelope.
+	if chat.Messages[0].Role != "user" || chat.Messages[0].Content != "bare payload" {
+		t.Fatalf("agent message = %#v", chat.Messages[0])
+	}
+}
+
+func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "message", "role": "user", "content": [
+			{"type": "input_text", "text": "prefix "},
+			{"type": "encrypted_content", "encrypted_content": "opaque to us"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || chat.Messages[0].Content != "prefix opaque to us" {
+		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }

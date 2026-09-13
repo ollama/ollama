@@ -59,14 +59,13 @@ func runOnMLXThread(f func() error) error {
 	return <-done
 }
 
-// sweepMLX releases the MLX buffer cache. It is a no-op if no MLX work has run.
-func sweepMLX() {
+// releaseMLXCache releases the MLX buffer cache. It is a no-op if no MLX work has run.
+func releaseMLXCache() {
 	if !mlxThreadStarted.Load() {
 		return
 	}
 	_ = runOnMLXThread(func() error {
 		mlx.ClearCache()
-		mlx.Sweep()
 		return nil
 	})
 }

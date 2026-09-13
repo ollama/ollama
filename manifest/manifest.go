@@ -71,10 +71,13 @@ func (m *Manifest) Remove() error {
 	return PruneDirectory(manifests)
 }
 
-func (m *Manifest) RemoveLayers() error {
+// RemoveLayers deletes the layers no other manifest references. The digests it
+// removed are returned even alongside an error, so callers can clean up
+// anything derived from them.
+func (m *Manifest) RemoveLayers() ([]string, error) {
 	ms, err := Manifests(true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Build set of digests still in use by other manifests
@@ -88,6 +91,7 @@ func (m *Manifest) RemoveLayers() error {
 	}
 
 	// Remove layers not used by any other manifest
+	var removed []string
 	for _, layer := range append(m.Layers, m.Config) {
 		if layer.Digest == "" {
 			continue
@@ -97,16 +101,17 @@ func (m *Manifest) RemoveLayers() error {
 		}
 		blob, err := BlobsPath(layer.Digest)
 		if err != nil {
-			return err
+			return removed, err
 		}
 		if err := os.Remove(blob); os.IsNotExist(err) {
 			slog.Debug("layer does not exist", "digest", layer.Digest)
 		} else if err != nil {
-			return err
+			return removed, err
 		}
+		removed = append(removed, layer.Digest)
 	}
 
-	return nil
+	return removed, nil
 }
 
 func ParseNamedManifest(n model.Name) (*Manifest, error) {

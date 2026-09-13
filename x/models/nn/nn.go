@@ -61,7 +61,7 @@ type Linear struct {
 }
 
 func NewLinear(weight *mlx.Array, bias *mlx.Array) *Linear {
-	if bias != nil && bias.Valid() && bias.DType() != weight.DType() {
+	if bias != nil && bias.DType() != weight.DType() {
 		bias = bias.AsType(weight.DType())
 	}
 	return &Linear{Weight: weight, Bias: bias}
@@ -69,7 +69,7 @@ func NewLinear(weight *mlx.Array, bias *mlx.Array) *Linear {
 
 func (l *Linear) Forward(x *mlx.Array) *mlx.Array {
 	w := l.Weight.Transpose(1, 0)
-	if l.Bias != nil && l.Bias.Valid() {
+	if l.Bias != nil {
 		return l.Bias.Addmm(x, w, 1.0, 1.0)
 	}
 	return x.Matmul(w)
@@ -98,7 +98,7 @@ func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int,
 	} else {
 		mlx.Eval(qw, scales)
 	}
-	if bias != nil && bias.Valid() && bias.DType() != weight.DType() {
+	if bias != nil && bias.DType() != weight.DType() {
 		bias = bias.AsType(weight.DType())
 	}
 	return &QuantizedLinear{
@@ -130,7 +130,7 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 		// coverage for this path.
 		out = quantizedLinearOutputScale(out, ql.GlobalScale)
 	}
-	if ql.Bias != nil && ql.Bias.Valid() {
+	if ql.Bias != nil {
 		bias := ql.Bias
 		if bias.DType() != out.DType() {
 			bias = bias.AsType(out.DType())
@@ -194,7 +194,7 @@ func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
 	weight := qe.Weight.TakeAxis(indices, 0)
 	scales := qe.Scales.TakeAxis(indices, 0)
 	var qbiases *mlx.Array
-	if qe.QBiases != nil && qe.QBiases.Valid() {
+	if qe.QBiases != nil {
 		qbiases = qe.QBiases.TakeAxis(indices, 0)
 	}
 	return mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode, qe.GlobalScale)
