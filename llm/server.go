@@ -115,8 +115,19 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		opts.NumCtx = int(trainCtx)
 	}
 
-	kvct := strings.ToLower(envconfig.KvCacheType())
+	kvct := resolveKvCacheType(opts)
 	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
+}
+
+// resolveKvCacheType determines the K/V cache quantization type for a model.
+// A per-model "kv_cache_type" Modelfile parameter takes precedence over the
+// global OLLAMA_KV_CACHE_TYPE environment variable.
+func resolveKvCacheType(opts api.Options) string {
+	kvct := opts.KvCacheType
+	if kvct == "" {
+		kvct = envconfig.KvCacheType()
+	}
+	return strings.ToLower(kvct)
 }
 
 // Server status types
