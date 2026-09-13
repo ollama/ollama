@@ -659,6 +659,235 @@ func TestCreateModelQuantizeRestoresEmbeddedCompatibilityTensors(t *testing.T) {
 	}
 }
 
+func TestCreateModelQuantizeCleansUpIntermediateBlob(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	oldRun := runLlamaQuantize
+	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
+		kv := ggml.KV{
+			"general.architecture": "llama",
+			"general.file_type":    fileType,
+		}
+		return ggml.WriteGGUF(out, kv, []*ggml.Tensor{
+			{
+				Name:     "blk.0.attn_q.weight",
+				Kind:     uint32(ggml.TensorTypeQ4_K),
+				Shape:    []uint64{256, 1},
+				WriterTo: bytes.NewReader(make([]byte, int(ggml.TensorTypeQ4_K.RowSize(256)))),
+			},
+		})
+	}
+	t.Cleanup(func() {
+		runLlamaQuantize = oldRun
+	})
+
+	// Create an F16 GGUF blob — this is the intermediate that should be cleaned up
+	_, f16Digest := createBinFile(t, map[string]any{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeF16),
+	}, []*ggml.Tensor{
+		{
+			Name:     "blk.0.attn_q.weight",
+			Kind:     uint32(ggml.TensorTypeF16),
+			Shape:    []uint64{256, 1},
+			WriterTo: bytes.NewReader(make([]byte, 512)),
+		},
+	})
+
+	// Record the F16 blob path before createModel runs
+	f16BlobPath, err := manifest.BlobsPath(f16Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f16BlobPath); err != nil {
+		t.Fatalf("F16 blob should exist before createModel: %v", err)
+	}
+
+	baseLayers, err := ggufLayers(f16Digest, "test.gguf", func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("test-quantize-cleanup:latest")
+	config := &model.ConfigV2{
+		OS:           "linux",
+		Architecture: "amd64",
+	}
+	req := api.CreateRequest{Model: name.String(), Quantize: "Q4_K_M"}
+	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The intermediate F16 blob should have been removed
+	if _, err := os.Stat(f16BlobPath); !os.IsNotExist(err) {
+		t.Fatalf("intermediate F16 blob should be cleaned up after quantization, got err: %v", err)
+	}
+
+	// The quantized blob should exist and be in the manifest
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, layer := range mf.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.model" {
+			qBlobPath, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(qBlobPath); err != nil {
+				t.Fatalf("quantized blob should exist: %v", err)
+			}
+			if layer.Digest == f16Digest {
+				t.Fatal("manifest should reference quantized blob, not intermediate F16")
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("manifest missing model layer")
+	}
+}
+
+func TestCreateModelQuantizeKeepsIntermediateBlobWithNoPrune(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_NOPRUNE", "1")
+	oldRun := runLlamaQuantize
+	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
+		kv := ggml.KV{
+			"general.architecture": "llama",
+			"general.file_type":    fileType,
+		}
+		return ggml.WriteGGUF(out, kv, []*ggml.Tensor{
+			{
+				Name:     "blk.0.attn_q.weight",
+				Kind:     uint32(ggml.TensorTypeQ4_K),
+				Shape:    []uint64{256, 1},
+				WriterTo: bytes.NewReader(make([]byte, int(ggml.TensorTypeQ4_K.RowSize(256)))),
+			},
+		})
+	}
+	t.Cleanup(func() {
+		runLlamaQuantize = oldRun
+	})
+
+	_, f16Digest := createBinFile(t, map[string]any{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeF16),
+	}, []*ggml.Tensor{
+		{
+			Name:     "blk.0.attn_q.weight",
+			Kind:     uint32(ggml.TensorTypeF16),
+			Shape:    []uint64{256, 1},
+			WriterTo: bytes.NewReader(make([]byte, 512)),
+		},
+	})
+
+	baseLayers, err := ggufLayers(f16Digest, "test.gguf", func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("test-quantize-noprune:latest")
+	config := &model.ConfigV2{
+		OS:           "linux",
+		Architecture: "amd64",
+	}
+	req := api.CreateRequest{Model: name.String(), Quantize: "Q4_K_M"}
+	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	f16BlobPath, err := manifest.BlobsPath(f16Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f16BlobPath); err != nil {
+		t.Fatalf("F16 blob removed with OLLAMA_NOPRUNE set: %v", err)
+	}
+}
+
+func TestCreateModelQuantizeKeepsBlobReferencedByAnotherManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	oldRun := runLlamaQuantize
+	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
+		kv := ggml.KV{
+			"general.architecture": "llama",
+			"general.file_type":    fileType,
+		}
+		return ggml.WriteGGUF(out, kv, []*ggml.Tensor{
+			{
+				Name:     "blk.0.attn_q.weight",
+				Kind:     uint32(ggml.TensorTypeQ4_K),
+				Shape:    []uint64{256, 1},
+				WriterTo: bytes.NewReader(make([]byte, int(ggml.TensorTypeQ4_K.RowSize(256)))),
+			},
+		})
+	}
+	t.Cleanup(func() {
+		runLlamaQuantize = oldRun
+	})
+
+	_, f16Digest := createBinFile(t, map[string]any{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(ggml.FileTypeF16),
+	}, []*ggml.Tensor{
+		{
+			Name:     "blk.0.attn_q.weight",
+			Kind:     uint32(ggml.TensorTypeF16),
+			Shape:    []uint64{256, 1},
+			WriterTo: bytes.NewReader(make([]byte, 512)),
+		},
+	})
+
+	// An unquantized import of the same source already references the F16 blob.
+	configLayer, err := createConfigLayer(model.ConfigV2{OS: "linux", Architecture: "amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := model.ParseName("test-quantize-shares-blob:latest")
+	if err := manifest.WriteManifest(other, *configLayer, []manifest.Layer{{
+		MediaType: "application/vnd.ollama.image.model",
+		Digest:    f16Digest,
+		Size:      512,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	baseLayers, err := ggufLayers(f16Digest, "test.gguf", func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("test-quantize-keeps-shared:latest")
+	config := &model.ConfigV2{
+		OS:           "linux",
+		Architecture: "amd64",
+	}
+	req := api.CreateRequest{Model: name.String(), Quantize: "Q4_K_M"}
+	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	f16BlobPath, err := manifest.BlobsPath(f16Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(f16BlobPath); err != nil {
+		t.Fatalf("F16 blob removed while another manifest still references it: %v", err)
+	}
+
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, layer := range mf.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.model" && layer.Digest == f16Digest {
+			t.Fatal("quantized manifest still references the intermediate F16 blob")
+		}
+	}
+}
+
 func TestCreateModelRejectsFileGGUFWhenValidationFails(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	oldRun := runLlamaQuantize
