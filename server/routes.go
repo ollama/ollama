@@ -988,12 +988,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			// TODO: this first normalization should be done by the model
 			embedding, err = normalize(embedding)
 			if err != nil {
-				return err
+				slog.Error("invalid embedding", "model", req.Model, "input_index", i, "error", err)
+				return api.StatusError{StatusCode: http.StatusInternalServerError, ErrorMessage: err.Error()}
 			}
 			if req.Dimensions > 0 && req.Dimensions < len(embedding) {
 				embedding, err = normalize(embedding[:req.Dimensions])
 				if err != nil {
-					return err
+					return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("cannot normalize embedding with dimensions %d: %s", req.Dimensions, err)}
 				}
 			}
 			embeddings[i] = embedding
@@ -1029,19 +1030,34 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 }
 
 func normalize(vec []float32) ([]float32, error) {
-	var sum float32
-	for _, v := range vec {
-		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
-			return nil, errors.New("embedding contains NaN or Inf values")
-		}
-		sum += v * v
+	norm, err := embeddingNorm(vec)
+	if err != nil {
+		return nil, err
 	}
-
-	norm := float32(1.0 / max(math.Sqrt(float64(sum)), 1e-12))
-	for i := range vec {
-		vec[i] *= norm
+	for i, v := range vec {
+		vec[i] = float32(float64(v) / norm)
 	}
 	return vec, nil
+}
+
+func embeddingNorm(vec []float32) (float64, error) {
+	if len(vec) == 0 {
+		return 0, errors.New("empty embedding")
+	}
+
+	// Accumulate in float64 so finite float32 values cannot overflow or
+	// underflow while computing the norm.
+	var sum float64
+	for _, v := range vec {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return 0, errors.New("embedding contains NaN or Inf values")
+		}
+		sum += float64(v) * float64(v)
+	}
+	if sum == 0 {
+		return 0, errors.New("embedding has zero norm")
+	}
+	return math.Sqrt(sum), nil
 }
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
@@ -1090,6 +1106,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+	if _, err := embeddingNorm(embedding); err != nil {
+		slog.Error("invalid embedding", "model", req.Model, "error", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
