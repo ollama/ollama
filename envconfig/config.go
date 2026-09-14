@@ -236,6 +236,8 @@ var (
 	EnableIntegratedGPU = BoolWithDefault("OLLAMA_IGPU_ENABLE")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
+	// PrefillCache enables experimental prefill/KV cache persistence across runner reloads within a single daemon process.
+	PrefillCache = Bool("OLLAMA_PREFILL_CACHE")
 )
 
 func String(s string) func() string {
@@ -332,6 +334,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOPRUNE":              {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":         {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
+		"OLLAMA_PREFILL_CACHE":        {"OLLAMA_PREFILL_CACHE", PrefillCache(), "Experimental: persist prefill/KV cache across model reloads within a daemon (default: false)"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},

@@ -368,6 +368,16 @@ How much the cache quantization impacts the model's response quality will depend
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
 
+## How can I avoid reprocessing the same prompt after a model reloads?
+
+Ollama normally discards processed prompt state when a model unloads. To save this state temporarily and restore it when the same model and runtime settings are loaded again, set `OLLAMA_PREFILL_CACHE=1` when starting the Ollama server. This can reduce prompt processing time when requests reuse the same prefix after a reload.
+
+Saved state is stored under the system temporary directory, has an 8 GiB soft limit, and is removed when the Ollama server shuts down. A restarted server never reuses state from a previous run. If it cannot be restored, Ollama processes the prompt normally.
+
+<Note>
+  This feature is experimental and off by default.
+</Note>
+
 ## Where can I find my Ollama Public Key?
 
 Your **Ollama Public Key** is the public part of the key pair that lets your local Ollama instance talk to [ollama.com](https://ollama.com).
