@@ -3,6 +3,7 @@ package convert
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -74,7 +75,15 @@ func (m *gemma3nModel) KV(t *Tokenizer) KV {
 	kv["gemma3n.activation_sparsity_scale"] = slices.Collect(func(yield func(float32) bool) {
 		norm := distuv.Normal{Mu: 0, Sigma: 1}
 		for _, v := range m.TextModel.ActivationSparsityPattern {
-			if !yield(float32(norm.Quantile(float64(v)))) {
+			// activation_sparsity_pattern holds a per-layer sparsity fraction that
+			// must be in [0, 1]. distuv.Normal.Quantile panics outside that domain,
+			// so map an out-of-range value to NaN (matching the reference converter)
+			// rather than crashing model conversion.
+			scale := float32(math.NaN())
+			if v >= 0 && v <= 1 {
+				scale = float32(norm.Quantile(float64(v)))
+			}
+			if !yield(scale) {
 				break
 			}
 		}
