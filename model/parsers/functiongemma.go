@@ -292,7 +292,7 @@ func (p *FunctionGemmaParser) parseValue(value string) any {
 
 // parseArray parses an array value
 func (p *FunctionGemmaParser) parseArray(content string) []any {
-	var result []any
+	result := make([]any, 0)
 	parts := p.splitArguments(content)
 	for _, part := range parts {
 		result = append(result, p.parseValue(part))
