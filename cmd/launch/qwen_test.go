@@ -79,6 +79,66 @@ func TestQwenConfigure(t *testing.T) {
 	}
 }
 
+func TestQwenConfigureWithModelsWritesProviderContextWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+	setQwenTestHome(t, tmpDir)
+
+	q := &Qwen{resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
+		if load {
+			t.Fatal("ConfigureWithModels must not load the model")
+		}
+		return contextWindowResolution{ContextLength: model.ContextLength, Source: contextWindowSourceInventory}
+	}}
+	if err := q.ConfigureWithModels("qwen3.8:27b-mlx", []LaunchModel{{
+		Name:          "qwen3.8:27b-mlx",
+		ContextLength: 262_144,
+	}}); err != nil {
+		t.Fatalf("ConfigureWithModels() error = %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".qwen", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := cfg["modelProviders"].(map[string]any)["openai"].([]any)[0].(map[string]any)
+	generation := provider["generationConfig"].(map[string]any)
+	if generation["contextWindowSize"] != float64(262_144) {
+		t.Fatalf("contextWindowSize = %v, want 262144", generation["contextWindowSize"])
+	}
+}
+
+func TestQwenProviderPreservesCompatibleSettingsOnlyForSameModel(t *testing.T) {
+	existing := []any{map[string]any{
+		"id":      "qwen3.8:27b-mlx",
+		"name":    "custom name",
+		"baseUrl": qwenBaseURL(),
+		"envKey":  qwenOllamaEnvKey,
+		"generationConfig": map[string]any{
+			"temperature":       0.2,
+			"contextWindowSize": float64(1_000_000),
+		},
+	}}
+
+	same := qwenMergeOpenAIProviders(existing, qwenProvider("qwen3.8:27b-mlx", 262_144))
+	sameGeneration := same[0].(map[string]any)["generationConfig"].(map[string]any)
+	if sameGeneration["temperature"] != 0.2 || sameGeneration["contextWindowSize"] != 262_144 {
+		t.Fatalf("same-model generation config = %#v, want temperature preserved and context refreshed", sameGeneration)
+	}
+
+	switched := qwenMergeOpenAIProviders(existing, qwenProvider("gemma4", 65_536))
+	switchedGeneration := switched[0].(map[string]any)["generationConfig"].(map[string]any)
+	if _, ok := switchedGeneration["temperature"]; ok {
+		t.Fatalf("model-specific temperature transferred across models: %#v", switchedGeneration)
+	}
+	if switchedGeneration["contextWindowSize"] != 65_536 {
+		t.Fatalf("contextWindowSize = %v, want 65536", switchedGeneration["contextWindowSize"])
+	}
+}
+
 func TestQwenConfigureBacksUpUnderIntegrationDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	setQwenTestHome(t, tmpDir)
@@ -327,6 +387,10 @@ func TestQwenIntegration(t *testing.T) {
 		var _ ManagedSingleModel = q
 	})
 
+	t.Run("implements ManagedModelListConfigurer", func(t *testing.T) {
+		var _ ManagedModelListConfigurer = q
+	})
+
 	t.Run("implements ManagedInteractiveOnboarding", func(t *testing.T) {
 		var _ ManagedInteractiveOnboarding = q
 	})
@@ -389,6 +453,26 @@ func TestQwenLaunchArgs(t *testing.T) {
 	}
 }
 
+func TestQwenEffectiveModelUsesSupportedOverride(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "long separated", args: []string{"--model", "gemma4"}, want: "gemma4"},
+		{name: "short separated", args: []string{"-m", "qwen3:8b"}, want: "qwen3:8b"},
+		{name: "long equals", args: []string{"--model=phi4-mini"}, want: "phi4-mini"},
+		{name: "last override wins", args: []string{"-m", "gemma4", "--model=qwen3:8b"}, want: "qwen3:8b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := qwenEffectiveModel("llama3.2", tt.args); got != tt.want {
+				t.Fatalf("effective model = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestQwenLaunchEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "")
@@ -423,7 +507,7 @@ func TestQwenLaunchEnvOverridesExistingOpenAIEnv(t *testing.T) {
 	}
 }
 
-func TestQwenRunDoesNotRewriteConfig(t *testing.T) {
+func TestQwenRunRefreshesContextBeforeExec(t *testing.T) {
 	tmpDir := t.TempDir()
 	setQwenTestHome(t, tmpDir)
 	t.Chdir(tmpDir)
@@ -455,13 +539,19 @@ func TestQwenRunDoesNotRewriteConfig(t *testing.T) {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
 
-	initialConfig := []byte(`{"model":{"name":"qwen3:32b"}}`)
+	initialConfig := []byte(`{"model":{"name":"qwen3:32b"},"modelProviders":{"openai":[{"id":"qwen3:32b","name":"qwen3:32b (Ollama)","envKey":"OLLAMA_API_KEY","baseUrl":"` + qwenBaseURL() + `","generationConfig":{"contextWindowSize":1000000,"temperature":0.2}}]}}`)
 	configPath := filepath.Join(configDir, "settings.json")
 	if err := os.WriteFile(configPath, initialConfig, 0o644); err != nil {
 		t.Fatalf("failed to write initial config: %v", err)
 	}
 
-	if err := (&Qwen{}).Run("qwen3:32b", nil, nil); err != nil {
+	q := &Qwen{resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
+		if !load {
+			t.Fatal("Run must request a loaded runtime context")
+		}
+		return contextWindowResolution{ContextLength: 65_536, RuntimeVerified: true}
+	}}
+	if err := q.Run("qwen3:32b", []LaunchModel{{Name: "qwen3:32b", ContextLength: 262_144}}, nil); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
@@ -469,8 +559,17 @@ func TestQwenRunDoesNotRewriteConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read config after run: %v", err)
 	}
-	if string(data) != string(initialConfig) {
-		t.Fatalf("expected run not to rewrite config, got %s", string(data))
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider := cfg["modelProviders"].(map[string]any)["openai"].([]any)[0].(map[string]any)
+	generation := provider["generationConfig"].(map[string]any)
+	if generation["contextWindowSize"] != float64(65_536) {
+		t.Fatalf("contextWindowSize = %v, want refreshed 65536", generation["contextWindowSize"])
+	}
+	if generation["temperature"] != 0.2 {
+		t.Fatalf("compatible generation setting lost: %#v", generation)
 	}
 }
 
