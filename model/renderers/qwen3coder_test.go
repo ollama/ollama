@@ -391,3 +391,111 @@ func TestQwen3ToolDefinitionTypes(t *testing.T) {
 		})
 	}
 }
+
+// toolWithExtraSchemaKeys is the shape from #18430: two or more keys the
+// renderer does not write itself, both on a property (`properties` beside
+// `required`) and on `parameters` (`$defs` beside `required`). Tools without
+// them have at most one additional key per object and so cannot expose an
+// ordering problem.
+func toolWithExtraSchemaKeys() []api.Tool {
+	inner := api.NewToolPropertiesMap()
+	inner.Set("city", api.ToolProperty{Type: api.PropertyType{"string"}})
+
+	props := api.NewToolPropertiesMap()
+	props.Set("place", api.ToolProperty{
+		Type:        api.PropertyType{"object"},
+		Description: "Where.",
+		Properties:  inner,
+		Required:    []string{"city"},
+	})
+	// `items` is declared before `enum` on ToolProperty but sorts after it, so
+	// this property is what separates "the order json.Marshal wrote" from "any
+	// other stable order" -- sorting the keys would also be deterministic, and
+	// would also be wrong.
+	props.Set("tags", api.ToolProperty{
+		Type:        api.PropertyType{"array"},
+		Description: "Labels.",
+		Items:       map[string]any{"type": "string"},
+		Enum:        []any{"a", "b"},
+	})
+
+	return []api.Tool{{Function: api.ToolFunction{
+		Name:        "get_weather",
+		Description: "Get the forecast.",
+		Parameters: api.ToolFunctionParameters{
+			Type:       "object",
+			Defs:       map[string]any{"unit": map[string]any{"type": "string"}},
+			Required:   []string{"place"},
+			Properties: props,
+		},
+	}}}
+}
+
+// Rendering is the prompt-cache key: an unchanged request that renders to a
+// different string reprocesses everything from the first differing byte. The
+// additional-key loop used to range over a map[string]any, and Go randomizes
+// map iteration, so identical requests rendered in different orders.
+func TestQwen3CoderRendererAdditionalKeysAreStableAcrossRenders(t *testing.T) {
+	renderer := &Qwen3CoderRenderer{}
+	msgs := []api.Message{{Role: "user", Content: "What is the weather in Lisbon?"}}
+
+	first, err := renderer.Render(msgs, toolWithExtraSchemaKeys(), nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// One render has two independent orderings to get wrong (the property's
+	// and `parameters`'), so a single repeat already fails the old code half
+	// the time; 100 makes it a certainty rather than a coin flip.
+	for i := 1; i < 100; i++ {
+		got, err := renderer.Render(msgs, toolWithExtraSchemaKeys(), nil)
+		if err != nil {
+			t.Fatalf("render %d: %v", i, err)
+		}
+		if diff := cmp.Diff(first, got); diff != "" {
+			t.Fatalf("render %d differs from render 0 (-first +got):\n%s", i, diff)
+		}
+	}
+}
+
+// The order itself is part of the contract, not just its stability: it is the
+// order `encoding/json` writes the struct's fields in, which is what the
+// reference implementation's ordering comment on renderAdditionalKeys means.
+func TestQwen3CoderRendererAdditionalKeysFollowFieldOrder(t *testing.T) {
+	renderer := &Qwen3CoderRenderer{}
+	got, err := renderer.Render(
+		[]api.Message{{Role: "user", Content: "What is the weather in Lisbon?"}},
+		toolWithExtraSchemaKeys(),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	// Declaration order: ToolProperty is anyOf, type, items, description,
+	// enum, properties, required; ToolFunctionParameters is type, $defs,
+	// items, required, properties. `items` before `enum` on `tags` is the
+	// pair that sorting the keys would swap.
+	want := `<parameters>
+<parameter>
+<name>place</name>
+<type>object</type>
+<description>Where.</description>
+<properties>{"city":{"type":"string"}}</properties>
+<required>["city"]</required>
+</parameter>
+<parameter>
+<name>tags</name>
+<type>array</type>
+<description>Labels.</description>
+<items>{"type":"string"}</items>
+<enum>["a","b"]</enum>
+</parameter>
+<$defs>{"unit":{"type":"string"}}</$defs>
+<required>["place"]</required>
+</parameters>`
+
+	if !strings.Contains(got, want) {
+		t.Errorf("rendered tool block does not match\nwant substring:\n%s\n\ngot:\n%s", want, got)
+	}
+}

@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -27,13 +28,37 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 		return ""
 	}
 
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
+	// Walk the marshalled object in the order its keys were written instead of
+	// unmarshalling into a map and ranging over it: Go randomizes map
+	// iteration, so the same tool rendered twice emitted these keys in
+	// different orders and a byte-identical request stopped hitting the prompt
+	// cache from the first reordered key on. `obj` is a struct at both call
+	// sites, and encoding/json writes struct fields in declaration order and
+	// map keys sorted, so the marshalled order is itself deterministic.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		// Not a JSON object: nothing to render, as before.
 		return ""
 	}
 
 	var sb strings.Builder
-	for key, value := range m {
+	for dec.More() {
+		keyToken, err := dec.Token()
+		if err != nil {
+			return ""
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return ""
+		}
+
+		// Decode every value, handled or not: skipping one would leave the
+		// decoder pointing at a value where the next key is expected.
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return ""
+		}
+
 		if handledKeys[key] {
 			continue
 		}
