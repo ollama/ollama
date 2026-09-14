@@ -549,7 +549,7 @@ func detectCapabilities(modelDir string) modelCapabilities {
 	return modelCapabilities{
 		vision: cfg.VisionConfig != nil || cfg.HasVision,
 		audio:  cfg.AudioConfig != nil || cfg.SoundConfig != nil,
-		thinking: chatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
+		thinking: model.ChatTemplateHasThinkingSupport(readChatTemplate(modelDir)) ||
 			alwaysSupportsThinking(cfg.Architectures, cfg.ModelType),
 	}
 }
@@ -570,22 +570,6 @@ func readChatTemplate(modelDir string) string {
 		return string(data)
 	}
 	return ""
-}
-
-// chatTemplateHasThinkingSupport reports whether a chat template emits thinking
-// blocks. Copied from server.chatTemplateHasThinkingSupport so this package need
-// not depend on the server package for an eight-line string check.
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
 }
 
 func alwaysSupportsThinking(architectures []string, modelType string) bool {
