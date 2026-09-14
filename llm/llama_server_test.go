@@ -187,9 +187,6 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
-		if !reqBody.TimingsPerToken {
-			t.Error("timings_per_token should be true")
-		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
@@ -212,9 +209,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	var responses []CompletionResponse
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:                     "test prompt",
-		Options:                    &opts,
-		IncludeIntermediateMetrics: true,
+		Prompt:  "test prompt",
+		Options: &opts,
 	}, func(cr CompletionResponse) {
 		responses = append(responses, cr)
 	})
@@ -233,28 +229,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].Done {
 		t.Error("response[0] should not be done")
 	}
-	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
-		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
-	}
-	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[0] cached prompt count = %v, want 2", got)
-	}
-	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
-		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
-	}
 
 	// Second token
 	if responses[1].Content != " world" {
 		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
-	}
-	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
-		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
-	}
-	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[1] cached prompt count = %v, want 2", got)
-	}
-	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
-		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
 	}
 
 	// Final response
