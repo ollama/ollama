@@ -723,6 +723,7 @@ func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
 	var layers []manifest.Layer
+	var replacedLayers []*layerGGML
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
 			if layer.rewriteForCreate && layer.GGML.Name() == "gguf" && len(layer.splitParts) > 0 && layerHasEmbeddedCompatibilityTensors(layer) {
@@ -755,10 +756,12 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				} else if !slices.Contains([]string{"F16", "BF16", "F32"}, ft.String()) {
 					return errors.New("quantization is only supported for F16, BF16 and F32 models")
 				} else if ft != want {
+					oldLayer := layer
 					layer, err = quantizeLayer(layer, quantType, fn)
 					if err != nil {
 						return err
 					}
+					replacedLayers = append(replacedLayers, oldLayer)
 					rewroteLayer = true
 				}
 			}
@@ -889,6 +892,26 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
 		return err
+	}
+
+	// The source layer is unreferenced once the quantized layer is in the
+	// manifest, so the blob it was written from can go. Layer.Remove scans the
+	// manifests and leaves the blob alone when something else still points at it.
+	if !envconfig.NoPrune() {
+		for _, l := range replacedLayers {
+			if err := l.Remove(); err != nil {
+				slog.Warn("failed to remove intermediate blob", "digest", l.Digest, "error", err)
+				continue
+			}
+
+			blob, err := manifest.BlobsPath(l.Digest)
+			if err != nil {
+				continue
+			}
+			if _, err := os.Stat(blob); errors.Is(err, os.ErrNotExist) {
+				removeGGUFMetadata(l.Digest)
+			}
+		}
 	}
 
 	return nil
