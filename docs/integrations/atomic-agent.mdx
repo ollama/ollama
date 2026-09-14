@@ -16,6 +16,10 @@ Ollama handles everything automatically:
 2. **Model** — Pick a model from the selector (local or cloud)
 3. **Configure** — Ollama points Atomic Agent at your local server and sets your model as the active provider
 
+## Context length
+
+Agent workloads need a large context window. With a local server, set `OLLAMA_CONTEXT_LENGTH=65536` before launching (or create the model with a `num_ctx` of at least 65536).
+
 ## Recommended models
 
 **Local models:**
