@@ -721,3 +721,32 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexThinkingControls(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		thinking     *api.ModelRecommendationThinking
+		levels       []string
+		defaultLevel any
+	}{
+		{"unknown", nil, nil, nil},
+		{"named", &api.ModelRecommendationThinking{Values: []any{false, "low", "high", "max"}, Default: "high"}, []string{"none", "low", "high", "max"}, "high"},
+		{"binary default on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, []string{"none", "high"}, "high"},
+		{"binary default off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, []string{"none"}, "none"},
+		{"mixed", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true}, []string{"none", "high", "medium"}, "high"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := buildCodexModelEntry(LaunchModel{Name: "fixture:cloud", Thinking: tt.thinking})
+			var levels []string
+			for _, v := range entry["supported_reasoning_levels"].([]any) {
+				levels = append(levels, v.(map[string]any)["effort"].(string))
+			}
+			if !slices.Equal(levels, tt.levels) {
+				t.Fatalf("levels = %v, want %v", levels, tt.levels)
+			}
+			if entry["default_reasoning_level"] != tt.defaultLevel {
+				t.Fatalf("default = %v, want %v", entry["default_reasoning_level"], tt.defaultLevel)
+			}
+		})
+	}
+}

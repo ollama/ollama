@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
@@ -52,6 +54,14 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
+	}
+
+	if client, err := api.ClientFromEnvironment(); err == nil {
+		if show, err := client.Show(context.Background(), &api.ShowRequest{Model: model}); err == nil && show.Thinking != nil {
+			selected := codexCatalogModel(model, models)
+			selected.Thinking = show.Thinking.Clone()
+			models = []LaunchModel{selected}
+		}
 	}
 
 	if err := ensureCodexConfig(model, models); err != nil {
@@ -715,6 +725,26 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		truncationMode = "tokens"
 	}
 
+	supportedReasoningLevels := make([]any, 0)
+	var defaultReasoningLevel any
+	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
+		// Direct Responses requests carry effort names, without the desktop proxy's
+		// boolean conversion. Advertise only names that resolve to the same control.
+		for _, level := range contract.levels {
+			value := contract.values[level]
+			if value == true && launchModel.Thinking.Default != true {
+				continue
+			}
+			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+				"effort":      level,
+				"description": codexAppThinkingLevelDescription(level),
+			})
+		}
+		if contract.defaultLevel != "" {
+			defaultReasoningLevel = contract.defaultLevel
+		}
+	}
+
 	return map[string]any{
 		"slug":                         modelName,
 		"display_name":                 modelName,
@@ -730,7 +760,8 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
 		"supports_reasoning_summaries": false,
-		"supported_reasoning_levels":   []any{},
+		"supported_reasoning_levels":   supportedReasoningLevels,
+		"default_reasoning_level":      defaultReasoningLevel,
 		"experimental_supported_tools": []any{},
 	}
 }
