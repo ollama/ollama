@@ -115,6 +115,8 @@ var (
 	_ MultimodalConverter = (*qwen3NextModel)(nil)
 )
 
+const maxQwen3NextBlockCount = 1024
+
 func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	if q.TextConfig != nil {
 		q.qwen3NextTextConfig = *q.TextConfig
@@ -183,6 +185,13 @@ func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 
 	if q.NumHiddenLayers == 0 {
 		return fmt.Errorf("qwen3next: num_hidden_layers must be set")
+	}
+	// maxQwen3NextBlockCount mirrors convert_deepseek2.go's maxDeepSeek2HiddenLayers
+	// rationale: far above any known config, but keeps blockCount*3 (used for
+	// merge-slice sizing in Tensors()) clear of uint32 overflow and bounds how
+	// many times that loop can iterate.
+	if blockCount := q.NumHiddenLayers + q.NumNextNPredictLayers; blockCount > maxQwen3NextBlockCount {
+		return fmt.Errorf("qwen3next: num_hidden_layers+num_next_n_predict_layers (%d) exceeds max supported value (%d)", blockCount, maxQwen3NextBlockCount)
 	}
 	if q.NumAttentionHeads == 0 {
 		return fmt.Errorf("qwen3next: num_attention_heads must be set")
@@ -937,20 +946,25 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	ts = q.renameMTPLayerTensors(ts)
 
 	blockCount := q.NumHiddenLayers + q.NumNextNPredictLayers
-	merges := make([]merge, blockCount*3)
+	// Built with append (not a pre-sized index-assigned slice) so a bad
+	// blockCount value can never cause an out-of-bounds write here even if
+	// the parseMore bound check above did not run on some future call path.
+	merges := make([]merge, 0, blockCount*3)
 	for i := range blockCount {
-		merges[i*3+0] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
-		}
-		merges[i*3+1] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
-		}
-		merges[i*3+2] = merge{
-			fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
-			fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
-		}
+		merges = append(merges,
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.gate_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_gate_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.up_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_up_exps.weight", i),
+			},
+			merge{
+				fmt.Sprintf("blk.%d.mlp.experts.*.down_proj.weight", i),
+				fmt.Sprintf("blk.%d.ffn_down_exps.weight", i),
+			},
+		)
 	}
 
 	merged, remaining := mergeTensors(ts, merges...)
