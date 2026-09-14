@@ -785,6 +785,42 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	require.Equal(t, req, fin)
 }
 
+func TestSchedUseLoadedRunnerDoesNotExtendExpiringRunner(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	finished := make(chan *LlmRequest, 1)
+	req := &LlmRequest{
+		ctx:             ctx,
+		successCh:       make(chan *runnerRef, 1),
+		sessionDuration: &api.Duration{Duration: time.Hour},
+	}
+	runner := &runnerRef{
+		expiring:        true,
+		sessionDuration: 0,
+		numParallel:     1,
+	}
+
+	req.useLoadedRunner(runner, finished)
+	require.Equal(t, uint(1), runner.refCount)
+	require.Zero(t, runner.sessionDuration)
+	require.Same(t, runner, <-req.successCh)
+
+	done()
+	require.Same(t, req, <-finished)
+}
+
+func TestSchedGetRunnerQueuesExpiringRunner(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+	model := &Model{Name: "expiring-model", ModelPath: "expiring-model"}
+	s.loaded[schedulerModelKey(model)] = &runnerRef{expiring: true}
+
+	success, errCh := s.getRunner(ctx, model, api.DefaultOptions(), nil, false, false, nil)
+	require.Empty(t, success)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
 func TestSchedUpdateFreeSpace(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
