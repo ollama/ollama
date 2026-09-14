@@ -5,9 +5,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -139,6 +141,19 @@ func TestGetTensor(t *testing.T) {
 	}
 	if td.Size != 16 {
 		t.Errorf("Size = %d, want 16", td.Size)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headerSize uint64
+	if err := binary.Read(f, binary.LittleEndian, &headerSize); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	f.Close()
+	if want := int64(8 + headerSize); td.Offset() != want {
+		t.Errorf("Offset() = %d, want %d", td.Offset(), want)
 	}
 	if len(td.Shape) != 2 || td.Shape[0] != 2 || td.Shape[1] != 2 {
 		t.Errorf("Shape = %v, want [2 2]", td.Shape)
@@ -358,7 +373,7 @@ func TestExtractRawFromSafetensors_InvalidInput(t *testing.T) {
 	}
 }
 
-func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
+func TestOpenForExtraction_Metadata(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.safetensors")
 
@@ -371,15 +386,32 @@ func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 			DataOffsets: [2]int{0, 8},
 		},
 	}
-	headerJSON, _ := json.Marshal(header)
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
 	padding := (8 - len(headerJSON)%8) % 8
 	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
 
-	f, _ := os.Create(path)
-	binary.Write(f, binary.LittleEndian, uint64(len(headerJSON)))
-	f.Write(headerJSON)
-	f.Write(make([]byte, 8))
-	f.Close()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if _, err := f.Write(headerJSON); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 8)); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	ext, err := OpenForExtraction(path)
 	if err != nil {
@@ -387,8 +419,49 @@ func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 	}
 	defer ext.Close()
 
-	// __metadata__ should be stripped
+	// __metadata__ should be exposed separately from tensors.
 	if ext.TensorCount() != 1 {
 		t.Errorf("TensorCount() = %d, want 1 (metadata should be stripped)", ext.TensorCount())
+	}
+	metadata := ext.Metadata()
+	if !maps.Equal(metadata, map[string]string{"format": "pt"}) {
+		t.Errorf("Metadata() = %v, want map[format:pt]", metadata)
+	}
+	metadata["format"] = "changed"
+	if got := ext.Metadata()["format"]; got != "pt" {
+		t.Errorf("Metadata() returned mutable state: format = %q, want pt", got)
+	}
+}
+
+func TestOpenForExtraction_HeaderSizeBound(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size uint64
+	}{
+		{name: "larger than file", size: 16},
+		{name: "larger than limit", size: maxHeaderSize + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "invalid.safetensors")
+			f, err := os.Create(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := binary.Write(f, binary.LittleEndian, tc.size); err != nil {
+				f.Close()
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
+			ext, err := OpenForExtraction(path)
+			if err == nil {
+				ext.Close()
+				t.Fatal("OpenForExtraction accepted an invalid header size")
+			}
+			if !strings.Contains(err.Error(), "invalid header size") {
+				t.Fatalf("OpenForExtraction error = %q, want invalid header size", err)
+			}
+		})
 	}
 }
