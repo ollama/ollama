@@ -1,6 +1,20 @@
 #include "dynamic.h"
 
 #include <stdio.h>
+#include <string.h>
+
+// Holds the name of the first symbol that failed to resolve during
+// mlx_dynamic_load_symbols, for the Go side to report lazily.
+static char mlx_load_error_symbol[128];
+
+void mlx_dynamic_record_load_error(const char* symbol) {
+    strncpy(mlx_load_error_symbol, symbol, sizeof(mlx_load_error_symbol) - 1);
+    mlx_load_error_symbol[sizeof(mlx_load_error_symbol) - 1] = '\0';
+}
+
+const char* mlx_dynamic_load_error(void) {
+    return mlx_load_error_symbol;
+}
 
 #ifdef _WIN32
 #include <windows.h>
