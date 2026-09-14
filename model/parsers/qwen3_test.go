@@ -1,6 +1,8 @@
 package parsers
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -314,5 +316,72 @@ func TestQwen3ParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 	if !toolCallEqual(calls[0], want) {
 		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
+
+func TestQwen3ParserQuotedToolDelimiter(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"plain", "ordinary text"},
+		{"delimiter", "literal </tool_call> text"},
+		{"escaped_quote", `quote " then </tool_call>`},
+		{"backslash", `slash \ then </tool_call>`},
+		{"repeated", "</tool_call> then </tool_call>"},
+		{"unicode", "汉字 </tool_call> λ"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var payload strings.Builder
+			encoder := json.NewEncoder(&payload)
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(map[string]any{
+				"name": "write_file", "arguments": map[string]string{"content": tc.text},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			input := "before<tool_call>" + payload.String() + "</tool_call>" +
+				`<tool_call>{"name":"finish","arguments":{}}</tool_call>after`
+			// Every boundary includes splits inside the quoted tag, escaped
+			// quotes/backslashes, UTF-8 bytes, and the actual closing tag.
+			for split := 0; split <= len(input); split++ {
+				parser := &Qwen3Parser{}
+				parser.Init(nil, nil, nil)
+				var content strings.Builder
+				var calls []api.ToolCall
+				for i, chunk := range []string{input[:split], input[split:]} {
+					text, thinking, got, err := parser.Add(chunk, i == 1)
+					if err != nil {
+						t.Fatalf("split %d: %v", split, err)
+					}
+					if thinking != "" {
+						t.Fatalf("split %d: unexpected thinking %q", split, thinking)
+					}
+					content.WriteString(text)
+					calls = append(calls, got...)
+				}
+				if content.String() != "beforeafter" || len(calls) != 2 {
+					t.Fatalf("split %d: content=%q, calls=%v", split, content.String(), calls)
+				}
+				if calls[0].Function.Name != "write_file" || calls[1].Function.Name != "finish" ||
+					calls[0].Function.Index != 0 || calls[1].Function.Index != 1 {
+					t.Fatalf("split %d: wrong tool calls: %v", split, calls)
+				}
+				if value, ok := calls[0].Function.Arguments.Get("content"); !ok || value != tc.text {
+					t.Fatalf("split %d: argument=%v, want %q", split, value, tc.text)
+				}
+			}
+		})
+	}
+}
+
+func TestQwen3ParserInvalidToolJSONAtEOF(t *testing.T) {
+	for _, input := range []string{
+		`<tool_call>{"name":"write_file","arguments":{"content":"unfinished</tool_call>`,
+		`<tool_call>{"name":"write_file","arguments":invalid}</tool_call>`,
+	} {
+		parser := &Qwen3Parser{}
+		parser.Init(nil, nil, nil)
+		_, _, calls, err := parser.Add(input, true)
+		if err == nil || len(calls) != 0 {
+			t.Fatalf("expected a JSON error and no tool calls for %q, got calls=%v, err=%v", input, calls, err)
+		}
 	}
 }
