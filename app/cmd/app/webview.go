@@ -238,6 +238,13 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 					return
 				}
 
+				if runtime.GOOS == "darwin" {
+					// Keep the current frame through the handoff. SetSize also
+					// recenters the macOS window and would jump before Apps paints.
+					setOnboardingWindowStyle(wv.Window(), false)
+					return
+				}
+
 				width, height := defaultWindowWidth, defaultWindowHeight
 				if w.Store != nil {
 					storedWidth, storedHeight, err := w.Store.WindowSize()
