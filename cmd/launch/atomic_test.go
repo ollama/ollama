@@ -165,6 +165,81 @@ func TestAtomicEditPreservesExistingConfig(t *testing.T) {
 	}
 }
 
+func TestAtomicEditRecoversNullConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ATOMIC_AGENT_STATE_DIR", dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Atomic{}
+	if err := a.Edit([]LaunchModel{{Name: "qwen3.6"}}); err != nil {
+		t.Fatalf("edit on null config: %v", err)
+	}
+
+	config := atomicTestConfig(t)
+	entry := atomicTestProvider(t, config, atomicLaunchProviderID)
+	if entry["defaultChatModel"] != "qwen3.6" {
+		t.Fatalf("defaultChatModel = %v", entry["defaultChatModel"])
+	}
+}
+
+func TestAtomicEditRewritesAuthWhenRepointing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("ATOMIC_AGENT_STATE_DIR", dir)
+
+	existing := map[string]any{
+		"llm": map[string]any{
+			"activeTextProvider":      atomicLaunchProviderID,
+			"activeEmbeddingProvider": "local-llama",
+			"toolTransport":           "auto",
+			"providers": []any{
+				map[string]any{
+					"id":               atomicLaunchProviderID,
+					"kind":             "openai-compatible",
+					"baseUrl":          "http://10.0.0.5:11434",
+					"apiKey":           "stale-inline-key",
+					"headers":          map[string]any{"Authorization": "Bearer stale"},
+					"defaultChatModel": "qwen3.6",
+					"requestTimeoutMs": float64(120000),
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Atomic{}
+	if err := a.Edit([]LaunchModel{{Name: "gemma4"}}); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+
+	config := atomicTestConfig(t)
+	entry := atomicTestProvider(t, config, atomicLaunchProviderID)
+	if entry["baseUrl"] != atomicOllamaBaseURL() {
+		t.Fatalf("baseUrl = %v, want %v", entry["baseUrl"], atomicOllamaBaseURL())
+	}
+	if _, ok := entry["apiKey"]; ok {
+		t.Fatalf("stale inline apiKey survived the repoint: %v", entry)
+	}
+	if _, ok := entry["headers"]; ok {
+		t.Fatalf("stale headers survived the repoint: %v", entry)
+	}
+	if entry["apiKeyEnvVar"] != "OLLAMA_API_KEY" {
+		t.Fatalf("apiKeyEnvVar = %v", entry["apiKeyEnvVar"])
+	}
+	// Non-auth keys the agent owns still ride along.
+	if entry["requestTimeoutMs"] != float64(120000) {
+		t.Fatalf("agent-owned key was dropped: %v", entry)
+	}
+}
+
 func TestAtomicEditUpdatesExistingEntryInPlace(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("ATOMIC_AGENT_STATE_DIR", dir)

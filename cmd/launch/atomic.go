@@ -186,6 +186,12 @@ func (a *Atomic) Edit(models []LaunchModel) error {
 		if err := json.Unmarshal(data, &config); err != nil {
 			return fmt.Errorf("failed to parse config: %w, at: %s", err, path)
 		}
+		// A literal `null` unmarshals without error and leaves the map
+		// nil; assigning into it would panic. Treat it like an empty
+		// config (hand-cleared file, truncated write).
+		if config == nil {
+			config = make(map[string]any)
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -255,12 +261,17 @@ func atomicUpsertOllamaProvider(providers []any, model string) []any {
 	for i, raw := range providers {
 		existing, _ := raw.(map[string]any)
 		if existing != nil && existing["id"] == atomicLaunchProviderID {
-			// Keep unknown keys the agent may have added to the entry;
-			// only re-point the fields the launcher owns.
+			// Keep unknown keys the agent may have added to the entry,
+			// but rewrite auth wholesale: the agent resolves a
+			// file-stored key ahead of apiKeyEnvVar, so an inline key
+			// or header from a previous host must not ride along to a
+			// new base URL.
 			existing["kind"] = entry["kind"]
 			existing["baseUrl"] = entry["baseUrl"]
 			existing["apiKeyEnvVar"] = entry["apiKeyEnvVar"]
 			existing["defaultChatModel"] = model
+			delete(existing, "apiKey")
+			delete(existing, "headers")
 			providers[i] = existing
 			return providers
 		}
