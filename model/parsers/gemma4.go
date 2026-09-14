@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -428,18 +429,20 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
+	// Keep placeholder indices free of JSON syntax: rune(44) is a comma and
+	// collides with the boundary between adjacent placeholders in an array.
 	var quotedStrings []string
 	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
 		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
 		quotedStrings = append(quotedStrings, submatches[1])
-		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
+		return "\x00STR" + strconv.Itoa(len(quotedStrings)-1) + "\x00"
 	})
 
 	text = quoteGemma4BareKeys(text)
 
 	for i, value := range quotedStrings {
 		escaped, _ := json.Marshal(value)
-		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
+		text = strings.ReplaceAll(text, "\x00STR"+strconv.Itoa(i)+"\x00", string(escaped))
 	}
 
 	return text
