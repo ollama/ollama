@@ -244,6 +244,36 @@ func String(s string) func() string {
 	}
 }
 
+// RunnersDir returns the directory containing the runner binaries.
+// It can be configured via the OLLAMA_RUNNERS_DIR environment variable.
+func RunnersDir() string {
+	return Var("OLLAMA_RUNNERS_DIR")
+}
+
+// TmpDir returns the directory to use for temporary files.
+// It can be configured via the OLLAMA_TMPDIR environment variable.
+func TmpDir() string {
+	return Var("OLLAMA_TMPDIR")
+}
+
+// IntelGPU returns whether Intel GPU support is enabled.
+// It can be configured via the OLLAMA_INTEL_GPU environment variable.
+func IntelGPU() bool {
+	if s := Var("OLLAMA_INTEL_GPU"); s != "" {
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return true
+		}
+		return b
+	}
+	return false
+}
+
+// Debug returns whether debug logging is enabled.
+func Debug() bool {
+	return LogLevel() <= slog.LevelDebug
+}
+
 var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
 	Editor     = String("OLLAMA_EDITOR")
