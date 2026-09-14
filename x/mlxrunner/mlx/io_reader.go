@@ -47,8 +47,10 @@ import (
 	"unsafe"
 )
 
-const maxInt = int(^uint(0) >> 1)
-const readerBatchSize = 1 << 25
+const (
+	maxInt          = int(^uint(0) >> 1)
+	readerBatchSize = 1 << 25
+)
 
 // Match MLX's native ParallelFileReader shape for large tensor materialization:
 // one disk-wide bounded pool, not one unbounded pool per safetensors blob.
@@ -178,7 +180,6 @@ func (r *fileIOReader) readAt(data unsafe.Pointer, n, off uint64) int {
 		return r.readAtBatched(data, n, off)
 	}
 
-	buf := unsafe.Slice((*byte)(data), int(n))
 	file, err := r.acquireFile()
 	if err != nil {
 		r.setErr(err)
@@ -186,6 +187,7 @@ func (r *fileIOReader) readAt(data unsafe.Pointer, n, off uint64) int {
 	}
 	defer r.releaseFile(file)
 
+	buf := unsafe.Slice((*byte)(data), int(n))
 	read, err := file.ReadAt(buf, int64(off))
 	if read > 0 && r.progress != nil {
 		r.progress(int64(read))
@@ -247,8 +249,8 @@ func (r *fileIOReader) readAtBatched(data unsafe.Pointer, n, off uint64) int {
 
 func (r *fileIOReader) acquireFile() (*os.File, error) {
 	r.filesMu.Lock()
-	defer r.filesMu.Unlock()
 	if r.closed.Load() {
+		r.filesMu.Unlock()
 		return nil, errors.New("read from closed safetensors reader")
 	}
 	last := len(r.idle) - 1
@@ -256,16 +258,30 @@ func (r *fileIOReader) acquireFile() (*os.File, error) {
 		file := r.idle[last]
 		r.idle[last] = nil
 		r.idle = r.idle[:last]
+		r.filesMu.Unlock()
 		return file, nil
 	}
+	r.filesMu.Unlock()
+
 	file, err := os.Open(r.path)
 	if err != nil {
 		return nil, fmt.Errorf("open safetensors: %w", err)
+	}
+
+	r.filesMu.Lock()
+	defer r.filesMu.Unlock()
+	if r.closed.Load() {
+		file.Close()
+		return nil, errors.New("read from closed safetensors reader")
 	}
 	return file, nil
 }
 
 func (r *fileIOReader) releaseFile(file *os.File) {
+	if file == nil {
+		return
+	}
+
 	r.filesMu.Lock()
 	defer r.filesMu.Unlock()
 	if r.closed.Load() {

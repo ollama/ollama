@@ -129,7 +129,10 @@ func TestFileIOReaderBatchedReadAt(t *testing.T) {
 		t.Fatalf("readAt read %d bytes, want %d", read, len(buf))
 	}
 	if !bytes.Equal(buf, data) {
-		t.Fatal("readAt data mismatch")
+		t.Fatal("batched readAt data mismatch")
+	}
+	if err := reader.Err(); err != nil {
+		t.Fatalf("reader error: %v", err)
 	}
 	if got := completed.Load(); got != int64(len(data)) {
 		t.Fatalf("progress bytes = %d, want %d", got, len(data))
