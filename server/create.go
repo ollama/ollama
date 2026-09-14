@@ -66,6 +66,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
+	if r.Parameters["typical_p"] != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errTypicalPUnsupported.Error()})
+		return
+	}
+
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 	config.Requires = r.Requires

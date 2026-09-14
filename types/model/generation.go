@@ -33,7 +33,7 @@ var generationDefaultMappings = []generationDefaultMapping{
 	generationDefault("top_k", generationDefaultInt, "general.sampling.top_k", "top_k"),
 	generationDefault("top_p", generationDefaultFloat, "general.sampling.top_p", "top_p"),
 	generationDefault("min_p", generationDefaultFloat, "general.sampling.min_p", "min_p"),
-	generationDefault("typical_p", generationDefaultFloat, "general.sampling.typ_p", "typical_p"),
+	generationDefault("typical_p", generationDefaultFloat, "general.sampling.typ_p"), // GGUF only: MLX does not support typical_p
 	generationDefault("temperature", generationDefaultFloat, "general.sampling.temp", "temperature"),
 	generationDefault("repeat_last_n", generationDefaultInt, "general.sampling.penalty_last_n", "repeat_last_n", "penalty_last_n"),
 	generationDefault("repeat_penalty", generationDefaultFloat, "general.sampling.penalty_repeat", "repetition_penalty", "repeat_penalty", "penalty_repeat"),

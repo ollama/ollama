@@ -1839,6 +1839,26 @@ func TestCreateHandlerRejectsAdaptersBeforeUpload(t *testing.T) {
 	}
 }
 
+func TestCreateHandlerRejectsTypicalPBeforeUpload(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:0")
+	dir := t.TempDir()
+	modelfile := filepath.Join(dir, "Modelfile")
+	if err := os.WriteFile(modelfile, []byte("FROM base\nPARAMETER typical_p 0.5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", modelfile, "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().String("draft-quantize", "", "")
+	cmd.Flags().Bool("force", false, "")
+	cmd.SetContext(t.Context())
+
+	if err := CreateHandler(cmd, []string{"test-model"}); !errors.Is(err, errTypicalPUnsupported) {
+		t.Fatalf("error = %v, want %v", err, errTypicalPUnsupported)
+	}
+}
+
 func TestCreateHandlerRejectsForceForRemoteSafetensors(t *testing.T) {
 	t.Setenv("OLLAMA_CREATE_REMOTE", "1")
 	dir := t.TempDir()
