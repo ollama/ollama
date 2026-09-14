@@ -44,9 +44,18 @@ func (f LinearFactory) Make(path string) nn.LinearLayer {
 
 // MakeLinearLayer constructs a linear layer from a tensor map.
 //
-// For quantized tensors (path.weight + path.weight_scale), it resolves per-tensor
-// quant params via TensorQuant metadata (with shape-based affine fallback).
-// For non-quantized tensors, it returns a standard nn.Linear.
+// For quantized tensors it resolves per-tensor quant params via TensorQuant
+// metadata (with shape-based affine fallback). For non-quantized tensors it
+// returns a standard nn.Linear.
+//
+// Two scale/qbias naming conventions are recognised:
+//   - Ollama-native dot-child singular: "<path>.weight_scale" / "<path>.weight_qbias"
+//   - mlx-lm sibling plural: "<path>.scales" / "<path>.biases"
+//
+// The plural form is what tools using mx.nn.quantize (mlx-lm, LM Studio)
+// emit natively. Recognising both lets community MLX safetensors imported
+// via "ollama create --experimental" load correctly regardless of which
+// convention the source blob used.
 func MakeLinearLayer(
 	tensors map[string]*mlx.Array,
 	path string,
@@ -60,8 +69,14 @@ func MakeLinearLayer(
 	}
 
 	scales := tensors[path+".weight_scale"]
+	if scales == nil {
+		scales = tensors[path+".scales"]
+	}
 	if scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
+		if qbiases == nil {
+			qbiases = tensors[path+".biases"]
+		}
 		bias := tensors[path+".bias"]
 
 		groupSize, bits, mode := ResolveLinearQuantParams(
