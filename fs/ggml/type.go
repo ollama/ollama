@@ -51,6 +51,7 @@ const (
 	fileTypeMXFP4_MOE
 	fileTypeNVFP4
 	fileTypeQ1_0
+	fileTypeQ2_0
 
 	FileTypeUnknown = 1024
 )
@@ -162,6 +163,8 @@ func (t FileType) String() string {
 		return "NVFP4"
 	case fileTypeQ1_0:
 		return "Q1_0"
+	case fileTypeQ2_0:
+		return "Q2_0"
 	default:
 		return "unknown"
 	}
@@ -239,6 +242,8 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeNVFP4
 	case fileTypeQ1_0:
 		return TensorTypeQ1_0
+	case fileTypeQ2_0:
+		return TensorTypeQ2_0
 	default:
 		slog.Warn("unsupported file type", "type", ftype)
 		return 0 // F32
@@ -292,6 +297,7 @@ const (
 	TensorTypeMXFP4
 	TensorTypeNVFP4
 	TensorTypeQ1_0
+	TensorTypeQ2_0
 )
 
 // ParseTensorType parses the provided GGUF tensor type
@@ -420,6 +426,8 @@ func (t TensorType) String() string {
 		return "NVFP4"
 	case TensorTypeQ1_0:
 		return "Q1_0"
+	case TensorTypeQ2_0:
+		return "Q2_0"
 	default:
 		return "unknown"
 	}

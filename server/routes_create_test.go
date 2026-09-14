@@ -240,45 +240,93 @@ func TestCreateModelPreservesEmbeddedCompatibilityGGUFWithoutQuantization(t *tes
 }
 
 func TestCreateModelValidatesTextOnlyFileGGUFWithoutQuantization(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	var gotTypeName string
-	oldRun := runLlamaQuantize
-	runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
-		gotTypeName = typeName
-		return copyLlamaQuantizeInput(in, out, orig, fileType, typeName, progressFn)
-	}
-	t.Cleanup(func() {
-		runLlamaQuantize = oldRun
-	})
-
-	_, digest := createBinFile(t, map[string]any{
-		"general.architecture": "llama",
-		"general.file_type":    uint32(ggml.FileTypeF32),
-	}, []*ggml.Tensor{
+	tests := []struct {
+		name         string
+		fileType     uint32
+		tensorType   uint32
+		shape        []uint64
+		data         []byte
+		wantFileType string
+	}{
 		{
-			Name:     "blk.0.attn_q.weight",
-			Kind:     uint32(ggml.TensorTypeF32),
-			Shape:    []uint64{1, 1},
-			WriterTo: bytes.NewReader(make([]byte, 4)),
+			name:       "F32",
+			fileType:   uint32(ggml.FileTypeF32),
+			tensorType: uint32(ggml.TensorTypeF32),
+			shape:      []uint64{1, 1},
+			data:       make([]byte, 4),
 		},
-	})
-	baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatal(err)
+		{
+			name:         "Q2_0",
+			fileType:     41,
+			tensorType:   uint32(ggml.TensorTypeQ2_0),
+			shape:        []uint64{64, 1},
+			data:         make([]byte, 18),
+			wantFileType: "Q2_0",
+		},
 	}
 
-	name := model.ParseName("test-create-validate-gguf:latest")
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-	req := api.CreateRequest{Model: name.String()}
-	if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
-		t.Fatal(err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var gotTypeName string
+			oldRun := runLlamaQuantize
+			runLlamaQuantize = func(in, out *os.File, orig *ggml.GGML, fileType ggml.FileType, typeName string, progressFn func(uint64)) error {
+				gotTypeName = typeName
+				return copyLlamaQuantizeInput(in, out, orig, fileType, typeName, progressFn)
+			}
+			t.Cleanup(func() {
+				runLlamaQuantize = oldRun
+			})
 
-	if gotTypeName != "COPY" {
-		t.Fatalf("llama-quantize type = %q, want COPY", gotTypeName)
+			_, digest := createBinFile(t, map[string]any{
+				"general.architecture": "llama",
+				"general.file_type":    tt.fileType,
+			}, []*ggml.Tensor{
+				{
+					Name:     "blk.0.attn_q.weight",
+					Kind:     tt.tensorType,
+					Shape:    tt.shape,
+					WriterTo: bytes.NewReader(tt.data),
+				},
+			})
+			baseLayers, err := ggufLayers(digest, "test.gguf", func(api.ProgressResponse) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			name := model.ParseName("test-create-validate-gguf:latest")
+			config := &model.ConfigV2{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+			req := api.CreateRequest{Model: name.String()}
+			if err := createModel(req, name, baseLayers, config, func(api.ProgressResponse) {}); err != nil {
+				t.Fatal(err)
+			}
+
+			if gotTypeName != "COPY" {
+				t.Fatalf("llama-quantize type = %q, want COPY", gotTypeName)
+			}
+			mf, err := manifest.ParseNamedManifest(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var modelDigest string
+			for _, layer := range mf.Layers {
+				if layer.MediaType == "application/vnd.ollama.image.model" {
+					modelDigest = layer.Digest
+				}
+			}
+			if modelDigest != digest {
+				t.Fatalf("model layer digest = %q, want original digest %q", modelDigest, digest)
+			}
+			if tt.wantFileType != "" {
+				cfg := readCreatedModelConfig(t, name.String())
+				if cfg.FileType != tt.wantFileType {
+					t.Fatalf("created model file type = %q, want %q", cfg.FileType, tt.wantFileType)
+				}
+			}
+		})
 	}
 }
 
