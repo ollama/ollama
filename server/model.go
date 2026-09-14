@@ -61,6 +61,9 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		layer.Name = srcLayer.Name
 
 		switch layer.MediaType {
+		case "application/vnd.ollama.image.tensor":
+			// Native MLX / safetensors tensor layer
+			layers = append(layers, &layerGGML{Layer: layer})
 		case "application/vnd.ollama.image.model",
 			"application/vnd.ollama.image.projector",
 			"application/vnd.ollama.image.adapter",

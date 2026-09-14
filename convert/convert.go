@@ -32,8 +32,8 @@ type ModelParameters struct {
 }
 
 type AdapterParameters struct {
-	Alpha          uint32 `json:"lora_alpha"`
-	LoraLayers     uint32 `json:"lora_layers"`
+	Alpha          float32 `json:"lora_alpha"`
+	LoraLayers     uint32  `json:"lora_layers"`
 	LoraParameters struct {
 		Rank  uint32  `json:"rank"`
 		Alpha float32 `json:"alpha"`
