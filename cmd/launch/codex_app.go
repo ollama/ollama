@@ -1281,11 +1281,11 @@ func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContrac
 		}
 	}
 
-	// Binary thinking maps "none" to off and "medium" to on.
+	// Binary thinking maps "none" to off and "high" to on.
 	return codexAppThinkingContract{
-		defaultLevel: "medium",
-		levels:       []string{"none", "medium"},
-		values:       map[string]any{"none": false, "medium": true},
+		defaultLevel: "high",
+		levels:       []string{"none", "high"},
+		values:       map[string]any{"none": false, "high": true},
 	}
 }
 
@@ -1323,12 +1323,15 @@ func codexAppThinkingLevelForOllamaValue(value any) (string, bool) {
 	switch value := value.(type) {
 	case bool:
 		if value {
-			return "medium", true
+			return "high", true
 		}
 		return "none", true
 	case string:
-		think := api.ThinkValue{Value: value}
-		return value, think.IsValid()
+		switch value {
+		case "low", "medium", "high", "max":
+			return value, true
+		}
+		return "", false
 	}
 	return "", false
 }

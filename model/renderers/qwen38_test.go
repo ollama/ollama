@@ -369,7 +369,7 @@ Montréal
 	}
 }
 
-func TestQwen38RendererReasoningEffortMapping(t *testing.T) {
+func TestQwen38RendererReasoningEffort(t *testing.T) {
 	tests := []struct {
 		name  string
 		think *api.ThinkValue
@@ -380,8 +380,10 @@ func TestQwen38RendererReasoningEffortMapping(t *testing.T) {
 		{name: "false", think: &api.ThinkValue{Value: false}, want: ""},
 		{name: "low", think: &api.ThinkValue{Value: "low"}, want: qwen38RefLow},
 		{name: "medium", think: &api.ThinkValue{Value: "medium"}, want: ""},
-		{name: "high", think: &api.ThinkValue{Value: "high"}, want: qwen38RefXHigh},
-		{name: "max", think: &api.ThinkValue{Value: "max"}, want: qwen38RefXHigh},
+		{name: "xhigh", think: &api.ThinkValue{Value: "xhigh"}, want: qwen38RefXHigh},
+		{name: "future uses renderer default", think: &api.ThinkValue{Value: "future"}, want: qwen38RefXHigh},
+		{name: "high uses renderer default", think: &api.ThinkValue{Value: "high"}, want: qwen38RefXHigh},
+		{name: "max uses renderer default", think: &api.ThinkValue{Value: "max"}, want: qwen38RefXHigh},
 	}
 
 	for _, tt := range tests {

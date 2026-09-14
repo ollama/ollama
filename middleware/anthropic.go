@@ -743,7 +743,7 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anth
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
-func AnthropicMessagesMiddleware() gin.HandlerFunc {
+func AnthropicMessagesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 
@@ -773,6 +773,13 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
 			return
+		}
+
+		if modelThinking(thinkingLookup, req.Model) && req.OutputConfig != nil && (req.Thinking == nil || (req.Thinking.Type != "enabled" && req.Thinking.Type != "disabled")) {
+			// Preserve the effort name; only the renderer knows which levels it honors.
+			if req.OutputConfig.Effort != "" {
+				chatReq.Think = &api.ThinkValue{Value: req.OutputConfig.Effort}
+			}
 		}
 
 		// Set think to nil when being used with Anthropic API to connect to tools like claude code

@@ -444,7 +444,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func ChatMiddleware() gin.HandlerFunc {
+func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.ChatCompletionRequest
 		err := c.ShouldBindJSON(&req)
@@ -460,10 +460,26 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		var b bytes.Buffer
 
-		chatReq, err := openai.FromChatRequest(req)
+		conversionReq := req
+		genericThinking := modelThinking(thinkingLookup, req.Model)
+		var effort string
+		if genericThinking {
+			if req.Reasoning != nil {
+				effort = req.Reasoning.Effort
+			} else if req.ReasoningEffort != nil {
+				effort = *req.ReasoningEffort
+			}
+			conversionReq.Reasoning = nil
+			conversionReq.ReasoningEffort = nil
+		}
+		chatReq, err := openai.FromChatRequest(conversionReq)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
+		}
+
+		if genericThinking {
+			chatReq.Think = requestedThinking(effort)
 		}
 
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
@@ -1167,7 +1183,7 @@ func decodeWebSearchResponseError(status int, data []byte) error {
 	return api.StatusError{StatusCode: status, ErrorMessage: response.Error}
 }
 
-func ResponsesMiddleware() gin.HandlerFunc {
+func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 		if c.GetHeader("Content-Encoding") == "zstd" {
@@ -1187,10 +1203,19 @@ func ResponsesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := openai.FromResponsesRequest(req)
+		conversionReq := req
+		genericThinking := modelThinking(thinkingLookup, req.Model)
+		if genericThinking {
+			conversionReq.Reasoning.Effort = ""
+		}
+		chatReq, err := openai.FromResponsesRequest(conversionReq)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
+		}
+
+		if genericThinking && req.Think == nil {
+			chatReq.Think = requestedThinking(req.Reasoning.Effort)
 		}
 
 		// Check if client requested streaming (defaults to false)

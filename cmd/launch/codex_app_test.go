@@ -2017,10 +2017,10 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 			t.Fatalf("supported_reasoning_levels for %q = %T, want list", slug, model["supported_reasoning_levels"])
 		}
 		if slug == "gemma4" {
-			if model["default_reasoning_level"] != "medium" {
-				t.Fatalf("default_reasoning_level for %q = %v, want medium", slug, model["default_reasoning_level"])
+			if model["default_reasoning_level"] != "high" {
+				t.Fatalf("default_reasoning_level for %q = %v, want high", slug, model["default_reasoning_level"])
 			}
-			wantEfforts := []string{"none", "medium"}
+			wantEfforts := []string{"none", "high"}
 			gotEfforts := make([]string, 0, len(levels))
 			for _, level := range levels {
 				entry, ok := level.(map[string]any)
@@ -2093,10 +2093,10 @@ func TestCodexAppConfigurePopulatesCatalogFromEnrichedModels(t *testing.T) {
 		t.Fatalf("routing catalog models = %#v, want 3 selected Ollama models", routingCatalog.Models)
 	}
 	gemmaThinking := routingCatalog.Models[0].Thinking
-	if routingCatalog.Models[0].Slug != "gemma4" || !gemmaThinking.Supported || !slices.Equal(gemmaThinking.Levels, []string{"none", "medium"}) {
-		t.Fatalf("gemma4 routing thinking = %+v, want binary off/medium metadata", gemmaThinking)
+	if routingCatalog.Models[0].Slug != "gemma4" || !gemmaThinking.Supported || !slices.Equal(gemmaThinking.Levels, []string{"none", "high"}) {
+		t.Fatalf("gemma4 routing thinking = %+v, want binary off/high metadata", gemmaThinking)
 	}
-	if gemmaThinking.Values["none"] != false || gemmaThinking.Values["medium"] != true {
+	if gemmaThinking.Values["none"] != false || gemmaThinking.Values["high"] != true {
 		t.Fatalf("gemma4 routing thinking values = %#v, want exact false/true values", gemmaThinking.Values)
 	}
 	for _, routed := range routingCatalog.Models[1:] {
@@ -2118,7 +2118,7 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		wantValues     map[string]any
 	}{
 		{name: "non-thinking model"},
-		{name: "binary fallback", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}, wantValues: map[string]any{"none": false, "medium": true}},
+		{name: "binary fallback", thinking: true, wantInitial: "high", wantLevels: []string{"none", "high"}, wantValues: map[string]any{"none": false, "high": true}},
 		{
 			name:           "recommendation with adjustable strings",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "high"},
@@ -2129,16 +2129,23 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		{
 			name:           "recommendation with mixed boolean and string values",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "max"}, Default: true},
-			wantInitial:    "medium",
-			wantLevels:     []string{"none", "medium", "max"},
-			wantValues:     map[string]any{"none": false, "medium": true, "max": "max"},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high", "max"},
+			wantValues:     map[string]any{"none": false, "high": true, "max": "max"},
+		},
+		{
+			name:           "boolean on is distinct from named medium",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high", "medium"},
+			wantValues:     map[string]any{"none": false, "high": true, "medium": "medium"},
 		},
 		{
 			name:           "recommendation with binary thinking off by default",
 			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false},
 			wantInitial:    "none",
-			wantLevels:     []string{"none", "medium"},
-			wantValues:     map[string]any{"none": false, "medium": true},
+			wantLevels:     []string{"none", "high"},
+			wantValues:     map[string]any{"none": false, "high": true},
 		},
 		{
 			name:           "explicit non-thinking recommendation",
@@ -2149,12 +2156,12 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 			name:           "invalid recommendation uses capability fallback",
 			thinking:       true,
 			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high"}, Default: "max"},
-			wantInitial:    "medium",
-			wantLevels:     []string{"none", "medium"},
-			wantValues:     map[string]any{"none": false, "medium": true},
+			wantInitial:    "high",
+			wantLevels:     []string{"none", "high"},
+			wantValues:     map[string]any{"none": false, "high": true},
 		},
 		{name: "model name alone does not infer thinking", modelName: "glm-5.3-flash:cloud"},
-		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "medium", wantLevels: []string{"none", "medium"}},
+		{name: "similar unverified tag uses fallback", modelName: "glm-5.3-flash:custom", thinking: true, wantInitial: "high", wantLevels: []string{"none", "high"}},
 		{name: "GLM 5.3 Flash family fallback", family: "glm5_next", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
 		{name: "GLM 5.3 family fallback", modelName: "glm-5.3:cloud", family: "glm_dsa_moe", thinking: true, wantInitial: "max", wantLevels: []string{"low", "high", "max"}},
 		{name: "GPT-OSS family", family: "gpt-oss", thinking: true, wantInitial: "medium", wantLevels: []string{"low", "medium", "high"}},
@@ -2215,15 +2222,15 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 	if len(catalog.Models) == 0 || catalog.Models[0].Slug != model.Name {
 		t.Fatalf("catalog models = %#v, want selected model first", catalog.Models)
 	}
-	if got := catalog.Models[0].DefaultReasoningLevel; got != "medium" {
-		t.Fatalf("default reasoning level = %q, want medium for Ollama true", got)
+	if got := catalog.Models[0].DefaultReasoningLevel; got != "high" {
+		t.Fatalf("default reasoning level = %q, want high for Ollama true", got)
 	}
 	var levels []string
 	for _, level := range catalog.Models[0].SupportedReasoningLevels {
 		levels = append(levels, level.Effort)
 	}
-	if !slices.Equal(levels, []string{"none", "medium", "max"}) {
-		t.Fatalf("reasoning levels = %v, want none/medium/max", levels)
+	if !slices.Equal(levels, []string{"none", "high", "max"}) {
+		t.Fatalf("reasoning levels = %v, want none/high/max", levels)
 	}
 
 	configPath, err := codexConfigPath()
@@ -2245,7 +2252,7 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := routing.Models[0].Thinking.Values
-	if values["none"] != false || values["medium"] != true || values["max"] != "max" {
+	if values["none"] != false || values["high"] != true || values["max"] != "max" {
 		t.Fatalf("routing thinking values = %#v, want exact endpoint values", values)
 	}
 }
