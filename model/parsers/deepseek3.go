@@ -45,6 +45,13 @@ func (p *DeepSeek3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *DeepSeek3Parser) ThinkingClose() []string {
+	if p.state == DeepSeekCollectingThinking {
+		return []string{deepseekThinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *DeepSeek3Parser) PreservedTokens() []string {
 	return []string{
 		deepseekThinkingCloseTag,

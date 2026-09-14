@@ -39,6 +39,10 @@ func (p *Olmo3Parser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *Olmo3Parser) ThinkingClose() []string {
+	return nil
+}
+
 func (p *Olmo3Parser) PreservedTokens() []string {
 	return []string{
 		olmo3FuncCallsOpenTag,

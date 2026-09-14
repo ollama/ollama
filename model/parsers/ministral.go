@@ -57,6 +57,13 @@ func (p *MinistralParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *MinistralParser) ThinkingClose() []string {
+	if p.state == ministralCollectingThinkingContent {
+		return []string{ministralThinkEndTag}
+	}
+	return nil
+}
+
 func (p *MinistralParser) PreservedTokens() []string {
 	return []string{
 		ministralToolCallsTag,
