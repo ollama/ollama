@@ -18,8 +18,10 @@ func copyLlamaQuantizeInput(in, out *os.File, _ *fsggml.GGML, _ fsggml.FileType,
 	if _, err := out.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	if err := out.Truncate(0); err != nil {
-		return err
+	if out.Name() != os.DevNull {
+		if err := out.Truncate(0); err != nil {
+			return err
+		}
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		return err
