@@ -1220,29 +1220,21 @@ func (s *Server) PushHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// getExistingName searches the models directory for the longest prefix match of
-// the input name and returns the input name with all existing parts replaced
-// with each part found. If no parts are found, the input name is returned as
-// is.
+// getExistingName searches the models directory for a case-insensitive match of
+// the input name. If a match is found, the on-disk canonical name is returned.
+// If no match is found, the input name is returned as-is.
 func getExistingName(n model.Name) (model.Name, error) {
 	var zero model.Name
 	existing, err := manifest.Manifests(true)
 	if err != nil {
 		return zero, err
 	}
-	var set model.Name // tracks parts already canonicalized
 	for e := range existing {
-		if set.Host == "" && strings.EqualFold(e.Host, n.Host) {
-			n.Host = e.Host
-		}
-		if set.Namespace == "" && strings.EqualFold(e.Namespace, n.Namespace) {
-			n.Namespace = e.Namespace
-		}
-		if set.Model == "" && strings.EqualFold(e.Model, n.Model) {
-			n.Model = e.Model
-		}
-		if set.Tag == "" && strings.EqualFold(e.Tag, n.Tag) {
-			n.Tag = e.Tag
+		if strings.EqualFold(e.Host, n.Host) &&
+			strings.EqualFold(e.Namespace, n.Namespace) &&
+			strings.EqualFold(e.Model, n.Model) &&
+			strings.EqualFold(e.Tag, n.Tag) {
+			return e, nil
 		}
 	}
 
