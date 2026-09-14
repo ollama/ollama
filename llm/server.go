@@ -209,8 +209,6 @@ type CompletionRequest struct {
 	// response begins with, which Format leaves free; none when the response
 	// starts in content.
 	ThinkingClose []string
-	// IncludeIntermediateMetrics adds cumulative metrics to non-final responses; final responses always include metrics.
-	IncludeIntermediateMetrics bool
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool

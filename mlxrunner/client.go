@@ -114,13 +114,12 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 }
 
 type CompletionRequest struct {
-	Prompt                     string
-	Media                      []llm.MediaData
-	Format                     json.RawMessage
-	Options                    api.Options
-	Logprobs                   bool
-	TopLogprobs                int
-	IncludeIntermediateMetrics bool
+	Prompt      string
+	Media       []llm.MediaData
+	Format      json.RawMessage
+	Options     api.Options
+	Logprobs    bool
+	TopLogprobs int
 }
 
 type CompletionResponse struct {
@@ -197,12 +196,11 @@ func jsonString(s string) string {
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
-		Prompt:                     req.Prompt,
-		Media:                      req.Media,
-		Format:                     requestGrammar(req),
-		Logprobs:                   req.Logprobs,
-		TopLogprobs:                req.TopLogprobs,
-		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
+		Prompt:      req.Prompt,
+		Media:       req.Media,
+		Format:      requestGrammar(req),
+		Logprobs:    req.Logprobs,
+		TopLogprobs: req.TopLogprobs,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options
