@@ -42,6 +42,7 @@ func TestFileTypeStringMatchesLlamaFType(t *testing.T) {
 		{38, "MXFP4_MOE"},
 		{39, "NVFP4"},
 		{40, "Q1_0"},
+		{41, "Q2_0"},
 		{FileTypeUnknown, "unknown"},
 	}
 
@@ -103,6 +104,7 @@ func TestTensorTypeStringMatchesGGMLType(t *testing.T) {
 		{39, "MXFP4"},
 		{40, "NVFP4"},
 		{41, "Q1_0"},
+		{42, "Q2_0"},
 	}
 
 	for _, tt := range tests {

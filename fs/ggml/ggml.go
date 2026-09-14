@@ -426,7 +426,7 @@ func (t TensorType) BlockSize() uint64 {
 		tensorTypeIQ4_NL,
 		TensorTypeMXFP4:
 		return 32
-	case TensorTypeNVFP4:
+	case TensorTypeNVFP4, TensorTypeQ2_0:
 		return 64
 	case TensorTypeQ1_0:
 		return 128
@@ -447,6 +447,8 @@ func (t TensorType) TypeSize() uint64 {
 		return 4
 	case TensorTypeF16:
 		return 2
+	case TensorTypeQ2_0:
+		return 2 + blockSize/4
 	case TensorTypeQ4_0:
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
