@@ -106,6 +106,26 @@ func TestLlamaServerHealthParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerRunnerHasExited(t *testing.T) {
+	t.Run("no process", func(t *testing.T) {
+		if (&llamaServerRunner{}).HasExited() {
+			t.Fatal("expected runner without a process to be running")
+		}
+	})
+
+	t.Run("done channel closed", func(t *testing.T) {
+		done := make(chan struct{})
+		runner := &llamaServerRunner{done: done}
+		if runner.HasExited() {
+			t.Fatal("expected open done channel to indicate running")
+		}
+		close(done)
+		if !runner.HasExited() {
+			t.Fatal("expected closed done channel to indicate exited")
+		}
+	})
+}
+
 func TestBoundedNumPredict(t *testing.T) {
 	tests := []struct {
 		name       string

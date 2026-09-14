@@ -769,7 +769,7 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	finished := make(chan *LlmRequest)
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, sessionDuration: 1, numParallel: 1}
-	req.useLoadedRunner(r1, finished)
+	require.True(t, req.useLoadedRunner(r1, finished))
 	require.Equal(t, uint(1), r1.refCount)
 	require.Equal(t, time.Duration(2), r1.sessionDuration)
 	select {
@@ -783,6 +783,103 @@ func TestSchedUseLoadedRunner(t *testing.T) {
 	done()
 	fin := <-finished
 	require.Equal(t, req, fin)
+}
+
+func TestSchedUseLoadedRunnerRefusesExitedRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	req := &LlmRequest{
+		ctx:       ctx,
+		opts:      api.DefaultOptions(),
+		successCh: make(chan *runnerRef, 1),
+	}
+	finished := make(chan *LlmRequest)
+	runner := &runnerRef{
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}, hasExited: true},
+		numParallel: 1,
+	}
+
+	require.False(t, req.useLoadedRunner(runner, finished))
+	require.Zero(t, runner.refCount)
+	require.Empty(t, req.successCh)
+	select {
+	case <-finished:
+		t.Fatal("expected no finished event for refused runner")
+	default:
+	}
+}
+
+func TestSchedGetRunnerRequeuesWhenLoadedRunnerExited(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}, hasExited: true},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	successCh, errCh := s.getRunner(ctx, &Model{Name: "safetensors-b", Digest: "sha-a"}, opts, nil, false, false, nil)
+
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
+func TestSchedProcessPendingReloadsExitedRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 3*time.Second)
+	defer done()
+
+	scenario := newScenarioRequest(t, ctx, "ollama-stale-model", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+	s.newServerFn = scenario.newServer
+
+	// Simulate a runner that exited but is still registered as loaded.
+	opts := api.DefaultOptions()
+	stale := &runnerRef{
+		model:       scenario.req.model,
+		modelKey:    schedulerModelKey(scenario.req.model),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}, hasExited: true},
+		Options:     &opts,
+		numParallel: 1,
+	}
+	s.loadedMu.Lock()
+	s.loaded[stale.modelKey] = stale
+	s.loadedMu.Unlock()
+
+	s.Run(ctx)
+	s.pendingReqCh <- scenario.req
+
+	select {
+	case runner := <-scenario.req.successCh:
+		require.Equal(t, scenario.srv, runner.llama)
+		require.NotEqual(t, stale, runner)
+		require.True(t, stale.llama.(*mockLlm).closeCalled)
+		s.loadedMu.Lock()
+		current := s.loaded[stale.modelKey]
+		s.loadedMu.Unlock()
+		require.Equal(t, scenario.srv, current.llama)
+	case err := <-scenario.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout")
+	}
+	scenario.ctxDone()
 }
 
 func TestSchedUpdateFreeSpace(t *testing.T) {
@@ -2088,7 +2185,8 @@ type mockLlm struct {
 
 	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
 	// load failure (e.g. llama-server crashing due to under-predicted VRAM).
-	loadErr error
+	loadErr   error
+	hasExited bool
 }
 
 func (s *mockLlm) ModelPath() string {
@@ -2154,7 +2252,7 @@ func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
-func (s *mockLlm) HasExited() bool                                    { return false }
+func (s *mockLlm) HasExited() bool                                    { return s.hasExited }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
 func (s *mockLlm) ContextLength() int                                 { return s.contextLength }
 
