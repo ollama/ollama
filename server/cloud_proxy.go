@@ -41,6 +41,7 @@ var (
 	cloudProxySigningHost = defaultCloudProxySigningHost
 	cloudProxySignRequest = signCloudProxyRequest
 	cloudProxySigninURL   = signinURL
+	cloudProxyHTTPClient  = newCloudProxyHTTPClient()
 )
 
 var hopByHopHeaders = map[string]struct{}{
@@ -69,6 +70,26 @@ func init() {
 	if overridden {
 		slog.Info("cloud base URL override enabled", "env", cloudProxyBaseURLEnv, "url", cloudProxyBaseURL, "mode", mode)
 	}
+}
+
+// newCloudProxyHTTPClient returns the client used to forward requests to the
+// cloud proxy. Connect, TLS, and response-header (TTFB) phases are bounded so
+// a stalled upstream fails fast instead of hanging the request indefinitely.
+// Idle keep-alive connections are evicted after a short window so stale
+// connections silently dropped by a load balancer or NAT are not reused. No
+// total timeout is set: once a response starts streaming, long-lived
+// generations must be allowed to run to completion.
+func newCloudProxyHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   envconfig.CloudProxyConnectTimeout(),
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.TLSHandshakeTimeout = envconfig.CloudProxyConnectTimeout()
+	transport.ResponseHeaderTimeout = envconfig.CloudProxyTTFBTimeout()
+	transport.IdleConnTimeout = envconfig.CloudProxyIdleConnTimeout()
+
+	return &http.Client{Transport: transport}
 }
 
 func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
@@ -214,10 +235,10 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 		return
 	}
 
-	// TODO(drifkin): Add phase-specific proxy timeouts.
-	// Connect/TLS/TTFB should have bounded timeouts, but once streaming starts
-	// we should not enforce a short total timeout for long-lived responses.
-	resp, err := http.DefaultClient.Do(outReq)
+	// Connect, TLS, and TTFB are bounded by cloudProxyHTTPClient. Once the
+	// response starts streaming, no total timeout is enforced so long-lived
+	// generations are not cut short.
+	resp, err := cloudProxyHTTPClient.Do(outReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
