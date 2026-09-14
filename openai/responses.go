@@ -511,6 +511,11 @@ type ResponsesRequest struct {
 	// for us: not supported
 	Conversation json.RawMessage `json:"conversation"`
 
+	// originally: optional, the id of a previous response to continue from
+	// for us: not supported. Accepting and ignoring it returns a completed
+	// response with no output, which a client reads as a finished turn.
+	PreviousResponseID *string `json:"previous_response_id,omitempty"`
+
 	// originally: string[]
 	// for us: ignored
 	Include []string `json:"include"`
@@ -553,6 +558,13 @@ type ResponsesRequest struct {
 
 // FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
 func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+	// Nothing resolves this id, so the conversation it names is not part of the
+	// prompt. Ignoring it produced a completed response with empty output,
+	// which a client cannot tell from a finished turn -- say so instead.
+	if r.PreviousResponseID != nil && *r.PreviousResponseID != "" {
+		return nil, errors.New("previous_response_id is not supported, send the whole conversation in input instead")
+	}
+
 	var messages []api.Message
 	availableTools := responsesRequestTools(r)
 
