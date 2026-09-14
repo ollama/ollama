@@ -8,6 +8,25 @@ import (
 	"unsafe"
 )
 
+// Nvfp4MaxProduct is the product of the maximum E4M3 and E2M1 values. Every
+// globalScale below is in MLX's representation: a checkpoint's multiplier m
+// (ModelOpt's weight_scale_2) is held as m*Nvfp4MaxProduct, so Nvfp4MaxProduct
+// itself is the identity. Wrappers that hand the scale to MLX pass it through;
+// wrappers that apply it themselves divide it back out.
+const Nvfp4MaxProduct = 448 * 6
+
+// scaleAndCast applies a global scale to an output and casts back, fusing the
+// divide, multiply and cast into one kernel. Eagerly this is several: MLX
+// promotes binary operands with an astype, so a bf16 input times a float32
+// scale round-trips through a full-size float32 intermediate.
+var scaleAndCast = Compile2(
+	"GlobalScaleOutput",
+	func(out, scale *Array) *Array {
+		return Mul(out, DivScalar(scale, Nvfp4MaxProduct)).AsType(out.DType())
+	},
+	Shapeless(),
+)
+
 // Quantization operations
 
 func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
@@ -45,6 +64,8 @@ func ToFP8(x *Array) *Array {
 	return out
 }
 
+// Dequantize applies globalScale itself rather than forwarding it: MLX's own
+// argument accepts only a scalar, and callers pass per-expert banks.
 func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, globalScale *Array) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -61,19 +82,18 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, glob
 	var noGlobalScale C.mlx_array
 	mlxCheck(C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, noGlobalScale, optDtype, DefaultStream().ctx))
 	if globalScale != nil {
-		// The C-level global_scale argument is rejected on Metal; apply it on top.
 		gs := globalScale
-		if gs.Size() > 1 {
-			// A vector scale is per-row; bind it to the weight's leading axis.
-			gs = Reshape(gs, int32(gs.Size()), 1)
+		for gs.NumDims() < out.NumDims() {
+			gs = ExpandDims(gs, -1)
 		}
-		outType := out.DType()
-		out = Mul(out, gs).AsType(outType)
+		out = scaleAndCast(out, gs)
 	}
 	return out
 }
 
-func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bits int, mode string) *Array {
+// QuantizedMatmul applies globalScale to the output; MLX's quantized_matmul
+// has none of its own.
+func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
@@ -86,16 +106,23 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 
 	out := New("QUANTIZED_MATMUL")
 	mlxCheck(C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx))
+	if globalScale != nil {
+		out = scaleAndCast(out, globalScale)
+	}
 	return out
 }
 
-func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, sortedIndices bool) *Array {
+// GatherQMM multiplies x against the quantized weight banks selected by
+// lhsIndices and rhsIndices, with one globalScale entry per expert. Metal
+// applies it inside the gather kernel, other backends scale the gathered
+// output rows in the wrapper.
+func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array, sortedIndices bool) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 
-	var b, lhs, rhs C.mlx_array
+	var b, lhs, rhs, gs C.mlx_array
 	if biases != nil {
 		b = biases.ctx
 	}
@@ -105,10 +132,35 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	if rhsIndices != nil {
 		rhs = rhsIndices.ctx
 	}
+	// The wrapper fallback needs rhs indices to map output rows to experts;
+	// without them the native path reports the unsupported combination.
+	applyWrapperScale := globalScale != nil && !MetalIsAvailable() && rhsIndices != nil
+	if globalScale != nil && !applyWrapperScale {
+		gs = globalScale.ctx
+	}
 
 	out := New("GATHER_QMM")
-	mlxCheck(C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx))
+	mlxCheck(C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, gs, C.bool(sortedIndices), DefaultStream().ctx))
+	if applyWrapperScale {
+		out = mulGatherQMMGlobalScale(out, globalScale, rhsIndices)
+	}
 	return out
+}
+
+// mulGatherQMMGlobalScale scales gathered output rows by the per-expert
+// global scale.
+func mulGatherQMMGlobalScale(out, globalScale, rhsIndices *Array) *Array {
+	// The indices address the weight's flattened batch dimensions, so the bank
+	// has to be flat too before taking from it.
+	perExpert := Reshape(globalScale, int32(globalScale.Size()))
+	scaleRows := Take(perExpert, rhsIndices, 0)
+	// out is the broadcast index shape plus the two matmul axes, and rhsIndices
+	// may be shorter, so pad left before appending those axes.
+	for scaleRows.NumDims() < out.NumDims()-2 {
+		scaleRows = ExpandDims(scaleRows, 0)
+	}
+	scaleRows = ExpandDims(ExpandDims(scaleRows, -1), -1)
+	return scaleAndCast(out, scaleRows)
 }
 
 // Missing tensor ops
@@ -126,6 +178,17 @@ func Tile(a *Array, reps []int32) *Array {
 	}
 	out := New("TILE")
 	mlxCheck(C.mlx_tile(&out.ctx, a.ctx, unsafe.SliceData(cReps), C.size_t(len(reps)), DefaultStream().ctx))
+	return out
+}
+
+// BroadcastTo broadcasts an array to the given shape.
+func BroadcastTo(a *Array, shape ...int32) *Array {
+	cShape := make([]C.int, len(shape))
+	for i, s := range shape {
+		cShape[i] = C.int(s)
+	}
+	out := New("BROADCAST_TO")
+	mlxCheck(C.mlx_broadcast_to(&out.ctx, a.ctx, unsafe.SliceData(cShape), C.size_t(len(shape)), DefaultStream().ctx))
 	return out
 }
 

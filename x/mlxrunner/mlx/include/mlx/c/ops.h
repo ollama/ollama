@@ -548,6 +548,7 @@ int mlx_gather_qmm(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     bool sorted_indices,
     const mlx_stream s);
 int mlx_gather_qqmm(

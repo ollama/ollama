@@ -1404,6 +1404,7 @@ int (*mlx_gather_qmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     bool sorted_indices,
     const mlx_stream s) = NULL;
 int (*mlx_gather_qqmm_)(

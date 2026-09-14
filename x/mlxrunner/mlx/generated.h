@@ -2717,6 +2717,7 @@ extern int (*mlx_gather_qmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     bool sorted_indices,
     const mlx_stream s);
 extern int (*mlx_gather_qqmm_)(
@@ -6045,9 +6046,10 @@ static inline int mlx_gather_qmm(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     bool sorted_indices,
     const mlx_stream s) {
-    return mlx_gather_qmm_(res, x, w, scales, biases, lhs_indices, rhs_indices, transpose, group_size, bits, mode, sorted_indices, s);
+    return mlx_gather_qmm_(res, x, w, scales, biases, lhs_indices, rhs_indices, transpose, group_size, bits, mode, global_scale, sorted_indices, s);
 }
 static inline int mlx_gather_qqmm(
     mlx_array* res,
