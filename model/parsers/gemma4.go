@@ -252,7 +252,36 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			}
 		}
 
-		if strings.Contains(bufStr, gemma4ThinkingCloseTag) {
+		// A tool call can open before the thinking channel is closed. The model
+		// is supposed to emit <channel|> first, and usually does -- but when it
+		// does not, this state used to scan for the close tag alone and the
+		// whole call was collected as reasoning. Captured verbatim at the end
+		// of a 17,325-character thinking block:
+		//
+		//   Let's go.<|tool_call>call:editor{end_line:91,...}<tool_call|><|tool_response>
+		//
+		// Complete, well-formed, and invisible: the caller saw a turn with no
+		// tool calls, so the run ended and the edit was never made. Content
+		// state has always checked for both tags; this makes thinking state
+		// symmetric with it. Whichever tag comes first wins, so a close tag
+		// followed by a call still takes the ordinary path below.
+		closeIdx := strings.Index(bufStr, gemma4ThinkingCloseTag)
+		toolIdx := strings.Index(bufStr, gemma4ToolCallOpenTag)
+		if toolIdx != -1 && (closeIdx == -1 || toolIdx < closeIdx) {
+			thinking := strings.TrimRightFunc(bufStr[:toolIdx], unicode.IsSpace)
+			remaining := bufStr[toolIdx+len(gemma4ToolCallOpenTag):]
+
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+			p.state = Gemma4CollectingToolCall
+
+			if len(thinking) > 0 {
+				events = append(events, gemma4EventThinkingContent{content: thinking})
+			}
+			return events, true
+		}
+
+		if closeIdx != -1 {
 			split := strings.SplitN(bufStr, gemma4ThinkingCloseTag, 2)
 			thinking := strings.TrimRightFunc(split[0], unicode.IsSpace)
 			remaining := strings.TrimLeftFunc(split[1], unicode.IsSpace)
@@ -267,9 +296,11 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			return events, true
 		}
 
-		// Check for partial close tag
+		// Check for a partial close tag -- or a partial tool-call open tag,
+		// which streams in across chunks exactly the same way and would
+		// otherwise have its prefix emitted as reasoning before it completed.
 		if !done {
-			if overlapLen := overlap(bufStr, gemma4ThinkingCloseTag); overlapLen > 0 {
+			if overlapLen := longestOverlap(bufStr, gemma4ThinkingCloseTag, gemma4ToolCallOpenTag); overlapLen > 0 {
 				beforePartialTag := bufStr[:len(bufStr)-overlapLen]
 				trailingLen := trailingWhitespaceLen(beforePartialTag)
 				ambiguousStart := len(beforePartialTag) - trailingLen
