@@ -111,6 +111,7 @@ func TraceMessagesRequest(r MessagesRequest) map[string]any {
 		"tools":          traceTools(r.Tools),
 		"tool_choice":    TraceJSON(r.ToolChoice),
 		"thinking":       TraceJSON(r.Thinking),
+		"output_config":  TraceJSON(r.OutputConfig),
 		"stop_sequences": r.StopSequences,
 		"temperature":    ptrVal(r.Temperature),
 		"top_p":          ptrVal(r.TopP),
