@@ -456,18 +456,19 @@ func stackLinears(a, b nn.LinearLayer) (nn.LinearLayer, error) {
 	return out, nil
 }
 
-// perRowGlobal expands a per-tensor (or nil, meaning 1.0) global scale to a
-// per-row vector; an already per-row scale passes through unchanged.
+// perRowGlobal expands a per-tensor global scale to a per-row vector; an
+// already per-row scale passes through unchanged. A nil scale fills with the
+// identity, which in MLX's representation is Nvfp4MaxProduct rather than 1.
 func perRowGlobal(g *mlx.Array, rows int32) *mlx.Array {
-	ones := make([]float32, rows)
-	for i := range ones {
-		ones[i] = 1
+	identity := make([]float32, rows)
+	for i := range identity {
+		identity[i] = mlx.Nvfp4MaxProduct
 	}
-	v := mlx.FromValues(ones, int(rows))
+	v := mlx.FromValues(identity, int(rows))
 	if g == nil {
 		return v
 	}
-	return mlx.Mul(v, g)
+	return mlx.Mul(mlx.DivScalar(v, mlx.Nvfp4MaxProduct), g)
 }
 
 func concatBias(a *mlx.Array, aRows int32, b *mlx.Array, bRows int32) *mlx.Array {

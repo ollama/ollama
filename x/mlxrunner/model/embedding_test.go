@@ -71,50 +71,55 @@ func TestMakeEmbeddingLayerQuantized(t *testing.T) {
 	})
 }
 
+// A checkpoint scale is converted to MLX's representation at load, and the
+// same converted scale reaches the linear view.
 func TestMakeEmbeddingLayerQuantizedGlobalScale(t *testing.T) {
-	weight := &mlx.Array{}
-	scales := &mlx.Array{}
-	globalScale := &mlx.Array{}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const checkpoint = 0.375
+		emb := MakeEmbeddingLayer(map[string]*mlx.Array{
+			"model.embed_tokens.weight":              {},
+			"model.embed_tokens.weight_scale":        {},
+			"model.embed_tokens.weight.global_scale": mlx.FromValues([]float32{checkpoint}, 1),
+		}, "model.embed_tokens", 16, 4, "nvfp4", nil)
 
-	emb := MakeEmbeddingLayer(map[string]*mlx.Array{
-		"model.embed_tokens.weight":              weight,
-		"model.embed_tokens.weight_scale":        scales,
-		"model.embed_tokens.weight.global_scale": globalScale,
-	}, "model.embed_tokens", 16, 4, "nvfp4", nil)
+		qemb, ok := emb.(*nn.QuantizedEmbedding)
+		if !ok {
+			t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
+		}
+		mlx.Eval(qemb.GlobalScale)
+		want := float32(checkpoint * mlx.Nvfp4MaxProduct)
+		if got := qemb.GlobalScale.Floats(); len(got) != 1 || got[0] != want {
+			t.Fatalf("GlobalScale = %v, want [%v]", got, want)
+		}
 
-	qemb, ok := emb.(*nn.QuantizedEmbedding)
-	if !ok {
-		t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
-	}
-	if qemb.GlobalScale != globalScale {
-		t.Fatalf("GlobalScale = %p, want %p", qemb.GlobalScale, globalScale)
-	}
-
-	linear, ok := qemb.AsLinear().(*nn.QuantizedLinear)
-	if !ok {
-		t.Fatalf("AsLinear type = %T, want *nn.QuantizedLinear", qemb.AsLinear())
-	}
-	if linear.GlobalScale != globalScale {
-		t.Fatalf("AsLinear GlobalScale = %p, want %p", linear.GlobalScale, globalScale)
-	}
+		linear, ok := qemb.AsLinear().(*nn.QuantizedLinear)
+		if !ok {
+			t.Fatalf("AsLinear type = %T, want *nn.QuantizedLinear", qemb.AsLinear())
+		}
+		if linear.GlobalScale != qemb.GlobalScale {
+			t.Fatalf("AsLinear GlobalScale = %p, want %p", linear.GlobalScale, qemb.GlobalScale)
+		}
+	})
 }
 
+// ModelOpt's own "weight_scale_2" name is honoured, and converted the same way.
 func TestMakeEmbeddingLayerQuantizedGlobalScaleFallback(t *testing.T) {
-	weight := &mlx.Array{}
-	scales := &mlx.Array{}
-	globalScale := &mlx.Array{}
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const checkpoint = 0.375
+		emb := MakeEmbeddingLayer(map[string]*mlx.Array{
+			"model.embed_tokens.weight":         {},
+			"model.embed_tokens.weight_scale":   {},
+			"model.embed_tokens.weight_scale_2": mlx.FromValues([]float32{checkpoint}, 1),
+		}, "model.embed_tokens", 16, 4, "nvfp4", nil)
 
-	emb := MakeEmbeddingLayer(map[string]*mlx.Array{
-		"model.embed_tokens.weight":         weight,
-		"model.embed_tokens.weight_scale":   scales,
-		"model.embed_tokens.weight_scale_2": globalScale,
-	}, "model.embed_tokens", 16, 4, "nvfp4", nil)
-
-	qemb, ok := emb.(*nn.QuantizedEmbedding)
-	if !ok {
-		t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
-	}
-	if qemb.GlobalScale != globalScale {
-		t.Fatalf("GlobalScale = %p, want %p", qemb.GlobalScale, globalScale)
-	}
+		qemb, ok := emb.(*nn.QuantizedEmbedding)
+		if !ok {
+			t.Fatalf("embedding type = %T, want *nn.QuantizedEmbedding", emb)
+		}
+		mlx.Eval(qemb.GlobalScale)
+		want := float32(checkpoint * mlx.Nvfp4MaxProduct)
+		if got := qemb.GlobalScale.Floats(); len(got) != 1 || got[0] != want {
+			t.Fatalf("GlobalScale = %v, want [%v]", got, want)
+		}
+	})
 }

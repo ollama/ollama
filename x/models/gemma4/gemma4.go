@@ -141,14 +141,13 @@ type MLP struct {
 
 // stackedExpertResult holds the result of collecting and stacking per-expert weights.
 type stackedExpertResult struct {
-	Weight              *mlx.Array
-	Scales              *mlx.Array
-	Biases              *mlx.Array
-	GlobalScales        *mlx.Array
-	DequantGlobalScales *mlx.Array
-	Bits                int
-	GroupSize           int
-	Mode                string
+	Weight       *mlx.Array
+	Scales       *mlx.Array
+	Biases       *mlx.Array
+	GlobalScales *mlx.Array
+	Bits         int
+	GroupSize    int
+	Mode         string
 }
 
 // firstNonNil returns the first non-nil tensor found under any of the given keys.
@@ -200,10 +199,10 @@ func transposeForGatherMM(w *mlx.Array) *mlx.Array {
 // proj: e.g. "gate_proj"
 func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, prefix, proj string, numExperts int32) *stackedExpertResult {
 	type expertPart struct {
-		weight, scales, biases         *mlx.Array
-		globalScale, kernelGlobalScale *mlx.Array
-		groupSize, bits                int
-		mode                           string
+		weight, scales, biases *mlx.Array
+		globalScale            *mlx.Array
+		groupSize, bits        int
+		mode                   string
 	}
 	parts := make([]expertPart, 0, numExperts)
 
@@ -226,20 +225,15 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 			continue
 		}
 		qb := tensors[key+"_qbias"]
-		globalScale := firstNonNil(tensors,
-			key+".global_scale",
-			base+".weight.global_scale",
-			base+".global_scale",
-		)
+		globalScale, _ := model.ReadGlobalScale(tensors, key, base+".weight", base)
 		gs, b, m := model.ResolveLinearQuantParams(
 			cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode,
 			cfg.TensorQuant, key, w, s,
 		)
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
 		parts = append(parts, expertPart{
 			weight: w, scales: s, biases: qb,
-			globalScale: globalScale, kernelGlobalScale: kernelGlobalScale,
-			groupSize: gs, bits: b, mode: m,
+			globalScale: globalScale,
+			groupSize:   gs, bits: b, mode: m,
 		})
 	}
 
@@ -279,7 +273,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	scales := make([]*mlx.Array, 0, len(parts))
 	biases := make([]*mlx.Array, 0, len(parts))
 	globalScales := make([]*mlx.Array, 0, len(parts))
-	dequantGlobalScales := make([]*mlx.Array, 0, len(parts))
 	for _, part := range parts {
 		weights = append(weights, part.weight)
 		scales = append(scales, part.scales)
@@ -287,8 +280,7 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 			biases = append(biases, part.biases)
 		}
 		if hasGlobalScales {
-			dequantGlobalScales = append(dequantGlobalScales, part.globalScale)
-			globalScales = append(globalScales, part.kernelGlobalScale)
+			globalScales = append(globalScales, part.globalScale)
 		}
 	}
 
@@ -302,7 +294,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, pre
 	}
 	if hasGlobalScales {
 		out.GlobalScales = mlx.Reshape(mlx.Stack(globalScales, 0).Clone(), int32(len(parts)))
-		out.DequantGlobalScales = mlx.Reshape(mlx.Stack(dequantGlobalScales, 0).Clone(), int32(len(parts)))
 	}
 	return out
 }
@@ -324,7 +315,7 @@ func denseStackedExpertResult(w *stackedExpertResult) *mlx.Array {
 		return w.Weight
 	}
 	return mlx.Dequantize(
-		w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode, w.DequantGlobalScales,
+		w.Weight, w.Scales, w.Biases, w.GroupSize, w.Bits, w.Mode, w.GlobalScales,
 	)
 }
 
@@ -347,14 +338,14 @@ func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, g
 
 	gateUpBiases := firstNonNil(tensors, gateUpKey+"_qbias", gateUpKey+".bias")
 	downBiases := firstNonNil(tensors, downKey+"_qbias", downKey+".bias")
-	gateUpGlobalScale := firstNonNil(tensors, gateUpKey+".global_scale", gateUpKey+".weight.global_scale")
-	downGlobalScale := firstNonNil(tensors, downKey+".global_scale", downKey+".weight.global_scale")
+	gateUpGlobalScale, _ := model.ReadGlobalScale(tensors, gateUpKey, gateUpKey+".weight")
+	downGlobalScale, _ := model.ReadGlobalScale(tensors, downKey, downKey+".weight")
 	gateUpGroupSize, gateUpBits, gateUpMode := model.ResolveLinearQuantParams(
 		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, gateUpKey, gateUp, gateUpScales)
 	downGroupSize, downBits, downMode := model.ResolveLinearQuantParams(
 		m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant, downKey, down, downScales)
-	gateUpKernelScale := model.PrepareGatherQMMGlobalScale(gateUpGlobalScale, gateUp.Dim(0))
-	downKernelScale := model.PrepareGatherQMMGlobalScale(downGlobalScale, down.Dim(0))
+	gateUpGlobalScale = model.PrepareGatherQMMGlobalScale(gateUpGlobalScale, gateUp.Dim(0))
+	downGlobalScale = model.PrepareGatherQMMGlobalScale(downGlobalScale, down.Dim(0))
 
 	// Quantized: keep the fused gate_up packed for a single GatherQMM call.
 	moe.UseQuantized = true
@@ -364,8 +355,8 @@ func (m *Model) loadFusedExperts(moe *MoEBlock, tensors map[string]*mlx.Array, g
 	moe.DownWeightQ = down
 	moe.DownScales = downScales
 	moe.DownBiases = downBiases
-	moe.GateUpGlobalScales = gateUpKernelScale
-	moe.DownGlobalScales = downKernelScale
+	moe.GateUpGlobalScales = gateUpGlobalScale
+	moe.DownGlobalScales = downGlobalScale
 	moe.GateUpGroupSize, moe.GateUpBits, moe.QuantMode = gateUpGroupSize, gateUpBits, gateUpMode
 	moe.DownGroupSize, moe.DownBits, moe.DownQuantMode = downGroupSize, downBits, downMode
 }
@@ -1007,9 +998,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 								upStacked.Biases = sliceAxis1(gateUpStacked.Biases, bMid, int32(bDims[1]))
 							}
 							gateStacked.GlobalScales = gateUpStacked.GlobalScales
-							gateStacked.DequantGlobalScales = gateUpStacked.DequantGlobalScales
 							upStacked.GlobalScales = gateUpStacked.GlobalScales
-							upStacked.DequantGlobalScales = gateUpStacked.DequantGlobalScales
 						}
 					}
 				}

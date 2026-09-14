@@ -191,7 +191,8 @@ func concatGlobalScales(hi, lo, hiRows, loRows *mlx.Array) *mlx.Array {
 	expand := func(scale *mlx.Array, rows int32) *mlx.Array {
 		switch {
 		case scale == nil:
-			return mlx.Tile(mlx.FromValues([]float32{1}, 1), []int32{rows})
+			// Identity in MLX's representation, not 1.
+			return mlx.Tile(mlx.FromValues([]float32{mlx.Nvfp4MaxProduct}, 1), []int32{rows})
 		case scale.Size() == 1:
 			return mlx.Tile(mlx.Reshape(scale.AsType(mlx.DTypeFloat32), 1), []int32{rows})
 		default:

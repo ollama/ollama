@@ -8,20 +8,21 @@ import (
 	"unsafe"
 )
 
-// Nvfp4MaxProduct is the product of the maximum E4M3 and E2M1 values. A
-// checkpoint's multiplier m (ModelOpt's weight_scale_2) reaches MLX as
-// m*Nvfp4MaxProduct, so Nvfp4MaxProduct is the identity. Only GatherQMM hands
-// the scale to MLX and takes that form; the rest apply it themselves and take
-// the checkpoint's.
+// Nvfp4MaxProduct is the product of the maximum E4M3 and E2M1 values. Every
+// globalScale below is in MLX's representation: a checkpoint's multiplier m
+// (ModelOpt's weight_scale_2) is held as m*Nvfp4MaxProduct, so Nvfp4MaxProduct
+// itself is the identity. Wrappers that hand the scale to MLX pass it through;
+// wrappers that apply it themselves divide it back out.
 const Nvfp4MaxProduct = 448 * 6
 
-// scaleAndCast fuses the multiply and the cast back. Eagerly it is three
-// kernels: MLX promotes binary operands with an astype, so a bf16 input times
-// a float32 scale round-trips through a full-size float32 intermediate.
+// scaleAndCast applies a global scale to an output and casts back, fusing the
+// divide, multiply and cast into one kernel. Eagerly this is several: MLX
+// promotes binary operands with an astype, so a bf16 input times a float32
+// scale round-trips through a full-size float32 intermediate.
 var scaleAndCast = Compile2(
 	"GlobalScaleOutput",
 	func(out, scale *Array) *Array {
-		return Mul(out, scale).AsType(out.DType())
+		return Mul(out, DivScalar(scale, Nvfp4MaxProduct)).AsType(out.DType())
 	},
 	Shapeless(),
 )
@@ -63,7 +64,7 @@ func ToFP8(x *Array) *Array {
 	return out
 }
 
-// Dequantize takes the checkpoint's globalScale, not MLX's: MLX's own
+// Dequantize applies globalScale itself rather than forwarding it: MLX's own
 // argument accepts only a scalar, and callers pass per-expert banks.
 func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, globalScale *Array) *Array {
 	cMode := C.CString(mode)
@@ -85,14 +86,13 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, glob
 		for gs.NumDims() < out.NumDims() {
 			gs = ExpandDims(gs, -1)
 		}
-		outType := out.DType()
-		out = Mul(out, gs).AsType(outType)
+		out = scaleAndCast(out, gs)
 	}
 	return out
 }
 
-// QuantizedMatmul takes the checkpoint's globalScale; MLX's quantized_matmul
-// has none of its own, so it is applied to the output here.
+// QuantizedMatmul applies globalScale to the output; MLX's quantized_matmul
+// has none of its own.
 func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -107,16 +107,15 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 	out := New("QUANTIZED_MATMUL")
 	mlxCheck(C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx))
 	if globalScale != nil {
-		// Double-scale nvfp4 (e.g., NVIDIA ModelOpt).
 		out = scaleAndCast(out, globalScale)
 	}
 	return out
 }
 
 // GatherQMM multiplies x against the quantized weight banks selected by
-// lhsIndices and rhsIndices. globalScale is MLX's form: one float32 per
-// expert. Metal applies it inside the gather kernel, other backends scale the
-// gathered output rows in the wrapper.
+// lhsIndices and rhsIndices, with one globalScale entry per expert. Metal
+// applies it inside the gather kernel, other backends scale the gathered
+// output rows in the wrapper.
 func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, globalScale *Array, sortedIndices bool) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
@@ -151,7 +150,9 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 // mulGatherQMMGlobalScale scales gathered output rows by the per-expert
 // global scale.
 func mulGatherQMMGlobalScale(out, globalScale, rhsIndices *Array) *Array {
-	perExpert := DivScalar(globalScale, Nvfp4MaxProduct)
+	// The indices address the weight's flattened batch dimensions, so the bank
+	// has to be flat too before taking from it.
+	perExpert := Reshape(globalScale, int32(globalScale.Size()))
 	scaleRows := Take(perExpert, rhsIndices, 0)
 	// out is the broadcast index shape plus the two matmul axes, and rhsIndices
 	// may be shorter, so pad left before appending those axes.

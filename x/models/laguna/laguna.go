@@ -164,14 +164,13 @@ type SwitchMLP struct {
 }
 
 type stackedExpertWeights struct {
-	Weight              *mlx.Array
-	Scales              *mlx.Array
-	Biases              *mlx.Array
-	GlobalScales        *mlx.Array
-	DequantGlobalScales *mlx.Array
-	Bits                int
-	GroupSize           int
-	Mode                string
+	Weight       *mlx.Array
+	Scales       *mlx.Array
+	Biases       *mlx.Array
+	GlobalScales *mlx.Array
+	Bits         int
+	GroupSize    int
+	Mode         string
 }
 
 func parseConfig(configData []byte) (Config, error) {
@@ -617,7 +616,7 @@ func denseExpertWeight(w *stackedExpertWeights) *mlx.Array {
 	if w.Scales != nil {
 		weight = mlx.Dequantize(
 			w.Weight, w.Scales, w.Biases,
-			w.GroupSize, w.Bits, w.Mode, w.DequantGlobalScales,
+			w.GroupSize, w.Bits, w.Mode, w.GlobalScales,
 		)
 	}
 	return weight
@@ -688,10 +687,7 @@ func canFuseDenseQuantizedLinears(a, b *nn.QuantizedLinear) bool {
 }
 
 func isScalarGlobalScale(scale *mlx.Array) bool {
-	if scale == nil {
-		return true
-	}
-	return scale.NumDims() == 0 || (scale.NumDims() == 1 && scale.Dim(0) == 1)
+	return scale == nil || scale.Size() == 1
 }
 
 func fuseDenseQuantizedLinears(a, b nn.LinearLayer) nn.LinearLayer {
@@ -733,7 +729,7 @@ func applyDenseGlobalScale(x, globalScale *mlx.Array) *mlx.Array {
 	if globalScale == nil {
 		return x
 	}
-	return mlx.Mul(x, globalScale).AsType(x.DType())
+	return mlx.Mul(x, mlx.DivScalar(globalScale, mlx.Nvfp4MaxProduct)).AsType(x.DType())
 }
 
 func splitLastDim(x *mlx.Array, first int32) (*mlx.Array, *mlx.Array) {
@@ -803,23 +799,7 @@ var (
 )
 
 func combinedTensorGlobalScale(tensors map[string]*mlx.Array, key string) (*mlx.Array, []string) {
-	var names []string
-	weightGlobal := tensors[key+".global_scale"]
-	if weightGlobal == nil {
-		weightGlobal = tensors[key+".weight.global_scale"]
-	}
-	if weightGlobal != nil {
-		names = append(names, key+".global_scale", key+".weight.global_scale")
-	}
-	if tensors[key+".input_global_scale"] != nil || tensors[key+".weight.input_global_scale"] != nil {
-		names = append(names, key+".input_global_scale", key+".weight.input_global_scale")
-	}
-	switch {
-	case weightGlobal != nil:
-		return weightGlobal, names
-	default:
-		return nil, nil
-	}
+	return model.ReadGlobalScale(tensors, key, key+".weight")
 }
 
 func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuantized bool, layerPrefix, proj string, numExperts int32) *stackedExpertWeights {
@@ -827,7 +807,6 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
 	globalScales := make([]*mlx.Array, 0, numExperts)
-	dequantGlobalScales := make([]*mlx.Array, 0, numExperts)
 	consumedKeys := make([]string, 0, numExperts*5)
 	bits := 0
 	groupSize := 0
@@ -878,7 +857,6 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
 		keepQuantized := useQuantized && supportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
@@ -889,14 +867,11 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 		if qb != nil {
 			biases = append(biases, qb)
 		}
-		if globalScale != nil {
-			dequantGlobalScales = append(dequantGlobalScales, globalScale)
-		}
 		if keepQuantized {
 			weights = append(weights, w)
 			scales = append(scales, s)
-			if kernelGlobalScale != nil {
-				globalScales = append(globalScales, kernelGlobalScale)
+			if globalScale != nil {
+				globalScales = append(globalScales, globalScale)
 			}
 		} else {
 			deq := mlx.Dequantize(w, s, qb, gs, b, m, globalScale)
@@ -905,8 +880,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	}
 
 	if (len(biases) != 0 && len(biases) != len(weights)) ||
-		(len(globalScales) != 0 && len(globalScales) != len(weights)) ||
-		(len(dequantGlobalScales) != 0 && len(dequantGlobalScales) != len(weights)) {
+		(len(globalScales) != 0 && len(globalScales) != len(weights)) {
 		return nil
 	}
 	out := &stackedExpertWeights{Weight: stackAndClone(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
@@ -918,9 +892,6 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	}
 	if len(globalScales) == len(weights) {
 		out.GlobalScales = mlx.Reshape(stackAndClone(globalScales), int32(len(weights)))
-	}
-	if quantized && len(dequantGlobalScales) == len(weights) {
-		out.DequantGlobalScales = mlx.Reshape(stackAndClone(dequantGlobalScales), int32(len(weights)))
 	}
 	freeTensorKeys(tensors, consumedKeys...)
 	return out
@@ -960,13 +931,13 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		globalScale, globalScaleKeys := combinedTensorGlobalScale(tensors, key)
 		consumedKeys = append(consumedKeys, globalScaleKeys...)
 		gs, b, m := model.ResolveLinearQuantParams(cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, s)
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+		globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
 		if useQuantized && supportsGatherQMM(m, b) {
 			freeTensorKeys(tensors, consumedKeys...)
 			return &stackedExpertWeights{
 				Weight: w, Scales: s, Biases: qb,
-				GlobalScales: kernelGlobalScale, DequantGlobalScales: globalScale,
-				Bits: b, GroupSize: gs, Mode: m,
+				GlobalScales: globalScale,
+				Bits:         b, GroupSize: gs, Mode: m,
 			}
 		}
 		deq := mlx.Dequantize(w, s, qb, gs, b, m, globalScale)

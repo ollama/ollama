@@ -718,9 +718,10 @@ func TestCombinedTensorGlobalScaleIgnoresInputGlobalScale(t *testing.T) {
 			t.Fatal("combinedTensorGlobalScale returned nil")
 		}
 		mlx.Eval(got)
+		// The reader converts to MLX's representation on the way out.
 		vals := got.Floats()
-		if len(vals) != 1 || vals[0] != 0.25 {
-			t.Fatalf("combinedTensorGlobalScale = %v, want [0.25]", vals)
+		if want := float32(0.25 * mlx.Nvfp4MaxProduct); len(vals) != 1 || vals[0] != want {
+			t.Fatalf("combinedTensorGlobalScale = %v, want [%v]", vals, want)
 		}
 	})
 }

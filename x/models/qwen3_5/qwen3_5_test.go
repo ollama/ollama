@@ -142,13 +142,13 @@ func TestLoadSwitchMLPGlobalScaleFusion(t *testing.T) {
 		// Nonzero nvfp4 payloads: packed fp4 codes cycle through all 16 values
 		// and every group scale is a power of two, so the dequantized weights
 		// are exact and the dense path is a faithful reference.
-		packed := make([]uint32, width*width/8)
+		packed := make([]uint32, experts*width*width/8)
 		for i := range packed {
 			for j := range 8 {
 				packed[i] |= uint32((i*8+j)%16) << (4 * j)
 			}
 		}
-		scaleBits := make([]uint8, width*width/group)
+		scaleBits := make([]uint8, experts*width*width/group)
 		for i := range scaleBits {
 			exp := (i/(width/group)+i%(width/group))%4 - 1
 			scaleBits[i] = uint8((exp + 7) << 3)

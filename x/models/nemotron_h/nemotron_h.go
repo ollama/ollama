@@ -405,24 +405,16 @@ func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 }
 
 func combinedTensorGlobalScale(tensors map[string]*mlx.Array, key string) (*mlx.Array, []string) {
-	var keys []string
-	weightGlobal := tensors[key+".global_scale"]
-	if weightGlobal == nil {
-		weightGlobal = tensors[key+".weight.global_scale"]
-	}
-	if weightGlobal != nil {
-		keys = append(keys, key+".global_scale", key+".weight.global_scale")
-	}
-	if tensors[key+".input_global_scale"] != nil || tensors[key+".weight.input_global_scale"] != nil {
-		keys = append(keys, key+".input_global_scale", key+".weight.input_global_scale")
-	}
-	return weightGlobal, keys
+	return model.ReadGlobalScale(tensors, key, key+".weight")
 }
 
 func applyExpertWeightGlobalScale(weight, scale *mlx.Array) *mlx.Array {
 	if scale == nil {
 		return weight
 	}
+	// Divide out MLX's representation while still in float32: these multipliers
+	// are ~1e-3, so narrowing first would cost most of the mantissa.
+	scale = mlx.DivScalar(scale, mlx.Nvfp4MaxProduct)
 	if scale.DType() != weight.DType() {
 		scale = scale.AsType(weight.DType())
 	}
@@ -604,7 +596,7 @@ func foldSharedExpertGlobalScale(globalScale *mlx.Array) (*mlx.Array, bool) {
 	if globalScale.Size() != 1 {
 		return nil, false
 	}
-	return model.PrepareGatherQMMGlobalScale(globalScale, 1), true
+	return globalScale, true
 }
 
 // extendFoldedGlobalScales appends the folded shared expert's per-part scales,
@@ -688,13 +680,13 @@ func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *Config, use
 		freeTensorKeys(tensors, key+"_qbias")
 	}
 
-	kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
 	if useQuantized && supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:       w,
 			Scales:       scales,
 			Biases:       qbiases,
-			GlobalScales: kernelGlobalScale,
+			GlobalScales: globalScale,
 			Bits:         bits,
 			GroupSize:    groupSize,
 			Mode:         mode,
@@ -769,7 +761,6 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 			groupSize = gs
 			mode = m
 		}
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
 		keepQuantized := useQuantized && supportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
@@ -783,8 +774,8 @@ func collectExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQuan
 		if keepQuantized {
 			weights = append(weights, w)
 			scales = append(scales, scale)
-			if kernelGlobalScale != nil {
-				globalScales = append(globalScales, kernelGlobalScale)
+			if globalScale != nil {
+				globalScales = append(globalScales, globalScale)
 			}
 			continue
 		}

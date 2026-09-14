@@ -364,7 +364,8 @@ func TestApplyExpertWeightGlobalScale(t *testing.T) {
 			5, 6,
 			7, 8,
 		}, 2, 2, 2)
-		scale := mlx.FromValues([]float32{2, 3}, 2)
+		// Scales reach this function already in MLX's representation.
+		scale := mlx.FromValues([]float32{2 * mlx.Nvfp4MaxProduct, 3 * mlx.Nvfp4MaxProduct}, 2)
 
 		got := applyExpertWeightGlobalScale(weight, scale)
 		mlx.Eval(got)
@@ -500,7 +501,7 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 		checkScales("identity extension", m, []float32{1, 2, 3, mlx.Nvfp4MaxProduct, mlx.Nvfp4MaxProduct})
 
 		// The shared expert's own per-tensor scale folds as a routed expert's.
-		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{0.25}, 1))
+		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{0.25 * mlx.Nvfp4MaxProduct}, 1))
 		if !foldSharedExperts(m, cfg) {
 			t.Fatal("foldSharedExperts failed with a per-tensor shared expert scale")
 		}
@@ -509,7 +510,7 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 
 		// Scaleless routed experts fold against an identity bank when the
 		// shared expert carries a scale.
-		m = newMoE(nil, mlx.FromValues([]float32{0.25}, 1))
+		m = newMoE(nil, mlx.FromValues([]float32{0.25 * mlx.Nvfp4MaxProduct}, 1))
 		if !foldSharedExperts(m, cfg) {
 			t.Fatal("foldSharedExperts failed with a scaleless routed bank")
 		}
@@ -527,7 +528,7 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 
 		// A per-row shared expert scale cannot be represented per expert bank
 		// row, so the fold is skipped.
-		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{1, 2}, 2))
+		m = newMoE([]float32{1, 2, 3}, mlx.FromValues([]float32{1 * mlx.Nvfp4MaxProduct, 2 * mlx.Nvfp4MaxProduct}, 2))
 		if foldSharedExperts(m, cfg) {
 			t.Fatal("foldSharedExperts accepted a per-row shared expert scale")
 		}

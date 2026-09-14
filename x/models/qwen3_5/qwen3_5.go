@@ -559,11 +559,7 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 		}
 
 		qbiases := tensors[key+"_qbias"]
-		globalScale, _ := tensorAny(tensors,
-			key+".global_scale",
-			base+".weight.global_scale",
-			base+".global_scale",
-		)
+		globalScale, _ := model.ReadGlobalScale(tensors, key, base+".weight", base)
 		groupSize, bits, mode := model.ResolveLinearQuantParams(
 			cfg.QuantGroupSize,
 			cfg.QuantBits,
@@ -573,13 +569,13 @@ func loadStackedProjection(tensors map[string]*mlx.Array, cfg *Config, useQuanti
 			w,
 			scales,
 		)
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
+		globalScale = model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0))
 		if useQuantized && supportsGatherQMM(mode, bits) {
 			return &stackedExpertWeights{
 				Weight:       w,
 				Scales:       scales,
 				Biases:       qbiases,
-				GlobalScales: kernelGlobalScale,
+				GlobalScales: globalScale,
 				Bits:         bits,
 				GroupSize:    groupSize,
 				Mode:         mode,
@@ -605,7 +601,7 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	scales := make([]*mlx.Array, 0, numExperts)
 	biases := make([]*mlx.Array, 0, numExperts)
 	globalScales := make([]*mlx.Array, 0, numExperts)
-	dequantGlobalScales := make([]*mlx.Array, 0, numExperts)
+	numGlobalScales := 0
 	consumedKeys := make([]string, 0, numExperts*3)
 	numDequantized := 0
 	bits := 0
@@ -656,15 +652,8 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			groupSize = gs
 			mode = m
 		}
-		globalScale, globalScaleKey := tensorAny(tensors,
-			key+".global_scale",
-			base+".weight.global_scale",
-			base+".global_scale",
-		)
-		if globalScaleKey != "" {
-			consumedKeys = append(consumedKeys, globalScaleKey)
-		}
-		kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, 1)
+		globalScale, globalScaleKeys := model.ReadGlobalScale(tensors, key, base+".weight", base)
+		consumedKeys = append(consumedKeys, globalScaleKeys...)
 		keepQuantized := useQuantized && supportsGatherQMM(m, b)
 		if e == 0 {
 			quantized = keepQuantized
@@ -676,13 +665,13 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 			biases = append(biases, qb)
 		}
 		if globalScale != nil {
-			dequantGlobalScales = append(dequantGlobalScales, globalScale)
+			numGlobalScales++
 		}
 		if keepQuantized {
 			weights = append(weights, w)
 			scales = append(scales, s)
-			if kernelGlobalScale != nil {
-				globalScales = append(globalScales, kernelGlobalScale)
+			if globalScale != nil {
+				globalScales = append(globalScales, globalScale)
 			}
 		} else {
 			weights = append(weights, mlx.Dequantize(w, s, qb, gs, b, m, globalScale))
@@ -697,9 +686,10 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 	if len(weights) == 0 {
 		return nil
 	}
+	// A global scale on some experts but not others is a malformed checkpoint.
 	if (len(biases) != 0 && len(biases) != len(weights)) ||
 		(len(globalScales) != 0 && len(globalScales) != len(weights)) ||
-		(len(dequantGlobalScales) != 0 && len(dequantGlobalScales) != len(weights)) {
+		(numGlobalScales != 0 && numGlobalScales != len(weights)) {
 		return nil
 	}
 
@@ -735,11 +725,9 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 	}
 
 	qbiases := tensors[key+"_qbias"]
-	globalScale, _ := tensorAny(tensors,
-		key+".global_scale",
-		layerPrefix+".mlp.experts.gate_up_proj.weight.global_scale",
-		layerPrefix+".mlp.experts.gate_up_proj.global_scale",
-	)
+	globalScale, _ := model.ReadGlobalScale(tensors, key,
+		layerPrefix+".mlp.experts.gate_up_proj.weight",
+		layerPrefix+".mlp.experts.gate_up_proj")
 	groupSize, bits, mode := model.ResolveLinearQuantParams(
 		cfg.QuantGroupSize,
 		cfg.QuantBits,
@@ -749,13 +737,13 @@ func combinedGateUpProjection(tensors map[string]*mlx.Array, cfg *Config, useQua
 		gateUp,
 		scales,
 	)
-	kernelGlobalScale := model.PrepareGatherQMMGlobalScale(globalScale, gateUp.Dim(0))
+	globalScale = model.PrepareGatherQMMGlobalScale(globalScale, gateUp.Dim(0))
 	if useQuantized && supportsGatherQMM(mode, bits) {
 		return &stackedExpertWeights{
 			Weight:       gateUp,
 			Scales:       scales,
 			Biases:       qbiases,
-			GlobalScales: kernelGlobalScale,
+			GlobalScales: globalScale,
 			Bits:         bits,
 			GroupSize:    groupSize,
 			Mode:         mode,
