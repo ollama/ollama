@@ -365,7 +365,7 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
-// /api/show supplies capabilities and family metadata without replacing recommended thinking controls.
+// /api/show refreshes selected model metadata; recommendations remain the fallback.
 func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -383,6 +383,9 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 		}
 		if response.Details.Family != "" || len(response.Details.Families) > 0 {
 			hydrated[i].Details = response.Details
+		}
+		if response.Thinking.Valid() {
+			hydrated[i].Thinking = response.Thinking.Clone()
 		}
 	}
 	return hydrated

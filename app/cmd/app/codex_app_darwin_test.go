@@ -1261,6 +1261,55 @@ func TestLoadCodexDesktopModelsHydratesAccountOnlyCloudCapabilities(t *testing.T
 	}
 }
 
+func TestLoadCodexDesktopModelsThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		load            func(context.Context, []string) (string, []launch.LaunchModel, error)
+		recommendations []api.ModelRecommendation
+	}{
+		{"new connection discovers local controls", loadCodexDesktopConnectionModels, nil},
+		{"update overrides stale recommendation", loadCodexDesktopModels, []api.ModelRecommendation{{Model: "custom-local:latest", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubCodexDesktopCatalogSources(t, tc.recommendations, proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"custom-local:latest","capabilities":["completion","tools","thinking"]}]}`)
+				case "/api/show":
+					fmt.Fprint(w, `{"capabilities":["completion","thinking","tools"],"thinking":{"values":[false,"low","medium","xhigh"],"default":"medium"}}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			base, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := api.NewClient(base, server.Client())
+			originalFactory, originalCloudModels := codexDesktopClientFactory, codexDesktopCloudModels
+			t.Cleanup(func() { codexDesktopClientFactory = originalFactory; codexDesktopCloudModels = originalCloudModels })
+			codexDesktopClientFactory = func() (*api.Client, error) { return client, nil }
+			codexDesktopCloudModels = func(context.Context) ([]string, error) { return nil, nil }
+			primary, models, err := tc.load(t.Context(), []string{"custom-local:latest"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if primary != "custom-local:latest" || len(models) != 1 {
+				t.Fatalf("primary=%q models=%+v", primary, models)
+			}
+			thinking := models[0].Thinking
+			if !thinking.Valid() || thinking.Default != "medium" || !slices.Equal(thinking.Values, []any{false, "low", "medium", "xhigh"}) {
+				t.Fatalf("desktop lost discovered controls: %+v", thinking)
+			}
+			if len(tc.recommendations) > 0 && tc.recommendations[0].Thinking.Default != true {
+				t.Fatal("discovery mutated recommendation metadata")
+			}
+		})
+	}
+}
+
 func TestReconcileCodexDesktopModelsDropsUnavailableSavedSelections(t *testing.T) {
 	available := []launch.LaunchModel{
 		{Name: "qwen3:8b"},

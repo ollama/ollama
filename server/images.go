@@ -81,7 +81,8 @@ type Model struct {
 	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
-	Template *template.Template
+	Template       *template.Template
+	templateDigest string
 
 	// Metadata of the model blob and of each projector, read from their
 	// metadata files when the model is loaded.
@@ -750,6 +751,7 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			m.HasGoTemplate = true
+			m.templateDigest = layer.Digest
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err

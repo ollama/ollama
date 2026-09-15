@@ -27,6 +27,54 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func TestRunThinkingNamesReachServer(t *testing.T) {
+	for _, value := range []string{"xhigh", "minimal", "future", "true", "false"} {
+		t.Run(value, func(t *testing.T) {
+			var got *api.ThinkValue
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					json.NewEncoder(w).Encode(api.ShowResponse{Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking}})
+				case "/api/generate":
+					var req api.GenerateRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						t.Error(err)
+					}
+					got = req.Think
+					json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			for _, name := range []string{"format", "think", "keepalive"} {
+				cmd.Flags().String(name, "", "")
+			}
+			for _, name := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
+				cmd.Flags().Bool(name, false, "")
+			}
+			if err := cmd.Flags().Set("think", value); err != nil {
+				t.Fatal(err)
+			}
+			if err := RunHandler(cmd, []string{"thinking-test", "hi"}); err != nil {
+				t.Fatal(err)
+			}
+			var want any = value
+			if value == "true" {
+				want = true
+			} else if value == "false" {
+				want = false
+			}
+			if got == nil || got.Value != want {
+				t.Fatalf("think=%v, want %#v", got, want)
+			}
+		})
+	}
+}
+
 func TestShowInfo(t *testing.T) {
 	t.Run("bare details", func(t *testing.T) {
 		var b bytes.Buffer

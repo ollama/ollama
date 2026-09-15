@@ -842,10 +842,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			opts.Think = &api.ThinkValue{Value: true}
 		case "false":
 			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
 		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+			opts.Think = &api.ThinkValue{Value: thinkStr}
 		}
 	} else {
 		opts.Think = nil
@@ -1430,6 +1428,16 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		tableRender("Capabilities", func() (rows [][]string) {
 			for _, capability := range resp.Capabilities {
 				rows = append(rows, []string{"", capability.String()})
+				if capability == model.CapabilityThinking && resp.Thinking.Valid() {
+					values := make([]string, len(resp.Thinking.Values))
+					for i, value := range resp.Thinking.Values {
+						values[i] = fmt.Sprint(value)
+					}
+					rows = append(rows,
+						[]string{"", "    levels", strings.Join(values, ", ")},
+						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
+					)
+				}
 			}
 			return
 		})

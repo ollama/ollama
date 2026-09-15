@@ -444,7 +444,7 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 	}
 }
 
-func ChatMiddleware() gin.HandlerFunc {
+func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req openai.ChatCompletionRequest
 		err := c.ShouldBindJSON(&req)
@@ -460,7 +460,8 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		var b bytes.Buffer
 
-		chatReq, err := openai.FromChatRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromChatRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
@@ -1167,7 +1168,7 @@ func decodeWebSearchResponseError(status int, data []byte) error {
 	return api.StatusError{StatusCode: status, ErrorMessage: response.Error}
 }
 
-func ResponsesMiddleware() gin.HandlerFunc {
+func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 		if c.GetHeader("Content-Encoding") == "zstd" {
@@ -1187,7 +1188,8 @@ func ResponsesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := openai.FromResponsesRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromResponsesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return

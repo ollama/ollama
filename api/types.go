@@ -738,6 +738,7 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
+	Thinking      *model.Thinking    `json:"thinking,omitempty"`
 	License       string             `json:"license,omitempty"`
 	Modelfile     string             `json:"modelfile,omitempty"`
 	Parameters    string             `json:"parameters,omitempty"`
@@ -827,23 +828,10 @@ type ModelRecommendation struct {
 	Thinking        *ModelRecommendationThinking `json:"thinking,omitempty"`
 }
 
-// ModelRecommendationThinking advertises the exact values accepted by
-// Ollama's think field and the model's default. Values may be booleans for
-// binary thinking controls or strings for adjustable effort levels.
-type ModelRecommendationThinking struct {
-	Values  []any `json:"values,omitempty"`
-	Default any   `json:"default,omitempty"`
-}
-
-// Clone returns an independent copy.
-func (t *ModelRecommendationThinking) Clone() *ModelRecommendationThinking {
-	if t == nil {
-		return nil
-	}
-	clone := *t
-	clone.Values = append([]any(nil), t.Values...)
-	return &clone
-}
+// ModelRecommendationThinking advertises the controls a model honors and its
+// default. Values may be booleans or named effort levels; other strings may
+// still be accepted by the endpoint and fall back to the default.
+type ModelRecommendationThinking = model.Thinking
 
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
@@ -1163,25 +1151,39 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low", "max")
+// ThinkValue represents a boolean or model-defined thinking level.
 type ThinkValue struct {
 	// Value can be a bool or string
 	Value interface{}
 }
 
-// IsValid checks if the ThinkValue is valid
+// IsValid checks the transport type. The model resolves supported effort names.
 func (t *ThinkValue) IsValid() bool {
 	if t == nil || t.Value == nil {
 		return true // nil is valid (means not set)
 	}
 
-	switch v := t.Value.(type) {
+	switch t.Value.(type) {
 	case bool:
 		return true
 	case string:
-		return v == "high" || v == "medium" || v == "low" || v == "max"
+		return true
 	default:
 		return false
+	}
+}
+
+// ValidateLegacyThinking checks named levels for models without thinking metadata.
+// Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
+func ValidateLegacyThinking(think *ThinkValue) error {
+	if !think.IsString() {
+		return nil
+	}
+	switch think.String() {
+	case "low", "medium", "high", "max":
+		return nil
+	default:
+		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
 }
 
@@ -1213,8 +1215,8 @@ func (t *ThinkValue) Bool() bool {
 	case bool:
 		return v
 	case string:
-		// Any string value ("high", "medium", "low", "max") means thinking is enabled
-		return v == "high" || v == "medium" || v == "low" || v == "max"
+		// Named levels request thinking; the renderer resolves the actual level.
+		return true
 	default:
 		return false
 	}
@@ -1241,25 +1243,17 @@ func (t *ThinkValue) String() string {
 
 // UnmarshalJSON implements json.Unmarshaler
 func (t *ThinkValue) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as bool first
-	var b bool
-	if err := json.Unmarshal(data, &b); err == nil {
-		t.Value = b
-		return nil
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
 	}
-
-	// Try to unmarshal as string
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		// Validate string values
-		if s != "high" && s != "medium" && s != "low" && s != "max" {
-			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", s)
-		}
-		t.Value = s
+	switch value.(type) {
+	case nil, bool, string:
+		t.Value = value
 		return nil
+	default:
+		return fmt.Errorf("think must be a boolean or string")
 	}
-
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", \"max\", true, or false)")
 }
 
 // MarshalJSON implements json.Marshaler
