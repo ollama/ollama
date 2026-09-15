@@ -410,18 +410,33 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	if r.Thinking != nil && r.Thinking.Type == "enabled" {
-		think = &api.ThinkValue{Value: true}
+	effortLevel := ""
+	switch normalizedEffort {
+	case "high", "medium", "low", "max":
+		effortLevel = normalizedEffort
 	}
-	if r.Thinking != nil && r.Thinking.Type == "disabled" {
+
+	switch {
+	case r.Thinking != nil && r.Thinking.Type == "disabled":
+		think = &api.ThinkValue{Value: false}
+	case r.Thinking != nil && (r.Thinking.Type == "enabled" || r.Thinking.Type == "adaptive"):
+		// Extended thinking is on; output_config.effort selects the level for
+		// models that support one, otherwise plain true.
+		if effortLevel != "" {
+			think = &api.ThinkValue{Value: effortLevel}
+		} else {
+			think = &api.ThinkValue{Value: true}
+		}
+	case r.Thinking == nil && r.OutputConfig != nil:
+		// Anthropic semantics: output_config.effort without a thinking block
+		// means NO extended thinking. In practice the only client that sends
+		// this shape is Claude Code with thinking switched off
+		// (alwaysThinkingEnabled=false / MAX_THINKING_TOKENS=0); previously the
+		// effort fell through and re-enabled thinking at that level, so the
+		// user's toggle had no effect against Ollama.
 		think = &api.ThinkValue{Value: false}
 	}
-	if think == nil && r.OutputConfig != nil {
-		switch normalizedEffort {
-		case "high", "medium", "low", "max":
-			think = &api.ThinkValue{Value: normalizedEffort}
-		}
-	}
+	// r.Thinking == nil && r.OutputConfig == nil: leave think nil (model default), unchanged.
 
 	stream := r.Stream
 	convertedRequest := &api.ChatRequest{
