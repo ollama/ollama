@@ -2,6 +2,8 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -294,6 +296,49 @@ func TestJSONLFramingResponseWriter_FlushPendingWritesTrailingLine(t *testing.T)
 	}
 	if got := string(rec.chunks[0]); got != `{"a":1` {
 		t.Fatalf("trailing chunk mismatch: got %q", got)
+	}
+}
+
+func TestProxyCloudRequestWithPathAbortsOnUpstreamStreamFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("response writer does not support hijacking")
+		}
+		conn, rw, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatalf("hijack: %v", err)
+		}
+		if _, err := rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"done\":false}"); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+		if err := rw.Flush(); err != nil {
+			t.Fatalf("flush response: %v", err)
+		}
+		conn.Close()
+	}))
+	defer upstream.Close()
+
+	originalBaseURL := cloudProxyBaseURL
+	originalSignRequest := cloudProxySignRequest
+	cloudProxyBaseURL = upstream.URL
+	cloudProxySignRequest = func(context.Context, *http.Request) error { return nil }
+	t.Cleanup(func() {
+		cloudProxyBaseURL = originalBaseURL
+		cloudProxySignRequest = originalSignRequest
+	})
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/chat", nil)
+
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		proxyCloudRequestWithPath(c, nil, "/api/chat", "test")
+	}()
+
+	if err, ok := recovered.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+		t.Fatalf("expected panic with %v, got %v", http.ErrAbortHandler, recovered)
 	}
 }
 
