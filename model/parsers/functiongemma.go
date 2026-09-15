@@ -158,7 +158,7 @@ func (p *FunctionGemmaParser) eat() ([]functionGemmaEvent, bool) {
 }
 
 // Matches call:function_name{args}
-var functionGemmaCallRegex = regexp.MustCompile(`call:([^{]+)\{(.*)\}`)
+var functionGemmaCallRegex = regexp.MustCompile(`(?s)call:([^{]+)\{(.*)\}`)
 
 func (p *FunctionGemmaParser) parseToolCall(content string) (api.ToolCall, error) {
 	toolCall := api.ToolCall{}
