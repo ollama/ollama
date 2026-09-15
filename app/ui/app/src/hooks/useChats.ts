@@ -195,7 +195,6 @@ export const useIsWaitingForLoad = (chatId: string) => {
 };
 
 export const useSendMessage = (chatId: string) => {
-  let updatableChatId = chatId;
   const queryClient = useQueryClient();
   const { selectedModel } = useSelectedModel();
   const {
@@ -208,6 +207,11 @@ export const useSendMessage = (chatId: string) => {
 
   const cleanupStreaming = (id: string) => {
     setStreamingChatIds((prev: Set<string>) => {
+      const newSet = new Set(prev);
+      newSet.delete(id);
+      return newSet;
+    });
+    setLoadingChats((prev) => {
       const newSet = new Set(prev);
       newSet.delete(id);
       return newSet;
@@ -226,13 +230,6 @@ export const useSendMessage = (chatId: string) => {
 
   return useMutation({
     mutationKey: ["sendMessage", chatId],
-    onSuccess: () => {
-      cleanupStreaming(updatableChatId);
-    },
-    onError: (error) => {
-      console.error("error mutating sendMessage", error);
-      cleanupStreaming(updatableChatId);
-    },
     mutationFn: async ({
       message,
       attachments,
@@ -252,290 +249,165 @@ export const useSendMessage = (chatId: string) => {
       think?: boolean | string;
       onChatEvent?: (event: ChatEventUnion) => void;
     }) => {
-      // For existing chats, set streaming state and add optimistic user message
-      if (chatId !== "new") {
-        setStreamingChatIds((prev: Set<string>) => {
-          const newSet = new Set(prev);
-          newSet.add(chatId);
-          return newSet;
-        });
-        queryClient.cancelQueries({ queryKey: ["chat", chatId] });
-
-        // Only add optimistic message for non-empty messages
-        if (message.trim() !== "") {
-          // Optimistically add the user message
-          queryClient.setQueryData(
-            ["chat", chatId],
-            (old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
-              const newMessage = new Message({
-                role: "user",
-                content: message,
-                attachments: attachments,
-              });
-
-              let messages = old.chat.messages || [];
-
-              // If editing a message (index provided), truncate messages array
-              if (
-                index !== undefined &&
-                index >= 0 &&
-                index < messages.length
-              ) {
-                messages = messages.slice(0, index);
-              }
-
-              return {
-                ...old,
-                chat: new Chat({
-                  ...old.chat,
-                  messages: [...messages, newMessage],
-                }),
-              };
-            },
-          );
-        }
-      }
-
-      if (!selectedModel) {
-        throw new Error("No model selected");
-      }
-
-      const effectiveModel = new Model({
-        model: selectedModel.model,
-        digest: selectedModel.digest,
-        modified_at: selectedModel.modified_at,
-      });
-
-      const abortController = new AbortController();
-      setAbortControllers((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(updatableChatId, abortController);
-        return newMap;
-      });
-
-      const events = sendMessage(
-        chatId,
-        message,
-        effectiveModel,
-        attachments,
-        abortController.signal,
-        index,
-        webSearch,
-        fileTools,
-        forceUpdate,
-        think,
-      );
       let currentChatId = chatId;
-      let isCancelled = false;
+      const abortController = new AbortController();
+      let batcher:
+        | ReturnType<typeof createQueryBatcher<{ chat: Chat }>>
+        | undefined;
 
-      // Listen for abort signal to set cancelled flag
-      abortController.signal.addEventListener("abort", () => {
-        isCancelled = true;
-      });
-
-      // Create batcher for streaming updates with smoother intervals, prevents state update depth being exceeded
-      // and allows for smoother updates at high frame rates
-      let batcher = createQueryBatcher<{ chat: Chat }>(
-        queryClient,
-        ["chat", currentChatId],
-        { batchInterval: 4, immediateFirst: true }, // ~250fps for smoother updates
-      );
-
-      for await (const event of events) {
-        // If cancelled, continue draining the stream but don't update UI
-        if (isCancelled) {
-          continue;
-        }
-
-        // download events don't count as loaded
-        // TODO(jmorganca): loading should potentially be an event instead of
-        // reducing it this way
-        if (
-          event.eventName !== "download" &&
-          !loadingChats.has(currentChatId)
-        ) {
-          // If this is the first time loading this chat, mark it as loaded
-          setLoadingChats((prev: Set<string>) => {
+      try {
+        // For existing chats, set streaming state and add optimistic user message
+        if (chatId !== "new") {
+          setStreamingChatIds((prev: Set<string>) => {
             const newSet = new Set(prev);
-            newSet.add(currentChatId);
+            newSet.add(chatId);
             return newSet;
           });
-        }
+          queryClient.cancelQueries({ queryKey: ["chat", chatId] });
 
-        switch (event.eventName) {
-          case "chat": {
-            // Update the current chat data with streaming content
-            batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
-              const existingMessages = old.chat.messages || [];
-              const newMessages = [...existingMessages];
-
-              // Find or create the assistant message
-              let lastMessage = newMessages[newMessages.length - 1];
-              if (!lastMessage || lastMessage.role !== "assistant") {
-                newMessages.push(
-                  new Message({
-                    role: "assistant",
-                    content: "",
-                    thinking: "",
-                    model: effectiveModel.model,
-                  }),
-                );
-                lastMessage = newMessages[newMessages.length - 1];
-              }
-
-              // Update the last message with new content
-              if (lastMessage) {
-                const updatedContent =
-                  (lastMessage.content || "") + (event.content || "");
-                const updatedThinking =
-                  (lastMessage.thinking || "") + (event.thinking || "");
-                const updatedMessage = new Message({
-                  ...lastMessage,
-                  content: updatedContent,
-                  thinking: updatedThinking,
-                });
-                if (event.thinkingTimeStart) {
-                  updatedMessage.thinkingTimeStart = event.thinkingTimeStart;
-                }
-                if (event.thinkingTimeEnd) {
-                  updatedMessage.thinkingTimeEnd = event.thinkingTimeEnd;
-                }
-                newMessages[newMessages.length - 1] = updatedMessage;
-              }
-
-              return {
-                ...old,
-                chat: new Chat({
-                  ...old.chat,
-                  messages: newMessages,
-                }),
-              };
-            });
-            break;
-          }
-          case "thinking": {
-            // Handle thinking content
-            batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
-              if (!old) return old;
-
-              const existingMessages = old.chat.messages || [];
-              const newMessages = [...existingMessages];
-
-              // Find or create the assistant message
-              let lastMessage = newMessages[newMessages.length - 1];
-              if (!lastMessage || lastMessage.role !== "assistant") {
-                newMessages.push(
-                  new Message({
-                    role: "assistant",
-                    content: "",
-                    thinking: "",
-                    model: effectiveModel.model,
-                  }),
-                );
-                lastMessage = newMessages[newMessages.length - 1];
-              }
-
-              // Update the last message with new thinking content
-              if (lastMessage) {
-                const updatedThinking =
-                  (lastMessage.thinking || "") + (event.thinking || "");
-                const updatedMessage = new Message({
-                  ...lastMessage,
-                  thinking: updatedThinking,
-                });
-                if (event.thinkingTimeStart) {
-                  updatedMessage.thinkingTimeStart = event.thinkingTimeStart;
-                }
-                newMessages[newMessages.length - 1] = updatedMessage;
-              }
-
-              return {
-                ...old,
-                chat: new Chat({
-                  ...old.chat,
-                  messages: newMessages,
-                }),
-              };
-            });
-            break;
-          }
-          case "tool_call": {
-            // Handle tool call events - these are now mostly handled by assistant_with_tools
-            // but kept for backward compatibility, potentially still good for normal tool calling models
+          // Only add optimistic message for non-empty messages
+          if (message.trim() !== "") {
+            // Optimistically add the user message
             queryClient.setQueryData(
-              ["chat", currentChatId],
+              ["chat", chatId],
               (old: { chat: Chat } | undefined) => {
                 if (!old) return old;
 
-                const existingMessages = old.chat.messages || [];
-                const newMessages = [...existingMessages];
+                const newMessage = new Message({
+                  role: "user",
+                  content: message,
+                  attachments: attachments,
+                });
 
-                // Add tool call message
-                if (event.toolCall) {
-                  newMessages.push(
-                    new Message({
-                      role: "tool",
-                      content: `Tool ${event.toolCall.function.name} called`,
-                      tool_calls: [event.toolCall],
-                      thinkingTimeStart: event.thinkingTimeStart,
-                      thinkingTimeEnd: event.thinkingTimeEnd,
-                    }),
-                  );
+                let messages = old.chat.messages || [];
+
+                // If editing a message (index provided), truncate messages array
+                if (
+                  index !== undefined &&
+                  index >= 0 &&
+                  index < messages.length
+                ) {
+                  messages = messages.slice(0, index);
                 }
 
                 return {
                   ...old,
                   chat: new Chat({
                     ...old.chat,
-                    messages: newMessages,
+                    messages: [...messages, newMessage],
                   }),
                 };
               },
             );
-            break;
           }
-          case "assistant_with_tools": {
-            // Handle assistant messages that include tool calls
-            queryClient.setQueryData(
-              ["chat", currentChatId],
-              (old: { chat: Chat } | undefined) => {
+        }
+
+        if (!selectedModel) {
+          throw new Error("No model selected");
+        }
+
+        const effectiveModel = new Model({
+          model: selectedModel.model,
+          digest: selectedModel.digest,
+          modified_at: selectedModel.modified_at,
+        });
+
+        setAbortControllers((prev) => {
+          const newMap = new Map(prev);
+          newMap.set(chatId, abortController);
+          return newMap;
+        });
+
+        const events = sendMessage(
+          chatId,
+          message,
+          effectiveModel,
+          attachments,
+          abortController.signal,
+          index,
+          webSearch,
+          fileTools,
+          forceUpdate,
+          think,
+        );
+        let isCancelled = false;
+
+        // Listen for abort signal to set cancelled flag
+        abortController.signal.addEventListener("abort", () => {
+          isCancelled = true;
+        });
+
+        // Create batcher for streaming updates with smoother intervals, prevents state update depth being exceeded
+        // and allows for smoother updates at high frame rates
+        batcher = createQueryBatcher<{ chat: Chat }>(
+          queryClient,
+          ["chat", currentChatId],
+          { batchInterval: 4, immediateFirst: true }, // ~250fps for smoother updates
+        );
+
+        for await (const event of events) {
+          // If cancelled, continue draining the stream but don't update UI
+          if (isCancelled) {
+            continue;
+          }
+
+          // Download and chat creation events do not indicate inference has loaded.
+          // TODO(jmorganca): loading should potentially be an event instead of
+          // reducing it this way
+          if (
+            event.eventName !== "download" &&
+            event.eventName !== "chat_created" &&
+            !loadingChats.has(currentChatId)
+          ) {
+            // If this is the first time loading this chat, mark it as loaded
+            setLoadingChats((prev: Set<string>) => {
+              const newSet = new Set(prev);
+              newSet.add(currentChatId);
+              return newSet;
+            });
+          }
+
+          switch (event.eventName) {
+            case "chat": {
+              // Update the current chat data with streaming content
+              batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
                 if (!old) return old;
 
                 const existingMessages = old.chat.messages || [];
                 const newMessages = [...existingMessages];
 
-                // Find the last assistant message and update it with tool calls
-                const lastMessage = newMessages[newMessages.length - 1];
-                if (lastMessage && lastMessage.role === "assistant") {
-                  // Update existing assistant message with tool calls
-                  const updatedMessage = new Message({
-                    ...lastMessage,
-                    content: lastMessage.content + (event.content || ""),
-                    thinking: lastMessage.thinking + (event.thinking || ""),
-                    tool_calls: event.toolCalls,
-                    thinkingTimeStart:
-                      lastMessage.thinkingTimeStart || event.thinkingTimeStart,
-                    thinkingTimeEnd: event.thinkingTimeEnd,
-                    model: selectedModel.model,
-                  });
-                  newMessages[newMessages.length - 1] = updatedMessage;
-                } else {
-                  // No existing assistant message, create new one
+                // Find or create the assistant message
+                let lastMessage = newMessages[newMessages.length - 1];
+                if (!lastMessage || lastMessage.role !== "assistant") {
                   newMessages.push(
                     new Message({
                       role: "assistant",
-                      content: event.content,
-                      thinking: event.thinking,
-                      tool_calls: event.toolCalls,
-                      thinkingTimeStart: event.thinkingTimeStart,
-                      thinkingTimeEnd: event.thinkingTimeEnd,
-                      model: selectedModel.model,
+                      content: "",
+                      thinking: "",
+                      model: effectiveModel.model,
                     }),
                   );
+                  lastMessage = newMessages[newMessages.length - 1];
+                }
+
+                // Update the last message with new content
+                if (lastMessage) {
+                  const updatedContent =
+                    (lastMessage.content || "") + (event.content || "");
+                  const updatedThinking =
+                    (lastMessage.thinking || "") + (event.thinking || "");
+                  const updatedMessage = new Message({
+                    ...lastMessage,
+                    content: updatedContent,
+                    thinking: updatedThinking,
+                  });
+                  if (event.thinkingTimeStart) {
+                    updatedMessage.thinkingTimeStart = event.thinkingTimeStart;
+                  }
+                  if (event.thinkingTimeEnd) {
+                    updatedMessage.thinkingTimeEnd = event.thinkingTimeEnd;
+                  }
+                  newMessages[newMessages.length - 1] = updatedMessage;
                 }
 
                 return {
@@ -545,187 +417,337 @@ export const useSendMessage = (chatId: string) => {
                     messages: newMessages,
                   }),
                 };
-              },
-            );
-            break;
-          }
-          case "tool_result": {
-            // Handle tool result events
-            queryClient.setQueryData(
-              ["chat", currentChatId],
-              (old: { chat: Chat } | undefined) => {
+              });
+              break;
+            }
+            case "thinking": {
+              // Handle thinking content
+              batcher.scheduleBatch((old: { chat: Chat } | undefined) => {
                 if (!old) return old;
 
                 const existingMessages = old.chat.messages || [];
                 const newMessages = [...existingMessages];
 
-                newMessages.push(
-                  Object.assign(
+                // Find or create the assistant message
+                let lastMessage = newMessages[newMessages.length - 1];
+                if (!lastMessage || lastMessage.role !== "assistant") {
+                  newMessages.push(
                     new Message({
-                      role: "tool",
-                      content: event.content,
-                      thinkingTimeStart: event.thinkingTimeStart,
-                      thinkingTimeEnd: event.thinkingTimeEnd,
+                      role: "assistant",
+                      content: "",
+                      thinking: "",
+                      model: effectiveModel.model,
                     }),
-                    {
-                      tool_result: (event as any).toolResultData,
-                      ...((event as any).toolName
-                        ? { tool_name: (event as any).toolName }
-                        : {}),
-                    },
-                  ),
-                );
+                  );
+                  lastMessage = newMessages[newMessages.length - 1];
+                }
+
+                // Update the last message with new thinking content
+                if (lastMessage) {
+                  const updatedThinking =
+                    (lastMessage.thinking || "") + (event.thinking || "");
+                  const updatedMessage = new Message({
+                    ...lastMessage,
+                    thinking: updatedThinking,
+                  });
+                  if (event.thinkingTimeStart) {
+                    updatedMessage.thinkingTimeStart = event.thinkingTimeStart;
+                  }
+                  newMessages[newMessages.length - 1] = updatedMessage;
+                }
 
                 return {
                   ...old,
                   chat: new Chat({
                     ...old.chat,
                     messages: newMessages,
-                    browser_state: event.toolState ?? old.chat.browser_state,
                   }),
                 };
-              },
-            );
-            break;
-          }
-          case "download": {
-            setDownloadProgress((prev) => {
-              const newMap = new Map(prev);
-              newMap.set(currentChatId, event);
-              return newMap;
-            });
+              });
+              break;
+            }
+            case "tool_call": {
+              // Handle tool call events - these are now mostly handled by assistant_with_tools
+              // but kept for backward compatibility, potentially still good for normal tool calling models
+              queryClient.setQueryData(
+                ["chat", currentChatId],
+                (old: { chat: Chat } | undefined) => {
+                  if (!old) return old;
 
-            if (event.done && selectedModel) {
-              const currentStaleModels =
-                queryClient.getQueryData<Map<string, boolean>>([
-                  "staleModels",
-                ]) || new Map();
-              const newStaleMap = new Map(currentStaleModels);
-              newStaleMap.delete(selectedModel.model);
-              queryClient.setQueryData(["staleModels"], newStaleMap);
+                  const existingMessages = old.chat.messages || [];
+                  const newMessages = [...existingMessages];
 
-              queryClient.invalidateQueries({ queryKey: ["models"] });
+                  // Add tool call message
+                  if (event.toolCall) {
+                    newMessages.push(
+                      new Message({
+                        role: "tool",
+                        content: `Tool ${event.toolCall.function.name} called`,
+                        tool_calls: [event.toolCall],
+                        thinkingTimeStart: event.thinkingTimeStart,
+                        thinkingTimeEnd: event.thinkingTimeEnd,
+                      }),
+                    );
+                  }
 
-              // Fetch fresh capabilities for the downloaded model
-              getModelCapabilities(selectedModel.model)
-                .then((capabilities) => {
-                  queryClient.setQueryData(
-                    ["modelCapabilities", selectedModel.model],
-                    capabilities,
+                  return {
+                    ...old,
+                    chat: new Chat({
+                      ...old.chat,
+                      messages: newMessages,
+                    }),
+                  };
+                },
+              );
+              break;
+            }
+            case "assistant_with_tools": {
+              // Handle assistant messages that include tool calls
+              queryClient.setQueryData(
+                ["chat", currentChatId],
+                (old: { chat: Chat } | undefined) => {
+                  if (!old) return old;
+
+                  const existingMessages = old.chat.messages || [];
+                  const newMessages = [...existingMessages];
+
+                  // Find the last assistant message and update it with tool calls
+                  const lastMessage = newMessages[newMessages.length - 1];
+                  if (lastMessage && lastMessage.role === "assistant") {
+                    // Update existing assistant message with tool calls
+                    const updatedMessage = new Message({
+                      ...lastMessage,
+                      content: lastMessage.content + (event.content || ""),
+                      thinking: lastMessage.thinking + (event.thinking || ""),
+                      tool_calls: event.toolCalls,
+                      thinkingTimeStart:
+                        lastMessage.thinkingTimeStart ||
+                        event.thinkingTimeStart,
+                      thinkingTimeEnd: event.thinkingTimeEnd,
+                      model: selectedModel.model,
+                    });
+                    newMessages[newMessages.length - 1] = updatedMessage;
+                  } else {
+                    // No existing assistant message, create new one
+                    newMessages.push(
+                      new Message({
+                        role: "assistant",
+                        content: event.content,
+                        thinking: event.thinking,
+                        tool_calls: event.toolCalls,
+                        thinkingTimeStart: event.thinkingTimeStart,
+                        thinkingTimeEnd: event.thinkingTimeEnd,
+                        model: selectedModel.model,
+                      }),
+                    );
+                  }
+
+                  return {
+                    ...old,
+                    chat: new Chat({
+                      ...old.chat,
+                      messages: newMessages,
+                    }),
+                  };
+                },
+              );
+              break;
+            }
+            case "tool_result": {
+              // Handle tool result events
+              queryClient.setQueryData(
+                ["chat", currentChatId],
+                (old: { chat: Chat } | undefined) => {
+                  if (!old) return old;
+
+                  const existingMessages = old.chat.messages || [];
+                  const newMessages = [...existingMessages];
+
+                  newMessages.push(
+                    Object.assign(
+                      new Message({
+                        role: "tool",
+                        content: event.content,
+                        thinkingTimeStart: event.thinkingTimeStart,
+                        thinkingTimeEnd: event.thinkingTimeEnd,
+                      }),
+                      {
+                        tool_result: event.toolResultData,
+                        ...(event.toolName
+                          ? { tool_name: event.toolName }
+                          : {}),
+                      },
+                    ),
                   );
-                })
-                .catch((error) => {
-                  console.error(
-                    "Failed to fetch capabilities after download:",
-                    error,
-                  );
-                  queryClient.invalidateQueries({
-                    queryKey: ["modelCapabilities", selectedModel.model],
+
+                  return {
+                    ...old,
+                    chat: new Chat({
+                      ...old.chat,
+                      messages: newMessages,
+                      browser_state: event.toolState ?? old.chat.browser_state,
+                    }),
+                  };
+                },
+              );
+              break;
+            }
+            case "download": {
+              setDownloadProgress((prev) => {
+                const newMap = new Map(prev);
+                newMap.set(currentChatId, event);
+                return newMap;
+              });
+
+              if (event.done && selectedModel) {
+                const currentStaleModels =
+                  queryClient.getQueryData<Map<string, boolean>>([
+                    "staleModels",
+                  ]) || new Map();
+                const newStaleMap = new Map(currentStaleModels);
+                newStaleMap.delete(selectedModel.model);
+                queryClient.setQueryData(["staleModels"], newStaleMap);
+
+                queryClient.invalidateQueries({ queryKey: ["models"] });
+
+                // Fetch fresh capabilities for the downloaded model
+                getModelCapabilities(selectedModel.model)
+                  .then((capabilities) => {
+                    queryClient.setQueryData(
+                      ["modelCapabilities", selectedModel.model],
+                      capabilities,
+                    );
+                  })
+                  .catch((error) => {
+                    console.error(
+                      "Failed to fetch capabilities after download:",
+                      error,
+                    );
+                    queryClient.invalidateQueries({
+                      queryKey: ["modelCapabilities", selectedModel.model],
+                    });
                   });
-                });
-            }
-            break;
-          }
-          case "error": {
-            // Clean up streaming state
-            setStreamingChatIds((prev: Set<string>) => {
-              const newSet = new Set(prev);
-              newSet.delete(currentChatId);
-              return newSet;
-            });
-            setDownloadProgress((prev) => {
-              const newMap = new Map(prev);
-              newMap.delete(currentChatId);
-              return newMap;
-            });
-
-            // Set error using separate React Query cache
-            queryClient.setQueryData(
-              ["chatError", currentChatId],
-              event as ErrorEvent,
-            );
-            break;
-          }
-          case "done":
-            // TODO(drifkin): update the chat with the thinking time for cases
-            // where there is thinking content, but no other content (which
-            // should be very rare)
-            setStreamingChatIds((prev: Set<string>) => {
-              const newSet = new Set(prev);
-              newSet.delete(currentChatId);
-              return newSet;
-            });
-            // Clear download progress when streaming is done
-            setDownloadProgress((prev) => {
-              const newMap = new Map(prev);
-              newMap.delete(currentChatId);
-              return newMap;
-            });
-            // Ensure chat is fresh for next fetch
-            queryClient.invalidateQueries({
-              queryKey: ["chat", currentChatId],
-            });
-            break;
-          case "chat_created": {
-            if (!event.chatId) break;
-            const newId = event.chatId;
-            updatableChatId = newId;
-            setStreamingChatIds((prev: Set<string>) => {
-              const newSet = new Set(prev);
-              newSet.add(newId);
-              return newSet;
-            });
-            setAbortControllers((prev) => {
-              const newMap = new Map(prev);
-              const controller = newMap.get(chatId);
-              if (controller) {
-                newMap.delete(chatId);
-                newMap.set(newId, controller);
               }
-              return newMap;
-            });
-
-            // Flush current batcher and create new one for the new chat ID
-            batcher.flushBatch();
-            batcher.cleanup();
-            currentChatId = newId;
-            batcher = createQueryBatcher<{ chat: Chat }>(
-              queryClient,
-              ["chat", currentChatId],
-              { batchInterval: 4, immediateFirst: true },
-            );
-
-            // Create initial chat data for the new chat
-            queryClient.setQueryData(["chat", newId], {
-              chat: new Chat({
-                id: newId,
-                model: effectiveModel.model,
-                messages: [
-                  new Message({
-                    role: "user",
-                    content: message,
-                    attachments: attachments,
-                  }),
-                ],
-              }),
-            });
-
-            // Cancel the old "new" chat query if it exists
-            if (chatId === "new") {
-              queryClient.cancelQueries({ queryKey: ["chat", "new"] });
+              break;
             }
+            case "error": {
+              // Clean up streaming state
+              setStreamingChatIds((prev: Set<string>) => {
+                const newSet = new Set(prev);
+                newSet.delete(currentChatId);
+                return newSet;
+              });
+              setDownloadProgress((prev) => {
+                const newMap = new Map(prev);
+                newMap.delete(currentChatId);
+                return newMap;
+              });
 
-            // Invalidate chats list to include the new chat
-            queryClient.invalidateQueries({ queryKey: ["chats"] });
-            break;
+              // Set error using separate React Query cache
+              queryClient.setQueryData(
+                ["chatError", currentChatId === "new" ? "" : currentChatId],
+                event as ErrorEvent,
+              );
+              break;
+            }
+            case "done":
+              // TODO(drifkin): update the chat with the thinking time for cases
+              // where there is thinking content, but no other content (which
+              // should be very rare)
+              setStreamingChatIds((prev: Set<string>) => {
+                const newSet = new Set(prev);
+                newSet.delete(currentChatId);
+                return newSet;
+              });
+              // Clear download progress when streaming is done
+              setDownloadProgress((prev) => {
+                const newMap = new Map(prev);
+                newMap.delete(currentChatId);
+                return newMap;
+              });
+              // Ensure chat is fresh for next fetch
+              queryClient.invalidateQueries({
+                queryKey: ["chat", currentChatId],
+              });
+              break;
+            case "chat_created": {
+              if (!event.chatId) break;
+              const newId = event.chatId;
+              setStreamingChatIds((prev: Set<string>) => {
+                const newSet = new Set(prev);
+                newSet.add(newId);
+                return newSet;
+              });
+              setAbortControllers((prev) => {
+                const newMap = new Map(prev);
+                const controller = newMap.get(chatId);
+                if (controller) {
+                  newMap.delete(chatId);
+                  newMap.set(newId, controller);
+                }
+                return newMap;
+              });
+
+              // Flush current batcher and create new one for the new chat ID
+              batcher.flushBatch();
+              batcher.cleanup();
+              currentChatId = newId;
+              batcher = createQueryBatcher<{ chat: Chat }>(
+                queryClient,
+                ["chat", currentChatId],
+                { batchInterval: 4, immediateFirst: true },
+              );
+
+              // Create initial chat data for the new chat
+              queryClient.setQueryData(["chat", newId], {
+                chat: new Chat({
+                  id: newId,
+                  model: effectiveModel.model,
+                  messages: [
+                    new Message({
+                      role: "user",
+                      content: message,
+                      attachments: attachments,
+                    }),
+                  ],
+                }),
+              });
+
+              // Cancel the old "new" chat query if it exists
+              if (chatId === "new") {
+                queryClient.cancelQueries({ queryKey: ["chat", "new"] });
+              }
+
+              // Invalidate chats list to include the new chat
+              queryClient.invalidateQueries({ queryKey: ["chats"] });
+              break;
+            }
           }
+          onChatEvent?.(event);
         }
-        onChatEvent?.(event);
+      } catch (error) {
+        // An aborted transport can also be a failure; only suppress it when
+        // the user cancelled this request through our controller.
+        if (!abortController.signal.aborted) {
+          console.error("error mutating sendMessage", error);
+          queryClient.setQueryData(
+            ["chatError", currentChatId === "new" ? "" : currentChatId],
+            new ErrorEvent({
+              eventName: "error",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to send message. Please try again.",
+            }),
+          );
+        }
+        throw error;
+      } finally {
+        // Preserve received content and release state even if the stream fails.
+        batcher?.flushBatch();
+        batcher?.cleanup();
+        cleanupStreaming(currentChatId);
       }
-
-      // Flush any remaining batched updates and cleanup
-      batcher.flushBatch();
-      batcher.cleanup();
     },
   });
 };
