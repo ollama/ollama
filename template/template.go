@@ -358,6 +358,11 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
+		// Go templates use system messages for instructions. Keep developer
+		// normalization here so specialized renderers retain the original role.
+		if msgs[i].Role == "developer" {
+			msgs[i].Role = "system"
+		}
 		if msgs[i].Role == "system" {
 			system = append(system, msgs[i].Content)
 		}
