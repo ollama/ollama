@@ -1,0 +1,26 @@
+name: test-install-windows
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/install.ps1'
+      - 'scripts/tests/**'
+      - '.github/workflows/test-install-windows.yaml'
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Pester
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Module -ListAvailable Pester | Where-Object { $_.Version -ge [version]"5.0.0" })) {
+            Install-Module Pester -Scope CurrentUser -Force -MinimumVersion 5.0.0
+          }
+      - name: Run install.ps1 unit tests
+        shell: powershell
+        run: |
+          Import-Module Pester -MinimumVersion 5.0.0
+          Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Unit -CI
