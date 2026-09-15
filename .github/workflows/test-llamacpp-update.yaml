@@ -98,6 +98,9 @@ jobs:
             target: publish-llama-server-cpu
             payload: cpu
           - arch: arm64
+            target: publish-llama-server-vulkan
+            payload: vulkan
+          - arch: arm64
             target: publish-llama-server-cuda_v12
             payload: cuda_v12
           - arch: arm64
@@ -210,8 +213,8 @@ jobs:
           copy_payload cpu
           copy_payload cuda_v12
           copy_payload cuda_v13
+          copy_payload vulkan
           if [ "${arch}" = "amd64" ]; then
-            copy_payload vulkan
             copy_payload rocm_v7_2
           else
             copy_payload cuda_jetpack5
