@@ -2305,6 +2305,15 @@ func llamaServerChatMediaPart(media MediaData) (map[string]any, error) {
 		}, nil
 	}
 
+	if format, ok := VideoFormat(media.Data); ok {
+		return map[string]any{
+			"type": "input_video",
+			"input_video": map[string]any{
+				"data": "data:video/" + format + ";base64," + base64.StdEncoding.EncodeToString(media.Data),
+			},
+		}, nil
+	}
+
 	data, err := llamaServerMediaBytes(media.Data)
 	if err != nil {
 		return nil, err

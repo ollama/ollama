@@ -176,13 +176,8 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
-# Subprocess spawning is only used by llama.cpp's own server tools and router
-# mode, neither of which Ollama runs. The vendored subprocess.h reaches for
-# posix_spawn_file_actions_addchdir_np without a version guard, which does not
-# exist before glibc 2.29 and so fails to build on the AlmaLinux 8 images.
-set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
-# Video input in mtmd pulls in the same subprocess header for frame extraction.
-set(MTMD_VIDEO OFF CACHE BOOL "" FORCE)
+set(LLAMA_SUBPROCESS ON CACHE BOOL "" FORCE)
+set(MTMD_VIDEO ON CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp

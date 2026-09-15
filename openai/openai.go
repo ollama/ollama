@@ -621,6 +621,25 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						return nil, fmt.Errorf("invalid input_audio base64 data: %w", err)
 					}
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
+				case "input_video":
+					videoMap, ok := data["input_video"].(map[string]any)
+					if !ok {
+						return nil, errors.New("invalid input_video format")
+					}
+					url, ok := videoMap["data"].(string)
+					if !ok {
+						url, ok = videoMap["url"].(string)
+					}
+					if !ok {
+						return nil, errors.New("invalid input_video format: missing data")
+					}
+
+					video, err := decodeVideoURL(url)
+					if err != nil {
+						return nil, err
+					}
+
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{video}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
@@ -779,6 +798,38 @@ func decodeImageURL(url string) (api.ImageData, error) {
 		return nil, errors.New("invalid image input")
 	}
 	return img, nil
+}
+
+// decodeVideoURL decodes a base64 data URI into raw video bytes.
+func decodeVideoURL(url string) (api.ImageData, error) {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return nil, errors.New("video URLs are not currently supported, please use base64 encoded data instead")
+	}
+
+	types := []string{"mp4", "webm", "avi", "quicktime", "x-matroska"}
+
+	if strings.HasPrefix(url, "data:;base64,") {
+		url = strings.TrimPrefix(url, "data:;base64,")
+	} else {
+		valid := false
+		for _, t := range types {
+			prefix := "data:video/" + t + ";base64,"
+			if strings.HasPrefix(url, prefix) {
+				url = strings.TrimPrefix(url, prefix)
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, errors.New("invalid video input")
+		}
+	}
+
+	video, err := base64.StdEncoding.DecodeString(url)
+	if err != nil {
+		return nil, errors.New("invalid video input")
+	}
+	return video, nil
 }
 
 // FromCompletionToolCall converts OpenAI ToolCall format to api.ToolCall
