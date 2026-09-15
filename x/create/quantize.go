@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,11 +12,6 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/quant"
 )
-
-// QuantizeSupported reports whether MLX (and thus quantization) is available.
-func QuantizeSupported() bool {
-	return mlx.CheckInit() == nil
-}
 
 // quantizeItem is one tensor going into a (possibly multi-tensor) quantized
 // blob: its output name, the quantization to apply (or "" to decode/keep at
@@ -31,9 +27,9 @@ type quantizeItem struct {
 // quantizeBlob loads, optionally quantizes, and packs the given tensors into a
 // single safetensors blob (weight + scale + optional bias per quantized
 // tensor). All MLX work runs on the pinned MLX thread.
-func quantizeBlob(items []quantizeItem) ([]byte, error) {
+func quantizeBlob(ctx context.Context, items []quantizeItem) ([]byte, error) {
 	var blob []byte
-	err := runOnMLXThread(func() error {
+	err := runOnMLXThread(ctx, func() error {
 		var err error
 		blob, err = quantizeBlobLocked(items)
 		return err
@@ -138,10 +134,12 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 	}
 	tmpPath = tmpFile.Name()
 	if _, err := io.Copy(tmpFile, r); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return tmpPath, nil, nil, fmt.Errorf("failed to write temp file for %s: %w", name, err)
 	}
-	tmpFile.Close()
+	if err := tmpFile.Close(); err != nil {
+		return tmpPath, nil, nil, fmt.Errorf("failed to close temp file for %s: %w", name, err)
+	}
 
 	st, err := mlx.LoadSafetensorsNative(tmpPath)
 	if err != nil {

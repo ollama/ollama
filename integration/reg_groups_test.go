@@ -129,6 +129,7 @@ func TestCreate(t *testing.T) {
 	runIntegrationGroup(t,
 		"create-safetensors",
 		"create-gguf",
+		"create-gguf-blob-transfer",
 	)
 }
 

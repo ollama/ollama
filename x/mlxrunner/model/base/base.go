@@ -98,6 +98,22 @@ func RegisterDraft(arch string, fn func(root *model.Root, target Model) (DraftMo
 	draftRegistry[arch] = fn
 }
 
+// SupportsArchitecture reports whether a target model constructor is registered.
+func SupportsArchitecture(arch string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	_, ok := registry[arch]
+	return ok
+}
+
+// SupportsDraftArchitecture reports whether a draft model constructor is registered.
+func SupportsDraftArchitecture(arch string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	_, ok := draftRegistry[arch]
+	return ok
+}
+
 // New reads config.json from the manifest, detects the architecture, looks up
 // the registered constructor, and calls it to create the model (with config
 // parsed and struct created, but weights not yet loaded).

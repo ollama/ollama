@@ -174,36 +174,41 @@ func planFloat(inv Inventory, quantize string, policy quantizePolicy) ([]BlobSpe
 // precisions use one blob per projection so safetensors quantization metadata
 // always describes the entire blob.
 func planExpertGroup(groupPrefix string, tensors []SourceTensor, quantize string, policy quantizePolicy) ([]BlobSpec, error) {
-	type expert struct {
-		idx int
-		t   SourceTensor
-	}
-	byProj := make(map[string][]expert)
+	byProj := make(map[string]map[int]SourceTensor)
 	for _, t := range tensors {
 		idx, proj, err := parseExpertTensor(groupPrefix, t.Name)
 		if err != nil {
 			return nil, err
 		}
-		byProj[proj] = append(byProj[proj], expert{idx: idx, t: t})
+		if byProj[proj] == nil {
+			byProj[proj] = make(map[int]SourceTensor)
+		}
+		if _, ok := byProj[proj][idx]; ok {
+			return nil, fmt.Errorf("expert group %s projection %s has duplicate expert index %d", groupPrefix, proj, idx)
+		}
+		byProj[proj][idx] = t
 	}
 
+	expertCount, err := validateExpertProjections(groupPrefix, byProj)
+	if err != nil {
+		return nil, err
+	}
 	var tensorSpecs []TensorSpec
 	for _, proj := range sortedKeys(byProj) {
 		experts := byProj[proj]
-		sort.Slice(experts, func(i, j int) bool { return experts[i].idx < experts[j].idx })
-
-		base := experts[0].t
-		sources := make([]SourceTensor, len(experts))
-		for i, e := range experts {
-			if e.t.Dtype != base.Dtype || !slices.Equal(e.t.Shape, base.Shape) {
+		base := experts[0]
+		sources := make([]SourceTensor, expertCount)
+		for i := range expertCount {
+			e := experts[i]
+			if e.Dtype != base.Dtype || !slices.Equal(e.Shape, base.Shape) {
 				return nil, fmt.Errorf("expert group %s projection %s has mismatched expert layout (%s %v vs %s %v)",
-					groupPrefix, proj, base.Dtype, base.Shape, e.t.Dtype, e.t.Shape)
+					groupPrefix, proj, base.Dtype, base.Shape, e.Dtype, e.Shape)
 			}
-			sources[i] = e.t
+			sources[i] = e
 		}
 
 		stackedName := groupPrefix + "." + proj + ".weight"
-		stackedShape := append([]int32{int32(len(experts))}, base.Shape...)
+		stackedShape := append([]int32{int32(expertCount)}, base.Shape...)
 		q := ""
 		if quantize != "" {
 			q = policy.quantizationType(stackedName, stackedShape, quantize)
@@ -259,7 +264,33 @@ func parseExpertTensor(groupPrefix, name string) (idx int, proj string, err erro
 	if err != nil {
 		return 0, "", fmt.Errorf("expert tensor %q has a non-numeric expert index %q", name, idxStr)
 	}
+	if idx < 0 || strconv.Itoa(idx) != idxStr {
+		return 0, "", fmt.Errorf("expert tensor %q has invalid expert index %q (must be a canonical non-negative integer)", name, idxStr)
+	}
 	return idx, proj, nil
+}
+
+// validateExpertProjections ensures source indices map directly to runtime
+// slots. Every projection in a group must cover the same contiguous 0..N-1
+// expert set; otherwise stacking would silently renumber or misalign experts.
+func validateExpertProjections[T any](groupPrefix string, byProjection map[string]map[int]T) (int, error) {
+	expectedCount := -1
+	for _, projection := range sortedKeys(byProjection) {
+		experts := byProjection[projection]
+		for index := range len(experts) {
+			if _, ok := experts[index]; !ok {
+				return 0, fmt.Errorf("expert group %s projection %s is missing expert index %d", groupPrefix, projection, index)
+			}
+		}
+		if expectedCount >= 0 && len(experts) != expectedCount {
+			return 0, fmt.Errorf("expert group %s projection %s has %d experts, want %d to match the other projections", groupPrefix, projection, len(experts), expectedCount)
+		}
+		expectedCount = len(experts)
+	}
+	if expectedCount < 0 {
+		return 0, nil
+	}
+	return expectedCount, nil
 }
 
 // perExpertGroup reports whether name is a per-expert weight that must be
