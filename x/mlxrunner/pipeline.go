@@ -324,14 +324,6 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				if !ok {
 					continue
 				}
-				// Two-pass structured output cancels the first pass before its final response.
-				if request.IncludeIntermediateMetrics {
-					resp.PromptEvalCount = len(request.Tokens)
-					resp.PromptEvalCachedCount = final.PromptEvalCachedCount
-					resp.PromptEvalDuration = promptEval
-					resp.EvalCount = generated
-					resp.EvalDuration = time.Since(now)
-				}
 				select {
 				case <-ctx.Done():
 					err = ctx.Err()
