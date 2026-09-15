@@ -390,7 +390,11 @@ func TestGetInferenceInfoTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to write log file %s: %s", serverLogPath, err)
 	}
+	start := time.Now()
 	_, err = GetInferenceInfo(ctx)
+	if elapsed := time.Since(start); elapsed >= 75*time.Millisecond {
+		t.Fatalf("GetInferenceInfo took %s to observe cancellation", elapsed)
+	}
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
