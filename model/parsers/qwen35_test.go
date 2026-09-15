@@ -513,3 +513,95 @@ func TestQwen35ParserThinkingTruncatedWithoutCloseTag(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen35ParserUnclosedThinkingReportedWhileCollecting(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	reporter, ok := parser.(ThinkingStateReporter)
+	if !ok {
+		t.Fatal("expected qwen3.5 parser to implement ThinkingStateReporter")
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+	if !reporter.UnclosedThinking() {
+		t.Fatal("expected UnclosedThinking to be true before any closing tag")
+	}
+
+	if _, _, _, err := parser.Add("Reasoning that never closes", true); err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if !reporter.UnclosedThinking() {
+		t.Fatal("expected UnclosedThinking to stay true when no closing tag was seen")
+	}
+}
+
+func TestQwen35ParserUnclosedThinkingClearedByCloseTag(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	reporter, ok := parser.(ThinkingStateReporter)
+	if !ok {
+		t.Fatal("expected qwen3.5 parser to implement ThinkingStateReporter")
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+	content, thinking, _, err := parser.Add("Let me think...</think>Answer.", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "Let me think..." {
+		t.Fatalf("expected thinking %q, got %q", "Let me think...", thinking)
+	}
+	if content != "Answer." {
+		t.Fatalf("expected content %q, got %q", "Answer.", content)
+	}
+	if reporter.UnclosedThinking() {
+		t.Fatal("expected UnclosedThinking to be false after a closing tag")
+	}
+}
+
+func TestQwen35ParserUnclosedThinkingClearedByToolCall(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	reporter, ok := parser.(ThinkingStateReporter)
+	if !ok {
+		t.Fatal("expected qwen3.5 parser to implement ThinkingStateReporter")
+	}
+
+	tools := []api.Tool{
+		{
+			Function: api.ToolFunction{
+				Name: "get_weather",
+				Parameters: api.ToolFunctionParameters{
+					Properties: func() *api.ToolPropertiesMap {
+						props := api.NewToolPropertiesMap()
+						props.Set("location", api.ToolProperty{Type: api.PropertyType{"string"}})
+						return props
+					}(),
+				},
+			},
+		},
+	}
+
+	parser.Init(tools, nil, &api.ThinkValue{Value: true})
+	// The model omits </think> and goes straight into a tool call; eat() closes
+	// thinking on its behalf, so the turn must not look like unclosed thinking.
+	_, _, calls, err := parser.Add("Deciding...<tool_call><function=get_weather><parameter=location>\nSan Francisco\n</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if reporter.UnclosedThinking() {
+		t.Fatal("expected UnclosedThinking to be false once thinking was closed for a tool call")
+	}
+}
