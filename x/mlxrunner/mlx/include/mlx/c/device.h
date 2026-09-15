@@ -7,7 +7,6 @@
 #include <stddef.h>
 
 #include "mlx/c/string.h"
-#include "mlx/c/vector.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +24,12 @@ extern "C" {
 typedef struct mlx_device_ {
   void* ctx;
 } mlx_device;
+
+/**
+ * A MLX vector of strings.
+ * Forward declaration to avoid circular references.
+ */
+typedef struct mlx_vector_string_ mlx_vector_string;
 
 /**
  * Device type.

@@ -7,6 +7,7 @@
 #define MLX_VECTOR_H
 
 #include "mlx/c/array.h"
+#include "mlx/c/stream.h"
 #include "mlx/c/string.h"
 
 #ifdef __cplusplus
@@ -123,6 +124,35 @@ int mlx_vector_string_append_data(
 int mlx_vector_string_append_value(mlx_vector_string vec, const char* val);
 size_t mlx_vector_string_size(mlx_vector_string vec);
 int mlx_vector_string_get(char** res, const mlx_vector_string vec, size_t idx);
+
+/**
+ * A vector of stream.
+ */
+typedef struct mlx_vector_stream_ {
+  void* ctx;
+} mlx_vector_stream;
+mlx_vector_stream mlx_vector_stream_new(void);
+int mlx_vector_stream_set(mlx_vector_stream* vec, const mlx_vector_stream src);
+int mlx_vector_stream_free(mlx_vector_stream vec);
+mlx_vector_stream mlx_vector_stream_new_data(
+    const mlx_stream* data,
+    size_t size);
+mlx_vector_stream mlx_vector_stream_new_value(const mlx_stream val);
+int mlx_vector_stream_set_data(
+    mlx_vector_stream* vec,
+    const mlx_stream* data,
+    size_t size);
+int mlx_vector_stream_set_value(mlx_vector_stream* vec, const mlx_stream val);
+int mlx_vector_stream_append_data(
+    mlx_vector_stream vec,
+    const mlx_stream* data,
+    size_t size);
+int mlx_vector_stream_append_value(mlx_vector_stream vec, const mlx_stream val);
+size_t mlx_vector_stream_size(mlx_vector_stream vec);
+int mlx_vector_stream_get(
+    mlx_stream* res,
+    const mlx_vector_stream vec,
+    size_t idx);
 
 /**@}*/
 

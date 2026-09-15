@@ -589,6 +589,11 @@
 #define mlx_stream_new mlx_stream_new_mlx_gen_orig_
 #define mlx_stream_new_device mlx_stream_new_device_mlx_gen_orig_
 #define mlx_stream_new_thread_unsafe mlx_stream_new_thread_unsafe_mlx_gen_orig_
+#define mlx_stream_thread_local_new mlx_stream_thread_local_new_mlx_gen_orig_
+#define mlx_stream_thread_local_set mlx_stream_thread_local_set_mlx_gen_orig_
+#define mlx_stream_thread_local_free mlx_stream_thread_local_free_mlx_gen_orig_
+#define mlx_stream_from_thread_local mlx_stream_from_thread_local_mlx_gen_orig_
+#define mlx_get_streams mlx_get_streams_mlx_gen_orig_
 #define mlx_stream_set mlx_stream_set_mlx_gen_orig_
 #define mlx_stream_free mlx_stream_free_mlx_gen_orig_
 #define mlx_stream_tostring mlx_stream_tostring_mlx_gen_orig_
@@ -596,6 +601,9 @@
 #define mlx_stream_get_device mlx_stream_get_device_mlx_gen_orig_
 #define mlx_stream_get_index mlx_stream_get_index_mlx_gen_orig_
 #define mlx_synchronize mlx_synchronize_mlx_gen_orig_
+#define mlx_synchronize_default mlx_synchronize_default_mlx_gen_orig_
+#define mlx_synchronize_thread_local mlx_synchronize_thread_local_mlx_gen_orig_
+#define mlx_clear_streams mlx_clear_streams_mlx_gen_orig_
 #define mlx_get_default_stream mlx_get_default_stream_mlx_gen_orig_
 #define mlx_set_default_stream mlx_set_default_stream_mlx_gen_orig_
 #define mlx_default_cpu_stream_new mlx_default_cpu_stream_new_mlx_gen_orig_
@@ -659,6 +667,17 @@
 #define mlx_vector_string_append_value mlx_vector_string_append_value_mlx_gen_orig_
 #define mlx_vector_string_size mlx_vector_string_size_mlx_gen_orig_
 #define mlx_vector_string_get mlx_vector_string_get_mlx_gen_orig_
+#define mlx_vector_stream_new mlx_vector_stream_new_mlx_gen_orig_
+#define mlx_vector_stream_set mlx_vector_stream_set_mlx_gen_orig_
+#define mlx_vector_stream_free mlx_vector_stream_free_mlx_gen_orig_
+#define mlx_vector_stream_new_data mlx_vector_stream_new_data_mlx_gen_orig_
+#define mlx_vector_stream_new_value mlx_vector_stream_new_value_mlx_gen_orig_
+#define mlx_vector_stream_set_data mlx_vector_stream_set_data_mlx_gen_orig_
+#define mlx_vector_stream_set_value mlx_vector_stream_set_value_mlx_gen_orig_
+#define mlx_vector_stream_append_data mlx_vector_stream_append_data_mlx_gen_orig_
+#define mlx_vector_stream_append_value mlx_vector_stream_append_value_mlx_gen_orig_
+#define mlx_vector_stream_size mlx_vector_stream_size_mlx_gen_orig_
+#define mlx_vector_stream_get mlx_vector_stream_get_mlx_gen_orig_
 #define mlx_version mlx_version_mlx_gen_orig_
 
 #include "mlx/c/mlx.h"
@@ -1247,6 +1266,11 @@
 #undef mlx_stream_new
 #undef mlx_stream_new_device
 #undef mlx_stream_new_thread_unsafe
+#undef mlx_stream_thread_local_new
+#undef mlx_stream_thread_local_set
+#undef mlx_stream_thread_local_free
+#undef mlx_stream_from_thread_local
+#undef mlx_get_streams
 #undef mlx_stream_set
 #undef mlx_stream_free
 #undef mlx_stream_tostring
@@ -1254,6 +1278,9 @@
 #undef mlx_stream_get_device
 #undef mlx_stream_get_index
 #undef mlx_synchronize
+#undef mlx_synchronize_default
+#undef mlx_synchronize_thread_local
+#undef mlx_clear_streams
 #undef mlx_get_default_stream
 #undef mlx_set_default_stream
 #undef mlx_default_cpu_stream_new
@@ -1317,6 +1344,17 @@
 #undef mlx_vector_string_append_value
 #undef mlx_vector_string_size
 #undef mlx_vector_string_get
+#undef mlx_vector_stream_new
+#undef mlx_vector_stream_set
+#undef mlx_vector_stream_free
+#undef mlx_vector_stream_new_data
+#undef mlx_vector_stream_new_value
+#undef mlx_vector_stream_set_data
+#undef mlx_vector_stream_set_value
+#undef mlx_vector_stream_append_data
+#undef mlx_vector_stream_append_value
+#undef mlx_vector_stream_size
+#undef mlx_vector_stream_get
 #undef mlx_version
 
 extern size_t (*mlx_dtype_size_)(mlx_dtype dtype);
@@ -3717,6 +3755,15 @@ extern int (*mlx_random_uniform_)(
 extern mlx_stream (*mlx_stream_new_)(void);
 extern mlx_stream (*mlx_stream_new_device_)(mlx_device dev);
 extern mlx_stream (*mlx_stream_new_thread_unsafe_)(mlx_device dev);
+extern mlx_stream_thread_local (*mlx_stream_thread_local_new_)(mlx_device dev);
+extern int (*mlx_stream_thread_local_set_)(
+    mlx_stream_thread_local* tls,
+    const mlx_stream_thread_local src);
+extern int (*mlx_stream_thread_local_free_)(mlx_stream_thread_local tls);
+extern int (*mlx_stream_from_thread_local_)(
+    mlx_stream* res,
+    const mlx_stream_thread_local tls);
+extern int (*mlx_get_streams_)(mlx_vector_stream* res);
 extern int (*mlx_stream_set_)(mlx_stream* stream, const mlx_stream src);
 extern int (*mlx_stream_free_)(mlx_stream stream);
 extern int (*mlx_stream_tostring_)(mlx_string* str, mlx_stream stream);
@@ -3724,6 +3771,9 @@ extern bool (*mlx_stream_equal_)(mlx_stream lhs, mlx_stream rhs);
 extern int (*mlx_stream_get_device_)(mlx_device* dev, mlx_stream stream);
 extern int (*mlx_stream_get_index_)(int* index, mlx_stream stream);
 extern int (*mlx_synchronize_)(mlx_stream stream);
+extern int (*mlx_synchronize_default_)(void);
+extern int (*mlx_synchronize_thread_local_)(mlx_stream_thread_local tls);
+extern int (*mlx_clear_streams_)(void);
 extern int (*mlx_get_default_stream_)(mlx_stream* stream, mlx_device dev);
 extern int (*mlx_set_default_stream_)(mlx_stream stream);
 extern mlx_stream (*mlx_default_cpu_stream_new_)(void);
@@ -3856,6 +3906,28 @@ extern int (*mlx_vector_string_append_data_)(
 extern int (*mlx_vector_string_append_value_)(mlx_vector_string vec, const char* val);
 extern size_t (*mlx_vector_string_size_)(mlx_vector_string vec);
 extern int (*mlx_vector_string_get_)(char** res, const mlx_vector_string vec, size_t idx);
+extern mlx_vector_stream (*mlx_vector_stream_new_)(void);
+extern int (*mlx_vector_stream_set_)(mlx_vector_stream* vec, const mlx_vector_stream src);
+extern int (*mlx_vector_stream_free_)(mlx_vector_stream vec);
+extern mlx_vector_stream (*mlx_vector_stream_new_data_)(
+    const mlx_stream* data,
+    size_t size);
+extern mlx_vector_stream (*mlx_vector_stream_new_value_)(const mlx_stream val);
+extern int (*mlx_vector_stream_set_data_)(
+    mlx_vector_stream* vec,
+    const mlx_stream* data,
+    size_t size);
+extern int (*mlx_vector_stream_set_value_)(mlx_vector_stream* vec, const mlx_stream val);
+extern int (*mlx_vector_stream_append_data_)(
+    mlx_vector_stream vec,
+    const mlx_stream* data,
+    size_t size);
+extern int (*mlx_vector_stream_append_value_)(mlx_vector_stream vec, const mlx_stream val);
+extern size_t (*mlx_vector_stream_size_)(mlx_vector_stream vec);
+extern int (*mlx_vector_stream_get_)(
+    mlx_stream* res,
+    const mlx_vector_stream vec,
+    size_t idx);
 extern int (*mlx_version_)(mlx_string* str_);
 
 int mlx_dynamic_load_symbols(mlx_dynamic_handle handle);
@@ -7426,6 +7498,25 @@ static inline mlx_stream mlx_stream_new_device(mlx_device dev) {
 static inline mlx_stream mlx_stream_new_thread_unsafe(mlx_device dev) {
     return mlx_stream_new_thread_unsafe_(dev);
 }
+static inline mlx_stream_thread_local mlx_stream_thread_local_new(mlx_device dev) {
+    return mlx_stream_thread_local_new_(dev);
+}
+static inline int mlx_stream_thread_local_set(
+    mlx_stream_thread_local* tls,
+    const mlx_stream_thread_local src) {
+    return mlx_stream_thread_local_set_(tls, src);
+}
+static inline int mlx_stream_thread_local_free(mlx_stream_thread_local tls) {
+    return mlx_stream_thread_local_free_(tls);
+}
+static inline int mlx_stream_from_thread_local(
+    mlx_stream* res,
+    const mlx_stream_thread_local tls) {
+    return mlx_stream_from_thread_local_(res, tls);
+}
+static inline int mlx_get_streams(mlx_vector_stream* res) {
+    return mlx_get_streams_(res);
+}
 static inline int mlx_stream_set(mlx_stream* stream, const mlx_stream src) {
     return mlx_stream_set_(stream, src);
 }
@@ -7446,6 +7537,15 @@ static inline int mlx_stream_get_index(int* index, mlx_stream stream) {
 }
 static inline int mlx_synchronize(mlx_stream stream) {
     return mlx_synchronize_(stream);
+}
+static inline int mlx_synchronize_default(void) {
+    return mlx_synchronize_default_();
+}
+static inline int mlx_synchronize_thread_local(mlx_stream_thread_local tls) {
+    return mlx_synchronize_thread_local_(tls);
+}
+static inline int mlx_clear_streams(void) {
+    return mlx_clear_streams_();
 }
 static inline int mlx_get_default_stream(mlx_stream* stream, mlx_device dev) {
     return mlx_get_default_stream_(stream, dev);
@@ -7704,6 +7804,50 @@ static inline size_t mlx_vector_string_size(mlx_vector_string vec) {
 }
 static inline int mlx_vector_string_get(char** res, const mlx_vector_string vec, size_t idx) {
     return mlx_vector_string_get_(res, vec, idx);
+}
+static inline mlx_vector_stream mlx_vector_stream_new(void) {
+    return mlx_vector_stream_new_();
+}
+static inline int mlx_vector_stream_set(mlx_vector_stream* vec, const mlx_vector_stream src) {
+    return mlx_vector_stream_set_(vec, src);
+}
+static inline int mlx_vector_stream_free(mlx_vector_stream vec) {
+    return mlx_vector_stream_free_(vec);
+}
+static inline mlx_vector_stream mlx_vector_stream_new_data(
+    const mlx_stream* data,
+    size_t size) {
+    return mlx_vector_stream_new_data_(data, size);
+}
+static inline mlx_vector_stream mlx_vector_stream_new_value(const mlx_stream val) {
+    return mlx_vector_stream_new_value_(val);
+}
+static inline int mlx_vector_stream_set_data(
+    mlx_vector_stream* vec,
+    const mlx_stream* data,
+    size_t size) {
+    return mlx_vector_stream_set_data_(vec, data, size);
+}
+static inline int mlx_vector_stream_set_value(mlx_vector_stream* vec, const mlx_stream val) {
+    return mlx_vector_stream_set_value_(vec, val);
+}
+static inline int mlx_vector_stream_append_data(
+    mlx_vector_stream vec,
+    const mlx_stream* data,
+    size_t size) {
+    return mlx_vector_stream_append_data_(vec, data, size);
+}
+static inline int mlx_vector_stream_append_value(mlx_vector_stream vec, const mlx_stream val) {
+    return mlx_vector_stream_append_value_(vec, val);
+}
+static inline size_t mlx_vector_stream_size(mlx_vector_stream vec) {
+    return mlx_vector_stream_size_(vec);
+}
+static inline int mlx_vector_stream_get(
+    mlx_stream* res,
+    const mlx_vector_stream vec,
+    size_t idx) {
+    return mlx_vector_stream_get_(res, vec, idx);
 }
 static inline int mlx_version(mlx_string* str_) {
     return mlx_version_(str_);

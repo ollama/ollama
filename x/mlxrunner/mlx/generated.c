@@ -2404,6 +2404,15 @@ int (*mlx_random_uniform_)(
 mlx_stream (*mlx_stream_new_)(void) = NULL;
 mlx_stream (*mlx_stream_new_device_)(mlx_device dev) = NULL;
 mlx_stream (*mlx_stream_new_thread_unsafe_)(mlx_device dev) = NULL;
+mlx_stream_thread_local (*mlx_stream_thread_local_new_)(mlx_device dev) = NULL;
+int (*mlx_stream_thread_local_set_)(
+    mlx_stream_thread_local* tls,
+    const mlx_stream_thread_local src) = NULL;
+int (*mlx_stream_thread_local_free_)(mlx_stream_thread_local tls) = NULL;
+int (*mlx_stream_from_thread_local_)(
+    mlx_stream* res,
+    const mlx_stream_thread_local tls) = NULL;
+int (*mlx_get_streams_)(mlx_vector_stream* res) = NULL;
 int (*mlx_stream_set_)(mlx_stream* stream, const mlx_stream src) = NULL;
 int (*mlx_stream_free_)(mlx_stream stream) = NULL;
 int (*mlx_stream_tostring_)(mlx_string* str, mlx_stream stream) = NULL;
@@ -2411,6 +2420,9 @@ bool (*mlx_stream_equal_)(mlx_stream lhs, mlx_stream rhs) = NULL;
 int (*mlx_stream_get_device_)(mlx_device* dev, mlx_stream stream) = NULL;
 int (*mlx_stream_get_index_)(int* index, mlx_stream stream) = NULL;
 int (*mlx_synchronize_)(mlx_stream stream) = NULL;
+int (*mlx_synchronize_default_)(void) = NULL;
+int (*mlx_synchronize_thread_local_)(mlx_stream_thread_local tls) = NULL;
+int (*mlx_clear_streams_)(void) = NULL;
 int (*mlx_get_default_stream_)(mlx_stream* stream, mlx_device dev) = NULL;
 int (*mlx_set_default_stream_)(mlx_stream stream) = NULL;
 mlx_stream (*mlx_default_cpu_stream_new_)(void) = NULL;
@@ -2543,6 +2555,28 @@ int (*mlx_vector_string_append_data_)(
 int (*mlx_vector_string_append_value_)(mlx_vector_string vec, const char* val) = NULL;
 size_t (*mlx_vector_string_size_)(mlx_vector_string vec) = NULL;
 int (*mlx_vector_string_get_)(char** res, const mlx_vector_string vec, size_t idx) = NULL;
+mlx_vector_stream (*mlx_vector_stream_new_)(void) = NULL;
+int (*mlx_vector_stream_set_)(mlx_vector_stream* vec, const mlx_vector_stream src) = NULL;
+int (*mlx_vector_stream_free_)(mlx_vector_stream vec) = NULL;
+mlx_vector_stream (*mlx_vector_stream_new_data_)(
+    const mlx_stream* data,
+    size_t size) = NULL;
+mlx_vector_stream (*mlx_vector_stream_new_value_)(const mlx_stream val) = NULL;
+int (*mlx_vector_stream_set_data_)(
+    mlx_vector_stream* vec,
+    const mlx_stream* data,
+    size_t size) = NULL;
+int (*mlx_vector_stream_set_value_)(mlx_vector_stream* vec, const mlx_stream val) = NULL;
+int (*mlx_vector_stream_append_data_)(
+    mlx_vector_stream vec,
+    const mlx_stream* data,
+    size_t size) = NULL;
+int (*mlx_vector_stream_append_value_)(mlx_vector_stream vec, const mlx_stream val) = NULL;
+size_t (*mlx_vector_stream_size_)(mlx_vector_stream vec) = NULL;
+int (*mlx_vector_stream_get_)(
+    mlx_stream* res,
+    const mlx_vector_stream vec,
+    size_t idx) = NULL;
 int (*mlx_version_)(mlx_string* str_) = NULL;
 
 int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
@@ -3130,6 +3164,11 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_stream_new);
     CHECK_LOAD(handle, mlx_stream_new_device);
     CHECK_LOAD(handle, mlx_stream_new_thread_unsafe);
+    CHECK_LOAD(handle, mlx_stream_thread_local_new);
+    CHECK_LOAD(handle, mlx_stream_thread_local_set);
+    CHECK_LOAD(handle, mlx_stream_thread_local_free);
+    CHECK_LOAD(handle, mlx_stream_from_thread_local);
+    CHECK_LOAD(handle, mlx_get_streams);
     CHECK_LOAD(handle, mlx_stream_set);
     CHECK_LOAD(handle, mlx_stream_free);
     CHECK_LOAD(handle, mlx_stream_tostring);
@@ -3137,6 +3176,9 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_stream_get_device);
     CHECK_LOAD(handle, mlx_stream_get_index);
     CHECK_LOAD(handle, mlx_synchronize);
+    CHECK_LOAD(handle, mlx_synchronize_default);
+    CHECK_LOAD(handle, mlx_synchronize_thread_local);
+    CHECK_LOAD(handle, mlx_clear_streams);
     CHECK_LOAD(handle, mlx_get_default_stream);
     CHECK_LOAD(handle, mlx_set_default_stream);
     CHECK_LOAD(handle, mlx_default_cpu_stream_new);
@@ -3200,6 +3242,17 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_vector_string_append_value);
     CHECK_LOAD(handle, mlx_vector_string_size);
     CHECK_LOAD(handle, mlx_vector_string_get);
+    CHECK_LOAD(handle, mlx_vector_stream_new);
+    CHECK_LOAD(handle, mlx_vector_stream_set);
+    CHECK_LOAD(handle, mlx_vector_stream_free);
+    CHECK_LOAD(handle, mlx_vector_stream_new_data);
+    CHECK_LOAD(handle, mlx_vector_stream_new_value);
+    CHECK_LOAD(handle, mlx_vector_stream_set_data);
+    CHECK_LOAD(handle, mlx_vector_stream_set_value);
+    CHECK_LOAD(handle, mlx_vector_stream_append_data);
+    CHECK_LOAD(handle, mlx_vector_stream_append_value);
+    CHECK_LOAD(handle, mlx_vector_stream_size);
+    CHECK_LOAD(handle, mlx_vector_stream_get);
     CHECK_LOAD(handle, mlx_version);
     return 0;
 }

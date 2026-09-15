@@ -115,7 +115,7 @@ jobs:
             superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=vulkan'
             expected_payload: lib/ollama/vulkan/libggml-vulkan.so
           - preset: 'MLX CUDA 13'
-            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
+            container: nvidia/cuda:13.0.0-devel-ubuntu24.04
             extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
             superbuild_target: ollama-mlx-cuda_v13
             superbuild_dir: build/local-superbuild-mlx-cuda_v13
