@@ -22,7 +22,7 @@ ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
 RUN yum install -y yum-utils epel-release \
-    && dnf install -y clang ccache git \
+    && dnf install -y clang ccache git libxcb-devel libX11-devel libXrandr-devel wayland-devel \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
 ENV CC=clang CXX=clang++
 
@@ -60,16 +60,18 @@ ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$P
 
 FROM base AS vulkan-deps
 ARG VULKANVERSION
-RUN ln -s /usr/bin/python3 /usr/bin/python \
-    && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
+RUN ln -sf /usr/bin/python3 /usr/bin/python \
+    && curl -fsSL https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -o /tmp/vulkansdk.tar.xz \
     && tar xvf /tmp/vulkansdk.tar.xz -C /tmp \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 spirv-headers \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 shaderc \
-    && cp -r /tmp/${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
-    && cp -r /tmp/${VULKANVERSION}/x86_64/lib/* /usr/local/lib \
-    && cp -r /tmp/${VULKANVERSION}/x86_64/share/* /usr/local/share/ \
-    && cp -r /tmp/${VULKANVERSION}/x86_64/bin/* /usr/local/bin/ \
+    && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-loader \
+    && SDK_ARCH="$(uname -m)" \
+    && cp -r /tmp/${VULKANVERSION}/${SDK_ARCH}/include/* /usr/local/include/ \
+    && cp -r /tmp/${VULKANVERSION}/${SDK_ARCH}/lib/* /usr/local/lib/ \
+    && cp -r /tmp/${VULKANVERSION}/${SDK_ARCH}/share/* /usr/local/share/ \
+    && cp -r /tmp/${VULKANVERSION}/${SDK_ARCH}/bin/* /usr/local/bin/ \
     && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
 ENV VULKAN_SDK=/usr/local
 
@@ -287,6 +289,7 @@ FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-vulkan dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
