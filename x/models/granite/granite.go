@@ -1,0 +1,361 @@
+// Package granite provides a Granite-style decoder-only transformer for MLX.
+//
+// Granite is architecturally identical to Llama with the addition of four
+// scalar multipliers applied to the embeddings, attention scores, residual
+// connections, and final logits.
+package granite
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
+	"github.com/ollama/ollama/x/models/nn"
+	"github.com/ollama/ollama/x/tokenizer"
+)
+
+func init() {
+	base.Register("GraniteForCausalLM", newModel)
+}
+
+// Config holds Granite model configuration.
+type Config struct {
+	HiddenSize            int32              `json:"hidden_size"`
+	NumHiddenLayers       int32              `json:"num_hidden_layers"`
+	IntermediateSize      int32              `json:"intermediate_size"`
+	NumAttentionHeads     int32              `json:"num_attention_heads"`
+	NumKeyValueHeads      int32              `json:"num_key_value_heads"`
+	VocabSize             int32              `json:"vocab_size"`
+	RMSNormEps            float32            `json:"rms_norm_eps"`
+	RopeTheta             float32            `json:"rope_theta"`
+	RopeScaling           *nn.RopeParameters `json:"rope_scaling"`
+	MaxPositionEmbeddings int32              `json:"max_position_embeddings"`
+	TieWordEmbeddings     bool               `json:"tie_word_embeddings"`
+
+	// Granite-specific multipliers (all default to 1.0, except
+	// AttentionMultiplier which defaults to the standard 1/sqrt(head_dim)
+	// scale, if unset).
+	EmbeddingMultiplier float32 `json:"embedding_multiplier"`
+	AttentionMultiplier float32 `json:"attention_multiplier"`
+	ResidualMultiplier  float32 `json:"residual_multiplier"`
+	LogitsScaling       float32 `json:"logits_scaling"`
+
+	// Quantization parameters (set during load based on model quantization).
+	QuantGroupSize int                               `json:"-"`
+	QuantBits      int                               `json:"-"`
+	QuantMode      string                            `json:"-"`
+	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
+
+	// Computed fields.
+	HeadDim    int32      `json:"-"`
+	Scale      float32    `json:"-"`
+	RopeFreqs  *mlx.Array `json:"-"`
+	RopeMScale float32    `json:"-"`
+}
+
+// Model is a Granite text model.
+type Model struct {
+	EmbedTokens nn.EmbeddingLayer
+	Layers      []*Layer
+	Norm        *nn.RMSNorm
+	LMHead      nn.LinearLayer
+
+	tok *tokenizer.Tokenizer
+	*Config
+
+	weightPrefix string
+}
+
+type Layer struct {
+	Attention     *Attention
+	MLP           *MLP
+	AttentionNorm *nn.RMSNorm
+	MLPNorm       *nn.RMSNorm
+}
+
+type Attention struct {
+	QProj nn.LinearLayer
+	KProj nn.LinearLayer
+	VProj nn.LinearLayer
+	OProj nn.LinearLayer
+}
+
+type MLP struct {
+	GateProj nn.LinearLayer
+	UpProj   nn.LinearLayer
+	DownProj nn.LinearLayer
+}
+
+func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
+	for _, prefix := range []string{"", "language_model."} {
+		if tensors[prefix+"model.embed_tokens.weight"] != nil {
+			return prefix
+		}
+	}
+	return ""
+}
+
+func newModel(root *model.Root) (base.Model, error) {
+	configData, err := root.Manifest.ReadConfig("config.json")
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	if cfg.HiddenSize <= 0 {
+		return nil, fmt.Errorf("invalid hidden_size: %d", cfg.HiddenSize)
+	}
+	if cfg.NumAttentionHeads <= 0 {
+		return nil, fmt.Errorf("invalid num_attention_heads: %d", cfg.NumAttentionHeads)
+	}
+	if cfg.NumKeyValueHeads <= 0 {
+		cfg.NumKeyValueHeads = cfg.NumAttentionHeads
+	}
+	if cfg.HiddenSize%cfg.NumAttentionHeads != 0 {
+		return nil, fmt.Errorf("hidden_size (%d) must be divisible by num_attention_heads (%d)", cfg.HiddenSize, cfg.NumAttentionHeads)
+	}
+	if cfg.HeadDim == 0 {
+		cfg.HeadDim = cfg.HiddenSize / cfg.NumAttentionHeads
+	}
+	if cfg.HeadDim <= 0 {
+		return nil, fmt.Errorf("invalid head_dim: %d", cfg.HeadDim)
+	}
+	if cfg.NumAttentionHeads%cfg.NumKeyValueHeads != 0 {
+		return nil, fmt.Errorf("num_attention_heads (%d) must be divisible by num_key_value_heads (%d)", cfg.NumAttentionHeads, cfg.NumKeyValueHeads)
+	}
+	if cfg.RopeTheta == 0 {
+		cfg.RopeTheta = 10000
+	}
+	cfg.RopeMScale = 1
+	if cfg.RopeScaling != nil {
+		switch strings.ToLower(cfg.RopeScaling.TypeName()) {
+		case "", "none":
+		case "yarn":
+			cfg.RopeFreqs, cfg.RopeMScale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, cfg.RopeScaling)
+		default:
+			return nil, fmt.Errorf("unsupported rope_scaling type %q", cfg.RopeScaling.TypeName())
+		}
+	}
+	if cfg.RMSNormEps == 0 {
+		cfg.RMSNormEps = 1e-5
+	}
+	if cfg.EmbeddingMultiplier == 0 {
+		cfg.EmbeddingMultiplier = 1.0
+	}
+	if cfg.ResidualMultiplier == 0 {
+		cfg.ResidualMultiplier = 1.0
+	}
+	if cfg.LogitsScaling == 0 {
+		cfg.LogitsScaling = 1.0
+	}
+	if cfg.AttentionMultiplier == 0 {
+		cfg.AttentionMultiplier = 1.0
+	}
+	// Granite's attention_multiplier replaces the standard 1/sqrt(head_dim)
+	// scaling factor used in attention.
+	cfg.Scale = cfg.AttentionMultiplier
+
+	if qt := root.QuantType(); qt != "" {
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
+		if gs := root.GroupSize(); gs > 0 {
+			cfg.QuantGroupSize = gs
+		}
+	} else {
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
+	}
+	cfg.TensorQuant = root.AllTensorQuant()
+
+	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer config: %w", err)
+	}
+
+	tokConfig := &tokenizer.TokenizerConfig{
+		ConfigJSON: configData,
+	}
+	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
+		tokConfig.GenerationConfigJSON = genConfigData
+	}
+	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
+		tokConfig.TokenizerConfigJSON = tokConfigData
+	}
+
+	tok, err := tokenizer.LoadFromBytesWithConfig(tokData, tokConfig)
+	if err != nil {
+		return nil, fmt.Errorf("parse tokenizer: %w", err)
+	}
+
+	m := &Model{
+		Layers: make([]*Layer, cfg.NumHiddenLayers),
+		Config: &cfg,
+		tok:    tok,
+	}
+
+	return m, nil
+}
+
+// LoadWeights receives all tensors loaded from the manifest and assigns them
+// to model fields.
+func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
+	m.weightPrefix = resolveWeightPrefix(tensors)
+	prefix := m.weightPrefix
+	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
+
+	embedTokens := model.MakeEmbeddingLayer(tensors, prefix+"model.embed_tokens", m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
+	if embedTokens == nil {
+		return fmt.Errorf("missing embedding weight: %smodel.embed_tokens.weight", prefix)
+	}
+	m.EmbedTokens = embedTokens
+
+	normWeight := tensors[prefix+"model.norm.weight"]
+	if normWeight == nil {
+		return fmt.Errorf("missing final norm weight: %smodel.norm.weight", prefix)
+	}
+	m.Norm = nn.NewRMSNorm(normWeight, m.RMSNormEps)
+
+	if m.TieWordEmbeddings {
+		m.LMHead = m.EmbedTokens.AsLinear()
+	} else if lmHead := linears.Make(prefix + "lm_head"); lmHead != nil {
+		m.LMHead = lmHead
+	} else if lmHead := linears.Make("lm_head"); lmHead != nil {
+		m.LMHead = lmHead
+	} else {
+		m.LMHead = m.EmbedTokens.AsLinear()
+	}
+
+	for i := range m.NumHiddenLayers {
+		layerPrefix := fmt.Sprintf("%smodel.layers.%d", prefix, i)
+
+		layer := &Layer{
+			Attention: &Attention{},
+			MLP:       &MLP{},
+		}
+
+		if w := tensors[layerPrefix+".input_layernorm.weight"]; w != nil {
+			layer.AttentionNorm = nn.NewRMSNorm(w, m.RMSNormEps)
+		}
+		if w := tensors[layerPrefix+".post_attention_layernorm.weight"]; w != nil {
+			layer.MLPNorm = nn.NewRMSNorm(w, m.RMSNormEps)
+		}
+
+		layer.Attention.QProj = linears.Make(layerPrefix + ".self_attn.q_proj")
+		layer.Attention.KProj = linears.Make(layerPrefix + ".self_attn.k_proj")
+		layer.Attention.VProj = linears.Make(layerPrefix + ".self_attn.v_proj")
+		layer.Attention.OProj = linears.Make(layerPrefix + ".self_attn.o_proj")
+
+		layer.MLP.GateProj = linears.Make(layerPrefix + ".mlp.gate_proj")
+		layer.MLP.UpProj = linears.Make(layerPrefix + ".mlp.up_proj")
+		layer.MLP.DownProj = linears.Make(layerPrefix + ".mlp.down_proj")
+
+		if layer.AttentionNorm == nil {
+			return fmt.Errorf("layer %d: missing input_layernorm", i)
+		}
+		if layer.MLPNorm == nil {
+			return fmt.Errorf("layer %d: missing post_attention_layernorm", i)
+		}
+		if layer.Attention.QProj == nil || layer.Attention.KProj == nil || layer.Attention.VProj == nil || layer.Attention.OProj == nil {
+			return fmt.Errorf("layer %d: missing attention projections", i)
+		}
+		if layer.MLP.GateProj == nil || layer.MLP.UpProj == nil || layer.MLP.DownProj == nil {
+			return fmt.Errorf("layer %d: missing mlp projections", i)
+		}
+
+		m.Layers[i] = layer
+	}
+
+	return nil
+}
+
+func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+	dims := b.InputIDs.Dims()
+	B, L := int32(dims[0]), int32(dims[1])
+	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
+
+	h := m.EmbedTokens.Forward(b.InputIDs)
+	h = mlx.MulScalar(h, m.EmbeddingMultiplier)
+	for i, layer := range m.Layers {
+		var c cache.Cache
+		if caches != nil && i < len(caches) {
+			c = caches[i]
+		}
+		h = layer.Forward(h, b, c, positions, B, L, m.Config)
+	}
+
+	out := m.Norm.Forward(h, m.RMSNormEps)
+	return out, out
+}
+
+func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
+	logits := m.LMHead.Forward(x)
+	if m.LogitsScaling != 1.0 {
+		logits = mlx.DivScalar(logits, m.LogitsScaling)
+	}
+	return logits
+}
+
+func (m *Model) MaxContextLength() int {
+	return int(m.MaxPositionEmbeddings)
+}
+
+func (m *Model) Tokenizer() *tokenizer.Tokenizer {
+	return m.tok
+}
+
+func (m *Model) NewCaches() []cache.Cache {
+	caches := make([]cache.Cache, len(m.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+	}
+	return caches
+}
+
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	attnOut := l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), b, c, positions, B, L, cfg)
+	h := mlx.Add(x, mlx.MulScalar(attnOut, cfg.ResidualMultiplier))
+	mlpOut := l.MLP.Forward(l.MLPNorm.Forward(h, cfg.RMSNormEps))
+	return mlx.Add(h, mlx.MulScalar(mlpOut, cfg.ResidualMultiplier))
+}
+
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+	q := a.QProj.Forward(x)
+	k := a.KProj.Forward(x)
+	v := a.VProj.Forward(x)
+
+	q = mlx.Reshape(q, B, L, cfg.NumAttentionHeads, cfg.HeadDim)
+	q = mlx.Transpose(q, 0, 2, 1, 3)
+
+	k = mlx.Reshape(k, B, L, cfg.NumKeyValueHeads, cfg.HeadDim)
+	k = mlx.Transpose(k, 0, 2, 1, 3)
+
+	v = mlx.Reshape(v, B, L, cfg.NumKeyValueHeads, cfg.HeadDim)
+	v = mlx.Transpose(v, 0, 2, 1, 3)
+
+	q = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeMScale)
+	k = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeMScale)
+
+	// MLX SDPA supports grouped-query attention directly (Q heads can be a
+	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
+	var kv nn.SDPAOption
+	if c != nil {
+		history := c.(cache.Attention).Update(b, k, v)
+		kv = nn.WithKVHistory(history)
+	} else {
+		kv = nn.WithKV(k, v, b.SeqQueryLens)
+	}
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
+	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
+	return a.OProj.Forward(out)
+}
+
+func (m *MLP) Forward(x *mlx.Array) *mlx.Array {
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
+}
