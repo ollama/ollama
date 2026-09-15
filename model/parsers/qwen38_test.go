@@ -116,6 +116,12 @@ func TestQwen38ParserMalformedAndControlLikeContent(t *testing.T) {
 			wantContent:  "Before",
 			wantThinking: "Plan",
 		},
+		{
+			name:         "markdown image tag preserved",
+			continuation: "Plan</think>Here's your image.\n\n![Generated image: A red fox sitting in a snowy forest at sunset](https://example.com/images/fox.png)",
+			wantContent:  "Here's your image.\n\n![Generated image: A red fox sitting in a snowy forest at sunset](https://example.com/images/fox.png)",
+			wantThinking: "Plan",
+		},
 	}
 
 	for _, tt := range tests {
