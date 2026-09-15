@@ -71,25 +71,65 @@ func ResetPeakMemory() {
 // MaxRecommendedWorkingSetSize returns the device's recommended upper bound
 // for resident Metal allocations.
 func MaxRecommendedWorkingSetSize() (int, error) {
-	info := mlxCheck(C.mlx_device_info_new())
-	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
+	size, ok, err := deviceInfoSize("max_recommended_working_set_size")
+	if err != nil {
 		return 0, err
 	}
-	defer freeDeviceInfo(info)
-
-	key := C.CString("max_recommended_working_set_size")
-	defer C.free(unsafe.Pointer(key))
-
-	var size C.size_t
-	rc := C.mlx_device_info_get_size(&size, info, key)
-	if err := lastError(); err != nil {
-		return 0, err
-	}
-	if rc != 0 {
+	if !ok {
 		// mlx-c reports a missing key with a non-zero return and no message.
 		return 0, fmt.Errorf("mlx: no max_recommended_working_set_size in device info")
 	}
-	return int(size), nil
+	return size, nil
+}
+
+// DeviceMemory returns the selected GPU device's total and currently
+// driver-free memory from device info. It reports ok=false on backends that
+// do not publish those keys.
+func DeviceMemory() (total, free int, ok bool) {
+	total, totalOK, err := deviceInfoSize("total_memory")
+	if err != nil || !totalOK {
+		return 0, 0, false
+	}
+	free, freeOK, err := deviceInfoSize("free_memory")
+	if err != nil {
+		return 0, 0, false
+	}
+	return total, free, freeOK
+}
+
+// deviceInfoSize reads a size_t key from the default device's info snapshot,
+// reporting ok=false when the backend does not publish the key.
+func deviceInfoSize(key string) (int, bool, error) {
+	info := mlxCheck(C.mlx_device_info_new())
+	if err := mlxError(C.mlx_device_info_get(&info, DefaultDevice().ctx)); err != nil {
+		return 0, false, err
+	}
+	defer freeDeviceInfo(info)
+
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	var size C.size_t
+	rc := C.mlx_device_info_get_size(&size, info, cKey)
+	if err := lastError(); err != nil {
+		return 0, false, err
+	}
+	return int(size), rc == 0, nil
+}
+
+// SetMemoryLimit sets the GPU allocator's maximum memory use and returns the
+// previous limit. Contrary to what the name suggests, it does not constrain
+// Metal memory use; mlx_set_wired_limit is the Metal governor.
+func SetMemoryLimit(limit int) (int, error) {
+	if limit < 0 {
+		return 0, fmt.Errorf("mlx: memory limit must be non-negative")
+	}
+
+	var previous C.size_t
+	if err := mlxError(C.mlx_set_memory_limit(&previous, C.size_t(limit))); err != nil {
+		return 0, err
+	}
+	return int(previous), nil
 }
 
 // SetWiredLimit sets the maximum amount of Metal memory MLX keeps resident and
