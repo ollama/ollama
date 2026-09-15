@@ -1,0 +1,9 @@
+beautifulsoup4==4.12.2
+feedparser==6.0.10
+mattsollamatools==0.0.8
+newspaper3k==0.2.8
+nltk==3.8.1
+numpy==1.24.3
+Requests==2.31.0
+scikit_learn==1.3.0
+sentence_transformers==2.2.2

@@ -1,0 +1,46 @@
+#EXTM3U
+
+#EXTINF:-1 group-title="直播源倉庫", IPv6 直播 (范明明)
+https://live.fanmingming.com/tv/m3u/ipv6.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", Global 直播 (范明明)
+https://live.fanmingming.com/tv/m3u/global.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", Radio 直播 (范明明)
+https://live.fanmingming.com/radio/m3u/index.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", YueChan IPTV
+https://raw.githubusercontent.com/YueChan/Live/main/IPTV.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", 1986 直播
+https://since1986.online/epg/live.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", PTV研究所 (綜合)
+https://smart.pendy.dpdns.org/m3u/merged_judy.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", PTV研究所 (體育)
+https://smart.pendy.dpdns.org/m3u/gongyi_judy.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", AKTV 直播
+https://aktv.space/live.m3u
+
+#EXTINF:-1 group-title="直播源倉庫", 夢澤河 (TiviMate專用)
+https://ghproxy.net/https://raw.githubusercontent.com/mengzehe/tvbox/main/live.m3u
+
+#EXTINF:-1 group-title="單線直播", 雲星家庭
+http://itvbox.cc/tvbox/云星日记/1.m3u8
+
+#EXTINF:-1 group-title="單線直播", 雲星嗶哩
+http://itvbox.cc/tvbox/云星日记/bili.m3u8
+
+#EXTINF:-1 group-title="單線直播", 螞蟻論壇接口
+https://download.kstore.space/download/2883/m3u8/dsj/guochan/mp1/1.m3u8
+
+#EXTINF:-1 group-title="單線直播", 不良帥源
+https://notabug.org/qizhen15800/My9394/raw/master/ProfessionalEdition.m3u8
+
+#EXTINF:-1 group-title="文字源(部分APP支援)", 365直播
+https://live.iptv365.org/live.txt
+
+#EXTINF:-1 group-title="文字源(部分APP支援)", 吾愛評測
+http://52pan.top:81/api/v3/file/get/174964/%E5%90%BE%E7%88%B1%E8%AF%84%E6%B5%8B.m3u?sign=rPssLoffquDXszCARt6UNF8MobSa1FA27XomzOluJBY%3D%3A0
