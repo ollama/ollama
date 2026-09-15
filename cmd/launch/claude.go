@@ -17,6 +17,52 @@ type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
 
+const (
+	claudeOneMillionContextWindow = 1_048_576
+	claudeOneMillionSuffix        = "[1m]"
+)
+
+func (c *Claude) readinessModel(model string) string {
+	if base, ok := strings.CutSuffix(model, claudeOneMillionSuffix); ok && base != "" {
+		return base
+	}
+	return model
+}
+
+func (c *Claude) runtimeModel(model string, models []LaunchModel) string {
+	if model == "" || strings.HasSuffix(model, claudeOneMillionSuffix) {
+		return model
+	}
+
+	base := c.readinessModel(model)
+	if !isCloudModelName(base) {
+		return model
+	}
+
+	if context, ok := c.modelContextLength(base, models); ok && context >= claudeOneMillionContextWindow {
+		return model + claudeOneMillionSuffix
+	}
+
+	return model
+}
+
+func (c *Claude) modelContextLength(model string, models []LaunchModel) (int, bool) {
+	if resolved, ok := findLaunchModel(models, model); ok {
+		if resolved.ContextLength > 0 {
+			return resolved.ContextLength, true
+		}
+		if resolved.Details.ContextLength > 0 {
+			return resolved.Details.ContextLength, true
+		}
+	}
+
+	if limit, ok := lookupCloudModelLimit(model); ok && limit.Context > 0 {
+		return limit.Context, true
+	}
+
+	return 0, false
+}
+
 func (c *Claude) args(model string, extra []string) []string {
 	var args []string
 	if model != "" {
@@ -49,22 +95,24 @@ func (c *Claude) findPath() (string, error) {
 	return "", fmt.Errorf("claude binary not found")
 }
 
-func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
+func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
 		return err
 	}
 
-	cmd := exec.Command(claudePath, c.args(model, args)...)
+	runtimeModel := c.runtimeModel(model, models)
+
+	cmd := exec.Command(claudePath, c.args(runtimeModel, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.Env = append(os.Environ(), c.envVars(model)...)
+	cmd.Env = append(os.Environ(), c.envVars(runtimeModel, models)...)
 	return cmd.Run()
 }
 
-func (c *Claude) envVars(model string) []string {
+func (c *Claude) envVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
@@ -76,7 +124,7 @@ func (c *Claude) envVars(model string) []string {
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
 	}
 
-	env = append(env, c.modelEnvVars(model)...)
+	env = append(env, c.modelEnvVars(model, models)...)
 	return env
 }
 
@@ -162,7 +210,7 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
-func (c *Claude) modelEnvVars(model string) []string {
+func (c *Claude) modelEnvVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
@@ -170,9 +218,10 @@ func (c *Claude) modelEnvVars(model string) []string {
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
 	}
 
-	if isCloudModelName(model) {
-		if l, ok := lookupCloudModelLimit(model); ok {
-			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
+	base := c.readinessModel(model)
+	if isCloudModelName(base) {
+		if context, ok := c.modelContextLength(base, models); ok {
+			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(context))
 		}
 	}
 
