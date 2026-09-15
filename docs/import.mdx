@@ -32,7 +32,7 @@ ollama run my-model
 
 ## Importing a GGUF model
 
-Use GGUF community tools to prepare and quantize GGUF files before importing.
+Ollama does not quantize GGUF models during import. Prepare and quantize them first with a GGUF tool such as llama.cpp's [`llama-quantize`](https://github.com/ggml-org/llama.cpp/tree/master/tools/quantize).
 
 To import a single-file GGUF model, create a `Modelfile` containing:
 
@@ -40,11 +40,10 @@ To import a single-file GGUF model, create a `Modelfile` containing:
 FROM /path/to/file.gguf
 ```
 
-For a split GGUF model, list every shard with a separate `FROM` instruction. Keep the original split filenames.
+For a split GGUF model, keep the original split filenames and use a wildcard that matches every shard.
 
 ```dockerfile
-FROM /path/to/model-00001-of-00002.gguf
-FROM /path/to/model-00002-of-00002.gguf
+FROM /path/to/model-*.gguf
 ```
 
 Once you have created your `Modelfile`, use the `ollama create` command to build the model.

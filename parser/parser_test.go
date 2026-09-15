@@ -892,6 +892,91 @@ func TestCreateRequestFiles(t *testing.T) {
 	}
 }
 
+func TestCreateRequestFileGlob(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"model-00001-of-00002.gguf": "first",
+		"model-00002-of-00002.gguf": "second",
+		"projector.gguf":            "projector",
+	}
+	want := make(map[string]string)
+	for name, contents := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(name, "model-") {
+			digest := sha256.Sum256([]byte(contents))
+			want[path] = fmt.Sprintf("sha256:%x", digest)
+		}
+	}
+
+	modelfile, err := ParseFile(strings.NewReader("FROM ./model-*.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, req.Files); diff != "" {
+		t.Errorf("files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestDraftFileGlob(t *testing.T) {
+	dir := t.TempDir()
+	want := make(map[string]string)
+	for i, contents := range []string{"first", "second"} {
+		path := filepath.Join(dir, fmt.Sprintf("draft-%05d-of-00002.gguf", i+1))
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256([]byte(contents))
+		want[path] = fmt.Sprintf("sha256:%x", digest)
+	}
+
+	modelfile, err := ParseFile(strings.NewReader("FROM base\nDRAFT ./draft-*.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, req.DraftFiles); diff != "" {
+		t.Errorf("draft files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestFileGlobNoMatchUsesModelName(t *testing.T) {
+	const ref = "model-*.gguf"
+	modelfile, err := ParseFile(strings.NewReader("FROM " + ref + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.From != ref {
+		t.Fatalf("from = %q, want %q", req.From, ref)
+	}
+	if len(req.Files) != 0 {
+		t.Fatalf("files = %v, want none", req.Files)
+	}
+}
+
+func TestCreateRequestFileGlobRejectsBadPattern(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader("FROM [\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modelfile.CreateRequest(t.TempDir()); !errors.Is(err, filepath.ErrBadPattern) {
+		t.Fatalf("CreateRequest() error = %v, want %v", err, filepath.ErrBadPattern)
+	}
+}
+
 func TestFilesForModel(t *testing.T) {
 	tests := []struct {
 		name          string
