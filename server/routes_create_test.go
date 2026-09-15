@@ -818,6 +818,22 @@ func TestCreateFromBin(t *testing.T) {
 			t.Errorf("expected adapters unsupported error, got:\n%s", w.Body.String())
 		}
 	})
+
+	t.Run("rejected parameter", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:       "my-gguf-model",
+			Files:      map[string]string{"0.gguf": digest},
+			Parameters: map[string]any{"typical_p": 0.5},
+			Stream:     &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "typical_p is no longer supported") {
+			t.Errorf("expected removed parameter error, got:\n%s", w.Body.String())
+		}
+	})
 }
 
 func TestCreateFromModel(t *testing.T) {
