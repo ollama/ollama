@@ -13,6 +13,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.10.0
+	github.com/x448/float16 v0.8.4
 	golang.org/x/sync v0.17.0
 	golang.org/x/sys v0.37.0
 )
@@ -21,6 +22,7 @@ require (
 	github.com/agnivade/levenshtein v1.1.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/dlclark/regexp2 v1.11.5
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/klauspost/compress v1.18.3

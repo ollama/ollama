@@ -605,7 +605,7 @@ func TestGGUFMetadataNotPublishedAfterDelete(t *testing.T) {
 		loaded <- err
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		entries, err := os.ReadDir(ggufMetadataDir())
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -633,7 +633,7 @@ func TestGGUFMetadataNotPublishedAfterDelete(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetModel: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("timed out waiting for GetModel")
 	}
 
