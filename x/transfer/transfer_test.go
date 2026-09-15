@@ -670,6 +670,57 @@ func TestUploadSkipsExisting(t *testing.T) {
 	t.Log("HEAD-based existence check verified")
 }
 
+func newUnauthorizedServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) > maxRetries {
+			http.Error(w, "unexpected request after retry limit", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Bearer realm="https://auth.example.com",service="registry"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	return server, &requests
+}
+
+func TestUploaderExistsBoundsAuthRetries(t *testing.T) {
+	server, requests := newUnauthorizedServer(t)
+	u := &uploader{
+		client:   server.Client(),
+		baseURL:  server.URL,
+		token:    "stale-token",
+		getToken: func(context.Context, AuthChallenge) (string, error) { return "stale-token", nil },
+	}
+
+	_, err := u.exists(t.Context(), Blob{Digest: "sha256:digest"})
+	if !errors.Is(err, errMaxRetriesExceeded) {
+		t.Fatalf("exists error = %v, want %v", err, errMaxRetriesExceeded)
+	}
+	if got := requests.Load(); got != maxRetries {
+		t.Fatalf("auth requests = %d, want %d", got, maxRetries)
+	}
+}
+
+func TestPushManifestBoundsAuthRetries(t *testing.T) {
+	server, requests := newUnauthorizedServer(t)
+	u := &uploader{
+		client:   server.Client(),
+		baseURL:  server.URL,
+		token:    "stale-token",
+		getToken: func(context.Context, AuthChallenge) (string, error) { return "stale-token", nil },
+	}
+
+	err := u.pushManifest(t.Context(), "library/test", "latest", []byte(`{}`))
+	if !errors.Is(err, errMaxRetriesExceeded) {
+		t.Fatalf("pushManifest error = %v, want %v", err, errMaxRetriesExceeded)
+	}
+	if got := requests.Load(); got != maxRetries {
+		t.Fatalf("auth requests = %d, want %d", got, maxRetries)
+	}
+}
+
 // TestUploadWithCustomRepository verifies that custom repository paths are used
 func TestUploadWithCustomRepository(t *testing.T) {
 	clientDir := t.TempDir()

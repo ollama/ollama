@@ -262,29 +262,33 @@ func (u *uploader) uploadOnce(ctx context.Context, blob Blob) (int64, error) {
 }
 
 func (u *uploader) exists(ctx context.Context, blob Blob) (bool, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, fmt.Sprintf("%s/v2/%s/blobs/%s", u.baseURL, u.repository, blob.Digest), nil)
-	req.Header.Set("User-Agent", u.userAgent)
-	prev := u.authToken()
-	if prev != "" {
-		req.Header.Set("Authorization", "Bearer "+prev)
-	}
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodHead, fmt.Sprintf("%s/v2/%s/blobs/%s", u.baseURL, u.repository, blob.Digest), nil)
+		req.Header.Set("User-Agent", u.userAgent)
+		prev := u.authToken()
+		if prev != "" {
+			req.Header.Set("Authorization", "Bearer "+prev)
+		}
 
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
-		ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
-		if err := u.refreshToken(ctx, ch, prev); err != nil {
+		resp, err := u.client.Do(req)
+		if err != nil {
 			return false, err
 		}
-		return u.exists(ctx, blob)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
+			ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
+			if err := u.refreshToken(ctx, ch, prev); err != nil {
+				return false, err
+			}
+			continue
+		}
+
+		return resp.StatusCode == http.StatusOK, nil
 	}
 
-	return resp.StatusCode == http.StatusOK, nil
+	return false, fmt.Errorf("%w: checking blob existence", errMaxRetriesExceeded)
 }
 
 const maxInitRetries = 12
@@ -760,33 +764,38 @@ func computePartsWithLimits(totalSize int64, nParts int, minPart, maxPart int64)
 }
 
 func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest []byte) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/v2/%s/manifests/%s", u.baseURL, repo, ref), bytes.NewReader(manifest))
-	req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-	req.Header.Set("User-Agent", u.userAgent)
-	prev := u.authToken()
-	if prev != "" {
-		req.Header.Set("Authorization", "Bearer "+prev)
-	}
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/v2/%s/manifests/%s", u.baseURL, repo, ref), bytes.NewReader(manifest))
+		req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		req.Header.Set("User-Agent", u.userAgent)
+		prev := u.authToken()
+		if prev != "" {
+			req.Header.Set("Authorization", "Bearer "+prev)
+		}
 
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
-		ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
-		if err := u.refreshToken(ctx, ch, prev); err != nil {
+		resp, err := u.client.Do(req)
+		if err != nil {
 			return err
 		}
-		return u.pushManifest(ctx, repo, ref, manifest)
-	}
 
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("status %d: %s", resp.StatusCode, body)
+		if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
+			if err := u.refreshToken(ctx, ch, prev); err != nil {
+				return err
+			}
+			continue
+		}
+
+		defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
+		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("status %d: %s", resp.StatusCode, body)
+		}
+		return nil
 	}
-	return nil
+	return fmt.Errorf("%w: pushing manifest", errMaxRetriesExceeded)
 }
 
 // progressReader counts bytes streamed through Read. The byte counter is
