@@ -167,24 +167,100 @@ func repoBuildDirs() []string {
 	return dirs
 }
 
-// prependLibraryPath prepends dir to the platform's dynamic library search
-// path so the linker finds colocated libmlx before any stale copies.
-// Called once after successful library load.
-func prependLibraryPath(dir string) {
-	var envVar string
+func libraryPathEnvVar() string {
 	switch runtime.GOOS {
+	case "windows":
+		return "PATH"
 	case "darwin":
-		envVar = "DYLD_LIBRARY_PATH"
+		return "DYLD_LIBRARY_PATH"
 	case "linux":
-		envVar = "LD_LIBRARY_PATH"
+		return "LD_LIBRARY_PATH"
 	default:
-		return
+		return ""
+	}
+}
+
+// prependLibraryPaths prepends dirs to the platform's dynamic library search
+// path so MLX and any shared sibling backend dependencies resolve before stale
+// system copies. It returns a restore function for failed speculative loads.
+func prependLibraryPaths(dirs ...string) func() {
+	envVar := libraryPathEnvVar()
+	if envVar == "" {
+		return func() {}
+	}
+	oldValue, hadValue := os.LookupEnv(envVar)
+
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		if !seen[path] {
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	for _, dir := range dirs {
+		add(dir)
 	}
 	if existing := os.Getenv(envVar); existing != "" {
-		os.Setenv(envVar, dir+string(filepath.ListSeparator)+existing)
-	} else {
-		os.Setenv(envVar, dir)
+		for _, dir := range filepath.SplitList(existing) {
+			add(dir)
+		}
 	}
+	if len(paths) == 0 {
+		return func() {}
+	}
+	os.Setenv(envVar, strings.Join(paths, string(filepath.ListSeparator)))
+	return func() {
+		if hadValue {
+			os.Setenv(envVar, oldValue)
+		} else {
+			os.Unsetenv(envVar)
+		}
+	}
+}
+
+func mlxLibraryPathsForDir(dir string) []string {
+	paths := []string{dir}
+	if depDir, ok := dependencyDir(dir); ok {
+		paths = append(paths, depDir)
+	}
+	return paths
+}
+
+func tryLoadFromMLXDir(dir string) bool {
+	restore := prependLibraryPaths(mlxLibraryPathsForDir(dir)...)
+	if tryLoadFromDir(dir) {
+		return true
+	}
+	restore()
+	return false
+}
+
+func prependLoadedLibraryPath() {
+	if initLoadedPath == "" {
+		return
+	}
+	dir := filepath.Dir(initLoadedPath)
+	if strings.HasPrefix(filepath.Base(dir), "mlx_") {
+		prependLibraryPaths(mlxLibraryPathsForDir(dir)...)
+		setBundledCUDAToolkitPath(dir)
+	} else {
+		prependLibraryPaths(dir)
+	}
+}
+
+func setBundledCUDAToolkitPath(dir string) {
+	cudaPath, ok := cudaToolkitDirForMLXDir(dir)
+	if !ok {
+		return
+	}
+	os.Setenv("CUDA_PATH", cudaPath)
+	os.Setenv("CUDA_HOME", cudaPath)
+	slog.Debug("MLX CUDA headers", "CUDA_PATH", cudaPath)
 }
 
 func init() {
@@ -208,25 +284,29 @@ func init() {
 		return
 	}
 
-	prependLibraryPath(filepath.Dir(initLoadedPath))
+	prependLoadedLibraryPath()
 }
 
 func findMLXLibrary(forcedVariant string) bool {
 	for _, root := range libOllamaRoots() {
 		if forcedVariant != "" {
-			if tryLoadFromDir(filepath.Join(root, forcedVariant)) {
+			if tryLoadFromMLXDir(filepath.Join(root, forcedVariant)) {
 				return true
 			}
 		} else {
 			if tryLoadFromMLXSubdirs(root) {
 				return true
 			}
-			if tryLoadFromDir(root) {
+			if tryLoadFromStandaloneDir(root) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func tryLoadFromStandaloneDir(dir string) bool {
+	return tryLoadFromDir(dir)
 }
 
 // tryLoadFromMLXSubdirs globs for mlx_* subdirs within dir, filters out
@@ -245,7 +325,7 @@ func tryLoadFromMLXSubdirs(dir string) bool {
 			slog.Debug("skipping incompatible MLX variant", "dir", mlxDir)
 			continue
 		}
-		if tryLoadFromDir(mlxDir) {
+		if tryLoadFromMLXDir(mlxDir) {
 			return true
 		}
 	}
