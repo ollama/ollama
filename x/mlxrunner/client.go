@@ -149,10 +149,17 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// requestGrammar returns the structural tag the runner decodes under: the
-// API's format wrapped into a json_schema tag.
+// requestGrammar returns the structural tag the runner decodes under. API
+// schemas are wrapped into a json_schema tag; server-built structural tags are
+// passed through unchanged.
 func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 	schema := req.Format
+	var envelope struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(schema, &envelope) == nil && envelope.Type == "structural_tag" {
+		return append(json.RawMessage(nil), schema...)
+	}
 	switch string(schema) {
 	case ``, `null`, `""`:
 		return nil

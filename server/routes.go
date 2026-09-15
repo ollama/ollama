@@ -2730,6 +2730,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
+	// MLX now supports structural tags that keep reasoning free-form until the
+	// closing think tag and constrain the response in the same decode. Avoiding
+	// the generic two-pass restart prevents the asynchronous MLX decoder from
+	// leaking the first post-thinking token into the structured response.
+	mlxFormat := mlxSinglePassFormat(m, req.Format, prompt, openingTag, closingTag, req.Think)
+	mlxSinglePass := len(mlxFormat) > 0
+
 	type structuredOutputsState int
 	const (
 		structuredOutputsState_None structuredOutputsState = iota
@@ -2748,6 +2755,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			var tb strings.Builder
 
 			currentFormat := req.Format
+			if mlxSinglePass {
+				currentFormat = mlxFormat
+			}
 			// structured outputs via double request is enabled when:
 			// 1. the model supports the thinking capability and
 			// 2. it uses a built-in parser or our generic thinking parser
@@ -2758,7 +2768,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// parsed non-thinking content as the signal to turn constraining on
 
 			forceImmediate := builtinParser != nil && builtinParser.HasThinkingSupport() && req.Think != nil && !req.Think.Bool()
-			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
+			restartStructuredOutputs := req.Format != nil && !mlxSinglePass && !forceImmediate && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking))
+			if restartStructuredOutputs && structuredOutputsState == structuredOutputsState_None {
 				currentFormat = nil
 			}
 			includeIntermediateMetrics := req.Format != nil && currentFormat == nil
@@ -2837,7 +2848,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 					tb.WriteString(thinking)
 					// we are now receiving content from the model - we should start applying structured outputs
-					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && res.Message.Content != "" {
+					if restartStructuredOutputs && structuredOutputsState == structuredOutputsState_None && tb.String() != "" && res.Message.Content != "" {
 						structuredOutputsState = structuredOutputsState_ReadyToApply
 						cancel()
 						return
@@ -2862,7 +2873,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					tb.WriteString(thinkingContent)
 					// emit the collected thinking text before restarting with structured outputs and clear unstructured content
 					// to avoid leaking mixed tokens like "</think>Hello"
-					if structuredOutputsState == structuredOutputsState_None && req.Format != nil && tb.String() != "" && remainingContent != "" {
+					if restartStructuredOutputs && structuredOutputsState == structuredOutputsState_None && tb.String() != "" && remainingContent != "" {
 						structuredOutputsState = structuredOutputsState_ReadyToApply
 						res.Message.Content = ""
 						ch <- res

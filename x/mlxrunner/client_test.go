@@ -33,6 +33,7 @@ func TestRequestGrammar(t *testing.T) {
 			want: `{"type":"structural_tag","format":{"type":"json_schema","json_schema":{"type":"object"}}}`,
 		},
 		{name: "schema", req: llm.CompletionRequest{Format: json.RawMessage(schema)}, want: tag},
+		{name: "structural tag", req: llm.CompletionRequest{Format: json.RawMessage(tag)}, want: tag},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := string(requestGrammar(tt.req)); got != tt.want {
