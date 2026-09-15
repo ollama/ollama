@@ -461,6 +461,16 @@ func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 	return true
 }
 
+// ThinkingTags reports the delimiters of the analysis channel so a
+// thinking-token budget can force it closed. The opening tag has to name the
+// channel: <|channel|> on its own also opens the final channel, and forcing
+// <|end|> there would cut off the answer rather than the reasoning. Analysis
+// messages that carry a recipient are tool calls and put " to=..." before
+// <|message|>, so they do not match either.
+func (h *HarmonyMessageHandler) ThinkingTags() (string, string) {
+	return "<|channel|>analysis<|message|>", "<|end|>"
+}
+
 func (h *HarmonyMessageHandler) PreservedTokens() []string {
 	// <|call|> is an EOG marker for tool calls. Preserve structural tokens
 	// used by the parser, but let llama-server stop on the call terminator.

@@ -50,6 +50,12 @@ func (p *LagunaParser) HasThinkingSupport() bool {
 	return true
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *LagunaParser) ThinkingTags() (string, string) {
+	return lagunaThinkingOpenTag, lagunaThinkingCloseTag
+}
+
 func (p *LagunaParser) PreservedTokens() []string {
 	return []string{
 		lagunaThinkingOpenTag,
