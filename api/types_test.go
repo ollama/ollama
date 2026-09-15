@@ -991,9 +991,17 @@ func TestThinkValueTransportTypes(t *testing.T) {
 		want    any
 		invalid bool
 	}{
-		{`null`, nil, false}, {`true`, true, false}, {`false`, false, false},
-		{`"xhigh"`, "xhigh", false}, {`"minimal"`, "minimal", false}, {`""`, "", false},
-		{`75`, nil, true}, {`0.75`, nil, true}, {`[]`, nil, true}, {`{}`, nil, true}, {`tru`, nil, true},
+		{`null`, nil, false},
+		{`true`, true, false},
+		{`false`, false, false},
+		{`"xhigh"`, "xhigh", false},
+		{`"minimal"`, "minimal", false},
+		{`""`, "", false},
+		{`75`, nil, true},
+		{`0.75`, nil, true},
+		{`[]`, nil, true},
+		{`{}`, nil, true},
+		{`tru`, nil, true},
 	} {
 		t.Run(tt.input, func(t *testing.T) {
 			var think ThinkValue
