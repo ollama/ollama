@@ -51,3 +51,20 @@ func TestWordPieceWords(t *testing.T) {
 		t.Errorf("unexpected words (-want +got):\n%s", diff)
 	}
 }
+
+func TestWordPieceUnicodePunctuation(t *testing.T) {
+	for _, punctuation := range []string{"\u00b7", "\u2014", "\u3002", "\U00010100"} {
+		t.Run(punctuation, func(t *testing.T) {
+			wpm := NewWordPiece(&Vocabulary{
+				Values: []string{"[UNK]", "▁hello", "▁" + punctuation, "▁world"},
+			}, false)
+			ids, err := wpm.Encode("hello"+punctuation+"world", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff([]int32{1, 2, 3}, ids); diff != "" {
+				t.Errorf("unexpected ids (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

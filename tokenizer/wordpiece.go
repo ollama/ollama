@@ -5,6 +5,7 @@ import (
 	"iter"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/logutil"
 )
@@ -83,7 +84,7 @@ func (wpm WordPiece) words(s string) iter.Seq[string] {
 				if end < 0 {
 					end = len(w) - start
 				} else if end == 0 {
-					end = 1
+					_, end = utf8.DecodeRuneInString(w[start:])
 				}
 
 				if !yield(w[start : start+end]) {
