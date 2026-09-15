@@ -225,6 +225,7 @@ console.log(response.message.content);
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
+- [Heap Code](https://github.com/heaplabshq/heapcode) - VS Code extension: chat, completions, inline edit, agent mode, and AI PR review
 
 ### Libraries & SDKs
 
@@ -302,6 +303,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [Heap Code CLI](https://github.com/heaplabshq/heapcode) - Terminal coding agent with tools, semantic search, checkpoints, and MCP
 
 ### Productivity & Apps
 
