@@ -72,3 +72,10 @@ func TestMLXSinglePassFormatKeepsExistingBehaviorWithoutThinking(t *testing.T) {
 		t.Fatalf("got a single-pass grammar for think=false: %s", got)
 	}
 }
+
+func TestMLXSinglePassFormatSkipsNonThinkingQwen3Parser(t *testing.T) {
+	mlx := &Model{Config: model.ConfigV2{ModelFormat: "safetensors", Parser: "qwen3"}}
+	if got := mlxSinglePassFormat(mlx, json.RawMessage(`{"type":"object"}`), "assistant:", "", "", &api.ThinkValue{Value: true}); got != nil {
+		t.Fatalf("got a single-pass grammar for non-thinking qwen3 parser: %s", got)
+	}
+}

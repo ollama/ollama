@@ -9,7 +9,9 @@ import (
 
 // mlxThinkingTags returns the delimiters used by an MLX model's reasoning
 // output. Renderer-backed models do not necessarily carry a Go template, so
-// the parser name is also used for the Qwen family that uses <think> tags.
+// the parser name is also used for Qwen variants that use <think> tags. The
+// plain qwen3 parser is intentionally excluded because it treats thinking as
+// ordinary content and cannot remove the generated thinking block.
 func mlxThinkingTags(m *Model, openingTag, closingTag string) (string, string) {
 	if openingTag != "" && closingTag != "" {
 		return openingTag, closingTag
@@ -19,7 +21,7 @@ func mlxThinkingTags(m *Model, openingTag, closingTag string) (string, string) {
 	}
 
 	switch m.Config.Parser {
-	case "qwen3", "qwen3-thinking", "qwen3.5", "ornith", "qwen3-vl-thinking":
+	case "qwen3-thinking", "qwen3.5", "ornith", "qwen3-vl-thinking":
 		return "<think>", "</think>"
 	default:
 		return "", ""
