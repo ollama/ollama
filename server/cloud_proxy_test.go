@@ -39,6 +39,22 @@ func TestCopyProxyRequestHeaders_StripsConnectionTokenHeaders(t *testing.T) {
 	}
 }
 
+func TestCopyProxyRequestHeaders_StripsSensitiveClientHeaders(t *testing.T) {
+	src := http.Header{}
+	src.Add("X-Api-Key", "user-anthropic-key")
+	src.Add("X-End-To-End", "keep-me")
+
+	dst := http.Header{}
+	copyProxyRequestHeaders(dst, src)
+
+	if got := dst.Get("X-Api-Key"); got != "" {
+		t.Fatalf("expected X-Api-Key to be stripped before proxying to cloud, got %q", got)
+	}
+	if got := dst.Get("X-End-To-End"); got != "keep-me" {
+		t.Fatalf("expected X-End-To-End to be forwarded, got %q", got)
+	}
+}
+
 func TestCopyProxyResponseHeaders_StripsConnectionTokenHeaders(t *testing.T) {
 	src := http.Header{}
 	src.Add("Connection", "X-Upstream-Hop")
