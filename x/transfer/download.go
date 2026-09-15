@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -120,7 +122,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 	progress.add(alreadyCompleted) // Report already-downloaded bytes upfront
 
 	d := &downloader{
-		client:       cmp.Or(opts.Client, defaultClient),
+		client:       redirectGuard(cmp.Or(opts.Client, defaultClient)),
 		baseURL:      opts.BaseURL,
 		destDir:      opts.DestDir,
 		repository:   cmp.Or(opts.Repository, "library/_"),
@@ -392,6 +394,72 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 			return n, err
 		}
 	}
+}
+
+// redirectGuard returns a shallow copy of client whose CheckRedirect rejects
+// redirects to hosts that the downloader must not reach: private, loopback,
+// link-local, multicast, and unspecified addresses. This blocks SSRF via
+// registries that redirect blob fetches to internal targets (issue #17041).
+// The transport is shared with the original client, so connection pooling is
+// unaffected, and the original CheckRedirect behavior is preserved for
+// redirects that are allowed.
+//
+// Redirects that stay on the original request's hostname are never blocked:
+// a private registry is a legitimate configuration, and redirects within it
+// cannot reach anything the caller has not already opted into.
+func redirectGuard(client *http.Client) *http.Client {
+	c := *client
+	prev := client.CheckRedirect
+	c.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && req.URL.Hostname() != via[0].URL.Hostname() {
+			if err := validateRedirectHost(req.Context(), req.URL); err != nil {
+				return err
+			}
+		}
+		if prev != nil {
+			return prev(req, via)
+		}
+		return nil
+	}
+	return &c
+}
+
+// validateRedirectHost rejects hosts that resolve to addresses which the
+// downloader must not be redirected to. Hosts given as IP literals are
+// checked directly; other hosts are resolved and every address must be
+// publicly routable. Resolution failures fail closed: downloads are retried,
+// so a transient DNS error is preferable to a redirect reaching an internal
+// address.
+func validateRedirectHost(ctx context.Context, u *url.URL) error {
+	host := u.Hostname()
+	if addr, err := netip.ParseAddr(host); err == nil {
+		if blockedRedirectAddr(addr) {
+			return fmt.Errorf("redirect to %s is not allowed", host)
+		}
+		return nil
+	}
+
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return fmt.Errorf("lookup of redirect host %q: %w", host, err)
+	}
+	for _, addr := range addrs {
+		if blockedRedirectAddr(addr) {
+			return fmt.Errorf("redirect to %s (%s) is not allowed", host, addr)
+		}
+	}
+	return nil
+}
+
+// blockedRedirectAddr reports whether addr must not be reached by following
+// a redirect.
+func blockedRedirectAddr(addr netip.Addr) bool {
+	return addr.IsPrivate() ||
+		addr.IsLoopback() ||
+		addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() ||
+		addr.IsMulticast() ||
+		addr.IsUnspecified()
 }
 
 // resolve follows redirects to find the final download URL.
