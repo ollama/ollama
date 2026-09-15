@@ -1332,6 +1332,127 @@ func TestParseGemma4ToolCall_ReferenceImplementationExample(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_BeginArgToolCall(t *testing.T) {
+	tools := []api.Tool{gemma4TestStringTool("create_new_file", "path", "content")}
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(tools, nil, &api.ThinkValue{Value: true})
+
+	input := `<|tool_call>call:create_new_file:
+BEGIN_ARG:
+<|channel>thought
+<channel|>parser.py
+END_ARG
+BEGIN_ARG:
+from pathlib import Path
+
+print("hello")
+END_ARG`
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("Gemma4Parser.Add returned error: %v", err)
+	}
+
+	want := []api.ToolCall{{
+		Function: api.ToolCallFunction{
+			Index: 0,
+			Name:  "create_new_file",
+			Arguments: testArgs(map[string]any{
+				"path":    "parser.py",
+				"content": "from pathlib import Path\n\nprint(\"hello\")",
+			}),
+		},
+	}}
+
+	if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+		t.Fatalf("BEGIN_ARG tool call mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestGemma4Parser_BeginArgToolCalls(t *testing.T) {
+	tools := []api.Tool{
+		gemma4TestStringTool("run_terminal_command", "command"),
+		gemma4TestStringTool("create_new_file", "path", "content"),
+	}
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(tools, nil, &api.ThinkValue{Value: true})
+
+	input := `<|tool_call>call:run_terminal_command:
+BEGIN_ARG:
+<|channel>thought
+<channel|>ls
+END_ARG
+<|tool_call>call:create_new_file:
+BEGIN_ARG:
+parser.py
+END_ARG
+BEGIN_ARG:
+print("hello")
+END_ARG`
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("Gemma4Parser.Add returned error: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Index:     0,
+				Name:      "run_terminal_command",
+				Arguments: testArgs(map[string]any{"command": "ls"}),
+			},
+		},
+		{
+			Function: api.ToolCallFunction{
+				Index: 1,
+				Name:  "create_new_file",
+				Arguments: testArgs(map[string]any{
+					"path":    "parser.py",
+					"content": "print(\"hello\")",
+				}),
+			},
+		},
+	}
+
+	if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+		t.Fatalf("BEGIN_ARG tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestGemma4Parser_BeginArgMalformedReturnsError(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{gemma4TestStringTool("run_terminal_command", "command")}, nil, &api.ThinkValue{Value: true})
+
+	_, _, _, err := parser.Add(`<|tool_call>call:run_terminal_command:
+BEGIN_ARG:
+ls`, true)
+	if err == nil {
+		t.Fatal("expected malformed BEGIN_ARG output to return an error")
+	}
+}
+
+func TestParseGemma4BeginArgRejectsDroppedPrefixAndMissingRequiredValue(t *testing.T) {
+	tool := gemma4TestStringTool("write", "optional", "required")
+	tool.Function.Parameters.Required = []string{"required"}
+
+	for name, input := range map[string]string{
+		"dropped prefix": `call:write:unexpected
+BEGIN_ARG:
+value
+END_ARG`,
+		"missing later required property": `call:write:
+BEGIN_ARG:
+value
+END_ARG`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseGemma4ToolCall(input, []api.Tool{tool}); err == nil {
+				t.Fatal("expected malformed BEGIN_ARG output to return an error")
+			}
+		})
+	}
+}
+
 func TestParseGemma4ToolCall_RepairsIssue15315Examples(t *testing.T) {
 	writeContent := "\n\n# Project Style Guide for Autonomous Agents' Code Generation (AGENTS.md)\n\n" +
 		"This document captures the *de facto* coding standards observed across the `src/` and `components/` source code, designed to ensure consistency for all generated code and modules consumed by the agent system."

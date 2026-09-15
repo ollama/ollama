@@ -40,6 +40,7 @@ type Gemma4Parser struct {
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
+	parseErr              error
 }
 
 func (p *Gemma4Parser) HasToolSupport() bool {
@@ -64,6 +65,7 @@ func (p *Gemma4Parser) PreservedTokens() []string {
 func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
+	p.parseErr = nil
 
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
@@ -138,7 +140,7 @@ func (p *Gemma4Parser) Add(s string, done bool) (content string, thinking string
 		p.callIndex++
 	}
 
-	return contentSb.String(), thinkingSb.String(), toolCalls, nil
+	return contentSb.String(), thinkingSb.String(), toolCalls, p.parseErr
 }
 
 func (p *Gemma4Parser) parseEvents(done bool) []gemma4Event {
@@ -178,7 +180,10 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 	switch p.state {
 	case Gemma4CollectingContent:
 		// Check for thinking open tag
-		if idx := strings.Index(bufStr, gemma4ThinkingOpenTag); idx != -1 {
+		thinkingIdx := strings.Index(bufStr, gemma4ThinkingOpenTag)
+		toolCallIdx := strings.Index(bufStr, gemma4ToolCallOpenTag)
+		if thinkingIdx != -1 && (toolCallIdx == -1 || thinkingIdx < toolCallIdx) {
+			idx := thinkingIdx
 			contentBefore := bufStr[:idx]
 			remaining := bufStr[idx+len(gemma4ThinkingOpenTag):]
 
@@ -194,7 +199,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 		}
 
 		// Check for tool call open tag
-		if idx := strings.Index(bufStr, gemma4ToolCallOpenTag); idx != -1 {
+		if idx := toolCallIdx; idx != -1 {
 			contentBefore := bufStr[:idx]
 			remaining := bufStr[idx+len(gemma4ToolCallOpenTag):]
 
@@ -318,6 +323,9 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
+				if p.parseErr == nil {
+					p.parseErr = err
+				}
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
 			}
 			return events, true
@@ -325,12 +333,30 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// If done, flush any accumulated tool call content even without closing tag.
 		// The model may hit a stop token before emitting <tool_call|>.
-		if done && len(bufStr) > 0 {
+		if done {
 			p.buffer.Reset()
 			p.state = Gemma4CollectingContent
+			if len(bufStr) == 0 {
+				p.parseErr = errors.New("unterminated empty Gemma4 tool call")
+				return events, false
+			}
+			if strings.Contains(bufStr, "BEGIN_ARG:") {
+				for _, toolCallContent := range splitGemma4BeginArgToolCalls(bufStr) {
+					if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
+						events = append(events, gemma4EventToolCall{toolCall: toolCall})
+					} else {
+						if p.parseErr == nil {
+							p.parseErr = err
+						}
+						slog.Warn("gemma4 begin-arg tool call flush on done failed", "error", err, "content", toolCallContent)
+					}
+				}
+				return events, false
+			}
 			if toolCall, err := parseGemma4ToolCall(bufStr, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
+				p.parseErr = err
 				slog.Warn("gemma4 tool call flush on done failed", "error", err, "content", bufStr)
 			}
 			return events, false
@@ -377,6 +403,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			if done {
 				p.buffer.Reset()
 				p.state = Gemma4CollectingContent
+				p.parseErr = errors.New("unterminated Gemma4 post-tool boundary")
 			}
 			return events, false
 		}
@@ -396,6 +423,9 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 		return api.ToolCall{}, errors.New("expected 'call:' prefix")
 	}
 	content = content[len("call:"):]
+	if colonIdx := strings.IndexByte(content, ':'); colonIdx != -1 && (strings.IndexByte(content, '{') == -1 || colonIdx < strings.IndexByte(content, '{')) {
+		return parseGemma4BeginArgToolCall(content, colonIdx, tools)
+	}
 
 	// Find the opening brace for args
 	braceIdx := strings.Index(content, "{")
@@ -424,6 +454,125 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 			Arguments: args,
 		},
 	}, nil
+}
+
+func splitGemma4BeginArgToolCalls(content string) []string {
+	const toolCallTag = "<|tool_call>"
+	var calls []string
+	for {
+		start := strings.Index(content, toolCallTag)
+		if start == -1 {
+			if strings.TrimSpace(content) != "" {
+				calls = append(calls, content)
+			}
+			return calls
+		}
+		if start > 0 {
+			calls = append(calls, content[:start])
+		}
+		content = content[start+len(toolCallTag):]
+	}
+}
+
+func parseGemma4BeginArgToolCall(content string, colonIdx int, tools []api.Tool) (api.ToolCall, error) {
+	toolName := strings.TrimSpace(content[:colonIdx])
+	if toolName == "" {
+		return api.ToolCall{}, errors.New("expected tool name")
+	}
+
+	properties := gemma4ToolProperties(toolName, tools)
+	if properties == nil {
+		return api.ToolCall{}, errors.New("tool schema is required for BEGIN_ARG format")
+	}
+
+	const beginArg = "BEGIN_ARG:"
+	const endArg = "END_ARG"
+	args := make([]string, 0)
+	remaining := content[colonIdx+1:]
+	requiredNames := make(map[string]bool)
+	for _, name := range gemma4RequiredToolArguments(toolName, tools) {
+		requiredNames[name] = true
+	}
+	for {
+		start := strings.Index(remaining, beginArg)
+		if start == -1 {
+			break
+		}
+		if strings.TrimSpace(remaining[:start]) != "" {
+			return api.ToolCall{}, errors.New("unexpected content before BEGIN_ARG block")
+		}
+		remaining = remaining[start+len(beginArg):]
+		end := gemma4EndArgIndex(remaining, endArg)
+		if end == -1 {
+			return api.ToolCall{}, errors.New("unterminated BEGIN_ARG block")
+		}
+		args = append(args, cleanGemma4BeginArg(remaining[:end]))
+		remaining = remaining[end+len(endArg):]
+	}
+
+	argumentNames := make([]string, 0, properties.Len())
+	for name := range properties.All() {
+		argumentNames = append(argumentNames, name)
+	}
+	if len(args) > len(argumentNames) {
+		return api.ToolCall{}, errors.New("more BEGIN_ARG blocks than tool parameters")
+	}
+	parsed := api.NewToolCallFunctionArguments()
+	for i, value := range args {
+		parsed.Set(argumentNames[i], value)
+	}
+	for i, name := range argumentNames {
+		if requiredNames[name] && i >= len(args) {
+			return api.ToolCall{}, errors.New("fewer BEGIN_ARG blocks than required tool parameters")
+		}
+	}
+	if trailing := cleanGemma4BeginArg(remaining); strings.TrimSpace(trailing) != "" {
+		return api.ToolCall{}, errors.New("unexpected content after BEGIN_ARG blocks")
+	}
+	return api.ToolCall{Function: api.ToolCallFunction{Name: toolName, Arguments: parsed}}, nil
+}
+
+func gemma4EndArgIndex(s, marker string) int {
+	for searchStart := 0; searchStart < len(s); {
+		idx := strings.Index(s[searchStart:], marker)
+		if idx == -1 {
+			return -1
+		}
+		idx += searchStart
+		beforeLine := idx == 0 || s[idx-1] == '\n'
+		after := idx + len(marker)
+		afterLine := after == len(s) || s[after] == '\n' || s[after] == '\r'
+		if beforeLine && afterLine {
+			return idx
+		}
+		searchStart = idx + len(marker)
+	}
+	return -1
+}
+
+func cleanGemma4BeginArg(value string) string {
+	value = strings.TrimSpace(value)
+	for {
+		start := strings.Index(value, gemma4ThinkingOpenTag)
+		if start == -1 {
+			return strings.TrimSpace(value)
+		}
+		end := strings.Index(value[start+len(gemma4ThinkingOpenTag):], gemma4ThinkingCloseTag)
+		if end == -1 {
+			return strings.TrimSpace(value)
+		}
+		end += start + len(gemma4ThinkingOpenTag) + len(gemma4ThinkingCloseTag)
+		value = value[:start] + value[end:]
+	}
+}
+
+func gemma4RequiredToolArguments(toolName string, tools []api.Tool) []string {
+	for _, tool := range tools {
+		if tool.Function.Name == toolName {
+			return tool.Function.Parameters.Required
+		}
+	}
+	return nil
 }
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
