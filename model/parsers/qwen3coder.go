@@ -21,6 +21,14 @@ type qwenParserState int
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+
+	// qwen3-coder intermittently omits the opening <tool_call> wrapper and
+	// starts a tool call directly with <function=...>. Accept that degenerate
+	// form as a tool-call start so the call is not leaked into chat content.
+	// Fail-safes: a bare-mode payload that does not parse, or that names an
+	// unregistered tool, is downgraded to plain content instead of erroring.
+	functionOpenTag  = "<function="
+	functionCloseTag = "</function>"
 )
 
 const (
@@ -33,6 +41,10 @@ type Qwen3CoderParser struct {
 	acc       strings.Builder
 	tools     []api.Tool
 	callIndex int
+
+	// bareFunctionMode is true while collecting a tool call that started with a
+	// bare <function= (missing <tool_call> wrapper).
+	bareFunctionMode bool
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -68,8 +80,20 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
+				if event.bare {
+					slog.Warn("qwen bare tool call parsing failed; emitting as content", "error", err)
+					sb.WriteString(event.raw)
+					continue
+				}
 				slog.Warn("qwen tool call parsing failed", "error", err)
 				return "", "", nil, err
+			}
+			// bare calls are only trusted when they target a registered tool —
+			// anything else is prose that merely looked like a call.
+			if event.bare && !p.hasTool(toolCall.Function.Name) {
+				slog.Warn("qwen bare tool call names unknown tool; emitting as content", "name", toolCall.Function.Name)
+				sb.WriteString(event.raw)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
@@ -82,7 +106,25 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		}
 	}
 
+	// bare-mode fail-safe: if the stream ends while we are still collecting a
+	// wrapper-less "call" that never closed, it was prose — flush it as content.
+	if done && p.state == qwenParserState_CollectingToolContent && p.bareFunctionMode {
+		sb.WriteString(p.acc.String())
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
+		p.bareFunctionMode = false
+	}
+
 	return sb.String(), "", toolCalls, nil
+}
+
+func (p *Qwen3CoderParser) hasTool(name string) bool {
+	for i := range p.tools {
+		if p.tools[i].Function.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Qwen3CoderParser) parseEvents() []qwenEvent {
@@ -117,6 +159,9 @@ type qwenEvent interface {
 
 type qwenEventRawToolCall struct {
 	raw string
+	// bare marks a call recovered from wrapper-less output; parse failures for
+	// bare calls downgrade to content instead of erroring.
+	bare bool
 }
 
 type qwenEventContent struct {
@@ -135,7 +180,9 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
+		idxTool := strings.Index(p.acc.String(), toolOpenTag)
+		idxFunc := strings.Index(p.acc.String(), functionOpenTag)
+		if idxTool >= 0 && (idxFunc < 0 || idxTool <= idxFunc) {
 			// we found a full tool open tag, so we can emit the content before the
 			// tag, being sure to trim any trailing whitespace
 			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
@@ -148,8 +195,23 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.Reset()
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
+			p.bareFunctionMode = false
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
+		} else if idxFunc >= 0 {
+			// wrapper-less tool call: the model skipped <tool_call> and started
+			// directly with <function=...>. Keep the <function= opener in the
+			// buffer — parseToolCall expects it.
+			before := strings.TrimRightFunc(p.acc.String()[:idxFunc], unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			after := p.acc.String()[idxFunc:]
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			p.state = qwenParserState_CollectingToolContent
+			p.bareFunctionMode = true
+			return events, true
+		} else if overlap := max(overlap(p.acc.String(), toolOpenTag), overlap(p.acc.String(), functionOpenTag)); overlap > 0 {
 			// we found a partial tool open tag, so we can emit the unambiguous part,
 			// which is the (trailing-whitespace trimmed) content before the partial
 			// tool open tag
@@ -179,6 +241,24 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			return events, false
 		}
 	case qwenParserState_CollectingToolContent:
+		if p.bareFunctionMode {
+			if strings.Contains(p.acc.String(), functionCloseTag) {
+				split := strings.SplitN(p.acc.String(), functionCloseTag, 2)
+				raw := split[0] + functionCloseTag
+				// swallow an orphaned </tool_call> the model may still emit after
+				// the wrapper-less call, plus surrounding whitespace
+				after := strings.TrimLeftFunc(split[1], unicode.IsSpace)
+				after = strings.TrimPrefix(after, toolCloseTag)
+				after = strings.TrimLeftFunc(after, unicode.IsSpace)
+				p.acc.Reset()
+				p.acc.WriteString(after)
+				events = append(events, qwenEventRawToolCall{raw: raw, bare: true})
+				p.state = qwenParserState_LookingForToolStart
+				p.bareFunctionMode = false
+				return events, true
+			}
+			return events, false
+		}
 		if strings.Contains(p.acc.String(), toolCloseTag) {
 			split := strings.SplitN(p.acc.String(), toolCloseTag, 2)
 			before := split[0]
