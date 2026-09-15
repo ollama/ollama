@@ -13,7 +13,7 @@ npm install -g @openai/codex
 
 ## Usage with Ollama
 
-<Note>Codex requires a larger context window. It is recommended to use a context window of at least 64k tokens.</Note>
+<Note>Use a context window of at least 64k tokens for Codex.</Note>
 
 ### Quick setup
 
@@ -77,7 +77,34 @@ Then run:
 codex --profile ollama-launch
 ```
 
-## Web search
+## Connect directly to Ollama Cloud
+
+Install Codex CLI, then set your [API key](/quickstart#build-an-application) in `OLLAMA_API_KEY`. No Ollama installation required.
+
+Add a provider and profile to `~/.codex/config.toml`, preserving your existing settings:
+
+```toml
+[model_providers.ollama-cloud]
+name = "Ollama Cloud"
+base_url = "https://ollama.com/v1"
+wire_api = "responses"
+env_key = "OLLAMA_API_KEY"
+
+[profiles.ollama-cloud]
+model = "glm-5.3-flash"
+model_provider = "ollama-cloud"
+web_search = "disabled"
+```
+
+Run the profile:
+
+```shell
+codex --profile ollama-cloud
+```
+
+Compatible models support basic sessions and function calls. Built-in web search and custom/freeform tool-call replay are not supported. You may need to set the model's context window and thinking options. A model name alone does not give Codex this information. See [OpenAI compatibility](/api/openai-compatibility).
+
+## Web search through local Ollama
 
 Codex web-search requests sent through the Ollama profile are executed by
 Ollama for both local and cloud models. Sign in with `ollama signin` to use the

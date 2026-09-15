@@ -2,7 +2,7 @@
 title: Claude Code
 ---
 
-[Claude Code](https://code.claude.com/docs/en/overview) is an agentic coding tool that reads your codebase, edits files, and runs commands.
+[Claude Code](https://code.claude.com/docs/en/overview) reads your codebase, edits files, and runs commands.
 
 Ollama connects Claude Code to local and cloud models through its Anthropic-compatible API.
 
@@ -154,6 +154,23 @@ ollama launch claude -- --channels plugin:telegram@claude-plugins-official
 Claude Code prompts for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in an isolated environment.
 
 See the [plugin README](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) for setup instructions.
+
+## Connect directly to Ollama Cloud
+
+Install Claude Code, then set your [API key](/quickstart#build-an-application) in `OLLAMA_API_KEY`. No Ollama installation required.
+
+In Bash or Zsh, run:
+
+```shell
+ANTHROPIC_BASE_URL=https://ollama.com \
+ANTHROPIC_AUTH_TOKEN="$OLLAMA_API_KEY" \
+ANTHROPIC_API_KEY="" \
+claude --model glm-5.3-flash
+```
+
+Use `ANTHROPIC_AUTH_TOKEN` for bearer authentication. Claude settings can override shell variables. Update any base URL or credentials in those settings, then run `/status` to check the connection.
+
+Choose a [cloud model](https://ollama.com/search?c=cloud) that supports tools. Basic chat and file edits work with compatible models. Hosted WebSearch and advanced tool controls are not fully supported. See [Anthropic compatibility](/api/anthropic-compatibility).
 
 ## Manual setup
 
