@@ -200,6 +200,7 @@ type launcherManagedRunner struct {
 	currentModel         string
 	configured           []string
 	ranModel             string
+	ranModels            []LaunchModel
 	onboarded            bool
 	onboardCalls         int
 	onboardingComplete   bool
@@ -210,8 +211,9 @@ type launcherManagedRunner struct {
 	skipModelReadiness   bool
 }
 
-func (r *launcherManagedRunner) Run(model string, _ []LaunchModel, args []string) error {
+func (r *launcherManagedRunner) Run(model string, models []LaunchModel, args []string) error {
 	r.ranModel = model
+	r.ranModels = cloneLaunchModels(models)
 	return nil
 }
 
@@ -258,10 +260,12 @@ func (r *launcherHeadlessManagedRunner) RequiresInteractiveOnboarding() bool { r
 type launcherManagedListRunner struct {
 	launcherManagedRunner
 	configuredModelLists [][]string
+	configuredModels     [][]LaunchModel
 }
 
 func (r *launcherManagedListRunner) ConfigureWithModels(primary string, models []LaunchModel) error {
 	r.configuredModelLists = append(r.configuredModelLists, launchModelNames(models))
+	r.configuredModels = append(r.configuredModels, cloneLaunchModels(models))
 	return r.Configure(primary)
 }
 
@@ -635,6 +639,113 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *
 	}
 	if diff := compareStrings(saved.Models, []string{"gemma4"}); diff != "" {
 		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchManagedSingleIntegrationReusesThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		showStatus    int
+		configureOnly bool
+		unchanged     bool
+	}{
+		{name: "configure and run", showStatus: http.StatusOK},
+		{name: "failed discovery keeps fallback", showStatus: http.StatusServiceUnavailable},
+		{name: "configure only", showStatus: http.StatusOK, configureOnly: true},
+		{name: "unchanged configuration", showStatus: http.StatusOK, unchanged: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setLaunchTestHome(t, t.TempDir())
+			withInteractiveSession(t, true)
+			withLauncherHooks(t)
+			DefaultConfirmPrompt = func(string, ConfirmOptions) (bool, error) { return true, nil }
+
+			var primaryCalls, secondaryCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					var request api.ShowRequest
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					switch request.Model {
+					case "custom-primary:latest":
+						primaryCalls.Add(1)
+					case "custom-secondary:latest":
+						secondaryCalls.Add(1)
+					default:
+						t.Errorf("unexpected show model %q", request.Model)
+					}
+					w.WriteHeader(tc.showStatus)
+					fmt.Fprint(w, `{"thinking":{"values":[false,"medium","xhigh"],"default":"xhigh"}}`)
+				case "/api/status":
+					fmt.Fprint(w, `{"cloud":{"disabled":false}}`)
+				default:
+					t.Errorf("unexpected request %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(true, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fallback := &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}
+			client.recommendationsLoaded = true
+			client.recommendationItems = []ModelItem{{Name: "custom-primary", Thinking: fallback}}
+			client.inventory.loaded = true
+			client.inventory.models = []LaunchModel{{Name: "custom-primary:latest"}, {Name: "custom-secondary:latest"}}
+			runner := &launcherManagedListRunner{launcherManagedRunner: launcherManagedRunner{
+				currentModel:       "custom-primary",
+				onboardingComplete: true,
+				skipModelReadiness: true,
+			}}
+			saved := &config.IntegrationConfig{Models: []string{"custom-primary"}, Onboarded: true}
+			request := IntegrationLaunchRequest{ModelOverride: "custom-primary", ConfigureOnly: tc.configureOnly}
+			if tc.unchanged {
+				request.ModelOverride = ""
+			}
+			if err := client.launchManagedSingleIntegration(t.Context(), chatGPTIntegrationName, runner, runner, saved, request); err != nil {
+				t.Fatal(err)
+			}
+			if got := primaryCalls.Load(); got != 1 {
+				t.Fatalf("primary show calls = %d, want 1", got)
+			}
+			wantSecondary := int32(1)
+			if tc.unchanged {
+				wantSecondary = 0
+			}
+			if got := secondaryCalls.Load(); got != wantSecondary {
+				t.Fatalf("secondary show calls = %d, want %d", got, wantSecondary)
+			}
+			wantThinking := &api.ModelRecommendationThinking{Values: []any{false, "medium", "xhigh"}, Default: "xhigh"}
+			if tc.showStatus != http.StatusOK {
+				wantThinking = fallback
+			}
+			if !tc.unchanged {
+				if len(runner.configuredModels) != 1 || len(runner.configuredModels[0]) != 2 {
+					t.Fatalf("configured models = %+v, want both selected models once", runner.configuredModels)
+				}
+				if diff := cmp.Diff(wantThinking, runner.configuredModels[0][0].Thinking); diff != "" {
+					t.Fatalf("configured thinking mismatch (-want +got):\n%s", diff)
+				}
+			}
+			if tc.configureOnly {
+				if runner.ranModel != "" {
+					t.Fatal("configure-only flow launched the runner")
+				}
+				return
+			}
+			if runner.ranModel != "custom-primary" || len(runner.ranModels) != 1 || runner.ranModels[0].Name != "custom-primary:latest" {
+				t.Fatalf("run model=%q models=%+v, want only the primary model", runner.ranModel, runner.ranModels)
+			}
+			if diff := cmp.Diff(wantThinking, runner.ranModels[0].Thinking); diff != "" {
+				t.Fatalf("run thinking mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

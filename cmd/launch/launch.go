@@ -803,12 +803,17 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	liveConfigMissing := current == ""
 	liveConfigDrifted := current != "" && target != current
 	configured := false
+	var runModels []LaunchModel
 	if needsConfigure || req.ModelOverride != "" || liveConfigMissing || liveConfigDrifted || !savedMatchesModels(saved, []string{target}) {
 		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, c.resolveRunModels(ctx, name, configureModels)); err != nil {
+		resolvedModels := c.resolveRunModels(ctx, name, configureModels)
+		if primary, ok := findLaunchModel(resolvedModels, target); ok {
+			runModels = []LaunchModel{primary}
+		}
+		if err := prepareManagedSingleIntegration(name, managed, target, resolvedModels); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -838,7 +843,10 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	return runIntegration(runner, target, c.resolveRunModels(ctx, name, []string{target}), req.ExtraArgs)
+	if len(runModels) == 0 {
+		runModels = c.resolveRunModels(ctx, name, []string{target})
+	}
+	return runIntegration(runner, target, runModels, req.ExtraArgs)
 }
 
 func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
