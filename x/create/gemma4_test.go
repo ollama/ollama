@@ -64,8 +64,13 @@ func TestGemma4QuantizationType(t *testing.T) {
 	transform26B := gemma4ImportTransform{numLayers: 30, numExperts: 128}
 	// 8-expert model (hypothetical)
 	transform8E := gemma4ImportTransform{numLayers: 30, numExperts: 8}
+	// Dense model (12B/31B): no experts, so the layer-position heuristic applies
+	transformDense := gemma4ImportTransform{numLayers: 30}
 
 	aligned := []int32{2816, 2816} // divisible by 64 (int4/int8 group size) and 16 (nvfp4)
+	// 26B-A4B source shapes, which are aligned for every quant family.
+	expertDown := []int32{128, 2816, 704}
+	expertGateUp := []int32{128, 1408, 2816}
 
 	tests := []struct {
 		name      string
@@ -82,63 +87,82 @@ func TestGemma4QuantizationType(t *testing.T) {
 		{"embed_tokens int8", transform26B, "model.embed_tokens.weight", aligned, "int8", "int8"},
 		{"embed_tokens mxfp8", transform26B, "model.embed_tokens.weight", aligned, "mxfp8", "mxfp8"},
 
-		// === v_proj: layer-position heuristic for int4/nvfp4 ===
-		// Layer 0 is in first 1/8 (30/8=3) → promoted
-		{"v_proj int4 promoted layer", transform26B, "model.layers.0.self_attn.v_proj.weight", aligned, "int4", "int8"},
-		// Layer 4 is NOT in useMoreBits → base quant
-		{"v_proj int4 non-promoted layer", transform26B, "model.layers.4.self_attn.v_proj.weight", aligned, "int4", "int4"},
-		// Layer 29 is in last 1/8 → promoted
-		{"v_proj int4 last layer promoted", transform26B, "model.layers.29.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		// === Sparse MoE dense body: the generic policy decides ===
+		// The architecture override steps aside, so v/k/down are promoted at
+		// every layer rather than at useMoreBits layers, and q/o/gate/up stay
+		// at the requested type.
+		{"body v_proj int4 first layer", transform26B, "model.language_model.layers.0.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		{"body v_proj int4 middle layer", transform26B, "model.language_model.layers.4.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		{"body v_proj int4 last layer", transform26B, "model.language_model.layers.29.self_attn.v_proj.weight", aligned, "int4", "int8"},
 		// nvfp4: promote to mxfp8 (cross-family, validated by MLX quantized_matmul)
-		{"v_proj nvfp4 promoted layer", transform26B, "model.layers.0.self_attn.v_proj.weight", aligned, "nvfp4", "mxfp8"},
-		{"v_proj nvfp4 non-promoted layer", transform26B, "model.layers.4.self_attn.v_proj.weight", aligned, "nvfp4", "nvfp4"},
-		// mxfp4: promoted to mxfp8 at promoted layers (same mxfp family)
-		{"v_proj mxfp4 promoted layer", transform26B, "model.layers.0.self_attn.v_proj.weight", aligned, "mxfp4", "mxfp8"},
-		{"v_proj mxfp4 non-promoted layer", transform26B, "model.layers.4.self_attn.v_proj.weight", aligned, "mxfp4", "mxfp4"},
+		{"body v_proj nvfp4 middle layer", transform26B, "model.language_model.layers.4.self_attn.v_proj.weight", aligned, "nvfp4", "mxfp8"},
+		{"body k_proj nvfp4", transform26B, "model.language_model.layers.4.self_attn.k_proj.weight", []int32{2048, 2816}, "nvfp4", "mxfp8"},
+		{"body mlp down_proj nvfp4", transform26B, "model.language_model.layers.4.mlp.down_proj.weight", []int32{2816, 2112}, "nvfp4", "mxfp8"},
+		{"body q_proj nvfp4", transform26B, "model.language_model.layers.4.self_attn.q_proj.weight", []int32{4096, 2816}, "nvfp4", "nvfp4"},
+		{"body o_proj nvfp4", transform26B, "model.language_model.layers.4.self_attn.o_proj.weight", []int32{2816, 4096}, "nvfp4", "nvfp4"},
+		{"body mlp gate_proj nvfp4", transform26B, "model.language_model.layers.4.mlp.gate_proj.weight", []int32{2112, 2816}, "nvfp4", "nvfp4"},
+		{"body mlp up_proj nvfp4", transform26B, "model.language_model.layers.4.mlp.up_proj.weight", []int32{2112, 2816}, "nvfp4", "nvfp4"},
+		// mxfp4: promoted to mxfp8 (same mxfp family)
+		{"body v_proj mxfp4", transform26B, "model.language_model.layers.4.self_attn.v_proj.weight", aligned, "mxfp4", "mxfp8"},
 		// int8/mxfp8: no promotion (already 8-bit)
-		{"v_proj int8 base", transform26B, "model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
-		{"v_proj mxfp8 base", transform26B, "model.layers.0.self_attn.v_proj.weight", aligned, "mxfp8", "mxfp8"},
+		{"body v_proj int8 base", transform26B, "model.language_model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
+		{"body v_proj mxfp8 base", transform26B, "model.language_model.layers.0.self_attn.v_proj.weight", aligned, "mxfp8", "mxfp8"},
 
-		// === down_proj (dense MLP): same heuristic as v_proj ===
-		{"dense down_proj int4 promoted", transform26B, "model.layers.0.mlp.down_proj.weight", aligned, "int4", "int8"},
-		{"dense down_proj int4 non-promoted", transform26B, "model.layers.4.mlp.down_proj.weight", aligned, "int4", "int4"},
-		{"dense down_proj nvfp4 promoted", transform26B, "model.layers.0.mlp.down_proj.weight", aligned, "nvfp4", "mxfp8"},
-		{"dense down_proj nvfp4 non-promoted", transform26B, "model.layers.4.mlp.down_proj.weight", aligned, "nvfp4", "nvfp4"},
-		{"dense down_proj mxfp4 promoted", transform26B, "model.layers.0.mlp.down_proj.weight", aligned, "mxfp4", "mxfp8"},
-		{"dense down_proj mxfp4 non-promoted", transform26B, "model.layers.4.mlp.down_proj.weight", aligned, "mxfp4", "mxfp4"},
+		// === Sparse MoE routed experts: one format for the whole bank ===
+		// Gemma 4 stacks the experts of a layer into one tensor, so these names
+		// carry no expert index and "down_proj" matches the bank itself.
+		// Promoting part of it splits the bank across two formats, which
+		// measured far worse than leaving all of it at the requested type.
+		{"stacked expert down int4", transform26B, "model.language_model.layers.0.experts.down_proj", expertDown, "int4", "int4"},
+		{"stacked expert down nvfp4", transform26B, "model.language_model.layers.0.experts.down_proj", expertDown, "nvfp4", "nvfp4"},
+		{"stacked expert down mxfp4", transform26B, "model.language_model.layers.0.experts.down_proj", expertDown, "mxfp4", "mxfp4"},
+		{"stacked expert down mxfp8", transform26B, "model.language_model.layers.0.experts.down_proj", expertDown, "mxfp8", "mxfp8"},
+		{"stacked expert gate_up int4", transform26B, "model.language_model.layers.0.experts.gate_up_proj", expertGateUp, "int4", "int4"},
+		{"stacked expert gate_up nvfp4", transform26B, "model.language_model.layers.0.experts.gate_up_proj", expertGateUp, "nvfp4", "nvfp4"},
+		{"stacked expert gate_up mxfp4", transform26B, "model.language_model.layers.0.experts.gate_up_proj", expertGateUp, "mxfp4", "mxfp4"},
+		// Per-expert naming reaches the same decision.
+		{"per-expert down int4", transform26B, "model.layers.0.moe.experts.42.down_proj.weight", aligned, "int4", "int4"},
+		{"per-expert down nvfp4", transform26B, "model.layers.0.moe.experts.42.down_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"per-expert gate_up nvfp4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "nvfp4", "nvfp4"},
 
-		// === Expert down_proj: int4→int8, nvfp4→nvfp8 at promoted layers ===
-		{"expert down_proj int4 promoted", transform26B, "model.layers.0.moe.experts.42.down_proj.weight", aligned, "int4", "int8"},
-		{"expert down_proj int4 non-promoted", transform26B, "model.layers.4.moe.experts.42.down_proj.weight", aligned, "int4", "int4"},
-		// nvfp4 experts: promote to mxfp8 (all experts at a layer get same treatment,
-		// so GatherQMM sees uniform quant per projection per layer)
-		{"expert down_proj nvfp4 promoted layer", transform26B, "model.layers.0.moe.experts.42.down_proj.weight", aligned, "nvfp4", "mxfp8"},
-		{"expert down_proj nvfp4 non-promoted layer", transform26B, "model.layers.4.moe.experts.42.down_proj.weight", aligned, "nvfp4", "nvfp4"},
-		// mxfp4 experts: promote to mxfp8 (same mxfp family, GatherQMM compatible)
-		{"expert down_proj mxfp4 promoted layer", transform26B, "model.layers.0.moe.experts.42.down_proj.weight", aligned, "mxfp4", "mxfp8"},
-		{"expert down_proj mxfp4 non-promoted layer", transform26B, "model.layers.4.moe.experts.42.down_proj.weight", aligned, "mxfp4", "mxfp4"},
-
-		// === Expert gate_up_proj: always base quant (not a sensitive tensor) ===
-		{"expert gate_up int4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "int4", "int4"},
-		{"expert gate_up nvfp4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "nvfp4", "nvfp4"},
-		{"expert gate_up mxfp4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "mxfp4", "mxfp4"},
+		// === Dense model: v/down promoted by layer position ===
+		// Layer 0 is in first 1/8 (30/8=3) → promoted
+		{"dense v_proj int4 promoted layer", transformDense, "model.layers.0.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		// Layer 4 is NOT in useMoreBits → base quant
+		{"dense v_proj int4 non-promoted layer", transformDense, "model.layers.4.self_attn.v_proj.weight", aligned, "int4", "int4"},
+		// Layer 29 is in last 1/8 → promoted
+		{"dense v_proj int4 last layer promoted", transformDense, "model.layers.29.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		{"dense v_proj nvfp4 promoted layer", transformDense, "model.layers.0.self_attn.v_proj.weight", aligned, "nvfp4", "mxfp8"},
+		{"dense v_proj nvfp4 non-promoted layer", transformDense, "model.layers.4.self_attn.v_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"dense v_proj mxfp4 promoted layer", transformDense, "model.layers.0.self_attn.v_proj.weight", aligned, "mxfp4", "mxfp8"},
+		{"dense v_proj mxfp4 non-promoted layer", transformDense, "model.layers.4.self_attn.v_proj.weight", aligned, "mxfp4", "mxfp4"},
+		{"dense down_proj int4 promoted", transformDense, "model.layers.0.mlp.down_proj.weight", aligned, "int4", "int8"},
+		{"dense down_proj int4 non-promoted", transformDense, "model.layers.4.mlp.down_proj.weight", aligned, "int4", "int4"},
+		{"dense down_proj nvfp4 promoted", transformDense, "model.layers.0.mlp.down_proj.weight", aligned, "nvfp4", "mxfp8"},
+		{"dense down_proj nvfp4 non-promoted", transformDense, "model.layers.4.mlp.down_proj.weight", aligned, "nvfp4", "nvfp4"},
+		// A dense model's q/o/gate/up are not sensitive: base quant everywhere.
+		{"dense q_proj nvfp4", transformDense, "model.layers.0.self_attn.q_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"dense o_proj nvfp4", transformDense, "model.layers.0.self_attn.o_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"dense gate_proj nvfp4", transformDense, "model.layers.0.mlp.gate_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"dense up_proj nvfp4", transformDense, "model.layers.0.mlp.up_proj.weight", aligned, "nvfp4", "nvfp4"},
 
 		// === Router projection: expert selection is sensitive; keep source precision ===
 		{"router proj int4", transform26B, "model.layers.0.router.proj.weight", aligned, "int4", ""},
 		{"router proj nvfp4", transform26B, "model.layers.0.router.proj.weight", aligned, "nvfp4", ""},
 		{"router proj mxfp4", transform26B, "model.layers.0.router.proj.weight", aligned, "mxfp4", ""},
 
-		// === k_proj: promoted only for 8-expert models ===
-		{"k_proj 128 experts int4", transform26B, "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int4"},
+		// === k_proj: 8-expert models promote it through their own path ===
 		{"k_proj 8 experts int4", transform8E, "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int8"},
 		{"k_proj 8 experts nvfp4", transform8E, "model.layers.0.self_attn.k_proj.weight", aligned, "nvfp4", "mxfp8"},
 		{"k_proj 8 experts mxfp4", transform8E, "model.layers.0.self_attn.k_proj.weight", aligned, "mxfp4", "mxfp8"},
+		{"k_proj dense non-promoted layer", transformDense, "model.layers.4.self_attn.k_proj.weight", aligned, "int4", "int4"},
+		{"k_proj dense promoted layer", transformDense, "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int4"},
 
-		// === q_proj, o_proj, gate_proj, up_proj: always base quant ===
-		{"q_proj int4", transform26B, "model.layers.0.self_attn.q_proj.weight", aligned, "int4", "int4"},
-		{"o_proj int4", transform26B, "model.layers.0.self_attn.o_proj.weight", aligned, "int4", "int4"},
-		{"gate_proj int4", transform26B, "model.layers.0.mlp.gate_proj.weight", aligned, "int4", "int4"},
-		{"up_proj int4", transform26B, "model.layers.0.mlp.up_proj.weight", aligned, "int4", "int4"},
+		// === Sparse MoE body: q/o/gate/up are not sensitive under int4 either ===
+		{"body q_proj int4", transform26B, "model.layers.0.self_attn.q_proj.weight", aligned, "int4", "int4"},
+		{"body o_proj int4", transform26B, "model.layers.0.self_attn.o_proj.weight", aligned, "int4", "int4"},
+		{"body gate_proj int4", transform26B, "model.layers.0.mlp.gate_proj.weight", aligned, "int4", "int4"},
+		{"body up_proj int4", transform26B, "model.layers.0.mlp.up_proj.weight", aligned, "int4", "int4"},
 
 		// === Non-quantizable tensors: always bf16 ===
 		{"embed_tokens per_layer skip", transform26B, "model.embed_tokens_per_layer.weight", aligned, "int4", ""},

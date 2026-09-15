@@ -53,6 +53,9 @@ func (t gemma4ImportTransform) quantizationType(name string, shape []int32, quan
 			return base
 		}
 		return ""
+	case t.isRoutedExpert(name):
+		// Expert banks take the requested type; never promote.
+		return sensitiveType(false, shape, base)
 	case t.isSensitiveProjection(name) && eightBit(base) != base:
 		return sensitiveType(t.promoteSensitive(name), shape, base)
 	default:
@@ -65,14 +68,27 @@ func (t gemma4ImportTransform) quantizationType(name string, shape []int32, quan
 // isSensitiveProjection reports the value/key/down projections whose precision
 // most affects quality — attention output (v/k) and the residual stream
 // (down). Audio and vision tensors are excluded and follow the generic
-// policy.
+// policy. Sparse-MoE models are excluded entirely: "down_proj" would also
+// match their stacked expert banks.
 func (t gemma4ImportTransform) isSensitiveProjection(name string) bool {
-	if isVision(name) || isAudioTower(name) {
+	if isVision(name) || isAudioTower(name) || t.isSparseMoE() {
 		return false
 	}
 	return strings.Contains(name, ".v_proj") ||
 		strings.Contains(name, ".k_proj") ||
 		strings.Contains(name, "down_proj")
+}
+
+// isSparseMoE reports routed-expert topologies, where the expert banks (not
+// the dense body) dominate the parameter count.
+func (t gemma4ImportTransform) isSparseMoE() bool {
+	return t.numExperts > 8
+}
+
+// isRoutedExpert reports a sparse MoE's stacked expert tensors
+// ("...layers.N.experts.down_proj").
+func (t gemma4ImportTransform) isRoutedExpert(name string) bool {
+	return t.isSparseMoE() && isStackedExpertWeight(name)
 }
 
 // promoteSensitive decides whether a sensitive projection uses 8-bit precision.
