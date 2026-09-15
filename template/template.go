@@ -364,7 +364,11 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 
 		// merges consecutive messages of the same role into a single message (except for tool messages)
 		if len(collated) > 0 && collated[len(collated)-1].Role == msgs[i].Role && msgs[i].Role != "tool" {
-			collated[len(collated)-1].Content += "\n\n" + msgs[i].Content
+			// Merge into a copy: collated holds pointers into the caller's slice,
+			// so writing through them mutates the caller's messages.
+			merged := *collated[len(collated)-1]
+			merged.Content += "\n\n" + msgs[i].Content
+			collated[len(collated)-1] = &merged
 		} else {
 			collated = append(collated, &msgs[i])
 		}
