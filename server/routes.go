@@ -442,7 +442,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	thinking := m.genericThinking()
 	if thinking == nil {
-		if err := validateLegacyThinking(req.Think); err != nil {
+		if err := api.ValidateLegacyThinking(req.Think); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -2657,7 +2657,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	thinking := m.genericThinking()
 	if thinking == nil {
-		if err := validateLegacyThinking(req.Think); err != nil {
+		if err := api.ValidateLegacyThinking(req.Think); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

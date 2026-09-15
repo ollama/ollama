@@ -985,6 +985,40 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 	})
 }
 
+func TestValidateLegacyThinking(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		valid bool
+	}{
+		{`null`, true},
+		{`true`, true},
+		{`false`, true},
+		{`"low"`, true},
+		{`"medium"`, true},
+		{`"high"`, true},
+		{`"max"`, true},
+		{`"xhigh"`, false},
+		{`"minimal"`, false},
+		{`"future"`, false},
+		{`""`, false},
+		{`"HIGH"`, false},
+		{`" high "`, false},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think *ThinkValue
+			if err := json.Unmarshal([]byte(tt.input), &think); err != nil {
+				t.Fatal(err)
+			}
+			if !think.IsValid() {
+				t.Fatal("legacy validation must not restrict transport types")
+			}
+			if err := ValidateLegacyThinking(think); (err == nil) != tt.valid {
+				t.Fatalf("ValidateLegacyThinking(%s) = %v, want valid=%v", tt.input, err, tt.valid)
+			}
+		})
+	}
+}
+
 func TestThinkValueTransportTypes(t *testing.T) {
 	for _, tt := range []struct {
 		input   string

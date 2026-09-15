@@ -1171,6 +1171,20 @@ func (t *ThinkValue) IsValid() bool {
 	}
 }
 
+// ValidateLegacyThinking checks named levels for models without thinking metadata.
+// Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
+func ValidateLegacyThinking(think *ThinkValue) error {
+	if !think.IsString() {
+		return nil
+	}
+	switch think.String() {
+	case "low", "medium", "high", "max":
+		return nil
+	default:
+		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
+	}
+}
+
 // IsBool returns true if the value is a boolean
 func (t *ThinkValue) IsBool() bool {
 	if t == nil || t.Value == nil {

@@ -769,17 +769,11 @@ func AnthropicMessagesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFu
 			return
 		}
 
-		chatReq, err := anthropic.FromMessagesRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := anthropic.FromMessagesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
 			return
-		}
-
-		if modelThinking(thinkingLookup, req.Model) && req.OutputConfig != nil && (req.Thinking == nil || (req.Thinking.Type != "enabled" && req.Thinking.Type != "disabled")) {
-			// Preserve the effort name; only the renderer knows which levels it honors.
-			if req.OutputConfig.Effort != "" {
-				chatReq.Think = &api.ThinkValue{Value: req.OutputConfig.Effort}
-			}
 		}
 
 		// Set think to nil when being used with Anthropic API to connect to tools like claude code

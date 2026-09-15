@@ -460,26 +460,11 @@ func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 
 		var b bytes.Buffer
 
-		conversionReq := req
-		genericThinking := modelThinking(thinkingLookup, req.Model)
-		var effort string
-		if genericThinking {
-			if req.Reasoning != nil {
-				effort = req.Reasoning.Effort
-			} else if req.ReasoningEffort != nil {
-				effort = *req.ReasoningEffort
-			}
-			conversionReq.Reasoning = nil
-			conversionReq.ReasoningEffort = nil
-		}
-		chatReq, err := openai.FromChatRequest(conversionReq)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromChatRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
-		}
-
-		if genericThinking {
-			chatReq.Think = requestedThinking(effort)
 		}
 
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
@@ -1203,19 +1188,11 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 			return
 		}
 
-		conversionReq := req
-		genericThinking := modelThinking(thinkingLookup, req.Model)
-		if genericThinking {
-			conversionReq.Reasoning.Effort = ""
-		}
-		chatReq, err := openai.FromResponsesRequest(conversionReq)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := openai.FromResponsesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
-		}
-
-		if genericThinking && req.Think == nil {
-			chatReq.Think = requestedThinking(req.Reasoning.Effort)
 		}
 
 		// Check if client requested streaming (defaults to false)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
@@ -112,16 +111,4 @@ func lookupThinking(name string) *model.Thinking {
 		return nil
 	}
 	return m.genericThinking()
-}
-
-func validateLegacyThinking(think *api.ThinkValue) error {
-	if think == nil || !think.IsString() {
-		return nil
-	}
-	switch think.String() {
-	case "low", "medium", "high", "max":
-		return nil
-	default:
-		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
-	}
 }
