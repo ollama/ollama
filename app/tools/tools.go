@@ -98,7 +98,7 @@ type ToolResult struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// ToolSchemas returns all tools as schema maps suitable for API calls
+// AvailableTools returns all tools as schema maps suitable for API calls
 func (r *Registry) AvailableTools() []map[string]any {
 	schemas := make([]map[string]any, 0, len(r.tools))
 	for _, tool := range r.tools {
