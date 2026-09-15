@@ -291,6 +291,151 @@ func TestQwen3ParserToolCallIndexingStreaming(t *testing.T) {
 	}
 }
 
+func TestQwen3ParserTruncatedToolCallNoCloseTag(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Simulate truncated output: model emits tool call open tag and partial JSON,
+	// but generation ends before closing tag (e.g. hit num_predict limit).
+	content, thinking, calls, err := parser.Add(`<tool_call>{"name":"write_file","arguments":{"path":"/tmp/test.py","content":"print('hel`, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != `{"name":"write_file","arguments":{"path":"/tmp/test.py","content":"print('hel` {
+		t.Fatalf("expected truncated JSON as content, got %q", content)
+	}
+}
+
+func TestQwen3ParserTruncatedToolCallNoCloseTagStreaming(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// First chunk: content before tool call
+	content, _, calls, err := parser.Add("Here is the code:\n<tool_call>", false)
+	if err != nil {
+		t.Fatalf("step 1: unexpected error: %v", err)
+	}
+	if content != "Here is the code:" {
+		t.Fatalf("step 1: expected content %q, got %q", "Here is the code:", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 1: expected no calls, got %d", len(calls))
+	}
+
+	// Second chunk: partial tool JSON, generation done (truncated)
+	content, _, calls, err = parser.Add(`{"name":"write_file","arguments":{"content":"...`, true)
+	if err != nil {
+		t.Fatalf("step 2: unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 2: expected no calls, got %d", len(calls))
+	}
+	if content != `{"name":"write_file","arguments":{"content":"...` {
+		t.Fatalf("step 2: expected truncated JSON as content, got %q", content)
+	}
+}
+
+func TestQwen3ParserInvalidToolCallJSON(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Tool call tags present but JSON inside is truncated/invalid
+	content, thinking, calls, err := parser.Add(`<tool_call>{"name":"write_file","arguments":{"content":"incomplete...</tool_call>`, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != `{"name":"write_file","arguments":{"content":"incomplete...` {
+		t.Fatalf("expected raw JSON as content fallback, got %q", content)
+	}
+}
+
+func TestQwen3ParserThinkingWithTruncatedToolCall(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	// Thinking followed by truncated tool call (no close tag)
+	content, thinking, calls, err := parser.Add("Let me help</think>\n<tool_call>{\"name\":\"write_file\",\"arguments\":{\"content\":\"truncated", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if thinking != "Let me help" {
+		t.Fatalf("expected thinking %q, got %q", "Let me help", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != `{"name":"write_file","arguments":{"content":"truncated` {
+		t.Fatalf("expected truncated JSON as content, got %q", content)
+	}
+}
+
+func TestQwen3ParserValidToolCallAfterInvalid(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Invalid tool call followed by valid one — invalid falls back to content,
+	// valid one is still parsed correctly.
+	input := `<tool_call>invalid json</tool_call>
+<tool_call>{"name":"get_weather","arguments":{"location":"SF"}}</tool_call>`
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if content != "invalid json" {
+		t.Fatalf("expected invalid JSON as content, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestQwen3ParserTruncatedContentDone(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Content with trailing whitespace — on done, should be flushed
+	content, _, _, err := parser.Add("Hello world\n", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "Hello world\n" {
+		t.Fatalf("expected %q, got %q", "Hello world\n", content)
+	}
+}
+
+func TestQwen3ParserPartialToolTagAtEndDone(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	// Model outputs partial <tool_call> tag and then generation ends.
+	// The partial tag should be flushed as content since done=true.
+	content, _, calls, err := parser.Add("Hello\n<tool_c", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "Hello\n<tool_c" {
+		t.Fatalf("expected %q, got %q", "Hello\n<tool_c", content)
+	}
+}
+
 func TestQwen3ParserToolCallIndexResetOnInit(t *testing.T) {
 	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
 	parser.Init(nil, nil, &api.ThinkValue{Value: false})
