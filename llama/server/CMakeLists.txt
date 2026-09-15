@@ -269,19 +269,16 @@ unset(_llama_cpp_root)
 # Link the Ollama-compat source files into the fetched llama target.
 # Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
-if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR AND TARGET llama)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
-    foreach(_compat_target IN ITEMS llama mtmd)
-        if(TARGET ${_compat_target})
-            target_sources(${_compat_target} PRIVATE ${_compat_sources})
-            target_include_directories(${_compat_target} PRIVATE
-                ${OLLAMA_LLAMA_CPP_COMPAT_DIR}
-                ${llama_cpp_SOURCE_DIR}/src)
-        endif()
-    endforeach()
+    target_sources(llama PRIVATE ${_compat_sources})
+    set_source_files_properties(${_compat_sources}
+        TARGET_DIRECTORY llama
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    target_include_directories(llama PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
     if(TARGET mtmd)
-        target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
+        target_include_directories(mtmd PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
     endif()
 endif()
 
