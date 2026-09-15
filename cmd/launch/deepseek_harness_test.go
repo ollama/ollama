@@ -16,6 +16,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestDeepSeekHarnessModelConfigsSetMaxOutputTokens(t *testing.T) {
+	configs := deepSeekHarnessModelConfigs("local-model:latest", []LaunchModel{
+		{Name: "local-model:latest", ContextLength: 65_536},
+		{Name: "cloud-model:cloud", ContextLength: 131_072, MaxOutputTokens: 32_768},
+	})
+	if len(configs) != 2 {
+		t.Fatalf("configured models = %#v", configs)
+	}
+
+	local, _ := configs[0].(map[string]any)
+	if local["maxTokens"] != 65_536 {
+		t.Fatalf("local maxTokens = %v, want context length", local["maxTokens"])
+	}
+	cloud, _ := configs[1].(map[string]any)
+	if cloud["maxTokens"] != 32_768 {
+		t.Fatalf("cloud maxTokens = %v, want explicit output limit", cloud["maxTokens"])
+	}
+}
+
 func TestDeepSeekHarnessRegistry(t *testing.T) {
 	spec, err := LookupIntegrationSpec("deepseek-harness")
 	if err != nil {
