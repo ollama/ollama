@@ -37,10 +37,10 @@ typedef struct mlx_io_vtable_ {
   bool (*is_open)(void*);
   bool (*good)(void*);
   size_t (*tell)(void*);
-  void (*seek)(void*, int64_t off, int whence);
-  void (*read)(void*, char* data, size_t n);
-  void (*read_at_offset)(void*, char* data, size_t n, size_t off);
-  void (*write)(void*, const char* data, size_t n);
+  int (*seek)(void*, int64_t off, int whence);
+  size_t (*read)(void*, char* data, size_t n);
+  size_t (*read_at_offset)(void*, char* data, size_t n, size_t off);
+  size_t (*write)(void*, const char* data, size_t n);
   const char* (*label)(void*);
   void (*free)(void*);
 } mlx_io_vtable;
