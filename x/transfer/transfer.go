@@ -30,9 +30,11 @@ package transfer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -116,7 +118,11 @@ const (
 	smallBlobSpeedThreshold = 100 << 10 // 100 KB
 )
 
-var errMaxRetriesExceeded = errors.New("max retries exceeded")
+var (
+	errMaxRetriesExceeded  = errors.New("max retries exceeded")
+	errInvalidDigestFormat = errors.New("invalid digest format")
+	sha256DigestPattern    = regexp.MustCompile(`^sha256[:-][0-9a-fA-F]{64}$`)
+)
 
 // defaultClient is a shared HTTP client with connection pooling.
 var defaultClient = &http.Client{
@@ -167,12 +173,14 @@ func Upload(ctx context.Context, opts UploadOptions) error {
 	return upload(ctx, opts)
 }
 
-// digestToPath converts sha256:abc123 to sha256-abc123
-func digestToPath(digest string) string {
-	if len(digest) > 7 && digest[6] == ':' {
-		return digest[:6] + "-" + digest[7:]
+// digestToPath validates a sha256 digest and converts its separator to the
+// format used for blob filenames. The validation matches manifest.BlobsPath.
+func digestToPath(digest string) (string, error) {
+	if strings.ContainsAny(digest, `/\\`) || strings.Contains(digest, "..") || !sha256DigestPattern.MatchString(digest) {
+		return "", fmt.Errorf("%w: %q", errInvalidDigestFormat, digest)
 	}
-	return digest
+
+	return strings.Replace(digest, ":", "-", 1), nil
 }
 
 // parseAuthChallenge parses a WWW-Authenticate header value.

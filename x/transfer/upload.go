@@ -90,6 +90,11 @@ func upload(ctx context.Context, opts UploadOptions) error {
 	if len(opts.Blobs) == 0 && len(opts.Manifest) == 0 {
 		return nil
 	}
+	for _, blob := range opts.Blobs {
+		if _, err := digestToPath(blob.Digest); err != nil {
+			return err
+		}
+	}
 
 	u := &uploader{
 		client:     cmp.Or(opts.Client, defaultClient),
@@ -231,6 +236,10 @@ func (u *uploader) uploadOnce(ctx context.Context, blob Blob) (int64, error) {
 	if u.logger != nil {
 		u.logger.Debug("uploading blob", "digest", blob.Digest, "size", blob.Size)
 	}
+	name, err := digestToPath(blob.Digest)
+	if err != nil {
+		return 0, err
+	}
 
 	ep, err := u.initUpload(ctx, blob)
 	if err != nil {
@@ -245,7 +254,7 @@ func (u *uploader) uploadOnce(ctx context.Context, blob Blob) (int64, error) {
 		return blob.Size, nil
 	}
 
-	f, err := os.Open(filepath.Join(u.srcDir, digestToPath(blob.Digest)))
+	f, err := os.Open(filepath.Join(u.srcDir, name))
 	if err != nil {
 		return 0, err
 	}
