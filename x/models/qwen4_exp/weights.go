@@ -120,6 +120,7 @@ type PLE struct {
 	HeadVocabSizes   *mlx.Array
 	EmbeddingShards  []nn.EmbeddingLayer
 	ShardRows        int
+	hostEmbedding    *hostPLETable
 }
 
 type streamRMSNorm struct {
@@ -337,6 +338,12 @@ func (m *Model) loadPLE(linears model.LinearFactory, tensors map[string]*mlx.Arr
 	}
 	if p.HeadVocabSizes, err = requiredArray(tensors, prefix+".ple_embedding.ngram_heads_vocab_sizes"); err != nil {
 		return nil, err
+	}
+
+	if table := m.hostPLE[prefix]; table != nil {
+		p.hostEmbedding = table
+		p.ShardRows = table.rows
+		return p, nil
 	}
 
 	p.EmbeddingShards = make([]nn.EmbeddingLayer, m.SplitNGramParts)
