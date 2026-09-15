@@ -666,16 +666,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var parserErr error
 
 		if err := r.Completion(ctx, llm.CompletionRequest{
-			Prompt:          prompt,
-			Media:           media,
-			Format:          req.Format,
-			Options:         opts,
-			Shift:           req.Shift == nil || *req.Shift,
-			Truncate:        req.Truncate == nil || *req.Truncate,
-			Logprobs:        req.Logprobs,
-			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
-			LeadingBOS:      leadingBOS,
+			Prompt:            prompt,
+			Media:             media,
+			Format:            req.Format,
+			Options:           opts,
+			Shift:             req.Shift == nil || *req.Shift,
+			Truncate:          req.Truncate == nil || *req.Truncate,
+			Logprobs:          req.Logprobs,
+			TopLogprobs:       req.TopLogprobs,
+			PreservedTokens:   preservedTokensForCompletion(builtinParser),
+			LeadingBOS:        leadingBOS,
+			MessageDelimiters: messageDelimitersForModel(m),
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2326,6 +2327,14 @@ func leadingBOSForModel(m *Model) string {
 	return renderers.LeadingBOSForRenderer(resolveRendererName(m))
 }
 
+func messageDelimitersForModel(m *Model) []renderers.MessageDelimiter {
+	if m == nil || m.Config.Renderer == "" {
+		return nil
+	}
+
+	return renderers.MessageDelimitersForRenderer(resolveRendererName(m))
+}
+
 func optionsForPrompt(opts *api.Options, runner llm.LlamaServer) *api.Options {
 	if opts == nil || runner == nil {
 		return opts
@@ -2781,6 +2790,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ToolCallTag:                toolCallTagForCompletion(toolParser),
 				LeadingBOS:                 leadingBOSForModel(m),
 				IncludeIntermediateMetrics: includeIntermediateMetrics,
+				MessageDelimiters:          messageDelimitersForModel(m),
 			}, func(r llm.CompletionResponse) {
 				metrics := api.Metrics{
 					PromptEvalCount:       r.PromptEvalCount,
