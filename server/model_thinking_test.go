@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +15,76 @@ import (
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
+
+func TestThinkingInputErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+	s := &Server{modelCaches: &modelCaches{show: newModelShowCache()}}
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: "thinking-qwen", From: "thinking-base", Renderer: "qwen3.8", Parser: "qwen3.5", Stream: &stream})
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+
+	showCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/show" {
+			t.Errorf("invalid thinking request reached %s", r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		showCalls++
+		json.NewEncoder(w).Encode(api.ShowResponse{Thinking: &model.Thinking{Values: []any{false, "high", "max"}, Default: "high"}})
+	}))
+	defer upstream.Close()
+	withCloudProxyBaseURL(t, upstream.URL)
+
+	for _, tc := range []struct {
+		name, values string
+	}{
+		{"thinking-qwen", `[false,"low","medium","xhigh"]`},
+		{"thinking-cloud:cloud", `[false,"high","max"]`},
+		{"thinking-base", ""},
+		{"missing", ""},
+	} {
+		for _, endpoint := range []struct {
+			name    string
+			handler gin.HandlerFunc
+		}{{"chat", s.ChatHandler}, {"generate", s.GenerateHandler}} {
+			for _, value := range []string{"75", "0.5", "{}", "[]"} {
+				for _, body := range []string{
+					fmt.Sprintf(`{"model":%q,"think":%s}`, tc.name, value),
+					fmt.Sprintf(`{"think":%s,"model":%q}`, value, tc.name),
+				} {
+					t.Run(tc.name+"/"+endpoint.name+"/"+body, func(t *testing.T) {
+						w := httptest.NewRecorder()
+						c, _ := gin.CreateTestContext(w)
+						c.Request = httptest.NewRequest("POST", "/api/"+endpoint.name, strings.NewReader(body))
+						endpoint.handler(c)
+						var response struct {
+							Error string `json:"error"`
+						}
+						if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+							t.Fatal(err)
+						}
+						want := "think must be a boolean or string"
+						if tc.values != "" {
+							want += "; supported values: " + tc.values
+						}
+						if w.Code != 400 || response.Error != want {
+							t.Fatalf("status=%d error=%q, want 400 %q", w.Code, response.Error, want)
+						}
+					})
+				}
+			}
+		}
+	}
+	if showCalls != 1 {
+		t.Fatalf("cloud show calls = %d, want one cold fetch then cached reads", showCalls)
+	}
+}
 
 func TestModelThinking(t *testing.T) {
 	t.Setenv("OLLAMA_GO_TEMPLATE", "1")

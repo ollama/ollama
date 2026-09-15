@@ -1,13 +1,50 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
 )
+
+func (s *Server) thinkingInputError(ctx context.Context, name string, inputErr error) error {
+	ref, err := parseAndValidateModelRef(name)
+	if err != nil {
+		return inputErr
+	}
+	var thinking *model.Thinking
+	if ref.Source == modelSourceCloud {
+		if disabled, _ := cloud.Status(); disabled {
+			return inputErr
+		}
+		cache := newModelShowCache()
+		if s.modelCaches != nil && s.modelCaches.show != nil {
+			cache = s.modelCaches.show
+		}
+		key := modelShowCloudKeyForModel(ref.Base, false)
+		info, ok := cache.getCloud(key)
+		if !ok {
+			info, err = cache.fetchCloudShow(ctx, ref.Base, false)
+			if err != nil {
+				return inputErr
+			}
+			cache.setCloud(key, info)
+		}
+		thinking = info.Thinking
+	} else if m, err := GetModel(ref.Name.String()); err == nil {
+		thinking = m.Thinking()
+	}
+	if !thinking.Valid() {
+		return inputErr
+	}
+	values, _ := json.Marshal(thinking.Values)
+	return fmt.Errorf("%w; supported values: %s", inputErr, values)
+}
 
 // Exact template identities keep legacy metadata from leaking to custom templates.
 // These entries describe the existing local endpoint behavior, without migrations.
