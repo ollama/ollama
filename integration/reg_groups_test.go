@@ -1,4 +1,4 @@
-//go:build integration && (fast || release || library)
+//go:build integration && (fast || release || library || create)
 
 package integration
 
