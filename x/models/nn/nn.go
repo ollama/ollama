@@ -1,10 +1,6 @@
 package nn
 
-import (
-	"fmt"
-
-	"github.com/ollama/ollama/x/mlxrunner/mlx"
-)
+import "github.com/ollama/ollama/x/mlxrunner/mlx"
 
 // Layer is the interface for neural network layers with a Forward method.
 type Layer interface {
@@ -96,10 +92,7 @@ type QuantizedLinear struct {
 }
 
 func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int, mode string) *QuantizedLinear {
-	qw, scales, qbiases, err := mlx.Quantize(weight, groupSize, bits, mode)
-	if err != nil {
-		panic(fmt.Sprintf("mlx quantize linear: %v", err))
-	}
+	qw, scales, qbiases := mlx.Quantize(weight, groupSize, bits, mode)
 	if qbiases != nil {
 		mlx.Eval(qw, scales, qbiases)
 	} else {

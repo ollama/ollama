@@ -4,7 +4,6 @@ package mlx
 import "C"
 
 import (
-	"fmt"
 	"reflect"
 	"unsafe"
 )
@@ -30,7 +29,7 @@ var scaleAndCast = Compile2(
 
 // Quantization operations
 
-func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array, err error) {
+func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, biases *Array) {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
@@ -38,30 +37,19 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	res := mlxCheck(C.mlx_vector_array_new())
 	defer freeVectorArray(res)
 	var globalScale C.mlx_array
-	if err := mlxError(C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)); err != nil {
-		return nil, nil, nil, fmt.Errorf("quantize failed: %w", err)
-	}
+	mlxCheck(C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx))
 
 	vecSize := int(mlxCheck(C.mlx_vector_array_size(res)))
-	if vecSize < 2 {
-		return nil, nil, nil, fmt.Errorf("quantize returned %d arrays, want at least 2", vecSize)
-	}
 	w0 := New("QUANTIZE_W")
-	if err := mlxError(C.mlx_vector_array_get(&w0.ctx, res, 0)); err != nil {
-		return nil, nil, nil, fmt.Errorf("quantize result missing weight: %w", err)
-	}
+	mlxCheck(C.mlx_vector_array_get(&w0.ctx, res, 0))
 	w1 := New("QUANTIZE_S")
-	if err := mlxError(C.mlx_vector_array_get(&w1.ctx, res, 1)); err != nil {
-		return nil, nil, nil, fmt.Errorf("quantize result missing scales: %w", err)
-	}
+	mlxCheck(C.mlx_vector_array_get(&w1.ctx, res, 1))
 	if vecSize >= 3 {
 		w2 := New("QUANTIZE_B")
-		if err := mlxError(C.mlx_vector_array_get(&w2.ctx, res, 2)); err != nil {
-			return nil, nil, nil, fmt.Errorf("quantize result missing biases: %w", err)
-		}
-		return w0, w1, w2, nil
+		mlxCheck(C.mlx_vector_array_get(&w2.ctx, res, 2))
+		return w0, w1, w2
 	}
-	return w0, w1, nil, nil
+	return w0, w1, nil
 }
 
 func FromFP8(x *Array, dtype DType) *Array {

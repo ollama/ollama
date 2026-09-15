@@ -42,10 +42,7 @@ func TestMakeEmbeddingLayerQuantized(t *testing.T) {
 			return out
 		}(), 2, 64).AsType(mlx.DTypeBFloat16)
 
-		qw, scales, qbiases, err := mlx.Quantize(denseWeight, 64, 4, "affine")
-		if err != nil {
-			t.Fatalf("Quantize() error = %v", err)
-		}
+		qw, scales, qbiases := mlx.Quantize(denseWeight, 64, 4, "affine")
 		mlx.Eval(qw, scales, qbiases)
 
 		emb := MakeEmbeddingLayer(map[string]*mlx.Array{

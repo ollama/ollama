@@ -184,12 +184,7 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		}
 
 		groupSize, bits, mode := quant.Params(quantize)
-		// Assign the closure's err (the named result) rather than shadowing it.
-		qweight, scales, qbiases, qerr := mlx.Quantize(arr, groupSize, bits, mode)
-		if qerr != nil {
-			err = fmt.Errorf("mlx.Quantize failed for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s): %w", name, quantize, groupSize, bits, mode, qerr)
-			return nil
-		}
+		qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
 		if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
 			err = fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
 			return nil
