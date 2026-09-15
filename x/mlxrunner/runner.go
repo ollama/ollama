@@ -58,6 +58,10 @@ type Runner struct {
 }
 
 func (r *Runner) Load(modelName string) error {
+	// The GPU budget must govern weight materialization, so it installs at
+	// the head of the load rather than at the tail with the Metal wired limit.
+	enforceMemoryBudget()
+
 	weights, err := r.loadModel(modelName)
 	if err != nil {
 		return err
@@ -220,6 +224,32 @@ func configureWiredMemory() {
 	// reserving the remaining capacity for growing KV caches.
 	slog.Debug("Configured MLX wired memory",
 		"active", mlx.PrettyBytes(active),
+		"limit", mlx.PrettyBytes(limit),
+		"previous", mlx.PrettyBytes(previous))
+}
+
+// enforceMemoryBudget bounds the allocator on GPUs that publish no working
+// set (non-Metal): 95% of driver-free memory, matching the allocators' own
+// padding convention. Fresh runner processes sample free memory before they
+// hold anything; without a limit, loads run unbounded until a mid-load OOM
+// loops the scheduler.
+func enforceMemoryBudget() {
+	total, free, ok := mlx.DeviceMemory()
+	if !ok || total <= 0 {
+		return
+	}
+
+	limit := free * 95 / 100
+	previous, err := mlx.SetMemoryLimit(limit)
+	if err != nil {
+		slog.Warn("Unable to enforce GPU memory budget; loads may silently oversubscribe",
+			"limit", mlx.PrettyBytes(limit),
+			"error", err)
+		return
+	}
+	slog.Info("Enforced GPU memory budget",
+		"total", mlx.PrettyBytes(total),
+		"free", mlx.PrettyBytes(free),
 		"limit", mlx.PrettyBytes(limit),
 		"previous", mlx.PrettyBytes(previous))
 }
