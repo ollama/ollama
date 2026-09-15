@@ -222,6 +222,7 @@ console.log(response.message.content);
 - [orbiton](https://github.com/xyproto/orbiton) - Config-free text editor with Ollama tab completion
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) - Sublime Text 4 AI assistant
 - [VT Code](https://github.com/vinhnx/vtcode) - Rust-based terminal coding agent with Tree-sitter
+- [deel](https://github.com/jysvai/deel-local-cli) - Zero-dependency terminal coding agent with editor (ACP) support
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) - AI coding assistant for Qt Creator
 - [AI Toolkit for VS Code](https://aka.ms/ai-tooklit/ollama-docs) - Microsoft-official VS Code extension
 - [Open Interpreter](https://docs.openinterpreter.com/language-model-setup/local-models/ollama) - Natural language interface for computers
