@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
@@ -64,12 +66,97 @@ func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models := client.resolveRunModels(context.Background(), []string{"deepseek-v4-flash:cloud"})
+	models := client.resolveRunModels(context.Background(), "test", []string{"deepseek-v4-flash:cloud"})
 	if len(models) != 1 || models[0].Thinking == nil {
 		t.Fatalf("resolved models = %#v, want recommendation thinking metadata", models)
 	}
 	if !slices.Equal(models[0].Thinking.Values, []any{false, true, "max"}) || models[0].Thinking.Default != true {
 		t.Fatalf("thinking = %#v, want exact endpoint values/default", models[0].Thinking)
+	}
+}
+
+func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name, show     string
+		integration    string
+		recommendation bool
+		want           []any
+	}{
+		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
+		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
+		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
+		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
+		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			showCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/experimental/model-recommendations":
+					if tc.recommendation {
+						fmt.Fprint(w, `{"recommendations":[{"model":"custom-local","thinking":{"values":[false,true],"default":true}}]}`)
+					} else {
+						fmt.Fprint(w, `{"recommendations":[]}`)
+					}
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"custom-local:latest","capabilities":["completion","thinking"]}]}`)
+				case "/api/show":
+					showCalls++
+					fmt.Fprint(w, tc.show)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			models := client.resolveRunModels(t.Context(), tc.integration, []string{"custom-local"})
+			if len(models) != 1 || models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, tc.want) || showCalls != 1 {
+				t.Fatalf("models=%+v showCalls=%d", models, showCalls)
+			}
+			contract := codexAppThinkingContractForModel(models[0])
+			if !slices.Equal(contract.controls.Values, tc.want) {
+				t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
+			}
+		})
+	}
+}
+
+type thinkingDeadlineTransport struct {
+	t     *testing.T
+	calls int
+}
+
+func (transport *thinkingDeadlineTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	transport.calls++
+	deadline, ok := r.Context().Deadline()
+	if !ok || time.Until(deadline) > 5*time.Second {
+		transport.t.Error("thinking discovery request must have a bounded deadline")
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func TestResolveRunModelsThinkingDiscoveryTimeout(t *testing.T) {
+	client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &thinkingDeadlineTransport{t: t}
+	client.apiClient = api.NewClient(&url.URL{Scheme: "http", Host: "thinking.test"}, &http.Client{Transport: transport})
+	client.recommendationsLoaded = true
+	// Seed the existing inventory so this test isolates the new best-effort lookup.
+	client.inventory = newModelInventory(client.apiClient)
+	client.inventory.loaded = true
+	client.inventory.models = []LaunchModel{{Name: "custom-local", Thinking: &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}}}
+	models := client.resolveRunModels(t.Context(), "codex", []string{"custom-local"})
+	if len(models) != 1 || models[0].Thinking == nil || models[0].Thinking.Default != true {
+		t.Fatalf("failed discovery lost existing metadata: %+v", models)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("show calls=%d, want 1", transport.calls)
 	}
 }
 

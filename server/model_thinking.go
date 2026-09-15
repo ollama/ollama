@@ -35,8 +35,10 @@ func (s *Server) thinkingInputError(ctx context.Context, name string, inputErr e
 			cache.setCloud(key, info)
 		}
 		thinking = info.Thinking
-	} else if m, err := GetModel(ref.Name.String()); err == nil {
-		thinking = m.Thinking()
+	} else if name, err := getExistingName(ref.Name); err == nil {
+		if m, err := GetModel(name.String()); err == nil {
+			thinking = m.Thinking()
+		}
 	}
 	if !thinking.Valid() {
 		return inputErr
@@ -63,12 +65,23 @@ func (m *Model) Thinking() *model.Thinking {
 		return nil
 	}
 	if name := resolveRendererName(m); name != "" {
-		// The default-on policy only applies when the model has the thinking
-		// capability. Custom renderer/parser combinations may not have it.
-		if !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
-			return renderers.ThinkingForRenderer(name)
+		thinking := renderers.ThinkingForRenderer(name)
+		if thinking == nil {
+			return nil
 		}
-		return thinkingForLocalRenderer(name)
+		// Discovery must match the controls accepted by the serving boundary.
+		if !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
+			return &model.Thinking{Values: []any{false}, Default: false}
+		}
+		// Preserve the local endpoint's historical default-on behavior.
+		if thinking.Default == false && thinking.Supports(true) {
+			thinking.Default = true
+		}
+		// true currently reaches Qwen3.8 as medium via ThinkValue.String().
+		if name == "qwen3.8" {
+			thinking.Default = "medium"
+		}
+		return thinking
 	}
 	if shouldUseGoTemplate(m) {
 		if thinking, ok := legacyThinking[m.templateDigest]; ok {
@@ -76,23 +89,6 @@ func (m *Model) Thinking() *model.Thinking {
 		}
 	}
 	return nil
-}
-
-func thinkingForLocalRenderer(name string) *model.Thinking {
-	thinking := renderers.ThinkingForRenderer(name)
-	if thinking == nil {
-		return nil
-	}
-	// Local requests historically enable thinking before rendering. Preserve that
-	// endpoint default even when the renderer alone defaults off.
-	if thinking.Default == false && thinking.Supports(true) {
-		thinking.Default = true
-	}
-	// true currently reaches Qwen3.8 as medium via ThinkValue.String().
-	if name == "qwen3.8" {
-		thinking.Default = "medium"
-	}
-	return thinking
 }
 
 // genericThinking excludes Harmony and template-only paths from new fallback rules.
@@ -106,7 +102,15 @@ func (m *Model) genericThinking() *model.Thinking {
 // lookupThinking lets compatibility middleware preserve named efforts only for
 // local generic renderers. Other models keep the existing protocol conversions.
 func lookupThinking(name string) *model.Thinking {
-	m, err := GetModel(name)
+	ref, err := parseAndValidateModelRef(name)
+	if err != nil || ref.Source == modelSourceCloud {
+		return nil
+	}
+	canonical, err := getExistingName(ref.Name)
+	if err != nil {
+		return nil
+	}
+	m, err := GetModel(canonical.String())
 	if err != nil {
 		return nil
 	}

@@ -91,24 +91,85 @@ func TestThinkingConversionMetadata(t *testing.T) {
 }
 
 func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
-	thinking := &model.Thinking{Values: []any{false, "high", "max"}, Default: "high"}
-	for _, value := range []any{false, true, "minimal", "future", 75} {
-		t.Run(fmt.Sprint(value), func(t *testing.T) {
-			req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
-			req.Reasoning.Effort = "xhigh"
-			got, err := FromResponsesRequest(req, thinking)
-			if value == 75 {
-				if err == nil {
-					t.Fatal("numeric thinking override must fail")
+	for _, metadata := range []struct {
+		name     string
+		thinking *model.Thinking
+	}{
+		{"named", &model.Thinking{Values: []any{false, "high", "max"}, Default: "high"}},
+		{"nil", nil},
+		{"invalid", &model.Thinking{Values: []any{"high"}, Default: "missing"}},
+	} {
+		for _, value := range []any{false, true, "low", "high", "max", "", "xhigh", "minimal", "future", 75} {
+			t.Run(metadata.name+"/"+fmt.Sprint(value), func(t *testing.T) {
+				req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
+				req.Reasoning.Effort = "xhigh"
+				got, err := FromResponsesRequest(req, metadata.thinking)
+				wantErr := value == 75 || (!metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "minimal" || value == "future"))
+				if wantErr {
+					if err == nil {
+						t.Fatal("invalid override must fail")
+					}
+					return
 				}
-				return
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Think == nil || got.Think.Value != value {
+					t.Fatalf("thinking=%v, want explicit override %#v", got.Think, value)
+				}
+			})
+		}
+	}
+}
+
+func TestThinkingBooleanOpenAIControls(t *testing.T) {
+	for _, metadata := range []struct {
+		name     string
+		thinking *model.Thinking
+		boolean  bool
+	}{
+		{"default off", &model.Thinking{Values: []any{false, true}, Default: false}, true},
+		{"default on", &model.Thinking{Values: []any{false, true}, Default: true}, true},
+		{"always on", &model.Thinking{Values: []any{true}, Default: true}, true},
+		{"off only", &model.Thinking{Values: []any{false}, Default: false}, false},
+		{"mixed", &model.Thinking{Values: []any{false, true, "medium"}, Default: true}, false},
+	} {
+		for _, protocol := range []string{"chat", "responses"} {
+			for _, effort := range []string{"", "none", "low", "medium", "high", "max", "minimal", "xhigh", "ultra", "future", " HIGH "} {
+				t.Run(metadata.name+"/"+protocol+"/"+effort, func(t *testing.T) {
+					var got *api.ChatRequest
+					var err error
+					if protocol == "chat" {
+						got, err = FromChatRequest(ChatCompletionRequest{Model: "test", ReasoningEffort: &effort}, metadata.thinking)
+					} else {
+						req := ResponsesRequest{Model: "test", Input: ResponsesInput{Text: "hi"}}
+						req.Reasoning.Effort = effort
+						got, err = FromResponsesRequest(req, metadata.thinking)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					var want any = effort
+					switch effort {
+					case "":
+						want = nil
+					case "none":
+						want = false
+					case "future", " HIGH ":
+					default:
+						if metadata.boolean {
+							want = true
+						}
+					}
+					var actual any
+					if got.Think != nil {
+						actual = got.Think.Value
+					}
+					if actual != want {
+						t.Fatalf("thinking=%#v, want %#v", actual, want)
+					}
+				})
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.Think == nil || got.Think.Value != value {
-				t.Fatalf("thinking=%v, want explicit override %#v", got.Think, value)
-			}
-		})
+		}
 	}
 }

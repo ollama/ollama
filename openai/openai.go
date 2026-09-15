@@ -533,17 +533,15 @@ func ToModel(r api.ShowResponse, m string) Model {
 	}
 }
 
-// thinkFromReasoningEffort preserves model-defined names when metadata is present.
-// Models without metadata retain the legacy OpenAI effort aliases.
-func thinkFromReasoningEffort(effort string, thinking ...*model.Thinking) (*api.ThinkValue, error) {
+// ThinkingFromReasoningEffort preserves model-defined names when metadata is present.
+// Boolean-only models retain the OpenAI on/off controls; models without metadata
+// retain the legacy effort aliases.
+func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*api.ThinkValue, error) {
 	switch effort {
 	case "":
 		return nil, nil
 	case "none":
 		return &api.ThinkValue{Value: false}, nil
-	}
-	if len(thinking) > 0 && thinking[0].Valid() {
-		return &api.ThinkValue{Value: effort}, nil
 	}
 	requestedEffort := effort
 	switch effort {
@@ -553,7 +551,19 @@ func thinkFromReasoningEffort(effort string, thinking ...*model.Thinking) (*api.
 		effort = "max"
 	}
 	think := &api.ThinkValue{Value: effort}
-	if err := api.ValidateLegacyThinking(think); err != nil {
+	err := api.ValidateLegacyThinking(think)
+	if len(thinking) > 0 && thinking[0].Valid() {
+		if err == nil && thinking[0].Supports(true) {
+			for _, value := range thinking[0].Values {
+				if _, named := value.(string); named {
+					return &api.ThinkValue{Value: requestedEffort}, nil
+				}
+			}
+			return &api.ThinkValue{Value: true}, nil
+		}
+		return &api.ThinkValue{Value: requestedEffort}, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("invalid reasoning value: %q (must be \"minimal\", \"low\", \"medium\", \"high\", \"xhigh\", \"ultra\", \"max\", or \"none\")", requestedEffort)
 	}
 	return think, nil
@@ -717,7 +727,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		effort = *r.ReasoningEffort
 	}
 
-	think, err := thinkFromReasoningEffort(effort, thinking...)
+	think, err := ThinkingFromReasoningEffort(effort, thinking...)
 	if err != nil {
 		return nil, err
 	}

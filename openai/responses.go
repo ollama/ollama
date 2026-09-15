@@ -751,8 +751,13 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		if !think.IsValid() {
 			return nil, fmt.Errorf("invalid think value")
 		}
+		if len(thinking) == 0 || !thinking[0].Valid() {
+			if err := api.ValidateLegacyThinking(think); err != nil {
+				return nil, err
+			}
+		}
 	} else {
-		converted, err := thinkFromReasoningEffort(r.Reasoning.Effort, thinking...)
+		converted, err := ThinkingFromReasoningEffort(r.Reasoning.Effort, thinking...)
 		if err != nil {
 			return nil, err
 		}

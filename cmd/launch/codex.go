@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,9 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
@@ -54,14 +54,6 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
-	}
-
-	if client, err := api.ClientFromEnvironment(); err == nil {
-		if show, err := client.Show(context.Background(), &api.ShowRequest{Model: model}); err == nil && show.Thinking != nil {
-			selected := codexCatalogModel(model, models)
-			selected.Thinking = show.Thinking.Clone()
-			models = []LaunchModel{selected}
-		}
 	}
 
 	if err := ensureCodexConfig(model, models); err != nil {
@@ -728,11 +720,14 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 	supportedReasoningLevels := make([]any, 0)
 	var defaultReasoningLevel any
 	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
-		// Direct Responses requests carry effort names, without the desktop proxy's
-		// boolean conversion. Advertise only names that resolve to the same control.
 		for _, level := range contract.levels {
 			value := contract.values[level]
-			if value == true && launchModel.Thinking.Default != true {
+			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
+			if err != nil || converted == nil {
+				continue
+			}
+			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
+			if resolved == nil || resolved.Value != value {
 				continue
 			}
 			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{

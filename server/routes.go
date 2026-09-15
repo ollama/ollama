@@ -474,6 +474,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		caps = append(caps, model.CapabilityInsert)
 	}
 
+	requestedThink := req.Think
+	think := renderers.ResolveThinking(requestedThink, thinking)
+	req.Think = think
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
@@ -487,9 +490,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	requestedThink := req.Think
-	think := renderers.ResolveThinking(requestedThink, thinking)
-	req.Think = think
 	if thinking != nil && !req.Raw && m.Config.Parser != "" {
 		builtinParser = parsers.ParserForName(m.Config.Parser)
 		if builtinParser != nil {
@@ -2668,6 +2668,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		caps = append(caps, model.CapabilityTools)
 	}
 
+	requestedThink := req.Think
+	think := renderers.ResolveThinking(requestedThink, thinking)
+	req.Think = think
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
@@ -2686,10 +2689,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 	}
-
-	requestedThink := req.Think
-	think := renderers.ResolveThinking(requestedThink, thinking)
-	req.Think = think
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -45,6 +46,8 @@ func TestThinkingInputErrors(t *testing.T) {
 		name, values string
 	}{
 		{"thinking-qwen", `[false,"low","medium","xhigh"]`},
+		{"thinking-qwen:local", `[false,"low","medium","xhigh"]`},
+		{" THINKING-QWEN ", `[false,"low","medium","xhigh"]`},
 		{"thinking-cloud:cloud", `[false,"high","max"]`},
 		{"thinking-base", ""},
 		{"missing", ""},
@@ -96,7 +99,8 @@ func TestModelThinking(t *testing.T) {
 	}{
 		{"local gemma default on", Model{Config: model.ConfigV2{Renderer: "gemma4", Parser: "gemma4"}}, &model.Thinking{Values: []any{false, true}, Default: true}},
 		{"local qwen38 default medium", Model{Config: model.ConfigV2{Renderer: "qwen3.8", Parser: "qwen3.5"}}, &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
-		{"renderer without thinking capability keeps its own default", Model{Config: model.ConfigV2{Renderer: "gemma4"}}, &model.Thinking{Values: []any{false, true}, Default: false}},
+		{"renderer without thinking capability", Model{Config: model.ConfigV2{Renderer: "gemma4"}}, &model.Thinking{Values: []any{false}, Default: false}},
+		{"unknown renderer", Model{Config: model.ConfigV2{Renderer: "unknown"}}, nil},
 		{"nonthinking", Model{Config: model.ConfigV2{Renderer: "qwen3-coder"}}, &model.Thinking{Values: []any{false}, Default: false}},
 		{"known template", Model{HasGoTemplate: true, templateDigest: known}, &model.Thinking{Values: []any{false, true}, Default: true}},
 		{"custom template", Model{HasGoTemplate: true, templateDigest: "custom"}, nil},
@@ -225,6 +229,97 @@ func TestThinkingResolvedBeforeRenderAndParse(t *testing.T) {
 					t.Fatalf("off produced thinking %q", reasoning)
 				}
 			})
+		}
+	}
+}
+
+func TestThinkingNonthinkingFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	mock := mockRunner{CompletionResponse: llm.CompletionResponse{Content: "answer", Done: true, DoneReason: llm.DoneReasonStop}}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	for _, config := range []struct{ name, renderer, parser string }{
+		{"thinking-coder", "qwen3-coder", "qwen3-coder"},
+		{"thinking-no-parser", "gemma4", ""},
+	} {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: config.name, From: "thinking-base", Renderer: config.renderer, Parser: config.parser, Stream: &stream})
+		if w.Code != http.StatusOK {
+			t.Fatal(w.Body.String())
+		}
+		show, err := GetModelInfo(api.ShowRequest{Model: config.name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(show.Thinking, &model.Thinking{Values: []any{false}, Default: false}) {
+			t.Fatalf("%s advertised rejected controls: %+v", config.name, show.Thinking)
+		}
+		for _, value := range []any{nil, false, true, "", "high", "future"} {
+			for _, endpoint := range []string{"chat", "generate"} {
+				t.Run(fmt.Sprintf("%s/%s/%v", config.name, endpoint, value), func(t *testing.T) {
+					var think *api.ThinkValue
+					if value != nil {
+						think = &api.ThinkValue{Value: value}
+					}
+					if endpoint == "chat" {
+						w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: config.name, Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: think, Stream: &stream})
+					} else {
+						w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: config.name, Prompt: "hello", Think: think, Stream: &stream})
+					}
+					want := http.StatusOK
+					if value == true {
+						want = http.StatusBadRequest
+					}
+					if w.Code != want {
+						t.Fatalf("status=%d, want %d: %s", w.Code, want, w.Body.String())
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestThinkingLookupModelReferences(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	s := &Server{}
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: "thinking-qwen", From: "thinking-base", Renderer: "qwen3.8", Parser: "qwen3.5", Stream: &stream})
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Body.String())
+	}
+	for _, protocol := range []struct {
+		name, fields string
+		middleware   gin.HandlerFunc
+	}{
+		{"chat", `"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"xhigh"`, middleware.ChatMiddleware(lookupThinking)},
+		{"responses", `"input":"hi","reasoning":{"effort":"xhigh"}`, middleware.ResponsesMiddleware(lookupThinking)},
+		{"anthropic", `"messages":[{"role":"user","content":"hi"}],"max_tokens":64,"output_config":{"effort":"xhigh"}`, middleware.AnthropicMessagesMiddleware(lookupThinking)},
+	} {
+		for _, name := range []string{"thinking-qwen", "thinking-qwen:local", " THINKING-QWEN "} {
+			t.Run(protocol.name+"/"+name, func(t *testing.T) {
+				var req api.ChatRequest
+				router := gin.New()
+				router.POST("/", protocol.middleware, func(c *gin.Context) {
+					if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+						t.Error(err)
+					}
+					c.Status(http.StatusOK)
+				})
+				r := httptest.NewRequest("POST", "/", strings.NewReader(fmt.Sprintf(`{"model":%q,%s}`, name, protocol.fields)))
+				r.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, r)
+				if w.Code != http.StatusOK || req.Think == nil || req.Think.Value != "xhigh" {
+					t.Fatalf("status=%d think=%v: %s", w.Code, req.Think, w.Body.String())
+				}
+			})
+		}
+	}
+	for _, name := range []string{"thinking-qwen:cloud", "missing", ""} {
+		if got := lookupThinking(name); got != nil {
+			t.Errorf("%q lookup=%+v, want no local metadata", name, got)
 		}
 	}
 }

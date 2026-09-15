@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
+	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 func TestCodexDesktopRoutesCatalogModelToOllamaAndStripsCredentials(t *testing.T) {
@@ -305,6 +308,59 @@ func TestNormalizeOllamaThinkingUsesRoutedModelContract(t *testing.T) {
 				t.Fatalf("reasoning summary = %q, want preserved", got)
 			}
 		})
+	}
+}
+
+func TestNormalizeOllamaDiscoveredThinking(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		controls *modelpkg.Thinking
+		values   map[string]any
+		effort   string
+		want     any
+	}{
+		{"exact xhigh", &modelpkg.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}, map[string]any{"none": false, "low": "low", "medium": "medium", "xhigh": "xhigh"}, "xhigh", "xhigh"},
+		{"exact minimal", &modelpkg.Thinking{Values: []any{"minimal", "high"}, Default: "high"}, map[string]any{"minimal": "minimal", "high": "high"}, "minimal", "minimal"},
+		{"unsupported xhigh defaults", &modelpkg.Thinking{Values: []any{false, "high", "max"}, Default: "high"}, map[string]any{"none": false, "high": "high", "max": "max"}, "xhigh", "high"},
+		{"saved Boolean medium", &modelpkg.Thinking{Values: []any{false, true}, Default: false}, map[string]any{"none": false, "high": true}, "medium", true},
+		{"Boolean effort alias", &modelpkg.Thinking{Values: []any{false, true}, Default: false}, map[string]any{"none": false, "high": true}, "minimal", true},
+		{"unknown Boolean effort defaults", &modelpkg.Thinking{Values: []any{false, true}, Default: false}, map[string]any{"none": false, "high": true}, "future", false},
+		{"mixed named medium", &modelpkg.Thinking{Values: []any{false, true, "medium"}, Default: false}, map[string]any{"none": false, "high": true, "medium": "medium"}, "medium", "medium"},
+		{"hidden named control prevents Boolean alias", &modelpkg.Thinking{Values: []any{false, true, "turbo"}, Default: false}, map[string]any{"none": false, "high": true}, "medium", false},
+		{"hidden default", &modelpkg.Thinking{Values: []any{"low", "high", "turbo"}, Default: "turbo"}, map[string]any{"low": "low", "high": "high"}, "medium", "turbo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := routingThinkingMetadata{Supported: true, Controls: tc.controls, Values: make(map[string]json.RawMessage)}
+			for level, value := range tc.values {
+				metadata.Levels = append(metadata.Levels, level)
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				metadata.Values[level] = encoded
+			}
+			body := []byte(fmt.Sprintf(`{"model":"test","input":"hi","reasoning":{"effort":%q,"summary":"auto"}}`, tc.effort))
+			normalized, err := normalizeOllamaThinking(body, metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request openai.ResponsesRequest
+			if err := json.Unmarshal(normalized, &request); err != nil {
+				t.Fatal(err)
+			}
+			converted, err := openai.FromResponsesRequest(request, tc.controls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolved := renderers.ResolveThinking(converted.Think, tc.controls)
+			if resolved == nil || resolved.Value != tc.want {
+				t.Fatalf("resolved=%v, want %#v; request=%s", resolved, tc.want, normalized)
+			}
+		})
+	}
+	legacy := routingThinkingMetadata{Supported: true, Levels: []string{"none", "high"}, Values: map[string]json.RawMessage{"none": json.RawMessage("false"), "high": json.RawMessage("true")}}
+	if got := normalizeThinkingEffort("medium", legacy); got != "high" {
+		t.Fatalf("saved Boolean effort=%q, want high", got)
 	}
 }
 

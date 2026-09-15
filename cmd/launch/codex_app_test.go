@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/internal/proxy"
@@ -2148,6 +2149,22 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 			wantValues:     map[string]any{"none": false, "high": true},
 		},
 		{
+			name:           "xhigh is retained",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"},
+			wantInitial:    "medium", wantLevels: []string{"none", "low", "medium", "xhigh"},
+			wantValues: map[string]any{"none": false, "low": "low", "medium": "medium", "xhigh": "xhigh"},
+		},
+		{
+			name:           "partial catalog keeps controls with unrepresentable default",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{"low", "high", "turbo"}, Default: "turbo"},
+			wantLevels:     []string{"low", "high"}, wantValues: map[string]any{"low": "low", "high": "high"},
+		},
+		{
+			name:           "literal high takes its label",
+			recommendation: &api.ModelRecommendationThinking{Values: []any{false, true, "high"}, Default: true},
+			wantLevels:     []string{"none", "high"}, wantValues: map[string]any{"none": false, "high": "high"},
+		},
+		{
 			name:           "explicit non-thinking recommendation",
 			thinking:       true,
 			recommendation: &api.ModelRecommendationThinking{Values: []any{false}, Default: false},
@@ -2244,7 +2261,8 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 	var routing struct {
 		Models []struct {
 			Thinking struct {
-				Values map[string]any `json:"values"`
+				Values   map[string]any                   `json:"values"`
+				Controls *api.ModelRecommendationThinking `json:"controls"`
 			} `json:"thinking"`
 		} `json:"models"`
 	}
@@ -2252,6 +2270,9 @@ func TestCodexAppConfigureWritesRecommendationThinkingContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	values := routing.Models[0].Thinking.Values
+	if diff := cmp.Diff(model.Thinking, routing.Models[0].Thinking.Controls); diff != "" {
+		t.Fatalf("routing lost the model contract: %s", diff)
+	}
 	if values["none"] != false || values["high"] != true || values["max"] != "max" {
 		t.Fatalf("routing thinking values = %#v, want exact endpoint values", values)
 	}
@@ -2555,8 +2576,8 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 	}{
 		{
 			name:         "existing user choices",
-			desktopValue: `enabled-reasoning-efforts = ["minimal", "high", "persistent"]` + "\n",
-			wantOriginal: []string{"minimal", "high", "persistent"},
+			desktopValue: `enabled-reasoning-efforts = ["minimal", "persistent"]` + "\n",
+			wantOriginal: []string{"minimal", "persistent"},
 		},
 		{name: "setting originally absent"},
 	}
@@ -2582,10 +2603,10 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 			}
 
 			app := &CodexApp{}
-			if err := app.ConfigureWithModels("gemma4", []LaunchModel{{
-				Name:         "gemma4",
-				Capabilities: []model.Capability{model.CapabilityThinking},
-			}}); err != nil {
+			if err := app.ConfigureWithModels("gemma4", []LaunchModel{
+				{Name: "gemma4", Capabilities: []model.Capability{model.CapabilityThinking}},
+				{Name: "custom-qwen", Thinking: &api.ModelRecommendationThinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
+			}); err != nil {
 				t.Fatalf("ConfigureWithModels returned error: %v", err)
 			}
 
@@ -2600,6 +2621,11 @@ func TestCodexAppRestoreRestoresDesktopReasoningEffortsExactly(t *testing.T) {
 			managedEfforts, ok := codexAppConfigReasoningEfforts(managedConfig)
 			if !ok || !slices.Contains(managedEfforts, "none") || !slices.Contains(managedEfforts, "max") {
 				t.Fatalf("managed reasoning efforts = %v, %v; want none and max enabled", managedEfforts, ok)
+			}
+			for _, level := range append(slices.Clone(tt.wantOriginal), "high", "low", "medium", "xhigh") {
+				if !slices.Contains(managedEfforts, level) {
+					t.Errorf("managed efforts %v hide %q", managedEfforts, level)
+				}
 			}
 
 			if err := app.Restore(); err != nil {
