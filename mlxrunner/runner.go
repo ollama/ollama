@@ -78,7 +78,6 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			err = e
 			return nil
 		}
-		defer root.Close()
 
 		m, e := model.New(root)
 		if e != nil {
