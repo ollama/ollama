@@ -1363,14 +1363,15 @@ func TestCodexAppConfigureIsIdempotentAndPreservesUnrelatedProvider(t *testing.T
 
 func TestCodexAppConfigurePersistsAutoReviewModel(t *testing.T) {
 	for _, test := range []struct {
-		name       string
-		configured string
-		want       string
+		name         string
+		configured   string
+		want         string
+		wantFallback string
 	}{
-		{name: "selected model default", want: "glm-5.3:cloud"},
+		{name: "selected model default", want: "selected", wantFallback: "glm-5.3:cloud"},
 		{name: "native explicit", configured: "native"},
 		{name: "chatgpt explicit", configured: "chatgpt"},
-		{name: "selected cloud model", configured: "selected", want: "glm-5.3:cloud"},
+		{name: "selected cloud model", configured: "selected", want: "selected", wantFallback: "glm-5.3:cloud"},
 		{name: "ollama alias", configured: "ollama", want: "glm-5.3:cloud"},
 		{name: "explicit configured model", configured: "qwen3:8b", want: "qwen3:8b"},
 		{name: "explicit configured cloud model", configured: "deepseek-v4-flash:cloud", want: "deepseek-v4-flash:cloud"},
@@ -1389,13 +1390,17 @@ func TestCodexAppConfigurePersistsAutoReviewModel(t *testing.T) {
 				t.Fatal(err)
 			}
 			var catalog struct {
-				AutoReviewModel string `json:"auto_review_model"`
+				AutoReviewModel         string `json:"auto_review_model"`
+				AutoReviewFallbackModel string `json:"auto_review_fallback_model"`
 			}
 			if err := json.Unmarshal(data, &catalog); err != nil {
 				t.Fatal(err)
 			}
 			if catalog.AutoReviewModel != test.want {
 				t.Fatalf("auto_review_model = %q, want %q", catalog.AutoReviewModel, test.want)
+			}
+			if catalog.AutoReviewFallbackModel != test.wantFallback {
+				t.Fatalf("auto_review_fallback_model = %q, want %q", catalog.AutoReviewFallbackModel, test.wantFallback)
 			}
 		})
 	}
@@ -1549,6 +1554,124 @@ func TestCodexAppConfigureUsesConnectableHostForUnspecifiedBindAddress(t *testin
 	}
 	if got, ok := codexRootStringValueOK(content, codexRootModelProviderKey); ok {
 		t.Fatalf("root model_provider = %q, want omitted built-in default", got)
+	}
+}
+
+func TestCodexAppHostChangePreservesRestoreState(t *testing.T) {
+	for _, host := range []string{
+		"http://127.0.0.1:11434",
+		"http://localhost:11434",
+		"http://localhost:11434/ollama",
+		"http://127.0.0.1:11434/ollama",
+		"http://[::1]:11434/ollama",
+	} {
+		t.Run(host, func(t *testing.T) {
+			t.Run("restore", func(t *testing.T) {
+				testCodexAppHostChangePreservesRestoreState(t, host, false)
+			})
+			t.Run("reconfigure then restore", func(t *testing.T) {
+				testCodexAppHostChangePreservesRestoreState(t, host, true)
+			})
+		})
+	}
+}
+
+func testCodexAppHostChangePreservesRestoreState(t *testing.T, host string, reconfigure bool) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppProcessHooks(t, func() bool { return false }, func() error { return nil }, func() error { return nil })
+
+	configPath := filepath.Join(tmpDir, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := "" +
+		`model = "gpt-5.6-sol"` + "\n" +
+		`model_provider = "openai"` + "\n" +
+		`openai_base_url = "https://api.openai.com/v1"` + "\n"
+	if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("OLLAMA_HOST", host)
+	app := &CodexApp{}
+	if err := app.ConfigureWithModels("llama3.2", testLaunchModels("llama3.2")); err != nil {
+		t.Fatalf("initial ConfigureWithModels returned error: %v", err)
+	}
+	if !app.OllamaConfigured() {
+		t.Fatal("generated configuration is not recognized as owned")
+	}
+	if got := app.CurrentModel(); got != "llama3.2" {
+		t.Fatalf("CurrentModel after setup = %q, want llama3.2", got)
+	}
+
+	// A changed server address must not make the off-switch disappear or cause
+	// the next update to save Ollama's managed root as the user's restore target.
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:22434")
+	if !app.OllamaConfigured() {
+		t.Fatal("OllamaConfigured = false after host change, want managed config to remain detectable")
+	}
+	if got := app.CurrentModel(); got != "" {
+		t.Fatalf("CurrentModel after host change = %q, want empty to require launcher reconfiguration", got)
+	}
+	if reconfigure {
+		if err := app.ConfigureWithModels("gemma4", testLaunchModels("gemma4")); err != nil {
+			t.Fatalf("updated ConfigureWithModels returned error: %v", err)
+		}
+		updated, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := codexRootStringValue(string(updated), codexRootOpenAIBaseURLKey); got != "http://127.0.0.1:22434/api/codex/v1" {
+			t.Fatalf("updated endpoint = %q, want current host", got)
+		}
+	}
+	if err := app.RestoreFromDesktop(false); err != nil {
+		t.Fatalf("RestoreFromDesktop returned error: %v", err)
+	}
+
+	restored, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]string{
+		codexRootModelKey:         "gpt-5.6-sol",
+		codexRootModelProviderKey: "openai",
+		codexRootOpenAIBaseURLKey: "https://api.openai.com/v1",
+	} {
+		if got := codexRootStringValue(string(restored), key); got != want {
+			t.Fatalf("restored %s = %q, want %q in:\n%s", key, got, want, restored)
+		}
+	}
+	if got, ok := codexRootStringValueOK(string(restored), codexRootModelCatalogJSONKey); ok {
+		t.Fatalf("restored model catalog = %q, want managed catalog removed in:\n%s", got, restored)
+	}
+	if _, err := os.Stat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		t.Fatalf("restore state should be removed after successful restore, err=%v", err)
+	}
+}
+
+func TestCodexAppManagedProxyURLRequiresLoopback(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{name: "IPv4 loopback", url: "http://127.0.0.1:11434/api/codex/v1", want: true},
+		{name: "localhost", url: "http://localhost:22434/api/codex/v1/", want: true},
+		{name: "IPv6 loopback", url: "https://[::1]:11434/api/codex/v1", want: true},
+		{name: "remote hostname", url: "https://example.com/api/codex/v1"},
+		{name: "private address", url: "http://192.168.1.5:11434/api/codex/v1"},
+		{name: "credentials", url: "http://user@127.0.0.1:11434/api/codex/v1"},
+		{name: "query", url: "http://127.0.0.1:11434/api/codex/v1?owned=true"},
+		{name: "wrong path", url: "http://127.0.0.1:11434/v1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := codexAppManagedProxyURL(tt.url); got != tt.want {
+				t.Fatalf("codexAppManagedProxyURL(%q) = %t, want %t", tt.url, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -2929,6 +3052,81 @@ func TestCodexAppRestoreDoesNotTreatCLIProfileAsOwned(t *testing.T) {
 	}
 	if string(data) != existing {
 		t.Fatalf("CLI Codex profile should be left untouched, got:\n%s", data)
+	}
+}
+
+func TestCodexAppDarwinOpenArgs(t *testing.T) {
+	for _, path := range []string{"", "/Applications/ChatGPT.app", "/Users/test/Apps/ChatGPT Preview.app"} {
+		t.Run(path, func(t *testing.T) {
+			setTestHome(t, t.TempDir())
+			withCodexAppPlatform(t, "darwin")
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+			usualArgs := []string{"-b", codexAppBundleID}
+			ollamaArgs := []string{"-b", codexAppBundleID, "codex://threads/new?mode=codex"}
+			if path != "" {
+				usualArgs = []string{path}
+				ollamaArgs = []string{"-a", path, "codex://threads/new?mode=codex"}
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, usualArgs) {
+				t.Fatalf("unconfigured open args = %q, want %q", got, usualArgs)
+			}
+
+			app := &CodexApp{}
+			if err := app.ConfigureWithModels("qwen3:8b", testLaunchModels("qwen3:8b")); err != nil {
+				t.Fatal(err)
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, ollamaArgs) {
+				t.Fatalf("Ollama open args = %q, want %q", got, ollamaArgs)
+			}
+
+			if err := restoreCodexAppProfile(); err != nil {
+				t.Fatal(err)
+			}
+			if got := codexAppDarwinOpenArgs(path); !slices.Equal(got, usualArgs) {
+				t.Fatalf("restored open args = %q, want %q", got, usualArgs)
+			}
+		})
+	}
+}
+
+func TestCodexAppDesktopLaunchMode(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	withCodexAppPlatform(t, "darwin")
+	withCodexAppRouterHealth(t, func() error { return nil })
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+	running := false
+	var openedArgs [][]string
+	withCodexAppProcessHooks(t,
+		func() bool { return running },
+		func() error { running = false; return nil },
+		func() error {
+			openedArgs = append(openedArgs, codexAppDarwinOpenArgs("/Applications/ChatGPT.app"))
+			running = true
+			return nil
+		},
+	)
+	codexAppCanOpenID = func() bool { return true }
+
+	app := &CodexApp{}
+	if err := app.UseOllamaFromDesktop("qwen3:8b", testLaunchModels("qwen3:8b"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestartFromDesktop(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RestoreFromDesktop(true); err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{"-a", "/Applications/ChatGPT.app", "codex://threads/new?mode=codex"},
+		{"-a", "/Applications/ChatGPT.app", "codex://threads/new?mode=codex"},
+		{"/Applications/ChatGPT.app"},
+	}
+	if !slices.EqualFunc(openedArgs, want, slices.Equal[[]string]) {
+		t.Fatalf("open args = %q, want first launch and restart in Codex, then a normal launch on restore: %q", openedArgs, want)
 	}
 }
 

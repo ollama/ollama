@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,6 +31,7 @@ const (
 	codexAppIntegrationName        = "codex-app"
 	codexAppProfileName            = "ollama-launch-codex-app"
 	codexAppBundleID               = "com.openai.codex"
+	codexAppLaunchURL              = "codex://threads/new?mode=codex"
 	codexAppModelCatalogFilename   = proxy.CodexDesktopModelCatalogFilename
 	codexAppRoutingCatalogFilename = proxy.CodexDesktopRoutingCatalogFilename
 	codexAppAutoReviewModelEnv     = "OLLAMA_CODEX_AUTO_REVIEW_MODEL"
@@ -101,7 +104,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 		return fmt.Errorf("chatgpt requires a model")
 	}
 	models = codexAppCatalogModels(primary, models)
-	autoReviewModel, err := codexAppConfiguredAutoReviewModel(primary, models)
+	autoReview, err := codexAppConfiguredAutoReviewModel(primary, models)
 	if err != nil {
 		return err
 	}
@@ -122,7 +125,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 		return err
 	}
 	routingCatalogPath := codexAppRoutingCatalogPathForConfig(configPath)
-	if err := writeCodexAppRoutingCatalog(routingCatalogPath, models, autoReviewModel); err != nil {
+	if err := writeCodexAppRoutingCatalog(routingCatalogPath, models, autoReview); err != nil {
 		return err
 	}
 	if err := writeCodexAppCombinedModelCatalog(catalogPath, models, nativeCatalog); err != nil {
@@ -157,7 +160,9 @@ func (c *CodexApp) CurrentModel() string {
 	if err != nil {
 		return ""
 	}
-	if codexAppRootUsesProxy(parsed) && codexAppCatalogHealthy(parsed, "") {
+	if codexAppRootUsesProxy(parsed) &&
+		codexNormalizeURL(parsed.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+		codexAppCatalogHealthy(parsed, "") {
 		model := strings.TrimSpace(parsed.RootString(codexRootModelKey))
 		if codexAppCatalogContainsModel(model) {
 			return model
@@ -1090,7 +1095,12 @@ func codexAppOllamaPriorityStart(nativeCatalog codexAppRawModelCatalog, ollamaMo
 	return lowestNativePriority - ollamaModelCount
 }
 
-func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewModel string) error {
+type codexAppAutoReviewRoute struct {
+	Model         string
+	FallbackModel string
+}
+
+func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReview codexAppAutoReviewRoute) error {
 	if len(models) == 0 {
 		return fmt.Errorf("chatgpt routing catalog cannot be empty")
 	}
@@ -1116,11 +1126,13 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewMo
 		})
 	}
 	catalog := struct {
-		Models          []routingEntry `json:"models"`
-		AutoReviewModel string         `json:"auto_review_model,omitempty"`
+		Models                  []routingEntry `json:"models"`
+		AutoReviewModel         string         `json:"auto_review_model,omitempty"`
+		AutoReviewFallbackModel string         `json:"auto_review_fallback_model,omitempty"`
 	}{
-		Models:          entries,
-		AutoReviewModel: autoReviewModel,
+		Models:                  entries,
+		AutoReviewModel:         autoReview.Model,
+		AutoReviewFallbackModel: autoReview.FallbackModel,
 	}
 	data, err := json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
@@ -1132,22 +1144,24 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReviewMo
 	return fileutil.WriteWithBackup(path, append(data, '\n'), codexAppIntegrationName)
 }
 
-func codexAppConfiguredAutoReviewModel(primary string, models []LaunchModel) (string, error) {
+func codexAppConfiguredAutoReviewModel(primary string, models []LaunchModel) (codexAppAutoReviewRoute, error) {
 	configured := strings.TrimSpace(os.Getenv(codexAppAutoReviewModelEnv))
 	switch strings.ToLower(configured) {
-	case "", "selected", "ollama":
-		return primary, nil
+	case "", "selected":
+		return codexAppAutoReviewRoute{Model: "selected", FallbackModel: primary}, nil
+	case "ollama":
+		return codexAppAutoReviewRoute{Model: primary}, nil
 	case "native", "chatgpt":
-		return "", nil
+		return codexAppAutoReviewRoute{}, nil
 	}
 
 	target := codexAppCatalogModelKey(configured)
 	for _, model := range models {
 		if codexAppCatalogModelKey(model.Name) == target {
-			return model.Name, nil
+			return codexAppAutoReviewRoute{Model: model.Name}, nil
 		}
 	}
-	return "", fmt.Errorf("%s=%q is not one of the configured Ollama models", codexAppAutoReviewModelEnv, configured)
+	return codexAppAutoReviewRoute{}, fmt.Errorf("%s=%q is not one of the configured Ollama models", codexAppAutoReviewModelEnv, configured)
 }
 
 func parseCodexAppModelCatalog(data []byte) (codexAppRawModelCatalog, error) {
@@ -2065,13 +2079,7 @@ func defaultCodexAppOpenApp(args []string) error {
 		}
 		return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
 	case "darwin":
-		if path := codexAppAppPath(); path != "" {
-			cmd := exec.Command("open", path)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			return cmd.Run()
-		}
-		cmd := exec.Command("open", "-b", codexAppBundleID)
+		cmd := exec.Command("open", codexAppDarwinOpenArgs(codexAppAppPath())...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -2080,12 +2088,26 @@ func defaultCodexAppOpenApp(args []string) error {
 	}
 }
 
+func codexAppDarwinOpenArgs(path string) []string {
+	args := []string{"-b", codexAppBundleID}
+	if path != "" {
+		args = []string{path}
+	}
+	if (&CodexApp{}).OllamaConfigured() {
+		if path != "" {
+			args = []string{"-a", path}
+		}
+		args = append(args, codexAppLaunchURL)
+	}
+	return args
+}
+
 func defaultCodexAppOpenAppPath(path string) error {
 	switch codexAppGOOS {
 	case "windows":
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", "Start-Process -FilePath "+quotePowerShellString(path)).Run()
 	case "darwin":
-		cmd := exec.Command("open", path)
+		cmd := exec.Command("open", codexAppDarwinOpenArgs(path)...)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
@@ -2277,8 +2299,27 @@ func codexAppRootUsesProxy(config codexParsedConfig) bool {
 	if modelProvider, ok := config.RootStringOK(codexRootModelProviderKey); ok && modelProvider != "openai" {
 		return false
 	}
-	return codexNormalizeURL(config.RootString(codexRootOpenAIBaseURLKey)) == codexNormalizeURL(codexAppProxyBaseURL()) &&
+	return codexAppManagedProxyURL(config.RootString(codexRootOpenAIBaseURLKey)) &&
 		config.RootString(codexRootModelCatalogJSONKey) == catalogPath
+}
+
+func codexAppManagedProxyURL(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	if !strings.EqualFold(host, "localhost") {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	// ConnectableHost preserves proxy path prefixes from OLLAMA_HOST.
+	return strings.HasSuffix(strings.TrimSuffix(u.Path, "/"), proxy.CodexDesktopPathPrefix+"/v1")
 }
 
 func codexAppRootReferencesCatalog(text string) bool {

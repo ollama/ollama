@@ -352,6 +352,75 @@ func TestClientDo(t *testing.T) {
 	}
 }
 
+func TestHeadBlob(t *testing.T) {
+	testCases := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantExists bool
+		wantErr    string
+	}{
+		{
+			name:       "exists",
+			statusCode: http.StatusOK,
+			wantExists: true,
+		},
+		{
+			name:       "missing",
+			statusCode: http.StatusNotFound,
+			body:       `{"error":"missing"}`,
+		},
+		{
+			name:       "server error",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":"stat failed"}`,
+			wantErr:    "stat failed",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(
+				&url.URL{Scheme: "http", Host: "example.com"},
+				&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if req.Method != http.MethodHead {
+						t.Fatalf("method = %q, want HEAD", req.Method)
+					}
+					if req.URL.Path != "/api/blobs/sha256:abc" {
+						t.Fatalf("path = %q, want /api/blobs/sha256:abc", req.URL.Path)
+					}
+
+					status := http.StatusText(tc.statusCode)
+					return &http.Response{
+						StatusCode: tc.statusCode,
+						Status:     fmt.Sprintf("%d %s", tc.statusCode, status),
+						Body:       io.NopCloser(strings.NewReader(tc.body)),
+						Header:     make(http.Header),
+						Request:    req,
+					}, nil
+				})},
+			)
+
+			exists, err := client.HeadBlob(t.Context(), "sha256:abc")
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("got nil, want error %q", tc.wantErr)
+				}
+				if err.Error() != tc.wantErr {
+					t.Fatalf("error = %q, want %q", err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("HeadBlob() error = %v", err)
+			}
+			if exists != tc.wantExists {
+				t.Fatalf("HeadBlob() exists = %v, want %v", exists, tc.wantExists)
+			}
+		})
+	}
+}
+
 func TestClientWebSearchExperimentalUsesLocalRoute(t *testing.T) {
 	var gotPath string
 	var gotMethod string

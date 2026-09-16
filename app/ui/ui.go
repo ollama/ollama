@@ -1566,6 +1566,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to load saved settings: %w", err)
 	}
 	settings.OnboardingVersion = saved.OnboardingVersion
+	settings.CodexDesktopUsed = saved.CodexDesktopUsed
 
 	// Handle auto-update toggle changes
 	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {

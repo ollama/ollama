@@ -1,78 +1,230 @@
-import { createElement, type ComponentType } from "react";
+import { StrictMode, type ComponentType } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Route } from "../routes/onboarding";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as api from "@/api";
+import { Settings } from "@/gotypes";
+import { CURRENT_ONBOARDING_VERSION } from "@/lib/onboarding";
+import { Route } from "@/routes/onboarding";
+import { WelcomeScreen } from "./Onboarding";
 
-const state = vi.hoisted(() => ({
-  settings: { OnboardingVersion: 0 },
-  setSettings: vi.fn(),
-  navigate: vi.fn(),
-}));
-
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settingsData: state.settings,
-    setSettings: state.setSettings,
+const mocks = vi.hoisted(() => ({ navigate: vi.fn(), authenticated: true }));
+vi.mock("@tanstack/react-router", async (importOriginal) =>
+  Object.assign(
+    {},
+    await importOriginal<typeof import("@tanstack/react-router")>(),
+    {
+      useNavigate: () => mocks.navigate,
+    },
+  ),
+);
+vi.mock("@/hooks/useUser", () => ({
+  useUser: () => ({
+    isAuthenticated: mocks.authenticated,
+    fetchConnectUrl: vi.fn(),
+    refetchUser: vi.fn(),
   }),
 }));
 
-vi.mock("@/hooks/useUser", () => ({
-  useUser: () => ({ isAuthenticated: true }),
-}));
-
-vi.mock("@tanstack/react-router", () => ({
-  createFileRoute: () => (options: unknown) => ({ options }),
-  useNavigate: () => state.navigate,
-  redirect: vi.fn(),
-}));
-
-vi.mock("@/components/Onboarding", () => ({
-  default: ({ onUseLocal }: { onUseLocal: () => void }) => (
-    <button onClick={onUseLocal}>Use local</button>
-  ),
-}));
-
-const renderRoute = () =>
-  createElement(Route.options.component as ComponentType);
-
-let renderer: ReactTestRenderer | undefined;
-beforeEach(() => {
-  state.settings = { OnboardingVersion: 0 };
-  state.navigate.mockReset();
-  state.setSettings.mockReset().mockResolvedValue(undefined);
-  vi.stubGlobal("window", { location: { search: "" } });
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-});
-
-afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = undefined;
+afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  mocks.navigate.mockReset();
+  mocks.authenticated = true;
 });
 
-describe("shared onboarding completion", () => {
-  it("leaves onboarding when CLI completion arrives, even when already signed in", async () => {
-    await act(async () => {
-      renderer = create(renderRoute());
-    });
-    expect(state.navigate).not.toHaveBeenCalled();
+// Use the real settings mutation: query notifications replace callbacks and
+// must not automatically retry a failed handoff after authentication.
+async function renderOnboarding(authenticated: boolean) {
+  mocks.authenticated = authenticated;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("navigator", { platform: "MacIntel" });
+  vi.stubGlobal("window", {
+    OLLAMA_PLATFORM: "darwin",
+    location: { search: "" },
+    setOnboardingWindow: vi.fn(),
+  });
+  let settingsResponse = { settings: new Settings({ OnboardingVersion: 0 }) };
+  vi.spyOn(api, "getSettings").mockImplementation(async () => settingsResponse);
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false },
+    },
+  });
+  client.setQueryData(["settings"], settingsResponse);
+  const OnboardingRoute = Route.options.component as ComponentType;
+  const element = () => (
+    <StrictMode>
+      <QueryClientProvider client={client}>
+        <OnboardingRoute />
+      </QueryClientProvider>
+    </StrictMode>
+  );
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(element());
+  });
+  const primaryAction = () =>
+    renderer.root.find(
+      (node) => node.type === "button" && "aria-busy" in node.props,
+    );
+  return {
+    get primaryAction() {
+      return primaryAction();
+    },
+    get root() {
+      return renderer.root;
+    },
+    async continue() {
+      await act(async () => {
+        const button = primaryAction();
+        button.props.onClick();
+        button.props.onClick();
+      });
+    },
+    async authenticate() {
+      mocks.authenticated = true;
+      await act(async () => {
+        renderer.update(element());
+      });
+    },
+    async receiveCompletion() {
+      settingsResponse = {
+        settings: new Settings({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        }),
+      };
+      await act(async () => {
+        client.setQueryData(["settings"], { ...settingsResponse });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    },
+    async unmount() {
+      await act(async () => renderer.unmount());
+      client.clear();
+    },
+  };
+}
 
-    state.settings = { OnboardingVersion: 1 };
-    await act(async () => renderer!.update(renderRoute()));
-    expect(state.navigate).toHaveBeenCalledWith({ to: "/" });
-    expect(state.setSettings).not.toHaveBeenCalled();
+async function flushQueryNotifications() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+describe("Onboarding completion", () => {
+  it("leaves onboarding when CLI completion arrives", async () => {
+    const save = vi.spyOn(api, "updateSettings");
+    const onboarding = await renderOnboarding(true);
+    try {
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      await onboarding.receiveCompletion();
+      expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/" });
+      expect(save).not.toHaveBeenCalled();
+    } finally {
+      await onboarding.unmount();
+    }
   });
 
-  it("keeps the app's own local completion flow visible", async () => {
-    await act(async () => {
-      renderer = create(renderRoute());
-    });
-    await act(async () => renderer!.root.findByType("button").props.onClick());
-    expect(state.setSettings).toHaveBeenCalledWith({ OnboardingVersion: 1 });
-
-    state.settings = { OnboardingVersion: 1 };
-    await act(async () => renderer!.update(renderRoute()));
-    expect(state.navigate).not.toHaveBeenCalled();
+  it("keeps the app's own local completion screen visible", async () => {
+    const save = vi
+      .spyOn(api, "updateSettings")
+      .mockImplementation(async (settings) => ({ settings }));
+    const onboarding = await renderOnboarding(false);
+    try {
+      await onboarding.continue();
+      await act(async () => {
+        onboarding.root.findByType(WelcomeScreen).props.onLocal();
+      });
+      expect(save).toHaveBeenCalledOnce();
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        }),
+      );
+      await onboarding.receiveCompletion();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    } finally {
+      await onboarding.unmount();
+    }
   });
 
+  it.each([true, false])(
+    "saves once before opening Apps directly (already signed in: %s)",
+    async (authenticated) => {
+      let resolveSave!: (value: { settings: Settings }) => void;
+      const save = vi.spyOn(api, "updateSettings").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveSave = resolve;
+          }),
+      );
+      const onboarding = await renderOnboarding(authenticated);
+      try {
+        expect(save).not.toHaveBeenCalled();
+        expect(mocks.navigate).not.toHaveBeenCalled();
+        await onboarding.continue();
+        if (!authenticated) {
+          expect(save).not.toHaveBeenCalled();
+          expect(onboarding.root.findByType(WelcomeScreen)).toBeTruthy();
+          await onboarding.authenticate();
+        }
+        await flushQueryNotifications();
+        expect(save).toHaveBeenCalledOnce();
+        expect(save).toHaveBeenCalledWith(
+          expect.objectContaining({
+            OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+          }),
+        );
+        expect(mocks.navigate).not.toHaveBeenCalled();
+        expect(onboarding.primaryAction.props.disabled).toBe(true);
+        await act(async () => {
+          resolveSave({ settings: save.mock.calls[0][0] });
+        });
+        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
+          to: "/connect",
+        });
+      } finally {
+        await onboarding.unmount();
+      }
+    },
+  );
+
+  it.each([true, false])(
+    "keeps the current screen and waits for an explicit save retry (already signed in: %s)",
+    async (authenticated) => {
+      const save = vi
+        .spyOn(api, "updateSettings")
+        .mockRejectedValueOnce(new Error("disk full"))
+        .mockImplementation(async (settings) => ({ settings }));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const onboarding = await renderOnboarding(authenticated);
+      try {
+        await onboarding.continue();
+        if (!authenticated) await onboarding.authenticate();
+        await flushQueryNotifications();
+        await flushQueryNotifications();
+        expect(save).toHaveBeenCalledOnce();
+        expect(mocks.navigate).not.toHaveBeenCalled();
+        expect(onboarding.primaryAction.props.disabled).toBe(false);
+        expect(onboarding.root.findByProps({ role: "alert" })).toBeTruthy();
+        await act(async () => {
+          onboarding.root
+            .find(
+              (node) =>
+                node.type === "button" && node.props.children === "Try again",
+            )
+            .props.onClick();
+        });
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
+        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
+          to: "/connect",
+        });
+      } finally {
+        await onboarding.unmount();
+      }
+    },
+  );
 });

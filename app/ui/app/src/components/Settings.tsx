@@ -150,8 +150,7 @@ export default function Settings() {
   const [hasCodexDraftChanges, setHasCodexDraftChanges] = useState(false);
   const claudeModelsSettingsRef =
     useRef<ClaudeDesktopModelsSettingsHandle>(null);
-  const codexModelsSettingsRef =
-    useRef<CodexDesktopModelsSettingsHandle>(null);
+  const codexModelsSettingsRef = useRef<CodexDesktopModelsSettingsHandle>(null);
   const savedConfirmationTimeoutRef = useRef<number | null>(null);
   useBlocker({
     shouldBlockFn: () =>

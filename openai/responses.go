@@ -54,6 +54,15 @@ type ResponsesFileContent struct {
 
 func (ResponsesFileContent) responsesContent() {}
 
+// ResponsesEncryptedContent is content a provider labeled as encrypted; for
+// Ollama-native conversations the value is plain text, which we accept as-is.
+type ResponsesEncryptedContent struct {
+	Type             string `json:"type"` // always "encrypted_content"
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func (ResponsesEncryptedContent) responsesContent() {}
+
 type ResponsesInputMessage struct {
 	Type    string             `json:"type"` // always "message"
 	Role    string             `json:"role"` // one of `user`, `system`, `developer`
@@ -139,6 +148,12 @@ func unmarshalResponsesContent(data []byte) (ResponsesContent, error) {
 			return nil, err
 		}
 		return content, nil
+	case "encrypted_content":
+		var content ResponsesEncryptedContent
+		if err := json.Unmarshal(data, &content); err != nil {
+			return nil, err
+		}
+		return content, nil
 	default:
 		return nil, fmt.Errorf("unknown content type: %s", typeField.Type)
 	}
@@ -166,11 +181,15 @@ type ResponsesFunctionCall struct {
 
 func (ResponsesFunctionCall) responsesInputItem() {}
 
-// ResponsesFunctionCallOutput represents a function call result from the client.
+// ResponsesFunctionCallOutput represents a paired result or standalone named
+// output from the client.
 type ResponsesFunctionCallOutput struct {
-	Type   string `json:"type"`    // always "function_call_output"
-	CallID string `json:"call_id"` // links to the original function call
-	Output string `json:"output"`  // the function result
+	ID        string `json:"id,omitempty"`
+	Type      string `json:"type"`              // always "function_call_output"
+	CallID    string `json:"call_id,omitempty"` // links to the original function call, if any
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	Output    string `json:"output"`
 
 	// OutputItems is populated when output is provided as Responses content
 	// items instead of the string shorthand.
@@ -179,18 +198,27 @@ type ResponsesFunctionCallOutput struct {
 
 func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 	var aux struct {
-		Type   string          `json:"type"`
-		CallID string          `json:"call_id"`
-		Output json.RawMessage `json:"output"`
+		ID        string          `json:"id"`
+		Type      string          `json:"type"`
+		CallID    *string         `json:"call_id"`
+		Name      string          `json:"name"`
+		Namespace string          `json:"namespace"`
+		Output    json.RawMessage `json:"output"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
 
-	o.Type = aux.Type
-	o.CallID = aux.CallID
-	o.Output = ""
-	o.OutputItems = nil
+	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
+		return errors.New("function output call_id must not be empty")
+	}
+	if aux.CallID == nil && strings.TrimSpace(aux.Name) == "" {
+		return errors.New("standalone function output is missing name")
+	}
+	*o = ResponsesFunctionCallOutput{ID: aux.ID, Type: aux.Type, Name: aux.Name, Namespace: aux.Namespace}
+	if aux.CallID != nil {
+		o.CallID = *aux.CallID
+	}
 
 	if len(aux.Output) == 0 {
 		return nil
@@ -264,6 +292,55 @@ type ResponsesReasoningInput struct {
 
 func (ResponsesReasoningInput) responsesInputItem() {}
 
+// AgentMessageEnvelopeFormat is the routing prefix for converted agent
+// messages; internal/proxy uses the same text (cross-pinned by tests).
+const AgentMessageEnvelopeFormat = "Agent message from %q to %q:\n"
+
+func agentMessageContent(author, recipient, content string) string {
+	if author == "" && recipient == "" {
+		return content
+	}
+	return fmt.Sprintf(AgentMessageEnvelopeFormat+"%s", author, recipient, content)
+}
+
+// ResponsesAgentMessageInput is a message passed between Codex agents in the
+// multi-agent collaboration flow.
+type ResponsesAgentMessageInput struct {
+	ID        string             `json:"id,omitempty"`
+	Type      string             `json:"type"` // always "agent_message"
+	Author    string             `json:"author"`
+	Recipient string             `json:"recipient"`
+	Content   []ResponsesContent `json:"content"`
+}
+
+func (ResponsesAgentMessageInput) responsesInputItem() {}
+
+func (m *ResponsesAgentMessageInput) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		ID        string            `json:"id"`
+		Type      string            `json:"type"`
+		Author    string            `json:"author"`
+		Recipient string            `json:"recipient"`
+		Content   []json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	m.ID = aux.ID
+	m.Type = aux.Type
+	m.Author = aux.Author
+	m.Recipient = aux.Recipient
+	m.Content = make([]ResponsesContent, 0, len(aux.Content))
+	for i, raw := range aux.Content {
+		content, err := unmarshalResponsesContent(raw)
+		if err != nil {
+			return fmt.Errorf("content[%d]: %w", i, err)
+		}
+		m.Content = append(m.Content, content)
+	}
+	return nil
+}
+
 // unmarshalResponsesInputItem unmarshals a single input item from JSON.
 func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 	var typeField struct {
@@ -324,6 +401,12 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return call, nil
+	case "agent_message":
+		var agentMessage ResponsesAgentMessageInput
+		if err := json.Unmarshal(data, &agentMessage); err != nil {
+			return nil, err
+		}
+		return agentMessage, nil
 	case "compaction":
 		var compaction ResponsesCompactionItem
 		if err := json.Unmarshal(data, &compaction); err != nil {
@@ -498,6 +581,15 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		case ResponsesReasoningInput:
 			// Store thinking to merge with the next assistant message
 			pendingThinking = v.EncryptedContent
+		case ResponsesAgentMessageInput:
+			content, _, err := convertResponsesContent(v.Content)
+			if err != nil {
+				return nil, err
+			}
+			messages = append(messages, api.Message{
+				Role:    "user",
+				Content: agentMessageContent(v.Author, v.Recipient, content),
+			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
 			if err != nil {
@@ -575,12 +667,16 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 					return nil, err
 				}
 			}
-			messages = append(messages, api.Message{
+			message := api.Message{
 				Role:       "tool",
 				Content:    content,
 				Images:     images,
 				ToolCallID: v.CallID,
-			})
+			}
+			if v.CallID == "" {
+				message.ToolName = qualifyNamespaceToolName(v.Namespace, v.Name)
+			}
+			messages = append(messages, message)
 		case ResponsesToolSearchCall:
 			messages = appendResponseToolCall(messages, api.ToolCall{
 				ID: v.CallID,
@@ -956,6 +1052,8 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 			content += v.Text
 		case ResponsesOutputTextContent:
 			content += v.Text
+		case ResponsesEncryptedContent:
+			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
 				continue // Skip if no URL (FileID not supported)
@@ -1148,7 +1246,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		for i, tc := range toolCalls {
 			if HasToolSearchTool(request.Tools) && tc.Function.Name == "tool_search" {
 				output = append(output, ResponsesOutputItem{
-					ID:        fmt.Sprintf("ts_%s_%d", responseID, i),
+					ID:        fmt.Sprintf("tsc_%s_%d", responseID, i),
 					Type:      "tool_search_call",
 					Status:    "completed",
 					CallID:    tc.ID,
@@ -1559,7 +1657,7 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		if HasToolSearchTool(c.request.Tools) && tc.Function.Name == "tool_search" {
-			itemID := fmt.Sprintf("ts_%d_%d", rand.Intn(999999), i)
+			itemID := fmt.Sprintf("tsc_%d_%d", rand.Intn(999999), i)
 			arguments := toolSearchArguments(tc.Function.Arguments)
 			item := map[string]any{
 				"id":        itemID,

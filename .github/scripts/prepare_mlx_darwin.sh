@@ -9,13 +9,14 @@
 #
 # The payload also depends on Ollama's payload build rules (cmake glue and
 # carried mlx/compat patches) and the xgrammar native wrapper
-# (x/mlxrunner/xgrammar/native). Rule drift rebuilds the whole payload from
+# (mlxrunner/xgrammar/native). Rule drift rebuilds the whole payload from
 # source; wrapper-only drift rebuilds just libollama_xgrammar.dylib.
 #
 # If no release matches the MLX pins (e.g. right after a pin bump), the
 # helper builds the minimal MLX payload for this platform: a single Metal
 # variant using the superbuild's platform default (metal_v4 on macOS 26.2+
 # SDKs, otherwise metal_v3), including a fresh libollama_xgrammar.dylib.
+# Built payloads are cached in the release tarball's layout for later runs.
 
 set -euo pipefail
 
@@ -28,6 +29,8 @@ tarball="${cache_dir}/ollama-darwin.tgz"
 tag_file="${cache_dir}/matched-tag"
 pins_file="${cache_dir}/matched-pins"
 target_pins_file="${target_dir}/.mlx-release-pins"
+# ${tag_file} value for a cached local build.
+local_tag="local-build"
 tmpdir=""
 tmp_tarball=""
 
@@ -51,7 +54,7 @@ read_pin() {
 
 # Native wrapper sources compiled into libollama_xgrammar.dylib — keep in
 # sync with the ollama_xgrammar target in cmake/mlx/CMakeLists.txt.
-xgrammar_native_dir=x/mlxrunner/xgrammar/native
+xgrammar_native_dir=mlxrunner/xgrammar/native
 
 # Payload build rules beyond the MLX_VERSION/MLX_C_VERSION pins.
 payload_rule_files=(
@@ -59,7 +62,7 @@ payload_rule_files=(
   "cmake/apply-git-patches.cmake"
   "cmake/mlx/CMakeLists.txt"
   "cmake/mlx/CMakePresets.json"
-  "x/mlxrunner/mlx/CMakeLists.txt"
+  "mlx/CMakeLists.txt"
 )
 
 # Build-rule inputs: the rule files plus carried MLX/MLX-C patch content.
@@ -168,6 +171,23 @@ extract_payload() {
   tmpdir=""
 }
 
+# Cache the built payload in the release tarball's layout.
+save_built_payload() {
+  local variant
+  local -a variants=()
+  for variant in "${target_dir}"/mlx_metal_v*; do
+    [ -d "${variant}" ] || continue
+    variants+=("$(basename "${variant}")")
+  done
+  tmp_tarball="${tarball}.tmp"
+  tar -czf "${tmp_tarball}" -C "${target_dir}" "${variants[@]}"
+  mv "${tmp_tarball}" "${tarball}"
+  tmp_tarball=""
+  echo "${local_tag}" >"${tag_file}"
+  echo "${current_pins}" >"${pins_file}"
+  echo "Cached the built payload in ${cache_dir}"
+}
+
 # Resolve the superbuild's platform-default MLX backend (metal_v3/metal_v4 on
 # arm64; empty when the platform has no MLX backend, e.g. x86_64 macOS).
 ci_mlx_backend() {
@@ -181,7 +201,7 @@ build_ci_sources() {
   cmake -S . -B "${ci_build_dir}" \
     -DOLLAMA_LLAMA_BACKENDS= \
     -DOLLAMA_PAYLOAD_INSTALL_PREFIX="$(dirname "$(dirname "${target_dir}")")"
-  cmake --build "${ci_build_dir}" --target ollama-mlx-sources --parallel
+  cmake --build "${ci_build_dir}" --target ollama-mlx-sources
 }
 
 # Rebuild only libollama_xgrammar.dylib into the extracted payload. The
@@ -196,7 +216,7 @@ build_ci_xgrammar() {
     configure_args+=("-DFETCHCONTENT_SOURCE_DIR_XGRAMMAR=${OLLAMA_XGRAMMAR_SOURCE}")
   fi
   cmake "${configure_args[@]}"
-  cmake --build "${xg_build_dir}" --target ollama_xgrammar --parallel
+  cmake --build "${xg_build_dir}" --target ollama_xgrammar
   lib="${xg_build_dir}/lib/ollama/libollama_xgrammar.dylib"
   [ -f "${lib}" ] || {
     echo "ollama_xgrammar build produced no library at ${lib}" >&2
@@ -228,7 +248,7 @@ build_ci_payload() {
   esac
   echo "Building the ${backend} payload for unit tests"
   rm -rf "${target_dir}"/mlx_metal_v*
-  cmake --build "${ci_build_dir}" --target "ollama-mlx-${backend}" --parallel
+  cmake --build "${ci_build_dir}" --target "ollama-mlx-${backend}"
   for variant in "${target_dir}"/mlx_metal_v*; do
     [ -d "${variant}" ] || continue
     for lib in libmlx.dylib libmlxc.dylib libollama_xgrammar.dylib; do
@@ -245,12 +265,15 @@ build_ci_payload() {
   echo "${current_pins}" >"${target_pins_file}"
   echo "Built MLX payload for unit tests:"
   find "${target_dir}" -maxdepth 2 -type f \( -name 'libmlx.dylib' -o -name 'libmlxc.dylib' -o -name 'libollama_xgrammar.dylib' -o -name '*.metallib' \) -print
+  save_built_payload
 }
 
 if [ "$(uname -s)" != "Darwin" ]; then
   warn "MLX Darwin payload setup is only supported on macOS"
   exit 0
 fi
+
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(sysctl -n hw.ncpu)}"
 
 current_mlx="$(read_pin MLX_VERSION)"
 current_mlxc="$(read_pin MLX_C_VERSION)"
@@ -266,7 +289,9 @@ fi
 
 mkdir -p "${cache_dir}"
 
-if [ -s "${tarball}" ] && [ -f "${tag_file}" ] && [ "$(cat "${pins_file}" 2>/dev/null || true)" = "${component_pins}" ]; then
+# Release tarballs are keyed on the MLX pins; local builds on the full fingerprint.
+cached_pins="$(cat "${pins_file}" 2>/dev/null || true)"
+if [ -s "${tarball}" ] && [ -f "${tag_file}" ] && { [ "${cached_pins}" = "${component_pins}" ] || [ "${cached_pins}" = "${current_pins}" ]; }; then
   extract_payload "$(cat "${tag_file}")"
 else
   matched_tag=""
@@ -319,7 +344,8 @@ else
   extract_payload "${matched_tag}"
 fi
 
-if tag_matches_payload "$(cat "${tag_file}")"; then
+tag="$(cat "${tag_file}")"
+if [ "${tag}" = "${local_tag}" ] || tag_matches_payload "${tag}"; then
   exit 0
 fi
 

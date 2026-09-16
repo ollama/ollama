@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -157,6 +158,22 @@ func TestCodexDesktopAccessErrorCopySignInMessage(t *testing.T) {
 	}
 	if !changed || !bytes.Equal(body, want) {
 		t.Fatalf("error = %s, want only the short sign-in message %s", body, want)
+	}
+}
+
+func TestCodexDesktopAccessErrorCopyDoesNotLogSignInSecret(t *testing.T) {
+	var logs bytes.Buffer
+	handler := newTestCodexDesktop(t, "http://localhost", "http://localhost", "unused")
+	handler.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	body := []byte(`{"error":{"message":"Sign in: https://ollama.com/connect?name=test&key=test-key","code":"authentication_error","signin_url":"https://ollama.com/connect?name=test&key=test-key"}}`)
+
+	if _, changed := handler.rewriteAccessErrorJSON(body, http.StatusUnauthorized); !changed {
+		t.Fatal("sign-in error was not rewritten")
+	}
+	for _, secret := range []string{"test-key", "https://ollama.com/connect"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Fatalf("debug log contains sign-in secret %q: %s", secret, logs.String())
+		}
 	}
 }
 
