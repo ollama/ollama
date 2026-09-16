@@ -1,94 +1,192 @@
 package model
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/quant"
 )
 
-// Import rewrites every vendor spelling to ".global_scale"; "_scale_2" is
-// ModelOpt's own name, reached when a checkpoint skips import.
-var globalScaleSuffixes = []string{".global_scale", "_scale_2"}
+// TensorQuantInfo describes per-tensor quantization metadata.
+type TensorQuantInfo struct {
+	QuantType string
+	GroupSize int
+}
 
-// These scale the activations, never the weight, but are freed alongside it.
-var activationScaleSuffixes = []string{".input_global_scale", ".input_scale"}
+func readBlobTensorQuantInfo(path string) (map[string]*TensorQuantInfo, string, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	defer f.Close()
 
-// ReadGlobalScale returns a weight's NVFP4 global scale in MLX's
-// representation, and the companion keys the caller should release. Candidate
-// keys are tried in order, so pass the resolved tensor key before any base.
-func ReadGlobalScale(tensors map[string]*mlx.Array, weightKeys ...string) (*mlx.Array, []string) {
-	var found *mlx.Array
-	var consumed []string
-	for _, key := range weightKeys {
-		if key == "" {
+	var headerSize uint64
+	if err := binary.Read(f, binary.LittleEndian, &headerSize); err != nil {
+		return nil, "", 0, err
+	}
+	if headerSize > 100*1024*1024 {
+		return nil, "", 0, fmt.Errorf("header too large: %d", headerSize)
+	}
+
+	data := make([]byte, headerSize)
+	if _, err := io.ReadFull(f, data); err != nil {
+		return nil, "", 0, err
+	}
+
+	var header map[string]json.RawMessage
+	if err := json.Unmarshal(data, &header); err != nil {
+		return nil, "", 0, err
+	}
+
+	globalQuantType, globalGroupSize := parseGlobalQuantMetadata(header)
+	globalQuantType = strings.ToUpper(globalQuantType)
+
+	// Parse full metadata for per-tensor quant info
+	var metaMap map[string]string
+	if metaRaw, ok := header["__metadata__"]; ok {
+		json.Unmarshal(metaRaw, &metaMap)
+	}
+
+	mainNames := mainTensorNames(header)
+	infos := make(map[string]*TensorQuantInfo)
+	for _, name := range mainNames {
+		if _, ok := header[name+".scale"]; !ok {
 			continue
 		}
-		for _, suffix := range globalScaleSuffixes {
-			scale, ok := tensors[key+suffix]
-			if !ok || scale == nil {
-				continue
+
+		quantType := globalQuantType
+		groupSize := globalGroupSize
+
+		// Check per-tensor metadata (e.g. from packed expert blobs with mixed precision)
+		if metaMap != nil {
+			if qt, ok := metaMap[name+".quant_type"]; ok && qt != "" {
+				quantType = strings.ToUpper(qt)
 			}
-			if found == nil {
-				found = scale
-			}
-			consumed = append(consumed, key+suffix)
-		}
-		for _, suffix := range activationScaleSuffixes {
-			if _, ok := tensors[key+suffix]; ok {
-				consumed = append(consumed, key+suffix)
+			if gs, ok := metaMap[name+".group_size"]; ok && gs != "" {
+				if v, err := strconv.Atoi(gs); err == nil {
+					groupSize = v
+				}
 			}
 		}
+
+		inferredType, inferredGroup := inferQuantTypeFromShapes(header, name, quantType)
+		if quantType == "" {
+			quantType = inferredType
+		}
+		if groupSize == 0 {
+			groupSize = inferredGroup
+		}
+		if quantType == "" {
+			continue
+		}
+		if groupSize == 0 {
+			groupSize = defaultGroupSize(quantType)
+		}
+
+		infos[name] = &TensorQuantInfo{QuantType: quantType, GroupSize: groupSize}
 	}
-	return ToMLXGlobalScale(found), consumed
+
+	return infos, globalQuantType, globalGroupSize, nil
 }
 
-// ToMLXGlobalScale converts a checkpoint multiplier into the representation
-// every global scale is held in once loaded. Shape is flattened too: a scalar
-// ships as either [] or [1], and stacking a mix of the two fails.
-func ToMLXGlobalScale(globalScale *mlx.Array) *mlx.Array {
-	if globalScale == nil {
-		return nil
+func parseGlobalQuantMetadata(header map[string]json.RawMessage) (quantType string, groupSize int) {
+	metaRaw, ok := header["__metadata__"]
+	if !ok {
+		return "", 0
 	}
-	flat := mlx.Reshape(globalScale.AsType(mlx.DTypeFloat32), int32(globalScale.Size()))
-	return mlx.MulScalar(flat, mlx.Nvfp4MaxProduct)
+
+	var meta map[string]string
+	if err := json.Unmarshal(metaRaw, &meta); err != nil {
+		return "", 0
+	}
+
+	quantType = meta["quant_type"]
+	if gs := meta["group_size"]; gs != "" {
+		groupSize, _ = strconv.Atoi(gs)
+	}
+	return quantType, groupSize
 }
 
-// PrepareGatherQMMGlobalScale broadcasts an already-converted global scale
-// into the one-entry-per-expert bank gather_qmm wants. Materialized dense: the
-// kernel indexes it by raw offset, and a broadcast view is one element of
-// storage.
-func PrepareGatherQMMGlobalScale(globalScale *mlx.Array, numExperts int) *mlx.Array {
-	if globalScale == nil {
-		return nil
+func mainTensorNames(header map[string]json.RawMessage) []string {
+	names := make([]string, 0, len(header))
+	for name := range header {
+		if name == "__metadata__" || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".bias") {
+			continue
+		}
+		names = append(names, name)
 	}
-	return mlx.Contiguous(mlx.BroadcastTo(globalScale, int32(numExperts)), false)
+	sort.Strings(names)
+	return names
 }
 
-// GatherQMMIdentityScale is the scale that leaves an expert bank unscaled,
-// for rows folded into a scaled bank without a scale of their own.
-func GatherQMMIdentityScale() *mlx.Array {
-	return mlx.FromValues([]float32{mlx.Nvfp4MaxProduct}, 1)
-}
+func inferQuantTypeFromShapes(header map[string]json.RawMessage, tensorName string, hintQuantType string) (string, int) {
+	type tensorShape struct {
+		Shape []int64 `json:"shape"`
+	}
 
-// SameGlobalScales reports whether two prepared banks hold the same scale for
-// every expert, which is what lets two projections share one fused bank.
-func SameGlobalScales(a, b *mlx.Array) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
+	mainRaw, ok := header[tensorName]
+	if !ok {
+		return "", 0
 	}
-	if a == b {
-		return true
+	scaleRaw, ok := header[tensorName+".scale"]
+	if !ok {
+		return "", 0
 	}
-	if a.Size() != b.Size() {
-		return false
+
+	var mainInfo tensorShape
+	if err := json.Unmarshal(mainRaw, &mainInfo); err != nil || len(mainInfo.Shape) == 0 {
+		return "", 0
 	}
-	mlx.Eval(a, b)
-	aValues, bValues := a.Floats(), b.Floats()
-	for i := range aValues {
-		if aValues[i] != bValues[i] {
-			return false
+
+	var scaleInfo tensorShape
+	if err := json.Unmarshal(scaleRaw, &scaleInfo); err != nil || len(scaleInfo.Shape) == 0 {
+		return "", 0
+	}
+
+	weightCols := int(mainInfo.Shape[len(mainInfo.Shape)-1])
+	scalesCols := int(scaleInfo.Shape[len(scaleInfo.Shape)-1])
+	if weightCols <= 0 || scalesCols <= 0 {
+		return "", 0
+	}
+
+	groupSize4 := weightCols * 8 / scalesCols
+	groupSize8 := weightCols * 4 / scalesCols
+
+	switch {
+	case groupSize4 == 32:
+		return "INT4", 32
+	case groupSize8 == 64:
+		return "INT8", 64
+	case groupSize4 == 64 && groupSize8 == 32:
+		h := strings.ToUpper(hintQuantType)
+		if strings.Contains(h, "8") {
+			return "INT8", 32
+		}
+		if strings.Contains(h, "4") {
+			return "INT4", 64
 		}
 	}
-	return true
+
+	if isCommonGroupSize(groupSize4) && !isCommonGroupSize(groupSize8) {
+		return "INT4", groupSize4
+	}
+	if isCommonGroupSize(groupSize8) && !isCommonGroupSize(groupSize4) {
+		return "INT8", groupSize8
+	}
+
+	return "", 0
+}
+
+func defaultGroupSize(quantType string) int {
+	groupSize, _, _ := QuantizationParams(quantType)
+	return groupSize
 }
 
 // QuantizationParams returns default groupSize, bits, and mode for a
