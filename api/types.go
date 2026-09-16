@@ -102,9 +102,9 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models. Needs to be a pointer so we can distinguish between false
-	// (request that thinking _not_ be used) and unset (use the old behavior
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// Needs to be a pointer so we can distinguish between false (request that
+	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
 
@@ -154,8 +154,7 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models.
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -1150,26 +1149,7 @@ func DefaultOptions() Options {
 }
 
 // ThinkValue represents a boolean or model-defined thinking level.
-type ThinkValue struct {
-	// Value can be a bool or string
-	Value interface{}
-}
-
-// IsValid checks the transport type. The model resolves supported effort names.
-func (t *ThinkValue) IsValid() bool {
-	if t == nil || t.Value == nil {
-		return true // nil is valid (means not set)
-	}
-
-	switch t.Value.(type) {
-	case bool:
-		return true
-	case string:
-		return true
-	default:
-		return false
-	}
-}
+type ThinkValue = model.ThinkValue
 
 // ValidateLegacyThinking checks named levels for models without thinking metadata.
 // Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
@@ -1183,83 +1163,6 @@ func ValidateLegacyThinking(think *ThinkValue) error {
 	default:
 		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
-}
-
-// IsBool returns true if the value is a boolean
-func (t *ThinkValue) IsBool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(bool)
-	return ok
-}
-
-// IsString returns true if the value is a string
-func (t *ThinkValue) IsString() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(string)
-	return ok
-}
-
-// Bool returns the value as a bool (true if enabled in any way)
-func (t *ThinkValue) Bool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-
-	switch v := t.Value.(type) {
-	case bool:
-		return v
-	case string:
-		// Named levels request thinking; the renderer resolves the actual level.
-		return true
-	default:
-		return false
-	}
-}
-
-// String returns the value as a string
-func (t *ThinkValue) String() string {
-	if t == nil || t.Value == nil {
-		return ""
-	}
-
-	switch v := t.Value.(type) {
-	case string:
-		return v
-	case bool:
-		if v {
-			return "medium" // Default level when just true
-		}
-		return ""
-	default:
-		return ""
-	}
-}
-
-// UnmarshalJSON implements json.Unmarshaler
-func (t *ThinkValue) UnmarshalJSON(data []byte) error {
-	var value any
-	if err := json.Unmarshal(data, &value); err != nil {
-		return err
-	}
-	switch value.(type) {
-	case nil, bool, string:
-		t.Value = value
-		return nil
-	default:
-		return fmt.Errorf("think must be a boolean or string")
-	}
-}
-
-// MarshalJSON implements json.Marshaler
-func (t *ThinkValue) MarshalJSON() ([]byte, error) {
-	if t == nil || t.Value == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(t.Value)
 }
 
 type Duration struct {

@@ -31,11 +31,65 @@ func TestThinkingDescriptor(t *testing.T) {
 				t.Fatalf("Valid() = %v, want %v", got, tt.valid)
 			}
 			if tt.valid {
+				encoded, err := json.Marshal(*thinking)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(encoded) != tt.json {
+					t.Fatalf("JSON = %s, want %s", encoded, tt.json)
+				}
 				clone := thinking.Clone()
 				clone.Values[0] = "changed"
 				if thinking.Values[0] == "changed" {
 					t.Fatal("clone shares values")
 				}
+			}
+		})
+	}
+}
+
+func TestThinkValueJSON(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value *ThinkValue
+		want  string
+	}{
+		{"false", &ThinkValue{Value: false}, `false`},
+		{"true", &ThinkValue{Value: true}, `true`},
+		{"level", &ThinkValue{Value: "xhigh"}, `"xhigh"`},
+		{"unset", &ThinkValue{}, `null`},
+		{"nil pointer", (*ThinkValue)(nil), `null`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := json.Marshal(tt.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("JSON = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestThinkValueAccessors(t *testing.T) {
+	for _, tt := range []struct {
+		name                        string
+		value                       *ThinkValue
+		valid, isBool, isString, on bool
+		level                       string
+	}{
+		{"nil", nil, true, false, false, false, ""},
+		{"unset", &ThinkValue{}, true, false, false, false, ""},
+		{"off", &ThinkValue{Value: false}, true, true, false, false, ""},
+		{"on", &ThinkValue{Value: true}, true, true, false, true, "medium"},
+		{"named", &ThinkValue{Value: "xhigh"}, true, false, true, true, "xhigh"},
+		{"empty name", &ThinkValue{Value: ""}, true, false, true, true, ""},
+		{"integer", &ThinkValue{Value: 75}, false, false, false, false, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.value.IsValid() != tt.valid || tt.value.IsBool() != tt.isBool || tt.value.IsString() != tt.isString || tt.value.Bool() != tt.on || tt.value.String() != tt.level {
+				t.Fatalf("unexpected accessors for %#v", tt.value)
 			}
 		})
 	}
