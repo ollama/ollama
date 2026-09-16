@@ -49,8 +49,6 @@ jobs:
             'LLAMA_CPP_VERSION' \
             'MLX_VERSION' \
             'MLX_C_VERSION' \
-            'llama/llama.cpp/**/*' \
-            'ml/backend/ggml/ggml/**/*' \
             'x/imagegen/mlx/**' \
             'x/imagegen/mlx/**/*' \
             'x/mlxrunner/xgrammar/native/**' \
