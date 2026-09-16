@@ -12,23 +12,22 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 func init() {
-	base.RegisterDraft("DFlashDraftModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+	model.RegisterDraft("DFlashDraftModel", func(root *model.Root, target model.Model) (model.DraftModel, error) {
 		return newModel(root, target, false)
 	})
-	base.RegisterDraft("DFlashLagunaForCausalLM", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+	model.RegisterDraft("DFlashLagunaForCausalLM", func(root *model.Root, target model.Model) (model.DraftModel, error) {
 		return newModel(root, target, true)
 	})
-	base.RegisterDraft("MuseGlimmerAssistantModel", func(root *model.Root, target base.Model) (base.DraftModel, error) {
+	model.RegisterDraft("MuseGlimmerAssistantModel", func(root *model.Root, target model.Model) (model.DraftModel, error) {
 		return newModel(root, target, false)
 	})
 }
 
-var _ base.BlockDraft = (*Model)(nil)
+var _ model.BlockDraft = (*Model)(nil)
 
 type Config struct {
 	HiddenSize        int32
@@ -59,9 +58,9 @@ type Config struct {
 	Causal *bool
 }
 
-// draftTarget is what dflash requires of its target beyond base.Model.
+// draftTarget is what dflash requires of its target beyond model.Model.
 type draftTarget interface {
-	base.Model
+	model.Model
 
 	// TokenEmbeddings is the raw table lookup; the draft has no table of
 	// its own.
@@ -232,7 +231,7 @@ func parseConfig(data []byte) (*Config, error) {
 	return cfg, nil
 }
 
-func newModel(root *model.Root, targetModel base.Model, ctxLayerNorm bool) (base.DraftModel, error) {
+func newModel(root *model.Root, targetModel model.Model, ctxLayerNorm bool) (model.DraftModel, error) {
 	if root == nil || root.Draft == nil {
 		return nil, fmt.Errorf("draft metadata missing")
 	}

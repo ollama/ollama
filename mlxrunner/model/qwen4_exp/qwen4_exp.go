@@ -8,21 +8,20 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/model/qwen3_5"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("Qwen4ExpForConditionalGeneration", NewModel)
+	model.Register("Qwen4ExpForConditionalGeneration", NewModel)
 }
 
 var (
-	_ base.Model      = (*Model)(nil)
-	_ base.SelfDraft  = (*Model)(nil)
-	_ base.DraftModel = (*mtpDraft)(nil)
-	_ base.MediaModel = (*Model)(nil)
+	_ model.Model      = (*Model)(nil)
+	_ model.SelfDraft  = (*Model)(nil)
+	_ model.DraftModel = (*mtpDraft)(nil)
+	_ model.MediaModel = (*Model)(nil)
 )
 
 // Model carries the validated architecture and tokenizer.
@@ -44,7 +43,7 @@ type Model struct {
 }
 
 // NewModel validates the publisher config before constructing runtime state.
-func NewModel(root *model.Root) (base.Model, error) {
+func NewModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -175,14 +174,14 @@ func (m *Model) Unembed(hidden *mlx.Array) *mlx.Array {
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return m.tok }
 
-func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
+func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
 	if m.Vision == nil {
 		return nil, fmt.Errorf("this model does not support media input")
 	}
 	return m.Vision.PrepareMedia(segments)
 }
 
-func (m *Model) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	return m.Vision.EncodeMedia(item, data)
 }
 
@@ -193,7 +192,7 @@ func (m *Model) MaxContextLength() int {
 // mtpDraft views the checkpoint's inline predictor through DraftModel.
 type mtpDraft Model
 
-func (m *Model) SelfDraft() base.DraftModel {
+func (m *Model) SelfDraft() model.DraftModel {
 	if m.MTP == nil {
 		return nil
 	}

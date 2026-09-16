@@ -1,4 +1,4 @@
-package base
+package model
 
 import (
 	"encoding/json"
@@ -9,7 +9,6 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
@@ -71,13 +70,13 @@ type SelfDraft interface {
 
 var (
 	mu            sync.Mutex
-	registry      = make(map[string]func(root *model.Root) (Model, error))
-	draftRegistry = make(map[string]func(root *model.Root, target Model) (DraftModel, error))
+	registry      = make(map[string]func(root *Root) (Model, error))
+	draftRegistry = make(map[string]func(root *Root, target Model) (DraftModel, error))
 )
 
 // Register registers a model constructor by architecture name.
 // Called from init() in model packages. Panics on duplicate registration.
-func Register(arch string, fn func(root *model.Root) (Model, error)) {
+func Register(arch string, fn func(root *Root) (Model, error)) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -88,7 +87,7 @@ func Register(arch string, fn func(root *model.Root) (Model, error)) {
 }
 
 // RegisterDraft registers a draft model constructor by architecture name.
-func RegisterDraft(arch string, fn func(root *model.Root, target Model) (DraftModel, error)) {
+func RegisterDraft(arch string, fn func(root *Root, target Model) (DraftModel, error)) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -117,7 +116,7 @@ func SupportsDraftArchitecture(arch string) bool {
 // New reads config.json from the manifest, detects the architecture, looks up
 // the registered constructor, and calls it to create the model (with config
 // parsed and struct created, but weights not yet loaded).
-func New(root *model.Root) (Model, error) {
+func New(root *Root) (Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config.json: %w", err)
@@ -149,7 +148,7 @@ func New(root *model.Root) (Model, error) {
 }
 
 // NewDraft constructs the draft model described by the manifest config, if any.
-func NewDraft(root *model.Root, target Model) (DraftModel, error) {
+func NewDraft(root *Root, target Model) (DraftModel, error) {
 	if root == nil || root.Draft == nil {
 		return nil, nil
 	}

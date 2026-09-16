@@ -9,7 +9,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func TestVisionAdapterWeightsAreCollectable(t *testing.T) {
@@ -85,7 +85,7 @@ func TestMRopePositionRule(t *testing.T) {
 		},
 	}
 
-	prepared, err := m.PrepareMedia([]base.Segment{{Tokens: []int32{1, 2, 3}}})
+	prepared, err := m.PrepareMedia([]model.Segment{{Tokens: []int32{1, 2, 3}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestMRopePositionRule(t *testing.T) {
 	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 64, 64))); err != nil {
 		t.Fatal(err)
 	}
-	prepared, err = m.PrepareMedia([]base.Segment{
+	prepared, err = m.PrepareMedia([]model.Segment{
 		{Tokens: []int32{1, 2, 3}},
 		{Kind: "image", Data: buf.Bytes()},
 	})

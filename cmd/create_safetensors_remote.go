@@ -1,4 +1,4 @@
-package client
+package cmd
 
 import (
 	"context"
@@ -26,10 +26,10 @@ import (
 // Six attempts produce at most 31 seconds of exponential backoff per blob.
 const maxUploadRetries = 6
 
-// CreateModelRemote uploads raw safetensors source files and asks the server to
+// createModelRemote uploads raw safetensors source files and asks the server to
 // run the create import pipeline. The server performs planning, transforms,
 // and MLX quantization against its own hardware.
-func CreateModelRemote(ctx context.Context, client *api.Client, opts CreateOptions, p *progress.Progress) error {
+func createModelRemote(ctx context.Context, client *api.Client, opts createOptions, p *progress.Progress) error {
 	if opts.Force {
 		return errors.New("--force is only supported for local MLX safetensors imports")
 	}
@@ -262,7 +262,7 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func newRemoteCreateRequest(opts CreateOptions, files []remoteSourceFile) *api.CreateRequest {
+func newRemoteCreateRequest(opts createOptions, files []remoteSourceFile) *api.CreateRequest {
 	req := &api.CreateRequest{
 		Model:         opts.ModelName,
 		Files:         make(map[string]string),

@@ -1,4 +1,4 @@
-package base
+package model
 
 import (
 	// Every model's PrepareMedia decodes through image.Decode; the decoder

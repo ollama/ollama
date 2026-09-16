@@ -1,11 +1,8 @@
-// Package client provides local and server-backed model creation for
-// safetensors-based models.
-package client
+package cmd
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -22,10 +19,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-var errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
-
-// ModelfileConfig holds configuration extracted from a Modelfile.
-type ModelfileConfig struct {
+// modelfileConfig holds configuration extracted from a Modelfile.
+type modelfileConfig struct {
 	Template   string
 	System     string
 	Licenses   []string
@@ -49,11 +44,11 @@ var ignoredModelfileParameters = []string{
 	"mirostat_eta",
 }
 
-// ConfigFromModelfile extracts the model directory and create-specific
+// configFromModelfile extracts the model directory and create-specific
 // Modelfile configuration from a parsed Modelfile.
-func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig, error) {
+func configFromModelfile(modelfile *parser.Modelfile) (string, *modelfileConfig, error) {
 	var modelDir string
-	mfConfig := &ModelfileConfig{}
+	mfConfig := &modelfileConfig{}
 
 	for _, cmd := range modelfile.Commands {
 		switch cmd.Name {
@@ -118,20 +113,20 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 	return modelDir, mfConfig, nil
 }
 
-// CreateOptions holds all options for model creation.
-type CreateOptions struct {
+// createOptions holds all options for model creation.
+type createOptions struct {
 	ModelName     string
 	ModelDir      string
 	Quantize      string           // "int4", "int8", "nvfp4", "mxfp4", or "mxfp8" for quantization
 	DraftQuantize string           // optional quantization level for draft model tensors
 	Force         bool             // create even when MLX validation fails
-	Modelfile     *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
+	Modelfile     *modelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
-// CreateModel imports a model from a local directory.
+// createModel imports a model from a local directory.
 // This creates blobs and manifest directly on disk, bypassing the HTTP API.
 // Automatically detects safetensors source imports and existing safetensors base models.
-func CreateModel(ctx context.Context, opts CreateOptions, p *progress.Progress) error {
+func createModel(ctx context.Context, opts createOptions, p *progress.Progress) error {
 	// Detect model type
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
@@ -236,7 +231,7 @@ func CreateModel(ctx context.Context, opts CreateOptions, p *progress.Progress) 
 	return nil
 }
 
-func validateSafetensorsQuantization(opts CreateOptions) error {
+func validateSafetensorsQuantization(opts createOptions) error {
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
 	if opts.DraftQuantize != "" && !hasDraft {
 		return fmt.Errorf("--draft-quantize requires a DRAFT model")
@@ -250,7 +245,7 @@ func validateSafetensorsQuantization(opts CreateOptions) error {
 	return nil
 }
 
-func createModelFromBaseWithDraft(ctx context.Context, opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
+func createModelFromBaseWithDraft(ctx context.Context, opts createOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -344,7 +339,7 @@ func readConfigV2(m *manifest.Manifest) (*model.ConfigV2, error) {
 	return &cfg, nil
 }
 
-func validateDistinctSafetensorsSources(modelDir string, modelfile *ModelfileConfig) error {
+func validateDistinctSafetensorsSources(modelDir string, modelfile *modelfileConfig) error {
 	if modelfile == nil || modelfile.Draft == "" {
 		return nil
 	}
@@ -364,7 +359,7 @@ func validateDistinctSafetensorsSources(modelDir string, modelfile *ModelfileCon
 }
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
-func newManifestWriter(opts CreateOptions) create.ManifestWriter {
+func newManifestWriter(opts createOptions) create.ManifestWriter {
 	var template, system, draftDir string
 	var license any
 	var parameters map[string]any

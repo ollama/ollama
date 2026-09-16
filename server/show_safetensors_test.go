@@ -1160,11 +1160,11 @@ func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
-	got, err := GetSafetensorsDtype(name)
+	got, err := getSafetensorsDtype(name)
 	if err != nil {
-		t.Fatalf("GetSafetensorsDtype() error = %v", err)
+		t.Fatalf("getSafetensorsDtype() error = %v", err)
 	}
 	if got != "nvfp4" {
-		t.Fatalf("GetSafetensorsDtype() = %q, want nvfp4", got)
+		t.Fatalf("getSafetensorsDtype() = %q, want nvfp4", got)
 	}
 }

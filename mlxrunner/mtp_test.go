@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
@@ -84,7 +84,7 @@ func (m *fakeMTPModel) LoadWeights(map[string]*mlx.Array) error {
 	return nil
 }
 
-var _ base.Model = (*fakeMTPModel)(nil)
+var _ model.Model = (*fakeMTPModel)(nil)
 
 // fakeMTPDraft is a cacheless draft that extends b.InputIDs through predict;
 // a map (not a step counter) keeps drafting consistent regardless of batching.
@@ -117,7 +117,7 @@ func (d *fakeMTPDraft) Forward(b *batch.Batch, _, _ []cache.Cache) (hidden, auxH
 // Unembed is the identity: the fake's hidden already is its one-hot logits.
 func (d *fakeMTPDraft) Unembed(x *mlx.Array) *mlx.Array { return x }
 
-var _ base.DraftModel = (*fakeMTPDraft)(nil)
+var _ model.DraftModel = (*fakeMTPDraft)(nil)
 
 // fakeKVDraft is a draft head that declares a KV cache: it writes its
 // input ids there on every Draft call (advancing the
@@ -181,7 +181,7 @@ func (d *fakeKVDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hid
 // Unembed is the identity: the fake's hidden already is its one-hot logits.
 func (d *fakeKVDraft) Unembed(x *mlx.Array) *mlx.Array { return x }
 
-var _ base.DraftModel = (*fakeKVDraft)(nil)
+var _ model.DraftModel = (*fakeKVDraft)(nil)
 
 type fatalTester interface {
 	Helper()

@@ -1,4 +1,4 @@
-package client
+package cmd
 
 import (
 	"context"
@@ -122,11 +122,11 @@ func TestPrepareRemoteSourceFilesCanceled(t *testing.T) {
 }
 
 func TestNewRemoteCreateRequest(t *testing.T) {
-	req := newRemoteCreateRequest(CreateOptions{
+	req := newRemoteCreateRequest(createOptions{
 		ModelName:     "example",
 		Quantize:      "nvfp4",
 		DraftQuantize: "mxfp8",
-		Modelfile: &ModelfileConfig{
+		Modelfile: &modelfileConfig{
 			Template:   "{{ .Prompt }}",
 			System:     "system",
 			Licenses:   []string{"MIT", "Apache-2.0"},
@@ -170,9 +170,9 @@ func TestNewRemoteCreateRequest(t *testing.T) {
 }
 
 func TestCreateModelRemoteRejectsForceBeforeReadingSource(t *testing.T) {
-	err := CreateModelRemote(t.Context(), nil, CreateOptions{Force: true, ModelDir: "missing"}, nil)
+	err := createModelRemote(t.Context(), nil, createOptions{Force: true, ModelDir: "missing"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "only supported for local") {
-		t.Fatalf("CreateModelRemote() error = %v, want local-only force error", err)
+		t.Fatalf("createModelRemote() error = %v, want local-only force error", err)
 	}
 }
 

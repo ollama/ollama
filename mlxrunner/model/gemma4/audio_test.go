@@ -7,7 +7,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func newAudioTestModel() *Model {
@@ -28,7 +28,7 @@ func newAudioTestModel() *Model {
 func TestPrepareAudioMedia(t *testing.T) {
 	m := newAudioTestModel()
 
-	prepared, err := m.PrepareMedia([]base.Segment{
+	prepared, err := m.PrepareMedia([]model.Segment{
 		{Tokens: []int32{2, 5}},
 		{Kind: "audio", Data: wavPCM16(16000)},
 		{Tokens: []int32{7}},
@@ -70,7 +70,7 @@ func TestPrepareAudioMediaChunks(t *testing.T) {
 
 	// 61 s: three chunks of at most 30 s, one soft-token run each, back to
 	// back inside one boa/eoa pair.
-	prepared, err := m.PrepareMedia([]base.Segment{{Kind: "audio", Data: wavPCM16(976000)}})
+	prepared, err := m.PrepareMedia([]model.Segment{{Kind: "audio", Data: wavPCM16(976000)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,18 +99,18 @@ func TestPrepareAudioMediaChunks(t *testing.T) {
 func TestPrepareAudioMediaRejections(t *testing.T) {
 	m := newAudioTestModel()
 
-	_, err := m.PrepareMedia([]base.Segment{{Kind: "audio", Data: []byte("ID3\x04\x00junk")}})
+	_, err := m.PrepareMedia([]model.Segment{{Kind: "audio", Data: []byte("ID3\x04\x00junk")}})
 	if err == nil || !strings.Contains(err.Error(), "unrecognized audio format") {
 		t.Fatalf("mp3 error = %v", err)
 	}
 
-	_, err = m.PrepareMedia([]base.Segment{{Kind: "video", Data: []byte{1}}})
+	_, err = m.PrepareMedia([]model.Segment{{Kind: "video", Data: []byte{1}}})
 	if err == nil || !strings.Contains(err.Error(), "does not support video input") {
 		t.Fatalf("video error = %v", err)
 	}
 
 	noAudio := &Model{MM: multimodalConfig{ImageTokenID: 258880}}
-	_, err = noAudio.PrepareMedia([]base.Segment{{Kind: "audio", Data: wavPCM16(16000)}})
+	_, err = noAudio.PrepareMedia([]model.Segment{{Kind: "audio", Data: wavPCM16(16000)}})
 	if err == nil || !strings.Contains(err.Error(), "does not support audio input") {
 		t.Fatalf("no-audio error = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestPrepareUnifiedAudioMedia(t *testing.T) {
 
 	// 31 s stays one item on the unified path: no chunking, one token per
 	// 640-sample frame, the final partial frame zero-padded.
-	prepared, err := m.PrepareMedia([]base.Segment{{Kind: "audio", Data: wavPCM16(496001)}})
+	prepared, err := m.PrepareMedia([]model.Segment{{Kind: "audio", Data: wavPCM16(496001)}})
 	if err != nil {
 		t.Fatal(err)
 	}

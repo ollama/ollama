@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 )
 
@@ -45,7 +45,7 @@ type draftSession interface {
 // decodes plainly.
 type speculation struct {
 	r     *Runner
-	draft base.DraftModel
+	draft model.DraftModel
 
 	// targets are the model's cache slots, which speculation snapshots and
 	// rolls back; draftKV are the drafter's. Both are built at load and
@@ -75,12 +75,12 @@ type drafter interface {
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
 // or nil when the checkpoint ships no draft head.
-func newSpeculation(r *Runner, draft base.DraftModel, targets, draftKV []cache.Cache) *speculation {
+func newSpeculation(r *Runner, draft model.DraftModel, targets, draftKV []cache.Cache) *speculation {
 	if draft == nil {
 		return nil
 	}
 	s := &speculation{r: r, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
-	if bd, ok := draft.(base.BlockDraft); ok {
+	if bd, ok := draft.(model.BlockDraft); ok {
 		s.drafter = newDFlashDrafter(s, bd)
 	} else {
 		s.drafter = newMTPDrafter(s)

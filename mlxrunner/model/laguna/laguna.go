@@ -12,16 +12,15 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("LagunaForCausalLM", NewModel)
+	model.Register("LagunaForCausalLM", NewModel)
 }
 
-var _ base.Model = (*Model)(nil)
+var _ model.Model = (*Model)(nil)
 
 type gatingMode string
 
@@ -473,7 +472,7 @@ func clampRopeDim(v, maxDim int) int {
 	return v
 }
 
-func NewModel(root *model.Root) (base.Model, error) {
+func NewModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

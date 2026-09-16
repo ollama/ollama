@@ -19,7 +19,6 @@ import (
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 	_ "github.com/ollama/ollama/mlxrunner/model/architectures"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
@@ -42,7 +41,7 @@ type Request struct {
 }
 
 type Runner struct {
-	Model         base.Model
+	Model         model.Model
 	weights       *mlx.Scope
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
@@ -80,7 +79,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 		defer root.Close()
 
-		m, e := base.New(root)
+		m, e := model.New(root)
 		if e != nil {
 			err = e
 			return nil
@@ -107,8 +106,8 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 			return nil
 		}
 
-		var draftModel base.DraftModel
-		draft, e := base.NewDraft(root, m)
+		var draftModel model.DraftModel
+		draft, e := model.NewDraft(root, m)
 		if e != nil {
 			err = e
 			return nil
@@ -118,7 +117,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 				return nil
 			}
 			draftModel = draft
-		} else if sd, ok := m.(base.SelfDraft); ok {
+		} else if sd, ok := m.(model.SelfDraft); ok {
 			// Inline draft head: already loaded with the target; nil if none shipped.
 			draftModel = sd.SelfDraft()
 		}
@@ -161,7 +160,7 @@ func (r *Runner) Close() {
 }
 
 // newDraftCaches returns nil when the model ships no draft.
-func newDraftCaches(draft base.DraftModel) []cache.Cache {
+func newDraftCaches(draft model.DraftModel) []cache.Cache {
 	if draft == nil {
 		return nil
 	}
@@ -171,7 +170,7 @@ func newDraftCaches(draft base.DraftModel) []cache.Cache {
 // logitsWidth reads a model's logits width off a one-token forward's static
 // shape — the same Forward and Unembed path decode logits take. Nothing is
 // evaluated.
-func logitsWidth(m base.Model) (width int) {
+func logitsWidth(m model.Model) (width int) {
 	mlx.Scoped(func() {
 		caches := m.NewCaches()
 		hidden, _ := m.Forward(&batch.Batch{

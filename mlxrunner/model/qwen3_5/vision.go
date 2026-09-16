@@ -8,7 +8,6 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -140,11 +139,11 @@ func NewVisionAdapter(configData []byte, tensors map[string]*mlx.Array, cfg Visi
 	return &VisionAdapter{Model: m}, nil
 }
 
-func (a *VisionAdapter) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
+func (a *VisionAdapter) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
 	return a.Model.PrepareMedia(segments)
 }
 
-func (a *VisionAdapter) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (a *VisionAdapter) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	return a.Model.EncodeMedia(item, data)
 }
 
@@ -265,11 +264,11 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 
 func (m *Model) visionLoaded() bool { return m.VisionTower != nil }
 
-// PrepareMedia implements base.MediaModel: preprocess each image segment,
+// PrepareMedia implements model.MediaModel: preprocess each image segment,
 // splice its vision_start + pads + vision_end expansion, and precompute the
 // request's 3-channel rope positions.
-func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
-	prepared := &base.PreparedRequest{}
+func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+	prepared := &model.PreparedRequest{}
 
 	// pos walks the reference's multimodal position rule: text advances one
 	// per token on all channels; an image spans a merged grid anchored at
@@ -320,7 +319,7 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 		text(1)
 
 		n := int(prep.numPatches())
-		prepared.Items = append(prepared.Items, base.PreparedItem{
+		prepared.Items = append(prepared.Items, model.PreparedItem{
 			Range:     [2]int{start, len(prepared.Tokens)},
 			Source:    s,
 			MediaData: pixels,
@@ -345,9 +344,9 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 	return prepared, nil
 }
 
-// EncodeMedia implements base.MediaModel: run the tower over one whole
+// EncodeMedia implements model.MediaModel: run the tower over one whole
 // image, returning the lazy [numTokens, hidden] features.
-func (m *Model) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	prep := item.Opaque.(preparedImage)
 	v := m.Vision
 	t := m.VisionTower

@@ -10,7 +10,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 )
 
@@ -88,7 +88,7 @@ func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (
 // Unembed is the identity: the fake's hidden already is its one-hot logits.
 func (d *fakeBlockDraft) Unembed(x *mlx.Array) *mlx.Array { return x }
 
-var _ base.BlockDraft = (*fakeBlockDraft)(nil)
+var _ model.BlockDraft = (*fakeBlockDraft)(nil)
 
 // newBlockTestSession wires a runner around a fakeBlockDraft and opens one
 // request's drafting session, returning the concrete session for

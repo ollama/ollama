@@ -8,11 +8,10 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
-var _ base.DraftModel = (*AssistantModel)(nil)
+var _ model.DraftModel = (*AssistantModel)(nil)
 
 type AssistantConfig struct {
 	TextConfig               TextConfig `json:"text_config"`
@@ -108,7 +107,7 @@ func parseAssistantConfig(configData []byte) (AssistantConfig, error) {
 	}, nil
 }
 
-func newAssistantModel(root *model.Root, target base.Model) (base.DraftModel, error) {
+func newAssistantModel(root *model.Root, target model.Model) (model.DraftModel, error) {
 	if root == nil || root.Draft == nil {
 		return nil, fmt.Errorf("draft metadata missing")
 	}

@@ -41,9 +41,9 @@ type modelConfig struct {
 	} `json:"text_config"`
 }
 
-// GetSafetensorsLLMInfo extracts model information from safetensors LLM models.
+// getSafetensorsLLMInfo extracts model information from safetensors LLM models.
 // It reads the config.json layer and returns a map compatible with GGML's KV format.
-func GetSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
+func getSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
@@ -210,9 +210,9 @@ func getParameterCountFromManifest(mf *manifest.Manifest) (int64, error) {
 	return total, nil
 }
 
-// GetSafetensorsTensorInfo extracts tensor information from safetensors model layers.
+// getSafetensorsTensorInfo extracts tensor information from safetensors model layers.
 // Each tensor is stored as a minimal safetensors file with an 88-byte header containing metadata.
-func GetSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
+func getSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
@@ -303,10 +303,10 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 	return tensors, nil
 }
 
-// GetSafetensorsDtype returns the quantization type for a safetensors model.
+// getSafetensorsDtype returns the quantization type for a safetensors model.
 // Reads tensor headers and reports the lowest-precision quantized weight type.
 // Falls back to torch_dtype from config.json if no quant metadata exists.
-func GetSafetensorsDtype(name model.Name) (string, error) {
+func getSafetensorsDtype(name model.Name) (string, error) {
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)

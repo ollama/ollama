@@ -5,7 +5,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 // dflashPendingFlushTokens bounds the held feature rows between flushes.
@@ -20,7 +20,7 @@ type dflashDrafter struct {
 	maskToken int32
 }
 
-func newDFlashDrafter(s *speculation, draft base.BlockDraft) *dflashDrafter {
+func newDFlashDrafter(s *speculation, draft model.BlockDraft) *dflashDrafter {
 	blockSize, maskToken := draft.BlockParams()
 	return &dflashDrafter{spec: s, blockSize: blockSize, maskToken: maskToken}
 }

@@ -12,23 +12,22 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("Qwen3_5ForCausalLM", NewModel)
-	base.Register("Qwen3_5ForConditionalGeneration", NewModel)
-	base.Register("Qwen3NextForCausalLM", NewModel)
-	base.Register("Qwen3NextForConditionalGeneration", NewModel)
+	model.Register("Qwen3_5ForCausalLM", NewModel)
+	model.Register("Qwen3_5ForConditionalGeneration", NewModel)
+	model.Register("Qwen3NextForCausalLM", NewModel)
+	model.Register("Qwen3NextForConditionalGeneration", NewModel)
 }
 
 var (
-	_ base.Model      = (*Model)(nil)
-	_ base.SelfDraft  = (*Model)(nil)
-	_ base.DraftModel = (*mtpDraft)(nil)
-	_ base.MediaModel = (*Model)(nil)
+	_ model.Model      = (*Model)(nil)
+	_ model.SelfDraft  = (*Model)(nil)
+	_ model.DraftModel = (*mtpDraft)(nil)
+	_ model.MediaModel = (*Model)(nil)
 )
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
@@ -391,7 +390,7 @@ func layerUsesMoE(cfg *Config, layer int32) bool {
 }
 
 // NewModel creates a Qwen 3.5 model from a manifest root.
-func NewModel(root *model.Root) (base.Model, error) {
+func NewModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -1359,7 +1358,7 @@ func (m *mtpDraft) Unembed(x *mlx.Array) *mlx.Array { return (*Model)(m).Unembed
 
 // SelfDraft returns the model's drafting view, or nil when no MTP head was
 // loaded. The methods exist either way, so this is what decides availability.
-func (m *Model) SelfDraft() base.DraftModel {
+func (m *Model) SelfDraft() model.DraftModel {
 	if m.MTP == nil {
 		return nil
 	}

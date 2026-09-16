@@ -11,14 +11,13 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("Glm4MoeLiteForCausalLM", newModel)
-	base.Register("GLM4MoeLite", newModel)
+	model.Register("Glm4MoeLiteForCausalLM", newModel)
+	model.Register("GLM4MoeLite", newModel)
 }
 
 // RopeScaling holds RoPE scaling configuration
@@ -622,8 +621,8 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 }
 
 // newModel creates a new GLM4-MoE-Lite model from a Root (config + tokenizer,
-// no weights loaded yet). Called by the registry via base.New().
-func newModel(root *model.Root) (base.Model, error) {
+// no weights loaded yet). Called by the registry via model.New().
+func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

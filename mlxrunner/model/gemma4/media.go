@@ -8,7 +8,6 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -143,13 +142,13 @@ func makeClippableLinear(linears model.LinearFactory, tensors map[string]*mlx.Ar
 	return c, nil
 }
 
-// PrepareMedia implements base.MediaModel: splice each media segment's
+// PrepareMedia implements model.MediaModel: splice each media segment's
 // placeholder expansion — the begin token, the soft-token run(s), the end
 // token — into the stream, with all preprocessing on the CPU. An audio
 // segment yields one item per chunk, all inside one boa/eoa pair; the runs
 // attend causally, so chunked prefill may split them.
-func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
-	prepared := &base.PreparedRequest{}
+func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+	prepared := &model.PreparedRequest{}
 	for s, seg := range segments {
 		switch seg.Kind {
 		case "":
@@ -172,7 +171,7 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 			prepared.Tokens = append(prepared.Tokens, m.MM.EOITokenID)
 
 			n := int(geom.PatchesH * geom.PatchesW)
-			prepared.Items = append(prepared.Items, base.PreparedItem{
+			prepared.Items = append(prepared.Items, model.PreparedItem{
 				Range:     [2]int{start, len(prepared.Tokens)},
 				Source:    s,
 				MediaData: pixels,
@@ -207,7 +206,7 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 				for range chunk.numTokens {
 					prepared.Tokens = append(prepared.Tokens, m.MM.AudioTokenID)
 				}
-				prepared.Items = append(prepared.Items, base.PreparedItem{
+				prepared.Items = append(prepared.Items, model.PreparedItem{
 					Range:     [2]int{start, len(prepared.Tokens)},
 					Source:    s,
 					MediaData: chunk.data,
@@ -224,9 +223,9 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 	return prepared, nil
 }
 
-// EncodeMedia implements base.MediaModel: run the matching encoder over one
+// EncodeMedia implements model.MediaModel: run the matching encoder over one
 // whole item, returning the lazy [soft tokens, hidden] features.
-func (m *Model) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	switch p := item.Opaque.(type) {
 	case preparedAudio:
 		if m.AudioTower != nil {
