@@ -10,7 +10,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func TestParseMultimodalConfig(t *testing.T) {
@@ -216,7 +216,7 @@ func TestPrepareMediaExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prepared, err := m.PrepareMedia([]base.Segment{
+	prepared, err := m.PrepareMedia([]model.Segment{
 		{Tokens: []int32{9}},
 		{Kind: "image", Data: buf.Bytes()},
 	})
@@ -257,14 +257,14 @@ func TestPrepareMediaExpansion(t *testing.T) {
 		t.Fatalf("geometry = %+v, positions = %d", p.geom, len(p.positions))
 	}
 
-	if _, err := m.PrepareMedia([]base.Segment{{Kind: "audio", Data: []byte{1}}}); err == nil {
+	if _, err := m.PrepareMedia([]model.Segment{{Kind: "audio", Data: []byte{1}}}); err == nil {
 		t.Fatal("audio accepted")
 	}
-	if _, err := m.PrepareMedia([]base.Segment{{Kind: "image"}}); err == nil {
+	if _, err := m.PrepareMedia([]model.Segment{{Kind: "image"}}); err == nil {
 		t.Fatal("image with no data accepted")
 	}
 	m.VisionTower = nil
-	if _, err := m.PrepareMedia([]base.Segment{{Kind: "image", Data: buf.Bytes()}}); err == nil {
+	if _, err := m.PrepareMedia([]model.Segment{{Kind: "image", Data: buf.Bytes()}}); err == nil {
 		t.Fatal("towerless model accepted an image")
 	}
 }

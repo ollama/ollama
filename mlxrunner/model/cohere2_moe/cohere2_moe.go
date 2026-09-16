@@ -23,13 +23,12 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("Cohere2MoeForCausalLM", NewModel)
+	model.Register("Cohere2MoeForCausalLM", NewModel)
 }
 
 // Config holds the Cohere2 MoE configuration (HuggingFace config.json).
@@ -329,7 +328,7 @@ func (cfg *Config) tieEmbeddings() bool {
 }
 
 // NewModel creates a Cohere2 MoE model from a manifest root.
-func NewModel(root *model.Root) (base.Model, error) {
+func NewModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

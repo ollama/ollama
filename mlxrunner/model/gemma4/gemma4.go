@@ -11,25 +11,24 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("Gemma4ForCausalLM", newModel)
-	base.Register("Gemma4ForConditionalGeneration", newModel)
-	base.Register("Gemma4UnifiedForCausalLM", newModel)
-	base.Register("Gemma4UnifiedForConditionalGeneration", newModel)
-	base.Register("gemma4_unified", newModel)
-	base.RegisterDraft("Gemma4AssistantForCausalLM", newAssistantModel)
-	base.RegisterDraft("Gemma4UnifiedAssistantForCausalLM", newAssistantModel)
-	base.RegisterDraft("gemma4_assistant", newAssistantModel)
-	base.RegisterDraft("gemma4_unified_assistant", newAssistantModel)
+	model.Register("Gemma4ForCausalLM", newModel)
+	model.Register("Gemma4ForConditionalGeneration", newModel)
+	model.Register("Gemma4UnifiedForCausalLM", newModel)
+	model.Register("Gemma4UnifiedForConditionalGeneration", newModel)
+	model.Register("gemma4_unified", newModel)
+	model.RegisterDraft("Gemma4AssistantForCausalLM", newAssistantModel)
+	model.RegisterDraft("Gemma4UnifiedAssistantForCausalLM", newAssistantModel)
+	model.RegisterDraft("gemma4_assistant", newAssistantModel)
+	model.RegisterDraft("gemma4_unified_assistant", newAssistantModel)
 }
 
 // Compile-time interface checks.
-var _ base.Model = (*Model)(nil)
+var _ model.Model = (*Model)(nil)
 
 // RopeParams holds per-layer-type RoPE settings.
 type RopeParams struct {
@@ -702,7 +701,7 @@ func precomputeGemmaScaledWeights(m *Model) {
 	}
 }
 
-func newModel(root *model.Root) (base.Model, error) {
+func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

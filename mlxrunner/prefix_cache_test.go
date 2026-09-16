@@ -7,7 +7,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 // snapshotTracker records every fakeSnapshot created and every Close() call
@@ -1038,7 +1038,7 @@ func TestAtomicMediaBoundaries(t *testing.T) {
 		pc := env.pc
 		inputs := []int32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
 		const itemPos, itemLen = 3, 6
-		items := []mediaItem{{pos: itemPos, length: itemLen, fold: 1 << 31, item: &base.PreparedItem{}}}
+		items := []mediaItem{{pos: itemPos, length: itemLen, fold: 1 << 31, item: &model.PreparedItem{}}}
 
 		session := pc.begin(inputs, items)
 		session.schedulePrefillSnapshots([]int{itemPos + itemLen/2})
@@ -1059,7 +1059,7 @@ func TestAtomicMediaBoundaries(t *testing.T) {
 		// A prompt ending inside the item matches the stored path through its
 		// last token, which would put the resume point inside the item.
 		short := inputs[:itemPos+itemLen-2]
-		shortItems := []mediaItem{{pos: itemPos, length: len(short) - itemPos, fold: 1 << 31, item: &base.PreparedItem{}}}
+		shortItems := []mediaItem{{pos: itemPos, length: len(short) - itemPos, fold: 1 << 31, item: &model.PreparedItem{}}}
 		session = pc.begin(short, shortItems)
 		if resumed := len(short) - len(session.remaining); resumed > itemPos {
 			t.Errorf("resumed at %d, inside the item's tokens starting at %d", resumed, itemPos)

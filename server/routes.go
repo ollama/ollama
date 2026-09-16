@@ -51,7 +51,6 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	xserver "github.com/ollama/ollama/x/server"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -1430,7 +1429,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models, populate details from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+		if info, err := getSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
 			}
@@ -1440,7 +1439,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		}
 		// Older manifests may not have file_type populated for safetensors models.
 		if modelDetails.QuantizationLevel == "" {
-			if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+			if dtype, err := getSafetensorsDtype(name); err == nil && dtype != "" {
 				modelDetails.QuantizationLevel = dtype
 			}
 		}
@@ -1541,12 +1540,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models, populate ModelInfo from config.json.
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+		if info, err := getSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
 		}
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
+			if tensors, err := getSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}
@@ -1559,7 +1558,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
+			if tensors, err := getSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}

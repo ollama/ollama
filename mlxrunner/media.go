@@ -12,7 +12,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 var imgTagPattern = regexp.MustCompile(`\[img-(\d+)\]`)
@@ -24,7 +24,7 @@ type mediaItem struct {
 	pos    int
 	length int
 	fold   uint32
-	item   *base.PreparedItem
+	item   *model.PreparedItem
 }
 
 // foldValue derives the trie-key substitute for a media item: a hash of the
@@ -46,7 +46,7 @@ func foldValue(data []byte, dims []int) uint32 {
 // use, released when the expansion is fully evaluated. A nil
 // *requestMedia is a text-only request; every method is nil-safe.
 type requestMedia struct {
-	model    base.MediaModel
+	model    model.MediaModel
 	items    []mediaItem
 	inputLen int
 
@@ -66,7 +66,7 @@ func (r *Runner) openMedia(request Request) *requestMedia {
 		return nil
 	}
 	m := &requestMedia{
-		model:    r.Model.(base.MediaModel),
+		model:    r.Model.(model.MediaModel),
 		items:    request.MediaItems,
 		inputLen: len(request.Tokens),
 		manifest: make([]batch.MediaItem, len(request.MediaItems)),
@@ -174,14 +174,14 @@ func (m *requestMedia) close() {
 // expandMedia tokenizes the [img-N]-tagged prompt into segments, expands
 // them in a single PrepareMedia call, and validates the authored items
 // before keying cache identity on them.
-func (r *Runner) expandMedia(mm base.MediaModel, prompt string, media []llm.MediaData) (*base.PreparedRequest, []mediaItem, error) {
+func (r *Runner) expandMedia(mm model.MediaModel, prompt string, media []llm.MediaData) (*model.PreparedRequest, []mediaItem, error) {
 	matches := imgTagPattern.FindAllStringSubmatch(prompt, -1)
 	parts := imgTagPattern.Split(prompt, -1)
 
 	referenced := make([]bool, len(media))
-	var segments []base.Segment
+	var segments []model.Segment
 	for i, part := range parts {
-		segments = append(segments, base.Segment{Tokens: r.Tokenizer.Encode(part, i == 0 && r.Tokenizer.AddBOS())})
+		segments = append(segments, model.Segment{Tokens: r.Tokenizer.Encode(part, i == 0 && r.Tokenizer.AddBOS())})
 		if i >= len(matches) {
 			continue
 		}
@@ -198,7 +198,7 @@ func (r *Runner) expandMedia(mm base.MediaModel, prompt string, media []llm.Medi
 			return nil, nil, fmt.Errorf("invalid image index: %d", id)
 		}
 		referenced[idx] = true
-		segments = append(segments, base.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
+		segments = append(segments, model.Segment{Kind: string(media[idx].Kind), Data: media[idx].Data})
 	}
 
 	for j := range media {
@@ -220,7 +220,7 @@ func (r *Runner) expandMedia(mm base.MediaModel, prompt string, media []llm.Medi
 
 // bindItems validates the authored ranges before cache identity is keyed
 // on them and binds each item to its source segment's bytes.
-func bindItems(prepared *base.PreparedRequest, segments []base.Segment) ([]mediaItem, error) {
+func bindItems(prepared *model.PreparedRequest, segments []model.Segment) ([]mediaItem, error) {
 	covered := make([]bool, len(segments))
 	items := make([]mediaItem, 0, len(prepared.Items))
 	end := 0

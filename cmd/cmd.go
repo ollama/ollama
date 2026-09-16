@@ -43,7 +43,6 @@ import (
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/create"
-	createclient "github.com/ollama/ollama/create/client"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -241,28 +240,28 @@ func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) 
 	return modelfile, filename, nil
 }
 
-func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName string) (createclient.CreateOptions, bool, error) {
-	modelDir, mfConfig, err := createclient.ConfigFromModelfile(modelfile)
+func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName string) (createOptions, bool, error) {
+	modelDir, mfConfig, err := configFromModelfile(modelfile)
 	if err != nil {
-		return createclient.CreateOptions{}, false, err
+		return createOptions{}, false, err
 	}
 
 	modelDir = resolveCreateLocalModelDir(modelDir, filename)
 	isSafetensors := create.IsSafetensorsModelDir(modelDir)
 	isBaseModelWithDraft := mfConfig.Draft != "" && !isSafetensors && create.IsSafetensorsLLMModel(modelDir)
 	if !isSafetensors && !isBaseModelWithDraft {
-		return createclient.CreateOptions{}, false, nil
+		return createOptions{}, false, nil
 	}
 
 	if mfConfig.Draft != "" {
 		draftDir, err := resolveCreateDraftDir(mfConfig.Draft, filename)
 		if err != nil {
 			if isSafetensors {
-				return createclient.CreateOptions{}, false, err
+				return createOptions{}, false, err
 			}
 			// Existing safetensors models may still use a GGUF DRAFT layer;
 			// leave that combination on the standard create path.
-			return createclient.CreateOptions{}, false, nil
+			return createOptions{}, false, nil
 		}
 		mfConfig.Draft = draftDir
 	}
@@ -277,13 +276,13 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 		}
 	}
 	if modelCount != 1 {
-		return createclient.CreateOptions{}, false, errors.New("safetensors imports require exactly one FROM source")
+		return createOptions{}, false, errors.New("safetensors imports require exactly one FROM source")
 	}
 	if draftCount > 1 {
-		return createclient.CreateOptions{}, false, errors.New("safetensors imports support at most one DRAFT source")
+		return createOptions{}, false, errors.New("safetensors imports support at most one DRAFT source")
 	}
 
-	return createclient.CreateOptions{
+	return createOptions{
 		ModelName: modelName,
 		ModelDir:  modelDir,
 		Modelfile: mfConfig,
@@ -298,9 +297,9 @@ var (
 
 // createSafetensorsModel imports in-process when the server is local and
 // otherwise uploads the source files for the server to import.
-func createSafetensorsModel(cmd *cobra.Command, args []string, opts createclient.CreateOptions, p *progress.Progress) error {
+func createSafetensorsModel(cmd *cobra.Command, args []string, opts createOptions, p *progress.Progress) error {
 	if !envconfig.CreateRemote() && isLocalhost() {
-		return createclient.CreateModel(cmd.Context(), opts, p)
+		return createModel(cmd.Context(), opts, p)
 	}
 	if opts.Force {
 		return errForceLocalOnly
@@ -312,7 +311,7 @@ func createSafetensorsModel(cmd *cobra.Command, args []string, opts createclient
 	if err != nil {
 		return err
 	}
-	return createclient.CreateModelRemote(cmd.Context(), client, opts, p)
+	return createModelRemote(cmd.Context(), client, opts, p)
 }
 
 func CreateHandler(cmd *cobra.Command, args []string) error {

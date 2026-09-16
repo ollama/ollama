@@ -6,7 +6,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func TestEffectiveKeyTokens(t *testing.T) {
@@ -30,9 +30,9 @@ func TestEffectiveKeyTokens(t *testing.T) {
 func TestExtendChunk(t *testing.T) {
 	m := &requestMedia{
 		items: []mediaItem{
-			{pos: 10, length: 4, item: &base.PreparedItem{}},
-			{pos: 40, length: 8, item: &base.PreparedItem{Causal: true}},
-			{pos: 96, length: 4, item: &base.PreparedItem{}},
+			{pos: 10, length: 4, item: &model.PreparedItem{}},
+			{pos: 40, length: 8, item: &model.PreparedItem{Causal: true}},
+			{pos: 96, length: 4, item: &model.PreparedItem{}},
 		},
 		inputLen: 100,
 	}
@@ -67,7 +67,7 @@ type encodeCountingModel struct {
 	calls *int
 }
 
-func (m encodeCountingModel) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (m encodeCountingModel) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	*m.calls++
 	return mlx.Zeros(mlx.DTypeFloat32, item.Range[1]-item.Range[0], 4)
 }
@@ -75,7 +75,7 @@ func (m encodeCountingModel) EncodeMedia(item *base.PreparedItem, data *mlx.Arra
 func TestBatchMediaLifecycle(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		calls := 0
-		prepared := &base.PreparedItem{
+		prepared := &model.PreparedItem{
 			Range:     [2]int{2, 6},
 			MediaData: []float32{1, 2},
 			Dims:      []int{2},

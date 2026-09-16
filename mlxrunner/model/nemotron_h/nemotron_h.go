@@ -13,21 +13,20 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("NemotronH_Nano_VL_V2", newModel)
-	base.Register("NemotronH_Nano_Omni_Reasoning_V3", newModel)
-	base.Register("NemotronHForCausalLM", newModel)
+	model.Register("NemotronH_Nano_VL_V2", newModel)
+	model.Register("NemotronH_Nano_Omni_Reasoning_V3", newModel)
+	model.Register("NemotronHForCausalLM", newModel)
 }
 
 var (
-	_ base.Model      = (*Model)(nil)
-	_ base.SelfDraft  = (*Model)(nil)
-	_ base.DraftModel = (*mtpDraft)(nil)
+	_ model.Model      = (*Model)(nil)
+	_ model.SelfDraft  = (*Model)(nil)
+	_ model.DraftModel = (*mtpDraft)(nil)
 )
 
 type Config struct {
@@ -285,7 +284,7 @@ func parseConfig(data []byte) (Config, error) {
 	return cfg, nil
 }
 
-func newModel(root *model.Root) (base.Model, error) {
+func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
@@ -1475,7 +1474,7 @@ type mtpDraft Model
 
 // SelfDraft returns the model's drafting view, or nil when no MTP head was
 // loaded. The methods exist either way, so this is what decides availability.
-func (m *Model) SelfDraft() base.DraftModel {
+func (m *Model) SelfDraft() model.DraftModel {
 	if m.MTP == nil {
 		return nil
 	}

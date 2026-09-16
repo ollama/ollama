@@ -11,16 +11,15 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("MuseGlimmerForConditionalGeneration", newModel)
+	model.Register("MuseGlimmerForConditionalGeneration", newModel)
 }
 
-var _ base.Model = (*Model)(nil)
+var _ model.Model = (*Model)(nil)
 
 // Config holds the decoder and vision fields from an Glimmer configuration.
 type Config struct {
@@ -364,7 +363,7 @@ func parseConfig(data []byte) (Config, error) {
 	return cfg, nil
 }
 
-func newModel(root *model.Root) (base.Model, error) {
+func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

@@ -10,13 +10,12 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
-	"github.com/ollama/ollama/mlxrunner/model/base"
 	"github.com/ollama/ollama/mlxrunner/nn"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
 func init() {
-	base.Register("LlamaForCausalLM", newModel)
+	model.Register("LlamaForCausalLM", newModel)
 }
 
 // Config holds Llama model configuration.
@@ -85,7 +84,7 @@ func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
 	return ""
 }
 
-func newModel(root *model.Root) (base.Model, error) {
+func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)

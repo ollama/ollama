@@ -13,14 +13,14 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 // The reference processor uses the full 4096-token budget for still images.
 // Reducing it here discards source detail and disproportionately hurts OCR.
 const maxImageTokens = 4096
 
-var _ base.MediaModel = (*Model)(nil)
+var _ model.MediaModel = (*Model)(nil)
 
 // preparedImage is glimmer's model-private media state: the patch grid the
 // encoder consumes and the soft-token count of its pixel-shuffled output.
@@ -30,11 +30,11 @@ type preparedImage struct {
 	outputTokens int
 }
 
-// PrepareMedia implements base.MediaModel: splice each image segment's
+// PrepareMedia implements model.MediaModel: splice each image segment's
 // placeholder expansion — image_start, the patch-token run, image_end — into
 // the stream, decoding, resizing, and patchifying the image on the CPU.
-func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
-	prepared := &base.PreparedRequest{}
+func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+	prepared := &model.PreparedRequest{}
 	for s, seg := range segments {
 		if seg.Data == nil {
 			prepared.Tokens = append(prepared.Tokens, seg.Tokens...)
@@ -60,7 +60,7 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 		prepared.Tokens = append(prepared.Tokens, m.ImageEndTokenID)
 
 		n := geom.gridH * geom.gridW
-		prepared.Items = append(prepared.Items, base.PreparedItem{
+		prepared.Items = append(prepared.Items, model.PreparedItem{
 			Range:     [2]int{start, len(prepared.Tokens)},
 			Source:    s,
 			MediaData: patches,
@@ -74,9 +74,9 @@ func (m *Model) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, er
 	return prepared, nil
 }
 
-// EncodeMedia implements base.MediaModel: run the vision tower over one
+// EncodeMedia implements model.MediaModel: run the vision tower over one
 // prepared image, returning the lazy [outputTokens, hidden] features.
-func (m *Model) EncodeMedia(item *base.PreparedItem, data *mlx.Array) *mlx.Array {
+func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	geom := item.Opaque.(preparedImage)
 	return m.encodeVision(data, geom.gridH, geom.gridW)
 }

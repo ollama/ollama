@@ -10,11 +10,11 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-// textOnlyModel satisfies base.Model but not base.MediaModel.
+// textOnlyModel satisfies model.Model but not model.MediaModel.
 type textOnlyModel struct{}
 
 func (textOnlyModel) LoadWeights(map[string]*mlx.Array) error { return nil }
@@ -53,8 +53,8 @@ type stubMediaModel struct {
 	layout    any
 }
 
-func (m stubMediaModel) PrepareMedia(segments []base.Segment) (*base.PreparedRequest, error) {
-	prepared := &base.PreparedRequest{Layout: m.layout}
+func (m stubMediaModel) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+	prepared := &model.PreparedRequest{Layout: m.layout}
 	for s, seg := range segments {
 		if seg.Data == nil {
 			prepared.Tokens = append(prepared.Tokens, seg.Tokens...)
@@ -68,7 +68,7 @@ func (m stubMediaModel) PrepareMedia(segments []base.Segment) (*base.PreparedReq
 		}
 		start := len(prepared.Tokens)
 		prepared.Tokens = append(prepared.Tokens, m.expansion...)
-		prepared.Items = append(prepared.Items, base.PreparedItem{
+		prepared.Items = append(prepared.Items, model.PreparedItem{
 			Range:     [2]int{start, len(prepared.Tokens)},
 			Source:    s,
 			MediaData: []float32{float32(len(seg.Data))},
@@ -79,7 +79,7 @@ func (m stubMediaModel) PrepareMedia(segments []base.Segment) (*base.PreparedReq
 	return prepared, nil
 }
 
-func (stubMediaModel) EncodeMedia(*base.PreparedItem, *mlx.Array) *mlx.Array { return nil }
+func (stubMediaModel) EncodeMedia(*model.PreparedItem, *mlx.Array) *mlx.Array { return nil }
 
 func mediaTestRunner(t *testing.T) *Runner {
 	t.Helper()
@@ -128,35 +128,35 @@ func TestPrepareExpandsMediaTags(t *testing.T) {
 // runner's validation of model-authored items.
 type rawMediaModel struct {
 	textOnlyModel
-	prepared base.PreparedRequest
+	prepared model.PreparedRequest
 }
 
-func (m rawMediaModel) PrepareMedia([]base.Segment) (*base.PreparedRequest, error) {
+func (m rawMediaModel) PrepareMedia([]model.Segment) (*model.PreparedRequest, error) {
 	p := m.prepared
 	return &p, nil
 }
-func (rawMediaModel) EncodeMedia(*base.PreparedItem, *mlx.Array) *mlx.Array { return nil }
+func (rawMediaModel) EncodeMedia(*model.PreparedItem, *mlx.Array) *mlx.Array { return nil }
 
 func TestPrepareValidatesAuthoredItems(t *testing.T) {
 	media := []llm.MediaData{{ID: 0, Kind: llm.MediaKindImage, Data: []byte("img")}}
-	item := func(lo, hi, src int) base.PreparedItem {
-		return base.PreparedItem{Range: [2]int{lo, hi}, Source: src, Dims: []int{1}}
+	item := func(lo, hi, src int) model.PreparedItem {
+		return model.PreparedItem{Range: [2]int{lo, hi}, Source: src, Dims: []int{1}}
 	}
 	// Prompt "0[img-0]1" produces segments 0=text, 1=media, 2=text.
 	cases := []struct {
 		name  string
-		items []base.PreparedItem
+		items []model.PreparedItem
 		want  string // "" means the items must be accepted
 	}{
-		{"per-tile items", []base.PreparedItem{item(1, 3, 1), item(3, 4, 1)}, ""},
-		{"overlap", []base.PreparedItem{item(1, 3, 1), item(2, 4, 1)}, "invalid range"},
-		{"out of bounds", []base.PreparedItem{item(2, 9, 1)}, "invalid range"},
-		{"empty range", []base.PreparedItem{item(2, 2, 1)}, "invalid range"},
-		{"text source", []base.PreparedItem{item(1, 3, 0)}, "non-media segment"},
+		{"per-tile items", []model.PreparedItem{item(1, 3, 1), item(3, 4, 1)}, ""},
+		{"overlap", []model.PreparedItem{item(1, 3, 1), item(2, 4, 1)}, "invalid range"},
+		{"out of bounds", []model.PreparedItem{item(2, 9, 1)}, "invalid range"},
+		{"empty range", []model.PreparedItem{item(2, 2, 1)}, "invalid range"},
+		{"text source", []model.PreparedItem{item(1, 3, 0)}, "non-media segment"},
 	}
 	for _, c := range cases {
 		r := mediaTestRunner(t)
-		r.Model = rawMediaModel{prepared: base.PreparedRequest{Tokens: []int32{0, 5, 5, 5, 1}, Items: c.items}}
+		r.Model = rawMediaModel{prepared: model.PreparedRequest{Tokens: []int32{0, 5, 5, 5, 1}, Items: c.items}}
 		err := r.Prepare(&Request{CompletionRequest: CompletionRequest{Prompt: "0[img-0]1", Media: media}})
 		if c.want == "" {
 			if err != nil {

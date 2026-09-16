@@ -6,7 +6,7 @@ import (
 	"image/png"
 	"testing"
 
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func testVisionModel() *Model {
@@ -35,7 +35,7 @@ func testPNG(t *testing.T, w, h int) []byte {
 
 func TestPrepareMediaSplicesExpansion(t *testing.T) {
 	m := testVisionModel()
-	prepared, err := m.PrepareMedia([]base.Segment{
+	prepared, err := m.PrepareMedia([]model.Segment{
 		{Tokens: []int32{1, 2}},
 		{Kind: "image", Data: testPNG(t, 56, 56)},
 		{Tokens: []int32{3}},
@@ -85,13 +85,13 @@ func TestPrepareMediaSplicesExpansion(t *testing.T) {
 
 func TestPrepareMediaRejectsUnsupportedKind(t *testing.T) {
 	m := testVisionModel()
-	_, err := m.PrepareMedia([]base.Segment{{Kind: "audio", Data: []byte{1}}})
+	_, err := m.PrepareMedia([]model.Segment{{Kind: "audio", Data: []byte{1}}})
 	if err == nil {
 		t.Fatal("expected error for audio input")
 	}
 
 	text := &Model{Config: &Config{}}
-	_, err = text.PrepareMedia([]base.Segment{{Kind: "image", Data: []byte{1}}})
+	_, err = text.PrepareMedia([]model.Segment{{Kind: "image", Data: []byte{1}}})
 	if err == nil {
 		t.Fatal("expected error for text-only model")
 	}

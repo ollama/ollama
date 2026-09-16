@@ -14,7 +14,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/mlxrunner/model/base"
+	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
@@ -50,7 +50,7 @@ func (r *Runner) Prepare(request *Request) (err error) {
 	if len(request.Media) == 0 {
 		tokens = r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	} else {
-		mm, ok := r.Model.(base.MediaModel)
+		mm, ok := r.Model.(model.MediaModel)
 		if !ok {
 			kind := string(request.Media[0].Kind)
 			if kind == "" {

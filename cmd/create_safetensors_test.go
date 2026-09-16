@@ -1,4 +1,4 @@
-package client
+package cmd
 
 import (
 	"context"
@@ -20,8 +20,8 @@ import (
 )
 
 func TestModelfileConfig(t *testing.T) {
-	// Test that ModelfileConfig struct works as expected
-	config := &ModelfileConfig{
+	// Test that modelfileConfig struct works as expected
+	config := &modelfileConfig{
 		Template: "{{ .Prompt }}",
 		System:   "You are a helpful assistant.",
 		Licenses: []string{"MIT"},
@@ -63,7 +63,7 @@ PARAMETER stop ASSISTANT:
 		t.Fatal(err)
 	}
 
-	modelDir, mfConfig, err := ConfigFromModelfile(modelfile)
+	modelDir, mfConfig, err := configFromModelfile(modelfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ PARAMETER stop ASSISTANT:
 		t.Fatal(err)
 	}
 
-	modelDir, got, err := ConfigFromModelfile(modelfile)
+	modelDir, got, err := configFromModelfile(modelfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ PARAMETER stop ASSISTANT:
 	if !ok {
 		t.Fatalf("CreateRequest license = %#v, want []string", req.License)
 	}
-	want := &ModelfileConfig{
+	want := &modelfileConfig{
 		Template:   req.Template,
 		System:     req.System,
 		Licenses:   licenses,
@@ -157,7 +157,7 @@ REQUIRES 0.14.0
 		t.Fatal(err)
 	}
 
-	_, config, err := ConfigFromModelfile(modelfile)
+	_, config, err := configFromModelfile(modelfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ REQUIRES not-a-version
 		t.Fatal(err)
 	}
 
-	_, _, err = ConfigFromModelfile(modelfile)
+	_, _, err = configFromModelfile(modelfile)
 	if err == nil {
 		t.Fatal("expected error for invalid semver, got nil")
 	}
@@ -185,7 +185,7 @@ REQUIRES not-a-version
 }
 
 func TestModelfileConfig_Empty(t *testing.T) {
-	config := &ModelfileConfig{}
+	config := &modelfileConfig{}
 
 	if config.Template != "" {
 		t.Errorf("Template should be empty, got %q", config.Template)
@@ -206,7 +206,7 @@ func TestModelfileConfig_Empty(t *testing.T) {
 
 func TestModelfileConfig_PartialFields(t *testing.T) {
 	// Test config with only some fields set
-	config := &ModelfileConfig{
+	config := &modelfileConfig{
 		Template: "{{ .Prompt }}",
 		// System and License intentionally empty
 	}
@@ -239,8 +239,8 @@ func TestMinOllamaVersion(t *testing.T) {
 }
 
 func TestCreateModel_InvalidDir(t *testing.T) {
-	// Test that CreateModel returns error for invalid directory
-	err := CreateModel(context.Background(), CreateOptions{
+	// Test that createModel returns error for invalid directory
+	err := createModel(context.Background(), createOptions{
 		ModelName: "test-model",
 		ModelDir:  "/nonexistent/path",
 	}, nil)
@@ -250,10 +250,10 @@ func TestCreateModel_InvalidDir(t *testing.T) {
 }
 
 func TestCreateModel_NotSafetensorsDir(t *testing.T) {
-	// Test that CreateModel returns error for directory without safetensors
+	// Test that createModel returns error for directory without safetensors
 	dir := t.TempDir()
 
-	err := CreateModel(context.Background(), CreateOptions{
+	err := createModel(context.Background(), createOptions{
 		ModelName: "test-model",
 		ModelDir:  dir,
 	}, nil)
@@ -267,8 +267,8 @@ func TestConfigFromModelfileRejectsAdapters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ConfigFromModelfile(modelfile); !errors.Is(err, errAdaptersUnsupported) {
-		t.Fatalf("ConfigFromModelfile() error = %v, want %v", err, errAdaptersUnsupported)
+	if _, _, err := configFromModelfile(modelfile); !errors.Is(err, errAdaptersUnsupported) {
+		t.Fatalf("configFromModelfile() error = %v, want %v", err, errAdaptersUnsupported)
 	}
 }
 
@@ -293,9 +293,9 @@ func TestCreateRejectsSameSafetensorsModelAndDraftSource(t *testing.T) {
 	}
 	for _, source := range draftSources {
 		t.Run(source.name, func(t *testing.T) {
-			opts := CreateOptions{
+			opts := createOptions{
 				ModelDir: dir,
-				Modelfile: &ModelfileConfig{
+				Modelfile: &modelfileConfig{
 					Draft: source.path,
 				},
 			}
@@ -303,8 +303,8 @@ func TestCreateRejectsSameSafetensorsModelAndDraftSource(t *testing.T) {
 				name   string
 				create func() error
 			}{
-				{name: "local", create: func() error { return CreateModel(t.Context(), opts, nil) }},
-				{name: "remote", create: func() error { return CreateModelRemote(t.Context(), nil, opts, nil) }},
+				{name: "local", create: func() error { return createModel(t.Context(), opts, nil) }},
+				{name: "remote", create: func() error { return createModelRemote(t.Context(), nil, opts, nil) }},
 			} {
 				t.Run(tt.name, func(t *testing.T) {
 					err := tt.create()
@@ -318,7 +318,7 @@ func TestCreateRejectsSameSafetensorsModelAndDraftSource(t *testing.T) {
 }
 
 func TestCreateModel_DraftQuantizeRequiresDraft(t *testing.T) {
-	err := CreateModel(context.Background(), CreateOptions{
+	err := createModel(context.Background(), createOptions{
 		ModelName:     "test-model",
 		ModelDir:      t.TempDir(),
 		DraftQuantize: "mxfp8",
@@ -339,22 +339,22 @@ func TestCreateModelCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := CreateModel(ctx, CreateOptions{
+	err := createModel(ctx, createOptions{
 		ModelName: "test-model",
 		ModelDir:  dir,
 	}, nil)
 	if err != context.Canceled {
-		t.Fatalf("CreateModel() error = %v, want context.Canceled", err)
+		t.Fatalf("createModel() error = %v, want context.Canceled", err)
 	}
 }
 
 func TestCreateOptions(t *testing.T) {
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName:     "my-model",
 		ModelDir:      "/path/to/model",
 		Quantize:      "fp8",
 		DraftQuantize: "mxfp8",
-		Modelfile: &ModelfileConfig{
+		Modelfile: &modelfileConfig{
 			Template: "test",
 			System:   "system",
 			Licenses: []string{"MIT"},
@@ -396,7 +396,7 @@ func TestCreateOptions(t *testing.T) {
 }
 
 func TestCreateOptions_Defaults(t *testing.T) {
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName: "test",
 		ModelDir:  "/tmp",
 	}
@@ -418,7 +418,7 @@ func TestCreateOptions_Defaults(t *testing.T) {
 func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName: "test-quantized",
 		ModelDir:  t.TempDir(),
 	}
@@ -460,10 +460,10 @@ func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) 
 
 func TestNewManifestWriterPreservesMultipleLicenses(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName: "test-licenses",
 		ModelDir:  t.TempDir(),
-		Modelfile: &ModelfileConfig{
+		Modelfile: &modelfileConfig{
 			Licenses: []string{"MIT", "Apache-2.0"},
 		},
 	}
@@ -508,10 +508,10 @@ func TestNewManifestWriter_PopulatesDraftMetadata(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName: "test-draft",
 		ModelDir:  t.TempDir(),
-		Modelfile: &ModelfileConfig{Draft: draftDir},
+		Modelfile: &modelfileConfig{Draft: draftDir},
 	}
 
 	writer := newManifestWriter(opts)
@@ -588,10 +588,10 @@ func TestCreateModelFromBaseReplacesDraftLayers(t *testing.T) {
 	draftLayers := []create.LayerInfo{{
 		Digest: newDraft.Digest, Size: newDraft.Size, MediaType: newDraft.MediaType, Name: newDraft.Name,
 	}}
-	opts := CreateOptions{
+	opts := createOptions{
 		ModelName: "base-with-replaced-draft:latest",
 		ModelDir:  baseName.String(),
-		Modelfile: &ModelfileConfig{Draft: draftDir},
+		Modelfile: &modelfileConfig{Draft: draftDir},
 	}
 	if err := createModelFromBaseWithDraft(t.Context(), opts, draftLayers, func(string) {}); err != nil {
 		t.Fatal(err)
