@@ -175,8 +175,8 @@ if(OLLAMA_MLX_BACKENDS)
     find_package(Git REQUIRED)
     set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
         ${CMAKE_COMMAND}
-            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat
-            -DPATCH_LABEL=mlx/compat
+            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx-c
+            -DPATCH_LABEL=mlx/compat/mlx-c
             -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
         CACHE INTERNAL "MLX-C carry patch")
 
@@ -236,7 +236,7 @@ if(OLLAMA_MLX_BACKENDS)
     add_custom_target(ollama-mlx-vendor-headers
         COMMAND ${CMAKE_COMMAND}
             -DMLX_C_HEADERS_DIR=${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c
-            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c
+            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/mlx/include/mlx/c
             -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
         DEPENDS ${_mlx_source_targets}
         COMMENT "Vendoring MLX-C headers"
@@ -623,7 +623,7 @@ if(OLLAMA_MLX_BACKENDS)
         add_custom_target(ollama-mlx-generate-wrappers
             COMMAND ${CMAKE_COMMAND} -E env
                 CC= CGO_CFLAGS= CGO_CXXFLAGS=
-                ${GO_EXECUTABLE} generate ./x/...
+                ${GO_EXECUTABLE} generate ./mlx/...
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             DEPENDS ollama-mlx-sources
             COMMENT "Regenerating MLX Go wrappers"

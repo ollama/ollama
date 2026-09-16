@@ -49,10 +49,11 @@ jobs:
             'LLAMA_CPP_VERSION' \
             'MLX_VERSION' \
             'MLX_C_VERSION' \
-            'x/imagegen/mlx/**' \
-            'x/imagegen/mlx/**/*' \
-            'x/mlxrunner/xgrammar/native/**' \
-            'x/mlxrunner/xgrammar/native/**/*' \
+            'mlx/CMakeLists.txt' \
+            'mlx/compat/**' \
+            'mlx/compat/**/*' \
+            'mlxrunner/xgrammar/native/**' \
+            'mlxrunner/xgrammar/native/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo go_mod_changed=$(changed 'go.mod') | tee -a $GITHUB_OUTPUT
@@ -417,7 +418,7 @@ jobs:
         with:
           path: .cache/mlx-darwin-release
           # Key on every payload input so a source-built payload survives pushes.
-          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'x/mlxrunner/mlx/CMakeLists.txt', 'mlx/compat/**', 'x/mlxrunner/xgrammar/native/**') }}
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'mlx/CMakeLists.txt', 'mlx/compat/**', 'mlxrunner/xgrammar/native/**') }}
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
@@ -437,11 +438,9 @@ jobs:
           cmake -S . -B build/mlx-generate -DOLLAMA_MLX_BACKENDS=cuda_v13
           cmake --build build/mlx-generate --target ollama-mlx-generate-wrappers
           git diff --exit-code -- \
-            x/imagegen/mlx/mlx.h \
-            x/imagegen/mlx/mlx.c \
-            x/mlxrunner/mlx/generated.h \
-            x/mlxrunner/mlx/generated.c \
-            x/mlxrunner/mlx/include/mlx/c
+            mlx/generated.h \
+            mlx/generated.c \
+            mlx/include/mlx/c
       - name: Run go generate
         run: go generate ./...
 
@@ -484,7 +483,7 @@ jobs:
         with:
           path: .cache/mlx-darwin-release
           # Key on every payload input so a source-built payload survives pushes.
-          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'x/mlxrunner/mlx/CMakeLists.txt', 'mlx/compat/**', 'x/mlxrunner/xgrammar/native/**') }}
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'mlx/CMakeLists.txt', 'mlx/compat/**', 'mlxrunner/xgrammar/native/**') }}
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
