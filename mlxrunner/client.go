@@ -25,9 +25,10 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/x/imagegen/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -62,11 +63,15 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 		client:            http.DefaultClient,
 	}
 
-	modelManifest, err := manifest.LoadManifest(modelName)
+	modelManifest, err := manifest.ParseNamedManifest(model.ParseName(modelName))
 	if err != nil {
 		return nil, err
 	}
-	c.memory.Store(uint64(modelManifest.TotalTensorSize()))
+	var tensorBytes int64
+	for _, layer := range modelManifest.TensorLayers() {
+		tensorBytes += layer.Size
+	}
+	c.memory.Store(uint64(tensorBytes))
 
 	return c, nil
 }

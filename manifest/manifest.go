@@ -40,22 +40,47 @@ func (m *Manifest) FileInfo() os.FileInfo {
 	return m.fi
 }
 
-// ReadConfigJSON reads and unmarshals a config layer as JSON.
-func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
+// ConfigLayer returns the JSON layer stored under configPath.
+func (m *Manifest) ConfigLayer(configPath string) (Layer, bool) {
 	for _, layer := range m.Layers {
 		if layer.MediaType == "application/vnd.ollama.image.json" && layer.Name == configPath {
-			blobPath, err := BlobsPath(layer.Digest)
-			if err != nil {
-				return err
-			}
-			data, err := os.ReadFile(blobPath)
-			if err != nil {
-				return err
-			}
-			return json.Unmarshal(data, v)
+			return layer, true
 		}
 	}
-	return fmt.Errorf("config %q not found in manifest", configPath)
+	return Layer{}, false
+}
+
+// ReadConfig returns the contents of the JSON layer stored under configPath.
+func (m *Manifest) ReadConfig(configPath string) ([]byte, error) {
+	layer, ok := m.ConfigLayer(configPath)
+	if !ok {
+		return nil, fmt.Errorf("config %q not found in manifest", configPath)
+	}
+	blobPath, err := BlobsPath(layer.Digest)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(blobPath)
+}
+
+// ReadConfigJSON reads and unmarshals a config layer as JSON.
+func (m *Manifest) ReadConfigJSON(configPath string, v any) error {
+	data, err := m.ReadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+// TensorLayers returns the layers holding tensor data.
+func (m *Manifest) TensorLayers() []Layer {
+	var layers []Layer
+	for _, layer := range m.Layers {
+		if layer.MediaType == MediaTypeImageTensor {
+			layers = append(layers, layer)
+		}
+	}
+	return layers
 }
 
 func (m *Manifest) Remove() error {
