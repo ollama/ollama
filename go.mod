@@ -21,7 +21,6 @@ require (
 	github.com/agnivade/levenshtein v1.1.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/dlclark/regexp2 v1.11.5
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/klauspost/compress v1.18.3
 	github.com/mattn/go-runewidth v0.0.16
@@ -87,6 +86,6 @@ require (
 	golang.org/x/net v0.46.0 // indirect
 	golang.org/x/term v0.36.0
 	golang.org/x/text v0.30.0
-	google.golang.org/protobuf v1.34.1
+	google.golang.org/protobuf v1.34.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )
