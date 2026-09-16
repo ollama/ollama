@@ -409,15 +409,7 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
           alt="Example Claude model mappings in Ollama settings"
           width={896}
           height={768}
-          className="h-auto w-full object-contain dark:hidden"
-          draggable={false}
-        />
-        <img
-          src="/claude-connected-dark.png"
-          alt="Example Claude model mappings in Ollama settings"
-          width={896}
-          height={768}
-          className="hidden h-auto w-full object-contain dark:block"
+          className="h-auto w-full object-contain"
           draggable={false}
         />
         <div className="p-6 pt-8">
