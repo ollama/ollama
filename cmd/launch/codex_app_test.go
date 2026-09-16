@@ -18,6 +18,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/internal/proxy"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -2119,6 +2120,13 @@ func TestCodexAppThinkingLevelsUseRecommendationsThenFallbacks(t *testing.T) {
 		wantValues     map[string]any
 	}{
 		{name: "non-thinking model"},
+		{
+			name:           "harmony descriptor without family fallback",
+			recommendation: renderers.ThinkingForRenderer("harmony"),
+			wantInitial:    "medium",
+			wantLevels:     []string{"low", "medium", "high"},
+			wantValues:     map[string]any{"low": "low", "medium": "medium", "high": "high"},
+		},
 		{name: "binary fallback", thinking: true, wantInitial: "high", wantLevels: []string{"none", "high"}, wantValues: map[string]any{"none": false, "high": true}},
 		{
 			name:           "recommendation with adjustable strings",

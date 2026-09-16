@@ -12,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/model/renderers"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
@@ -730,6 +731,7 @@ func TestCodexThinkingControls(t *testing.T) {
 		defaultLevel any
 	}{
 		{"unknown", nil, nil, nil},
+		{"harmony", renderers.ThinkingForRenderer("harmony"), []string{"low", "medium", "high"}, "medium"},
 		{"named", &api.ModelRecommendationThinking{Values: []any{false, "low", "high", "max"}, Default: "high"}, []string{"none", "low", "high", "max"}, "high"},
 		{"binary default on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, []string{"none", "high"}, "high"},
 		{"binary default off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, []string{"none", "high"}, "none"},

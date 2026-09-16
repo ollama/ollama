@@ -24,6 +24,7 @@ func TestThinkingInputErrors(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 	s := &Server{modelCaches: &modelCaches{show: newModelShowCache()}}
 	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	createMinimalGGUFModel(t, s, "thinking-harmony", nil, "<|start|>{{ .Prompt }}<|end|>", map[string]any{"model_family": "gptoss", "capabilities": []any{"completion", "thinking"}})
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: "thinking-qwen", From: "thinking-base", Renderer: "qwen3.8", Parser: "qwen3.5", Stream: &stream})
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Body.String())
@@ -49,6 +50,7 @@ func TestThinkingInputErrors(t *testing.T) {
 		{"thinking-qwen:local", `[false,"low","medium","xhigh"]`},
 		{" THINKING-QWEN ", `[false,"low","medium","xhigh"]`},
 		{"thinking-cloud:cloud", `[false,"high","max"]`},
+		{"thinking-harmony", `["low","medium","high"]`},
 		{"thinking-base", ""},
 		{"missing", ""},
 	} {
@@ -126,9 +128,15 @@ func TestModelThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	harmony := &Model{Template: tmpl, Config: model.ConfigV2{ModelFamily: "gptoss"}}
-	if harmony.Thinking() != nil || harmony.genericThinking() != nil {
-		t.Fatal("Harmony must retain legacy behavior")
+	for _, renderer := range []string{"", "harmony"} {
+		harmony := &Model{Template: tmpl, Config: model.ConfigV2{ModelFamily: "gptoss", Renderer: renderer}}
+		want := &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}
+		if got := harmony.Thinking(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("Harmony discovery = %#v, want %#v", got, want)
+		}
+		if harmony.genericThinking() != nil {
+			t.Fatal("Harmony must retain legacy inference behavior")
+		}
 	}
 }
 
@@ -285,6 +293,7 @@ func TestThinkingLookupModelReferences(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	s := &Server{}
 	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	createMinimalGGUFModel(t, s, "thinking-harmony", nil, "<|start|>{{ .Prompt }}<|end|>", map[string]any{"model_family": "gptoss", "capabilities": []any{"completion", "thinking"}})
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: "thinking-qwen", From: "thinking-base", Renderer: "qwen3.8", Parser: "qwen3.5", Stream: &stream})
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Body.String())
@@ -297,7 +306,7 @@ func TestThinkingLookupModelReferences(t *testing.T) {
 		{"responses", `"input":"hi","reasoning":{"effort":"xhigh"}`, middleware.ResponsesMiddleware(lookupThinking)},
 		{"anthropic", `"messages":[{"role":"user","content":"hi"}],"max_tokens":64,"output_config":{"effort":"xhigh"}`, middleware.AnthropicMessagesMiddleware(lookupThinking)},
 	} {
-		for _, name := range []string{"thinking-qwen", "thinking-qwen:local", " THINKING-QWEN "} {
+		for _, name := range []string{"thinking-qwen", "thinking-qwen:local", " THINKING-QWEN ", "thinking-harmony"} {
 			t.Run(protocol.name+"/"+name, func(t *testing.T) {
 				var req api.ChatRequest
 				router := gin.New()
@@ -311,7 +320,14 @@ func TestThinkingLookupModelReferences(t *testing.T) {
 				r.Header.Set("Content-Type", "application/json")
 				w := httptest.NewRecorder()
 				router.ServeHTTP(w, r)
-				if w.Code != http.StatusOK || req.Think == nil || req.Think.Value != "xhigh" {
+				want := "xhigh"
+				if name == "thinking-harmony" {
+					want = "max"
+					if protocol.name == "anthropic" {
+						want = "high"
+					}
+				}
+				if w.Code != http.StatusOK || req.Think == nil || req.Think.Value != want {
 					t.Fatalf("status=%d think=%v: %s", w.Code, req.Think, w.Body.String())
 				}
 			})
@@ -324,19 +340,37 @@ func TestThinkingLookupModelReferences(t *testing.T) {
 	}
 }
 
-func TestThinkingHarmonyKeepsLegacyDefaultAndMax(t *testing.T) {
+func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	mock := mockRunner{CompletionResponse: llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop}}
 	s := newServerWithMockRunner(t, &mock)
 	createMinimalGGUFModel(t, s, "thinking-harmony", nil, "<|start|><|end|>Reasoning: {{ .ThinkLevel }} {{ .Prompt }}", map[string]any{"model_family": "gptoss", "capabilities": []any{"completion", "thinking"}})
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Model: "thinking-harmony"})
+	var show api.ShowResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &show); err != nil {
+		t.Fatal(err)
+	}
+	want := &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}
+	if w.Code != http.StatusOK || !reflect.DeepEqual(show.Thinking, want) {
+		t.Fatalf("show status=%d thinking=%#v, want %#v", w.Code, show.Thinking, want)
+	}
 	for _, tt := range []struct {
-		name  string
-		think *api.ThinkValue
-		want  string
+		name       string
+		think      *api.ThinkValue
+		want       string
+		badRequest bool
 	}{
-		{"omitted", nil, "medium"}, {"max", &api.ThinkValue{Value: "max"}, "high"},
+		{"omitted", nil, "medium", false},
+		{"low", &api.ThinkValue{Value: "low"}, "low", false},
+		{"medium", &api.ThinkValue{Value: "medium"}, "medium", false},
+		{"high", &api.ThinkValue{Value: "high"}, "high", false},
+		{"max", &api.ThinkValue{Value: "max"}, "high", false},
+		{"true", &api.ThinkValue{Value: true}, "medium", false},
+		{"false", &api.ThinkValue{Value: false}, "", false},
+		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "", true},
+		{"future", &api.ThinkValue{Value: "future"}, "", true},
 	} {
 		for _, endpoint := range []string{"chat", "generate"} {
 			t.Run(endpoint+"/"+tt.name, func(t *testing.T) {
@@ -344,18 +378,22 @@ func TestThinkingHarmonyKeepsLegacyDefaultAndMax(t *testing.T) {
 				if think != nil {
 					think = &api.ThinkValue{Value: think.Value}
 				}
+				var w *httptest.ResponseRecorder
 				if endpoint == "chat" {
-					w := createRequest(t, s.ChatHandler, api.ChatRequest{Model: "thinking-harmony", Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: think, Stream: &stream})
-					if w.Code != http.StatusOK {
-						t.Fatalf("status %d: %s", w.Code, w.Body.String())
-					}
+					w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "thinking-harmony", Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: think, Stream: &stream})
 				} else {
-					w := createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "thinking-harmony", Prompt: "hello", Think: think, Stream: &stream})
-					if w.Code != http.StatusOK {
-						t.Fatalf("status %d: %s", w.Code, w.Body.String())
-					}
+					w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "thinking-harmony", Prompt: "hello", Think: think, Stream: &stream})
 				}
-				if !strings.Contains(mock.CompletionRequest.Prompt, "Reasoning: "+tt.want) {
+				if tt.badRequest {
+					if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid think value") {
+						t.Fatalf("expected legacy validation error: %d %s", w.Code, w.Body.String())
+					}
+					return
+				}
+				if w.Code != http.StatusOK {
+					t.Fatalf("status %d: %s", w.Code, w.Body.String())
+				}
+				if !strings.Contains(mock.CompletionRequest.Prompt, "Reasoning: "+tt.want+" ") {
 					t.Fatalf("expected reasoning %s: %s", tt.want, mock.CompletionRequest.Prompt)
 				}
 			})

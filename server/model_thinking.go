@@ -61,8 +61,11 @@ var legacyThinking = map[string]model.Thinking{
 // Thinking returns the effective local serving contract. Remote models obtain
 // their current contract from the remote show response.
 func (m *Model) Thinking() *model.Thinking {
-	if m == nil || m.Config.RemoteHost != "" || shouldUseHarmony(m) {
+	if m == nil || m.Config.RemoteHost != "" {
 		return nil
+	}
+	if shouldUseHarmony(m) {
+		return renderers.ThinkingForRenderer("harmony")
 	}
 	if name := resolveRendererName(m); name != "" {
 		thinking := renderers.ThinkingForRenderer(name)
@@ -93,7 +96,7 @@ func (m *Model) Thinking() *model.Thinking {
 
 // genericThinking excludes Harmony and template-only paths from new fallback rules.
 func (m *Model) genericThinking() *model.Thinking {
-	if m == nil || m.Config.Renderer == "" {
+	if m == nil || m.Config.Renderer == "" || shouldUseHarmony(m) {
 		return nil
 	}
 	return m.Thinking()

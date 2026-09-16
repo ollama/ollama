@@ -53,7 +53,7 @@ func TestResolveThinking(t *testing.T) {
 }
 
 func TestThinkingRendererVariants(t *testing.T) {
-	for _, name := range []string{"qwen3.5", "qwen3.8", "ornith", "qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think", "nemotron-3-nano", "nemotron-3.5-nano", "gemma4", "gemma4-small", "gemma4-large", "functiongemma", "glm-4.7", "glm-ocr", "lfm2", "lfm2-thinking", "laguna", "poolside-v1", "cohere", "glimmer"} {
+	for _, name := range []string{"harmony", "qwen3.5", "qwen3.8", "ornith", "qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think", "nemotron-3-nano", "nemotron-3.5-nano", "gemma4", "gemma4-small", "gemma4-large", "functiongemma", "glm-4.7", "glm-ocr", "lfm2", "lfm2-thinking", "laguna", "poolside-v1", "cohere", "glimmer"} {
 		t.Run(name, func(t *testing.T) {
 			if !ThinkingForRenderer(name).Valid() {
 				t.Fatal("invalid or absent descriptor")

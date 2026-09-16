@@ -8,6 +8,12 @@ import (
 // ThinkingForRenderer returns the controls of the selected renderer variant.
 // Unknown or invalid descriptors are omitted.
 func ThinkingForRenderer(name string) *model.Thinking {
+	if name == "harmony" {
+		return &model.Thinking{
+			Values:  []any{"low", "medium", "high"},
+			Default: "medium",
+		}
+	}
 	r := rendererForName(name)
 	if r == nil {
 		return nil
