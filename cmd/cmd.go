@@ -51,13 +51,13 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
-	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcreate "github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 func init() {
@@ -2557,12 +2557,12 @@ func NewCLI() *cobra.Command {
 		Use:    "runner",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runner.Execute(os.Args[1:])
+			return mlxrunner.Execute(os.Args[2:])
 		},
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 	}
 	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		_ = runner.Execute(args[1:])
+		_ = mlxrunner.Execute([]string{"--help"})
 	})
 
 	var gpuDiscoverLibDirs []string
