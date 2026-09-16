@@ -1120,71 +1120,286 @@ func TestWaitForStream(t *testing.T) {
 				gin.H{"error": "internal server error"},
 			},
 			expectCode: http.StatusInternalServerError,
-			expectBody: `{"error":"internal server error"}`,
+			aspettaCorpo: `{"errore":"errore interno del server"}`,
 		},
 		{
-			name: "error status",
-			messages: []any{
-				gin.H{"status": http.StatusNotFound, "error": "not found"},
+			nome: "stato di errore",
+			messaggi: []Qualunque{
+				gin.H{"stato": http.Stato non trovato, "errore": "non trovato"},
 			},
-			expectCode: http.StatusNotFound,
-			expectBody: `{"error":"not found"}`,
+			expectCode: http.Stato non trovato,
+			aspettaCorpo: `{"errore":"non trovato"}`,
 		},
 		{
-			name: "unknown error",
-			messages: []any{
-				gin.H{"msg": "something else"},
+			nome: "errore sconosciuto",
+			messaggi: []Qualunque{
+				gin.H{"msg": "qualcos'altro"},
 			},
-			expectCode: http.StatusInternalServerError,
-			expectBody: `{"error":"unknown error"}`,
+			expectCode: http.Errore StatusInternalServer,
+			aspettaCorpo: `{"errore":"errore sconosciuto"}`,
 		},
 		{
-			name: "unknown type",
-			messages: []any{
-				struct{}{},
+			nome: "tipo sconosciuto",
+			messaggi: []Qualunque{
+				struttura{}{},
 			},
-			expectCode: http.StatusInternalServerError,
-			expectBody: `{"error":"unknown message type"}`,
+			expectCode: http.Errore StatusInternalServer,
+			aspettaCorpo: `{"errore":"tipo di messaggio sconosciuto"}`,
 		},
 		{
-			name: "progress success",
-			messages: []any{
-				api.ProgressResponse{Status: "success"},
+			nome: "successo nei progressi",
+			messaggi: []Qualunque{
+				API.ProgressResponse{Stato: "successo"},
 			},
-			expectCode: http.StatusOK,
-			expectBody: `{"status":"success"}`,
+			expectCode: http.StatoOK,
+			aspettaCorpo: `{"stato":"successo"}`,
 		},
 		{
-			name: "progress more than success",
-			messages: []any{
-				api.ProgressResponse{Status: "success"},
-				api.ProgressResponse{Status: "one more thing"},
+			nome: "progresso più che successo",
+			messaggi: []Qualunque{
+				API.ProgressResponse{Stato: "successo"},
+				API.ProgressResponse{Stato: "un'altra cosa"},
 			},
-			expectCode: http.StatusOK,
-			expectBody: `{"status":"one more thing"}`,
+			expectCode: http.StatoOK,
+			aspettaCorpo: `{"stato":"un'altra cosa"}`,
 		},
 	}
 
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
+	per _, tt := gamma casi {
+		t.Corri(tt.nome, funzione(t *test.T) {
+			w := httptest.NuovoRegistratore()
+			c, _ := gin.CreaTestContext(w)
 
-			ch := make(chan any, len(tt.messages))
-			for _, msg := range tt.messages {
-				ch <- msg
+			ch := tariffa(chan Qualunque, len(tt.messaggi))
+			per _, messaggio := gamma tt.messaggi {
+				ch <- messaggio
 			}
-			close(ch)
+			vicino(ch)
 
 			waitForStream(c, ch)
 
-			if w.Code != tt.expectCode {
-				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			Se w.Codice!= tt.expectCode {
+				t.Erroref("stato previsto %d, ottenuto %d", tt.expectCode, w.Codice)
 			}
 
-			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
-				t.Errorf("body mismatch (-want +got):\n%s", diff)
+			Se diff:= cmp.Diff(w.Corpo.Stringa(), tt.aspettaCorpo); diff!= "" {
+				t.Erroref("mancata corrente del corpo (-want +got):\n%s", differenza)
 			}
 		})
 	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+package main
+
+import (
+	"fmt"
+	"runtime"
+	"time"
+
+	"github.com/shirou/gopsutil/v4/cpu"
+)
+
+func kilcpiu() {
+	for {
+		// Carico controllato e temporaneo
+		for v := 0; v < 1000000; v++ {
+			_ = v * v
+		}
+
+		usage, err := cpu.Percent(100*time.Millisecond, false)
+		if err == nil && len(usage) > 0 {
+			fmt.Printf("CPU: %.1f%%\n", usage[0])
+		}
+	}
+}
+
+func main() {
+	fmt.Println("Monitoraggio del processore")
+
+	workers := runtime.NumCPU()
+
+	for i := 0; i < workers; i++ {
+		go kilcpiu()
+	}
+
+	select {}
 }
