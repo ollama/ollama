@@ -25,13 +25,13 @@ import (
 	gocmpopts "github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/fs/gguf"
+	st "github.com/ollama/ollama/fs/safetensors"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/types/model"
-	xcreate "github.com/ollama/ollama/x/create"
-	"github.com/ollama/ollama/x/mlxrunner"
-	st "github.com/ollama/ollama/x/safetensors"
 )
 
 var stream bool = false
@@ -2083,9 +2083,9 @@ func createTestSafetensorsBlob(t *testing.T, tensors []*st.TensorData) string {
 	return createTestBlob(t, data)
 }
 
-func createTestLayerInfo(t *testing.T, name, mediaType string, data []byte) xcreate.LayerInfo {
+func createTestLayerInfo(t *testing.T, name, mediaType string, data []byte) create.LayerInfo {
 	t.Helper()
-	return xcreate.LayerInfo{
+	return create.LayerInfo{
 		Name:      name,
 		MediaType: mediaType,
 		Digest:    createTestBlob(t, data),
@@ -2113,7 +2113,7 @@ func TestCreateSafetensorsRejectsUnsupportedArchitecture(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), xcreate.ErrUnsupportedMLXArchitecture.Error()) {
+	if !strings.Contains(w.Body.String(), create.ErrUnsupportedMLXArchitecture.Error()) {
 		t.Fatalf("response = %s, want unsupported architecture error", w.Body.String())
 	}
 	if _, err := manifest.ParseNamedManifest(model.ParseName("unsupported-safetensors")); !errors.Is(err, os.ErrNotExist) {
@@ -2223,7 +2223,7 @@ func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 	tensorData := []byte("tensor")
 	configData := []byte(`{"architectures":["TestModel"]}`)
 	tokenizerData := []byte(`{"version":"1.0"}`)
-	info := xcreate.ManifestInfo{Layers: []xcreate.LayerInfo{
+	info := create.ManifestInfo{Layers: []create.LayerInfo{
 		createTestLayerInfo(t, "model.embed_tokens.weight", manifest.MediaTypeImageTensor, tensorData),
 		createTestLayerInfo(t, "config.json", "application/vnd.ollama.image.json", configData),
 		createTestLayerInfo(t, "tokenizer.json", "application/vnd.ollama.image.json", tokenizerData),
@@ -2331,7 +2331,7 @@ func TestWriteSafetensorsManifestIncludesDraft(t *testing.T) {
 	mainData := []byte("main tensor")
 	draftData := []byte("draft tensor")
 	draftConfig := []byte(`{"architectures":["TestDraftModel"]}`)
-	info := xcreate.ManifestInfo{Layers: []xcreate.LayerInfo{
+	info := create.ManifestInfo{Layers: []create.LayerInfo{
 		createTestLayerInfo(t, "model.embed_tokens.weight", manifest.MediaTypeImageTensor, mainData),
 		createTestLayerInfo(t, "draft.model.embed_tokens.weight", manifest.MediaTypeImageTensor, draftData),
 		createTestLayerInfo(t, "draft/config.json", "application/vnd.ollama.image.json", draftConfig),
@@ -2478,7 +2478,7 @@ func TestCreateRejectsInvalidLicense(t *testing.T) {
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
 			}
-			if !strings.Contains(w.Body.String(), xcreate.ErrInvalidLicense.Error()) {
+			if !strings.Contains(w.Body.String(), create.ErrInvalidLicense.Error()) {
 				t.Fatalf("response = %s, want invalid license error", w.Body.String())
 			}
 		})

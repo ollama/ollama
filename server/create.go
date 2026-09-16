@@ -24,15 +24,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlx/quant"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
-	xcreate "github.com/ollama/ollama/x/create"
-	"github.com/ollama/ollama/x/mlxrunner"
-	"github.com/ollama/ollama/x/quant"
 )
 
 var (
@@ -87,7 +87,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errAdaptersUnsupported.Error()})
 		return
 	}
-	if _, err := xcreate.LicenseStrings(r.License); err != nil {
+	if _, err := create.LicenseStrings(r.License); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -257,7 +257,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		if err := createModel(reqCtx, r, name, baseLayers, config, fn); err != nil {
-			if errors.Is(err, xcreate.ErrBadTemplate) || errors.Is(err, xcreate.ErrInvalidRequires) || errors.Is(err, xcreate.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {
+			if errors.Is(err, create.ErrBadTemplate) || errors.Is(err, create.ErrInvalidRequires) || errors.Is(err, create.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {
 				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 				return
 			}
@@ -297,7 +297,7 @@ func recoverCreatePanic(send func(any) bool) {
 }
 
 // createSafetensorsModel imports uploaded raw safetensors source files by
-// staging them as a normal model directory and running the shared x/create
+// staging them as a normal model directory and running the shared create
 // pipeline on the server.
 func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) error {
 	if len(r.Files) == 0 {
@@ -326,7 +326,7 @@ func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model
 	progressFn := func(status string) {
 		fn(api.ProgressResponse{Status: status})
 	}
-	store := xcreate.ManifestBlobStore{}
+	store := create.ManifestBlobStore{}
 
 	var draftDir string
 	var draftCleanup func()
@@ -341,7 +341,7 @@ func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model
 		defer draftCleanup()
 	}
 
-	return xcreate.Create(ctx, name.String(), modelDir, xcreate.PipelineOptions{
+	return create.Create(ctx, name.String(), modelDir, create.PipelineOptions{
 		Quantize:      cmp.Or(r.Quantize, r.Quantization),
 		Parser:        r.Parser,
 		Renderer:      r.Renderer,
@@ -358,7 +358,7 @@ func createSafetensorsErrorResponse(err error) gin.H {
 	}
 
 	status := http.StatusInternalServerError
-	for _, badReq := range []error{errNoFilesProvided, errFilePath, errSafetensorsFrom, errInvalidCreateInfo, manifest.ErrInvalidDigestFormat, xcreate.ErrBadTemplate, xcreate.ErrInvalidRequires, xcreate.ErrInvalidLicense, xcreate.ErrUnsupportedMLXArchitecture, os.ErrNotExist} {
+	for _, badReq := range []error{errNoFilesProvided, errFilePath, errSafetensorsFrom, errInvalidCreateInfo, manifest.ErrInvalidDigestFormat, create.ErrBadTemplate, create.ErrInvalidRequires, create.ErrInvalidLicense, create.ErrUnsupportedMLXArchitecture, os.ErrNotExist} {
 		if errors.Is(err, badReq) {
 			status = http.StatusBadRequest
 			break
@@ -367,9 +367,9 @@ func createSafetensorsErrorResponse(err error) gin.H {
 	return gin.H{"error": err.Error(), "status": status}
 }
 
-func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp api.ProgressResponse)) xcreate.ManifestWriter {
-	next := xcreate.NewSafetensorsManifestWriter(xcreate.SafetensorsManifestOptions{
-		MinVersion:          xcreate.SafetensorsMinOllamaVersion,
+func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp api.ProgressResponse)) create.ManifestWriter {
+	next := create.NewSafetensorsManifestWriter(create.SafetensorsManifestOptions{
+		MinVersion:          create.SafetensorsMinOllamaVersion,
 		DraftDir:            draftDir,
 		Template:            r.Template,
 		System:              r.System,
@@ -378,7 +378,7 @@ func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp
 		Messages:            r.Messages,
 		BeforeWriteManifest: func() { fn(api.ProgressResponse{Status: "writing manifest"}) },
 	})
-	return func(ctx context.Context, modelName string, info xcreate.ManifestInfo) error {
+	return func(ctx context.Context, modelName string, info create.ManifestInfo) error {
 		if len(info.ModelConfig.Capabilities) == 0 {
 			info.ModelConfig.Capabilities = []string{"completion"}
 		}
@@ -470,7 +470,7 @@ func linkOrCopyFile(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(out, xcreate.ReaderWithContext(ctx, in))
+	_, copyErr := io.Copy(out, create.ReaderWithContext(ctx, in))
 	closeErr := out.Close()
 	if copyErr != nil {
 		return copyErr
@@ -844,7 +844,7 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 		}
 	}
 
-	layers, err = xcreate.ApplyModelfileLayers(layers, xcreate.ModelfileLayerOptions{
+	layers, err = create.ApplyModelfileLayers(layers, create.ModelfileLayerOptions{
 		Template:   r.Template,
 		System:     r.System,
 		License:    r.License,

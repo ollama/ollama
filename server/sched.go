@@ -23,8 +23,8 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 type LlmRequest struct {

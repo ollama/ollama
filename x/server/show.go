@@ -12,8 +12,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlx/quant"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/quant"
 )
 
 func canonicalQuantType(quantType string) string {
