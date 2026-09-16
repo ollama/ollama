@@ -327,7 +327,7 @@ Examples:
 			if len(args) > 0 && launchCommandIsClaudeDesktop(args[0]) {
 				return fmt.Errorf("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore")
 			}
-			return checkServerHeartbeat(cmd, args)
+			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
@@ -362,6 +362,23 @@ Examples:
 				}
 				runTUI(cmd)
 				return nil
+			}
+
+			if !configFlag && !restoreFlag && !yesFlag && modelFlag == "" && isInteractiveSession() && DefaultWelcome != nil {
+				if spec, err := LookupIntegrationSpec(name); err == nil && !spec.Hidden {
+					if err := DefaultWelcome(cmd.Context()); err != nil {
+						if errors.Is(err, ErrCancelled) {
+							return nil
+						}
+						return err
+					}
+				}
+			}
+
+			if !restoreFlag {
+				if err := checkServerHeartbeat(cmd, args); err != nil {
+					return err
+				}
 			}
 
 			if modelFlag != "" && isCloudModelName(modelFlag) {

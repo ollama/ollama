@@ -2,6 +2,7 @@ package launch
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -625,6 +626,48 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	}
 	if diff := cmp.Diff([]string{"qwen3:8b"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmdCancelledWelcome(t *testing.T) {
+	setLaunchTestHome(t, t.TempDir())
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "claude", runner)
+	calls := 0
+	previousWelcome := DefaultWelcome
+	t.Cleanup(func() { DefaultWelcome = previousWelcome })
+	DefaultWelcome = func(context.Context) error { calls++; return ErrCancelled }
+	cmd := LaunchCmd(func(*cobra.Command, []string) error {
+		t.Fatal("cancelled welcome must not check the server")
+		return nil
+	}, func(*cobra.Command) { t.Fatal("unexpected menu") })
+	cmd.SetArgs([]string{"claude"})
+	if err := cmd.Execute(); err != nil || calls != 1 || runner.ranModel != "" {
+		t.Fatalf("cancelled onboarding: err=%v calls=%d launched=%q", err, calls, runner.ranModel)
+	}
+	if saved, err := config.LoadIntegration("claude"); !os.IsNotExist(err) || saved != nil {
+		t.Fatalf("cancelled onboarding saved app setup: %+v, %v", saved, err)
+	}
+}
+
+func TestLaunchWelcomeBeforeUnavailableServer(t *testing.T) {
+	withInteractiveSession(t, true)
+	previous := DefaultWelcome
+	t.Cleanup(func() { DefaultWelcome = previous })
+	welcomeShown := false
+	DefaultWelcome = func(context.Context) error { welcomeShown = true; return nil }
+	serverErr := fmt.Errorf("server unavailable")
+	cmd := LaunchCmd(func(*cobra.Command, []string) error {
+		if !welcomeShown {
+			t.Fatal("server check ran before welcome")
+		}
+		return serverErr
+	}, func(*cobra.Command) { t.Fatal("unexpected menu") })
+	cmd.SetArgs([]string{"claude"})
+	if err := cmd.Execute(); err != serverErr || !welcomeShown {
+		t.Fatalf("welcome shown=%v, error=%v; want server error after welcome", welcomeShown, err)
 	}
 }
 
