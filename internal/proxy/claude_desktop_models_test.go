@@ -22,8 +22,8 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
 			Recommendations: []api.ModelRecommendation{
-				{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, RequiredPlan: "pro"},
-				{Model: "glm-5.3-flash:cloud", Description: "GLM Flash", MaxOutputTokens: 1_048_576, RequiredPlan: "pro"},
+				{Model: "glm-5.2:cloud", Description: "GLM", MaxOutputTokens: 131_072, ContextLength: 202_752, RequiredPlan: "pro"},
+				{Model: "glm-5.3-flash:cloud", Description: "GLM Flash", MaxOutputTokens: 1_048_576, ContextLength: 1_048_576, RequiredPlan: "pro"},
 				{Model: "gemma4:31b-cloud", Description: "Gemma", MaxOutputTokens: 262_144, RequiredPlan: "free"},
 				{Model: "deepseek-v4-pro", Description: "DeepSeek", MaxOutputTokens: 65_536, RequiredPlan: "pro"},
 				{Model: "qwen3.8:27b", Description: "Qwen", MaxOutputTokens: 131_072},
@@ -54,6 +54,15 @@ func TestFetchClaudeDesktopModelsUsesAppAwareContract(t *testing.T) {
 	}
 	if models[3].DisplayName != "deepseek-v4-pro:cloud" {
 		t.Fatalf("display name = %q, want exact model identifier", models[3].DisplayName)
+	}
+	if got, want := models[0].gateway.MaxInputTokens, 202_752; got != want {
+		t.Fatalf("glm-5.2:cloud max_input_tokens = %d, want %d", got, want)
+	}
+	if got, want := models[1].gateway.MaxInputTokens, 1_048_576; got != want {
+		t.Fatalf("glm-5.3-flash:cloud max_input_tokens = %d, want %d", got, want)
+	}
+	if models[3].gateway.MaxInputTokens != 0 {
+		t.Fatalf("deepseek-v4-pro should omit context size when unset")
 	}
 	for _, model := range models {
 		if !model.Recommended {
