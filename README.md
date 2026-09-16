@@ -292,6 +292,7 @@ console.log(response.message.content);
 ### Terminal & CLI
 
 - [aichat](https://github.com/sigoden/aichat) - All-in-one LLM CLI with Shell Assistant, RAG, and AI tools
+- [loki](https://github.com/Dark-Alex-17/loki) - Terminal-based LLM client with function calling, agents, and secure secret storage
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
 - [tlm](https://github.com/yusufcanb/tlm) - Local shell copilot
