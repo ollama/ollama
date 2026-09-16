@@ -107,6 +107,10 @@ func openUI(path string) {
 	wv.Run(path)
 }
 
+func openAppsUI() {
+	wv.Run("/connect")
+}
+
 func (*appCallbacks) UITerminate() {
 	wv.Terminate()
 }

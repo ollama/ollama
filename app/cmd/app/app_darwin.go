@@ -152,6 +152,12 @@ func openUI(path string) {
 	StartUI(p)
 }
 
+func openAppsUI() {
+	p := C.CString("/connect")
+	defer C.free(unsafe.Pointer(p))
+	C.uiRequest(p)
+}
+
 //export StopUI
 func StopUI() {
 	wv.Terminate()
