@@ -406,13 +406,13 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
       >
         <img
           src="/claude-connected.png"
-          alt="Ollama models in the Claude model picker"
-          width={900}
-          height={761}
+          alt="Example Claude model mappings in Ollama settings"
+          width={896}
+          height={768}
           className="h-auto w-full object-contain"
           draggable={false}
         />
-        <div className="p-6">
+        <div className="p-6 pt-8">
           <h2
             id="claude-connected-title"
             className="font-rounded text-lg font-medium leading-6 text-neutral-950 dark:text-neutral-100"
@@ -423,10 +423,10 @@ export function ClaudeConnectedIntro({ onDone }: { onDone: () => void }) {
             id="claude-connected-description"
             className="mt-2 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
           >
-            Ollama models now show up in Claude so you can pick the right model
-            for the task.
+            Ollama automatically routes Claude models for you. Open settings in
+            Ollama to update which models are used by Claude Desktop.
           </p>
-          <div className="mt-5 flex justify-end">
+          <div className="mt-11 flex justify-end">
             <button
               type="button"
               autoFocus
