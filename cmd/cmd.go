@@ -60,8 +60,6 @@ import (
 )
 
 func init() {
-	launch.DefaultWelcome = runWelcome
-
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
 	launch.DefaultSingleSelector = func(title string, items []launch.SelectionItem, current string) (string, error) {
 		return runTUISingleSelector(title, items, current, nil)
@@ -2260,22 +2258,6 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
-	if fromInstaller, _ := cmd.Flags().GetBool("from-installer"); fromInstaller {
-		needed, err := needsInstallerOnboarding(term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		if err != nil || !needed {
-			return
-		}
-	}
-	if err := runWelcome(cmd.Context()); err != nil {
-		if !errors.Is(err, launch.ErrCancelled) {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		return
-	}
-
 	// Ensure the server is running via the shared checkServerHeartbeat path.
 	if err := checkServerHeartbeat(cmd, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -2414,6 +2396,12 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			if err := runWelcome(cmd.Context()); err != nil {
+				if !errors.Is(err, launch.ErrCancelled) {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+				return
+			}
 			runInteractiveTUI(cmd)
 		},
 	}
@@ -2421,9 +2409,6 @@ func NewCLI() *cobra.Command {
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
 	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	// The installer may offer first-run setup, but must not reopen a completed menu.
-	rootCmd.Flags().Bool("from-installer", false, "Start onboarding only if it is unfinished")
-	rootCmd.Flags().MarkHidden("from-installer")
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",

@@ -77,32 +77,3 @@ func TestWelcomeOnceAfterCompletion(t *testing.T) {
 		t.Fatalf("completed welcome must not repeat: shows=%d err=%v", shows, err)
 	}
 }
-
-func TestInstallerOnboarding(t *testing.T) {
-	for _, tc := range []struct {
-		name                         string
-		completed, interactive, want bool
-		ci, noStart                  string
-	}{
-		{name: "first install", interactive: true, want: true},
-		{name: "completed", completed: true, interactive: true},
-		{name: "headless"},
-		{name: "CI", interactive: true, ci: "true"},
-		{name: "no-start", interactive: true, noStart: "1"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			setCmdTestHome(t, t.TempDir())
-			t.Setenv("LOCALAPPDATA", t.TempDir())
-			t.Setenv("CI", tc.ci)
-			t.Setenv("OLLAMA_NO_START", tc.noStart)
-			if tc.completed {
-				if err := config.CompleteWelcome(); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if got, err := needsInstallerOnboarding(tc.interactive); err != nil || got != tc.want {
-				t.Fatalf("onboarding=%v err=%v; want %v", got, err, tc.want)
-			}
-		})
-	}
-}

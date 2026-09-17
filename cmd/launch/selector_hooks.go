@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -66,11 +65,6 @@ var DefaultMultiSelector MultiSelector
 
 // DefaultMultiSelectorWithUpdates is the default multi-select implementation with live updates.
 var DefaultMultiSelectorWithUpdates MultiSelectorWithUpdates
-
-// DefaultWelcome shows the first-time introduction and optional account setup.
-// An explicit app launch resumes that app's flow after onboarding finishes.
-// Setup flags and non-interactive launches bypass the introduction.
-var DefaultWelcome func(context.Context) error
 
 // DefaultSignIn provides a TUI-based sign-in flow.
 // When set, ensureAuth uses it instead of plain text prompts.

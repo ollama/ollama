@@ -2,33 +2,6 @@
 # This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
-start_onboarding() {
-    # curl | sh has piped stdin. Only hand off when there is a real terminal;
-    # do not run a user's onboarding as root via sudo, in CI, or with no-start.
-    [ -z "${CI:-}" ] && [ -z "${OLLAMA_NO_START:-}" ] &&
-        [ -z "${SUDO_USER:-}" ] && [ -t 1 ] && [ -t 2 ] || return 0
-    ( : </dev/tty ) 2>/dev/null || return 0
-
-    # OLLAMA_VERSION can select an older release without this installer hook.
-    "$OLLAMA_BIN" --from-installer --help >/dev/null 2>&1 || return 0
-    "$OLLAMA_BIN" --from-installer </dev/tty ||
-        warning 'Could not open setup. Run "ollama" to continue.'
-}
-
-finish_install() {
-    install_exit_status=$?
-    trap - EXIT
-    cleanup
-    if [ "$START_SERVICE" = true ]; then
-        $SUDO systemctl restart ollama
-    fi
-    if [ "$install_exit_status" -eq 0 ] && [ "$INSTALL_COMPLETE" = true ]; then
-        status 'Install complete. Run "ollama" to get started.'
-        start_onboarding
-    fi
-    exit "$install_exit_status"
-}
-
 # Wrap script in main function so that a truncated partial download doesn't end
 # up executing half a script.
 main() {
@@ -43,10 +16,8 @@ error() { echo "${red}ERROR:${plain} $*"; exit 1; }
 warning() { echo "${red}WARNING:${plain} $*"; }
 
 TEMP_DIR=$(mktemp -d)
-cleanup() { rm -rf "$TEMP_DIR"; }
-INSTALL_COMPLETE=false
-START_SERVICE=false
-trap finish_install EXIT
+cleanup() { rm -rf $TEMP_DIR; }
+trap cleanup EXIT
 
 available() { command -v $1 >/dev/null; }
 require() {
@@ -117,8 +88,7 @@ if [ "$OS" = "Darwin" ]; then
         open -a Ollama --args hidden
     fi
 
-    OLLAMA_BIN="/Applications/Ollama.app/Contents/Resources/ollama"
-    INSTALL_COMPLETE=true
+    status "Install complete. You can now run 'ollama'."
     exit 0
 fi
 
@@ -216,8 +186,11 @@ if [ -f /etc/nv_tegra_release ] ; then
     fi
 fi
 
-OLLAMA_BIN="$BINDIR/ollama"
-INSTALL_COMPLETE=true
+install_success() {
+    status 'The Ollama API is now available at 127.0.0.1:11434.'
+    status 'Install complete. Run "ollama" from the command line.'
+}
+trap install_success EXIT
 
 # Everything from this point onwards is optional.
 
@@ -262,7 +235,8 @@ EOF
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
 
-            START_SERVICE=true
+            start_service() { $SUDO systemctl restart ollama; }
+            trap start_service EXIT
             ;;
         *)
             warning "systemd is not running"
@@ -283,12 +257,14 @@ if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
+    install_success
     exit 0
 fi
 
 # Don't attempt to install drivers on Jetson systems
 if [ -f /etc/nv_tegra_release ] ; then
     status "NVIDIA JetPack ready."
+    install_success
     exit 0
 fi
 
@@ -321,6 +297,7 @@ if check_gpu nvidia-smi; then
 fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+    install_success
     warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
@@ -328,6 +305,7 @@ fi
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
 
+    install_success
     status "AMD GPU ready."
     exit 0
 fi
@@ -471,6 +449,7 @@ if available nvidia-persistenced; then
 fi
 
 status "NVIDIA GPU ready."
+install_success
 }
 
 main

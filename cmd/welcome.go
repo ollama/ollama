@@ -33,13 +33,6 @@ func runWelcome(ctx context.Context) error {
 	})
 }
 
-func needsInstallerOnboarding(interactive bool) (bool, error) {
-	if !interactive || os.Getenv("CI") != "" || os.Getenv("OLLAMA_NO_START") != "" {
-		return false, nil
-	}
-	return config.NeedsWelcome()
-}
-
 func checkWelcomeAccount(ctx context.Context) tui.WelcomeAccount {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
