@@ -50,6 +50,13 @@ func (p *LFM2Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *LFM2Parser) ThinkingClose() []string {
+	if p.state == LFM2LookingForThinking || p.state == LFM2CollectingThinking {
+		return []string{lfm2ThinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *LFM2Parser) PreservedTokens() []string {
 	return []string{
 		lfm2ThinkingOpenTag,

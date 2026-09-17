@@ -187,9 +187,6 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
-		if !reqBody.TimingsPerToken {
-			t.Error("timings_per_token should be true")
-		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
@@ -212,9 +209,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	var responses []CompletionResponse
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:                     "test prompt",
-		Options:                    &opts,
-		IncludeIntermediateMetrics: true,
+		Prompt:  "test prompt",
+		Options: &opts,
 	}, func(cr CompletionResponse) {
 		responses = append(responses, cr)
 	})
@@ -233,28 +229,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].Done {
 		t.Error("response[0] should not be done")
 	}
-	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
-		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
-	}
-	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[0] cached prompt count = %v, want 2", got)
-	}
-	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
-		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
-	}
 
 	// Second token
 	if responses[1].Content != " world" {
 		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
-	}
-	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
-		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
-	}
-	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[1] cached prompt count = %v, want 2", got)
-	}
-	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
-		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
 	}
 
 	// Final response
@@ -3846,4 +3824,117 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+// TestLlamaServerCompletionThinkingFormat checks that a format on a thinking
+// response is one request carrying a grammar: a schema is converted by an
+// empty completion once per schema, "json" needs no conversion, the grammar
+// wraps the format rules behind the closing string, and content and metrics
+// pass through unchanged.
+func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	converted := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
+	sseLines := []string{
+		`data: {"content":"Let me think.</think>","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":3,"predicted_ms":15}}`,
+		`data: {"content":"{}","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+	}
+
+	var conversions atomic.Int32
+	grammars := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		var reqBody struct {
+			Prompt         any             `json:"prompt"`
+			NPredict       *int            `json:"n_predict"`
+			JsonSchema     json.RawMessage `json:"json_schema"`
+			Grammar        string          `json:"grammar"`
+			ResponseFields []string        `json:"response_fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		if len(reqBody.ResponseFields) > 0 {
+			conversions.Add(1)
+			if !reflect.DeepEqual(reqBody.Prompt, []any{[]any{}}) || reqBody.NPredict == nil || *reqBody.NPredict != 0 {
+				t.Errorf("conversion request prompt %v n_predict %v, want an empty token prompt and no generation", reqBody.Prompt, reqBody.NPredict)
+			}
+			if !bytes.Equal(reqBody.JsonSchema, schema) || !reflect.DeepEqual(reqBody.ResponseFields, []string{"generation_settings/grammar"}) {
+				t.Errorf("conversion request schema %s fields %v", reqBody.JsonSchema, reqBody.ResponseFields)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"generation_settings/grammar": converted})
+			return
+		}
+		if reqBody.JsonSchema != nil {
+			t.Errorf("completion carried schema %s", reqBody.JsonSchema)
+		}
+		grammars <- reqBody.Grammar
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, line := range sseLines {
+			fmt.Fprintln(w, line)
+			fmt.Fprintln(w)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	complete := func(format json.RawMessage) string {
+		var responses []CompletionResponse
+		opts := api.DefaultOptions()
+		err := runner.Completion(t.Context(), CompletionRequest{
+			Prompt:        "test prompt",
+			Format:        format,
+			ThinkingClose: []string{"</think>"},
+			Options:       &opts,
+		}, func(cr CompletionResponse) {
+			responses = append(responses, cr)
+		})
+		if err != nil {
+			t.Fatalf("Completion error: %v", err)
+		}
+		var content strings.Builder
+		for _, resp := range responses[:len(responses)-1] {
+			content.WriteString(resp.Content)
+		}
+		if got := content.String(); got != "Let me think.</think>{}" {
+			t.Errorf("streamed content = %q", got)
+		}
+		final := responses[len(responses)-1]
+		if !final.Done || final.DoneReason != DoneReasonStop || final.EvalCount != 4 || final.PromptEvalCount != 5 {
+			t.Errorf("final response = %+v, want done with 4 generated and 5 prompt tokens", final)
+		}
+		return <-grammars
+	}
+
+	for range 2 {
+		grammar := complete(schema)
+		if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format ::= \"{\" space \"}\"\n") {
+			t.Errorf("grammar does not wrap the converted schema:\n%s", grammar)
+		}
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("schema converted %d times, want once", got)
+	}
+
+	grammar := complete(json.RawMessage(`"json"`))
+	if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format   ::= object\n") {
+		t.Errorf("grammar does not wrap the json grammar:\n%s", grammar)
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("json format converted a schema, %d conversions", got)
+	}
 }

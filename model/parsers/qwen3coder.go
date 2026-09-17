@@ -43,6 +43,10 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *Qwen3CoderParser) ThinkingClose() []string {
+	return nil
+}
+
 func (p *Qwen3CoderParser) PreservedTokens() []string {
 	return []string{
 		toolOpenTag,
