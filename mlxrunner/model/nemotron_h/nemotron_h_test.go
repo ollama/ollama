@@ -1,6 +1,7 @@
 package nemotron_h
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -536,4 +538,283 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 			t.Fatalf("skipped fold mutated the weight bank: dims = %v", dims)
 		}
 	})
+}
+
+func TestParseVisionConfigOmni(t *testing.T) {
+	cfg, err := parseVisionConfig([]byte(`{
+		"ps_version": "v2",
+		"vision_config": {
+			"version": "radio_v2.5-h",
+			"patch_size": 16,
+			"min_num_patches": 1024,
+			"max_num_patches": 13312,
+			"args": {"model": "vit_huge_patch16_224"}
+		},
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"img_context_token_id": 18,
+		"img_context_token": "<image>",
+		"img_start_token": "<img>",
+		"img_end_token": "</img>",
+		"vit_hidden_size": 1280,
+		"projector_hidden_size": 20480
+	}`), []byte(`{
+		"patch_size": 16,
+		"downsample_ratio": 0.5,
+		"norm_mean": [0.48145466, 0.4578275, 0.40821073],
+		"norm_std": [0.26862954, 0.26130258, 0.27577711]
+	}`))
+	if err != nil {
+		t.Fatalf("parseVisionConfig returned error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("parseVisionConfig returned nil config")
+	}
+	if got, want := cfg.ModelName, "vit_huge_patch16_224"; got != want {
+		t.Fatalf("ModelName = %q, want %q", got, want)
+	}
+	if got, want := cfg.PSVersion, "v2"; got != want {
+		t.Fatalf("PSVersion = %q, want %q", got, want)
+	}
+	if got, want := cfg.NumAttentionHeads, int32(16); got != want {
+		t.Fatalf("NumAttentionHeads = %d, want %d", got, want)
+	}
+	if cfg.PatchSize != 0 || cfg.HiddenSize != 0 || cfg.NumHiddenLayers != 0 || cfg.HeadDim != 0 {
+		t.Fatalf("weight-derived dimensions initialized before weights: %+v", cfg)
+	}
+	if got, want := cfg.DownsampleFactor, int32(2); got != want {
+		t.Fatalf("DownsampleFactor = %d, want %d", got, want)
+	}
+	if got, want := cfg.ImageTokenID, int32(18); got != want {
+		t.Fatalf("ImageTokenID = %d, want %d", got, want)
+	}
+	if got, want := cfg.MinNumPatches, 1024; got != want {
+		t.Fatalf("MinNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxNumPatches, 13312; got != want {
+		t.Fatalf("MaxNumPatches = %d, want %d", got, want)
+	}
+	if got, want := cfg.MaxModelLen, 16384; got != want {
+		t.Fatalf("MaxModelLen = %d, want %d", got, want)
+	}
+}
+
+func TestParseVisionConfigRejectsMalformedNormalization(t *testing.T) {
+	config := []byte(`{
+		"ps_version": "v2",
+		"vision_config": {"version": "c-radio_v4-h", "args": {"model": "vit_huge_patch16_224"}},
+		"norm_mean": [0.1, 0.2]
+	}`)
+	if _, err := parseVisionConfig(config, nil); err == nil {
+		t.Fatal("expected malformed config norm_mean error")
+	}
+
+	config = []byte(`{"ps_version":"v2","vision_config":{"version":"c-radio_v4-h","args":{"model":"vit_huge_patch16_224"}}}`)
+	preprocessor := []byte(`{"norm_std": [0.1, 0.2, 0.3, 0.4]}`)
+	if _, err := parseVisionConfig(config, preprocessor); err == nil {
+		t.Fatal("expected malformed preprocessor norm_std error")
+	}
+}
+
+func TestParseVisionConfigRequiresDynamicResolutionBounds(t *testing.T) {
+	for _, config := range []string{
+		`{"ps_version":"v2","vision_config":{"version":"c-radio_v4-h","min_num_patches":1024,"args":{"model":"vit_huge_patch16_224"}}}`,
+		`{"ps_version":"v2","vision_config":{"version":"c-radio_v4-h","max_num_patches":13312,"args":{"model":"vit_huge_patch16_224"}}}`,
+		`{"ps_version":"v2","vision_config":{"version":"c-radio_v4-h","args":{"model":"vit_huge_patch16_224"}}}`,
+	} {
+		if _, err := parseVisionConfig([]byte(config), nil); err == nil || !strings.Contains(err.Error(), "requires min_num_patches and max_num_patches") {
+			t.Fatalf("parseVisionConfig error = %v, want missing dynamic-resolution bounds", err)
+		}
+	}
+
+	_, err := parseVisionConfig([]byte(`{
+		"ps_version": "v2",
+		"vision_config": {
+			"version": "c-radio_v4-h",
+			"min_num_patches": 2048,
+			"max_num_patches": 1024,
+			"args": {"model": "vit_huge_patch16_224"}
+		}
+	}`), nil)
+	if err == nil || !strings.Contains(err.Error(), "min_num_patches (2048) exceeds max_num_patches (1024)") {
+		t.Fatalf("parseVisionConfig error = %v, want reversed bounds error", err)
+	}
+}
+
+func TestParseVisionConfigRejectsUnknownArchitecture(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name:   "missing model",
+			config: `{"ps_version":"v2","vision_config":{"min_num_patches":1024,"max_num_patches":13312}}`,
+			want:   `unsupported RADIO model ""`,
+		},
+		{
+			name:   "unknown model",
+			config: `{"ps_version":"v2","vision_config":{"min_num_patches":1024,"max_num_patches":13312,"args":{"model":"vit_custom_patch16_224"}}}`,
+			want:   `unsupported RADIO model "vit_custom_patch16_224"`,
+		},
+		{
+			name:   "missing ps_version",
+			config: `{"vision_config":{"min_num_patches":1024,"max_num_patches":13312,"args":{"model":"vit_huge_patch16_224"}}}`,
+			want:   `unsupported RADIO ps_version ""`,
+		},
+		{
+			name:   "unsupported ps_version",
+			config: `{"ps_version":"v1","vision_config":{"min_num_patches":1024,"max_num_patches":13312,"args":{"model":"vit_huge_patch16_224"}}}`,
+			want:   `unsupported RADIO ps_version "v1"`,
+		},
+		{
+			name:   "mismatched head count",
+			config: `{"ps_version":"v2","vision_config":{"num_attention_heads":8,"min_num_patches":1024,"max_num_patches":13312,"args":{"model":"vit_huge_patch16_224"}}}`,
+			want:   `RADIO model "vit_huge_patch16_224" has num_attention_heads=16, config has 8`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseVisionConfig([]byte(tt.config), nil)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parseVisionConfig error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRadioPatchDimensions(t *testing.T) {
+	hiddenSize, patchSize, err := radioPatchDimensions([]int{1280, 3 * 16 * 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hiddenSize != 1280 || patchSize != 16 {
+		t.Fatalf("dimensions = (%d, %d), want (1280, 16)", hiddenSize, patchSize)
+	}
+
+	for _, dims := range [][]int{{1280}, {1280, 767}, {1280, 3 * 15}} {
+		if _, _, err := radioPatchDimensions(dims); err == nil {
+			t.Fatalf("radioPatchDimensions(%v) succeeded, want error", dims)
+		}
+	}
+}
+
+func TestRadioLayerCount(t *testing.T) {
+	const prefix = "vision_model.radio_model.model."
+	tensors := map[string]*mlx.Array{
+		prefix + "blocks.0.norm1.weight":   nil,
+		prefix + "blocks.1.norm1.weight":   nil,
+		prefix + "blocks.1.mlp.fc1.weight": nil,
+		"unrelated.blocks.2.weight":        nil,
+	}
+	if got, err := radioLayerCount(tensors, prefix); err != nil || got != 2 {
+		t.Fatalf("radioLayerCount = %d, %v, want 2, nil", got, err)
+	}
+
+	delete(tensors, prefix+"blocks.1.norm1.weight")
+	delete(tensors, prefix+"blocks.1.mlp.fc1.weight")
+	tensors[prefix+"blocks.2.norm1.weight"] = nil
+	if _, err := radioLayerCount(tensors, prefix); err == nil || !strings.Contains(err.Error(), "missing RADIO transformer block 1") {
+		t.Fatalf("radioLayerCount error = %v, want missing block 1", err)
+	}
+}
+
+func TestVisionConfigLoadsArchitectureFromWeights(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const prefix = "vision_model.radio_model.model."
+		weight := mlx.Zeros(mlx.DTypeBFloat16, 384, 3*16*16)
+		tensors := map[string]*mlx.Array{prefix + "patch_generator.embedder.weight": weight}
+		for i := range 12 {
+			tensors[fmt.Sprintf("%sblocks.%d.norm1.weight", prefix, i)] = weight
+		}
+
+		cfg := &VisionConfig{ModelName: "vit_small_patch16_224", NumAttentionHeads: 6}
+		if err := cfg.loadArchitecture(tensors, prefix); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.PatchSize != 16 || cfg.HiddenSize != 384 || cfg.NumHiddenLayers != 12 || cfg.HeadDim != 64 {
+			t.Fatalf("derived architecture = %+v", cfg)
+		}
+	})
+}
+
+func TestLoadVisionWeightsRejectsNonSquarePositionGrid(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const prefix = "vision_model.radio_model.model."
+		tensors := map[string]*mlx.Array{
+			prefix + "patch_generator.embedder.weight": mlx.Zeros(mlx.DTypeBFloat16, 4, 3),
+			prefix + "patch_generator.cls_token.token": mlx.Zeros(mlx.DTypeBFloat16, 1, 4),
+			prefix + "patch_generator.pos_embed":       mlx.Zeros(mlx.DTypeBFloat16, 1, 6, 4),
+		}
+		m := &Model{
+			VisionConfig:  &VisionConfig{},
+			VisionEncoder: &RadioVisionEncoder{},
+			Projector:     &VisionProjector{},
+		}
+		linears := model.NewLinearFactory(tensors, 0, 0, "", nil)
+		if err := m.loadVisionWeights(tensors, linears); err == nil || !strings.Contains(err.Error(), "6 positions, want a square grid") {
+			t.Fatalf("loadVisionWeights error = %v, want non-square position-grid error", err)
+		}
+	})
+}
+
+func TestResizeGrid2DPreservesSourceDType(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		x := mlx.FromValues([]float32{0, 1, 2, 3}, 1, 2, 2, 1).AsType(mlx.DTypeBFloat16)
+		got := resizeGrid2D(x, 3, 3)
+		mlx.Eval(got)
+		if got.DType() != mlx.DTypeBFloat16 {
+			t.Fatalf("resizeGrid2D dtype = %s, want bfloat16", got.DType())
+		}
+	})
+}
+
+func TestNemotronImagePatchBudget(t *testing.T) {
+	cfg := &VisionConfig{
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+		MaxModelLen:      16384,
+	}
+
+	// Context-bound, not memory-bound: model.MediaModel requires PrepareMedia
+	// to be deterministic for given segments.
+	if got, want := nemotronImagePatchBudget(cfg), 13312; got != want {
+		t.Fatalf("budget = %d, want %d", got, want)
+	}
+	if got, want := nemotronImagePatchBudget(&VisionConfig{DownsampleFactor: 2, MinNumPatches: 1024, MaxNumPatches: 13312, MaxModelLen: 512}), 2032; got != want {
+		t.Fatalf("context-limited budget = %d, want %d", got, want)
+	}
+}
+
+func TestNemotronImagePatchGrid(t *testing.T) {
+	cfg := &VisionConfig{
+		PatchSize:        16,
+		DownsampleFactor: 2,
+		MinNumPatches:    1024,
+		MaxNumPatches:    13312,
+	}
+
+	for _, tt := range []struct {
+		name       string
+		height     int
+		width      int
+		budget     int
+		wantMax    int
+		wantMin    int
+		wantFactor int
+	}{
+		{name: "square minimum", height: 512, width: 512, budget: 1024, wantMax: 1024, wantMin: 1024, wantFactor: 2},
+		{name: "large square capped", height: 2048, width: 2048, budget: 13312, wantMax: 13312, wantMin: 1024, wantFactor: 2},
+		{name: "wide image capped", height: 512, width: 2048, budget: 4096, wantMax: 4096, wantMin: 1024, wantFactor: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			patchH, patchW := nemotronImagePatchGrid(tt.height, tt.width, tt.budget, cfg)
+			if got := patchH * patchW; got > tt.wantMax || got < tt.wantMin {
+				t.Fatalf("patches = %d (%dx%d), want within [%d,%d]", got, patchH, patchW, tt.wantMin, tt.wantMax)
+			}
+			if patchH%tt.wantFactor != 0 || patchW%tt.wantFactor != 0 {
+				t.Fatalf("patch grid = %dx%d, want both divisible by %d", patchH, patchW, tt.wantFactor)
+			}
+		})
+	}
 }
