@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +30,26 @@ func TestCodexIntegration(t *testing.T) {
 	})
 }
 
+func TestEnsureCodexConfigUsesCodexHome(t *testing.T) {
+	osHome := filepath.Join(t.TempDir(), "home")
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	setTestHome(t, osHome)
+	t.Setenv("CODEX_HOME", codexHome)
+
+	if err := ensureCodexConfig("llama3.2", []LaunchModel{{Name: "llama3.2"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"model.json", codexProfileName + ".config.toml"} {
+		if _, err := os.Stat(filepath.Join(codexHome, name)); err != nil {
+			t.Fatalf("expected %s in CODEX_HOME: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(osHome, ".codex", "model.json")); !os.IsNotExist(err) {
+		t.Fatalf("launcher wrote outside CODEX_HOME: %v", err)
+	}
+}
+
 func TestCodexArgs(t *testing.T) {
 	c := &Codex{}
 	catalogPath := filepath.Join("tmp", "model.json")
@@ -38,6 +60,7 @@ func TestCodexArgs(t *testing.T) {
 		"-c", fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
 		"-c", fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
 		"-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath),
+		"-c", "model_context_window=65536",
 	}
 
 	tests := []struct {
@@ -53,7 +76,7 @@ func TestCodexArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := c.args(tt.model, catalogPath, tt.args)
+			got, err := c.args(tt.model, catalogPath, 65_536, tt.args)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -73,7 +96,7 @@ func TestCodexArgsRejectManagedProfile(t *testing.T) {
 		{"--profile=myprofile"},
 	} {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			_, err := c.args("llama3.2", "", extra)
+			_, err := c.args("llama3.2", "", 65_536, extra)
 			if err == nil || !strings.Contains(err.Error(), "manages --profile") {
 				t.Fatalf("args error = %v, want profile conflict", err)
 			}
@@ -93,11 +116,124 @@ func TestCodexArgsRejectManagedOverrides(t *testing.T) {
 		{"--config=model_providers.ollama-launch.base_url=\"http://other.invalid/v1/\""},
 	} {
 		t.Run(strings.Join(extra, " "), func(t *testing.T) {
-			_, err := c.args("llama3.2", "", extra)
+			_, err := c.args("llama3.2", "", 65_536, extra)
 			if err == nil {
 				t.Fatalf("args error = nil, want managed config conflict")
 			}
 		})
+	}
+}
+
+func TestCodexContextOverridePreservesSmallerAndClampsLarger(t *testing.T) {
+	tests := []struct {
+		name          string
+		available     int
+		inherited     int
+		extra         []string
+		wantEffective int
+		wantCorrected bool
+	}{
+		{name: "runtime default", available: 65_536, wantEffective: 65_536},
+		{name: "smaller inherited budget", available: 65_536, inherited: 32_768, wantEffective: 32_768},
+		{name: "larger inherited budget", available: 65_536, inherited: 1_000_000, wantEffective: 65_536, wantCorrected: true},
+		{name: "smaller CLI budget", available: 65_536, inherited: 48_000, extra: []string{"-c", "model_context_window=16384"}, wantEffective: 16_384},
+		{name: "larger CLI budget", available: 65_536, extra: []string{"--config=model_context_window=1000000"}, wantEffective: 65_536, wantCorrected: true},
+		{name: "compact short CLI budget", available: 65_536, extra: []string{"-c=model_context_window=32768"}, wantEffective: 32_768},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, cleaned, corrected, err := codexReconcileContextWindow(tt.available, tt.inherited, tt.extra)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.wantEffective || corrected != tt.wantCorrected {
+				t.Fatalf("effective = %d, corrected = %v; want %d, %v", got, corrected, tt.wantEffective, tt.wantCorrected)
+			}
+			for _, arg := range cleaned {
+				if strings.Contains(arg, "model_context_window") {
+					t.Fatalf("cleaned args retained managed override: %v", cleaned)
+				}
+			}
+		})
+	}
+}
+
+func TestCodexRunWritesRuntimeContextAndOverridesConflictingRoot(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsLog := filepath.Join(tmpDir, "codex-args.json")
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "codex-cli 0.153.2"
+  exit 0
+fi
+printf '%%s\n' "$@" > %q
+`, argsLog)
+	if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	configDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rootConfig := "model_context_window = 1000000\nmodel_auto_compact_token_limit = 60000\n"
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte(rootConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &Codex{
+		resolveContext: func(model LaunchModel, load bool) contextWindowResolution {
+			if !load {
+				t.Fatal("Codex Run must load before resolving context")
+			}
+			return contextWindowResolution{ContextLength: 65_536, RuntimeVerified: true, Source: contextWindowSourceRuntime}
+		},
+		resolveModelMetadata: func(model LaunchModel) LaunchModel {
+			model.Thinking, _ = codexThinkingRecommendationForRenderer("qwen3.8")
+			return model
+		},
+	}
+	if err := c.Run("qwen3.8:27b-mlx", []LaunchModel{{Name: "qwen3.8:27b-mlx", ContextLength: 262_144}}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	catalogData, err := os.ReadFile(filepath.Join(configDir, "model.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(catalogData, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if got := catalog.Models[0]["context_window"]; got != float64(65_536) {
+		t.Fatalf("catalog context_window = %v, want 65536", got)
+	}
+	levels, _ := catalog.Models[0]["supported_reasoning_levels"].([]any)
+	if len(levels) != 4 {
+		t.Fatalf("catalog supported_reasoning_levels length = %d, want 4", len(levels))
+	}
+	argsData, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(argsData), "model_context_window=65536") {
+		t.Fatalf("managed runtime override missing from args:\n%s", argsData)
+	}
+	rootData, err := os.ReadFile(filepath.Join(configDir, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rootData), "model_auto_compact_token_limit = 60000") {
+		t.Fatalf("compatible compaction setting was not preserved:\n%s", rootData)
 	}
 }
 
@@ -615,14 +751,14 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 			wantContext: 131072,
 		},
 		{
-			name: "OLLAMA_CONTEXT_LENGTH overrides local gguf inventory context",
+			name: "launcher environment does not override resolved model context",
 			model: LaunchModel{
 				Name:          "llama3.2",
 				ContextLength: 131072,
 				Details:       api.ModelDetails{Format: "gguf"},
 			},
 			envContextLen: "64000",
-			wantContext:   64000,
+			wantContext:   131072,
 		},
 		{
 			name: "safetensors uses inventory context only",
@@ -720,4 +856,162 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildCodexModelEntryReasoningLevels(t *testing.T) {
+	entry := buildCodexModelEntry(LaunchModel{
+		Name:         "qwen3.8:27b-mlx",
+		Capabilities: []modelpkg.Capability{modelpkg.CapabilityThinking},
+		Thinking: &api.ModelRecommendationThinking{
+			Values:  []any{false, "low", "medium", "high"},
+			Default: "high",
+		},
+	})
+
+	if got := entry["default_reasoning_level"]; got != "high" {
+		t.Fatalf("default_reasoning_level = %v, want high", got)
+	}
+
+	levels, ok := entry["supported_reasoning_levels"].([]any)
+	if !ok {
+		t.Fatalf("supported_reasoning_levels = %T, want []any", entry["supported_reasoning_levels"])
+	}
+	want := []string{"none", "low", "medium", "high"}
+	if len(levels) != len(want) {
+		t.Fatalf("supported_reasoning_levels length = %d, want %d", len(levels), len(want))
+	}
+	for i, level := range levels {
+		item, ok := level.(map[string]any)
+		if !ok {
+			t.Fatalf("reasoning level %d = %T, want object", i, level)
+		}
+		if got := item["effort"]; got != want[i] {
+			t.Errorf("reasoning level %d effort = %v, want %s", i, got, want[i])
+		}
+		if description, _ := item["description"].(string); description == "" {
+			t.Errorf("reasoning level %q has no description", want[i])
+		}
+	}
+}
+
+func TestCodexThinkingRecommendationForRenderer(t *testing.T) {
+	tests := []struct {
+		name         string
+		renderer     string
+		wantDefault  any
+		wantValues   []any
+		wantResolved bool
+	}{
+		{
+			name:         "Qwen 3.8 exposes graded effort",
+			renderer:     "qwen3.8",
+			wantDefault:  "high",
+			wantValues:   []any{false, "low", "medium", "high"},
+			wantResolved: true,
+		},
+		{
+			name:     "unknown renderer is left unchanged",
+			renderer: "qwen3.5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := codexThinkingRecommendationForRenderer(tt.renderer)
+			if ok != tt.wantResolved {
+				t.Fatalf("resolved = %v, want %v", ok, tt.wantResolved)
+			}
+			if !ok {
+				return
+			}
+			if got.Default != tt.wantDefault {
+				t.Errorf("default = %#v, want %#v", got.Default, tt.wantDefault)
+			}
+			if !slices.Equal(got.Values, tt.wantValues) {
+				t.Errorf("values = %#v, want %#v", got.Values, tt.wantValues)
+			}
+		})
+	}
+}
+
+func TestCodexThinkingRecommendationFromShowUsesModelfileRenderer(t *testing.T) {
+	shown := &api.ShowResponse{
+		Modelfile: "FROM qwen3.8:27b-mlx\nTEMPLATE {{ .Prompt }}\nRENDERER qwen3.8\nPARSER qwen3.5\n",
+	}
+
+	got, ok := codexThinkingRecommendationFromShow(shown)
+	if !ok {
+		t.Fatal("expected Qwen 3.8 thinking recommendation")
+	}
+	if got.Default != "high" || !slices.Equal(got.Values, []any{false, "low", "medium", "high"}) {
+		t.Fatalf("thinking recommendation = %#v, want Qwen 3.8 levels", got)
+	}
+}
+
+func TestResolveCodexModelMetadataFromEnvironment(t *testing.T) {
+	t.Run("selected alias uses show metadata", func(t *testing.T) {
+		var requestedModel string
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/show" {
+				t.Fatalf("path = %q, want /api/show", r.URL.Path)
+			}
+			var request api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			requestedModel = request.Model
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Modelfile:    "FROM qwen3.8:27b-mlx\nRENDERER qwen3.8\nPARSER qwen3.5\n",
+				Capabilities: []modelpkg.Capability{modelpkg.CapabilityCompletion, modelpkg.CapabilityThinking},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		got := resolveCodexModelMetadataFromEnvironment(LaunchModel{Name: "qwen-coding-alias"})
+		if requestedModel != "qwen-coding-alias" {
+			t.Fatalf("show model = %q, want selected alias", requestedModel)
+		}
+		if got.Thinking == nil || got.Thinking.Default != "high" {
+			t.Fatalf("thinking = %#v, want Qwen 3.8 recommendation", got.Thinking)
+		}
+		if !slices.Contains(got.Capabilities, modelpkg.CapabilityThinking) {
+			t.Fatalf("capabilities = %v, want thinking", got.Capabilities)
+		}
+	})
+
+	t.Run("show failure preserves inventory metadata", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+		thinking := &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}
+		model := LaunchModel{Name: "thinking-alias", Thinking: thinking}
+
+		got := resolveCodexModelMetadataFromEnvironment(model)
+		if got.Thinking != thinking {
+			t.Fatalf("thinking = %#v, want preserved inventory metadata", got.Thinking)
+		}
+	})
+
+	t.Run("cloud model does not call local show", func(t *testing.T) {
+		called := false
+		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		}))
+		defer server.Close()
+		t.Setenv("OLLAMA_HOST", server.URL)
+
+		model := LaunchModel{Name: "qwen3.8:cloud", Remote: true}
+		got := resolveCodexModelMetadataFromEnvironment(model)
+		if called {
+			t.Fatal("cloud model unexpectedly called local /api/show")
+		}
+		if got.Name != model.Name || !got.Remote {
+			t.Fatalf("model = %#v, want cloud metadata unchanged", got)
+		}
+	})
 }
