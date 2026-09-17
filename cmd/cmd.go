@@ -2396,6 +2396,12 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			if err := runWelcome(cmd.Context()); err != nil {
+				if !errors.Is(err, launch.ErrCancelled) {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+				return
+			}
 			runInteractiveTUI(cmd)
 		},
 	}

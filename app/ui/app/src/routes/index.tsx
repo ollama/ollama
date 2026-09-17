@@ -4,9 +4,10 @@ import { CURRENT_ONBOARDING_VERSION, homeChatId } from "@/lib/onboarding";
 
 export const Route = createFileRoute("/")({
   beforeLoad: async ({ context }) => {
-    const settingsData = await context.queryClient.ensureQueryData({
+    const settingsData = await context.queryClient.fetchQuery({
       queryKey: ["settings"],
       queryFn: getSettings,
+      staleTime: 0,
     });
     if (settingsData.settings.OnboardingVersion < CURRENT_ONBOARDING_VERSION) {
       throw redirect({ to: "/onboarding" });

@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/types/not"
+	"github.com/ollama/ollama/internal/onboarding"
 )
 
 type File struct {
@@ -185,10 +186,11 @@ type Settings struct {
 }
 
 // Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
-const CurrentOnboardingVersion = 1
+const CurrentOnboardingVersion = onboarding.CurrentVersion
 
 type Store struct {
-	// DBPath allows overriding the default database path (mainly for testing)
+	// DBPath overrides the database path. Custom stores keep their shared
+	// onboarding record alongside the database, isolated from the user's state.
 	DBPath string
 
 	// dbMu protects database initialization only
@@ -196,16 +198,7 @@ type Store struct {
 	db   *database
 }
 
-var defaultDBPath = func() string {
-	switch runtime.GOOS {
-	case "windows":
-		return filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "db.sqlite")
-	case "darwin":
-		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
-	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
-	}
-}()
+var defaultDBPath = onboarding.AppDatabasePath()
 
 // legacyConfigPath is the path to the old config.json file
 var legacyConfigPath = func() string {
@@ -401,6 +394,9 @@ func (s *Store) Settings() (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
+	if err := s.syncOnboarding(&settings); err != nil {
+		return Settings{}, fmt.Errorf("load shared onboarding state: %w", err)
+	}
 
 	// Set default models directory if not set
 	if settings.Models == "" {
@@ -427,7 +423,45 @@ func (s *Store) SetSettings(settings Settings) error {
 		return err
 	}
 
-	return s.db.setSettings(settings)
+	if err := s.db.setSettings(settings); err != nil {
+		return err
+	}
+	if settings.OnboardingVersion >= CurrentOnboardingVersion {
+		return s.syncOnboarding(&settings)
+	}
+	return nil
+}
+
+func (s *Store) onboardingState() onboarding.State {
+	if s.DBPath != "" {
+		return onboarding.State{Dir: filepath.Dir(s.DBPath)}
+	}
+	return onboarding.State{}
+}
+
+func (s *Store) syncOnboarding(settings *Settings) error {
+	state := s.onboardingState()
+	if settings.OnboardingVersion >= CurrentOnboardingVersion {
+		// Migrate existing app completion so the CLI recognizes it too.
+		// SQLite is already saved; publishing the shared record is best-effort.
+		if err := state.Complete(); err != nil {
+			slog.Warn("could not share onboarding completion", "error", err)
+		}
+		return nil
+	}
+	completed, err := state.Completed()
+	if err != nil {
+		slog.Warn("could not read shared onboarding completion", "error", err)
+		return nil
+	}
+	if !completed {
+		return nil
+	}
+	if err := s.db.markOnboardingCompleted(); err != nil {
+		return err
+	}
+	settings.OnboardingVersion = CurrentOnboardingVersion
+	return nil
 }
 
 func (s *Store) MarkCodexDesktopUsed() error {
