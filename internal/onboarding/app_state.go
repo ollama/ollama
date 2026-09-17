@@ -60,6 +60,11 @@ func readAppCompletion(path string) bool {
 	defer cancel()
 	var version int
 	if err := db.QueryRowContext(ctx, "SELECT onboarding_version FROM settings WHERE id = 1").Scan(&version); err != nil {
+		// Migration 16 -> 17 marks existing users completed at onboarding version 1.
+		var schema int
+		if err := db.QueryRowContext(ctx, "SELECT schema_version FROM settings WHERE id = 1").Scan(&schema); err == nil && schema >= 1 && schema <= 16 {
+			return CurrentVersion <= 1
+		}
 		slog.Debug("could not read app onboarding completion", "error", err)
 		return false
 	}

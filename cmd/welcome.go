@@ -52,6 +52,9 @@ func checkWelcomeAccount(ctx context.Context) tui.WelcomeAccount {
 	if err != nil {
 		return tui.WelcomeAccount{Err: err}
 	}
+	if status, err := client.CloudStatusExperimental(ctx); err == nil && status.Cloud.Disabled {
+		return tui.WelcomeAccount{CloudDisabled: true}
+	}
 	user, err := client.Whoami(ctx)
 	if err != nil {
 		var authErr api.AuthorizationError

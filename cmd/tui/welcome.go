@@ -11,9 +11,10 @@ import (
 )
 
 type WelcomeAccount struct {
-	SignedIn  bool
-	SigninURL string
-	Err       error
+	CloudDisabled bool
+	SignedIn      bool
+	SigninURL     string
+	Err           error
 }
 
 type WelcomeOptions struct {
@@ -83,7 +84,7 @@ func (m welcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case welcomeAccountMsg:
 		m.account, m.checking = WelcomeAccount(msg), false
 		m.cursor = 0
-		if m.account.SignedIn {
+		if m.account.SignedIn || m.account.CloudDisabled {
 			m.continued = true
 			return m, tea.Quit
 		}

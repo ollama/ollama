@@ -17,6 +17,7 @@ func updateWelcome(m *welcomeModel, msg tea.Msg) tea.Cmd {
 func TestWelcomeAccountRouting(t *testing.T) {
 	for _, account := range []WelcomeAccount{
 		{SignedIn: true},
+		{CloudDisabled: true},
 		{SigninURL: "https://ollama.com/connect?key=test"},
 		{Err: errors.New("offline")},
 	} {
@@ -33,10 +34,10 @@ func TestWelcomeAccountRouting(t *testing.T) {
 			t.Fatal("repeated Enter started another check")
 		}
 		updateWelcome(&m, check())
-		if checks != 1 || m.continued != account.SignedIn {
+		if checks != 1 || m.continued != (account.SignedIn || account.CloudDisabled) {
 			t.Fatalf("incorrect account routing: %+v", m)
 		}
-		if !account.SignedIn {
+		if !account.SignedIn && !account.CloudDisabled {
 			if m.step != welcomeAccount {
 				t.Fatal("signed-out users must reach account choices")
 			}

@@ -3,6 +3,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -311,6 +312,35 @@ func TestAppCompletionReachesCLI(t *testing.T) {
 			}
 			if needed, err := config.NeedsWelcome(); err != nil || needed {
 				t.Fatalf("app completion did not reach CLI: %v, %v", needed, err)
+			}
+		})
+	}
+}
+
+func TestLegacyAppCompletionReachesCLI(t *testing.T) {
+	for _, schema := range []int{1, 16, 17, 0} {
+		t.Run(fmt.Sprint(schema), func(t *testing.T) {
+			s := setupPairedOnboarding(t)
+			if err := s.ensureDB(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.conn.Exec("ALTER TABLE settings DROP COLUMN onboarding_version"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.conn.Exec("UPDATE settings SET schema_version = ?", schema); err != nil {
+				t.Fatal(err)
+			}
+			wantWelcome := schema < 1 || schema > 16
+			if needed, err := config.NeedsWelcome(); err != nil || needed != wantWelcome {
+				t.Fatalf("welcome needed=%v, err=%v; want %v", needed, err, wantWelcome)
+			}
+			var unchanged int
+			if err := s.db.conn.QueryRow("SELECT schema_version FROM settings WHERE id = 1").Scan(&unchanged); err != nil || unchanged != schema {
+				t.Fatalf("CLI changed the app schema: %d, %v", unchanged, err)
+			}
+			var columns int
+			if err := s.db.conn.QueryRow("SELECT count(*) FROM pragma_table_info('settings') WHERE name = 'onboarding_version'").Scan(&columns); err != nil || columns != 0 {
+				t.Fatalf("CLI migrated the app database: columns=%d, err=%v", columns, err)
 			}
 		})
 	}
