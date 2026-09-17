@@ -345,7 +345,7 @@ WEBVIEW_API void webview_unbind(webview_t w, const char *name);
  * @param seq The sequence number of the binding call. Pass along the value
  *            received in the binding handler (see webview_bind()).
  * @param status A status of zero tells the JS side that the binding call was
- *               succesful; any other value indicates an error.
+ *               successful; any other value indicates an error.
  * @param result The result of the binding call to be returned to the JS side.
  *               This must either be a valid JSON value or an empty string for
  *               the primitive JS value @c undefined.
@@ -2535,9 +2535,19 @@ inline SIZE make_window_frame_size(HWND window, int width, int height,
   return {frame_width, frame_height};
 }
 
+inline bool is_dark_theme_enabled() {
+  constexpr auto *sub_key =
+      L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
+  reg_key key(HKEY_CURRENT_USER, sub_key, 0, KEY_READ);
+  if (!key.is_open()) {
+    // Default is light theme
+    return false;
+  }
+  return key.query_uint(L"AppsUseLightTheme", 1) == 0;
+}
+
 inline void apply_window_theme(HWND window) {
-  // Ollama uses a light-only application appearance.
-  constexpr bool dark_theme_enabled = false;
+  auto dark_theme_enabled = is_dark_theme_enabled();
 
   // Use "immersive dark mode" on systems that support it.
   // Changes the color of the window's title bar (light or dark).

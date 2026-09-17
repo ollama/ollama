@@ -6,8 +6,9 @@ Ollama's API responses include metrics that can be used for measuring performanc
 
 * `total_duration`: How long the response took to generate
 * `load_duration`: How long the model took to load
-* `prompt_eval_count`: How many input tokens were processed
-* `prompt_eval_duration`: How long it took to evaluate the prompt
+* `prompt_eval_count`: How many input tokens were in the prompt
+* `prompt_eval_cached_count`: How many prompt tokens were read from the cache
+* `prompt_eval_duration`: How long it took to evaluate the uncached prompt tokens
 * `eval_count`: How many output tokens were processes
 * `eval_duration`: How long it took to generate the output tokens
 
@@ -27,6 +28,7 @@ For endpoints that return usage metrics, the response body will include the usag
   "total_duration": 174560334,
   "load_duration": 101397084,
   "prompt_eval_count": 11,
+  "prompt_eval_cached_count": 8,
   "prompt_eval_duration": 13074791,
   "eval_count": 18,
   "eval_duration": 52479709

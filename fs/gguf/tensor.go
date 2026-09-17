@@ -17,11 +17,11 @@ func (ti TensorInfo) Valid() bool {
 }
 
 func (ti TensorInfo) NumValues() int64 {
-	var numItems int64 = 1
-	for _, dim := range ti.Shape {
-		numItems *= int64(dim)
+	n, ok := ti.numValues()
+	if !ok {
+		return -1
 	}
-	return numItems
+	return n
 }
 
 func (ti TensorInfo) numValues() (int64, bool) {
@@ -41,7 +41,11 @@ func (ti TensorInfo) numValues() (int64, bool) {
 
 // NumBytes returns the number of bytes in the tensor.
 func (ti TensorInfo) NumBytes() int64 {
-	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
+	n, ok := ti.numBytes()
+	if !ok {
+		return -1
+	}
+	return n
 }
 
 func (ti TensorInfo) numBytes() (int64, bool) {
@@ -143,6 +147,10 @@ const (
 	tensorTypeIQ4_NL_4_4
 	tensorTypeIQ4_NL_4_8
 	tensorTypeIQ4_NL_8_8
+
+	TensorTypeMXFP4
+	TensorTypeNVFP4
+	TensorTypeQ1_0
 )
 
 func (tt TensorType) NumBytes() float64 {
@@ -209,6 +217,12 @@ func (tt TensorType) typeSize() int64 {
 		return tt.blockSize()/8 + tt.blockSize()/16 + tt.blockSize()/32
 	case TensorTypeBF16:
 		return 2
+	case TensorTypeMXFP4:
+		return 1 + tt.blockSize()/2
+	case TensorTypeNVFP4:
+		return 4 + tt.blockSize()/2
+	case TensorTypeQ1_0:
+		return 2 + tt.blockSize()/8
 	default:
 		return 0
 	}
@@ -225,13 +239,18 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeF64,
 		TensorTypeBF16:
 		return 1
+	case TensorTypeNVFP4:
+		return 64
+	case TensorTypeQ1_0:
+		return 128
 	case TensorTypeQ4_0,
 		TensorTypeQ4_1,
 		TensorTypeQ5_0,
 		TensorTypeQ5_1,
 		TensorTypeQ8_0,
 		TensorTypeQ8_1,
-		tensorTypeIQ4_NL:
+		tensorTypeIQ4_NL,
+		TensorTypeMXFP4:
 		return 32
 	default:
 		return 256
@@ -318,6 +337,12 @@ func (tt TensorType) String() string {
 		return "iq4_nl_4_8"
 	case tensorTypeIQ4_NL_8_8:
 		return "iq4_nl_8_8"
+	case TensorTypeMXFP4:
+		return "mxfp4"
+	case TensorTypeNVFP4:
+		return "nvfp4"
+	case TensorTypeQ1_0:
+		return "q1_0"
 	default:
 		return "unknown"
 	}

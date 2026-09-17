@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Security/Security.h>
+#include <stddef.h>
+#include <stdint.h>
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification;
@@ -17,8 +19,11 @@ enum AppMove
 };
 
 void run(bool showOnboarding, bool startHidden);
-void killOtherInstances();
-bool otherOllamaInstanceRunning(void);
+typedef struct {
+    int pid;
+    int64_t started_at;
+} AppProcessIdentity;
+bool otherOllamaProcesses(AppProcessIdentity **processes, size_t *count);
 enum AppMove askToMoveToApplications();
 int createSymlinkWithAuthorization();
 int installSymlink(const char *cliPath);
@@ -50,6 +55,11 @@ bool RestoreClaudeGatewayForShutdown(void);
 bool IsClaudeGatewayConfigured(void);
 bool IsClaudeDesktopInstalled(void);
 bool IsClaudeDesktopRunning(void);
+bool IsCodexDesktopInstalled(void);
+bool IsCodexDesktopConnected(void);
+bool IsCodexDesktopRunning(void);
+unsigned long long CodexDesktopRequestCount(void);
+bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
 char *ClaudeGatewayErrorMessage(void);
@@ -65,5 +75,7 @@ enum ClaudeInstallResult
     ClaudeInstallFailed,
 };
 enum ClaudeInstallResult installClaudeDesktop(void);
+enum ClaudeInstallResult installCodexDesktop(void);
 char *ClaudeDesktopDownloadRequest(char **authorization);
 bool InstallClaudeDesktopArchive(const char *archivePath);
+bool InstallCodexDesktopDiskImage(const char *imagePath);

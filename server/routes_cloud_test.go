@@ -215,7 +215,8 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 	})
 
 	t.Run("api chat", func(t *testing.T) {
-		upstream, capture := newUpstream(t, `{"message":{"role":"assistant","content":"ok"},"done":true}`)
+		upstreamResponse := `{"message":{"role":"assistant","content":"ok"},"done":true,"prompt_eval_count":12,"prompt_eval_cached_count":9}`
+		upstream, capture := newUpstream(t, upstreamResponse)
 		defer upstream.Close()
 
 		original := cloudProxyBaseURL
@@ -246,6 +247,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+		if got := string(body); got != upstreamResponse {
+			t.Fatalf("cloud response changed: got %q, want %q", got, upstreamResponse)
 		}
 
 		if capture.path != "/api/chat" {
@@ -387,7 +391,8 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 	})
 
 	t.Run("v1 chat completions bypasses conversion", func(t *testing.T) {
-		upstream, capture := newUpstream(t, `{"id":"chatcmpl_test","object":"chat.completion"}`)
+		upstreamResponse := `{"id":"chatcmpl_test","object":"chat.completion","usage":{"prompt_tokens":12,"prompt_tokens_details":{"cached_tokens":9},"completion_tokens":3,"total_tokens":15}}`
+		upstream, capture := newUpstream(t, upstreamResponse)
 		defer upstream.Close()
 
 		original := cloudProxyBaseURL
@@ -419,6 +424,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+		if got := string(body); got != upstreamResponse {
+			t.Fatalf("cloud response changed: got %q, want %q", got, upstreamResponse)
 		}
 
 		if capture.path != "/v1/chat/completions" {
@@ -811,10 +819,10 @@ func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
 			w.Header().Set("Content-Type", "application/x-ndjson")
 			if chatCalls == 1 {
 				_, _ = io.WriteString(w, `{"message":{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"web_search","arguments":{"query":"latest Ollama release"}}}]},"done":false}`+"\n")
-				_, _ = io.WriteString(w, `{"message":{"role":"assistant"},"done":true,"prompt_eval_count":12,"eval_count":4}`+"\n")
+				_, _ = io.WriteString(w, `{"message":{"role":"assistant"},"done":true,"prompt_eval_count":12,"prompt_eval_cached_count":5,"eval_count":4}`+"\n")
 				return
 			}
-			_, _ = io.WriteString(w, `{"message":{"role":"assistant","content":"Ollama [release](https://ollama.com/release)."},"done":true,"prompt_eval_count":20,"eval_count":6}`)
+			_, _ = io.WriteString(w, `{"message":{"role":"assistant","content":"Ollama [release](https://ollama.com/release)."},"done":true,"prompt_eval_count":20,"prompt_eval_cached_count":17,"eval_count":6}`)
 		case "/api/web_search":
 			searchCalls++
 			w.Header().Set("Content-Type", "application/json")
@@ -872,6 +880,9 @@ func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
 	}
 	if bytes.Contains(body, []byte("response.function_call_arguments")) || bytes.Contains(body, []byte(`"type":"function_call"`)) {
 		t.Fatalf("private web_search function leaked: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"input_tokens_details":{"cached_tokens":22}`)) {
+		t.Fatalf("missing aggregated cached token usage: %s", body)
 	}
 }
 

@@ -319,7 +319,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	generation, models := p.modelSnapshotWithGeneration()
+	_, models := p.modelSnapshot()
 	switch r.URL.Path {
 	case "/v1/models":
 		if r.Method != http.MethodGet {
@@ -330,7 +330,7 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := p.refreshModelCatalog(r.Context()); err != nil {
 				p.logger.Debug("could not refresh Claude model catalog", "error", err)
 			}
-			_, models = p.modelSnapshotWithGeneration()
+			_, models = p.modelSnapshot()
 		}
 		p.serveModels(w, r.Context(), models)
 		return
@@ -339,14 +339,14 @@ func (p *ClaudeDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		p.serveTokenCount(w, r, generation, models)
+		p.serveTokenCount(w, r, models)
 		return
 	case "/v1/messages":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
-		if err := p.routeModel(r, generation, models); err != nil {
+		if err := p.routeModel(r, models); err != nil {
 			var accessErr *claudeDesktopAccessError
 			if errors.As(err, &accessErr) {
 				writeAnthropicError(w, accessErr.status, accessErr)
@@ -554,7 +554,7 @@ func (p *ClaudeDesktop) serveModels(w http.ResponseWriter, ctx context.Context, 
 	}
 }
 
-func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, generation uint64, models []ClaudeDesktopModel) {
+func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, models []ClaudeDesktopModel) {
 	body, err := readRequestBody(r)
 	if err != nil {
 		writeAnthropicError(w, http.StatusBadRequest, err)
@@ -575,10 +575,8 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}
-	if !p.modelGenerationMatches(generation) {
-		writeAnthropicError(w, http.StatusConflict, errors.New("Claude model catalog changed; try again"))
-		return
-	}
+	// Continue with the model snapshot that admitted this request. A concurrent
+	// catalog refresh must not turn a valid token-count request into an error.
 	if access := p.modelAccess(r.Context(), selected); access.Availability != ClaudeDesktopAvailabilityAvailable {
 		accessErr := newClaudeDesktopAccessError(selected, access)
 		writeAnthropicError(w, accessErr.status, accessErr)
@@ -593,7 +591,7 @@ func (p *ClaudeDesktop) serveTokenCount(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-func (p *ClaudeDesktop) routeModel(r *http.Request, generation uint64, models []ClaudeDesktopModel) error {
+func (p *ClaudeDesktop) routeModel(r *http.Request, models []ClaudeDesktopModel) error {
 	body, err := readRequestBody(r)
 	if err != nil {
 		return err
@@ -615,9 +613,8 @@ func (p *ClaudeDesktop) routeModel(r *http.Request, generation uint64, models []
 			p.logger.Debug("could not refresh Claude model catalog", "error", err)
 		}
 	}
-	if !p.modelGenerationMatches(generation) {
-		return errors.New("Claude model catalog changed; try again")
-	}
+	// Continue with the model snapshot that admitted this request. A concurrent
+	// catalog refresh may affect later requests, but not one already in flight.
 	if access := p.modelAccess(r.Context(), selected); access.Availability != ClaudeDesktopAvailabilityAvailable {
 		return newClaudeDesktopAccessError(selected, access)
 	}
@@ -748,12 +745,6 @@ func claudeDesktopModelForID(models []ClaudeDesktopModel, id string) (ClaudeDesk
 		}
 	}
 	return ClaudeDesktopModel{}, fmt.Errorf("unknown Claude model %q", id)
-}
-
-func (p *ClaudeDesktop) modelGenerationMatches(generation uint64) bool {
-	p.modelsMu.RLock()
-	defer p.modelsMu.RUnlock()
-	return p.modelsGeneration == generation
 }
 
 func (p *ClaudeDesktop) accessFacts(ctx context.Context) (ClaudeDesktopAccessState, map[string]struct{}, bool) {

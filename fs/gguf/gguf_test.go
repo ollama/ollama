@@ -2,15 +2,19 @@ package gguf_test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 )
 
 func createBinFile(tb testing.TB) string {
@@ -21,7 +25,7 @@ func createBinFile(tb testing.TB) string {
 	}
 	defer f.Close()
 
-	kv := ggml.KV{
+	kv := gguftest.KV{
 		"general.architecture":                   "llama",
 		"llama.block_count":                      uint32(8),
 		"llama.embedding_length":                 uint32(3),
@@ -38,46 +42,46 @@ func createBinFile(tb testing.TB) string {
 		"tokenizer.ggml.scores":                  []float32{0, 1},
 	}
 
-	tensors := []*ggml.Tensor{
+	tensors := []*gguftest.Tensor{
 		{
 			Name:     "token_embd.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{2, 3},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*2*3)),
 		},
 		{
 			Name:     "output.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{3, 2},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*3*2)),
 		},
 	}
 
 	for i := range 8 {
-		tensors = append(tensors, &ggml.Tensor{
+		tensors = append(tensors, &gguftest.Tensor{
 			Name:     "blk." + strconv.Itoa(i) + ".attn_q.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{3, 3},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*3*3)),
-		}, &ggml.Tensor{
+		}, &gguftest.Tensor{
 			Name:     "blk." + strconv.Itoa(i) + ".attn_k.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{3, 3},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*3*3)),
-		}, &ggml.Tensor{
+		}, &gguftest.Tensor{
 			Name:     "blk." + strconv.Itoa(i) + ".attn_v.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{3, 3},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*3*3)),
-		}, &ggml.Tensor{
+		}, &gguftest.Tensor{
 			Name:     "blk." + strconv.Itoa(i) + ".attn_output.weight",
-			Kind:     0,
+			Type:     gguf.TensorTypeF32,
 			Shape:    []uint64{3, 3},
 			WriterTo: bytes.NewBuffer(make([]byte, 4*3*3)),
 		})
 	}
 
-	if err := ggml.WriteGGUF(f, kv, tensors); err != nil {
+	if err := gguftest.Write(f, kv, tensors); err != nil {
 		tb.Fatal(err)
 	}
 
@@ -224,6 +228,146 @@ func TestRead(t *testing.T) {
 	if b.Len() != int(ti.NumBytes()) {
 		t.Errorf(`ReadFrom TensorReader("output.weight") length = %d, want %d`, b.Len(), ti.NumBytes())
 	}
+}
+
+func TestOpenCleansUpPartialLazyReader(t *testing.T) {
+	p := createFile(t, []byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0,
+	})
+
+	runtime.GC()
+	before := runtime.NumGoroutine()
+
+	for range 20 {
+		f, err := gguf.Open(p)
+		if err == nil {
+			f.Close()
+			t.Fatal("gguf.Open truncated header succeeded")
+		}
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		runtime.GC()
+		runtime.Gosched()
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if after := runtime.NumGoroutine(); after > before+2 {
+		t.Fatalf("goroutines after repeated failed gguf.Open = %d, want at most %d", after, before+2)
+	}
+}
+
+func TestOpenRejectsInvalidMagic(t *testing.T) {
+	data := append([]byte("nope"), make([]byte, 20)...)
+	f, err := gguf.Open(createFile(t, data))
+	if f != nil {
+		f.Close()
+		t.Fatal("gguf.Open returned a file for invalid magic")
+	}
+	if !errors.Is(err, gguf.ErrUnsupported) {
+		t.Fatalf("gguf.Open error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestOpenDoesNotPreallocateDeclaredArray(t *testing.T) {
+	const allocationLimit = 1 << 20
+
+	for _, elementType := range []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12} {
+		t.Run(strconv.FormatUint(uint64(elementType), 10), func(t *testing.T) {
+			var data []byte
+			data = append(data, 'G', 'G', 'U', 'F')
+			data = binary.LittleEndian.AppendUint32(data, 3)
+			data = binary.LittleEndian.AppendUint64(data, 0)
+			data = binary.LittleEndian.AppendUint64(data, 1)
+			data = binary.LittleEndian.AppendUint64(data, 3)
+			data = append(data, "big"...)
+			data = binary.LittleEndian.AppendUint32(data, 9)
+			data = binary.LittleEndian.AppendUint32(data, elementType)
+			data = binary.LittleEndian.AppendUint64(data, 8_000_000)
+
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			g, err := gguf.Open(createFile(t, data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range g.KeyValues() {
+			}
+			if err := g.Close(); err != nil {
+				t.Fatal(err)
+			}
+			runtime.ReadMemStats(&after)
+
+			if allocated := after.TotalAlloc - before.TotalAlloc; allocated > allocationLimit {
+				t.Fatalf("declared array allocated %d bytes, want at most %d", allocated, allocationLimit)
+			}
+		})
+	}
+}
+
+func FuzzOpen(f *testing.F) {
+	validPath := createBinFile(f)
+	validData, err := os.ReadFile(validPath)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(validData)
+	f.Add([]byte{})
+	f.Add([]byte{'G', 'G', 'U', 'F'})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		1, 0, 0, 0, 0, 0, 0, 0,
+	})
+	f.Add([]byte{
+		'G', 'G', 'U', 'F',
+		3, 0, 0, 0,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			t.Skip("bounded fuzz input")
+		}
+
+		g, err := gguf.Open(createFile(t, data))
+		if err != nil {
+			return
+		}
+		defer g.Close()
+
+		for i, kv := range g.KeyValues() {
+			if i > 4096 {
+				break
+			}
+			_ = kv.Valid()
+		}
+		for i, tensor := range g.TensorInfos() {
+			if i > 4096 {
+				break
+			}
+			_ = tensor.Valid()
+		}
+		_ = g.Err()
+	})
+}
+
+func createFile(tb testing.TB, b []byte) string {
+	tb.Helper()
+
+	p := tb.TempDir() + "/model.gguf"
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		tb.Fatal(err)
+	}
+
+	return p
 }
 
 func BenchmarkRead(b *testing.B) {

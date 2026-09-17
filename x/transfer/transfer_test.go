@@ -1680,6 +1680,10 @@ func BenchmarkUploadThroughput(b *testing.B) {
 		case http.MethodPost:
 			w.Header().Set("Location", fmt.Sprintf("%s/v2/library/_/blobs/uploads/1", serverURL))
 			w.WriteHeader(http.StatusAccepted)
+		case http.MethodPatch:
+			io.Copy(io.Discard, r.Body)
+			w.Header().Set("Location", r.URL.Path)
+			w.WriteHeader(http.StatusAccepted)
 		case http.MethodPut:
 			io.Copy(io.Discard, r.Body)
 			w.WriteHeader(http.StatusCreated)

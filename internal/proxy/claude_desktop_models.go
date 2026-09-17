@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 
@@ -49,44 +50,35 @@ func ClaudeDesktopRoutes() []ClaudeDesktopRoute {
 	return routes
 }
 
-// DefaultClaudeDesktopMappings returns the initial Claude-to-Ollama mapping
-// for the current account tier. Accounts without Pro access expose only the
-// free Sonnet route; the remaining routes intentionally stay unassigned.
-func DefaultClaudeDesktopMappings(fullAccess bool) map[string]string {
-	if !fullAccess {
-		return map[string]string{
-			"claude-sonnet-5": "gemma4:31b-cloud",
-		}
-	}
+// DefaultClaudeDesktopMappings returns the safe compatibility fallback used
+// when Ollama.com does not provide an app-specific mapping contract.
+func DefaultClaudeDesktopMappings() map[string]string {
 	return map[string]string{
-		"claude-fable-5":            "kimi-k3:cloud",
-		"claude-opus-5":             "glm-5.2:cloud",
-		"claude-sonnet-5":           "deepseek-v4-flash:0731:cloud",
-		"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
-		"claude-sonnet-4-6":         "deepseek-v4-pro:cloud",
+		"claude-sonnet-5": "gemma4:31b-cloud",
 	}
 }
 
-// DefaultClaudeDesktopMappingsForModels resolves the default recommendation
-// names to the exact Ollama routes in the current catalog. This preserves
-// server-owned aliases such as the current DeepSeek Flash revision.
-func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel, fullAccess bool) map[string]string {
-	mappings := make(map[string]string, MaxClaudeDesktopModels)
-	wanted := map[string]string{
-		"claude-sonnet-5": "gemma4:31b-cloud",
-	}
-	if fullAccess {
-		wanted = map[string]string{
-			"claude-fable-5":            "kimi-k3:cloud",
-			"claude-opus-5":             "glm-5.2:cloud",
-			"claude-sonnet-5":           "deepseek-v4-flash",
-			"claude-haiku-4-5-20251001": "gemma4:31b-cloud",
-			"claude-sonnet-4-6":         "deepseek-v4-pro",
+// DefaultClaudeDesktopMappingsForModels resolves the server contract, or the
+// compatibility fallback when it is absent, against the current catalog.
+func DefaultClaudeDesktopMappingsForModels(available []ClaudeDesktopModel) map[string]string {
+	wanted := DefaultClaudeDesktopMappings()
+	for _, model := range available {
+		if model.defaultMappings != nil {
+			wanted = make(map[string]string, len(*model.defaultMappings))
+			for route, mapping := range *model.defaultMappings {
+				wanted[route] = mapping.Model
+			}
+			break
 		}
 	}
+	return resolveClaudeDesktopMappings(available, wanted)
+}
+
+func resolveClaudeDesktopMappings(available []ClaudeDesktopModel, wanted map[string]string) map[string]string {
+	mappings := make(map[string]string, len(wanted))
 	for _, model := range available {
 		for route, name := range wanted {
-			if model.Name == name {
+			if isClaudeDesktopRouteID(route) && (model.Name == name || model.OllamaModel == name) {
 				mappings[route] = model.OllamaModel
 			}
 		}
@@ -107,6 +99,7 @@ type ClaudeDesktopModel struct {
 	Recommended      bool
 	AccountCloud     bool
 	entitlementKnown bool
+	defaultMappings  *api.ModelRecommendationMappings
 	gateway          gatewayModel
 }
 
@@ -149,6 +142,12 @@ func FetchClaudeDesktopModels(client *http.Client, req *http.Request) ([]ClaudeD
 	}
 	if len(cloudModels) == 0 {
 		return nil, errors.New("Claude Desktop recommendations contain no cloud models")
+	}
+	if payload.Mappings != nil {
+		mappings := maps.Clone(*payload.Mappings)
+		for i := range cloudModels {
+			cloudModels[i].defaultMappings = &mappings
+		}
 	}
 	return cloudModels, nil
 }
@@ -208,6 +207,46 @@ func UnverifyClaudeDesktopCloudEntitlements(models []ClaudeDesktopModel) []Claud
 		if models[i].Cloud {
 			models[i].entitlementKnown = false
 		}
+	}
+	return models
+}
+
+// PreserveClaudeDesktopCloudEntitlements carries verified account facts into
+// an offline catalog without replacing its built-in routes or weakening its
+// last-known plan requirement.
+func PreserveClaudeDesktopCloudEntitlements(models, previous []ClaudeDesktopModel) []ClaudeDesktopModel {
+	models = UnverifyClaudeDesktopCloudEntitlements(models)
+	known := make(map[string]ClaudeDesktopModel, len(previous)*2)
+	for _, model := range previous {
+		known[model.Name] = model
+		known[model.OllamaModel] = model
+	}
+	for i, model := range models {
+		prior, ok := known[model.Name]
+		if !ok {
+			prior, ok = known[model.OllamaModel]
+		}
+		if !ok {
+			continue
+		}
+		models[i].AccountCloud = prior.AccountCloud
+		models[i].entitlementKnown = prior.entitlementKnown
+		required := strings.TrimSpace(models[i].RequiredPlan)
+		priorRequired := strings.TrimSpace(prior.RequiredPlan)
+		if (required == "" || strings.EqualFold(required, "free")) && priorRequired != "" && !strings.EqualFold(priorRequired, "free") {
+			models[i].RequiredPlan = priorRequired
+		}
+	}
+	return models
+}
+
+// WithoutClaudeDesktopRecommendationMappings returns a catalog without
+// server-provided defaults. Callers use this when retaining model metadata
+// across an offline refresh, where the prior mapping contract is stale.
+func WithoutClaudeDesktopRecommendationMappings(models []ClaudeDesktopModel) []ClaudeDesktopModel {
+	models = cloneClaudeDesktopModels(models)
+	for i := range models {
+		models[i].defaultMappings = nil
 	}
 	return models
 }

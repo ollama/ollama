@@ -146,7 +146,7 @@ func TestLlamaCppBinaryCandidates(t *testing.T) {
 	}
 }
 
-func TestFindLlamaCppBinaryPrefersPlatformBuildOutput(t *testing.T) {
+func TestLlamaCppBinarySearchPrefersPlatformBuildOutput(t *testing.T) {
 	root := t.TempDir()
 	cpuDir := filepath.Join(root, "build", "llama-server-cpu", "bin")
 	cudaDir := filepath.Join(root, "build", "llama-server-cuda", "bin")

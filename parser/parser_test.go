@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,8 +20,6 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
-	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -843,46 +840,21 @@ MESSAGE assistant Hi! How are you?
 	}
 }
 
-func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
+func createTestFile(t *testing.T, contents string) (string, string) {
 	t.Helper()
 
-	h := sha256.New()
-	n, err := io.Copy(h, r)
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "model.gguf")
+	data := []byte(contents)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-
-	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
-}
-
-func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
-	t.Helper()
-
-	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-
-	var base convert.KV = map[string]any{"general.architecture": "test"}
-	maps.Copy(base, kv)
-
-	if err := ggml.WriteGGUF(f, base, ti); err != nil {
-		t.Fatal(err)
-	}
-	// Calculate sha256 of file
-	if _, err := f.Seek(0, 0); err != nil {
-		t.Fatal(err)
-	}
-
-	digest, _ := getSHA256Digest(t, f)
-
-	return f.Name(), digest
+	digest := sha256.Sum256(data)
+	return path, fmt.Sprintf("sha256:%x", digest)
 }
 
 func TestCreateRequestFiles(t *testing.T) {
-	n1, d1 := createBinFile(t, nil, nil)
-	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
+	n1, d1 := createTestFile(t, "first")
+	n2, d2 := createTestFile(t, "second")
 
 	cases := []struct {
 		input    string
@@ -917,6 +889,91 @@ func TestCreateRequestFiles(t *testing.T) {
 		if diff := cmp.Diff(actual, c.expected); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
+	}
+}
+
+func TestCreateRequestFileGlob(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"model-00001-of-00002.gguf": "first",
+		"model-00002-of-00002.gguf": "second",
+		"projector.gguf":            "projector",
+	}
+	want := make(map[string]string)
+	for name, contents := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(name, "model-") {
+			digest := sha256.Sum256([]byte(contents))
+			want[path] = fmt.Sprintf("sha256:%x", digest)
+		}
+	}
+
+	modelfile, err := ParseFile(strings.NewReader("FROM ./model-*.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, req.Files); diff != "" {
+		t.Errorf("files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestDraftFileGlob(t *testing.T) {
+	dir := t.TempDir()
+	want := make(map[string]string)
+	for i, contents := range []string{"first", "second"} {
+		path := filepath.Join(dir, fmt.Sprintf("draft-%05d-of-00002.gguf", i+1))
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256([]byte(contents))
+		want[path] = fmt.Sprintf("sha256:%x", digest)
+	}
+
+	modelfile, err := ParseFile(strings.NewReader("FROM base\nDRAFT ./draft-*.gguf\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, req.DraftFiles); diff != "" {
+		t.Errorf("draft files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestCreateRequestFileGlobNoMatchUsesModelName(t *testing.T) {
+	const ref = "model-*.gguf"
+	modelfile, err := ParseFile(strings.NewReader("FROM " + ref + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := modelfile.CreateRequest(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.From != ref {
+		t.Fatalf("from = %q, want %q", req.From, ref)
+	}
+	if len(req.Files) != 0 {
+		t.Fatalf("files = %v, want none", req.Files)
+	}
+}
+
+func TestCreateRequestFileGlobRejectsBadPattern(t *testing.T) {
+	modelfile, err := ParseFile(strings.NewReader("FROM [\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modelfile.CreateRequest(t.TempDir()); !errors.Is(err, filepath.ErrBadPattern) {
+		t.Fatalf("CreateRequest() error = %v, want %v", err, filepath.ErrBadPattern)
 	}
 }
 

@@ -7,9 +7,12 @@ type ConfigV2 struct {
 	ModelFamilies []string `json:"model_families"`
 	ModelType     string   `json:"model_type"` // shown as Parameter Size
 	FileType      string   `json:"file_type"`  // shown as Quantization Level
-	Renderer      string   `json:"renderer,omitempty"`
-	Parser        string   `json:"parser,omitempty"`
-	Requires      string   `json:"requires,omitempty"`
+	// GenerationDefaults stores model-authored sampler defaults. These are
+	// lower precedence than Modelfile PARAMETERs and request options.
+	GenerationDefaults GenerationDefaults `json:"generation_defaults,omitempty"`
+	Renderer           string             `json:"renderer,omitempty"`
+	Parser             string             `json:"parser,omitempty"`
+	Requires           string             `json:"requires,omitempty"`
 
 	RemoteHost  string `json:"remote_host,omitempty"`
 	RemoteModel string `json:"remote_model,omitempty"`
@@ -20,10 +23,6 @@ type ConfigV2 struct {
 	EmbedLen     int      `json:"embedding_length,omitempty"`
 	BaseName     string   `json:"base_name,omitempty"`
 	Draft        *Draft   `json:"draft,omitempty"`
-
-	// required by spec
-	Architecture string `json:"architecture"`
-	OS           string `json:"os"`
 }
 
 // Draft describes an auxiliary draft model stored in the same manifest.

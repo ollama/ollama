@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -333,7 +335,10 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	previousLoader := claudeModelsLoader
 	previousResolver := claudeCloudModelsResolver
 	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
-		return proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}), "endpoint"
+		mappings := api.ModelRecommendationMappings{
+			"claude-opus-5": {Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		}
+		return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{{Model: "glm-5.2:cloud"}}, &mappings), "endpoint"
 	}
 	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
 		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2"}), nil
@@ -352,7 +357,86 @@ func TestResolveClaudeDesktopStartupCatalogMarksDefaultAccountModelsAutoEligible
 	}
 }
 
-func TestResolveClaudeDesktopStartupCatalogUsesAccountDefaults(t *testing.T) {
+func TestClaudeDesktopCatalogListsAccountModelsWithoutChangingDefaults(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	mappings := api.ModelRecommendationMappings{
+		"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}
+	recommendations := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}, &mappings)
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return recommendations, "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "pro",
+		}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+			"glm-5.3-flash:cloud",
+			"deepseek-v4-flash:cloud",
+		}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	assertCatalog := func(t *testing.T, available, selected []proxy.ClaudeDesktopModel) {
+		t.Helper()
+		if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, map[string]string{
+			"claude-sonnet-5": "glm-5.3-flash:cloud",
+		}) {
+			t.Fatalf("default mappings = %v, want GLM Flash for Sonnet 5", got)
+		}
+		for _, model := range available {
+			if model.OllamaModel != "deepseek-v4-flash:cloud" {
+				continue
+			}
+			if model.Recommended {
+				t.Fatal("account DeepSeek model was marked as recommended")
+			}
+			if !model.AccountCloud {
+				t.Fatal("account DeepSeek model is missing cloud inventory membership")
+			}
+			return
+		}
+		t.Fatal("account DeepSeek model is missing from the selectable catalog")
+	}
+
+	available, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if source != "endpoint" {
+		t.Fatalf("source = %q, want endpoint", source)
+	}
+	assertCatalog(t, available, selected)
+
+	available, selected, source = refreshClaudeDesktopCatalog(context.Background(), selected, true)
+	if source != "endpoint" {
+		t.Fatalf("refreshed source = %q, want endpoint", source)
+	}
+	assertCatalog(t, available, selected)
+}
+
+func TestResolveClaudeDesktopStartupCatalogUsesSafeFallback(t *testing.T) {
 	states := []struct {
 		name  string
 		state proxy.ClaudeDesktopAccessState
@@ -372,14 +456,141 @@ func TestResolveClaudeDesktopStartupCatalogUsesAccountDefaults(t *testing.T) {
 			t.Cleanup(func() { claudeAccessStateResolver = previousAccess })
 
 			_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
-			want := proxy.DefaultClaudeDesktopMappings(
-				claudeDesktopHasFullDefaultAccess(tt.state),
-			)
+			want := proxy.DefaultClaudeDesktopMappings()
 			if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, want) {
 				t.Fatalf("startup mappings = %v, want %v (source %q)", got, want, source)
 			}
 		})
 	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogUsesEffectiveEndpointMappings(t *testing.T) {
+	recommendations := []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}
+	tests := []struct {
+		name     string
+		state    proxy.ClaudeDesktopAccessState
+		mappings api.ModelRecommendationMappings
+		saved    map[string]string
+		want     map[string]string
+	}{
+		{
+			name:     "mapping with free plan metadata",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "gemma4:31b-cloud", RequiredPlan: "free"}},
+			want:     map[string]string{"claude-sonnet-5": "gemma4:31b-cloud"},
+		},
+		{
+			name:     "mapping plan metadata is informational",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"}},
+			want:     map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"},
+		},
+		{
+			name:     "persisted user mapping wins",
+			state:    proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"},
+			mappings: api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}},
+			saved:    map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
+			want:     map[string]string{"claude-opus-5": "gemma4:31b-cloud"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			if tt.saved != nil {
+				if err := launch.SaveClaudeDesktopModelMappings(tt.saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			models := claudeDesktopRecommendationModelsForTest(t, recommendations, &tt.mappings)
+
+			previousLoader := claudeModelsLoader
+			previousAccess := claudeAccessStateResolver
+			previousCloud := claudeCloudModelsResolver
+			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+				return models, "endpoint"
+			}
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+				return tt.state, nil
+			}
+			claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+				return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"}), nil
+			}
+			t.Cleanup(func() {
+				claudeModelsLoader = previousLoader
+				claudeAccessStateResolver = previousAccess
+				claudeCloudModelsResolver = previousCloud
+			})
+
+			_, selected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+			if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, tt.want) {
+				t.Fatalf("startup mappings = %v, want %v (source %q)", got, tt.want, source)
+			}
+		})
+	}
+}
+
+func TestResolveClaudeDesktopStartupCatalogUpdatesDefaultsAfterReconnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpointModels := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}})
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousCloud := claudeCloudModelsResolver
+	load := 0
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		load++
+		if load == 1 {
+			return fallbackClaudeDesktopModels(), "fallback"
+		}
+		return endpointModels, "endpoint"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}, nil
+	}
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{
+			"glm-5.3-flash:cloud", "glm-5.2:cloud", "kimi-k3:cloud", "deepseek-v4-pro:cloud", "deepseek-v4-flash:0731:cloud", "gemma4:31b-cloud",
+		}), nil
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeCloudModelsResolver = previousCloud
+	})
+
+	_, offline, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if got := proxy.ClaudeDesktopMappings(offline)["claude-sonnet-5"]; source != "fallback" || got != "gemma4:31b-cloud" {
+		t.Fatalf("offline Sonnet/source = %q/%q", got, source)
+	}
+	_, reconnected, source := resolveClaudeDesktopStartupCatalog(context.Background())
+	if got := proxy.ClaudeDesktopMappings(reconnected); source != "endpoint" || !maps.Equal(got, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"}) {
+		t.Fatalf("reconnected mappings/source = %v/%q", got, source)
+	}
+}
+
+func claudeDesktopRecommendationModelsForTest(t *testing.T, recommendations []api.ModelRecommendation, mappings *api.ModelRecommendationMappings) []proxy.ClaudeDesktopModel {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.ModelRecommendationsResponse{
+			Recommendations: recommendations,
+			Mappings:        mappings,
+		})
+	}))
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := proxy.FetchClaudeDesktopModels(server.Client(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return models
 }
 
 func TestResolveClaudeDesktopStartupCatalogVerifiesFallbackFromAccountInventory(t *testing.T) {
@@ -508,6 +719,51 @@ func TestRefreshClaudeDesktopCatalogUpdatesPolicyAndPreservesSlots(t *testing.T)
 	}
 	if updated[0].GatewayID() != initialID {
 		t.Fatalf("gateway ID changed from %q to %q", initialID, updated[0].GatewayID())
+	}
+}
+
+func TestRefreshClaudeDesktopCatalogDropsStaleDefaultsOnFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpointModels := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "glm-5.2:cloud", RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}, &api.ModelRecommendationMappings{"claude-sonnet-5": {Model: "glm-5.3-flash:cloud"}})
+	current := proxy.MapClaudeDesktopModels(endpointModels, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"})
+
+	previousLoader := claudeModelsLoader
+	claudeProxyMu.Lock()
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAvailableModels = endpointModels
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = time.Now()
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	t.Cleanup(func() {
+		claudeModelsLoader = previousLoader
+		claudeProxyMu.Lock()
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	available, selected, source := refreshClaudeDesktopCatalog(context.Background(), current, true)
+	if source != "fallback" {
+		t.Fatalf("source = %q, want fallback", source)
+	}
+	if got := proxy.ClaudeDesktopMappings(selected); !maps.Equal(got, map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"}) {
+		t.Fatalf("current mappings = %v, want preserved explicit mapping", got)
+	}
+	if got := proxy.DefaultClaudeDesktopMappingsForModels(available)["claude-sonnet-5"]; got != "gemma4:31b-cloud" {
+		t.Fatalf("offline default Sonnet = %q, want compatibility fallback", got)
 	}
 }
 
@@ -697,28 +953,23 @@ func TestMapKnownClaudeDesktopModelsAllowsSharedModels(t *testing.T) {
 	}
 }
 
-func TestClaudeDesktopDefaultsFollowAccountPlan(t *testing.T) {
-	paidDefaults := proxy.DefaultClaudeDesktopMappings(true)
-	restrictedDefaults := proxy.DefaultClaudeDesktopMappings(false)
+func TestClaudeDesktopDefaultsDoNotDependOnAccountPlan(t *testing.T) {
+	want := proxy.DefaultClaudeDesktopMappings()
 	tests := []struct {
-		name         string
-		state        proxy.ClaudeDesktopAccessState
-		wantMappings map[string]string
+		name  string
+		state proxy.ClaudeDesktopAccessState
 	}{
-		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedOut}, wantMappings: restrictedDefaults},
-		{name: "free", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, wantMappings: restrictedDefaults},
-		{name: "Pro", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}, wantMappings: paidDefaults},
-		{name: "Team", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}, wantMappings: paidDefaults},
-		{name: "future paid plan", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "enterprise"}, wantMappings: paidDefaults},
+		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedOut}},
+		{name: "free", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}},
+		{name: "Pro", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "pro"}},
+		{name: "Team", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}},
+		{name: "future paid plan", state: proxy.ClaudeDesktopAccessState{Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "enterprise"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := proxy.DefaultClaudeDesktopMappingsForModels(
-				proxy.DefaultClaudeDesktopModels(),
-				claudeDesktopHasFullDefaultAccess(tt.state),
-			)
-			if !maps.Equal(got, tt.wantMappings) {
-				t.Fatalf("default mappings = %v, want %v", got, tt.wantMappings)
+			got := proxy.DefaultClaudeDesktopMappingsForModels(proxy.DefaultClaudeDesktopModels())
+			if !maps.Equal(got, want) {
+				t.Fatalf("default mappings for state %+v = %v, want %v", tt.state, got, want)
 			}
 		})
 	}
@@ -907,7 +1158,6 @@ func TestSetClaudeDesktopAutoModeAvoidsUnnecessaryRestart(t *testing.T) {
 	claudeAvailableModels = mergeClaudeDesktopCloudInventory(
 		proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{{Model: "glm-5.2:cloud"}}),
 		proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.2:cloud"}),
-		false,
 	)
 	previousDesktop := claudeDesktop
 	previousRunning := claudeDesktopRunning
@@ -1014,7 +1264,7 @@ func TestClaudeDesktopAutoModeModelEligibility(t *testing.T) {
 		"glm-5.2:cloud",
 		"gemma4:31b-cloud",
 	})
-	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud, false)
+	recommended = mergeClaudeDesktopCloudInventory(recommended, accountCloud)
 	custom := proxy.SelectClaudeDesktopModels(nil, []string{"qwen3:8b"})
 	tagOnly := proxy.SelectClaudeDesktopModels(nil, []string{"made-up:cloud"})
 
@@ -1340,7 +1590,7 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 		claudeProxyMu.Unlock()
 	})
 
-	paidMappings := proxy.DefaultClaudeDesktopMappings(true)
+	defaultMappings := proxy.DefaultClaudeDesktopMappings()
 	applied, err := resetClaudeDesktopMappings(false)
 	if err != nil || !applied {
 		t.Fatalf("reset mappings = %v/%v, want persisted change", applied, err)
@@ -1348,7 +1598,7 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	if !fake.configured || !fake.installed || fake.opened || fake.restart {
 		t.Fatalf("stopped Claude reset = %+v, want configured without open or restart", fake)
 	}
-	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, paidMappings) {
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, defaultMappings) {
 		t.Fatalf("persisted reset mappings = %v", got)
 	}
 
@@ -1357,10 +1607,10 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	fake.installed = false
 	fake.configureCalls = 0
 	plan = "free"
-	disconnectedMappings := proxy.DefaultClaudeDesktopMappings(false)
+	disconnectedMappings := proxy.DefaultClaudeDesktopMappings()
 	applied, err = resetClaudeDesktopMappings(false)
-	if err != nil || !applied {
-		t.Fatalf("disconnected reset mappings = %v/%v, want persisted change", applied, err)
+	if err != nil || applied {
+		t.Fatalf("disconnected reset mappings = %v/%v, want unchanged defaults", applied, err)
 	}
 	if fake.configured || fake.installed || fake.opened || fake.restart || fake.configureCalls != 0 {
 		t.Fatalf("disconnected Claude reset = %+v, want no connection side effects", fake)
@@ -1373,6 +1623,41 @@ func TestResetClaudeDesktopMappingsDoesNotOpenStoppedClaude(t *testing.T) {
 	}
 	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, disconnectedMappings) {
 		t.Fatalf("persisted disconnected reset mappings = %v", got)
+	}
+}
+
+func TestResetClaudeDesktopMappingsPreservesSavedMappingsForEmptyContract(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	saved := map[string]string{"claude-opus-5": "glm-5.2:cloud"}
+	if err := launch.SaveClaudeDesktopModelMappings(saved); err != nil {
+		t.Fatal(err)
+	}
+
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+	empty := api.ModelRecommendationMappings{}
+	models := claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	}, &empty)
+	previousLoader := claudeModelsLoader
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return models, "endpoint"
+	}
+	t.Cleanup(func() {
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeModelsLoader = previousLoader
+	})
+
+	applied, err := resetClaudeDesktopMappings(false)
+	if err == nil || applied {
+		t.Fatalf("reset mappings = %v/%v, want authoritative empty-contract error", applied, err)
+	}
+	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, saved) {
+		t.Fatalf("persisted mappings = %v, want preserved %v", got, saved)
 	}
 }
 
@@ -1941,79 +2226,64 @@ func TestEnsureClaudeDesktopModelsAvailableRetriesStartupRace(t *testing.T) {
 	}
 }
 
-func TestResolveClaudeDesktopDefaultMappingsHandlesAccountVerificationRestartRace(t *testing.T) {
+func TestResolveClaudeDesktopDefaultMappingsUsesContractWithoutAccountLookup(t *testing.T) {
 	previousLoader := claudeModelsLoader
 	previousAccess := claudeAccessStateResolver
-	previousRetryWait := claudeAccessRetryWait
-	previousRetryPoll := claudeAccessRetryPoll
-	claudeAccessRetryWait = 10 * time.Millisecond
-	claudeAccessRetryPoll = time.Millisecond
 	t.Cleanup(func() {
 		claudeModelsLoader = previousLoader
 		claudeAccessStateResolver = previousAccess
-		claudeAccessRetryWait = previousRetryWait
-		claudeAccessRetryPoll = previousRetryPoll
 	})
 
 	tests := []struct {
-		name             string
-		accessStateAfter int
-		plan             string
-		catalog          func() []proxy.ClaudeDesktopModel
-		wantDefaults     map[string]string
+		name         string
+		catalog      func(*testing.T) []proxy.ClaudeDesktopModel
+		wantDefaults map[string]string
 	}{
 		{
-			name:             "retry restores paid defaults",
-			accessStateAfter: 2,
-			plan:             "team",
-			wantDefaults:     proxy.DefaultClaudeDesktopMappings(true),
+			name:         "omitted contract uses safe fallback",
+			catalog:      func(*testing.T) []proxy.ClaudeDesktopModel { return proxy.DefaultClaudeDesktopModels() },
+			wantDefaults: proxy.DefaultClaudeDesktopMappings(),
 		},
 		{
-			name:             "free account restores only the free default",
-			accessStateAfter: 1,
-			plan:             "free",
-			wantDefaults:     proxy.DefaultClaudeDesktopMappings(false),
+			name: "present contract supplies defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				mappings := api.ModelRecommendationMappings{
+					"claude-sonnet-5": {Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}, &mappings)
+			},
+			wantDefaults: map[string]string{"claude-sonnet-5": "glm-5.3-flash:cloud"},
 		},
 		{
-			name:             "incomplete paid catalog does not clear routes",
-			accessStateAfter: 1,
-			plan:             "team",
-			catalog: func() []proxy.ClaudeDesktopModel {
-				return proxy.DefaultClaudeDesktopModels()[:4]
+			name: "present empty contract has no defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				mappings := api.ModelRecommendationMappings{}
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+				}, &mappings)
 			},
 		},
 		{
-			name:             "missing free default does not clear routes",
-			accessStateAfter: 1,
-			plan:             "free",
-			catalog: func() []proxy.ClaudeDesktopModel {
-				return proxy.DefaultClaudeDesktopModels()[:4]
+			name: "missing fallback target has no defaults",
+			catalog: func(t *testing.T) []proxy.ClaudeDesktopModel {
+				return claudeDesktopRecommendationModelsForTest(t, []api.ModelRecommendation{
+					{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+				}, nil)
 			},
-		},
-		{
-			name: "persistent failure does not synthesize free defaults",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
-				if tt.catalog != nil {
-					return tt.catalog(), "endpoint"
-				}
-				return proxy.DefaultClaudeDesktopModels(), "endpoint"
+				return tt.catalog(t), "endpoint"
 			}
 			accessCalls := 0
 			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
 				accessCalls++
-				if tt.accessStateAfter == 0 || accessCalls < tt.accessStateAfter {
-					return proxy.ClaudeDesktopAccessState{}, errors.New("server restarting")
-				}
-				return proxy.ClaudeDesktopAccessState{
-					Cloud:   proxy.ClaudeDesktopCloudOn,
-					Account: proxy.ClaudeDesktopAccountSignedIn,
-					Plan:    tt.plan,
-				}, nil
+				return proxy.ClaudeDesktopAccessState{}, errors.New("account lookup must not run")
 			}
 
 			gotDefaults, err := resolveClaudeDesktopDefaultMappings(context.Background())
@@ -2021,39 +2291,19 @@ func TestResolveClaudeDesktopDefaultMappingsHandlesAccountVerificationRestartRac
 				if err == nil {
 					t.Fatalf("reset defaults = %v, want an error", gotDefaults)
 				}
+				if accessCalls != 0 {
+					t.Fatalf("account lookups = %d, want 0", accessCalls)
+				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !maps.Equal(gotDefaults, tt.wantDefaults) {
-				t.Fatalf("reset defaults = %v, want %v after %d access checks", gotDefaults, tt.wantDefaults, accessCalls)
+				t.Fatalf("reset defaults = %v, want %v", gotDefaults, tt.wantDefaults)
 			}
-			if tt.accessStateAfter > 0 && accessCalls < tt.accessStateAfter {
-				t.Fatalf("access checks = %d, want at least %d", accessCalls, tt.accessStateAfter)
-			}
-		})
-	}
-}
-
-func TestClaudeDesktopDefaultAccessTierRequiresVerifiedAccount(t *testing.T) {
-	tests := []struct {
-		name      string
-		state     proxy.ClaudeDesktopAccessState
-		wantFull  bool
-		wantKnown bool
-	}{
-		{name: "cloud off", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}},
-		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}},
-		{name: "missing plan", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn}},
-		{name: "free", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "free"}, wantKnown: true},
-		{name: "team", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedIn, Plan: "team"}, wantFull: true, wantKnown: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			full, known := claudeDesktopDefaultAccessTier(tt.state)
-			if full != tt.wantFull || known != tt.wantKnown {
-				t.Fatalf("default access tier = %v/%v, want %v/%v", full, known, tt.wantFull, tt.wantKnown)
+			if accessCalls != 0 {
+				t.Fatalf("account lookups = %d, want 0", accessCalls)
 			}
 		})
 	}
@@ -2280,6 +2530,90 @@ func TestClaudeGatewayStartupWithLocalSelectionSkipsCloudLookupsButSettingsLoads
 	}
 }
 
+func TestClaudeDesktopConnectionStatusPrefersActiveGatewayMappings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	previousStore := appStore
+	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	if err := markClaudeDesktopIntegrationUsed(); err != nil {
+		t.Fatal(err)
+	}
+
+	activeCatalog := proxy.ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", RequiredPlan: "free"},
+	})
+	activeModels := proxy.MapClaudeDesktopModels(activeCatalog, map[string]string{
+		"claude-sonnet-5": "glm-5.3-flash:cloud",
+	})
+	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      activeModels[0].OllamaModel,
+		Models:     activeModels,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	previousLoader := claudeModelsLoader
+	previousAccess := claudeAccessStateResolver
+	previousLocal := claudeLocalModelsResolver
+	previousCloud := claudeCloudModelsResolver
+	claudeProxyMu.Lock()
+	previousGateway := claudeAppProxy
+	previousAvailable := claudeAvailableModels
+	previousSource := claudeModelSource
+	previousUpdated := claudeCatalogUpdated
+	claudeAppProxy = gateway
+	claudeAvailableModels = activeCatalog
+	claudeModelSource = "endpoint"
+	claudeCatalogUpdated = time.Time{}
+	claudeProxyMu.Unlock()
+	claudeModelsLoader = func(context.Context) ([]proxy.ClaudeDesktopModel, string) {
+		return fallbackClaudeDesktopModels(), "fallback"
+	}
+	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
+		return proxy.ClaudeDesktopAccessState{
+			Cloud:   proxy.ClaudeDesktopCloudOn,
+			Account: proxy.ClaudeDesktopAccountSignedIn,
+			Plan:    "pro",
+		}, nil
+	}
+	claudeLocalModelsResolver = func(context.Context) ([]string, error) { return nil, nil }
+	claudeCloudModelsResolver = func(context.Context) ([]proxy.ClaudeDesktopModel, error) {
+		return proxy.ClaudeDesktopModelsFromCloudInventory([]string{"glm-5.3-flash:cloud", "gemma4:31b-cloud"}), nil
+	}
+	t.Cleanup(func() {
+		_ = gateway.Close(context.Background())
+		_ = appStore.Close()
+		appStore = previousStore
+		claudeModelsLoader = previousLoader
+		claudeAccessStateResolver = previousAccess
+		claudeLocalModelsResolver = previousLocal
+		claudeCloudModelsResolver = previousCloud
+		claudeProxyMu.Lock()
+		claudeAppProxy = previousGateway
+		claudeAvailableModels = previousAvailable
+		claudeModelSource = previousSource
+		claudeCatalogUpdated = previousUpdated
+		claudeProxyMu.Unlock()
+	})
+
+	status := getClaudeDesktopConnectionStatus()
+	if got := proxy.ClaudeDesktopMappings(gateway.Models())["claude-sonnet-5"]; got != "glm-5.3-flash:cloud" {
+		t.Fatalf("active gateway Sonnet mapping = %q", got)
+	}
+	for _, mapping := range status.Mappings {
+		if mapping.RouteID == "claude-sonnet-5" {
+			if mapping.Model != "glm-5.3-flash:cloud" {
+				t.Fatalf("status Sonnet mapping = %q, want active gateway mapping", mapping.Model)
+			}
+			return
+		}
+	}
+	t.Fatal("status omitted Sonnet mapping")
+}
+
 func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 	tests := []struct {
 		name               string
@@ -2407,9 +2741,182 @@ func TestClaudeGatewayLocalSelectionCatalogPolicy(t *testing.T) {
 	}
 }
 
+func TestRunAppSyncBarrierStopsOlderInstances(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		exitOn    appProcessStopMode
+		wantStops []appProcessStopMode
+	}{
+		{name: "handoff", exitOn: appProcessStopForHandoff, wantStops: []appProcessStopMode{appProcessStopForHandoff}},
+		{name: "graceful", exitOn: appProcessStopGracefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully}},
+		{name: "forced", exitOn: appProcessStopForcefully, wantStops: []appProcessStopMode{appProcessStopForHandoff, appProcessStopGracefully, appProcessStopForcefully}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			self := appProcessIdentity{pid: 20, startedAt: 20}
+			older := appProcessIdentity{pid: 10, startedAt: 10}
+			alive := true
+			var stops []appProcessStopMode
+			controller := appProcessController{
+				discover: func() ([]appProcessIdentity, error) {
+					if alive {
+						return []appProcessIdentity{older}, nil
+					}
+					return nil, nil
+				},
+				running: func(process appProcessIdentity) (bool, error) {
+					return alive && process.sameProcess(older), nil
+				},
+				stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+					if !process.sameProcess(older) {
+						t.Fatalf("stopped process %+v, want %+v", process, older)
+					}
+					stops = append(stops, mode)
+					if mode == test.exitOn {
+						alive = false
+					}
+					return nil
+				},
+			}
+
+			err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+				killTimeout:  time.Second,
+				pollInterval: time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(stops, test.wantStops) {
+				t.Fatalf("stop modes = %v, want %v", stops, test.wantStops)
+			}
+		})
+	}
+}
+
+func TestRunAppSyncBarrierStopsEveryOlderInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 30, startedAt: 30}
+	graceful := appProcessIdentity{pid: 10, startedAt: 10}
+	stubborn := appProcessIdentity{pid: 20, startedAt: 20}
+	late := appProcessIdentity{pid: 25, startedAt: 25}
+	alive := map[appProcessIdentity]bool{
+		graceful: true,
+		stubborn: true,
+	}
+	type stoppedProcess struct {
+		process appProcessIdentity
+		mode    appProcessStopMode
+	}
+	var stops []stoppedProcess
+	lateDiscovered := false
+	controller := appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			if !alive[graceful] && !alive[stubborn] && !lateDiscovered {
+				alive[late] = true
+				lateDiscovered = true
+			}
+			var processes []appProcessIdentity
+			for _, process := range []appProcessIdentity{graceful, stubborn, late} {
+				if alive[process] {
+					processes = append(processes, process)
+				}
+			}
+			return processes, nil
+		},
+		running: func(process appProcessIdentity) (bool, error) {
+			return alive[process], nil
+		},
+		stop: func(process appProcessIdentity, mode appProcessStopMode) error {
+			if !alive[process] {
+				return nil
+			}
+			stops = append(stops, stoppedProcess{process: process, mode: mode})
+			if !process.sameProcess(stubborn) || mode == appProcessStopForcefully {
+				alive[process] = false
+			}
+			return nil
+		},
+	}
+
+	err := runAppSyncBarrier(self, controller, appSyncBarrierConfig{
+		killTimeout:  time.Second,
+		pollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []stoppedProcess{
+		{process: graceful, mode: appProcessStopForHandoff},
+		{process: stubborn, mode: appProcessStopForHandoff},
+		{process: stubborn, mode: appProcessStopGracefully},
+		{process: stubborn, mode: appProcessStopForcefully},
+		{process: late, mode: appProcessStopForHandoff},
+	}
+	if !slices.Equal(stops, want) {
+		t.Fatalf("stops = %+v, want %+v", stops, want)
+	}
+}
+
+func TestRunAppSyncBarrierDefersToNewerInstance(t *testing.T) {
+	self := appProcessIdentity{pid: 10, startedAt: 10}
+	newer := appProcessIdentity{pid: 20, startedAt: 20}
+	stopped := false
+	err := runAppSyncBarrier(self, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			return []appProcessIdentity{newer}, nil
+		},
+		running: func(appProcessIdentity) (bool, error) { return true, nil },
+		stop: func(appProcessIdentity, appProcessStopMode) error {
+			stopped = true
+			return nil
+		},
+	}, appSyncBarrierConfig{killTimeout: time.Second})
+	if !errors.Is(err, errNewerAppInstance) {
+		t.Fatalf("barrier error = %v, want newer-instance error", err)
+	}
+	if stopped {
+		t.Fatal("older launch stopped the newer instance")
+	}
+}
+
+func TestRunAppSyncBarrierRequiresSettledEmptyList(t *testing.T) {
+	queries := 0
+	err := runAppSyncBarrier(appProcessIdentity{pid: 1, startedAt: 1}, appProcessController{
+		discover: func() ([]appProcessIdentity, error) {
+			queries++
+			return nil, nil
+		},
+	}, appSyncBarrierConfig{killTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queries != 2 {
+		t.Fatalf("discovery queries = %d, want 2", queries)
+	}
+}
+
+func TestContinueAfterBarrierErrorOnlyBlocksNewerInstance(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "success", err: nil, want: true},
+		{name: "discovery failure", err: errors.New("discover other Ollama app processes"), want: true},
+		{name: "handoff timeout", err: errors.New("timed out waiting for app instances to exit"), want: true},
+		{name: "newer instance", err: fmt.Errorf("%w: pid 2", errNewerAppInstance), want: false},
+		{name: "wrapped newer instance", err: fmt.Errorf("barrier: %w", fmt.Errorf("%w: pid 2", errNewerAppInstance)), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := continueAfterBarrierError(tt.err); got != tt.want {
+				t.Fatalf("continueAfterBarrierError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	called := false
-	if err := restoreClaudeBeforeQuit(context.Background(), false, false, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), false, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2419,7 +2926,7 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 		t.Fatal("restore called while Claude was not configured")
 	}
 
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		called = true
 		return nil
 	}); err != nil {
@@ -2430,21 +2937,74 @@ func TestRestoreClaudeBeforeQuit(t *testing.T) {
 	}
 
 	wantErr := errors.New("restore failed")
-	if err := restoreClaudeBeforeQuit(context.Background(), false, true, func(context.Context) error {
+	if err := restoreClaudeBeforeQuit(context.Background(), true, func(context.Context) error {
 		return wantErr
 	}); !errors.Is(err, wantErr) {
 		t.Fatalf("restore error = %v, want %v", err, wantErr)
 	}
+}
 
-	called = false
-	if err := restoreClaudeBeforeQuit(context.Background(), true, true, func(context.Context) error {
-		called = true
-		return nil
-	}); err != nil {
+func TestRestoreClaudeAppForTerminationPreservesHandoffProfile(t *testing.T) {
+	previousDesktop := claudeDesktop
+	fake := &fakeClaudeDesktopController{configured: true}
+	claudeDesktop = fake
+	t.Cleanup(func() { claudeDesktop = previousDesktop })
+
+	if err := restoreClaudeAppForTermination(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
+	if fake.restoreCalls != 0 || !fake.configured {
+		t.Fatalf("handoff restore calls/configured = %d/%v, want 0/true", fake.restoreCalls, fake.configured)
+	}
+}
+
+func TestHandleExistingInstanceSkipsDevelopmentBuild(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = false
+	called := false
+	killOtherInstances = func() bool {
+		called = true
+		return false
+	}
+
+	if !handleExistingInstance(false) {
+		t.Fatal("development instance did not continue startup")
+	}
 	if called {
-		t.Fatal("restore called during an app replacement handoff")
+		t.Fatal("development instance entered the packaged app handoff barrier")
+	}
+}
+
+func TestHandleExistingInstanceReturnsBarrierResult(t *testing.T) {
+	oldIsApp := isApp
+	oldKillOtherInstances := killOtherInstances
+	t.Cleanup(func() {
+		isApp = oldIsApp
+		killOtherInstances = oldKillOtherInstances
+	})
+
+	isApp = true
+	for _, want := range []bool{true, false} {
+		killOtherInstances = func() bool { return want }
+		if got := handleExistingInstance(false); got != want {
+			t.Fatalf("handleExistingInstance() = %v, want %v", got, want)
+		}
+	}
+}
+
+func TestDarwinAppProcessRunningReportsExitedProcess(t *testing.T) {
+	running, err := darwinAppProcessRunning(appProcessIdentity{pid: 1 << 30, startedAt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running {
+		t.Fatal("nonexistent process reported as running")
 	}
 }
 
@@ -2521,6 +3081,22 @@ func TestClaudeDesktopInstallResultFromCode(t *testing.T) {
 	} {
 		if got := claudeDesktopInstallResultFromCode(tt.code); got != tt.want {
 			t.Errorf("claudeDesktopInstallResultFromCode(%d) = %q, want %q", tt.code, got, tt.want)
+		}
+	}
+}
+
+func TestCodexDesktopInstallResultFromCode(t *testing.T) {
+	for _, tt := range []struct {
+		code int
+		want codexDesktopInstallResult
+	}{
+		{code: 0, want: codexDesktopInstallCancelled},
+		{code: 1, want: codexDesktopInstallerOpened},
+		{code: 2, want: codexDesktopInstallFailed},
+		{code: 99, want: codexDesktopInstallFailed},
+	} {
+		if got := codexDesktopInstallResultFromCode(tt.code); got != tt.want {
+			t.Errorf("codexDesktopInstallResultFromCode(%d) = %q, want %q", tt.code, got, tt.want)
 		}
 	}
 }

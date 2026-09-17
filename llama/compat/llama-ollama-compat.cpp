@@ -13,7 +13,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -29,20 +28,8 @@ using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
 
 namespace {
 
-#ifdef OLLAMA_COMPAT_MTMD_BUILD
-void ollama_compat_log(const char * format, ...) {
-    std::va_list args;
-    va_start(args, format);
-    std::vfprintf(stderr, format, args);
-    va_end(args);
-}
-
-#define OLLAMA_COMPAT_LOG_INFO(...)  do { ollama_compat_log(__VA_ARGS__); } while (0)
-#define OLLAMA_COMPAT_LOG_ERROR(...) ollama_compat_log(__VA_ARGS__)
-#else
 #define OLLAMA_COMPAT_LOG_INFO(...)  do { LLAMA_LOG_INFO(__VA_ARGS__); } while (0)
 #define OLLAMA_COMPAT_LOG_ERROR(...) LLAMA_LOG_ERROR(__VA_ARGS__)
-#endif
 
 double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -3436,6 +3423,71 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     LoadOp op;
     if (!take_load_op(ggml_get_name(cur), op)) return false;
     return load_tensor_with_op(cur, path.c_str(), buft, op);
+}
+
+// Slab-read cache slot (maybe_load_text_tensor_range). Holds AT MOST ONE
+// materialized tensor per loader: quantize reads a tensor's slabs
+// contiguously, so the previous entry is evicted when the next tensor's
+// first range arrives. This keeps peak memory at one op tensor at a time —
+// the same profile as the whole-tensor read this hook replaced. Growing a
+// per-tensor map instead would accumulate every layer's output for per-layer
+// ops (gemma4 MoE gate/up, qwen3.5 norm-shift) — most of the model in RAM by
+// the end of a quantize run.
+std::mutex g_text_range_mutex;
+std::unordered_map<const llama_model_loader *,
+                   std::pair<std::string, std::vector<uint8_t>>>
+    g_text_range_cache;
+
+const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf) {
+    if (compat_disabled()) return nullptr;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        auto it = g_loader_paths.find(ml);
+        if (it == g_loader_paths.end() || it->second.empty()) return nullptr;
+        path = it->second;
+    }
+
+    std::lock_guard<std::mutex> lk(g_text_range_mutex);
+    auto & slot = g_text_range_cache[ml];
+    auto cached = slot.first == ggml_get_name(cur) ? &slot.second : nullptr;
+    if (!cached) {
+        LoadOp op;
+        if (!take_load_op(ggml_get_name(cur), op)) return nullptr;
+
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<uint8_t> full(ggml_nbytes(cur));
+        if (!op.apply(path.c_str(), full.data(), full.size())) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: %s failed for %s after %.3f ms\n",
+                                    __func__, op.description, ggml_get_name(cur), elapsed_ms(start));
+            return nullptr;
+        }
+
+        const size_t dst_size = full.size();
+        slot = {std::string(ggml_get_name(cur)), std::move(full)};
+        cached = &slot.second;
+        const double ms = elapsed_ms(start);
+        const TransformTiming total = record_transform_timing(dst_size, ms);
+        OLLAMA_COMPAT_LOG_INFO("compat tensor transform: op=%s tensor=%s bytes=%zu duration_ms=%.3f total_ops=%llu total_bytes=%zu total_ms=%.3f\n",
+                               op.description, ggml_get_name(cur), dst_size, ms,
+                               (unsigned long long) total.count, total.bytes, total.ms);
+    }
+
+    if (offs + size > cached->size()) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: range %zu+%zu out of bounds for %s (%zu bytes)\n",
+                                __func__, offs, size, ggml_get_name(cur), cached->size());
+        return nullptr;
+    }
+
+    const void * out = buf ? buf : cached->data() + offs;
+    if (buf) {
+        std::memcpy(buf, cached->data() + offs, size);
+    }
+    return out;
 }
 
 int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {

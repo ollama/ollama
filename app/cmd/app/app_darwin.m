@@ -8,13 +8,53 @@
 #import <ServiceManagement/ServiceManagement.h>
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
+#include <errno.h>
+#include <libproc.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 extern NSString *SystemWidePath;
 
 static NSString *const ClaudeDownloadPageURL = @"https://claude.com/download";
+static NSString *const ChatGPTDownloadPageURL = @"https://chatgpt.com/download";
+static NSString *const ChatGPTDiskImageURL =
+    @"https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
 static NSString *const ShowAppsInMenuDefaultsKey = @"ShowAppsInMenu";
 static NSBundle *OllamaResourceBundle(void);
+
+typedef NS_ENUM(NSInteger, DesktopDownloadKind) {
+    DesktopDownloadNone,
+    DesktopDownloadClaude,
+    DesktopDownloadChatGPT,
+};
+
+typedef NS_ENUM(NSInteger, ChatGPTRestartAction) {
+    ChatGPTRestartActionAddModels,
+    ChatGPTRestartActionUpdateModels,
+    ChatGPTRestartActionRemoveModels,
+};
+
+static void configureChatGPTRestartAlert(NSAlert *alert,
+                                         ChatGPTRestartAction action) {
+    switch (action) {
+    case ChatGPTRestartActionAddModels:
+        [alert setMessageText:@"Restart ChatGPT to add Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to add Ollama models. Any running task will stop."];
+        break;
+    case ChatGPTRestartActionUpdateModels:
+        [alert setMessageText:@"Restart ChatGPT to update Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to update Ollama models. Any running task will stop."];
+        break;
+    case ChatGPTRestartActionRemoveModels:
+        [alert setMessageText:@"Restart ChatGPT to remove Ollama models?"];
+        [alert setInformativeText:
+            @"ChatGPT must restart to remove Ollama models. Any running task will stop."];
+        break;
+    }
+    [alert addButtonWithTitle:@"Restart ChatGPT"];
+}
 
 static BOOL shouldShowAppsInMenu(void) {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
@@ -44,7 +84,7 @@ static NSImage *integrationAppIcon(NSString *appName,
     NSBundle *bundle = OllamaResourceBundle();
     NSImage *bundledIcon = [bundle imageForResource:appName.lowercaseString];
     if (bundledIcon != nil) {
-        [bundledIcon setTemplate:NO];
+        [bundledIcon setTemplate:[appName isEqualToString:@"ChatGPT"]];
         return bundledIcon;
     }
     return [NSImage imageWithSystemSymbolName:fallbackSymbolName
@@ -325,6 +365,8 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeAppReady;
 @property(strong, nonatomic) IntegrationMenuRow *claudeAppRow;
 @property(strong, nonatomic) NSMenuItem *claudeMenuItem;
+@property(strong, nonatomic) IntegrationMenuRow *codexAppRow;
+@property(strong, nonatomic) NSMenuItem *codexMenuItem;
 @property(strong, nonatomic) NSMenuItem *claudeMenuSeparatorItem;
 @property(strong, nonatomic) NSURLSession *claudeDownloadSession;
 @property(strong, nonatomic) NSURLSessionDownloadTask *claudeDownloadTask;
@@ -335,16 +377,24 @@ static NSImage *integrationAppIcon(NSString *appName,
 @property(assign, nonatomic) BOOL claudeDownloadCancelled;
 @property(assign, nonatomic) BOOL claudeDownloadCompleted;
 @property(assign, nonatomic) BOOL claudeDownloadModalRunning;
+@property(assign, nonatomic) DesktopDownloadKind desktopDownloadKind;
 @property(assign, nonatomic) BOOL quitInProgress;
 @property(assign, nonatomic) BOOL systemTerminationReplyPending;
 @property(strong, nonatomic) NSApplication *systemTerminationApplication;
 - (void)openClaudeApp:(id)sender;
+- (void)openChatGPTApp:(id)sender;
 - (enum ClaudeInstallResult)downloadClaude;
-- (enum ClaudeInstallResult)finishClaudeDownload;
+- (enum ClaudeInstallResult)downloadChatGPT;
+- (enum ClaudeInstallResult)downloadDesktopApp:(DesktopDownloadKind)kind;
+- (enum ClaudeInstallResult)finishDesktopDownload;
 - (void)showClaudeDownloadFailure:(NSError *)error;
 - (void)showClaudeInstallFailure:(NSError *)error;
+- (void)showChatGPTDownloadFailure:(NSError *)error;
+- (void)showChatGPTInstallFailure:(NSError *)error;
 - (void)toggleClaudeAppProxy:(NSButton *)sender;
 - (void)refreshClaudeAppState;
+- (void)toggleCodexApp:(NSButton *)sender;
+- (void)refreshCodexAppState;
 - (void)applyShowAppsInMenu:(BOOL)visible;
 - (void)requestQuit;
 - (void)completeSystemTermination;
@@ -391,6 +441,8 @@ static NSImage *ollamaApplicationIcon(void) {
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
+            } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
+                [self appsUI];
             } else {
                 [self openUI];
             }
@@ -435,6 +487,21 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeMenuItem setView:self.claudeAppRow];
     [menu addItem:self.claudeMenuItem];
     [self refreshClaudeAppState];
+
+    self.codexMenuItem = [[NSMenuItem alloc] initWithTitle:@"ChatGPT"
+                                                    action:nil
+                                             keyEquivalent:@""];
+    [self.codexMenuItem setEnabled:YES];
+    self.codexAppRow = [[IntegrationMenuRow alloc]
+        initWithTitle:@"ChatGPT"
+           symbolName:@"bubble.left.and.bubble.right"
+               target:self
+           openAction:@selector(openChatGPTApp:)
+         toggleAction:@selector(toggleCodexApp:)];
+    [self.codexMenuItem setView:self.codexAppRow];
+    [menu addItem:self.codexMenuItem];
+    [self refreshCodexAppState];
+
     self.claudeMenuSeparatorItem = [NSMenuItem separatorItem];
     [menu addItem:self.claudeMenuSeparatorItem];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
@@ -622,13 +689,10 @@ static NSImage *ollamaApplicationIcon(void) {
         return;
     }
     [self refreshClaudeAppState];
+    [self refreshCodexAppState];
 }
 
 - (void)refreshClaudeAppState {
-    BOOL hasUsed = HasUsedClaudeDesktopIntegration();
-    BOOL visible = shouldShowAppsInMenu() && hasUsed;
-    [self.claudeMenuItem setHidden:!visible];
-    [self.claudeMenuSeparatorItem setHidden:!visible];
     BOOL installed = IsClaudeDesktopInstalled();
     BOOL startFailed = ClaudeGatewayStartFailed();
     BOOL portConflict = startFailed && ClaudeGatewayPortConflict();
@@ -645,17 +709,40 @@ static NSImage *ollamaApplicationIcon(void) {
     [self.claudeAppRow setIntegrationActive:self.claudeAppEnabled];
     [self.claudeAppRow setIntegrationReady:self.claudeAppReady];
     RefreshClaudeProxyMenu();
+    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
+}
+
+- (void)refreshCodexAppState {
+    BOOL installed = IsCodexDesktopInstalled();
+    BOOL connected = IsCodexDesktopConnected();
+    unsigned long long requests = connected ? CodexDesktopRequestCount() : 0;
+    NSString *activeStatus = requests == 1
+        ? @"1 request this session"
+        : [NSString stringWithFormat:@"%llu requests this session", requests];
+    [self.codexAppRow setActiveStatusText:connected
+        ? activeStatus
+        : nil];
+    [self.codexAppRow setInactiveStatusText:installed
+        ? @"Use Ollama models in ChatGPT"
+        : @"Not installed"];
+    [self.codexAppRow setIntegrationActive:connected];
+    [self.codexAppRow setIntegrationReady:installed && connected];
+    [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 }
 
 - (void)applyShowAppsInMenu:(BOOL)visible {
-    visible = visible && HasUsedClaudeDesktopIntegration();
-    [self.claudeMenuItem setHidden:!visible];
-    [self.claudeMenuSeparatorItem setHidden:!visible];
+    BOOL claudeVisible = visible && HasUsedClaudeDesktopIntegration();
+    // Keep the installation flow accessible from the menu.
+    BOOL codexVisible = visible;
+    [self.claudeMenuItem setHidden:!claudeVisible];
+    [self.codexMenuItem setHidden:!codexVisible];
+    [self.claudeMenuSeparatorItem setHidden:!(claudeVisible || codexVisible)];
 }
 
 - (void)menuDidClose:(NSMenu *)menu {
     if (menu == self.statusItem.menu) {
         [self.claudeAppRow resetHover];
+        [self.codexAppRow resetHover];
     }
 }
 
@@ -724,6 +811,49 @@ static NSImage *ollamaApplicationIcon(void) {
     [alert runModal];
 }
 
+- (void)openChatGPTApp:(id)sender {
+    (void)sender;
+    if (!IsCodexDesktopConnected()) {
+        return;
+    }
+    [self.statusItem.menu cancelTracking];
+
+    NSArray<NSString *> *candidates = @[
+        @"/Applications/ChatGPT.app",
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/ChatGPT.app"],
+        @"/Applications/Codex.app",
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/Codex.app"],
+    ];
+    for (NSString *path in candidates) {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            continue;
+        }
+        NSWorkspaceOpenConfiguration *configuration =
+            [NSWorkspaceOpenConfiguration configuration];
+        configuration.activates = YES;
+        configuration.createsNewApplicationInstance = NO;
+        [[NSWorkspace sharedWorkspace]
+            openApplicationAtURL:[NSURL fileURLWithPath:path]
+                   configuration:configuration
+               completionHandler:^(NSRunningApplication *application,
+                                   NSError *error) {
+                   (void)application;
+                   if (error != nil) {
+                       appLogInfo([NSString stringWithFormat:
+                           @"Unable to open ChatGPT: %@", error]);
+                   }
+               }];
+        return;
+    }
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert setMessageText:@"Unable to open ChatGPT"];
+    [alert setInformativeText:
+        @"Install ChatGPT in Applications, then try again."];
+    [alert runModal];
+}
+
 - (void)showClaudeDownloadFailure:(NSError *)error {
     appLogInfo([NSString stringWithFormat:@"Unable to download Claude: %@",
                                           error]);
@@ -758,43 +888,102 @@ static NSImage *ollamaApplicationIcon(void) {
     }
 }
 
+- (void)showChatGPTDownloadFailure:(NSError *)error {
+    appLogInfo([NSString stringWithFormat:@"Unable to download ChatGPT: %@",
+                                          error]);
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert setIcon:ollamaApplicationIcon()];
+    [alert setMessageText:@"ChatGPT couldn’t be downloaded"];
+    [alert setInformativeText:
+        @"Try again or download ChatGPT from its website."];
+    [alert addButtonWithTitle:@"Open download page"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        [[NSWorkspace sharedWorkspace]
+            openURL:[NSURL URLWithString:ChatGPTDownloadPageURL]];
+    }
+}
+
+- (void)showChatGPTInstallFailure:(NSError *)error {
+    appLogInfo([NSString stringWithFormat:@"Unable to install ChatGPT: %@",
+                                          error]);
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSAlertStyleWarning];
+    [alert setIcon:ollamaApplicationIcon()];
+    [alert setMessageText:@"ChatGPT couldn’t be installed"];
+    [alert setInformativeText:
+        @"Try again or install ChatGPT from its website."];
+    [alert addButtonWithTitle:@"Open download page"];
+    [alert addButtonWithTitle:@"Cancel"];
+    if ([alert runModal] == NSAlertFirstButtonReturn) {
+        [[NSWorkspace sharedWorkspace]
+            openURL:[NSURL URLWithString:ChatGPTDownloadPageURL]];
+    }
+}
+
 - (enum ClaudeInstallResult)downloadClaude {
+    return [self downloadDesktopApp:DesktopDownloadClaude];
+}
+
+- (enum ClaudeInstallResult)downloadChatGPT {
+    return [self downloadDesktopApp:DesktopDownloadChatGPT];
+}
+
+- (enum ClaudeInstallResult)downloadDesktopApp:(DesktopDownloadKind)kind {
     if (self.claudeDownloadTask != nil) {
         return ClaudeInstallCancelled;
     }
 
+    BOOL chatGPT = kind == DesktopDownloadChatGPT;
     char *downloadAuthorization = NULL;
-    char *downloadURL = ClaudeDesktopDownloadRequest(&downloadAuthorization);
-    NSString *downloadURLString = downloadURL == NULL
-        ? nil
-        : [NSString stringWithUTF8String:downloadURL];
-    NSString *authorization = downloadAuthorization == NULL
-        ? nil
-        : [NSString stringWithUTF8String:downloadAuthorization];
-    free(downloadURL);
-    free(downloadAuthorization);
+    char *downloadURL = NULL;
+    NSString *downloadURLString = ChatGPTDiskImageURL;
+    NSString *authorization = nil;
+    if (!chatGPT) {
+        downloadURL = ClaudeDesktopDownloadRequest(&downloadAuthorization);
+        downloadURLString = downloadURL == NULL
+            ? nil
+            : [NSString stringWithUTF8String:downloadURL];
+        authorization = downloadAuthorization == NULL
+            ? nil
+            : [NSString stringWithUTF8String:downloadAuthorization];
+        free(downloadURL);
+        free(downloadAuthorization);
+    }
     NSURL *url = downloadURLString == nil
         ? nil
         : [NSURL URLWithString:downloadURLString];
-    if (url == nil || authorization.length == 0) {
+    if (url == nil || (!chatGPT && authorization.length == 0)) {
         NSError *error = [NSError
             errorWithDomain:@"com.ollama.app"
                        code:3
                    userInfo:@{NSLocalizedDescriptionKey:
-                       @"Ollama could not authenticate the download request."}];
-        [self showClaudeDownloadFailure:error];
+                       chatGPT
+                           ? @"Ollama could not prepare the ChatGPT download."
+                           : @"Ollama could not authenticate the download request."}];
+        if (chatGPT) {
+            [self showChatGPTDownloadFailure:error];
+        } else {
+            [self showClaudeDownloadFailure:error];
+        }
         return ClaudeInstallFailed;
     }
 
-    [self.claudeAppRow setInactiveStatusText:@"Downloading Claude…"];
-    [self.claudeAppRow.integrationSwitch setEnabled:NO];
+    IntegrationMenuRow *row = chatGPT ? self.codexAppRow : self.claudeAppRow;
+    NSString *appName = chatGPT ? @"ChatGPT" : @"Claude";
+    [row setInactiveStatusText:
+        [NSString stringWithFormat:@"Downloading %@…", appName]];
+    [row.integrationSwitch setEnabled:NO];
 
     self.claudeDownloadAlert = [[NSAlert alloc] init];
     [self.claudeDownloadAlert setAlertStyle:NSAlertStyleInformational];
     [self.claudeDownloadAlert setIcon:ollamaApplicationIcon()];
-    [self.claudeDownloadAlert setMessageText:@"Downloading Claude"];
+    [self.claudeDownloadAlert setMessageText:
+        [NSString stringWithFormat:@"Downloading %@", appName]];
     [self.claudeDownloadAlert setInformativeText:
-        @"Claude will be installed when the download finishes."];
+        [NSString stringWithFormat:
+            @"%@ will be installed when the download finishes.", appName]];
     [self.claudeDownloadAlert addButtonWithTitle:@"Cancel"];
     self.claudeDownloadProgress = [[NSProgressIndicator alloc]
         initWithFrame:NSMakeRect(0, 0, 260, 12)];
@@ -809,6 +998,7 @@ static NSImage *ollamaApplicationIcon(void) {
     self.claudeDownloadCompleted = NO;
     self.claudeDownloadedInstallerURL = nil;
     self.claudeDownloadError = nil;
+    self.desktopDownloadKind = kind;
     NSURLSessionConfiguration *configuration =
         [NSURLSessionConfiguration ephemeralSessionConfiguration];
     self.claudeDownloadSession = [NSURLSession
@@ -816,7 +1006,9 @@ static NSImage *ollamaApplicationIcon(void) {
                         delegate:self
                    delegateQueue:[NSOperationQueue mainQueue]];
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
-    [request setValue:authorization forHTTPHeaderField:@"Authorization"];
+    if (authorization.length > 0) {
+        [request setValue:authorization forHTTPHeaderField:@"Authorization"];
+    }
     self.claudeDownloadTask = [self.claudeDownloadSession
         downloadTaskWithRequest:request];
 
@@ -832,7 +1024,7 @@ static NSImage *ollamaApplicationIcon(void) {
         return ClaudeInstallCancelled;
     }
     if (self.claudeDownloadCompleted) {
-        return [self finishClaudeDownload];
+        return [self finishDesktopDownload];
     }
     return ClaudeInstallCancelled;
 }
@@ -888,15 +1080,20 @@ didFinishDownloadingToURL:(NSURL *)location {
             ? (NSHTTPURLResponse *)downloadTask.response
             : nil;
     NSString *host = response.URL.host.lowercaseString;
-    BOOL trustedHost = [host isEqualToString:@"claude.ai"] ||
-                       [host hasSuffix:@".claude.ai"];
+    BOOL chatGPT = self.desktopDownloadKind == DesktopDownloadChatGPT;
+    BOOL trustedHost = chatGPT
+        ? [host isEqualToString:@"persistent.oaistatic.com"]
+        : ([host isEqualToString:@"claude.ai"] ||
+           [host hasSuffix:@".claude.ai"]);
     if (response.statusCode != 200 || !trustedHost ||
         ![response.URL.scheme isEqualToString:@"https"]) {
         error = [NSError
             errorWithDomain:@"com.ollama.app"
                        code:1
                    userInfo:@{NSLocalizedDescriptionKey:
-                       @"Claude returned an invalid download response."}];
+                       chatGPT
+                           ? @"ChatGPT returned an invalid download response."
+                           : @"Claude returned an invalid download response."}];
     }
 
     if (error == nil) {
@@ -906,15 +1103,18 @@ didFinishDownloadingToURL:(NSURL *)location {
         if (error == nil && [attributes fileSize] < 1024 * 1024) {
             error = [NSError
                 errorWithDomain:@"com.ollama.app"
-                           code:2
-                       userInfo:@{NSLocalizedDescriptionKey:
-                           @"Claude returned an incomplete download."}];
+                       code:2
+                   userInfo:@{NSLocalizedDescriptionKey:
+                           chatGPT
+                               ? @"ChatGPT returned an incomplete download."
+                               : @"Claude returned an incomplete download."}];
         }
     }
 
     if (error == nil) {
         NSString *fileName = [NSString
-            stringWithFormat:@"Claude-%@.zip", [NSUUID UUID].UUIDString];
+            stringWithFormat:chatGPT ? @"ChatGPT-%@.dmg" : @"Claude-%@.zip",
+                             [NSUUID UUID].UUIDString];
         NSURL *installerURL = [NSURL fileURLWithPath:
             [NSTemporaryDirectory() stringByAppendingPathComponent:fileName]];
         if ([[NSFileManager defaultManager] moveItemAtURL:location
@@ -941,16 +1141,19 @@ didCompleteWithError:(NSError *)error {
         [NSApp abortModal];
         return;
     }
-    [self finishClaudeDownload];
+    [self finishDesktopDownload];
 }
 
-- (enum ClaudeInstallResult)finishClaudeDownload {
+- (enum ClaudeInstallResult)finishDesktopDownload {
     BOOL cancelled = self.claudeDownloadCancelled;
+    BOOL chatGPT = self.desktopDownloadKind == DesktopDownloadChatGPT;
+    IntegrationMenuRow *row = chatGPT ? self.codexAppRow : self.claudeAppRow;
+    NSString *appName = chatGPT ? @"ChatGPT" : @"Claude";
 
     [self.claudeDownloadProgress stopAnimation:nil];
     [self.claudeDownloadAlert.window orderOut:nil];
-    [self.claudeAppRow.integrationSwitch setEnabled:YES];
-    [self.claudeAppRow setInactiveStatusText:@"Not installed"];
+    [row.integrationSwitch setEnabled:YES];
+    [row setInactiveStatusText:@"Not installed"];
     [self.claudeDownloadSession finishTasksAndInvalidate];
     self.claudeDownloadTask = nil;
     self.claudeDownloadSession = nil;
@@ -962,6 +1165,7 @@ didCompleteWithError:(NSError *)error {
         self.claudeDownloadedInstallerURL = nil;
         self.claudeDownloadCancelled = NO;
         self.claudeDownloadCompleted = NO;
+        self.desktopDownloadKind = DesktopDownloadNone;
         return ClaudeInstallCancelled;
     }
     if (self.claudeDownloadError != nil ||
@@ -971,39 +1175,97 @@ didCompleteWithError:(NSError *)error {
                 errorWithDomain:@"com.ollama.app"
                            code:3
                        userInfo:@{NSLocalizedDescriptionKey:
-                           @"The Claude installer was not downloaded."}];
+                           chatGPT
+                               ? @"The ChatGPT installer was not downloaded."
+                               : @"The Claude installer was not downloaded."}];
         }
-        [self showClaudeDownloadFailure:self.claudeDownloadError];
+        if (chatGPT) {
+            [self showChatGPTDownloadFailure:self.claudeDownloadError];
+        } else {
+            [self showClaudeDownloadFailure:self.claudeDownloadError];
+        }
         self.claudeDownloadError = nil;
         self.claudeDownloadedInstallerURL = nil;
         self.claudeDownloadCancelled = NO;
         self.claudeDownloadCompleted = NO;
+        self.desktopDownloadKind = DesktopDownloadNone;
         return ClaudeInstallFailed;
     }
-    [self.claudeAppRow setInactiveStatusText:@"Installing Claude…"];
-    BOOL installed = InstallClaudeDesktopArchive(
-        self.claudeDownloadedInstallerURL.fileSystemRepresentation);
+    [row setInactiveStatusText:
+        [NSString stringWithFormat:@"Installing %@…", appName]];
+    BOOL installed = NO;
+    if (chatGPT) {
+        [row.integrationSwitch setEnabled:NO];
+        NSAlert *installAlert = [[NSAlert alloc] init];
+        [installAlert setAlertStyle:NSAlertStyleInformational];
+        [installAlert setIcon:ollamaApplicationIcon()];
+        [installAlert setMessageText:@"Installing ChatGPT"];
+        [installAlert setInformativeText:
+            @"Ollama is verifying and copying the ChatGPT app."];
+        NSButton *installingButton =
+            [installAlert addButtonWithTitle:@"Installing…"];
+        [installingButton setEnabled:NO];
+        NSProgressIndicator *installProgress = [[NSProgressIndicator alloc]
+            initWithFrame:NSMakeRect(0, 0, 260, 12)];
+        [installProgress setStyle:NSProgressIndicatorStyleBar];
+        [installProgress setIndeterminate:YES];
+        [installProgress startAnimation:nil];
+        [installAlert setAccessoryView:installProgress];
+
+        NSString *installerPath =
+            [self.claudeDownloadedInstallerURL.path copy];
+        __block BOOL backgroundInstalled = NO;
+        dispatch_async(
+            dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+                backgroundInstalled = InstallCodexDesktopDiskImage(
+                    installerPath.fileSystemRepresentation);
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [NSApp abortModal];
+                });
+            });
+        [NSApp activateIgnoringOtherApps:YES];
+        [installAlert runModal];
+        installed = backgroundInstalled;
+        [installProgress stopAnimation:nil];
+        [installAlert.window orderOut:nil];
+        [row.integrationSwitch setEnabled:YES];
+    } else {
+        installed = InstallClaudeDesktopArchive(
+            self.claudeDownloadedInstallerURL.fileSystemRepresentation);
+    }
     NSError *removeError = nil;
     [[NSFileManager defaultManager]
         removeItemAtURL:self.claudeDownloadedInstallerURL
                   error:&removeError];
     if (removeError != nil) {
-        appLogInfo([NSString stringWithFormat:
-            @"Unable to remove downloaded Claude archive: %@", removeError]);
+        appLogInfo([NSString stringWithFormat:chatGPT
+            ? @"Unable to remove downloaded ChatGPT installer: %@"
+            : @"Unable to remove downloaded Claude archive: %@",
+            removeError]);
     }
     if (!installed) {
         NSError *installError = [NSError
             errorWithDomain:@"com.ollama.app"
                        code:4
                    userInfo:@{NSLocalizedDescriptionKey:
-                       @"Claude could not be installed."}];
-        [self showClaudeInstallFailure:installError];
+                       [NSString stringWithFormat:
+                           @"%@ could not be installed.", appName]}];
+        if (chatGPT) {
+            [self showChatGPTInstallFailure:installError];
+        } else {
+            [self showClaudeInstallFailure:installError];
+        }
     }
     self.claudeDownloadError = nil;
     self.claudeDownloadedInstallerURL = nil;
     self.claudeDownloadCancelled = NO;
     self.claudeDownloadCompleted = NO;
-    [self refreshClaudeAppState];
+    self.desktopDownloadKind = DesktopDownloadNone;
+    if (chatGPT) {
+        [self refreshCodexAppState];
+    } else {
+        [self refreshClaudeAppState];
+    }
     return installed ? ClaudeInstallerOpened : ClaudeInstallFailed;
 }
 
@@ -1087,6 +1349,64 @@ didCompleteWithError:(NSError *)error {
             if (enabled) {
                 RefreshClaudeProxyMenu();
                 [self openClaudeApp:nil];
+            }
+        });
+    });
+}
+
+- (void)toggleCodexApp:(NSButton *)sender {
+    BOOL enabled = sender.state == NSControlStateValueOn;
+    if (enabled && !IsCodexDesktopInstalled()) {
+        [self refreshCodexAppState];
+        NSAlert *installAlert = [[NSAlert alloc] init];
+        [installAlert setAlertStyle:NSAlertStyleInformational];
+        [installAlert setIcon:ollamaApplicationIcon()];
+        [installAlert setMessageText:@"ChatGPT is not installed"];
+        [installAlert setInformativeText:
+            @"Download ChatGPT to add Ollama models to the ChatGPT app."];
+        [installAlert addButtonWithTitle:@"Download ChatGPT"];
+        [installAlert addButtonWithTitle:@"Cancel"];
+        if ([installAlert runModal] == NSAlertFirstButtonReturn) {
+            if ([self downloadChatGPT] != ClaudeInstallerOpened) {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+
+    BOOL restartChatGPT = IsCodexDesktopRunning();
+    if (restartChatGPT) {
+        NSAlert *restartAlert = [[NSAlert alloc] init];
+        [restartAlert setAlertStyle:NSAlertStyleWarning];
+        [restartAlert setIcon:ollamaApplicationIcon()];
+        configureChatGPTRestartAlert(restartAlert, enabled
+            ? ChatGPTRestartActionAddModels
+            : ChatGPTRestartActionRemoveModels);
+        [restartAlert addButtonWithTitle:@"Cancel"];
+        if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
+            [self refreshCodexAppState];
+            return;
+        }
+    }
+
+    [sender setEnabled:NO];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL succeeded = SetCodexDesktopConnected(enabled, restartChatGPT);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [sender setEnabled:YES];
+            [self refreshCodexAppState];
+            if (!succeeded) {
+                NSAlert *alert = [[NSAlert alloc] init];
+                [alert setAlertStyle:NSAlertStyleWarning];
+                [alert setIcon:ollamaApplicationIcon()];
+                [alert setMessageText:enabled
+                    ? @"Unable to add Ollama models to ChatGPT"
+                    : @"Unable to remove Ollama models from ChatGPT"];
+                [alert setInformativeText:
+                    @"ChatGPT could not complete the model update. Check the Ollama log for details, then try again."];
+                [alert runModal];
+                return;
             }
         });
     });
@@ -1434,6 +1754,12 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
         [alert setInformativeText:
             @"Claude Desktop must restart to remove Ollama. Any running task will stop."];
         [alert addButtonWithTitle:@"Restart Claude Desktop"];
+    } else if ([message hasPrefix:@"Restart ChatGPT to add Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionAddModels);
+    } else if ([message hasPrefix:@"Restart ChatGPT to update Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionUpdateModels);
+    } else if ([message hasPrefix:@"Restart ChatGPT to remove Ollama models?"]) {
+        configureChatGPTRestartAlert(alert, ChatGPTRestartActionRemoveModels);
     } else {
         [alert setMessageText:message];
         [alert addButtonWithTitle:@"Confirm"];
@@ -1542,7 +1868,6 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 AppDelegate *appDelegate;
 void run(bool so, bool sh) {
     [NSApplication sharedApplication];
-    [NSApp setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameAqua]];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     appDelegate = [[AppDelegate alloc] init];
     [NSApp setDelegate:appDelegate];
@@ -1562,38 +1887,74 @@ static BOOL isOllamaApplication(NSRunningApplication *app) {
         [bundleId isEqualToString:@"com.electron.ollama"];
 }
 
-bool otherOllamaInstanceRunning(void) {
-    pid_t myPid = getpid();
-    for (NSRunningApplication *app in
-         [[NSWorkspace sharedWorkspace] runningApplications]) {
-        if (isOllamaApplication(app) && app.processIdentifier > 0 &&
-            app.processIdentifier != myPid) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// killOtherInstances kills all other instances of the app currently
-// running. This way we can ensure that only the most recently started
-// instance of Ollama is running
-void killOtherInstances() {
+bool otherOllamaProcesses(AppProcessIdentity **processes, size_t *count) {
     pid_t myPid = getpid();
     NSArray *apps = [[NSWorkspace sharedWorkspace] runningApplications];
-
-    for (NSRunningApplication *app in apps) {
-        if (isOllamaApplication(app)) {
-            pid_t pid = app.processIdentifier;
-            if (pid != myPid && pid > 0) {
-                appLogInfo([NSString stringWithFormat:@"terminating other ollama instance %d", pid]);
-                // Preserve the Claude profile while the replacement instance
-                // takes ownership of the local gateway.
-                kill(pid, SIGUSR1);
-            } else if (pid == -1) {
-                appLogInfo([NSString stringWithFormat:@"skipping app with invalid pid: %@", app.bundleIdentifier]);
-            }
-        }
+    AppProcessIdentity *result = calloc(apps.count, sizeof(*result));
+    if (result == NULL && apps.count > 0) {
+        return false;
     }
+
+    size_t resultCount = 0;
+    for (NSRunningApplication *app in apps) {
+        pid_t pid = app.processIdentifier;
+        if (!isOllamaApplication(app) || pid == myPid) {
+            continue;
+        }
+        if (pid <= 0) {
+            appLogInfo([NSString stringWithFormat:
+                @"skipping app with invalid pid: %@", app.bundleIdentifier]);
+            continue;
+        }
+
+        // Tie the NSWorkspace match to the kernel process. Re-read the start
+        // time after confirming the current app so PID reuse is rejected.
+        struct proc_bsdinfo before = {0};
+        int size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &before,
+                               sizeof(before));
+        if (size != sizeof(before)) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                continue;
+            }
+            appLogInfo([NSString stringWithFormat:
+                @"unable to inspect ollama instance %d", pid]);
+            free(result);
+            return false;
+        }
+
+        NSRunningApplication *current =
+            [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        if (current == nil || current.isTerminated ||
+            !isOllamaApplication(current)) {
+            continue;
+        }
+
+        struct proc_bsdinfo after = {0};
+        size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &after, sizeof(after));
+        if (size != sizeof(after)) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                continue;
+            }
+            appLogInfo([NSString stringWithFormat:
+                @"unable to confirm ollama instance %d", pid]);
+            free(result);
+            return false;
+        }
+        if (before.pbi_start_tvsec != after.pbi_start_tvsec ||
+            before.pbi_start_tvusec != after.pbi_start_tvusec) {
+            continue;
+        }
+
+        result[resultCount++] = (AppProcessIdentity){
+            .pid = pid,
+            .started_at = (int64_t)after.pbi_start_tvsec * 1000000 +
+                after.pbi_start_tvusec,
+        };
+    }
+
+    *processes = result;
+    *count = resultCount;
+    return true;
 }
 
 // Move the source bundle to the system-wide applications location
@@ -1958,6 +2319,21 @@ enum ClaudeInstallResult installClaudeDesktop(void) {
     void (^install)(void) = ^{
         if (appDelegate != nil) {
             result = [appDelegate downloadClaude];
+        }
+    };
+    if ([NSThread isMainThread]) {
+        install();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), install);
+    }
+    return result;
+}
+
+enum ClaudeInstallResult installCodexDesktop(void) {
+    __block enum ClaudeInstallResult result = ClaudeInstallFailed;
+    void (^install)(void) = ^{
+        if (appDelegate != nil) {
+            result = [appDelegate downloadChatGPT];
         }
     };
     if ([NSThread isMainThread]) {
