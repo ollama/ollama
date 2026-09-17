@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -939,6 +940,7 @@ func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.P
 	}
 
 	manifests := make([]manifest.Manifest, 0, len(r.List))
+	signatures := make([]manifestListChildSignature, 0, len(r.List))
 	seenDigests := make(map[string]string)
 	seenRunners := make(map[string]string)
 	var anchorChild *manifest.Manifest
@@ -980,6 +982,12 @@ func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.P
 			return fmt.Errorf("manifest list entry %s: %w", ref, err)
 		}
 
+		signature, err := newManifestListChildSignature(ref, childName, &child)
+		if err != nil {
+			return err
+		}
+		signatures = append(signatures, signature)
+
 		childData, err := json.Marshal(child)
 		if err != nil {
 			return err
@@ -1013,6 +1021,8 @@ func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.P
 
 		manifests = append(manifests, childRef)
 	}
+
+	warnManifestListDrift(signatures, fn)
 
 	fn(api.ProgressResponse{Status: "writing manifest list"})
 	parentDigest, err := manifest.WriteManifestList(name, manifests)
@@ -1117,4 +1127,146 @@ func createConfigLayer(config model.ConfigV2) (*manifest.Layer, error) {
 		return nil, err
 	}
 	return &layer, nil
+}
+
+// manifestListChildSignature holds the fields compared across manifest list
+// entries so accidental drift across runner variants is visible at creation
+// time. Runner and format are expected to differ; these fields describe the
+// model itself.
+type manifestListChildSignature struct {
+	ref       string
+	config    model.ConfigV2
+	caps      []model.Capability
+	capsKnown bool
+}
+
+func newManifestListChildSignature(ref string, name model.Name, child *manifest.Manifest) (manifestListChildSignature, error) {
+	config, err := readModelListConfig(child)
+	if err != nil {
+		return manifestListChildSignature{}, fmt.Errorf("read config for manifest list entry %s: %w", ref, err)
+	}
+
+	caps, capsKnown := manifestListChildCapabilities(name)
+	return manifestListChildSignature{ref: ref, config: config, caps: caps, capsKnown: capsKnown}, nil
+}
+
+// manifestListChildCapabilities renders the same capability list show and
+// /api/tags report, so drift warnings match what users see. A child that
+// cannot be loaded leaves capabilities unknown rather than failing the
+// combine.
+func manifestListChildCapabilities(name model.Name) ([]model.Capability, bool) {
+	m, err := GetModel(name.String())
+	if err != nil {
+		slog.Warn("could not load model to check capabilities", "model", name.String(), "error", err)
+		return nil, false
+	}
+	return m.Capabilities(), true
+}
+
+// warnManifestListDrift warns when manifest list entries disagree on fields
+// that describe the same model. Unset fields never count as drift: legacy
+// manifests often carry them only in their model files. Differences are
+// warnings, not errors, because runner pairs legitimately vary in what they
+// support.
+func warnManifestListDrift(signatures []manifestListChildSignature, fn func(resp api.ProgressResponse)) {
+	if len(signatures) < 2 {
+		return
+	}
+
+	base := signatures[0]
+	for _, child := range signatures[1:] {
+		warnDrift(fn, "model family", base, child,
+			base.config.ModelFamily, child.config.ModelFamily)
+		warnDrift(fn, "model families", base, child,
+			joinNonEmpty(base.config.ModelFamilies), joinNonEmpty(child.config.ModelFamilies))
+		warnDrift(fn, "parameter size", base, child,
+			base.config.ModelType, child.config.ModelType)
+		warnDrift(fn, "context length", base, child,
+			nonZeroInt(base.config.ContextLen), nonZeroInt(child.config.ContextLen))
+		warnDrift(fn, "embedding length", base, child,
+			nonZeroInt(base.config.EmbedLen), nonZeroInt(child.config.EmbedLen))
+		warnDrift(fn, "parser", base, child,
+			base.config.Parser, child.config.Parser)
+		warnDrift(fn, "renderer", base, child,
+			base.config.Renderer, child.config.Renderer)
+		warnDriftDtype(fn, base, child)
+		warnDriftCapabilities(fn, base, child)
+	}
+}
+
+func joinNonEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.Join(values, ",")
+}
+
+func nonZeroInt(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+func warnDrift(fn func(resp api.ProgressResponse), field string, base, child manifestListChildSignature, baseValue, childValue string) {
+	if baseValue == "" || childValue == "" || baseValue == childValue {
+		return
+	}
+	warning := fmt.Sprintf("warning: manifest list entries differ in %s: %s=%s, %s=%s", field, base.ref, baseValue, child.ref, childValue)
+	fn(api.ProgressResponse{Status: warning})
+	slog.Warn("manifest list entries differ", "field", field,
+		base.ref, baseValue, child.ref, childValue)
+}
+
+func warnDriftDtype(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	baseClass, childClass := dtypeClass(base.config.FileType), dtypeClass(child.config.FileType)
+	if baseClass == "" || childClass == "" || baseClass == childClass {
+		return
+	}
+	warnDrift(fn, "quantization class", base, child,
+		fmt.Sprintf("%s (%s)", base.config.FileType, baseClass),
+		fmt.Sprintf("%s (%s)", child.config.FileType, childClass))
+}
+
+func warnDriftCapabilities(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	if !base.capsKnown || !child.capsKnown {
+		return
+	}
+	baseCaps, childCaps := capabilitiesValue(base.caps), capabilitiesValue(child.caps)
+	if baseCaps == childCaps {
+		return
+	}
+	warnDrift(fn, "capabilities", base, child, baseCaps, childCaps)
+}
+
+func capabilitiesValue(caps []model.Capability) string {
+	names := make([]string, len(caps))
+	for i, c := range caps {
+		names[i] = c.String()
+	}
+	slices.Sort(names)
+	return "[" + strings.Join(names, " ") + "]"
+}
+
+// dtypeClass maps a model file type to a coarse precision class so
+// runner-native spellings of the same precision compare equal: Q4_K_M and
+// nvfp4 are both 4-bit, and bf16 and F16 are both unquantized.
+func dtypeClass(fileType string) string {
+	switch strings.ToLower(fileType) {
+	case "":
+		return ""
+	case "q4_0", "q4_1", "q4_k_m", "q4_k_s", "iq4_xs", "iq4_nl",
+		"4bit", "mxfp4", "nvfp4":
+		return "4-bit"
+	case "q5_0", "q5_1", "q5_k_m", "q5_k_s", "5bit":
+		return "5-bit"
+	case "q6_k", "6bit":
+		return "6-bit"
+	case "q8_0", "q8_1", "iq8", "8bit", "mxfp8":
+		return "8-bit"
+	case "f16", "bf16", "f32", "fp16", "unquantized":
+		return "unquantized"
+	default:
+		return strings.ToLower(fileType)
+	}
 }

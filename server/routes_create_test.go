@@ -3243,3 +3243,196 @@ func mustBlobsPath(t *testing.T, digest string) string {
 	}
 	return path
 }
+
+func writeDriftVariant(t *testing.T, name, format string, config model.ConfigV2) {
+	t.Helper()
+
+	configData, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var layers []manifest.Layer
+	switch format {
+	case manifest.FormatGGUF:
+		_, digest := createBinFile(t, map[string]any{"general.architecture": "test"}, nil)
+		modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layers = append(layers, modelLayer)
+	case manifest.FormatSafetensors:
+		layers = append(layers, createShowSafetensorsLayer(t, name+".weight", []int64{2, 2}))
+	}
+
+	if err := manifest.WriteManifest(model.ParseName(name), configLayer, layers); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func driftWarnings(t *testing.T, name string, children []model.ConfigV2) []string {
+	t.Helper()
+
+	for i, child := range children {
+		writeDriftVariant(t, fmt.Sprintf("drift-%d", i), child.ModelFormat, child)
+	}
+
+	refs := make([]string, len(children))
+	for i := range children {
+		refs[i] = fmt.Sprintf("drift-%d", i)
+	}
+
+	var warnings []string
+	err := createManifestList(api.CreateRequest{Name: name, List: refs}, model.ParseName(name), func(resp api.ProgressResponse) {
+		if strings.HasPrefix(resp.Status, "warning:") {
+			warnings = append(warnings, resp.Status)
+		}
+	})
+	if err != nil {
+		t.Fatalf("createManifestList() error = %v", err)
+	}
+	return warnings
+}
+
+func TestCreateManifestListWarnsOnDrift(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	baseConfig := func(format string) model.ConfigV2 {
+		return model.ConfigV2{
+			ModelFormat:   format,
+			ModelFamily:   "testfam",
+			ModelFamilies: []string{"testfam"},
+			ModelType:     "1B",
+			FileType:      "Q4_K_M",
+			ContextLen:    8192,
+			EmbedLen:      2048,
+			Parser:        "test",
+			Renderer:      "test",
+			Capabilities:  []string{"completion"},
+		}
+	}
+
+	tests := []struct {
+		name          string
+		mutate        func(config *model.ConfigV2)
+		wantSubstring string
+	}{
+		{
+			name: "context length drift",
+			mutate: func(config *model.ConfigV2) {
+				config.ContextLen = 131072
+			},
+			wantSubstring: "context length: drift-0=8192, drift-1=131072",
+		},
+		{
+			name: "model family drift",
+			mutate: func(config *model.ConfigV2) {
+				config.ModelFamily = "otherfam"
+				config.ModelFamilies = []string{"otherfam"}
+			},
+			wantSubstring: "model family: drift-0=testfam, drift-1=otherfam",
+		},
+		{
+			name: "parameter size drift",
+			mutate: func(config *model.ConfigV2) {
+				config.ModelType = "7B"
+			},
+			wantSubstring: "parameter size: drift-0=1B, drift-1=7B",
+		},
+		{
+			name: "quantization class drift",
+			mutate: func(config *model.ConfigV2) {
+				config.FileType = "Q8_0"
+			},
+			wantSubstring: "quantization class: drift-0=Q4_K_M (4-bit), drift-1=Q8_0 (8-bit)",
+		},
+		{
+			name: "parser drift",
+			mutate: func(config *model.ConfigV2) {
+				config.Parser = "other"
+			},
+			wantSubstring: "parser: drift-0=test, drift-1=other",
+		},
+		{
+			name: "renderer drift",
+			mutate: func(config *model.ConfigV2) {
+				config.Renderer = "other"
+			},
+			wantSubstring: "renderer: drift-0=test, drift-1=other",
+		},
+		{
+			name: "capabilities drift",
+			mutate: func(config *model.ConfigV2) {
+				config.Capabilities = []string{"completion", "tools"}
+			},
+			wantSubstring: "capabilities: drift-0=[completion], drift-1=[completion tools]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+			first := baseConfig(manifest.FormatGGUF)
+			second := baseConfig(manifest.FormatSafetensors)
+			tt.mutate(&second)
+
+			warnings := driftWarnings(t, "drift-test", []model.ConfigV2{first, second})
+			found := slices.ContainsFunc(warnings, func(w string) bool {
+				return strings.Contains(w, tt.wantSubstring)
+			})
+			if !found {
+				t.Fatalf("warnings = %v, want one containing %q", warnings, tt.wantSubstring)
+			}
+		})
+	}
+
+	t.Run("unset fields are not drift", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+		first := baseConfig(manifest.FormatGGUF)
+		second := baseConfig(manifest.FormatSafetensors)
+		second.ModelFamily = ""
+		second.ModelFamilies = nil
+		second.ModelType = ""
+		second.ContextLen = 0
+		second.FileType = ""
+
+		warnings := driftWarnings(t, "drift-unset", []model.ConfigV2{first, second})
+		if len(warnings) != 0 {
+			t.Fatalf("warnings = %v, want none", warnings)
+		}
+	})
+
+	t.Run("same precision class is not drift", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+		first := baseConfig(manifest.FormatGGUF)
+		second := baseConfig(manifest.FormatSafetensors)
+		second.FileType = "nvfp4"
+
+		warnings := driftWarnings(t, "drift-class", []model.ConfigV2{first, second})
+		for _, warning := range warnings {
+			if strings.Contains(warning, "quantization") {
+				t.Fatalf("warnings = %v, want no quantization warning", warnings)
+			}
+		}
+	})
+
+	t.Run("no drift is silent", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+		first := baseConfig(manifest.FormatGGUF)
+		second := baseConfig(manifest.FormatSafetensors)
+
+		warnings := driftWarnings(t, "drift-clean", []model.ConfigV2{first, second})
+		if len(warnings) != 0 {
+			t.Fatalf("warnings = %v, want none", warnings)
+		}
+	})
+}
