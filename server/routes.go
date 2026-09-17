@@ -673,7 +673,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	var thinkTagParser *thinkingparser.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
-		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+		// Parse reasoning whenever the model can emit it, rather than only when
+		// thinking was asked for. A model told not to think may still produce a
+		// reasoning block, and those tags belong in `thinking`, never raw in
+		// `response`. The native chat path already behaves this way: llama-server
+		// splits `reasoning_content` regardless of the think value, which is why
+		// /api/chat was clean and /api/generate was not (#18044).
+		if req.Think != nil && openingTag != "" && closingTag != "" {
 			thinkTagParser = &thinkingparser.Parser{
 				OpeningTag: openingTag,
 				ClosingTag: closingTag,
