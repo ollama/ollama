@@ -829,6 +829,12 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
 					}
+
+					// MiniCPM5 identifies as a generic llama architecture, so
+					// detect it from its XML tool-call chat template instead.
+					if config.Parser == "" && create.IsMiniCPM5ChatTemplate(layer.GGUF.ChatTemplate()) {
+						config.Parser = "minicpm5"
+					}
 				}
 			case manifest.MediaTypeImageDraft:
 				config.Draft = &model.Draft{
