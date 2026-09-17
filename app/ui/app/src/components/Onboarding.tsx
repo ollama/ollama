@@ -1068,7 +1068,7 @@ export function ConnectAppsScreen({
             </p>
           </div>
         </div>
-        <div className="ml-auto flex min-w-0 shrink-0 items-center overflow-hidden rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
+        <div className="ml-auto flex min-w-0 shrink-0 items-center rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
           <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
             {item.command}
           </code>
