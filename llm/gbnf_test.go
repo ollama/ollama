@@ -55,16 +55,16 @@ func TestClosingAutomatonNext(t *testing.T) {
 }
 
 // TestThinkingGrammarRules checks the emitted rules: every prefix state may
-// end the response, completing the closing leads through the whitespace rule
-// to the renamed format root, the format grammar's other rules keep their
-// names, and the added rules avoid a prefix the format grammar already uses.
+// end the response, completing the closing leads to the renamed format root,
+// the format grammar's other rules keep their names, and the added rules
+// avoid a prefix the format grammar already uses.
 func TestThinkingGrammarRules(t *testing.T) {
 	format := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
 	grammar := thinkingGrammar([]string{"</think>"}, format)
 	for _, want := range []string{
 		"root ::= ollama-thinking-0\n",
 		"ollama-thinking-0 ::= | [^<] ollama-thinking-0 | [<] ollama-thinking-1\n",
-		"ollama-thinking-7 ::= | [^<>] ollama-thinking-0 | [<] ollama-thinking-1 | [>] ollama-space ollama-format\n",
+		"ollama-thinking-7 ::= | [^<>] ollama-thinking-0 | [<] ollama-thinking-1 | [>] ollama-format\n",
 		"ollama-format ::= \"{\" space \"}\"\nspace ::= | \" \"\n",
 	} {
 		if !strings.Contains(grammar, want) {

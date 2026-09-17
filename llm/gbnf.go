@@ -9,8 +9,7 @@ import (
 
 // thinkingGrammar returns a grammar that leaves the text before any of the
 // closings unconstrained, then constrains what follows the first complete
-// closing to the root of the format grammar, after the whitespace a
-// converted schema allows between tokens. The response may end before any
+// closing to the root of the format grammar. The response may end before any
 // closing. A closing that is a prefix of another ends the thinking as soon
 // as it is complete.
 func thinkingGrammar(closings []string, format string) string {
@@ -20,7 +19,7 @@ func thinkingGrammar(closings []string, format string) string {
 	for grammarHasRulePrefix(format, prefix) {
 		prefix += "ollama-"
 	}
-	thinking, space, formatted := prefix+"thinking-", prefix+"space", prefix+"format"
+	thinking, formatted := prefix+"thinking-", prefix+"format"
 
 	a := newClosingAutomaton(closings)
 	var b strings.Builder
@@ -48,11 +47,10 @@ func thinkingGrammar(closings []string, format string) string {
 			}
 		}
 		if len(terminal) > 0 {
-			fmt.Fprintf(&b, " | %s %s %s", gbnfCharClass(terminal, false), space, formatted)
+			fmt.Fprintf(&b, " | %s %s", gbnfCharClass(terminal, false), formatted)
 		}
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(&b, "%s ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\n", space)
 	b.WriteString(renameGrammarRule(format, "root", formatted))
 	return b.String()
 }
