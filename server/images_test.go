@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -899,5 +900,56 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	err = PullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
 	if !errors.Is(err, errDigestMismatch) {
 		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
+	}
+}
+
+// TestPullManifestRejectsCrossHostRedirect: a manifest GET that the registry
+// redirects to a different host must be refused by default, so a malicious
+// registry can't turn a pull into a request to an internal address.
+// --insecure opts out for trusted registries.
+func TestPullManifestRejectsCrossHostRedirect(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var internalHit atomic.Bool
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internalHit.Store(true)
+	}))
+	defer internal.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer ts.Close()
+
+	requestURL, err := url.Parse(ts.URL + "/v2/test/attack/manifests/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Default policy: cross-host redirect is refused before any request
+	// leaves for the internal host. (regOpts nil exercises the makeRequest
+	// default; the insecure protocol check doesn't apply at this level.)
+	blockedResp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+	// On a CheckRedirect failure the client returns the pre-redirect
+	// response with its body already closed; close again defensively to
+	// satisfy bodyclose (double close is a no-op).
+	if blockedResp != nil && blockedResp.Body != nil {
+		blockedResp.Body.Close()
+	}
+	if !errors.Is(err, errBlockedRedirect) {
+		t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+	}
+	if internalHit.Load() {
+		t.Fatal("internal host received a request despite the blocked redirect")
+	}
+
+	// Insecure opts out: the cross-host redirect is followed.
+	resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{Insecure: true})
+	if err != nil {
+		t.Fatalf("makeRequest with Insecure = %v, want redirect followed", err)
+	}
+	resp.Body.Close()
+	if !internalHit.Load() {
+		t.Fatal("redirect target was not reached with Insecure set")
 	}
 }
