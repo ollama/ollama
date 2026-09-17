@@ -96,6 +96,9 @@ if(GGML_HIP AND OLLAMA_RUNNER_DIR MATCHES "^rocm_v")
     ollama_set_cache_default(CMAKE_HIP_FLAGS STRING
         "-parallel-jobs=4" "HIP compiler flags")
     if(WIN32)
+        # Windows ROCm split-load needs peer copies disabled for correctness.
+        ollama_set_cache_default(GGML_CUDA_NO_PEER_COPY BOOL ON
+            "Disable direct peer device copies")
         # HIP on Windows currently emits attributes and deprecated pragma
         # warnings from ROCm headers. Keep the workaround local to Windows ROCm
         # so it can be removed when the ROCm toolchain no longer needs it.
@@ -173,6 +176,7 @@ set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_TOOLS_INSTALL OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp
@@ -183,22 +187,111 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama_cpp)
 
+if(NOT COMMAND license_add_file)
+    message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")
+endif()
+set(_llama_cpp_root "${llama_cpp_SOURCE_DIR}")
+
+file(GLOB_RECURSE _ollama_vendor_license_files
+     "${_llama_cpp_root}/vendor/*/LICENSE*")
+file(GLOB _llamacpp_repo_license_files
+     "${_llama_cpp_root}/licenses/LICENSE*")
+list(APPEND _ollama_vendor_license_files ${_llamacpp_repo_license_files})
+list(APPEND _ollama_vendor_license_files "${_llama_cpp_root}/LICENSE")
+foreach(_lic IN LISTS _ollama_vendor_license_files)
+    cmake_path(RELATIVE_PATH _lic BASE_DIRECTORY "${_llama_cpp_root}")
+    # upstream registers these itself; skip to avoid double entries
+    if(_lic STREQUAL "LICENSE" OR _lic STREQUAL "vendor/cpp-httplib/LICENSE")
+        continue()
+    endif()
+    set(_name "${_lic}")
+    if(_name MATCHES "^vendor/")
+        # registry name = component path without the vendor/ prefix
+        string(REGEX REPLACE "^vendor/" "" _name "${_name}")
+        string(REGEX REPLACE "/LICENSE[^/]*$" "" _name "${_name}")
+    endif()
+    string(REPLACE "/" "-" _name "${_name}")
+    license_add_file("${_name}" "${_llama_cpp_root}/${_lic}")
+endforeach()
+unset(_ollama_vendor_license_files)
+
+function(ollama_extract_vendor_license name src start_marker end_marker)
+    if(NOT EXISTS "${src}")
+        message(FATAL_ERROR
+            "llama.cpp vendored source missing: ${src}; check the llama.cpp update "
+            "and the embedded-license entry in llama/server/CMakeLists.txt")
+    endif()
+    file(READ "${src}" _txt)
+    string(FIND "${_txt}" "${start_marker}" _start)
+    if(_start EQUAL -1)
+        message(FATAL_ERROR
+            "llama.cpp embedded license anchor '${start_marker}' not found in "
+            "${src}; update llama/server/CMakeLists.txt")
+    endif()
+    string(FIND "${_txt}" "${end_marker}" _end)
+    if(_end EQUAL -1)
+        message(FATAL_ERROR
+            "llama.cpp embedded license end anchor '${end_marker}' not found in "
+            "${src}; update llama/server/CMakeLists.txt")
+    endif()
+    string(LENGTH "${end_marker}" _end_len)
+    math(EXPR _len "${_end} - ${_start} + ${_end_len}")
+    string(SUBSTRING "${_txt}" "${_start}" "${_len}" _lic)
+    set(_dst "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/${name}.txt")
+    file(WRITE "${_dst}" "${_lic}")
+    license_add_file("${name}" "${_dst}")
+endfunction()
+
+ollama_extract_vendor_license(
+    "llamafile-sgemm"
+    "${_llama_cpp_root}/ggml/src/ggml-cpu/llamafile/sgemm.cpp"
+    "Copyright 2024 Mozilla Foundation"
+    "// SOFTWARE.")
+
+get_property(_reg_text GLOBAL PROPERTY LICENSE_TEXT)
+string(REPLACE "R\"=L=(" "" _reg_text "${_reg_text}")
+string(REPLACE ")=L=\"," "\n" _reg_text "${_reg_text}")
+set(_reg_ok TRUE)
+foreach(_anchor IN ITEMS "llama.cpp" "cpp-httplib" "llamafile-sgemm" "jsonhpp")
+    string(FIND "${_reg_text}" "${_anchor}" _pos)
+    if(_pos EQUAL -1)
+        set(_reg_ok FALSE)
+    endif()
+endforeach()
+string(LENGTH "${_reg_text}" _reg_len)
+if(NOT _reg_ok OR _reg_len LESS 256)
+    message(FATAL_ERROR "llama.cpp vendored license aggregate came out empty or incomplete; the registry mechanism changed upstream")
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/LLAMA_CPP_VENDORS_LICENSE" "${_reg_text}")
+unset(_reg_text)
+unset(_llama_cpp_root)
+
 # Link the Ollama-compat source files into the fetched llama target.
 # Kept separate from the hook patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
-if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR AND TARGET llama)
     file(GLOB _compat_sources CONFIGURE_DEPENDS
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
-    foreach(_compat_target IN ITEMS llama mtmd)
-        if(TARGET ${_compat_target})
-            target_sources(${_compat_target} PRIVATE ${_compat_sources})
-            target_include_directories(${_compat_target} PRIVATE
-                ${OLLAMA_LLAMA_CPP_COMPAT_DIR}
-                ${llama_cpp_SOURCE_DIR}/src)
-        endif()
-    endforeach()
+    target_sources(llama PRIVATE ${_compat_sources})
+    set_source_files_properties(${_compat_sources}
+        TARGET_DIRECTORY llama
+        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
+    target_include_directories(llama PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
     if(TARGET mtmd)
-        target_compile_definitions(mtmd PRIVATE OLLAMA_COMPAT_MTMD_BUILD)
+        target_include_directories(mtmd PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
+    endif()
+endif()
+
+# Link temporary architecture sources (llama/compat/models/*.cpp) into the
+# llama target only (not the mtmd projector lib).
+if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
+    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models/*.cpp)
+    if(_ollama_model_sources AND TARGET llama)
+        target_sources(llama PRIVATE ${_ollama_model_sources})
+        target_include_directories(llama PRIVATE
+            ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
+            ${llama_cpp_SOURCE_DIR}/src)
     endif()
 endif()
 
@@ -421,11 +514,25 @@ if(OLLAMA_RUNNER_DIR)
     # Bundle GPU runtime libraries (cublas, cudart, rocblas, etc.)
     # These are needed at runtime by the GPU backend .so
     if(GGML_CUDA AND CUDAToolkit_FOUND)
+        if(DEFINED OLLAMA_WINDOWS_RUNTIME_ARCH)
+            string(TOLOWER "${OLLAMA_WINDOWS_RUNTIME_ARCH}" _cuda_redist_arch)
+            if(_cuda_redist_arch MATCHES "^(x64|amd64|x86_64)$")
+                set(_cuda_redist_arch "x64")
+            elseif(_cuda_redist_arch MATCHES "^(arm64|aarch64)$")
+                set(_cuda_redist_arch "arm64")
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+            set(_cuda_redist_arch "arm64")
+        else()
+            set(_cuda_redist_arch "x64")
+        endif()
+        set(_cuda_redist_dir "${CUDAToolkit_BIN_DIR}/${_cuda_redist_arch}")
+
         # Find the actual ggml-cuda target to get its runtime dependencies
         if(TARGET ggml-cuda)
             install(TARGETS ggml-cuda
                 RUNTIME_DEPENDENCIES
-                    DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
+                    DIRECTORIES ${_cuda_redist_dir} ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
                     PRE_INCLUDE_REGEXES cublas cublasLt cudart
                     PRE_EXCLUDE_REGEXES ".*"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -485,26 +592,6 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
-            if(WIN32)
-                # Bundle the system Vulkan loader, not an arbitrary SDK copy.
-                # The loader is supplied by the installed Vulkan runtime or
-                # GPU driver; using that copy avoids PATH-dependent SDK drift.
-                if(DEFINED ENV{SystemRoot})
-                    file(TO_CMAKE_PATH "$ENV{SystemRoot}" _ollama_windows_root)
-                else()
-                    set(_ollama_windows_root "C:/Windows")
-                endif()
-                find_file(_vulkan_loader_dll
-                    NAMES vulkan-1.dll
-                    HINTS "${_ollama_windows_root}/System32"
-                    NO_DEFAULT_PATH)
-                if(NOT _vulkan_loader_dll)
-                    message(FATAL_ERROR "Could not find vulkan-1.dll in the Windows Vulkan runtime. Install the Vulkan runtime from the GPU driver or VULKAN_SDK/Helpers/VulkanRT.exe.")
-                endif()
-                install(FILES "${_vulkan_loader_dll}"
-                    DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
-                    COMPONENT llama-server)
-            endif()
         endif()
     endif()
 else()
@@ -528,6 +615,25 @@ else()
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL
         LIBRARY DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
 
+    get_target_property(_llama_cpp_license_source llama SOURCE_DIR)
+    if(NOT _llama_cpp_license_source OR _llama_cpp_license_source MATCHES "-NOTFOUND$")
+        message(FATAL_ERROR "llama.cpp source directory not found for license install")
+    endif()
+    get_filename_component(_llama_cpp_license_root "${_llama_cpp_license_source}/.." ABSOLUTE)
+    install(FILES
+        "${_llama_cpp_license_root}/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME LLAMA_CPP_LICENSE
+        COMPONENT llama-server)
+    install(FILES
+        "${_llama_cpp_license_root}/vendor/cpp-httplib/LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        RENAME CPP_HTTPLIB_LICENSE
+        COMPONENT llama-server)
+    install(FILES
+        "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/LLAMA_CPP_VENDORS_LICENSE"
+        DESTINATION ${OLLAMA_LIB_DIR}
+        COMPONENT llama-server)
     # Bundle Windows CRT DLLs alongside the executables so zip installs
     # do not depend on host-global redistributables.
     ollama_install_windows_runtime_dlls("${_base_dest}")

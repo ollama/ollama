@@ -74,6 +74,12 @@ func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 		return tools
 	}
 
+	if lastMessage != nil && lastMessage.Role == "tool" {
+		p.state = Gemma4CollectingThinking
+		p.needsChannelNameStrip = false
+		return tools
+	}
+
 	if prefill && lastMessage.Content != "" {
 		p.state = Gemma4CollectingContent
 		return tools

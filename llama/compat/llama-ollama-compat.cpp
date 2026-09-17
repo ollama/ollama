@@ -13,7 +13,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -29,20 +28,8 @@ using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
 
 namespace {
 
-#ifdef OLLAMA_COMPAT_MTMD_BUILD
-void ollama_compat_log(const char * format, ...) {
-    std::va_list args;
-    va_start(args, format);
-    std::vfprintf(stderr, format, args);
-    va_end(args);
-}
-
-#define OLLAMA_COMPAT_LOG_INFO(...)  do { ollama_compat_log(__VA_ARGS__); } while (0)
-#define OLLAMA_COMPAT_LOG_ERROR(...) ollama_compat_log(__VA_ARGS__)
-#else
 #define OLLAMA_COMPAT_LOG_INFO(...)  do { LLAMA_LOG_INFO(__VA_ARGS__); } while (0)
 #define OLLAMA_COMPAT_LOG_ERROR(...) LLAMA_LOG_ERROR(__VA_ARGS__)
-#endif
 
 double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -68,6 +55,18 @@ TransformTiming record_transform_timing(size_t bytes, double ms) {
 bool compat_disabled() {
     const char * value = std::getenv("OLLAMA_LLAMA_CPP_COMPAT");
     return value && std::strcmp(value, "0") == 0;
+}
+
+bool clip_mmproj_embd_uses_projection_dim(const char * projector_type) {
+    static constexpr const char * kProjectorTypes[] = {
+        "gemma4a",
+    };
+
+    if (!projector_type) return false;
+    for (const char * compat_type : kProjectorTypes) {
+        if (std::strcmp(projector_type, compat_type) == 0) return true;
+    }
+    return false;
 }
 
 // Per-loader file path registry — set by translate_metadata, read by
@@ -103,6 +102,43 @@ void fix_glm4moelite_eog_token_ids(gguf_context * meta) {
     }
     if (need_eom && ids.size() >= 3) {
         gguf_set_val_u32(meta, "tokenizer.ggml.eom_token_id", ids[2]);
+    }
+}
+
+// =========================================================================
+// laguna (text side)
+// =========================================================================
+
+bool detect_ollama_laguna(const gguf_context * meta, const ggml_context * ctx) {
+    const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
+    if (arch_kid < 0 || std::strcmp(gguf_get_val_str(meta, arch_kid), "laguna") != 0) return false;
+
+    return has_key(meta, "laguna.rope.swa.dimension_count")
+        || has_key(meta, "laguna.rope.swa.freq_base")
+        || ggml_get_tensor(const_cast<ggml_context *>(ctx), "blk.0.attn_g.weight") != nullptr;
+}
+
+void handle_laguna(gguf_context * meta, ggml_context * ctx) {
+    if (!detect_ollama_laguna(meta, ctx)) return;
+
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format laguna GGUF; applying compatibility fixes\n", __func__);
+
+    copy_u32_kv(meta, "laguna.rope.swa.dimension_count", "laguna.rope.dimension_count_swa");
+    copy_f32_kv(meta, "laguna.rope.swa.freq_base",       "laguna.rope.freq_base_swa");
+
+    std::vector<std::pair<std::string, std::string>> renames;
+    const int64_t n = gguf_get_n_tensors(meta);
+    constexpr const char * old_suffix = ".attn_g.weight";
+    constexpr const char * new_suffix = ".attn_gate.weight";
+    for (int64_t i = 0; i < n; ++i) {
+        const std::string name(gguf_get_tensor_name(meta, i));
+        const size_t pos = name.rfind(old_suffix);
+        if (pos != std::string::npos && pos + std::strlen(old_suffix) == name.size()) {
+            renames.emplace_back(name, name.substr(0, pos) + new_suffix);
+        }
+    }
+    for (const auto & [from, to] : renames) {
+        rename_tensor(meta, ctx, from.c_str(), to.c_str());
     }
 }
 
@@ -2946,6 +2982,7 @@ void handle_qwen25vl_clip(gguf_context * meta, ggml_context * ctx) {
             gguf_set_val_u32(meta, "clip.vision.n_wa_pattern", (uint32_t)(arr[0] + 1));
         }
     }
+    inject_u32_if_missing(meta, "clip.vision.n_wa_pattern", 8);
 
     // Default image_size = 560 (Qwen2VLVisionModel default, no image_size in HF config).
     inject_u32_if_missing(meta, "clip.vision.image_size", 560);
@@ -3208,6 +3245,7 @@ bool translate_metadata(const llama_model_loader * ml,
     if (arch_name == "qwen35moe") handle_qwen35moe(ml, meta, ctx);
     if (arch_name == "qwen35")    handle_qwen35   (ml, meta, ctx);
     if (arch_name == "qwen3next") handle_qwen3next(meta, ctx);
+    if (arch_name == "laguna")   handle_laguna   (meta, ctx);
     if (arch_name == "gptoss")        handle_gptoss        (ml, meta, ctx, arch_name);
     if (arch_name == "lfm2")          handle_lfm2          (ml, meta, ctx);
     if (arch_name == "olmo3")         handle_olmo3         (meta, arch_name);
@@ -3385,6 +3423,77 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     LoadOp op;
     if (!take_load_op(ggml_get_name(cur), op)) return false;
     return load_tensor_with_op(cur, path.c_str(), buft, op);
+}
+
+// Slab-read cache slot (maybe_load_text_tensor_range). Holds AT MOST ONE
+// materialized tensor per loader: quantize reads a tensor's slabs
+// contiguously, so the previous entry is evicted when the next tensor's
+// first range arrives. This keeps peak memory at one op tensor at a time —
+// the same profile as the whole-tensor read this hook replaced. Growing a
+// per-tensor map instead would accumulate every layer's output for per-layer
+// ops (gemma4 MoE gate/up, qwen3.5 norm-shift) — most of the model in RAM by
+// the end of a quantize run.
+std::mutex g_text_range_mutex;
+std::unordered_map<const llama_model_loader *,
+                   std::pair<std::string, std::vector<uint8_t>>>
+    g_text_range_cache;
+
+const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf) {
+    if (compat_disabled()) return nullptr;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        auto it = g_loader_paths.find(ml);
+        if (it == g_loader_paths.end() || it->second.empty()) return nullptr;
+        path = it->second;
+    }
+
+    std::lock_guard<std::mutex> lk(g_text_range_mutex);
+    auto & slot = g_text_range_cache[ml];
+    auto cached = slot.first == ggml_get_name(cur) ? &slot.second : nullptr;
+    if (!cached) {
+        LoadOp op;
+        if (!take_load_op(ggml_get_name(cur), op)) return nullptr;
+
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<uint8_t> full(ggml_nbytes(cur));
+        if (!op.apply(path.c_str(), full.data(), full.size())) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: %s failed for %s after %.3f ms\n",
+                                    __func__, op.description, ggml_get_name(cur), elapsed_ms(start));
+            return nullptr;
+        }
+
+        const size_t dst_size = full.size();
+        slot = {std::string(ggml_get_name(cur)), std::move(full)};
+        cached = &slot.second;
+        const double ms = elapsed_ms(start);
+        const TransformTiming total = record_transform_timing(dst_size, ms);
+        OLLAMA_COMPAT_LOG_INFO("compat tensor transform: op=%s tensor=%s bytes=%zu duration_ms=%.3f total_ops=%llu total_bytes=%zu total_ms=%.3f\n",
+                               op.description, ggml_get_name(cur), dst_size, ms,
+                               (unsigned long long) total.count, total.bytes, total.ms);
+    }
+
+    if (offs + size > cached->size()) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: range %zu+%zu out of bounds for %s (%zu bytes)\n",
+                                __func__, offs, size, ggml_get_name(cur), cached->size());
+        return nullptr;
+    }
+
+    const void * out = buf ? buf : cached->data() + offs;
+    if (buf) {
+        std::memcpy(buf, cached->data() + offs, size);
+    }
+    return out;
+}
+
+int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {
+    if (compat_disabled() || projection_dim <= 0) return 0;
+    if (!clip_mmproj_embd_uses_projection_dim(projector_type)) return 0;
+    return projection_dim;
 }
 
 } // namespace llama_ollama_compat

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 )
+
+func testIntPtr(v int) *int {
+	return &v
+}
 
 func createTestFlagOptions() flagOptions {
 	models := "test-model"
@@ -1083,7 +1088,7 @@ func TestBenchmarkModel_CSVFormat(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(output, "NAME,STEP,COUNT,NS_PER_COUNT,TOKEN_PER_SEC") {
+	if !strings.Contains(output, "NAME,STEP,COUNT,NS_PER_COUNT,TOKEN_PER_SEC,CACHED_PROMPT_COUNT") {
 		t.Errorf("Expected CSV header, got: %s", output)
 	}
 	if !strings.Contains(output, "test-model,prefill,") {
@@ -1091,6 +1096,35 @@ func TestBenchmarkModel_CSVFormat(t *testing.T) {
 	}
 	if !strings.Contains(output, "test-model,ttft,") {
 		t.Errorf("Expected CSV ttft row, got: %s", output)
+	}
+}
+
+func TestBenchmarkModel_PrefillExcludesCachedTokens(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	format := "csv"
+	fOpt.format = &format
+	responses := defaultGenerateResponses()
+	responses[len(responses)-1].PromptEvalCachedCount = testIntPtr(4)
+
+	server := createMockOllamaServer(t, mockServerOptions{generateResponses: responses})
+	defer server.Close()
+	t.Setenv("OLLAMA_HOST", server.URL)
+
+	output := captureOutput(func() {
+		if err := BenchmarkModel(fOpt); err != nil {
+			t.Errorf("BenchmarkModel: %v", err)
+		}
+	})
+	wantPrefix := fmt.Sprintf("test-model,prefill,%d,", responses[len(responses)-1].PromptEvalCount-*responses[len(responses)-1].PromptEvalCachedCount)
+	var prefillRow string
+	for row := range strings.SplitSeq(output, "\n") {
+		if strings.HasPrefix(row, wantPrefix) {
+			prefillRow = row
+			break
+		}
+	}
+	if prefillRow == "" || !strings.HasSuffix(prefillRow, ",4") {
+		t.Errorf("prefill row did not exclude cached prompt tokens:\n%s", output)
 	}
 }
 
@@ -1188,7 +1222,7 @@ func TestBuildGenerateRequest_VariesByEpoch(t *testing.T) {
 func TestOutputMetrics_Benchstat(t *testing.T) {
 	var buf bytes.Buffer
 	metrics := []Metrics{
-		{Model: "m1", Step: "prefill", Count: 10, Duration: 100 * time.Millisecond},
+		{Model: "m1", Step: "prefill", Count: 10, CachedPromptCount: testIntPtr(4), Duration: 100 * time.Millisecond},
 		{Model: "m1", Step: "generate", Count: 50, Duration: 500 * time.Millisecond},
 		{Model: "m1", Step: "ttft", Count: 1, Duration: 50 * time.Millisecond},
 		{Model: "m1", Step: "load", Count: 1, Duration: 50 * time.Millisecond},
@@ -1213,6 +1247,9 @@ func TestOutputMetrics_Benchstat(t *testing.T) {
 	// Verify dual value/unit pairs for throughput lines (ns/token + token/sec)
 	if !strings.Contains(output, "token/sec") {
 		t.Errorf("Expected token/sec metric for throughput lines, got: %s", output)
+	}
+	if !strings.Contains(output, "10 processed-prompt-token 4 cached-prompt-token") {
+		t.Errorf("Expected prompt cache counts on prefill line, got: %s", output)
 	}
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		if !strings.HasPrefix(line, "Benchmark") {
@@ -1241,6 +1278,37 @@ func TestOutputMetrics_BenchstatFormat(t *testing.T) {
 	// Prefill/generate should use ns/token
 	if !strings.Contains(output, "ns/token") {
 		t.Errorf("Expected ns/token unit for prefill, got: %s", output)
+	}
+	if strings.Contains(output, "cached-prompt-token") {
+		t.Errorf("unexpected cached prompt count when unavailable: %s", output)
+	}
+}
+
+func TestOutputMetrics_CachedPromptAvailability(t *testing.T) {
+	tests := []struct {
+		name  string
+		count *int
+		want  string
+	}{
+		{name: "unavailable", want: "m1,prefill,10,10000000.00,100.00,"},
+		{name: "zero", count: testIntPtr(0), want: "m1,prefill,10,10000000.00,100.00,0"},
+		{name: "positive", count: testIntPtr(4), want: "m1,prefill,10,10000000.00,100.00,4"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			OutputMetrics(&buf, "csv", []Metrics{{
+				Model:             "m1",
+				Step:              "prefill",
+				Count:             10,
+				CachedPromptCount: tt.count,
+				Duration:          100 * time.Millisecond,
+			}}, false)
+			if got := strings.TrimSpace(buf.String()); got != tt.want {
+				t.Errorf("output = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1403,7 +1471,7 @@ func TestOutputFormatHeader(t *testing.T) {
 		var buf bytes.Buffer
 		outputFormatHeader(&buf, "csv", false)
 		output := buf.String()
-		if !strings.Contains(output, "NAME,STEP,COUNT") {
+		if output != "NAME,STEP,COUNT,NS_PER_COUNT,TOKEN_PER_SEC,CACHED_PROMPT_COUNT\n" {
 			t.Errorf("Expected CSV header, got: %s", output)
 		}
 	})

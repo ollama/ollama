@@ -275,7 +275,7 @@ bool take_load_op(const char * dest_name, LoadOp & out) {
 }
 
 bool read_at(const char * path, size_t offset, void * dst, size_t size) {
-    FILE * f = std::fopen(path, "rb");
+    FILE * f = ggml_fopen(path, "rb");
     if (!f) {
         std::fprintf(stderr, "%s: open failed path=%s offset=%zu size=%zu errno=%d (%s)\n",
                      __func__, path, offset, size, errno, std::strerror(errno));

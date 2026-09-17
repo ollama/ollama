@@ -49,6 +49,7 @@ type AppCallbacks interface {
 	UIShow()
 	UITerminate()
 	UIRunning() bool
+	UIOnboarding() bool
 	Quit()
 	DoUpdate()
 }

@@ -5,7 +5,7 @@ title: Codex CLI
 
 ## Install
 
-Install the [Codex CLI](https://developers.openai.com/codex/cli/). For the desktop app, see [Codex App](/integrations/codex-app).
+Install the [Codex CLI](https://developers.openai.com/codex/cli/). For the ChatGPT desktop app, see [ChatGPT Desktop](/integrations/chatgpt).
 
 ```
 npm install -g @openai/codex
@@ -13,7 +13,7 @@ npm install -g @openai/codex
 
 ## Usage with Ollama
 
-<Note>Codex requires a larger context window. It is recommended to use a context window of at least 64k tokens.</Note>
+<Note>Use a context window of at least 64k tokens for Codex.</Note>
 
 ### Quick setup
 
@@ -22,12 +22,18 @@ ollama launch codex
 ```
 
 When launched through `ollama launch codex`, Ollama refreshes the model catalog
-and passes it to Codex for that session.
+and uses a dedicated Codex profile for that session.
 
 To configure without launching:
 
 ```shell
 ollama launch codex --config
+```
+
+To remove the Ollama launch profile and generated model catalog:
+
+```shell
+ollama launch codex --restore
 ```
 
 ### Manual setup
@@ -52,25 +58,33 @@ codex --oss -m gpt-oss:120b-cloud
 
 ### Profile-based setup
 
-For a persistent configuration, add an Ollama provider and profiles to `~/.codex/config.toml`:
+For a persistent Codex CLI configuration, create `~/.codex/ollama-launch.config.toml`:
 
 ```toml
-[model_providers.ollama-launch]
-name = "Ollama"
-base_url = "http://localhost:11434/v1"
-
-[profiles.ollama-launch]
 model = "gpt-oss:120b"
 model_provider = "ollama-launch"
+model_catalog_json = "/Users/you/.codex/model.json"
 
-[profiles.ollama-cloud]
-model = "gpt-oss:120b-cloud"
-model_provider = "ollama-launch"
+[model_providers.ollama-launch]
+name = "Ollama"
+base_url = "http://localhost:11434/v1/"
+wire_api = "responses"
 ```
 
 Then run:
 
 ```
 codex --profile ollama-launch
-codex --profile ollama-cloud
+```
+
+## Web search through local Ollama
+
+Codex web-search requests sent through the Ollama profile are executed by
+Ollama for both local and cloud models. Sign in with `ollama signin` to use the
+web-search service.
+
+To disable web search for a Codex session:
+
+```shell
+codex --profile ollama-launch -c 'web_search="disabled"'
 ```

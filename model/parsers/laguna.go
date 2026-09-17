@@ -94,6 +94,17 @@ func (p *LagunaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	return tools
 }
 
+// LagunaV8Parser matches the v8 renderer, which closes any assistant history
+// turn and emits a fresh assistant generation prompt instead of continuing the
+// final assistant message in place.
+type LagunaV8Parser struct {
+	LagunaParser
+}
+
+func (p *LagunaV8Parser) Init(tools []api.Tool, _ *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	return p.LagunaParser.Init(tools, nil, thinkValue)
+}
+
 func (p *LagunaParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
 	var contentSB, thinkingSB strings.Builder

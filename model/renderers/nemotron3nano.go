@@ -11,7 +11,10 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type Nemotron3NanoRenderer struct{}
+type Nemotron3NanoRenderer struct {
+	// v35 renders the Nemotron 3.5 prompt layout.
+	v35 bool
+}
 
 func (r *Nemotron3NanoRenderer) LeadingBOS() string {
 	return ""
@@ -22,6 +25,7 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 	imageOffset := 0
 
 	enableThinking := r.resolveThinking(messages, thinkValue)
+	mediumEffort := r.v35 && thinkValue != nil && thinkValue.IsString() && thinkValue.String() == "medium"
 
 	// Extract system message if present
 	var systemMessage string
@@ -41,7 +45,6 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 		}
 	}
 
-	sb.WriteString("\n\n\n")
 	sb.WriteString("<|im_start|>system\n")
 	if systemMessage != "" {
 		sb.WriteString(systemMessage)
@@ -53,7 +56,7 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 		}
 		sb.WriteString(r.renderTools(tools))
 	}
-	sb.WriteString("<|im_end|>\n\n")
+	sb.WriteString("<|im_end|>\n")
 
 	for i, message := range loopMessages {
 		switch message.Role {
@@ -75,7 +78,13 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 
 		case "user", "system":
 			sb.WriteString("<|im_start|>" + message.Role + "\n")
-			sb.WriteString(r.renderMessageContent(message, imageOffset))
+			content := r.renderMessageContent(message, imageOffset)
+			if !r.v35 {
+				content = strings.TrimSpace(stripThinkToggles(content))
+			} else if message.Role == "user" && i == lastUserIdx && mediumEffort {
+				content += "\n\n{reasoning effort: efficient}"
+			}
+			sb.WriteString(content)
 			imageOffset += len(message.Images)
 			sb.WriteString("<|im_end|>\n")
 
@@ -86,7 +95,8 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 			content := r.renderMessageContent(message, imageOffset)
 			imageOffset += len(message.Images)
 
-			if !prevWasTool {
+			// A tool message with nothing before it opens no user block.
+			if i > 0 && !prevWasTool {
 				sb.WriteString("<|im_start|>user\n")
 			}
 			sb.WriteString("<tool_response>\n")
@@ -101,8 +111,6 @@ func (r *Nemotron3NanoRenderer) Render(messages []api.Message, tools []api.Tool,
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + message.Content + "<|im_end|>\n")
 		}
 	}
-
-	sb.WriteString("\n")
 
 	// Add generation prompt
 	if enableThinking {
@@ -175,6 +183,9 @@ func (r *Nemotron3NanoRenderer) renderTools(tools []api.Tool) string {
 func (r *Nemotron3NanoRenderer) buildContent(message api.Message) string {
 	content := nemotron3NanoRenderContent(message.Content)
 	if message.Thinking != "" {
+		if r.v35 {
+			return "<think>\n" + message.Thinking + "</think>" + content
+		}
 		return "<think>\n" + message.Thinking + "\n</think>\n" + content
 	}
 	if !strings.Contains(content, "<think>") && !strings.Contains(content, "</think>") {
@@ -229,12 +240,35 @@ func (r *Nemotron3NanoRenderer) writeToolCalls(sb *strings.Builder, toolCalls []
 }
 
 func (r *Nemotron3NanoRenderer) formatArgValue(value any) string {
-	switch v := value.(type) {
-	case map[string]any, []any:
-		return r.pythonJSON(v)
-	default:
-		return fmt.Sprintf("%v", v)
+	return r.templateValue(value)
+}
+
+// templateValue prints a value the way the template does: JSON for mappings
+// and non-string sequences, Python's str() otherwise, so scalars render True,
+// False and None. Container-ness comes from the marshaled form because callers
+// may pass schema types rather than plain maps and slices.
+func (r *Nemotron3NanoRenderer) templateValue(value any) string {
+	if value == nil {
+		return "None"
 	}
+
+	b, err := json.Marshal(value)
+	if err != nil {
+		return "None"
+	}
+	if len(b) > 0 && (b[0] == '{' || b[0] == '[') {
+		return r.pythonJSON(value)
+	}
+
+	switch string(b) {
+	case "null":
+		return "None"
+	case "true":
+		return "True"
+	case "false":
+		return "False"
+	}
+	return fmt.Sprintf("%v", value)
 }
 
 func (r *Nemotron3NanoRenderer) renderMessageContent(message api.Message, imageOffset int) string {
@@ -282,6 +316,11 @@ func nemotron3NanoRenderContent(content any) string {
 
 func (r *Nemotron3NanoRenderer) resolveThinking(messages []api.Message, thinkValue *api.ThinkValue) bool {
 	enableThinking := thinkValue == nil || thinkValue.Bool()
+	// Under v35 only the request controls thinking; "/think" and "/no_think"
+	// in a prompt are ordinary text.
+	if r.v35 {
+		return enableThinking
+	}
 	for _, message := range messages {
 		if message.Role != "user" && message.Role != "system" {
 			continue
@@ -298,11 +337,21 @@ func (r *Nemotron3NanoRenderer) resolveThinking(messages []api.Message, thinkVal
 
 func (r *Nemotron3NanoRenderer) sanitizeSystemMessage(content string) string {
 	system := nemotron3NanoRenderContent(content)
-	system = strings.ReplaceAll(system, "</think>", "<_end_think>")
-	system = strings.ReplaceAll(system, "/think", "")
-	system = strings.ReplaceAll(system, "/no_think", "")
-	system = strings.ReplaceAll(system, "<_end_think>", "</think>")
-	return system
+	// Under v35 the system message is passed through unaltered.
+	if r.v35 {
+		return system
+	}
+	return stripThinkToggles(system)
+}
+
+// stripThinkToggles removes the inline /think and /no_think markers the
+// template deletes once they have been read, while preserving a genuine
+// </think> tag that would otherwise be caught by the /think match.
+func stripThinkToggles(s string) string {
+	s = strings.ReplaceAll(s, "</think>", "<_end_think>")
+	s = strings.ReplaceAll(s, "/think", "")
+	s = strings.ReplaceAll(s, "/no_think", "")
+	return strings.ReplaceAll(s, "<_end_think>", "</think>")
 }
 
 func (r *Nemotron3NanoRenderer) formatPropertyType(propertyType api.PropertyType) string {
@@ -333,10 +382,10 @@ func (r *Nemotron3NanoRenderer) renderToolPropertyExtraKeys(sb *strings.Builder,
 
 func (r *Nemotron3NanoRenderer) renderToolParameterExtraKeys(sb *strings.Builder, params api.ToolFunctionParameters) {
 	if params.Defs != nil {
-		sb.WriteString("\n<$defs>" + r.pythonJSON(params.Defs) + "</$defs>")
+		sb.WriteString("\n<$defs>" + r.templateValue(params.Defs) + "</$defs>")
 	}
 	if params.Items != nil {
-		sb.WriteString("\n<items>" + r.pythonJSON(params.Items) + "</items>")
+		sb.WriteString("\n<items>" + r.templateValue(params.Items) + "</items>")
 	}
 }
 

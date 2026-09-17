@@ -51,6 +51,15 @@ func TestResolveGemma4Renderer(t *testing.T) {
 			want: gemma4RendererLarge,
 		},
 		{
+			name: "legacy 12b tag resolves large",
+			model: &Model{
+				Name:      "gemma-4-12b-it",
+				ShortName: "gemma-4-12b-it",
+				Config:    testConfigWithRenderer(gemma4RendererLegacy),
+			},
+			want: gemma4RendererLarge,
+		},
+		{
 			name: "legacy model type resolves small",
 			model: &Model{
 				Config: testConfigWithRendererAndType(gemma4RendererLegacy, "4.3B"),
@@ -61,6 +70,13 @@ func TestResolveGemma4Renderer(t *testing.T) {
 			name: "legacy model type resolves large",
 			model: &Model{
 				Config: testConfigWithRendererAndType(gemma4RendererLegacy, "25.2B"),
+			},
+			want: gemma4RendererLarge,
+		},
+		{
+			name: "legacy 12b model type resolves large",
+			model: &Model{
+				Config: testConfigWithRendererAndType(gemma4RendererLegacy, "12B"),
 			},
 			want: gemma4RendererLarge,
 		},

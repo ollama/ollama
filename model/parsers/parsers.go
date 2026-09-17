@@ -54,6 +54,8 @@ func ParserForName(name string) Parser {
 		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3.5":
 		p = &Qwen35Parser{}
+	case "ornith":
+		p = &Qwen35Parser{}
 	case "qwen3-coder":
 		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
@@ -74,7 +76,7 @@ func ParserForName(name string) Parser {
 		return &Olmo3Parser{}
 	case "olmo3-think":
 		return &Olmo3ThinkParser{}
-	case "nemotron-3-nano":
+	case "nemotron-3-nano", "nemotron-3.5-nano":
 		return &Nemotron3NanoParser{}
 	case "functiongemma":
 		return &FunctionGemmaParser{}
@@ -92,6 +94,12 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: true}
 	case "laguna":
 		return &LagunaParser{}
+	case "poolside-v1":
+		return &LagunaV8Parser{}
+	case "cohere":
+		return &CohereParser{}
+	case "glimmer":
+		return &GlimmerParser{}
 	default:
 		return nil
 	}

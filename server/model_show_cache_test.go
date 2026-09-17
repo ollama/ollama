@@ -323,7 +323,7 @@ func TestModelShowCacheCloudColdMissFallsBackToProxy(t *testing.T) {
 	withCloudProxyBaseURL(t, upstream.URL)
 
 	s := &Server{modelCaches: &modelCaches{show: newModelShowCache()}}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatalf("GenerateRoutes failed: %v", err)
 	}

@@ -16,151 +16,25 @@ import (
 
 const nemotron3NanoTemplate = "testdata/nemotron3nano_chat_template.jinja2"
 
-func TestNemotron3NanoRendererMatchesReference(t *testing.T) {
-	toolText := `<|im_start|>system
-# Tools
+// nemotronReferenceCase is one reference conversation. The same inputs drive
+// every Nemotron flavor's parity test; only the template and the frozen
+// expectations differ.
+type nemotronReferenceCase struct {
+	name     string
+	messages []api.Message
+	tools    []api.Tool
+	think    *api.ThinkValue
+	expected string
+}
 
-You have access to the following functions:
-
-<tools>
-<function>
-<name>search_docs</name>
-<description>Search docs</description>
-<parameters>
-<parameter>
-<name>query</name>
-<type>string</type>
-<description>Search query</description>
-<enum>["api", "cli"]</enum>
-</parameter>
-<parameter>
-<name>mode</name>
-<type>['string', 'null']</type>
-<description>Mode</description>
-<anyOf>[{"type": "string"}, {"type": "number"}]</anyOf>
-</parameter>
-<parameter>
-<name>payload</name>
-<type>object</type>
-<description>Payload</description>
-<properties>{"enabled": {"type": "boolean"}}</properties>
-<required>["enabled"]</required>
-</parameter>
-<parameter>
-<name>tags</name>
-<type>array</type>
-<description>Tags</description>
-<items>{"type": "string"}</items>
-</parameter>
-<$defs>{"shared": {"type": "string"}}</$defs>
-<required>["query"]</required>
-</parameters>
-</function>
-</tools>
-
-If you choose to call a function ONLY reply in the following format with NO suffix:
-
-<tool_call>
-<function=example_function_name>
-<parameter=example_parameter_1>
-value_1
-</parameter>
-<parameter=example_parameter_2>
-This is the value for the second parameter
-that can span
-multiple lines
-</parameter>
-</function>
-</tool_call>
-
-<IMPORTANT>
-Reminder:
-- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
-- Required parameters MUST be specified
-- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
-- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
-</IMPORTANT><|im_end|>
-`
-	toolTextWithSystem := `<|im_start|>system
-Follow policy.
-
-# Tools
-
-You have access to the following functions:
-
-<tools>
-<function>
-<name>search_docs</name>
-<description>Search docs</description>
-<parameters>
-<parameter>
-<name>query</name>
-<type>string</type>
-<description>Search query</description>
-<enum>["api", "cli"]</enum>
-</parameter>
-<parameter>
-<name>mode</name>
-<type>['string', 'null']</type>
-<description>Mode</description>
-<anyOf>[{"type": "string"}, {"type": "number"}]</anyOf>
-</parameter>
-<parameter>
-<name>payload</name>
-<type>object</type>
-<description>Payload</description>
-<properties>{"enabled": {"type": "boolean"}}</properties>
-<required>["enabled"]</required>
-</parameter>
-<parameter>
-<name>tags</name>
-<type>array</type>
-<description>Tags</description>
-<items>{"type": "string"}</items>
-</parameter>
-<$defs>{"shared": {"type": "string"}}</$defs>
-<required>["query"]</required>
-</parameters>
-</function>
-</tools>
-
-If you choose to call a function ONLY reply in the following format with NO suffix:
-
-<tool_call>
-<function=example_function_name>
-<parameter=example_parameter_1>
-value_1
-</parameter>
-<parameter=example_parameter_2>
-This is the value for the second parameter
-that can span
-multiple lines
-</parameter>
-</function>
-</tool_call>
-
-<IMPORTANT>
-Reminder:
-- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
-- Required parameters MUST be specified
-- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
-- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
-</IMPORTANT><|im_end|>
-`
-
-	tests := []struct {
-		name     string
-		messages []api.Message
-		tools    []api.Tool
-		think    *api.ThinkValue
-		expected string
-	}{
+func nemotronReferenceCases() []nemotronReferenceCase {
+	return []nemotronReferenceCase{
 		{
 			name: "no system default thinking on",
 			messages: []api.Message{
 				{Role: "user", Content: "Hello"},
 			},
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHello<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "no system explicit thinking off",
@@ -168,7 +42,7 @@ Reminder:
 				{Role: "user", Content: "Hello"},
 			},
 			think:    thinkFalse(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHello<|im_end|>\n\n<|im_start|>assistant\n<think></think>",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think></think>",
 		},
 		{
 			name: "literal endthink does not enable thinking",
@@ -176,7 +50,7 @@ Reminder:
 				{Role: "user", Content: "literal </think> only"},
 			},
 			think:    thinkFalse(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nliteral </think> only<|im_end|>\n\n<|im_start|>assistant\n<think></think>",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nliteral </think> only<|im_end|>\n<|im_start|>assistant\n<think></think>",
 		},
 		{
 			name: "user no think toggle",
@@ -184,7 +58,7 @@ Reminder:
 				{Role: "user", Content: "Hello /no_think"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHello /no_think<|im_end|>\n\n<|im_start|>assistant\n<think></think>",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think></think>",
 		},
 		{
 			name: "system think toggle overrides false",
@@ -193,7 +67,7 @@ Reminder:
 				{Role: "user", Content: "Hello"},
 			},
 			think:    thinkFalse(),
-			expected: "\n\n\n<|im_start|>system\nPolicy <|im_end|>\n\n<|im_start|>user\nHello<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\nPolicy <|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "later toggle wins",
@@ -202,7 +76,7 @@ Reminder:
 				{Role: "user", Content: "Actually /think"},
 			},
 			think:    thinkFalse(),
-			expected: "\n\n\n<|im_start|>system\nPolicy <|im_end|>\n\n<|im_start|>user\nActually /think<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\nPolicy <|im_end|>\n<|im_start|>user\nActually<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "system sanitizes toggles but preserves closing tag",
@@ -211,7 +85,7 @@ Reminder:
 				{Role: "user", Content: "Hello"},
 			},
 			think:    thinkFalse(),
-			expected: "\n\n\n<|im_start|>system\nA  B  C </think><|im_end|>\n\n<|im_start|>user\nHello<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\nA  B  C </think><|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant plain content adds empty think block",
@@ -220,7 +94,7 @@ Reminder:
 				{Role: "assistant", Content: "Hello there"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello there<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Hello there<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant reasoning content",
@@ -229,7 +103,7 @@ Reminder:
 				{Role: "assistant", Content: "Answer", Thinking: "Need to think"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\nNeed to think\n</think>\nAnswer<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>\nNeed to think\n</think>\nAnswer<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant preserves existing think tags",
@@ -238,7 +112,7 @@ Reminder:
 				{Role: "assistant", Content: "<think>kept</think>Answer"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>kept</think>Answer<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think>kept</think>Answer<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "tools without system",
@@ -247,7 +121,7 @@ Reminder:
 			},
 			tools:    nemotron3NanoReferenceTools(),
 			think:    thinkTrue(),
-			expected: "\n\n\n" + toolText + "\n<|im_start|>user\nUse a tool<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>search_docs</name>\n<description>Search docs</description>\n<parameters>\n<parameter>\n<name>query</name>\n<type>string</type>\n<description>Search query</description>\n<enum>[\"api\", \"cli\"]</enum>\n</parameter>\n<parameter>\n<name>mode</name>\n<type>['string', 'null']</type>\n<description>Mode</description>\n<anyOf>[{\"type\": \"string\"}, {\"type\": \"number\"}]</anyOf>\n</parameter>\n<parameter>\n<name>payload</name>\n<type>object</type>\n<description>Payload</description>\n<properties>{\"enabled\": {\"type\": \"boolean\"}}</properties>\n<required>[\"enabled\"]</required>\n</parameter>\n<parameter>\n<name>tags</name>\n<type>array</type>\n<description>Tags</description>\n<items>{\"type\": \"string\"}</items>\n</parameter>\n<$defs>{\"shared\": {\"type\": \"string\"}}</$defs>\n<required>[\"query\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nUse a tool<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "system with tools",
@@ -257,7 +131,7 @@ Reminder:
 			},
 			tools:    nemotron3NanoReferenceTools(),
 			think:    thinkTrue(),
-			expected: "\n\n\n" + toolTextWithSystem + "\n<|im_start|>user\nUse a tool<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\nFollow policy.\n\n# Tools\n\nYou have access to the following functions:\n\n<tools>\n<function>\n<name>search_docs</name>\n<description>Search docs</description>\n<parameters>\n<parameter>\n<name>query</name>\n<type>string</type>\n<description>Search query</description>\n<enum>[\"api\", \"cli\"]</enum>\n</parameter>\n<parameter>\n<name>mode</name>\n<type>['string', 'null']</type>\n<description>Mode</description>\n<anyOf>[{\"type\": \"string\"}, {\"type\": \"number\"}]</anyOf>\n</parameter>\n<parameter>\n<name>payload</name>\n<type>object</type>\n<description>Payload</description>\n<properties>{\"enabled\": {\"type\": \"boolean\"}}</properties>\n<required>[\"enabled\"]</required>\n</parameter>\n<parameter>\n<name>tags</name>\n<type>array</type>\n<description>Tags</description>\n<items>{\"type\": \"string\"}</items>\n</parameter>\n<$defs>{\"shared\": {\"type\": \"string\"}}</$defs>\n<required>[\"query\"]</required>\n</parameters>\n</function>\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT><|im_end|>\n<|im_start|>user\nUse a tool<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant tool call with content",
@@ -275,7 +149,7 @@ Reminder:
 				},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>Checking now.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>Checking now.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant tool call with structured arguments",
@@ -295,7 +169,7 @@ Reminder:
 				},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nCreate data<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=create>\n<parameter=payload>\n{\"count\": 42, \"nested\": {\"value\": \"ok\"}}\n</parameter>\n<parameter=tags>\n[\"a\", \"b\"]\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nCreate data<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=create>\n<parameter=payload>\n{\"count\": 42, \"nested\": {\"value\": \"ok\"}}\n</parameter>\n<parameter=tags>\n[\"a\", \"b\"]\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant tool call truncated with reasoning",
@@ -315,7 +189,7 @@ Reminder:
 				{Role: "user", Content: "And tomorrow?"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>Checking now.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\nAnd tomorrow?<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>Checking now.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\nAnd tomorrow?<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant tool call truncated open think only",
@@ -334,7 +208,7 @@ Reminder:
 				{Role: "user", Content: "And tomorrow?"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\nAnd tomorrow?<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\nAnd tomorrow?<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant tool call empty content",
@@ -352,7 +226,7 @@ Reminder:
 				},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant truncated with think pair",
@@ -362,7 +236,7 @@ Reminder:
 				{Role: "user", Content: "Next"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Visible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Visible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant truncated reasoning content",
@@ -372,7 +246,7 @@ Reminder:
 				{Role: "user", Content: "Next"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>\nVisible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>\nVisible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant truncated plain content",
@@ -382,7 +256,7 @@ Reminder:
 				{Role: "user", Content: "Next"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Visible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think>Visible<|im_end|>\n<|im_start|>user\nNext<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "assistant truncated empty content",
@@ -392,7 +266,7 @@ Reminder:
 				{Role: "user", Content: "Next"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think><|im_end|>\n<|im_start|>user\nNext<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n<think></think><|im_end|>\n<|im_start|>user\nNext<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "consecutive tool messages grouped",
@@ -411,7 +285,7 @@ Reminder:
 				{Role: "tool", Content: "two"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>user\nDo work<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=step>\n<parameter=value>\n1\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\none\n</tool_response>\n<tool_response>\ntwo\n</tool_response>\n<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>user\nDo work<|im_end|>\n<|im_start|>assistant\n<think></think>\n<tool_call>\n<function=step>\n<parameter=value>\n1\n</parameter>\n</function>\n</tool_call>\n<|im_end|>\n<|im_start|>user\n<tool_response>\none\n</tool_response>\n<tool_response>\ntwo\n</tool_response>\n<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 		{
 			name: "fallback role",
@@ -419,9 +293,13 @@ Reminder:
 				{Role: "developer", Content: "Custom role content"},
 			},
 			think:    thinkTrue(),
-			expected: "\n\n\n<|im_start|>system\n<|im_end|>\n\n<|im_start|>developer\nCustom role content<|im_end|>\n\n<|im_start|>assistant\n<think>\n",
+			expected: "<|im_start|>system\n<|im_end|>\n<|im_start|>developer\nCustom role content<|im_end|>\n<|im_start|>assistant\n<think>\n",
 		},
 	}
+}
+
+func TestNemotron3NanoRendererMatchesReference(t *testing.T) {
+	tests := nemotronReferenceCases()
 
 	verifyJinja2 := os.Getenv("VERIFY_JINJA2") != ""
 	if verifyJinja2 {
@@ -506,6 +384,13 @@ func nemotron3NanoReferenceTools() []api.Tool {
 }
 
 func renderNemotron3NanoWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
+	return renderNemotronWithJinja2(t, nemotron3NanoTemplate, messages, tools, think)
+}
+
+// renderNemotronWithJinja2 renders through the real jinja engine using the
+// named testdata template, so each Nemotron flavor is checked against the
+// template its checkpoint ships.
+func renderNemotronWithJinja2(t *testing.T, templateRel string, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
 	t.Helper()
 
 	type jinja2ToolCall struct {
@@ -536,12 +421,15 @@ func renderNemotron3NanoWithJinja2(t *testing.T, messages []api.Message, tools [
 		for _, tc := range m.ToolCalls {
 			jtc := jinja2ToolCall{ID: tc.ID}
 			jtc.Function.Name = tc.Function.Name
-			var args map[string]any
-			raw, _ := tc.Function.Arguments.MarshalJSON()
-			if err := json.Unmarshal(raw, &args); err != nil {
-				t.Fatalf("failed to unmarshal tool args: %v", err)
+			// Pass the arguments through as raw JSON. Decoding into a Go map
+			// would drop their order, and re-marshaling would re-emit them
+			// sorted -- the template renders one <parameter=...> per key in
+			// order, so that silently changes the reference.
+			raw, err := tc.Function.Arguments.MarshalJSON()
+			if err != nil {
+				t.Fatalf("failed to marshal tool args: %v", err)
 			}
-			jtc.Function.Arguments = args
+			jtc.Function.Arguments = json.RawMessage(raw)
 			jm.ToolCalls = append(jm.ToolCalls, jtc)
 		}
 		jMsgs = append(jMsgs, jm)
@@ -562,16 +450,20 @@ func renderNemotron3NanoWithJinja2(t *testing.T, messages []api.Message, tools [
 	}
 
 	thinking := "unset"
+	mediumEffort := "false"
 	if think != nil {
 		if think.Bool() {
 			thinking = "true"
 		} else {
 			thinking = "false"
 		}
+		if think.IsString() && think.String() == "medium" {
+			mediumEffort = "true"
+		}
 	}
 
 	repoRoot := nemotron3NanoRepoRoot(t)
-	templatePath := filepath.Join(repoRoot, "model", "renderers", nemotron3NanoTemplate)
+	templatePath := filepath.Join(repoRoot, "model", "renderers", templateRel)
 	pythonPath := filepath.Join(repoRoot, ".venv", "bin", "python3")
 	script := `
 import json
@@ -579,7 +471,7 @@ import sys
 from pathlib import Path
 from transformers.utils.chat_template_utils import _compile_jinja_template
 
-template_path, messages_json, tools_json, thinking = sys.argv[1:5]
+template_path, messages_json, tools_json, thinking, medium_effort = sys.argv[1:6]
 tmpl = _compile_jinja_template(Path(template_path).read_text())
 kwargs = {
     "messages": json.loads(messages_json),
@@ -591,10 +483,12 @@ if thinking == "true":
     kwargs["enable_thinking"] = True
 elif thinking == "false":
     kwargs["enable_thinking"] = False
+if medium_effort == "true":
+    kwargs["medium_effort"] = True
 print(tmpl.render(**kwargs), end="")
 `
 
-	cmd := exec.Command(pythonPath, "-c", script, templatePath, string(msgsJSON), toolsJSON, thinking)
+	cmd := exec.CommandContext(t.Context(), pythonPath, "-c", script, templatePath, string(msgsJSON), toolsJSON, thinking, mediumEffort)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -3,21 +3,27 @@ package progress
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 type Spinner struct {
-	message      atomic.Value
+	message atomic.Value
+
+	mu           sync.Mutex
 	messageWidth int
 
 	parts []string
 
 	value int
 
-	ticker  *time.Ticker
 	started time.Time
 	stopped time.Time
+
+	stopOnce sync.Once
+	// done is closed to tell the animation loop to exit.
+	done chan struct{}
 }
 
 func NewSpinner(message string) *Spinner {
@@ -26,6 +32,7 @@ func NewSpinner(message string) *Spinner {
 			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 		},
 		started: time.Now(),
+		done:    make(chan struct{}),
 	}
 	s.SetMessage(message)
 	go s.start()
@@ -37,6 +44,9 @@ func (s *Spinner) SetMessage(message string) {
 }
 
 func (s *Spinner) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	var sb strings.Builder
 
 	if message, ok := s.message.Load().(string); ok && len(message) > 0 {
@@ -63,17 +73,27 @@ func (s *Spinner) String() string {
 }
 
 func (s *Spinner) start() {
-	s.ticker = time.NewTicker(100 * time.Millisecond)
-	for range s.ticker.C {
-		s.value = (s.value + 1) % len(s.parts)
-		if !s.stopped.IsZero() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.done:
 			return
+		case <-ticker.C:
+			s.mu.Lock()
+			s.value = (s.value + 1) % len(s.parts)
+			s.mu.Unlock()
 		}
 	}
 }
 
 func (s *Spinner) Stop() {
+	s.mu.Lock()
 	if s.stopped.IsZero() {
 		s.stopped = time.Now()
 	}
+	s.mu.Unlock()
+
+	s.stopOnce.Do(func() { close(s.done) })
 }

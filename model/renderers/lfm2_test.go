@@ -160,6 +160,78 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\n<think>reason1</think>A1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2",
 		},
 		{
+			name:     "thinking_field_reconstructed_when_enabled",
+			renderer: &LFM2Renderer{IsThinking: true},
+			messages: []api.Message{
+				{Role: "user", Content: "Q1"},
+				{Role: "assistant", Content: "A1", Thinking: "reason1"},
+				{Role: "user", Content: "Q2"},
+				{Role: "assistant", Content: "A2", Thinking: "reason2"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\n<think>reason1</think>A1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2",
+		},
+		{
+			name:     "thinking_field_stripped_for_non_last_when_disabled",
+			renderer: &LFM2Renderer{IsThinking: true},
+			messages: []api.Message{
+				{Role: "user", Content: "Q1"},
+				{Role: "assistant", Content: "A1", Thinking: "reason1"},
+				{Role: "user", Content: "Q2"},
+				{Role: "assistant", Content: "A2", Thinking: "reason2"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2",
+		},
+		{
+			name:     "thinking_precedes_tool_calls",
+			renderer: &LFM2Renderer{IsThinking: true},
+			messages: []api.Message{
+				{Role: "user", Content: "Weather?"},
+				{
+					Role:     "assistant",
+					Content:  "",
+					Thinking: "Let me check the weather.",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: testArgs(map[string]any{
+									"location": "Paris",
+								}),
+							},
+						},
+					},
+				},
+				{Role: "tool", Content: "22C"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   "<|startoftext|><|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think>Let me check the weather.</think><|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|><|im_end|>\n<|im_start|>tool\n<|tool_response_start|>22C<|tool_response_end|><|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:     "direct_answer_history_has_no_think_tags",
+			renderer: &LFM2Renderer{IsThinking: true},
+			messages: []api.Message{
+				{Role: "user", Content: "Q1"},
+				{Role: "assistant", Content: "A1"},
+				{Role: "user", Content: "Q2"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			// The non-thinking variant must never emit <think> tags, even for a
+			// trailing assistant prefill (which is exempt from thinking stripping).
+			name:     "non_thinking_renderer_drops_thinking_metadata_on_prefill",
+			renderer: &LFM2Renderer{IsThinking: false},
+			messages: []api.Message{
+				{Role: "user", Content: "Hi"},
+				{Role: "assistant", Content: "Hello", Thinking: "some reasoning"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|startoftext|><|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\nHello",
+		},
+		{
 			name:     "arbitrary_roles_are_rendered_verbatim",
 			renderer: &LFM2Renderer{IsThinking: false},
 			messages: []api.Message{

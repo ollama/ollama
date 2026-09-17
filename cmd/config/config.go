@@ -17,6 +17,7 @@ type integration struct {
 	Models    []string          `json:"models"`
 	Aliases   map[string]string `json:"aliases,omitempty"`
 	Onboarded bool              `json:"onboarded,omitempty"`
+	AutoMode  *bool             `json:"automode,omitempty"`
 }
 
 // IntegrationConfig is the persisted config for one integration.
@@ -143,17 +144,42 @@ func SaveIntegration(appName string, models []string) error {
 	existing := cfg.Integrations[key]
 	var aliases map[string]string
 	var onboarded bool
+	var autoMode *bool
 	if existing != nil {
 		aliases = existing.Aliases
 		onboarded = existing.Onboarded
+		autoMode = existing.AutoMode
 	}
 
 	cfg.Integrations[key] = &integration{
 		Models:    models,
 		Aliases:   aliases,
 		Onboarded: onboarded,
+		AutoMode:  autoMode,
 	}
 
+	return save(cfg)
+}
+
+// SaveIntegrationAutoMode saves an integration's auto mode preference while
+// preserving its models, aliases, and onboarding state.
+func SaveIntegrationAutoMode(appName string, enabled bool) error {
+	if appName == "" {
+		return errors.New("app name cannot be empty")
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	if existing == nil {
+		existing = &integration{}
+	}
+	existing.AutoMode = &enabled
+	cfg.Integrations[key] = existing
 	return save(cfg)
 }
 

@@ -160,8 +160,8 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 		logNativeProbeFailure(nativeErr, nativeStderr, libDirs)
 	}
 
-	combined := string(listOutput) + "\n" + strings.Join(stderrLines, "\n") + "\n" + nativeStderr
-	return parseLlamaServerDevicesWithNative(combined, libDirs, nativeDevices), status, nil
+	llamaOutput := string(listOutput) + "\n" + strings.Join(stderrLines, "\n")
+	return parseLlamaServerDevicesWithNative(llamaOutput, nativeStderr, libDirs, nativeDevices), status, nil
 }
 
 func llamaServerDiscoveryOutput(ctx context.Context) io.Writer {
@@ -199,17 +199,20 @@ var (
 	cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
 )
 
-// parseLlamaServerDevices parses the combined output of llama-server discovery.
-// It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
-// CUDA compiled architecture lists.
-func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
-	return parseLlamaServerDevicesWithNative(output, libDirs, nil)
-}
-
-func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDevices []nativeProbeDevice) []ml.DeviceInfo {
+// parseLlamaServerDevicesWithNative parses the combined output of llama-server
+// discovery. It extracts device info, ROCm gfx targets, CUDA compute
+// capabilities, and CUDA compiled architecture lists.
+func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []string, nativeDevices []nativeProbeDevice) []ml.DeviceInfo {
+	combined := output
+	if nativeOutput != "" {
+		combined += "\n" + nativeOutput
+	}
 	// Extract per-device metadata from stderr
-	gfxByIndex := parseROCmGFXTargets(output)
+	gfxByIndex := parseROCmGFXTargets(combined)
 	rocmGFXOverride := hsaOverrideGFXTarget()
+	// The native probe enumerates Vulkan devices in its own order, which can
+	// differ from llama-server's, so its ggml_vulkan uma lines must not key
+	// into llama-server's device indexes.
 	integratedByIndex := parseVulkanUMA(output)
 	ccByIndex := make(map[int]cudaComputeCapability)
 	var cudaArchs []string // compiled architectures for this variant
@@ -222,7 +225,7 @@ func parseLlamaServerDevicesWithNative(output string, libDirs []string, nativeDe
 		}
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(output))
+	scanner := bufio.NewScanner(strings.NewReader(combined))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if matches := cudaCCRegex.FindStringSubmatch(line); matches != nil {

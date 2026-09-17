@@ -167,12 +167,25 @@ type Settings struct {
 	// SidebarOpen indicates if the chat sidebar is open
 	SidebarOpen bool
 
-	// LastHomeView stores the preferred home route target ("chat" or integration name)
+	// LastHomeView is retained for settings compatibility and resolves to chat.
 	LastHomeView string
+
+	// OnboardingVersion stores the latest onboarding flow the user has completed.
+	OnboardingVersion int
 
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
+
+	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
+	ClaudeDesktopUsed bool
+
+	// CodexDesktopUsed records whether ChatGPT has successfully connected through Ollama.
+	// Only MarkCodexDesktopUsed updates it; SetSettings preserves the stored value.
+	CodexDesktopUsed bool
 }
+
+// Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
+const CurrentOnboardingVersion = 1
 
 type Store struct {
 	// DBPath allows overriding the default database path (mainly for testing)
@@ -334,6 +347,16 @@ func (s *Store) migrateFromConfig(database *database) error {
 	if err := database.setHasCompletedFirstRun(hasCompleted); err != nil {
 		return fmt.Errorf("migrate first time run: %w", err)
 	}
+	if hasCompleted {
+		settings, err := database.getSettings()
+		if err != nil {
+			return fmt.Errorf("read settings for onboarding migration: %w", err)
+		}
+		settings.OnboardingVersion = CurrentOnboardingVersion
+		if err := database.setSettings(settings); err != nil {
+			return fmt.Errorf("migrate onboarding completion: %w", err)
+		}
+	}
 	slog.Info("migrated first run status from config.json", "hasCompleted", hasCompleted)
 
 	// Mark as migrated
@@ -393,7 +416,7 @@ func (s *Store) Settings() (Settings, error) {
 	}
 
 	if settings.LastHomeView == "" {
-		settings.LastHomeView = "launch"
+		settings.LastHomeView = "chat"
 	}
 
 	return settings, nil
@@ -405,6 +428,13 @@ func (s *Store) SetSettings(settings Settings) error {
 	}
 
 	return s.db.setSettings(settings)
+}
+
+func (s *Store) MarkCodexDesktopUsed() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	return s.db.markCodexDesktopUsed()
 }
 
 func (s *Store) Chats() ([]Chat, error) {

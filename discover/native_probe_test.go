@@ -46,7 +46,7 @@ func TestParseLlamaServerDevicesUsesNativeCUDAComputeCapability(t *testing.T) {
 Available devices:
   CUDA0: NVIDIA GeForce GTX 1060 6GB (6063 MiB, 5900 MiB free)
 `
-	devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/cuda_v13"}, []nativeProbeDevice{{
+	devices := parseLlamaServerDevicesWithNative(output, "", []string{"/lib/ollama", "/lib/ollama/cuda_v13"}, []nativeProbeDevice{{
 		Library:             "CUDA",
 		Index:               0,
 		IndexMatchesBackend: true,
@@ -64,7 +64,7 @@ Available devices:
 Available devices:
   CUDA0: NVIDIA GeForce GTX 1060 6GB (6063 MiB, 5900 MiB free)
 `
-	devices = parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/cuda_v12"}, []nativeProbeDevice{{
+	devices = parseLlamaServerDevicesWithNative(output, "", []string{"/lib/ollama", "/lib/ollama/cuda_v12"}, []nativeProbeDevice{{
 		Library:             "CUDA",
 		Index:               0,
 		IndexMatchesBackend: true,
@@ -97,7 +97,7 @@ func TestParseLlamaServerDevicesUsesNativeROCmMetadata(t *testing.T) {
 Available devices:
   ROCm0: AMD Radeon RX 7600 (8176 MiB, 7900 MiB free)
 `
-	devices := parseLlamaServerDevicesWithNative(output, []string{"/lib/ollama", "/lib/ollama/rocm_v7_2"}, []nativeProbeDevice{{
+	devices := parseLlamaServerDevicesWithNative(output, "", []string{"/lib/ollama", "/lib/ollama/rocm_v7_2"}, []nativeProbeDevice{{
 		Library:             "ROCm",
 		Index:               0,
 		IndexMatchesBackend: true,

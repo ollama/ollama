@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -21,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
@@ -45,6 +47,12 @@ func TestLlamaServerHealthParsing(t *testing.T) {
 		{
 			name:       "loading",
 			body:       `{"status":"loading model"}`,
+			statusCode: 503,
+			wantStatus: ServerStatusLoadingModel,
+		},
+		{
+			name:       "loading error envelope",
+			body:       `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`,
 			statusCode: 503,
 			wantStatus: ServerStatusLoadingModel,
 		},
@@ -120,14 +128,40 @@ func TestBoundedNumPredict(t *testing.T) {
 	}
 }
 
+func TestContextShiftPromptLimit(t *testing.T) {
+	tests := []struct {
+		name    string
+		numCtx  int
+		numKeep int
+		want    int
+	}{
+		{name: "small context reserves half after keep", numCtx: 8, numKeep: 3, want: 6},
+		{name: "issue 16618 context preserves generation headroom", numCtx: 4096, numKeep: 4, want: 2050},
+		{name: "issue 16618 with implicit BOS keep", numCtx: 4096, numKeep: 5, want: 2051},
+		{name: "keep is clamped below context", numCtx: 8, numKeep: 99, want: 7},
+		{name: "negative keep is treated as zero", numCtx: 8, numKeep: -1, want: 4},
+		{name: "invalid context has no prompt budget", numCtx: 1, numKeep: 0, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := contextShiftPromptLimit(tt.numCtx, tt.numKeep); got != tt.want {
+				t.Fatalf("contextShiftPromptLimit(%d, %d) = %d, want %d", tt.numCtx, tt.numKeep, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	// Simulate llama-server SSE streaming response
 	sseLines := []string{
-		`data: {"content":"Hello","stop":false}`,
+		`data: {"content":"Hello","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":1,"predicted_ms":9.1}}`,
 		``,
-		`data: {"content":" world","stop":false}`,
+		`:`,
+		`data: {"content":" world","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
-		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":5,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
+		`:`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10.5,"predicted_n":2,"predicted_ms":20.3}}`,
 		``,
 	}
 
@@ -153,10 +187,104 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
+		if !reqBody.TimingsPerToken {
+			t.Error("timings_per_token should be true")
+		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
 			fmt.Fprintln(w, line)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:                     "test prompt",
+		Options:                    &opts,
+		IncludeIntermediateMetrics: true,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if len(responses) != 3 {
+		t.Fatalf("got %d responses, want 3", len(responses))
+	}
+
+	// First token
+	if responses[0].Content != "Hello" {
+		t.Errorf("response[0].Content = %q, want %q", responses[0].Content, "Hello")
+	}
+	if responses[0].Done {
+		t.Error("response[0] should not be done")
+	}
+	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
+		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
+	}
+	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("response[0] cached prompt count = %v, want 2", got)
+	}
+	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
+		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
+	}
+
+	// Second token
+	if responses[1].Content != " world" {
+		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
+	}
+	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
+		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
+	}
+	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("response[1] cached prompt count = %v, want 2", got)
+	}
+	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
+		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
+	}
+
+	// Final response
+	if !responses[2].Done {
+		t.Error("response[2] should be done")
+	}
+	if responses[2].DoneReason != DoneReasonStop {
+		t.Errorf("DoneReason = %v, want %v", responses[2].DoneReason, DoneReasonStop)
+	}
+	if responses[2].PromptEvalCount != 5 {
+		t.Errorf("PromptEvalCount = %d, want 5", responses[2].PromptEvalCount)
+	}
+	if got := responses[2].PromptEvalCachedCount; got == nil || *got != 2 {
+		t.Errorf("PromptEvalCachedCount = %v, want 2", got)
+	}
+	if responses[2].EvalCount != 2 {
+		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
+	}
+}
+
+func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/completion":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":12,"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
@@ -183,36 +311,70 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Completion error: %v", err)
 	}
+	if len(responses) != 1 {
+		t.Fatalf("got %d responses, want 1", len(responses))
+	}
+	if responses[0].PromptEvalCount != 17 {
+		t.Errorf("PromptEvalCount = %d, want 17", responses[0].PromptEvalCount)
+	}
+	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
+	}
+	if responses[0].PromptEvalDuration != 10*time.Millisecond {
+		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[0].PromptEvalDuration)
+	}
+}
 
-	if len(responses) != 3 {
-		t.Fatalf("got %d responses, want 3", len(responses))
+func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w, `:`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"cache_n":12,"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 	}
 
-	// First token
-	if responses[0].Content != "Hello" {
-		t.Errorf("response[0].Content = %q, want %q", responses[0].Content, "Hello")
+	var responses []ChatResponse
+	opts := api.DefaultOptions()
+	err := runner.Chat(t.Context(), ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}, func(cr ChatResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
 	}
-	if responses[0].Done {
-		t.Error("response[0] should not be done")
+	if len(responses) != 2 {
+		t.Fatalf("got %d responses, want 2", len(responses))
 	}
-
-	// Second token
-	if responses[1].Content != " world" {
-		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
+	if responses[1].PromptEvalCount != 17 {
+		t.Errorf("PromptEvalCount = %d, want 17", responses[1].PromptEvalCount)
 	}
-
-	// Final response
-	if !responses[2].Done {
-		t.Error("response[2] should be done")
+	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 12 {
+		t.Errorf("PromptEvalCachedCount = %v, want 12", got)
 	}
-	if responses[2].DoneReason != DoneReasonStop {
-		t.Errorf("DoneReason = %v, want %v", responses[2].DoneReason, DoneReasonStop)
-	}
-	if responses[2].PromptEvalCount != 5 {
-		t.Errorf("PromptEvalCount = %d, want 5", responses[2].PromptEvalCount)
-	}
-	if responses[2].EvalCount != 2 {
-		t.Errorf("EvalCount = %d, want 2", responses[2].EvalCount)
+	if responses[1].PromptEvalDuration != 10*time.Millisecond {
+		t.Errorf("PromptEvalDuration = %s, want 10ms", responses[1].PromptEvalDuration)
 	}
 }
 
@@ -383,14 +545,16 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 	}
 }
 
-func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
-	var completionReq llamaServerCompletionRequest
+func TestLlamaServerCompletionRejectsPromptOverContext(t *testing.T) {
+	const wantError = "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length"
+
 	var tokenizeReq struct {
 		Content      string `json:"content"`
 		AddSpecial   bool   `json:"add_special"`
 		ParseSpecial *bool  `json:"parse_special"`
 	}
 
+	completionCalled := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
@@ -402,10 +566,7 @@ func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 			}
 			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6,7,8,9]}`)
 		case "/completion":
-			if err := json.NewDecoder(r.Body).Decode(&completionReq); err != nil {
-				t.Errorf("invalid completion request body: %v", err)
-				return
-			}
+			completionCalled = true
 			w.Header().Set("Content-Type", "text/event-stream")
 			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":7,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
 		default:
@@ -432,8 +593,15 @@ func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 		Options:  &opts,
 		Truncate: true,
 	}, func(cr CompletionResponse) {})
-	if err != nil {
-		t.Fatalf("Completion error: %v", err)
+	var statusErr api.StatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("Completion error = %T %v, want api.StatusError", err, err)
+	}
+	if statusErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("StatusCode = %d, want %d", statusErr.StatusCode, http.StatusBadRequest)
+	}
+	if statusErr.ErrorMessage != wantError {
+		t.Fatalf("ErrorMessage = %q, want %q", statusErr.ErrorMessage, wantError)
 	}
 
 	if tokenizeReq.Content != strings.Repeat("long prompt ", 2) {
@@ -442,12 +610,151 @@ func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 	if !tokenizeReq.AddSpecial {
 		t.Fatal("expected tokenize request to add special tokens")
 	}
-
-	got, ok := completionReq.Prompt.([]any)
-	if !ok {
-		t.Fatalf("completion prompt = %T, want token array", completionReq.Prompt)
+	if completionCalled {
+		t.Fatal("completion endpoint was called")
 	}
-	want := []int{0, 1, 2, 6, 7, 8, 9}
+}
+
+func TestLlamaServerCompletionContextShiftAllowsPromptWithHeadroom(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":10,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 3
+	prompt := strings.Repeat("long prompt ", 2)
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeReq.Content != prompt {
+		t.Fatalf("tokenize content = %q, want %q", tokenizeReq.Content, prompt)
+	}
+	if !tokenizeReq.AddSpecial {
+		t.Fatal("expected tokenize request to add special tokens")
+	}
+	if capturedReq.Prompt != prompt {
+		t.Fatalf("prompt = %q, want %q", capturedReq.Prompt, prompt)
+	}
+	if capturedReq.NKeep != opts.NumKeep {
+		t.Fatalf("n_keep = %d, want %d", capturedReq.NKeep, opts.NumKeep)
+	}
+}
+
+func TestLlamaServerCompletionContextShiftTruncatesPromptOverContext(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			fmt.Fprint(w, `{"tokens":[0,1,2,3,4,5,6,7,8,9]}`)
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":6,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 8}},
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 3
+	prompt := strings.Repeat("long prompt ", 2)
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   prompt,
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if tokenizeReq.Content != prompt {
+		t.Fatalf("tokenize content = %q, want %q", tokenizeReq.Content, prompt)
+	}
+	if !tokenizeReq.AddSpecial {
+		t.Fatal("expected tokenize request to add special tokens")
+	}
+
+	got, ok := capturedReq.Prompt.([]any)
+	if !ok {
+		t.Fatalf("completion prompt = %T, want token array", capturedReq.Prompt)
+	}
+	want := []int{0, 1, 2, 7, 8, 9}
 	if len(got) != len(want) {
 		t.Fatalf("token prompt len = %d, want %d: %#v", len(got), len(want), got)
 	}
@@ -456,6 +763,102 @@ func TestLlamaServerCompletionTruncatesPromptAsTokens(t *testing.T) {
 		if !ok || int(gotToken) != wantToken {
 			t.Fatalf("token prompt[%d] = %#v, want %d", i, got[i], wantToken)
 		}
+	}
+	if capturedReq.NKeep != opts.NumKeep {
+		t.Fatalf("n_keep = %d, want %d", capturedReq.NKeep, opts.NumKeep)
+	}
+}
+
+func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+	var tokenizeReq struct {
+		Content      string `json:"content"`
+		AddSpecial   bool   `json:"add_special"`
+		ParseSpecial *bool  `json:"parse_special"`
+	}
+	tokens := make([]int, 5000)
+	for i := range tokens {
+		tokens[i] = i
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/tokenize":
+			if err := json.NewDecoder(r.Body).Decode(&tokenizeReq); err != nil {
+				t.Errorf("invalid tokenize request body: %v", err)
+				return
+			}
+			if err := json.NewEncoder(w).Encode(map[string][]int{"tokens": tokens}); err != nil {
+				t.Errorf("failed to encode tokenize response: %v", err)
+			}
+		case "/completion":
+			if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+				t.Errorf("invalid completion request body: %v", err)
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"ok","stop":true,"timings":{"prompt_n":2051,"prompt_ms":1,"predicted_n":32,"predicted_ms":1}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
+		metadata: loadTestGGUF(t, gguftest.KV{
+			"general.architecture":         "gemma3",
+			"tokenizer.ggml.add_bos_token": true,
+		}),
+		launch: llamaServerLaunchConfig{
+			config: LlamaServerConfig{ContextShift: true},
+		},
+	}
+
+	opts := api.DefaultOptions()
+	opts.NumKeep = 4
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:   strings.Repeat("long prompt ", 500),
+		Options:  &opts,
+		Truncate: true,
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	got, ok := capturedReq.Prompt.([]any)
+	if !ok {
+		t.Fatalf("completion prompt = %T, want token array", capturedReq.Prompt)
+	}
+
+	if len(got) != 2051 {
+		t.Fatalf("token prompt len = %d, want 2051", len(got))
+	}
+	if len(got) == 4095 {
+		t.Fatal("token prompt preserved old one-token headroom behavior")
+	}
+
+	effectiveKeep := opts.NumKeep + 1
+	for i := range effectiveKeep {
+		gotToken, ok := got[i].(float64)
+		if !ok || int(gotToken) != i {
+			t.Fatalf("token prompt[%d] = %#v, want %d", i, got[i], i)
+		}
+	}
+
+	const wantSuffixStart = 2954
+	gotToken, ok := got[effectiveKeep].(float64)
+	if !ok || int(gotToken) != wantSuffixStart {
+		t.Fatalf("first shifted token = %#v, want %d", got[effectiveKeep], wantSuffixStart)
 	}
 }
 
@@ -701,7 +1104,7 @@ func TestLlamaServerWaitUntilRunningWaitsOnRecoverableStartupOOM(t *testing.T) {
 	}
 }
 
-func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T) {
+func TestLlamaServerWaitUntilRunningTimesOutWhenLoadStalls(t *testing.T) {
 	t.Setenv("OLLAMA_LOAD_TIMEOUT", "10ms")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -732,11 +1135,63 @@ func TestLlamaServerWaitUntilRunningTimesOutWhenLoadExceedsTimeout(t *testing.T)
 	}
 }
 
+func TestLlamaServerWaitUntilRunningExtendsTimeoutOnOutputActivity(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "100ms")
+
+	var activityCount atomic.Int32
+	var activityStarted atomic.Bool
+	var runner *llamaServerRunner
+	done := make(chan struct{})
+	defer close(done)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/health" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			return
+		}
+		if !activityStarted.Swap(true) {
+			go func() {
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-done:
+						return
+					case <-ticker.C:
+						activityCount.Add(1)
+						_, _ = runner.output.Write([]byte("."))
+					}
+				}
+			}()
+		}
+		if activityCount.Load() < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":{"message":"Loading model","type":"unavailable_error","code":503}}`)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner = &llamaServerRunner{
+		port: portInt,
+		cmd:  fakeRunningCmd(),
+	}
+	runner.output = &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	if err := runner.WaitUntilRunning(t.Context()); err != nil {
+		t.Fatalf("WaitUntilRunning error: %v", err)
+	}
+}
+
 func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 	tests := []struct {
 		name           string
 		format         string
-		grammar        string
 		wantGrammar    bool
 		wantJsonSchema bool
 		wantErr        bool
@@ -761,11 +1216,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			name:           "json schema",
 			format:         `{"type":"object","properties":{"name":{"type":"string"}}}`,
 			wantJsonSchema: true,
-		},
-		{
-			name:        "raw grammar",
-			grammar:     `root ::= "hello"`,
-			wantGrammar: true,
 		},
 		{
 			name:    "invalid format",
@@ -804,7 +1254,6 @@ func TestLlamaServerCompletionRequestFormat(t *testing.T) {
 			req := CompletionRequest{
 				Prompt:  "test",
 				Options: &opts,
-				Grammar: tt.grammar,
 			}
 			if tt.format != "" {
 				req.Format = json.RawMessage(tt.format)
@@ -981,7 +1430,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		name             string
 		leadingBOS       string
 		tokenizerAddsBOS bool
-		ggmlKV           ggml.KV
+		ggufKV           gguftest.KV
 		prompt           string
 		wantPrompt       string
 	}{
@@ -1024,7 +1473,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 llama.cpp runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.pre":              "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1038,7 +1487,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 model runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.model":            "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1052,7 +1501,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 strips renderer bos",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
@@ -1065,7 +1514,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 missing bos metadata uses llama.cpp default",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":        "lfm2",
 				"tokenizer.ggml.model":        "gpt2",
 				"tokenizer.ggml.pre":          "lfm2",
@@ -1107,10 +1556,10 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 				sem:     semaphore.NewWeighted(1),
 				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 			}
-			if tt.ggmlKV != nil {
-				runner.ggml = loadTestGGML(t, tt.ggmlKV)
+			if tt.ggufKV != nil {
+				runner.metadata = loadTestGGUF(t, tt.ggufKV)
 			} else if tt.tokenizerAddsBOS {
-				runner.ggml = loadTestGGML(t, ggml.KV{
+				runner.metadata = loadTestGGUF(t, gguftest.KV{
 					"general.architecture":         "gemma3",
 					"tokenizer.ggml.add_bos_token": true,
 				})
@@ -1295,6 +1744,47 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("prompt_eval_count = %d, want 2", count)
+	}
+}
+
+func TestLegacyEmbeddingsWereRaw(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   gguftest.KV
+		want bool
+	}{
+		{
+			name: "bert t5 raw like bge-m3",
+			kv: gguftest.KV{
+				"general.architecture": "bert",
+				"bert.pooling_type":    uint32(1),
+				"tokenizer.ggml.model": "t5",
+			},
+			want: true,
+		},
+		{
+			name: "nomic bert default raw",
+			kv: gguftest.KV{
+				"general.architecture":    "nomic-bert",
+				"nomic-bert.pooling_type": uint32(1),
+			},
+			want: true,
+		},
+		{
+			name: "qwen3 remains normalized",
+			kv: gguftest.KV{
+				"general.architecture": "qwen3",
+				"qwen3.pooling_type":   uint32(1),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := legacyEmbeddingsWereRaw(loadTestGGUF(t, tt.kv).KV()); got != tt.want {
+				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1490,7 +1980,7 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	supportedGPU := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 8, ComputeMinor: 9}}
 	oldGPU := []ml.DeviceInfo{
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
-		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},
 	}
 
 	tests := []struct {
@@ -1604,6 +2094,97 @@ func TestAppendMainGPUArgs(t *testing.T) {
 	}
 }
 
+func TestAppendLoadModeArgs(t *testing.T) {
+	mmapOff := api.DefaultOptions()
+	mmapOff.UseMMap = testBoolPtr(false)
+	mmapOn := api.DefaultOptions()
+	mmapOn.UseMMap = testBoolPtr(true)
+
+	integratedCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true}}
+	integratedROCm := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "rocm"}, Integrated: true}}
+	discreteCUDA := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	integratedMetal := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}}
+
+	// Direct I/O is only selected on Linux, so the expectation depends on the host.
+	dio := []string{"base"}
+	dioWithMMapOff := []string{"base", "--load-mode", "none"}
+	if runtime.GOOS == "linux" {
+		dio = []string{"base", "--load-mode", "dio"}
+		dioWithMMapOff = []string{"base", "--load-mode", "dio"}
+	}
+
+	tests := []struct {
+		name string
+		opts api.Options
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "defaults leave llama-server load mode alone",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "explicit mmap enabled leaves default",
+			opts: mmapOn,
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "mmap disabled selects none",
+			opts: mmapOff,
+			gpus: discreteCUDA,
+			want: []string{"base", "--load-mode", "none"},
+		},
+		{
+			name: "integrated cuda selects dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedCUDA,
+			want: dio,
+		},
+		{
+			name: "integrated rocm selects dio case insensitively",
+			opts: api.DefaultOptions(),
+			gpus: integratedROCm,
+			want: dio,
+		},
+		{
+			name: "integrated metal does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: integratedMetal,
+			want: []string{"base"},
+		},
+		{
+			name: "discrete cuda does not select dio",
+			opts: api.DefaultOptions(),
+			gpus: discreteCUDA,
+			want: []string{"base"},
+		},
+		{
+			name: "dio wins over disabled mmap",
+			opts: mmapOff,
+			gpus: integratedCUDA,
+			want: dioWithMMapOff,
+		},
+		{
+			name: "no gpus leaves default",
+			opts: api.DefaultOptions(),
+			gpus: nil,
+			want: []string{"base"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendLoadModeArgs([]string{"base"}, tt.opts, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendLoadModeArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMMProjArgs(t *testing.T) {
 	defaultOpts := api.DefaultOptions()
 	partialOpts := api.DefaultOptions()
@@ -1614,13 +2195,15 @@ func TestAppendMMProjArgs(t *testing.T) {
 	cpuOpts.NumGPU = 0
 
 	tests := []struct {
-		name        string
-		projectors  []string
-		opts        api.Options
-		gpus        []ml.DeviceInfo
-		modelLayers uint64
-		retry       bool
-		want        []string
+		name         string
+		modelArch    string
+		projectors   []string
+		opts         api.Options
+		gpus         []ml.DeviceInfo
+		mmprojMemory uint64
+		modelLayers  uint64
+		retry        bool
+		want         []string
 	}{
 		{
 			name: "no projector leaves args unchanged",
@@ -1628,61 +2211,105 @@ func TestAppendMMProjArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
-			name:        "large discrete gpu keeps projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf"},
+			name:         "large discrete gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "small discrete gpu disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, TotalMemory: 8 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "small discrete gpu keeps projector offload when projector fits",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, FreeMemory: 7900 << 20, TotalMemory: 8 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "integrated gpu disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "tight discrete gpu disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 1500 << 20, TotalMemory: 8 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
 		{
-			name:        "cpu only request disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        cpuOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "integrated rocm gpu keeps projector offload when projector fits",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "ROCm"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "partial text offload disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        partialOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "integrated cuda gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "explicit full text offload keeps projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        fullOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			want:        []string{"base", "--mmproj", "model.gguf"},
+			name:         "integrated metal gpu keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, FreeMemory: 32 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 		{
-			name:        "startup oom retry disables projector offload",
-			projectors:  []string{"model.gguf"},
-			opts:        defaultOpts,
-			gpus:        []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
-			modelLayers: 81,
-			retry:       true,
-			want:        []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+			name:         "cpu only request disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         cpuOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:         "partial text offload disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:         "explicit full text offload keeps projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         fullOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
+		{
+			name:         "startup oom retry disables projector offload",
+			projectors:   []string{"model.gguf"},
+			opts:         defaultOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			retry:        true,
+			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
+		},
+		{
+			name:         "gemma3n keeps projector offload under partial text offload",
+			modelArch:    "gemma3n",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
 		},
 	}
 
@@ -1690,7 +2317,9 @@ func TestAppendMMProjArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
 				modelPath:            "model.gguf",
+				modelArch:            tt.modelArch,
 				projectors:           tt.projectors,
+				mmprojMemory:         tt.mmprojMemory,
 				opts:                 tt.opts,
 				gpus:                 tt.gpus,
 				modelLayers:          tt.modelLayers,
@@ -1700,6 +2329,164 @@ func TestAppendMMProjArgs(t *testing.T) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldRetryMMProjCPUOffload(t *testing.T) {
+	launch := func(modelArch string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			modelArch:    modelArch,
+			projectors:   []string{"mmproj.gguf"},
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		launch llamaServerLaunchConfig
+		want   bool
+	}{
+		{
+			name:   "oom retries with projector on cpu",
+			launch: launch("qwen3vl"),
+			want:   true,
+		},
+		{
+			name:   "gemma3n oom does not retry with projector on cpu",
+			launch: launch("gemma3n"),
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{launch: tt.launch}
+			if got := s.shouldRetryMMProjCPUOffload(errors.New("out of memory")); got != tt.want {
+				t.Fatalf("shouldRetryMMProjCPUOffload = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMMProjFitTargetExtraEnvs(t *testing.T) {
+	t.Setenv(llamaArgFitTargetEnv, "")
+	_ = os.Unsetenv(llamaArgFitTargetEnv)
+
+	const (
+		projectorMemoryMiB = uint64(933)
+		projectorPadMiB    = projectorMemoryMiB + mmprojOffloadHeadroom/bytesPerMiB
+	)
+
+	fitTargetValue := func(mib uint64) string {
+		return fmt.Sprint(mib)
+	}
+
+	assertFitTarget := func(t *testing.T, got map[string]string, wantMiB uint64) {
+		t.Helper()
+		if got[llamaArgFitTargetEnv] != fitTargetValue(wantMiB) {
+			t.Fatalf("fit target = %q, want %d", got[llamaArgFitTargetEnv], wantMiB)
+		}
+	}
+
+	newLaunch := func(extraEnvs map[string]string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			projectors:   []string{"model.gguf"},
+			mmprojMemory: projectorMemoryMiB * bytesPerMiB,
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, Integrated: true, FreeMemory: 32 << 30}},
+			modelLayers:  81,
+			extraEnvs:    extraEnvs,
+		}
+	}
+
+	t.Run("sets projector pad when no fit target exists", func(t *testing.T) {
+		launch := newLaunch(map[string]string{"KEEP": "1"})
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, projectorPadMiB)
+		if _, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+			t.Fatal("extraEnvsForStart mutated launch.extraEnvs")
+		}
+	})
+
+	for _, tt := range []struct {
+		name               string
+		launchFitTargetMiB uint64
+	}{
+		{name: "adds projector pad to existing launch fit target", launchFitTargetMiB: 2048},
+		{name: "adds projector pad to smaller launch fit target", launchFitTargetMiB: 512},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			launch := newLaunch(map[string]string{
+				llamaArgFitTargetEnv: fitTargetValue(tt.launchFitTargetMiB),
+			})
+
+			got := launch.extraEnvsForStart()
+			assertFitTarget(t, got, tt.launchFitTargetMiB+projectorPadMiB)
+		})
+	}
+
+	t.Run("preserves inherited user fit target", func(t *testing.T) {
+		t.Setenv(llamaArgFitTargetEnv, fitTargetValue(256))
+		launch := newLaunch(map[string]string{})
+
+		got := launch.extraEnvsForStart()
+		if _, ok := got[llamaArgFitTargetEnv]; ok {
+			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
+		}
+	})
+}
+
+func TestMMProjMemoryRequirement(t *testing.T) {
+	if got, err := mmprojMemoryRequirement("model.gguf", nil, nil); err != nil || got != 0 {
+		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)
+	}
+
+	modelPath, model := writeTestGGUF(t, gguftest.KV{"general.architecture": "gemma3"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{4}),
+		testGGUFTensor("v.patch_embd.weight", gguf.TensorTypeF16, []uint64{16}),
+		testGGUFTensor("mm.0.weight", gguf.TensorTypeF32, []uint64{8}),
+		testGGUFTensor("a.encoder.weight", gguf.TensorTypeF32, []uint64{2}),
+	})
+
+	wantInline := uint64(16*2 + 8*4 + 2*4)
+	if got, err := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); err != nil || got != wantInline {
+		t.Fatalf("inline mmproj memory = %d, %v; want %d, nil", got, err, wantInline)
+	}
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("v.split.weight", gguf.TensorTypeF16, []uint64{8}),
+	})
+	splitModel, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSplitInline := wantInline + 8*2
+	if got, err := mmprojMemoryRequirement(modelPath, splitModel, []string{modelPath}); err != nil || got != wantSplitInline {
+		t.Fatalf("split inline mmproj memory = %d, %v; want %d, nil", got, err, wantSplitInline)
+	}
+
+	projectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, []*gguftest.Tensor{
+		testGGUFTensor("vision.weight", gguf.TensorTypeF16, []uint64{32}),
+		testGGUFTensor("audio.weight", gguf.TensorTypeF32, []uint64{4}),
+	})
+	wantProjector := uint64(32*2 + 4*4)
+	if got, err := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); err != nil || got != wantProjector {
+		t.Fatalf("projector file memory = %d, %v; want %d, nil", got, err, wantProjector)
+	}
+
+	if _, err := mmprojMemoryRequirement(modelPath, nil, []string{modelPath}); err == nil {
+		t.Fatal("inline mmproj with nil model error = nil, want error")
+	}
+	if _, err := mmprojMemoryRequirement(modelPath, model, []string{filepath.Join(t.TempDir(), "missing.gguf")}); err == nil {
+		t.Fatal("missing projector error = nil, want error")
+	}
+
+	emptyProjectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, nil)
+	if _, err := mmprojMemoryRequirement(modelPath, model, []string{emptyProjectorPath}); err == nil {
+		t.Fatal("empty projector error = nil, want error")
 	}
 }
 
@@ -1769,12 +2556,13 @@ func TestAppendContextShiftArgs(t *testing.T) {
 	}
 }
 
-func TestAppendMTPDraftArgs(t *testing.T) {
+func TestAppendDraftArgs(t *testing.T) {
 	tests := []struct {
-		name   string
-		config LlamaServerConfig
-		opts   api.Options
-		want   []string
+		name      string
+		draftType string
+		draftPath string
+		opts      api.Options
+		want      []string
 	}{
 		{
 			name: "no draft model leaves speculative decoding disabled",
@@ -1782,30 +2570,63 @@ func TestAppendMTPDraftArgs(t *testing.T) {
 			want: []string{"base"},
 		},
 		{
-			name:   "embedded draft uses configured draft depth",
-			config: LlamaServerConfig{EnableMTP: true},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
+			name:      "embedded MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--spec-draft-backend-sampling"},
 		},
 		{
-			name:   "separate draft model uses configured draft depth",
-			config: LlamaServerConfig{DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 8}},
-			want:   []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
+			name:      "separate MTP draft uses configured draft depth",
+			draftType: draftTypeMTP,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 8}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:   "zero draft depth disables speculative decoding",
-			config: LlamaServerConfig{EnableMTP: true, DraftModelPath: "draft.gguf"},
-			opts:   api.Options{Runner: api.Runner{DraftNumPredict: 0}},
-			want:   []string{"base"},
+			name:      "DFlash draft omits MTP backend sampling",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "zero draft depth disables speculative decoding",
+			draftType: draftTypeDFlash,
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
+			want:      []string{"base"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendMTPDraftArgs([]string{"base"}, tt.config, tt.opts)
+			got := appendDraftArgs([]string{"base"}, tt.draftType, tt.draftPath, tt.opts)
 			if !slices.Equal(got, tt.want) {
-				t.Fatalf("appendMTPDraftArgs = %v, want %v", got, tt.want)
+				t.Fatalf("appendDraftArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExternalDraftType(t *testing.T) {
+	tests := []struct {
+		architecture string
+		want         string
+	}{
+		{architecture: "dflash", want: draftTypeDFlash},
+		{architecture: "qwen35", want: draftTypeMTP},
+		{architecture: "unknown", want: draftTypeMTP},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.architecture, func(t *testing.T) {
+			path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": tt.architecture}, nil)
+			got, err := externalDraftType(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("externalDraftType = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -1815,19 +2636,19 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	tests := []struct {
 		name    string
 		arch    string
-		tensors []*ggml.Tensor
+		tensors []gguf.TensorInfo
 		want    bool
 	}{
 		{
 			name:    "qwen35 legacy mtp marker",
 			arch:    "qwen35",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    true,
 		},
 		{
 			name:    "qwen35moe legacy mtp marker",
 			arch:    "qwen35moe",
-			tensors: []*ggml.Tensor{{Name: "mtp.layers.0.attn_q.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.layers.0.attn_q.weight"}},
 			want:    true,
 		},
 		{
@@ -1839,7 +2660,7 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 		{
 			name:    "other arch with mtp prefix",
 			arch:    "qwen3next",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    false,
 		},
 	}
@@ -1853,7 +2674,27 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	}
 }
 
+func TestHasMTPDraftAcrossShards(t *testing.T) {
+	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("mtp.0.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	model, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMTPDraft(model) {
+		t.Fatal("hasMTPDraft() = false, want true for MTP tensors in a later shard")
+	}
+}
+
 func testIntPtr(v int) *int {
+	return &v
+}
+
+func testBoolPtr(v bool) *bool {
 	return &v
 }
 
@@ -2288,6 +3129,39 @@ func TestMemoryParsingWriter(t *testing.T) {
 	}
 }
 
+func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	before := time.Now()
+	if _, err := w.Write([]byte("...")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); got.Before(before) {
+		t.Fatalf("lastLoadActivity = %v, want after %v", got, before)
+	}
+}
+
+func TestMemoryParsingWriterIgnoresOutputActivityAfterLoadTrackingStops(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	runner.startLoadTracking(time.Now())
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	lastActivity := runner.lastLoadActivity()
+
+	runner.stopLoadTracking()
+	if _, err := w.Write([]byte(".")); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.lastLoadActivity(); !got.Equal(lastActivity) {
+		t.Fatalf("lastLoadActivity changed after tracking stopped: got %v, want %v", got, lastActivity)
+	}
+}
+
 func TestMemoryParsingPerDevice(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -2482,6 +3356,166 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 			total, vram := runner.MemorySize()
 			if total != tt.wantProcessTotal || vram != tt.wantProcessVRAM {
 				t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, tt.wantProcessTotal, tt.wantProcessVRAM)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterMemorySizeMmapPartialOffload(t *testing.T) {
+	tests := []struct {
+		name          string
+		fileSizeBytes int64 // sparse model file size; 0 means no model file on disk
+		lines         []string
+		wantTotalMiB  float64
+		wantVRAMMiB   float64
+	}{
+		{
+			// Numbers from https://github.com/ollama/ollama/issues/16637: a
+			// 13.26 GiB MoE GGUF offloaded 48/49 layers with mmap on. The
+			// CPU_Mapped buffer spans nearly the whole file because the first
+			// and last tensors stay on CPU, re-counting the weights already
+			// accounted to the CUDA0 buffer.
+			name:          "CUDA partial offload with mmap",
+			fileSizeBytes: 13578 * 1024 * 1024, // 13.26 GiB
+			lines: []string{
+				"load_tensors: offloaded 48/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size = 12900.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size = 13260.00 MiB\n",
+				"llama_kv_cache:      CUDA0 KV buffer size =   460.00 MiB\n",
+				"sched_reserve:      CUDA0 compute buffer size =   350.00 MiB\n",
+				"sched_reserve:  CUDA_Host compute buffer size =   270.00 MiB\n",
+			},
+			// Weights counted once (13578) + KV + compute, not ~26.6 GiB.
+			wantTotalMiB: 13578 + 460 + 350 + 270,
+			wantVRAMMiB:  12900 + 460 + 350,
+		},
+		{
+			// Captured from llama-server on Apple Silicon (SmolLM2 360M Q8_0,
+			// 368.50 MiB GGUF, -ngl 20 of 33, mmap on): CPU_Mapped and
+			// MTL0_Mapped each span nearly the whole file.
+			name:          "Metal partial offload with mmap",
+			fileSizeBytes: 386400256, // 368.50 MiB
+			lines: []string{
+				"load_tensors: offloaded 20/33 layers to GPU\n",
+				"load_tensors:   CPU_Mapped model buffer size =   364.31 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =   129.49 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   366.80 MiB\n",
+				"llama_context:        CPU  output buffer size =     0.75 MiB\n",
+				"llama_kv_cache:        CPU KV buffer size =    32.50 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    47.50 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    20.76 MiB\n",
+				"sched_reserve:        CPU compute buffer size =    24.51 MiB\n",
+			},
+			// CPU_Mapped (364.31) and MTL0_Mapped (366.80) both span the file, so
+			// the file-backed overlap is 364.31+366.80-368.50 = 362.61; only that
+			// is trimmed from the reclaimable CPU_Mapped page cache. CPU_REPACK is
+			// a real copy and is kept. Result: file once + REPACK + output + KV +
+			// compute.
+			wantTotalMiB: 368.50 + 129.49 + 0.75 + 32.50 + 47.50 + 20.76 + 24.51,
+			wantVRAMMiB:  366.80 + 47.50 + 20.76,
+		},
+		{
+			// dhiltgen's llama3.2 CPU-only case (PR #16709 review): mmap on,
+			// nothing offloaded. CPU_Mapped equals the file and CPU_REPACK is a
+			// real repacked copy. With no device buffer to overlap, the repack
+			// must not be trimmed: report file + repack, not just the file.
+			name:          "CPU-only mmap with repack is not trimmed",
+			fileSizeBytes: 1919 * 1024 * 1024, // ~1918.35 MiB file, CPU_Mapped span fits within
+			lines: []string{
+				"load_tensors: offloaded 0/29 layers to GPU\n",
+				"load_tensors:   CPU_Mapped model buffer size =  1918.35 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =  1299.38 MiB\n",
+				"llama_kv_cache:        CPU KV buffer size =   112.00 MiB\n",
+				"sched_reserve:        CPU compute buffer size =    72.00 MiB\n",
+			},
+			wantTotalMiB: 1918.35 + 1299.38 + 112.00 + 72.00,
+			wantVRAMMiB:  0,
+		},
+		{
+			// use_mmap=false: weights are copied into plain CPU buffers and
+			// the REPACK copy legitimately exceeds the file size. No trim.
+			name:          "no mmap is unchanged",
+			fileSizeBytes: 386404992,
+			lines: []string{
+				"load_tensors: offloaded 20/33 layers to GPU\n",
+				"load_tensors:          CPU model buffer size =   234.82 MiB\n",
+				"load_tensors:   CPU_REPACK model buffer size =   129.49 MiB\n",
+				"load_tensors:         MTL0 model buffer size =   132.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =    47.50 MiB\n",
+			},
+			wantTotalMiB: 234.82 + 129.49 + 132.00 + 47.50,
+			wantVRAMMiB:  132.00 + 47.50,
+		},
+		{
+			// Model file size unknown (stat failure): keep parsed sizes as-is.
+			name:          "missing model file is unchanged",
+			fileSizeBytes: 0,
+			lines: []string{
+				"load_tensors: offloaded 48/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size = 12900.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size = 13260.00 MiB\n",
+			},
+			wantTotalMiB: 12900 + 13260,
+			wantVRAMMiB:  12900,
+		},
+		{
+			// Mapped buffers that fit within the file budget cover disjoint
+			// file ranges: nothing is double-counted, nothing to trim.
+			name:          "mapped buffers within file size are unchanged",
+			fileSizeBytes: 13578 * 1024 * 1024,
+			lines: []string{
+				"load_tensors: offloaded 24/49 layers to GPU\n",
+				"load_tensors:        CUDA0 model buffer size =  6500.00 MiB\n",
+				"load_tensors:   CPU_Mapped model buffer size =  7000.00 MiB\n",
+			},
+			wantTotalMiB: 6500 + 7000,
+			wantVRAMMiB:  6500,
+		},
+	}
+
+	withinKiB := func(got, want uint64) bool {
+		if got > want {
+			return got-want <= 1024
+		}
+		return want-got <= 1024
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+			if tt.fileSizeBytes > 0 {
+				modelPath := filepath.Join(t.TempDir(), "model.gguf")
+				f, err := os.Create(modelPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := f.Truncate(tt.fileSizeBytes); err != nil {
+					f.Close()
+					t.Fatal(err)
+				}
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+				runner.modelPath = modelPath
+			}
+
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			for _, line := range tt.lines {
+				if _, err := w.Write([]byte(line)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			total, vram := runner.MemorySize()
+			wantTotal := uint64(tt.wantTotalMiB * 1024 * 1024)
+			wantVRAM := uint64(tt.wantVRAMMiB * 1024 * 1024)
+			if !withinKiB(total, wantTotal) {
+				t.Errorf("MemorySize total = %d (%.2f MiB), want %d (%.2f MiB)",
+					total, float64(total)/1024/1024, wantTotal, tt.wantTotalMiB)
+			}
+			if !withinKiB(vram, wantVRAM) {
+				t.Errorf("MemorySize vram = %d (%.2f MiB), want %d (%.2f MiB)",
+					vram, float64(vram)/1024/1024, wantVRAM, tt.wantVRAMMiB)
 			}
 		})
 	}
@@ -2708,27 +3742,37 @@ func TestLlamaServerChatMessageConvertsToolCalls(t *testing.T) {
 
 func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	png := []byte("\x89PNG\r\n\x1a\n")
+	webp, err := base64.StdEncoding.DecodeString("UklGRhwAAABXRUJQVlA4TA8AAAAvAAAAAAcQ/Y/+ByKi/wEA")
+	if err != nil {
+		t.Fatal(err)
+	}
 	wav := []byte("RIFF\x00\x00\x00\x00WAVE")
 	mp3 := []byte("ID3\x04\x00\x00")
 
 	msg, err := llamaServerChatMessage(Message{
 		Role:    "user",
 		Content: "describe these",
-		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, wav), NewMediaData(2, mp3)},
+		Media:   []MediaData{NewMediaData(0, png), NewMediaData(1, webp), NewMediaData(2, wav), NewMediaData(3, mp3)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	parts, ok := msg["content"].([]map[string]any)
-	if !ok || len(parts) != 4 {
-		t.Fatalf("expected four content parts, got %#v", msg["content"])
+	if !ok || len(parts) != 5 {
+		t.Fatalf("expected five content parts, got %#v", msg["content"])
 	}
 	if parts[1]["type"] != "image_url" {
 		t.Fatalf("expected image_url for PNG, got %#v", parts[1])
 	}
+	if imageURL := parts[1]["image_url"].(map[string]any)["url"]; imageURL != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(png) {
+		t.Fatalf("expected PNG to pass through unchanged, got %#v", imageURL)
+	}
+	if imageURL := parts[2]["image_url"].(map[string]any)["url"].(string); !strings.HasPrefix(imageURL, "data:image/png;base64,") {
+		t.Fatalf("expected WebP to be converted to PNG, got %q", imageURL)
+	}
 	for i, want := range []string{"wav", "mp3"} {
-		part := parts[i+2]
+		part := parts[i+3]
 		if part["type"] != "input_audio" {
 			t.Fatalf("expected input_audio for %s, got %#v", want, part)
 		}
@@ -2754,14 +3798,21 @@ func TestFindLlamaServer(t *testing.T) {
 	_ = err
 }
 
-func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
+func loadTestGGUF(t *testing.T, kv gguftest.KV) *gguf.Model {
+	t.Helper()
+
+	_, model := writeTestGGUF(t, kv, nil)
+	return model
+}
+
+func writeTestGGUF(t *testing.T, kv gguftest.KV, tensors []*gguftest.Tensor) (string, *gguf.Model) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ggml.WriteGGUF(f, kv, nil); err != nil {
+	if err := gguftest.Write(f, kv, tensors); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -2772,7 +3823,17 @@ func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return model
+	return f.Name(), model
+}
+
+func testGGUFTensor(name string, kind gguf.TensorType, shape []uint64) *gguftest.Tensor {
+	tensor := &gguftest.Tensor{
+		Name:  name,
+		Type:  kind,
+		Shape: shape,
+	}
+	tensor.WriterTo = bytes.NewReader(make([]byte, tensor.Size()))
+	return tensor
 }
 
 // fakeRunningCmd returns an exec.Cmd that looks like it's still running

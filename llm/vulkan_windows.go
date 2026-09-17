@@ -5,6 +5,7 @@ package llm
 import (
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -13,25 +14,12 @@ import (
 
 const windowsVulkanRuntimeDLLName = "vulkan-1.dll"
 
-type windowsVulkanRuntimeDLL struct {
-	path         string
-	source       string
-	bundledPath  string
-	bundledVer   windowsFileVersion
-	bundledVerOK bool
-	systemPath   string
-	systemVer    windowsFileVersion
-	systemVerOK  bool
-	systemDir    string
-	bundledDir   string
-}
-
 func WindowsVulkanRuntimeDLLPath(libDirs []string) (string, error) {
-	choice, err := windowsVulkanRuntimeDLLChoice(libDirs)
+	systemDir, err := windows.GetSystemDirectory()
 	if err != nil {
 		return "", err
 	}
-	return choice.path, nil
+	return windowsVulkanRuntimeDLLPath(systemDir, os.Getenv("PATH"), libDirs, fileExists)
 }
 
 func adjustWindowsVulkanLibraryPaths(paths, gpuLibs []string) []string {
@@ -40,74 +28,68 @@ func adjustWindowsVulkanLibraryPaths(paths, gpuLibs []string) []string {
 		return paths
 	}
 
-	choice, err := windowsVulkanRuntimeDLLChoice(gpuLibs)
+	vulkanPath, err := WindowsVulkanRuntimeDLLPath(gpuLibs)
 	if err != nil {
 		slog.Debug("windows Vulkan loader selection unavailable", "error", err)
 		return paths
 	}
 
-	slog.Debug("selected windows Vulkan loader",
-		"loader_source", choice.source,
-		"path", choice.path,
-		"bundled", choice.bundledPath,
-		"bundled_version", choice.bundledVer.String(),
-		"system", choice.systemPath,
-		"system_version", choice.systemVer.String(),
-	)
+	slog.Debug("selected windows Vulkan loader", "path", vulkanPath)
 
-	if choice.source != "system" || choice.systemDir == "" {
-		return paths
-	}
-
-	return insertPathBefore(paths, choice.systemDir, vulkanDir)
+	return insertPathBefore(paths, filepath.Dir(vulkanPath), vulkanDir)
 }
 
-// Prefer the system Vulkan loader when present, but keep a bundled loader as a
-// fallback for hosts without a Vulkan runtime. If both versions are available
-// and the bundled loader is newer, select the bundled copy.
-func windowsVulkanRuntimeDLLChoice(libDirs []string) (windowsVulkanRuntimeDLL, error) {
-	systemDir, err := windows.GetSystemDirectory()
-	if err != nil {
-		return windowsVulkanRuntimeDLL{}, err
-	}
+// Use the host Vulkan loader supplied by the installed Vulkan runtime or GPU
+// driver. Ollama no longer packages the loader; exclude backend library
+// directories from PATH probing so stale app-local copies from older installs
+// cannot shadow the host runtime.
+func windowsVulkanRuntimeDLLPath(
+	systemDir string,
+	pathEnv string,
+	libDirs []string,
+	exists func(string) bool,
+) (string, error) {
 	systemDir = filepath.Clean(systemDir)
 
-	bundledPath := firstExistingFile(libDirs, windowsVulkanRuntimeDLLName)
 	systemPath := filepath.Join(systemDir, windowsVulkanRuntimeDLLName)
-	systemExists := fileExists(systemPath)
-
-	choice := windowsVulkanRuntimeDLL{
-		path:        bundledPath,
-		source:      "bundled",
-		bundledPath: bundledPath,
-		systemPath:  systemPath,
-		systemDir:   systemDir,
-	}
-	if bundledPath != "" {
-		choice.bundledDir = filepath.Dir(bundledPath)
-		choice.bundledVer, choice.bundledVerOK = readWindowsFileVersion(bundledPath)
-	}
-	if systemExists {
-		choice.systemVer, choice.systemVerOK = readWindowsFileVersion(systemPath)
+	if exists(systemPath) {
+		return systemPath, nil
 	}
 
-	switch {
-	case bundledPath != "" && systemExists:
-		if choice.bundledVerOK && choice.systemVerOK && choice.bundledVer.Compare(choice.systemVer) > 0 {
-			return choice, nil
+	if path := firstWindowsVulkanRuntimeDLLOnPath(pathEnv, libDirs, exists); path != "" {
+		return path, nil
+	}
+
+	return "", errors.New("no host vulkan-1.dll runtime DLL found")
+}
+
+func firstWindowsVulkanRuntimeDLLOnPath(pathEnv string, excludedDirs []string, exists func(string) bool) string {
+	for _, dir := range filepath.SplitList(pathEnv) {
+		dir = strings.Trim(filepath.Clean(strings.Trim(dir, `"`)), `"`)
+		if dir == "." || dir == "" || windowsDirInList(dir, excludedDirs) {
+			continue
 		}
-		choice.path = systemPath
-		choice.source = "system"
-		return choice, nil
-	case systemExists:
-		choice.path = systemPath
-		choice.source = "system"
-		return choice, nil
-	case bundledPath != "":
-		return choice, nil
-	default:
-		return windowsVulkanRuntimeDLL{}, errors.New("no vulkan-1.dll runtime DLL found")
+
+		path := filepath.Join(dir, windowsVulkanRuntimeDLLName)
+		if exists(path) {
+			return filepath.Clean(path)
+		}
 	}
+	return ""
+}
+
+func windowsDirInList(dir string, dirs []string) bool {
+	dir = strings.ToLower(filepath.Clean(dir))
+	for _, candidate := range dirs {
+		candidate = strings.ToLower(filepath.Clean(candidate))
+		if candidate == "" || candidate == "." {
+			continue
+		}
+		if dir == candidate || strings.HasPrefix(dir, candidate+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func firstWindowsVulkanLibDir(libDirs []string) string {

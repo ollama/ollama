@@ -95,32 +95,40 @@ func applyWindowsVulkanRefinement(devices []ml.DeviceInfo, probed []vulkanPhysic
 		}
 	}
 
-	if len(probed) != len(vulkanIndexes) {
-		slog.Debug("windows vulkan device refinement skipped: device count mismatch",
+	if len(probed) < len(vulkanIndexes) {
+		slog.Debug("windows vulkan device refinement skipped: fewer probed devices than llama-server devices",
 			"llama_server_count", len(vulkanIndexes), "vulkan_count", len(probed))
 		return false
 	}
 
+	// Raw Vulkan enumeration can be a superset of llama-server's device list
+	// (extra ICDs, D3D12 mapping-layer devices) and the two orders can differ,
+	// so match by name rather than requiring equal counts or matching indexes.
 	matches := make([]int, len(vulkanIndexes))
-	for i := range matches {
-		matches[i] = -1
-	}
 	used := make([]bool, len(probed))
 	for i, deviceIndex := range vulkanIndexes {
+		matches[i] = -1
 		description := devices[deviceIndex].Description
 		for j, probedDevice := range probed {
 			if used[j] || !sameVulkanDeviceName(description, probedDevice.Name) {
 				continue
 			}
+			if matches[i] >= 0 {
+				if probed[matches[i]].Integrated != probedDevice.Integrated {
+					slog.Debug("windows vulkan device refinement skipped: ambiguous device name match",
+						"index", i, "llama_server_name", description)
+					return false
+				}
+				continue
+			}
 			matches[i] = j
-			used[j] = true
-			break
 		}
 		if matches[i] < 0 {
 			slog.Debug("windows vulkan device refinement skipped: device name mismatch",
 				"index", i, "llama_server_name", description)
 			return false
 		}
+		used[matches[i]] = true
 	}
 
 	for i, probedIndex := range matches {

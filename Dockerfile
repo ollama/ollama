@@ -15,9 +15,9 @@ FROM scratch AS local-mlx
 FROM scratch AS local-mlx-c
 
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
-RUN dnf install -y yum-utils ccache gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+RUN dnf install -y yum-utils ccache gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
-ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
@@ -42,8 +42,8 @@ ENV LDFLAGS=-s
 #
 
 FROM base AS cpu-deps
-RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
-ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+RUN dnf install -y gcc-toolset-13-gcc gcc-toolset-13-gcc-c++
+ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
 
 FROM base AS cuda-12-deps
 ARG CUDA12VERSION=12.8
@@ -74,7 +74,7 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
 ENV VULKAN_SDK=/usr/local
 
 #
-# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, or llama/compat/ changes.
+# llama-server stages — rebuild when LLAMA_CPP_VERSION, llama/server/, llama/compat/, or cmake/ changes.
 #
 # CPU stage: llama-server + ggml-base + ggml-cpu variants → lib/ollama/
 # GPU stages: GPU backend .so only → lib/ollama/<variant>/
@@ -84,6 +84,7 @@ FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cpu \
         && cmake --build build/llama-server-cpu -- -l $(nproc) \
@@ -91,48 +92,67 @@ RUN --mount=type=cache,target=/root/.ccache \
         && for lib in \
             /usr/lib64/libgomp.so* \
             /usr/lib64/libomp.so* \
-            /opt/rh/gcc-toolset-11/root/usr/lib64/libgomp.so* \
-            /opt/rh/gcc-toolset-11/root/usr/lib64/libomp.so*; do \
+            /opt/rh/gcc-toolset-13/root/usr/lib64/libgomp.so* \
+            /opt/rh/gcc-toolset-13/root/usr/lib64/libomp.so*; do \
                 [ -e "$lib" ] && cp -a "$lib" dist/lib/ollama/ || true; \
             done
+
+FROM scratch AS publish-llama-server-cpu
+COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
 
 FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v12_linux \
         && cmake --build build/llama-server-cuda_v12 -- -l $(nproc) \
         && cmake --install build/llama-server-cuda_v12 --component llama-server --strip
 
+FROM scratch AS publish-llama-server-cuda_v12
+COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
+
 FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v13_linux \
         && cmake --build build/llama-server-cuda_v13 -- -l $(nproc) \
         && cmake --install build/llama-server-cuda_v13 --component llama-server --strip
 
+FROM scratch AS publish-llama-server-cuda_v13
+COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
+
 FROM rocm-7-deps AS llama-server-rocm_v7_2
-ENV CC=clang CXX=clang++
+ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/usr
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm_v7_2_linux \
         && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
         && cmake --install build/llama-server-rocm_v7_2 --component llama-server --strip
 RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
 
+FROM scratch AS publish-llama-server-rocm_v7_2
+COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset vulkan \
         && cmake --build build/llama-server-vulkan -- -l $(nproc) \
         && cmake --install build/llama-server-vulkan --component llama-server --strip
+
+FROM scratch AS publish-llama-server-vulkan
+COPY --from=llama-server-vulkan dist/lib/ollama /lib/ollama/
 
 #
 # JetPack stages — self-contained with their own base images
@@ -150,10 +170,14 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack5 \
         && cmake --build build/llama-server-cuda_jetpack5 -- -l $(nproc) \
         && cmake --install build/llama-server-cuda_jetpack5 --component llama-server --strip
+
+FROM scratch AS publish-llama-server-cuda_jetpack5
+COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
@@ -167,10 +191,14 @@ ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
+COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack6 \
         && cmake --build build/llama-server-cuda_jetpack6 -- -l $(nproc) \
         && cmake --install build/llama-server-cuda_jetpack6 --component llama-server --strip
+
+FROM scratch AS publish-llama-server-cuda_jetpack6
+COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/
 
 #
 # MLX stage
@@ -192,7 +220,8 @@ ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY cmake cmake
-COPY x/imagegen/mlx x/imagegen/mlx
+COPY mlx mlx
+COPY mlxrunner/xgrammar/native mlxrunner/xgrammar/native
 COPY go.mod go.sum .
 COPY MLX_VERSION MLX_C_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
@@ -209,6 +238,9 @@ RUN --mount=type=cache,target=/root/.ccache \
     fi \
     && cmake -S . -B build/mlx_cuda_v13 -DOLLAMA_MLX_BACKENDS=cuda_v13 -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas -DCMAKE_CUDA_FLAGS="-t ${OLLAMA_MLX_NVCC_THREADS}" ${MLX_CUDA_RAM_MB:+-DMLX_CUDA_RAM_MB=${MLX_CUDA_RAM_MB}} -DOLLAMA_PAYLOAD_INSTALL_PREFIX=/go/src/github.com/ollama/ollama/dist \
         && cmake --build build/mlx_cuda_v13 --target ollama-mlx-cuda_v13 -- -l $(nproc) ${OLLAMA_MLX_BUILD_JOBS:+-j ${OLLAMA_MLX_BUILD_JOBS}}
+
+FROM scratch AS publish-mlx
+COPY --from=mlx /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 
 #
 # Go build
@@ -229,6 +261,15 @@ ENV CGO_CFLAGS="${CGO_CFLAGS}"
 ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    cmake -S . -B build/go-license \
+        -DOLLAMA_LLAMA_BACKENDS= \
+        -DOLLAMA_MLX_BACKENDS= \
+    && cmake --build build/go-license --target ollama-go-license
+
+FROM scratch AS publish-go
+COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 #
 # Assembly stages — combine llama-server variants + GPU runtime libs
@@ -261,9 +302,11 @@ COPY --from=arm64 /lib/ollama /lib/ollama/
 
 FROM ${TARGETARCH}-archive AS archive
 COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 FROM ${FLAVOR} AS image-archive
 COPY --from=build /bin/ollama /bin/ollama
+COPY --from=build /go/src/github.com/ollama/ollama/build/go-license/lib/ollama/GO_LICENSE /lib/ollama/GO_LICENSE
 
 FROM ubuntu:24.04
 ARG APT_MIRROR=http://archive.ubuntu.com/ubuntu

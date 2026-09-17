@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-func TestProgressConcurrentStopStart(t *testing.T) {
-	// Reproduces the race: start() goroutine writes ticker
-	// while Stop() reads it, both without holding mutex.
+func TestProgressConcurrentStopAndClear(t *testing.T) {
+	// Concurrent shutdown calls must serialize their final output writes.
 	var buf bytes.Buffer
 	p := NewProgress(&buf)
 
@@ -18,7 +17,6 @@ func TestProgressConcurrentStopStart(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		// Give start() time to spawn
 		time.Sleep(1 * time.Millisecond)
 		p.Stop()
 	}()
@@ -33,8 +31,7 @@ func TestProgressConcurrentStopStart(t *testing.T) {
 }
 
 func TestProgressConcurrentAddAndStop(t *testing.T) {
-	// Reproduces the race: Add() writes states while
-	// stop() reads states.
+	// Adding a state can overlap with shutdown.
 	var buf bytes.Buffer
 	p := NewProgress(&buf)
 
@@ -44,7 +41,9 @@ func TestProgressConcurrentAddAndStop(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 20; i++ {
-			p.Add("test", &Spinner{})
+			spinner := NewSpinner("test")
+			p.Add("test", spinner)
+			defer spinner.Stop()
 			time.Sleep(100 * time.Microsecond)
 		}
 	}()
