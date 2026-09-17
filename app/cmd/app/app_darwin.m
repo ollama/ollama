@@ -441,6 +441,8 @@ static NSImage *ollamaApplicationIcon(void) {
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
+            } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
+                [self appsUI];
             } else {
                 [self openUI];
             }
