@@ -282,8 +282,8 @@ func (t *ToolCallFunctionArguments) ToMap() map[string]any {
 	return t.om.ToMap()
 }
 
-func (t *ToolCallFunctionArguments) String() string {
-	if t == nil || t.om == nil {
+func (t ToolCallFunctionArguments) String() string {
+	if t.om == nil {
 		return "{}"
 	}
 	bts, _ := json.Marshal(t.om)
@@ -478,7 +478,7 @@ type ToolFunctionParameters struct {
 	Properties *ToolPropertiesMap `json:"properties"`
 }
 
-func (t *ToolFunctionParameters) String() string {
+func (t ToolFunctionParameters) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
 }
@@ -489,7 +489,7 @@ type ToolFunction struct {
 	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 
-func (t *ToolFunction) String() string {
+func (t ToolFunction) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
 }
