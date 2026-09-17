@@ -460,6 +460,64 @@ func TestCodexDesktopUsedPreservedBySettings(t *testing.T) {
 	}
 }
 
+func TestUpdateChannelSettings(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.UpdateChannel != UpdateChannelStable {
+		t.Fatalf("default update channel = %q, want %q", settings.UpdateChannel, UpdateChannelStable)
+	}
+
+	settings.UpdateChannel = UpdateChannelPreview
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	settings, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.UpdateChannel != UpdateChannelPreview {
+		t.Fatalf("saved update channel = %q, want %q", settings.UpdateChannel, UpdateChannelPreview)
+	}
+
+	settings.UpdateChannel = "nightly"
+	if err := s.SetSettings(settings); err == nil {
+		t.Fatal("expected unsupported update channel to be rejected")
+	}
+	settings, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.UpdateChannel != UpdateChannelPreview {
+		t.Fatalf("saved update channel = %q, want preserved %q", settings.UpdateChannel, UpdateChannelPreview)
+	}
+}
+
+func TestParseUpdateChannel(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		input string
+		want  string
+		ok    bool
+	}{
+		{"stable channel", "stable", UpdateChannelStable, true},
+		{"preview is canonicalized", " PREVIEW ", UpdateChannelPreview, true},
+		{"unsupported channel", "nightly", "", false},
+		{"empty channel", "", "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ParseUpdateChannel(tt.input)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("ParseUpdateChannel(%q) = %q, %v; want %q, %v", tt.input, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()

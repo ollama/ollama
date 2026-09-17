@@ -58,6 +58,7 @@ describe("Settings defaults", () => {
       Models: "",
       ContextLength: 65_536,
       AutoUpdateEnabled: true,
+      UpdateChannel: "stable",
     });
     expect(onSaved).not.toHaveBeenCalled();
     settingsUpdate.resolve();

@@ -48,6 +48,19 @@ var (
 type UpdateResponse struct {
 	UpdateURL     string `json:"url"`
 	UpdateVersion string `json:"version"`
+	updateChannel string
+}
+
+func (u *Updater) updateChannel() string {
+	if u.Store == nil {
+		return store.UpdateChannelStable
+	}
+	settings, err := u.Store.Settings()
+	if err != nil {
+		slog.Warn("failed to load update channel", "error", err)
+		return store.UpdateChannelStable
+	}
+	return store.NormalizeUpdateChannel(settings.UpdateChannel)
 }
 
 func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
@@ -63,6 +76,8 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	query.Add("arch", runtime.GOARCH)
 	currentVersion := version.Version
 	query.Add("version", currentVersion)
+	channel := u.updateChannel()
+	query.Add("channel", channel)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
 	// The original macOS app used to use the device ID
@@ -129,20 +144,33 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	}
 	// Extract the version string from the URL in the github release artifact path
 	updateResp.UpdateVersion = path.Base(path.Dir(updateResp.UpdateURL))
+	updateResp.updateChannel = channel
 
-	slog.Info("New update available at " + updateResp.UpdateURL)
+	slog.Info("New update available", "url", updateResp.UpdateURL, "channel", channel)
 	return true, updateResp
 }
 
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	// Create a cancellable context for this download
 	downloadCtx, cancel := context.WithCancel(ctx)
+	downloadDone := make(chan struct{})
 	u.cancelDownloadLock.Lock()
+	channel := store.NormalizeUpdateChannel(updateResp.updateChannel)
+	if selected := u.updateChannel(); selected != channel {
+		u.cancelDownloadLock.Unlock()
+		cancel()
+		return fmt.Errorf("update channel changed from %s to %s", channel, selected)
+	}
 	u.cancelDownload = cancel
+	u.downloadDone = downloadDone
 	u.cancelDownloadLock.Unlock()
 	defer func() {
+		close(downloadDone)
 		u.cancelDownloadLock.Lock()
-		u.cancelDownload = nil
+		if u.downloadDone == downloadDone {
+			u.cancelDownload = nil
+			u.downloadDone = nil
+		}
 		u.cancelDownloadLock.Unlock()
 		cancel()
 	}()
@@ -324,21 +352,36 @@ func cleanupOldDownloads(stageDir string) {
 }
 
 type Updater struct {
-	Store              *store.Store
-	cancelDownload     context.CancelFunc
+	Store *store.Store
+
+	// cancelDownloadLock guards cancelDownload and downloadDone.
 	cancelDownloadLock sync.Mutex
-	checkNow           chan struct{}
+	cancelDownload     context.CancelFunc
+	downloadDone       chan struct{}
+
+	checkNow chan struct{}
 }
 
-// CancelOngoingDownload cancels any currently running download
+// CancelOngoingDownload cancels any current download and waits for it to stop.
 func (u *Updater) CancelOngoingDownload() {
 	u.cancelDownloadLock.Lock()
-	defer u.cancelDownloadLock.Unlock()
-	if u.cancelDownload != nil {
+	cancel := u.cancelDownload
+	done := u.downloadDone
+	u.cancelDownloadLock.Unlock()
+	if cancel != nil {
 		slog.Info("cancelling ongoing update download")
-		u.cancelDownload()
-		u.cancelDownload = nil
+		cancel()
 	}
+	if done != nil {
+		<-done
+	}
+}
+
+// DiscardPendingUpdate stops any active download and removes staged payloads.
+func (u *Updater) DiscardPendingUpdate() {
+	u.CancelOngoingDownload()
+	cleanupOldDownloads(UpdateStageDir)
+	UpdateDownloaded = false
 }
 
 // TriggerImmediateCheck signals the background checker to check for updates immediately
