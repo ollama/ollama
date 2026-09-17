@@ -181,6 +181,32 @@ begin
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
 end;
 
+procedure RemovePath(Param: string);
+var
+  OrigPath, NewPath, ParamPadded: string;
+  P: Integer;
+begin
+  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', OrigPath)
+  then begin
+    exit;
+  end;
+  ParamPadded := ExpandConstant(Param);
+  { Match on a padded copy so we only ever remove a whole path segment, never
+    a substring inside a different, unrelated PATH entry. }
+  NewPath := ';' + OrigPath + ';';
+  P := Pos(';' + ParamPadded + ';', NewPath);
+  if P = 0 then begin
+    { Not present (e.g. user already removed it manually); nothing to do. }
+    exit;
+  end;
+  Delete(NewPath, P, Length(ParamPadded) + 1);
+  if (Length(NewPath) > 0) and (NewPath[1] = ';') then
+    Delete(NewPath, 1, 1);
+  if (Length(NewPath) > 0) and (NewPath[Length(NewPath)] = ';') then
+    Delete(NewPath, Length(NewPath), 1);
+  RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', NewPath);
+end;
+
 function GetDirSize(Path: String): Int64;
 var
   FindRec: TFindRec;
@@ -307,6 +333,8 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usDone then begin
+    Log('removing {app} from user PATH');
+    RemovePath('{app}');
     if DeleteModelsChecked then begin
       Log('user requested model cleanup');
       if (VarIsEmpty(ModelsDir)) then begin
