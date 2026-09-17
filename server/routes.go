@@ -432,6 +432,24 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	caps := []model.Capability{model.CapabilityCompletion}
+	if req.Suffix != "" {
+		caps = append(caps, model.CapabilityInsert)
+	}
+
+	modelCaps := m.Capabilities()
+	if slices.Contains(modelCaps, model.CapabilityThinking) {
+		caps = append(caps, model.CapabilityThinking)
+		if req.Think == nil {
+			req.Think = &api.ThinkValue{Value: true}
+		}
+	} else {
+		if req.Think != nil && req.Think.Bool() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
+			return
+		}
+	}
+
 	var builtinParser parsers.Parser
 	if shouldUseHarmony(m) {
 		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
@@ -450,24 +468,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if builtinParser != nil {
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
-		}
-	}
-
-	caps := []model.Capability{model.CapabilityCompletion}
-	if req.Suffix != "" {
-		caps = append(caps, model.CapabilityInsert)
-	}
-
-	modelCaps := m.Capabilities()
-	if slices.Contains(modelCaps, model.CapabilityThinking) {
-		caps = append(caps, model.CapabilityThinking)
-		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: true}
-		}
-	} else {
-		if req.Think != nil && req.Think.Bool() {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
-			return
 		}
 	}
 
