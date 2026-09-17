@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1499,5 +1500,44 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 
 	if diff := cmp.Diff(want, got, argsComparer); diff != "" {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestGemma4ParserManyStringsBeforeArray(t *testing.T) {
+	for _, count := range []int{43, 44, 45, 50, 130} {
+		t.Run(fmt.Sprintf("strings_%d", count), func(t *testing.T) {
+			var fields []string
+			expected := map[string]any{}
+			for i := 0; i < count; i++ {
+				key, value := fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i)
+				fields = append(fields, key+":"+gemma4StringDelimiter+value+gemma4StringDelimiter)
+				expected[key] = value
+			}
+			fields = append(fields, `members:[<|"|>a<|"|>,<|"|>b<|"|>]`)
+			expected["members"] = []any{"a", "b"}
+			input := "<|tool_call>call:submit{" + strings.Join(fields, ",") + "}<tool_call|>"
+			for _, chunkSize := range []int{len(input), 1} {
+				t.Run(fmt.Sprintf("chunk_%d", chunkSize), func(t *testing.T) {
+					p := &Gemma4Parser{}
+					p.Init(nil, nil, nil)
+					var calls []api.ToolCall
+					for start := 0; start < len(input); start += chunkSize {
+						end := min(start+chunkSize, len(input))
+						content, thinking, chunkCalls, err := p.Add(input[start:end], end == len(input))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if content != "" || thinking != "" {
+							t.Fatalf("unexpected text: content=%q thinking=%q", content, thinking)
+						}
+						calls = append(calls, chunkCalls...)
+					}
+					want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "submit", Arguments: testArgs(expected)}}}
+					if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+						t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+					}
+				})
+			}
+		})
 	}
 }
