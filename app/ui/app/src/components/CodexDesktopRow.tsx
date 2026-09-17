@@ -476,17 +476,17 @@ export function CodexDesktopRow({
   return (
     <div
       id="integration-chatgpt"
-      className="flex items-center gap-4 rounded-2xl border border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-700 dark:bg-neutral-800/50"
+      className="flex min-h-18 items-center justify-between gap-4 bg-white px-4 py-3 dark:bg-neutral-900"
     >
-      <div className="flex min-w-0 flex-1 items-center gap-4">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <CodexIcon integration={integration} />
         <div className="min-w-0">
-          <p className="text-base font-medium text-neutral-950 dark:text-neutral-100">
+          <p className="text-sm font-medium text-neutral-950 dark:text-neutral-100">
             ChatGPT
           </p>
           <p
             role={actionError ? "alert" : notice ? "status" : undefined}
-            className="mt-1 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400"
+            className="text-xs leading-5 text-neutral-500 dark:text-neutral-400"
           >
             {description}
           </p>

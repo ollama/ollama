@@ -87,25 +87,25 @@
   transition-timing-function: ease-in-out;
 }
 
-@keyframes apps-copy-card-flash {
-  0%,
-  100% {
-    opacity: 0;
+@keyframes apps-row-reveal {
+  from {
+    opacity: 0.25;
+    transform: translateY(8px);
   }
-  25%,
-  50% {
+  to {
     opacity: 1;
+    transform: none;
   }
 }
 
-.apps-copy-card-feedback {
-  animation: apps-copy-card-flash 1800ms ease-in-out both;
+.apps-row-reveal {
+  animation: apps-row-reveal 450ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .claude-connected-backdrop,
   .claude-connected-dialog,
-  .apps-copy-card-feedback {
+  .apps-row-reveal {
     animation: none;
   }
 
