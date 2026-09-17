@@ -9,16 +9,39 @@ Use this capability to audit model steps, animate the model *thinking* in a UI, 
 ## Supported models
 
 - [Qwen 3](https://ollama.com/library/qwen3)
-- [GPT-OSS](https://ollama.com/library/gpt-oss) *(use `think` levels: `low`, `medium`, `high` — the trace cannot be fully disabled)*
+- [GPT-OSS](https://ollama.com/library/gpt-oss) *(use `think` levels: `low`, `medium`, `high`; `medium` is the default)*
 - [DeepSeek-v3.1](https://ollama.com/library/deepseek-v3.1)
 - [DeepSeek R1](https://ollama.com/library/deepseek-r1)
 - Browse the latest additions under [thinking models](https://ollama.com/search?c=thinking)
 
+## Discover a model's thinking controls
+
+Thinking controls vary by model. Use `/api/show` to discover the values a model supports and the value Ollama uses by default:
+
+```shell
+curl http://localhost:11434/api/show -d '{
+  "model": "gpt-oss"
+}'
+```
+
+The response includes a top-level `thinking` object:
+
+```json
+{
+  "thinking": {
+    "values": ["low", "medium", "high"],
+    "default": "medium"
+  }
+}
+```
+
+The `values` array can contain booleans (`true` or `false`) for on/off controls or model-defined strings for named levels. The default is used when `think` is not set. A response with `[false]` means the model does not support thinking. If `thinking` is omitted, Ollama has no model-specific metadata and keeps its existing behavior.
+
 ## Enable thinking in API calls
 
-Set the `think` field on chat or generate requests. Most models accept booleans (`true`/`false`) or levels (`low`, `medium`, `high`, `max`), where `max` requests the highest thinking level.
+Set the `think` field on chat or generate requests. `think` can be `true`, `false`, `null`, or a model-defined string. Numbers are not supported. Use exact string values from `/api/show` when they are available. `true` requests thinking and `false` requests no thinking output, subject to each model's controls.
 
-GPT-OSS instead expects one of `low`, `medium`, or `high` to tune the trace length.
+When a model uses its `/api/show` metadata to resolve named levels, supported names are applied exactly and unsupported names resolve to the model default. GPT-OSS keeps its existing request behavior; use its advertised `low`, `medium`, or `high` values, with `medium` as the default.
 
 The `message.thinking` (chat endpoint) or `thinking` (generate endpoint) field contains the reasoning trace while `message.content` / `response` holds the final answer.
 
@@ -69,7 +92,7 @@ The `message.thinking` (chat endpoint) or `thinking` (generate endpoint) field c
 </Tabs>
 
 <Note>
-  GPT-OSS requires `think` to be set to `"low"`, `"medium"`, or `"high"`. Passing `true`/`false` is ignored for that model.
+  GPT-OSS defaults to `"medium"` thinking. Set `"low"` for a shorter trace or `"high"` for a longer trace. `true` maps to the medium default, while `false` requests no thinking output.
 </Note>
 
 ## Stream the reasoning trace
@@ -148,6 +171,6 @@ Thinking streams interleave reasoning tokens before answer tokens. Detect the fi
 - Disable thinking: `ollama run deepseek-r1 --think=false "Summarize this article"`
 - Hide the trace while still using a thinking model: `ollama run deepseek-r1 --hidethinking "Is 9.9 bigger or 9.11?"`
 - Inside interactive sessions, toggle with `/set think` or `/set nothink`.
-- GPT-OSS only accepts levels: `ollama run gpt-oss --think=low "Draft a headline"` (replace `low` with `medium` or `high` as needed).
+- Set a level for GPT-OSS: `ollama run gpt-oss --think=low "Draft a headline"` (replace `low` with `medium` or `high` as needed).
 
-<Note>Thinking is enabled by default in the CLI and API for supported models.</Note>
+<Note>Thinking defaults are model-specific. Use `/api/show` to see the supported values and default when a model exposes metadata. For thinking-capable local models, `ollama show` also lists the available values and default.</Note>
