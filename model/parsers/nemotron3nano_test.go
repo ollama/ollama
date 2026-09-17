@@ -347,14 +347,25 @@ func TestNemotron3NanoParser_DoneFlushesBufferedText(t *testing.T) {
 	}
 }
 
-func TestNemotron3NanoParser_DoneRejectsUnterminatedToolCall(t *testing.T) {
+func TestNemotron3NanoParser_DoneFlushesUnterminatedToolCall(t *testing.T) {
 	p := &Nemotron3NanoParser{}
 	p.Init(nil, nil, &api.ThinkValue{Value: true})
-	if _, _, _, err := p.Add("reasoning<tool_call><function=test>", false); err != nil {
+	content, thinking, calls, err := p.Add("reasoning<tool_call><function=test>", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := p.Add("", true); err == nil {
-		t.Fatal("expected unterminated tool call error")
+	finalContent, finalThinking, finalCalls, err := p.Add("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := content+finalContent, "<tool_call><function=test>"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	if got, want := thinking+finalThinking, "reasoning"; got != want {
+		t.Fatalf("thinking = %q, want %q", got, want)
+	}
+	if got := append(calls, finalCalls...); len(got) != 0 {
+		t.Fatalf("calls = %v, want none", got)
 	}
 }
 

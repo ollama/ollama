@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/mlx"
@@ -12,17 +13,30 @@ import (
 )
 
 const (
-	nemotronVisionDefaultPatchSize        = int32(16)
-	nemotronVisionDefaultHiddenSize       = int32(1280)
-	nemotronVisionDefaultNumLayers        = int32(32)
-	nemotronVisionDefaultNumHeads         = int32(16)
 	nemotronVisionDefaultLayerNormEpsilon = float32(1e-6)
 	nemotronVisionDefaultProjectorNormEps = float32(1e-5)
 	nemotronVisionDefaultMaxModelLen      = 16384
 	nemotronVisionReservedTokens          = 4
 )
 
+type radioModelSpec struct {
+	patchSize         int32
+	hiddenSize        int32
+	numHiddenLayers   int32
+	numAttentionHeads int32
+}
+
+// radioModelSpecs is the architecture set used by RADIO's timm model names.
+var radioModelSpecs = map[string]radioModelSpec{
+	"vit_small_patch16_224": {patchSize: 16, hiddenSize: 384, numHiddenLayers: 12, numAttentionHeads: 6},
+	"vit_base_patch16_224":  {patchSize: 16, hiddenSize: 768, numHiddenLayers: 12, numAttentionHeads: 12},
+	"vit_large_patch16_224": {patchSize: 16, hiddenSize: 1024, numHiddenLayers: 24, numAttentionHeads: 16},
+	"vit_huge_patch16_224":  {patchSize: 16, hiddenSize: 1280, numHiddenLayers: 32, numAttentionHeads: 16},
+}
+
 type VisionConfig struct {
+	ModelName         string
+	PSVersion         string
 	Version           string
 	PatchSize         int32
 	HiddenSize        int32
@@ -41,6 +55,10 @@ type VisionConfig struct {
 	ImageToken        string
 	ImageStartToken   string
 	ImageEndToken     string
+
+	configuredPatchSize       int32
+	configuredHiddenSize      int32
+	configuredNumHiddenLayers int32
 }
 
 type RadioVisionEncoder struct {
@@ -68,6 +86,7 @@ type VisionProjector struct {
 
 func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, error) {
 	var env struct {
+		PSVersion    string `json:"ps_version"`
 		VisionConfig *struct {
 			Version         string `json:"version"`
 			PatchSize       int32  `json:"patch_size"`
@@ -77,8 +96,9 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 			NumHiddenLayers int32  `json:"num_hidden_layers"`
 			NumHeads        int32  `json:"num_attention_heads"`
 			Args            struct {
-				MinNumPatches int `json:"min_num_patches"`
-				MaxNumPatches int `json:"max_num_patches"`
+				Model         string `json:"model"`
+				MinNumPatches int    `json:"min_num_patches"`
+				MaxNumPatches int    `json:"max_num_patches"`
 			} `json:"args"`
 		} `json:"vision_config"`
 		PatchSize         int32     `json:"patch_size"`
@@ -97,33 +117,44 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 	if env.VisionConfig == nil {
 		return nil, nil
 	}
+	modelName := strings.TrimSpace(env.VisionConfig.Args.Model)
+	spec, ok := radioModelSpecs[modelName]
+	if !ok {
+		return nil, fmt.Errorf("unsupported RADIO model %q", modelName)
+	}
+	psVersion := strings.TrimSpace(env.PSVersion)
+	if psVersion != "v2" {
+		return nil, fmt.Errorf("unsupported RADIO ps_version %q", psVersion)
+	}
+	if heads := env.VisionConfig.NumHeads; heads > 0 && heads != spec.numAttentionHeads {
+		return nil, fmt.Errorf("RADIO model %q has num_attention_heads=%d, config has %d", modelName, spec.numAttentionHeads, heads)
+	}
 
 	cfg := &VisionConfig{
-		Version:           strings.TrimSpace(env.VisionConfig.Version),
-		PatchSize:         firstPositiveInt32(env.VisionConfig.PatchSize, env.PatchSize, nemotronVisionDefaultPatchSize),
-		HiddenSize:        firstPositiveInt32(env.VisionConfig.HiddenSize, env.VitHiddenSize, nemotronVisionDefaultHiddenSize),
-		NumHiddenLayers:   firstPositiveInt32(env.VisionConfig.NumHiddenLayers, nemotronVisionDefaultNumLayers),
-		NumAttentionHeads: firstPositiveInt32(env.VisionConfig.NumHeads, nemotronVisionDefaultNumHeads),
-		LayerNormEps:      nemotronVisionDefaultLayerNormEpsilon,
-		ProjectorNormEps:  nemotronVisionDefaultProjectorNormEps,
-		MinNumPatches:     firstPositiveInt(env.VisionConfig.MinNumPatches, env.VisionConfig.Args.MinNumPatches),
-		MaxNumPatches:     firstPositiveInt(env.VisionConfig.MaxNumPatches, env.VisionConfig.Args.MaxNumPatches),
-		MaxModelLen:       nemotronVisionDefaultMaxModelLen,
-		Mean:              [3]float32{0.48145466, 0.4578275, 0.40821073},
-		Std:               [3]float32{0.26862954, 0.26130258, 0.27577711},
-		ImageTokenID:      env.ImgContextTokenID,
-		ImageToken:        firstNonEmpty(env.ImgContextToken, "<image>"),
-		ImageStartToken:   firstNonEmpty(env.ImgStartToken, "<img>"),
-		ImageEndToken:     firstNonEmpty(env.ImgEndToken, "</img>"),
+		ModelName:                 modelName,
+		PSVersion:                 psVersion,
+		Version:                   strings.TrimSpace(env.VisionConfig.Version),
+		NumAttentionHeads:         spec.numAttentionHeads,
+		LayerNormEps:              nemotronVisionDefaultLayerNormEpsilon,
+		ProjectorNormEps:          nemotronVisionDefaultProjectorNormEps,
+		MinNumPatches:             firstPositiveInt(env.VisionConfig.MinNumPatches, env.VisionConfig.Args.MinNumPatches),
+		MaxNumPatches:             firstPositiveInt(env.VisionConfig.MaxNumPatches, env.VisionConfig.Args.MaxNumPatches),
+		MaxModelLen:               nemotronVisionDefaultMaxModelLen,
+		Mean:                      [3]float32{0.48145466, 0.4578275, 0.40821073},
+		Std:                       [3]float32{0.26862954, 0.26130258, 0.27577711},
+		ImageTokenID:              env.ImgContextTokenID,
+		ImageToken:                firstNonEmpty(env.ImgContextToken, "<image>"),
+		ImageStartToken:           firstNonEmpty(env.ImgStartToken, "<img>"),
+		ImageEndToken:             firstNonEmpty(env.ImgEndToken, "</img>"),
+		configuredPatchSize:       firstPositiveInt32(env.VisionConfig.PatchSize, env.PatchSize),
+		configuredHiddenSize:      firstPositiveInt32(env.VisionConfig.HiddenSize, env.VitHiddenSize),
+		configuredNumHiddenLayers: env.VisionConfig.NumHiddenLayers,
 	}
 	if env.DownsampleRatio > 0 {
 		cfg.DownsampleFactor = int32(math.Round(float64(1 / env.DownsampleRatio)))
 	}
 	if cfg.DownsampleFactor <= 0 {
 		cfg.DownsampleFactor = 2
-	}
-	if cfg.HeadDim = cfg.HiddenSize / cfg.NumAttentionHeads; cfg.HiddenSize%cfg.NumAttentionHeads != 0 {
-		return nil, fmt.Errorf("vision hidden_size (%d) must be divisible by num_attention_heads (%d)", cfg.HiddenSize, cfg.NumAttentionHeads)
 	}
 	if err := setTriplet(cfg.Mean[:], env.NormMean, "norm_mean"); err != nil {
 		return nil, fmt.Errorf("vision config: %w", err)
@@ -142,9 +173,6 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 	case "", "radio_v2.5-h", "c-radio_v4-h":
 	default:
 		return nil, fmt.Errorf("unsupported RADIO version %q", cfg.Version)
-	}
-	if cfg.PatchSize != 16 {
-		return nil, fmt.Errorf("unsupported RADIO patch_size=%d", cfg.PatchSize)
 	}
 	if cfg.DownsampleFactor != 2 {
 		return nil, fmt.Errorf("unsupported RADIO downsample factor=%d", cfg.DownsampleFactor)
@@ -171,7 +199,12 @@ func (cfg *VisionConfig) applyPreprocessorConfig(data []byte) error {
 	if err := json.Unmarshal(data, &pre); err != nil {
 		return fmt.Errorf("parse preprocessor_config.json: %w", err)
 	}
-	cfg.PatchSize = firstPositiveInt32(pre.PatchSize, cfg.PatchSize)
+	if pre.PatchSize > 0 {
+		if cfg.configuredPatchSize > 0 && pre.PatchSize != cfg.configuredPatchSize {
+			return fmt.Errorf("parse preprocessor_config.json: patch_size=%d, config has %d", pre.PatchSize, cfg.configuredPatchSize)
+		}
+		cfg.configuredPatchSize = pre.PatchSize
+	}
 	if pre.DownsampleRatio > 0 {
 		cfg.DownsampleFactor = int32(math.Round(float64(1 / pre.DownsampleRatio)))
 	}
@@ -271,6 +304,9 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	ve.PositionGridSize = positionGridSize
 
 	cfg := m.VisionConfig
+	if err := cfg.loadArchitecture(tensors, visionPrefix); err != nil {
+		return err
+	}
 	ve.Layers = make([]*RadioVisionLayer, cfg.NumHiddenLayers)
 	for i := range cfg.NumHiddenLayers {
 		prefix := fmt.Sprintf("%sblocks.%d", visionPrefix, i)
@@ -298,6 +334,106 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	}
 	projector.Norm = nn.NewRMSNorm(normWeight, cfg.ProjectorNormEps)
 	return nil
+}
+
+func (cfg *VisionConfig) loadArchitecture(tensors map[string]*mlx.Array, visionPrefix string) error {
+	weight := tensors[visionPrefix+"patch_generator.embedder.weight"]
+	if weight == nil {
+		return fmt.Errorf("missing RADIO patch embedder weight")
+	}
+	hiddenSize, patchSize, err := radioPatchDimensions(weight.Dims())
+	if err != nil {
+		return fmt.Errorf("RADIO patch embedder: %w", err)
+	}
+	numHiddenLayers, err := radioLayerCount(tensors, visionPrefix)
+	if err != nil {
+		return err
+	}
+
+	spec, ok := radioModelSpecs[cfg.ModelName]
+	if !ok {
+		return fmt.Errorf("unsupported RADIO model %q", cfg.ModelName)
+	}
+	cfg.NumAttentionHeads = spec.numAttentionHeads
+	for _, check := range []struct {
+		name string
+		got  int32
+		want int32
+	}{
+		{name: "patch_size", got: patchSize, want: spec.patchSize},
+		{name: "hidden_size", got: hiddenSize, want: spec.hiddenSize},
+		{name: "num_hidden_layers", got: numHiddenLayers, want: spec.numHiddenLayers},
+	} {
+		if check.got != check.want {
+			return fmt.Errorf("RADIO model %q has %s=%d, weights have %d", cfg.ModelName, check.name, check.want, check.got)
+		}
+	}
+	for _, check := range []struct {
+		name       string
+		configured int32
+		derived    int32
+	}{
+		{name: "patch_size", configured: cfg.configuredPatchSize, derived: patchSize},
+		{name: "hidden_size", configured: cfg.configuredHiddenSize, derived: hiddenSize},
+		{name: "num_hidden_layers", configured: cfg.configuredNumHiddenLayers, derived: numHiddenLayers},
+	} {
+		if check.configured > 0 && check.configured != check.derived {
+			return fmt.Errorf("RADIO %s=%d, weights have %d", check.name, check.configured, check.derived)
+		}
+	}
+	if hiddenSize%cfg.NumAttentionHeads != 0 {
+		return fmt.Errorf("vision hidden_size (%d) must be divisible by num_attention_heads (%d)", hiddenSize, cfg.NumAttentionHeads)
+	}
+
+	cfg.PatchSize = patchSize
+	cfg.HiddenSize = hiddenSize
+	cfg.NumHiddenLayers = numHiddenLayers
+	cfg.HeadDim = hiddenSize / cfg.NumAttentionHeads
+	return nil
+}
+
+func radioPatchDimensions(dims []int) (hiddenSize, patchSize int32, err error) {
+	if len(dims) != 2 || dims[0] <= 0 || dims[1] <= 0 {
+		return 0, 0, fmt.Errorf("weight shape %v, want [hidden_size, 3*patch_size*patch_size]", dims)
+	}
+	if dims[1]%3 != 0 {
+		return 0, 0, fmt.Errorf("input dimension %d is not divisible by 3 RGB channels", dims[1])
+	}
+	patchArea := dims[1] / 3
+	patch := int(math.Sqrt(float64(patchArea)))
+	if patch*patch != patchArea {
+		return 0, 0, fmt.Errorf("input dimension %d does not describe square RGB patches", dims[1])
+	}
+	return int32(dims[0]), int32(patch), nil
+}
+
+func radioLayerCount(tensors map[string]*mlx.Array, visionPrefix string) (int32, error) {
+	blockPrefix := visionPrefix + "blocks."
+	indices := make(map[int]struct{})
+	for name := range tensors {
+		rest, ok := strings.CutPrefix(name, blockPrefix)
+		if !ok {
+			continue
+		}
+		indexText, _, ok := strings.Cut(rest, ".")
+		if !ok {
+			continue
+		}
+		index, err := strconv.Atoi(indexText)
+		if err != nil || index < 0 {
+			continue
+		}
+		indices[index] = struct{}{}
+	}
+	if len(indices) == 0 {
+		return 0, fmt.Errorf("missing RADIO transformer block weights")
+	}
+	for i := range len(indices) {
+		if _, ok := indices[i]; !ok {
+			return 0, fmt.Errorf("missing RADIO transformer block %d", i)
+		}
+	}
+	return int32(len(indices)), nil
 }
 
 func resolveVisionPrefix(tensors map[string]*mlx.Array) string {

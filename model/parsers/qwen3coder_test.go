@@ -1062,6 +1062,55 @@ func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserDoneFlushesBufferedContent(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{name: "trailing whitespace", chunks: []string{"answer", " \n"}, want: "answer \n"},
+		{name: "partial opener", chunks: []string{"answer ", "<tool_"}, want: "answer <tool_"},
+		{name: "empty open tool call", chunks: []string{"<tool_call>"}, want: "<tool_call>"},
+		{name: "truncated tool call", chunks: []string{"<tool_call>", "<function=test>"}, want: "<tool_call><function=test>"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init(nil, nil, nil)
+
+			var got string
+			for _, chunk := range tt.chunks {
+				content, _, calls, err := parser.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(calls) != 0 {
+					t.Fatalf("calls = %v, want none", calls)
+				}
+				got += content
+			}
+			content, _, calls, err := parser.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got += content
+			if len(calls) != 0 {
+				t.Fatalf("calls = %v, want none", calls)
+			}
+			if got != tt.want {
+				t.Fatalf("content = %q, want %q", got, tt.want)
+			}
+
+			content, _, calls, err = parser.Add("next", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if content != "next" || len(calls) != 0 {
+				t.Fatalf("parser was not reset after done: content = %q, calls = %v", content, calls)
+			}
+		})
+	}
+}
+
 func TestQwen3CoderParserToolCallIndexingStreaming(t *testing.T) {
 	parser := Qwen3CoderParser{}
 	parser.Init(nil, nil, nil)

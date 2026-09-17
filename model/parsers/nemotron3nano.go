@@ -1,7 +1,6 @@
 package parsers
 
 import (
-	"fmt"
 	"strings"
 	"unicode"
 
@@ -64,7 +63,7 @@ func (p *Nemotron3NanoParser) Init(tools []api.Tool, lastMessage *api.Message, t
 
 func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	if p.state == Nemotron3NanoCollectingContent {
-		return p.addContent(s, done)
+		return p.toolParser.Add(s, done)
 	}
 
 	if p.state == Nemotron3NanoSkipWhitespaceAfterThinking {
@@ -73,7 +72,7 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 			return "", "", nil, nil
 		}
 		p.state = Nemotron3NanoCollectingContent
-		return p.addContent(s, done)
+		return p.toolParser.Add(s, done)
 	}
 
 	// Nemotron3NanoCollectingThinking - buffer and look for end markers
@@ -132,7 +131,7 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 			p.state = Nemotron3NanoSkipWhitespaceAfterThinking
 		} else {
 			p.state = Nemotron3NanoCollectingContent
-			content, _, calls, err = p.addContent(remainder, done)
+			content, _, calls, err = p.toolParser.Add(remainder, done)
 		}
 		return content, thinking, calls, err
 	}
@@ -144,24 +143,6 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 		p.buffer.Reset()
 	}
 	return "", thinking, nil, nil
-}
-
-// addContent keeps Qwen's shared parser behavior unchanged while making the
-// Nemotron wrapper account for everything still buffered at end of stream.
-func (p *Nemotron3NanoParser) addContent(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
-	content, thinking, calls, err = p.toolParser.Add(s, done)
-	if err != nil || !done {
-		return content, thinking, calls, err
-	}
-
-	switch p.toolParser.state {
-	case qwenParserState_LookingForToolStart:
-		content += p.toolParser.acc.String()
-		p.toolParser.acc.Reset()
-	case qwenParserState_CollectingToolContent:
-		return content, thinking, calls, fmt.Errorf("unterminated %s", toolOpenTag)
-	}
-	return content, thinking, calls, nil
 }
 
 // emitThinking returns unambiguous thinking content, keeping potential partial tags in buffer
