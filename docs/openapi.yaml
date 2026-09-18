@@ -666,6 +666,12 @@ components:
             quantization_level:
               type: string
               description: Quantization level used (for example `Q4_0`)
+            context_length:
+              type: integer
+              description: Maximum context length supported by the model, when known
+            recommended_context_length:
+              type: integer
+              description: Context length recommended for the model on this host, when it can be estimated
     ListResponse:
       type: object
       properties:
@@ -1191,6 +1197,8 @@ paths:
                         - "gemma4"
                       parameter_size: "8.0B"
                       quantization_level: "Q4_K_M"
+                      context_length: 131072
+                      recommended_context_length: 32768
   /api/ps:
     get:
       summary: List running models

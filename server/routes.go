@@ -1670,6 +1670,13 @@ func (s *Server) ListHandler(c *gin.Context) {
 		return
 	}
 
+	for i := range models {
+		if models[i].RemoteHost != "" || models[i].RemoteModel != "" {
+			continue
+		}
+		models[i].Details.RecommendedContextLength = s.recommendedContextLength(models[i])
+	}
+
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
