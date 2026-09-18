@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -916,10 +918,9 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	}
 }
 
-// TestPullManifestRejectsCrossHostRedirect: a manifest GET that the registry
-// redirects to a different host must be refused by default, so a malicious
-// registry can't turn a pull into a request to an internal address.
-// --insecure opts out for trusted registries.
+// TestPullManifestRejectsCrossHostRedirect: a registry can't redirect a
+// pull at an internal address; cross-host redirects to public addresses
+// (hf.co's CDN) are fine. --insecure opts out.
 func TestPullManifestRejectsCrossHostRedirect(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -964,5 +965,81 @@ func TestPullManifestRejectsCrossHostRedirect(t *testing.T) {
 	resp.Body.Close()
 	if !internalHit.Load() {
 		t.Fatal("redirect target was not reached with Insecure set")
+	}
+}
+
+// TestPullManifestRedirectPolicy: cross-host redirects are blocked by
+// default except between allowlisted hosts.
+func TestPullManifestRedirectPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		origin  string // registry host receiving the initial request
+		target  string // redirect target
+		allowed bool
+	}{
+		{name: "hf to cdn sibling", origin: "hf.co", target: "us.aws.cdn.hf.co", allowed: true},
+		{name: "hf to huggingface", origin: "hf.co", target: "huggingface.co", allowed: true},
+		{name: "ollama registry to cdn", origin: "registry.ollama.ai", target: "cdn.ollama.com", allowed: true},
+		{name: "public third party", origin: "hf.co", target: "93.184.216.34", allowed: false},
+		{name: "other registry cross-host", origin: "registry.example.com", target: "cdn.example.com", allowed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit bool
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hit = true
+				w.Write([]byte("ok"))
+			}))
+			defer cdn.Close()
+			_, cdnPort, err := net.SplitHostPort(strings.TrimPrefix(cdn.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://"+net.JoinHostPort(tc.target, cdnPort)+r.URL.Path, http.StatusFound)
+			}))
+			defer ts.Close()
+
+			// Steer all dials at the local servers so tests stay offline.
+			prev := testMakeRequestDialContext
+			testMakeRequestDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				if host == tc.target {
+					addr = net.JoinHostPort("127.0.0.1", cdnPort)
+				} else {
+					_, port, _ = net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+					addr = net.JoinHostPort("127.0.0.1", port)
+				}
+				return new(net.Dialer).DialContext(ctx, network, addr)
+			}
+			defer func() { testMakeRequestDialContext = prev }()
+
+			requestURL, err := url.Parse(ts.URL + "/v2/unsloth/model/manifests/latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestURL.Host = net.JoinHostPort(tc.origin, requestURL.Port())
+
+			resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("makeRequest = %v, want %s -> %s followed", err, tc.origin, tc.target)
+				}
+				resp.Body.Close()
+				if !hit {
+					t.Fatal("redirect target not reached")
+				}
+				return
+			}
+			if !errors.Is(err, errBlockedRedirect) {
+				t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+			}
+			if hit {
+				t.Fatal("blocked redirect target received a request")
+			}
+		})
 	}
 }

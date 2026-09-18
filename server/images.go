@@ -1376,6 +1376,18 @@ var testMakeRequestDialContext func(ctx context.Context, network, addr string) (
 
 var errBlockedRedirect = errors.New("blocked redirect to a different host")
 
+// isAllowedHost reports whether host may receive cross-host redirects.
+var allowedRedirectHosts = []string{"ollama.com", "ollama.ai", "hf.co", "huggingface.co"}
+
+func isAllowedHost(host string) bool {
+	for _, h := range allowedRedirectHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
@@ -1416,16 +1428,20 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	if checkRedirect == nil {
 		insecure := regOpts != nil && regOpts.Insecure
 		// Default redirect policy: same-host only, so a registry can't steer
-		// manifest or blob requests at internal addresses. --insecure opts out
-		// for trusted LAN/local registries.
+		// manifest or blob requests at internal addresses. CDN-backed
+		// registries redirect among their own hosts, allowed via
+		// isAllowedHost. --insecure opts out for trusted LAN/local registries.
 		checkRedirect = func(req *http.Request, via []*http.Request) error {
 			if len(via) > 10 {
 				return errMaxRedirectsExceeded
 			}
-			if !insecure && req.URL.Host != via[0].URL.Host {
-				return errBlockedRedirect
+			if insecure || req.URL.Host == via[0].URL.Host {
+				return nil
 			}
-			return nil
+			if isAllowedHost(via[0].URL.Hostname()) && isAllowedHost(req.URL.Hostname()) {
+				return nil
+			}
+			return errBlockedRedirect
 		}
 	}
 
