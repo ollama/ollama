@@ -50,14 +50,30 @@ func (r registryChallenge) URL() (*url.URL, error) {
 	return redirectURL, nil
 }
 
+// realmHostAllowed reports whether the auth realm host is permitted to
+// differ from the original request host. The default behavior is strict
+// equality; this helper allows a small set of known registry aliases that
+// legitimately redirect to a canonical host.
+func realmHostAllowed(originalHost, realmHost string) bool {
+	if originalHost == realmHost {
+		return true
+	}
+	aliases := map[string]string{
+		"hf.co": "huggingface.co",
+	}
+	canonical, ok := aliases[originalHost]
+	return ok && canonical == realmHost
+}
+
 func getAuthorizationToken(ctx context.Context, challenge registryChallenge, originalHost string) (string, error) {
 	redirectURL, err := challenge.URL()
 	if err != nil {
 		return "", err
 	}
 
-	// Validate that the realm host matches the original request host to prevent sending tokens cross-origin.
-	if redirectURL.Host != originalHost {
+	// Validate that the realm host matches the original request host (or a
+	// known safe alias) to prevent sending tokens cross-origin.
+	if !realmHostAllowed(originalHost, redirectURL.Host) {
 		return "", fmt.Errorf("realm host %q does not match original host %q", redirectURL.Host, originalHost)
 	}
 
