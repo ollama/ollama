@@ -1567,6 +1567,15 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	}
 	settings.OnboardingVersion = saved.OnboardingVersion
 	settings.CodexDesktopUsed = saved.CodexDesktopUsed
+	settings.UpdateChannel = saved.UpdateChannel
+
+	channelChanged := old.UpdateChannel != settings.UpdateChannel
+	if channelChanged && s.Updater != nil {
+		s.Updater.DiscardPendingUpdate()
+		if settings.AutoUpdateEnabled {
+			s.Updater.TriggerImmediateCheck()
+		}
+	}
 
 	// Handle auto-update toggle changes
 	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
@@ -1575,11 +1584,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 			if s.Updater != nil {
 				s.Updater.CancelOngoingDownload()
 			}
-		} else {
+		} else if !channelChanged && s.Updater != nil {
 			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
 			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
 				s.UpdateAvailableFunc()
-			} else if s.Updater != nil {
+			} else {
 				// Trigger the background checker to run immediately
 				s.Updater.TriggerImmediateCheck()
 			}

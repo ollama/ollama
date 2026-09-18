@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,12 +33,13 @@ func TestHandlePostApiSettings(t *testing.T) {
 		{
 			name: "valid settings update - all fields",
 			requested: store.Settings{
-				Expose:     true,
-				Browser:    true,
-				Models:     "/custom/models",
-				Agent:      true,
-				Tools:      true,
-				WorkingDir: "/workspace",
+				Expose:        true,
+				Browser:       true,
+				Models:        "/custom/models",
+				Agent:         true,
+				Tools:         true,
+				WorkingDir:    "/workspace",
+				UpdateChannel: store.UpdateChannelPreview,
 			},
 			wantErr: false,
 		},
@@ -57,6 +60,11 @@ func TestHandlePostApiSettings(t *testing.T) {
 				Agent:      true,
 			},
 			wantErr: false,
+		},
+		{
+			name:      "unsupported update channel",
+			requested: store.Settings{UpdateChannel: "nightly"},
+			wantErr:   true,
 		},
 	}
 
@@ -110,6 +118,10 @@ func TestHandlePostApiSettings(t *testing.T) {
 					}
 					if savedSettings.WorkingDir != tt.requested.WorkingDir {
 						t.Errorf("WorkingDir: got %q, want %q", savedSettings.WorkingDir, tt.requested.WorkingDir)
+					}
+					wantChannel := store.NormalizeUpdateChannel(tt.requested.UpdateChannel)
+					if savedSettings.UpdateChannel != wantChannel {
+						t.Errorf("UpdateChannel: got %q, want %q", savedSettings.UpdateChannel, wantChannel)
 					}
 					// Only check Models if explicitly set in the test case
 					if tt.requested.Models != "" && savedSettings.Models != tt.requested.Models {
@@ -962,15 +974,28 @@ func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testi
 		t.Fatal(err)
 	}
 
-	// Simulate that an update was previously downloaded
+	// Simulate that a stable update was previously downloaded.
 	oldVal := updater.UpdateDownloaded
+	oldStageDir := updater.UpdateStageDir
 	updater.UpdateDownloaded = true
-	defer func() { updater.UpdateDownloaded = oldVal }()
+	updater.UpdateStageDir = t.TempDir()
+	defer func() {
+		updater.UpdateDownloaded = oldVal
+		updater.UpdateStageDir = oldStageDir
+	}()
+	payload := filepath.Join(updater.UpdateStageDir, "etag", updater.Installer)
+	if err := os.MkdirAll(filepath.Dir(payload), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	var notificationCalled atomic.Bool
 	server := &Server{
 		Store:   testStore,
 		Restart: func() {},
+		Updater: &updater.Updater{Store: testStore},
 		UpdateAvailableFunc: func() {
 			notificationCalled.Store(true)
 		},
@@ -999,48 +1024,38 @@ func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testi
 	}
 }
 
-func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) {
+func TestSettingsChangeUpdateChannelDiscardsPendingUpdate(t *testing.T) {
 	testStore := &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
 	}
 	defer testStore.Close()
 
-	// Start with auto-update disabled
 	settings, err := testStore.Settings()
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings.AutoUpdateEnabled = false
-	if err := testStore.SetSettings(settings); err != nil {
-		t.Fatal(err)
-	}
-
-	// Ensure no pending update - clear both the downloaded flag and the stage dir
 	oldVal := updater.UpdateDownloaded
-	updater.UpdateDownloaded = false
+	updater.UpdateDownloaded = true
 	defer func() { updater.UpdateDownloaded = oldVal }()
 
 	oldStageDir := updater.UpdateStageDir
-	updater.UpdateStageDir = t.TempDir() // empty dir means IsUpdatePending() returns false
+	updater.UpdateStageDir = t.TempDir()
 	defer func() { updater.UpdateStageDir = oldStageDir }()
+	payload := filepath.Join(updater.UpdateStageDir, "etag", updater.Installer)
+	if err := os.MkdirAll(filepath.Dir(payload), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(payload, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-	upd := &updater.Updater{Store: &store.Store{
-		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
-	}}
-	defer upd.Store.Close()
-
-	var notificationCalled atomic.Bool
 	server := &Server{
 		Store:   testStore,
 		Restart: func() {},
-		Updater: upd,
-		UpdateAvailableFunc: func() {
-			notificationCalled.Store(true)
-		},
+		Updater: &updater.Updater{Store: testStore},
 	}
 
-	// Re-enable auto-update via settings API
-	settings.AutoUpdateEnabled = true
+	settings.UpdateChannel = store.UpdateChannelPreview
 	body, err := json.Marshal(settings)
 	if err != nil {
 		t.Fatal(err)
@@ -1057,9 +1072,11 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_DoesNotNotify(t *testing.T) 
 		t.Fatalf("settings() status = %d, want %d", rr.Code, http.StatusOK)
 	}
 
-	// UpdateAvailableFunc should NOT be called since there's no pending update
-	if notificationCalled.Load() {
-		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
+	if updater.UpdateDownloaded {
+		t.Fatal("UpdateDownloaded = true, want false")
+	}
+	if _, err := os.Stat(payload); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staged payload still exists: %v", err)
 	}
 }
 

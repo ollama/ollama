@@ -21,10 +21,18 @@ import {
   WrenchIcon,
   CloudIcon,
   CogIcon,
+  CheckIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
+  ChevronUpDownIcon,
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
+import {
+  Listbox,
+  ListboxButton,
+  ListboxOption,
+  ListboxOptions,
+} from "@headlessui/react";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
 import { settingsMutationScope } from "@/lib/settingsMutationScope";
@@ -74,6 +82,17 @@ interface CloudUpdateRequest {
 
 let latestCloudRequestId = 0;
 const savedConfirmationDuration = 3000;
+const updateChannels = [
+  { value: "stable", label: "Stable" },
+  { value: "preview", label: "Preview" },
+] as const;
+
+function updateChannelOption(value: string) {
+  return (
+    updateChannels.find((channel) => channel.value === value) ??
+    updateChannels[0]
+  );
+}
 
 export async function applySettingsDefaults({
   updateSettings,
@@ -104,6 +123,7 @@ export async function applySettingsDefaults({
         Tools: false,
         ContextLength: currentSettings.ContextLength,
         AutoUpdateEnabled: true,
+        UpdateChannel: "stable",
       }),
     );
     rollbacks.push(() => updateSettings(currentSettings));
@@ -486,6 +506,7 @@ export default function Settings() {
   }
 
   const isWindows = isWindowsPlatform();
+  const selectedUpdateChannel = updateChannelOption(settings.UpdateChannel);
 
   return (
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
@@ -677,6 +698,65 @@ export default function Settings() {
                       }
                     />
                   </div>
+                </div>
+              </Field>
+
+              {/* Update Channel */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-1 items-start space-x-3">
+                    <ArrowDownTrayIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Update channel</Label>
+                      <Description>
+                        Get early access to upcoming releases with Preview. The
+                        Preview channel may be less stable.
+                      </Description>
+                    </div>
+                  </div>
+                  <Listbox
+                    value={selectedUpdateChannel.value}
+                    onChange={(channel) =>
+                      handleChange("UpdateChannel", channel)
+                    }
+                  >
+                    <div className="relative w-32 flex-shrink-0">
+                      <ListboxButton
+                        aria-label="Update channel"
+                        className="flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-lg bg-neutral-50 px-3 py-1.5 text-left text-sm text-neutral-800 outline-none ring-1 ring-inset ring-neutral-200 hover:bg-neutral-100 focus:ring-2 focus:ring-blue-500 dark:bg-neutral-700 dark:text-neutral-100 dark:ring-neutral-600 dark:hover:bg-neutral-600"
+                      >
+                        <span className="min-w-0 flex-1 truncate">
+                          {selectedUpdateChannel.label}
+                        </span>
+                        <ChevronUpDownIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
+                      </ListboxButton>
+                      <ListboxOptions
+                        anchor={{ to: "bottom end", gap: 8, padding: 8 }}
+                        className="z-50 w-[var(--button-width)] overflow-hidden rounded-2xl border border-neutral-100 bg-white py-1 text-sm text-neutral-800 shadow-xl shadow-black/5 dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white"
+                      >
+                        {updateChannels.map((channel) => (
+                          <ListboxOption
+                            key={channel.value}
+                            value={channel.value}
+                            className="flex cursor-pointer items-center gap-2 px-3 py-2 text-left outline-none data-focus:bg-neutral-100 dark:data-focus:bg-neutral-700/60"
+                          >
+                            {({ selected }) => (
+                              <>
+                                <span className="min-w-0 flex-1 truncate">
+                                  {channel.label}
+                                </span>
+                                <span className="h-4 w-4 flex-shrink-0">
+                                  {selected && (
+                                    <CheckIcon className="h-4 w-4" />
+                                  )}
+                                </span>
+                              </>
+                            )}
+                          </ListboxOption>
+                        ))}
+                      </ListboxOptions>
+                    </div>
+                  </Listbox>
                 </div>
               </Field>
 
