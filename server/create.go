@@ -19,11 +19,13 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -53,6 +55,18 @@ const (
 	maxSafetensorsMetadataSize = 64 << 20
 	maxCreateFiles             = 1024
 )
+
+type manifestListRequestError struct {
+	err error
+}
+
+func (e manifestListRequestError) Error() string {
+	return e.err.Error()
+}
+
+func newManifestListRequestError(format string, args ...any) error {
+	return manifestListRequestError{err: fmt.Errorf(format, args...)}
+}
 
 func (s *Server) CreateHandler(c *gin.Context) {
 	config := new(model.ConfigV2)
@@ -142,16 +156,44 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			send(resp)
 		}
 
-		oldManifest, _ := manifest.ParseNamedManifest(name)
+		oldManifestDigests, _ := manifest.ReferencedBlobDigestsForName(name)
+
+		if len(r.List) > 0 {
+			if err := createManifestList(r, name, fn); err != nil {
+				status := http.StatusInternalServerError
+				var requestErr manifestListRequestError
+				if errors.As(err, &requestErr) {
+					status = http.StatusBadRequest
+				}
+				send(gin.H{"error": err.Error(), "status": status})
+				return
+			}
+
+			if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+				removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+				removeGGUFMetadata(removed...)
+				if err != nil {
+					send(gin.H{"error": err.Error()})
+					return
+				}
+			}
+
+			send(api.ProgressResponse{Status: "success"})
+			return
+		}
 
 		if fileType == "safetensors" {
 			if err := createSafetensorsModel(reqCtx, r, name, fn); err != nil {
 				send(createSafetensorsErrorResponse(err))
 				return
 			}
-			if err := pruneOldManifestLayers(oldManifest); err != nil {
-				send(gin.H{"error": err.Error()})
-				return
+			if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+				removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+				removeGGUFMetadata(removed...)
+				if err != nil {
+					send(gin.H{"error": err.Error()})
+					return
+				}
 			}
 			send(api.ProgressResponse{Status: "success"})
 			return
@@ -265,9 +307,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 
-		if err := pruneOldManifestLayers(oldManifest); err != nil {
-			send(gin.H{"error": err.Error()})
-			return
+		if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+			removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+			removeGGUFMetadata(removed...)
+			if err != nil {
+				send(gin.H{"error": err.Error()})
+				return
+			}
 		}
 		send(api.ProgressResponse{Status: "success"})
 	}()
@@ -278,15 +324,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
-}
-
-func pruneOldManifestLayers(oldManifest *manifest.Manifest) error {
-	if envconfig.NoPrune() || oldManifest == nil {
-		return nil
-	}
-	removed, err := oldManifest.RemoveLayers()
-	removeGGUFMetadata(removed...)
-	return err
 }
 
 func recoverCreatePanic(send func(any) bool) {
@@ -799,6 +836,17 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 
 		if layer.GGUF != nil {
 			switch layer.MediaType {
+			case "application/vnd.ollama.image.model", manifest.MediaTypeImageDraft:
+				rewritten, changed, err := compatmigrate.RewriteLlama3MetadataLayer(layer.Layer)
+				if err != nil {
+					return err
+				}
+				if changed {
+					layer.Layer = rewritten
+				}
+			}
+
+			switch layer.MediaType {
 			case "application/vnd.ollama.image.model":
 				config.ModelFormat = cmp.Or(config.ModelFormat, "gguf")
 				config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGUF.Architecture())
@@ -867,14 +915,151 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
+	runner, format := manifest.MetadataForConfig(*config)
+	if format == manifest.FormatGGUF {
+		runner = manifest.RunnerLlamaCPP
+		for _, layer := range baseLayers {
+			if layer.GGUF.IsGGML() {
+				runner = manifest.RunnerGGML
+			}
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+	if err := manifest.WriteManifestWithMetadata(name, *configLayer, layers, runner, format); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) error {
+	if err := validateCreateManifestListRequest(r); err != nil {
+		return err
+	}
+
+	manifests := make([]manifest.Manifest, 0, len(r.List))
+	signatures := make([]manifestListChildSignature, 0, len(r.List))
+	seenDigests := make(map[string]string)
+	seenRunners := make(map[string]string)
+	var anchorChild *manifest.Manifest
+	for _, ref := range r.List {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return newManifestListRequestError("manifest list contains an empty model")
+		}
+
+		fn(api.ProgressResponse{Status: fmt.Sprintf("reading manifest %s", ref)})
+
+		modelRef, err := parseAndValidateModelRef(ref)
+		if err != nil {
+			return err
+		}
+		if modelRef.Source == modelSourceCloud {
+			return newManifestListRequestError("manifest list entries must be local models: %s", ref)
+		}
+
+		childName, err := getExistingName(modelRef.Name)
+		if err != nil {
+			return err
+		}
+
+		data, err := manifest.ReadManifestData(childName)
+		if err != nil {
+			return fmt.Errorf("read manifest %s: %w", ref, err)
+		}
+
+		var child manifest.Manifest
+		if err := json.Unmarshal(data, &child); err != nil {
+			return err
+		}
+		if child.MediaType == manifest.MediaTypeManifestList {
+			return newManifestListRequestError("manifest list entry %s is already a manifest list", ref)
+		}
+
+		if err := manifest.FillMetadata(&child); err != nil {
+			return fmt.Errorf("manifest list entry %s: %w", ref, err)
+		}
+
+		signature, err := newManifestListChildSignature(ref, childName, &child)
+		if err != nil {
+			return err
+		}
+		signatures = append(signatures, signature)
+
+		childData, err := json.Marshal(child)
+		if err != nil {
+			return err
+		}
+		childDigest, err := manifest.WriteManifestBlob(childData)
+		if err != nil {
+			return err
+		}
+
+		if previous, ok := seenDigests[childDigest]; ok {
+			return newManifestListRequestError("manifest list entries %s and %s resolve to the same manifest", previous, ref)
+		}
+		runner := strings.ToLower(strings.TrimSpace(child.Runner))
+		if previous, ok := seenRunners[runner]; ok {
+			return newManifestListRequestError("manifest list entries %s and %s use the same runner %q", previous, ref, child.Runner)
+		}
+		seenDigests[childDigest] = ref
+		seenRunners[runner] = ref
+
+		childRef, err := manifest.NewManifestReference(childDigest, child.Runner, child.Format)
+		if err != nil {
+			return err
+		}
+
+		// The downgrade anchor describes the child a pre-manifest-list daemon
+		// would load itself: the GGML child when one is listed, else the first.
+		if anchorChild == nil || (anchorChild.Runner != manifest.RunnerGGML && child.Runner == manifest.RunnerGGML) {
+			childCopy := child
+			anchorChild = &childCopy
+		}
+
+		manifests = append(manifests, childRef)
+	}
+
+	warnManifestListDrift(signatures, fn)
+
+	fn(api.ProgressResponse{Status: "writing manifest list"})
+	parentDigest, err := manifest.WriteManifestList(name, manifests)
+	if err != nil {
+		return err
+	}
+
+	// Extra layers reference the manifest blobs so a downgrade's garbage
+	// collector cannot delete them.
+	docDigests := []string{parentDigest}
+	for _, childRef := range manifests {
+		digest, err := manifest.ChildManifestDigest(childRef)
+		if err != nil {
+			return err
+		}
+		docDigests = append(docDigests, digest)
+	}
+	return manifest.WriteLegacyAnchor(name, anchorChild, docDigests...)
+}
+
+func validateCreateManifestListRequest(r api.CreateRequest) error {
+	if len(r.List) == 0 {
+		return newManifestListRequestError("manifest list must contain at least one model")
+	}
+
+	switch {
+	case r.From != "", r.RemoteHost != "", len(r.Files) > 0, len(r.DraftFiles) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Template != "", r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Quantize != "", r.Quantization != "", r.DraftQuantize != "":
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	default:
+		return nil
+	}
 }
 
 func ggufLayersWithMediaType(digest, sourceName, mediaType string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
@@ -937,9 +1122,151 @@ func createConfigLayer(config model.ConfigV2) (*manifest.Layer, error) {
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return nil, err
 	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	layer, err := manifest.NewLayer(&b, manifest.MediaTypeImageConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &layer, nil
+}
+
+// manifestListChildSignature holds the fields compared across manifest list
+// entries so accidental drift across runner variants is visible at creation
+// time. Runner and format are expected to differ; these fields describe the
+// model itself.
+type manifestListChildSignature struct {
+	ref       string
+	config    model.ConfigV2
+	caps      []model.Capability
+	capsKnown bool
+}
+
+func newManifestListChildSignature(ref string, name model.Name, child *manifest.Manifest) (manifestListChildSignature, error) {
+	config, err := readModelListConfig(child)
+	if err != nil {
+		return manifestListChildSignature{}, fmt.Errorf("read config for manifest list entry %s: %w", ref, err)
+	}
+
+	caps, capsKnown := manifestListChildCapabilities(name)
+	return manifestListChildSignature{ref: ref, config: config, caps: caps, capsKnown: capsKnown}, nil
+}
+
+// manifestListChildCapabilities renders the same capability list show and
+// /api/tags report, so drift warnings match what users see. A child that
+// cannot be loaded leaves capabilities unknown rather than failing the
+// combine.
+func manifestListChildCapabilities(name model.Name) ([]model.Capability, bool) {
+	m, err := GetModel(name.String())
+	if err != nil {
+		slog.Warn("could not load model to check capabilities", "model", name.String(), "error", err)
+		return nil, false
+	}
+	return m.Capabilities(), true
+}
+
+// warnManifestListDrift warns when manifest list entries disagree on fields
+// that describe the same model. Unset fields never count as drift: legacy
+// manifests often carry them only in their model files. Differences are
+// warnings, not errors, because runner pairs legitimately vary in what they
+// support.
+func warnManifestListDrift(signatures []manifestListChildSignature, fn func(resp api.ProgressResponse)) {
+	if len(signatures) < 2 {
+		return
+	}
+
+	base := signatures[0]
+	for _, child := range signatures[1:] {
+		warnDrift(fn, "model family", base, child,
+			base.config.ModelFamily, child.config.ModelFamily)
+		warnDrift(fn, "model families", base, child,
+			joinNonEmpty(base.config.ModelFamilies), joinNonEmpty(child.config.ModelFamilies))
+		warnDrift(fn, "parameter size", base, child,
+			base.config.ModelType, child.config.ModelType)
+		warnDrift(fn, "context length", base, child,
+			nonZeroInt(base.config.ContextLen), nonZeroInt(child.config.ContextLen))
+		warnDrift(fn, "embedding length", base, child,
+			nonZeroInt(base.config.EmbedLen), nonZeroInt(child.config.EmbedLen))
+		warnDrift(fn, "parser", base, child,
+			base.config.Parser, child.config.Parser)
+		warnDrift(fn, "renderer", base, child,
+			base.config.Renderer, child.config.Renderer)
+		warnDriftDtype(fn, base, child)
+		warnDriftCapabilities(fn, base, child)
+	}
+}
+
+func joinNonEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.Join(values, ",")
+}
+
+func nonZeroInt(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+func warnDrift(fn func(resp api.ProgressResponse), field string, base, child manifestListChildSignature, baseValue, childValue string) {
+	if baseValue == "" || childValue == "" || baseValue == childValue {
+		return
+	}
+	warning := fmt.Sprintf("warning: manifest list entries differ in %s: %s=%s, %s=%s", field, base.ref, baseValue, child.ref, childValue)
+	fn(api.ProgressResponse{Status: warning})
+	slog.Warn("manifest list entries differ", "field", field,
+		base.ref, baseValue, child.ref, childValue)
+}
+
+func warnDriftDtype(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	baseClass, childClass := dtypeClass(base.config.FileType), dtypeClass(child.config.FileType)
+	if baseClass == "" || childClass == "" || baseClass == childClass {
+		return
+	}
+	warnDrift(fn, "quantization class", base, child,
+		fmt.Sprintf("%s (%s)", base.config.FileType, baseClass),
+		fmt.Sprintf("%s (%s)", child.config.FileType, childClass))
+}
+
+func warnDriftCapabilities(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	if !base.capsKnown || !child.capsKnown {
+		return
+	}
+	baseCaps, childCaps := capabilitiesValue(base.caps), capabilitiesValue(child.caps)
+	if baseCaps == childCaps {
+		return
+	}
+	warnDrift(fn, "capabilities", base, child, baseCaps, childCaps)
+}
+
+func capabilitiesValue(caps []model.Capability) string {
+	names := make([]string, len(caps))
+	for i, c := range caps {
+		names[i] = c.String()
+	}
+	slices.Sort(names)
+	return "[" + strings.Join(names, " ") + "]"
+}
+
+// dtypeClass maps a model file type to a coarse precision class so
+// runner-native spellings of the same precision compare equal: Q4_K_M and
+// nvfp4 are both 4-bit, and bf16 and F16 are both unquantized.
+func dtypeClass(fileType string) string {
+	switch strings.ToLower(fileType) {
+	case "":
+		return ""
+	case "q4_0", "q4_1", "q4_k_m", "q4_k_s", "iq4_xs", "iq4_nl",
+		"4bit", "mxfp4", "nvfp4":
+		return "4-bit"
+	case "q5_0", "q5_1", "q5_k_m", "q5_k_s", "5bit":
+		return "5-bit"
+	case "q6_k", "6bit":
+		return "6-bit"
+	case "q8_0", "q8_1", "iq8", "8bit", "mxfp8":
+		return "8-bit"
+	case "f16", "bf16", "f32", "fp16", "unquantized":
+		return "unquantized"
+	default:
+		return strings.ToLower(fileType)
+	}
 }
