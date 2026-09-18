@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -109,4 +110,100 @@ func TestUnknownRendererReturnsError(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for unknown renderer")
 	}
+}
+
+// TestThinkingPromptPrefill pins whether each thinking renderer primes the
+// thinking block by ending the prompt with the opening tag. A thinking-token
+// budget is enforced by a sampler that watches for that tag: when the prompt
+// already contains it the tag has to be replayed into the sampler, and when it
+// does not the model emits it and the sampler sees it directly. Either way the
+// budget engages — but only as long as a renderer does not silently change
+// which of the two it does.
+func TestThinkingPromptPrefill(t *testing.T) {
+	tests := []struct {
+		renderer string
+		openTag  string
+		closeTag string
+		// primes records whether the prompt is left inside a thinking block
+		// once thinking is on, so the model never emits the opening tag
+		primes bool
+		// primesAfterToolResponse is the same for a turn that resumes after a
+		// tool response, which is where gemma4 differs from the rest and where
+		// an agent loop spends nearly every request
+		primesAfterToolResponse bool
+		// primesWithThinkingOff marks renderers that prime the block even when
+		// thinking is off, because the model always reasons
+		primesWithThinkingOff bool
+	}{
+		{renderer: "gemma4", openTag: "<|channel>", closeTag: "<channel|>", primesAfterToolResponse: true},
+		{renderer: "qwen3.5", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-thinking", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "qwen3-vl-instruct", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "deepseek3.1", openTag: "<think>", closeTag: "</think>", primes: true},
+		{renderer: "cogito", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "glm-4.7", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "laguna", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "poolside-v1", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "ornith", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "nemotron-3-nano", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true},
+		{renderer: "cohere", openTag: "<|START_THINKING|>", closeTag: "<|END_THINKING|>", primes: true, primesAfterToolResponse: true},
+		{renderer: "olmo3-think", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true, primesWithThinkingOff: true},
+		{renderer: "olmo3-32b-think", openTag: "<think>", closeTag: "</think>", primes: true, primesAfterToolResponse: true, primesWithThinkingOff: true},
+		{renderer: "lfm2-thinking", openTag: "<think>", closeTag: "</think>", primes: false},
+	}
+
+	// primesThinking mirrors how the runner decides to replay a primed block
+	// into the sampler; llm.thinkingGenerationPrompt is the authority
+	primesThinking := func(prompt, openTag, closeTag string) bool {
+		i := strings.LastIndex(prompt, openTag)
+		if i == -1 {
+			return false
+		}
+		rest := prompt[i:]
+		return !strings.Contains(rest[len(openTag):], closeTag) && len(rest) <= 64
+	}
+
+	msgs := []api.Message{{Role: "user", Content: "hi"}}
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "get_time", Description: "the time"}}}
+	afterToolResponse := []api.Message{
+		{Role: "user", Content: "what time is it"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_time", Arguments: api.ToolCallFunctionArguments{}}}}},
+		{Role: "tool", Content: "12:00", ToolName: "get_time"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.renderer, func(t *testing.T) {
+			for _, shape := range []struct {
+				name     string
+				msgs     []api.Message
+				tools    []api.Tool
+				thinking bool
+				want     bool
+			}{
+				{"thinking on", msgs, nil, true, tt.primes},
+				{"thinking on, after a tool response", afterToolResponse, tools, true, tt.primesAfterToolResponse},
+				// With thinking off the tag must not be left dangling, or the
+				// budget would engage on a block the model never opens. The
+				// exception is renderers whose model always reasons.
+				{"thinking off", msgs, nil, false, tt.primesWithThinkingOff},
+				{"thinking off, after a tool response", afterToolResponse, tools, false, tt.primesWithThinkingOff},
+			} {
+				prompt, err := RenderWithRenderer(tt.renderer, shape.msgs, shape.tools, &api.ThinkValue{Value: shape.thinking})
+				if err != nil {
+					t.Fatalf("%s: %v", shape.name, err)
+				}
+				if got := primesThinking(prompt, tt.openTag, tt.closeTag); got != shape.want {
+					t.Errorf("%s: prompt primes %q = %v, want %v\nprompt tail: %q",
+						shape.name, tt.openTag, got, shape.want, tail(prompt))
+				}
+			}
+		})
+	}
+}
+
+func tail(s string) string {
+	if len(s) > 48 {
+		return s[len(s)-48:]
+	}
+	return s
 }

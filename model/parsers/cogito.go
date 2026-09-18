@@ -20,6 +20,7 @@ const (
 )
 
 const (
+	cogitoThinkingOpenTag     = "<think>"
 	cogitoThinkingCloseTag    = "</think>"
 	cogitoToolCallsBeginTag   = "<｜tool▁calls▁begin｜>"
 	cogitoToolCallsEndTag     = "<｜tool▁calls▁end｜>"
@@ -44,6 +45,12 @@ func (p *CogitoParser) HasToolSupport() bool {
 
 func (p *CogitoParser) HasThinkingSupport() bool {
 	return true
+}
+
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *CogitoParser) ThinkingTags() (string, string) {
+	return cogitoThinkingOpenTag, cogitoThinkingCloseTag
 }
 
 func (p *CogitoParser) PreservedTokens() []string {

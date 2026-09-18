@@ -411,16 +411,17 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
-		think = &api.ThinkValue{Value: true}
+		if r.Thinking.BudgetTokens > 0 {
+			think = &api.ThinkValue{Value: r.Thinking.BudgetTokens}
+		} else {
+			think = &api.ThinkValue{Value: true}
+		}
 	}
 	if r.Thinking != nil && r.Thinking.Type == "disabled" {
 		think = &api.ThinkValue{Value: false}
 	}
-	if think == nil && r.OutputConfig != nil {
-		switch normalizedEffort {
-		case "high", "medium", "low", "max":
-			think = &api.ThinkValue{Value: normalizedEffort}
-		}
+	if think == nil && r.OutputConfig != nil && api.IsThinkLevel(normalizedEffort) {
+		think = &api.ThinkValue{Value: normalizedEffort}
 	}
 
 	stream := r.Stream

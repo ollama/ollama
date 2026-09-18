@@ -1266,9 +1266,11 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink: "max",
 		},
 		{
-			name:      "minimal clamps to low",
+			// A level of ours rather than one to clamp: it resolves to a
+			// sixteenth of the response, where "low" is an eighth.
+			name:      "minimal",
 			effort:    "minimal",
-			wantThink: "low",
+			wantThink: "minimal",
 		},
 		{
 			name:      "xhigh clamps to max",
@@ -1298,8 +1300,11 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink:   "max",
 		},
 		{
+			// An integer is a thinking-token budget now, so 3 is a valid one --
+			// a very small one, but nothing about it is malformed. Zero is what
+			// an integer still cannot be: a budget of no tokens is not a budget.
 			name:        "invalid Ollama override",
-			directThink: &api.ThinkValue{Value: 3},
+			directThink: &api.ThinkValue{Value: 0},
 			wantErr:     true,
 		},
 		{
