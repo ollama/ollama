@@ -1,0 +1,69 @@
+{
+  "last_node_id": 3,
+  "last_link_id": 2,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Note",
+      "pos": [50, 50],
+      "size": [500, 200],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "properties": {
+        "text": ""
+      },
+      "widgets_values": [
+        "# Getting Started with Ollama in ComfyUI\n\nThis is a minimal workflow to get you started.\n\nTo use Ollama with ComfyUI:\n1. Install Ollama custom nodes (see README.md)\n2. Start Ollama: ollama serve\n3. Pull a model: ollama pull llama3.2\n4. Load one of the example workflows:\n   - ollama-text-generation.json\n   - ollama-chat-workflow.json\n\nFor more information, see the README.md file."
+      ],
+      "bgcolor": "#232",
+      "title": "Welcome to Ollama Integration"
+    },
+    {
+      "id": 2,
+      "type": "Note",
+      "pos": [50, 300],
+      "size": [500, 150],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "properties": {
+        "text": ""
+      },
+      "widgets_values": [
+        "# Quick Test\n\nTo verify Ollama is working, open a terminal and run:\n\ncurl http://localhost:11434/api/version\n\nYou should see a JSON response with the version number."
+      ],
+      "bgcolor": "#323",
+      "title": "Verify Installation"
+    },
+    {
+      "id": 3,
+      "type": "Note",
+      "pos": [50, 500],
+      "size": [500, 100],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "properties": {
+        "text": ""
+      },
+      "widgets_values": [
+        "# Available Models\n\nRun 'ollama list' to see installed models.\nPull new models with: ollama pull <model-name>"
+      ],
+      "bgcolor": "#333",
+      "title": "Model Management"
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [0, 0]
+    }
+  },
+  "version": 0.4,
+  "widget_idx_map": {},
+  "seed_widgets": {}
+}
