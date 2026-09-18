@@ -319,14 +319,20 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 
 > Note: Added in Ollama v0.13.3
 
-Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses). Only the non-stateful flavor is supported (i.e., there is no `previous_response_id` or `conversation` support).
+Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses), including conversation continuation with `previous_response_id` for local and cloud models.
+
+Responses are stored in memory by default. Pass the returned `id` as `previous_response_id` to prepend the prior input and output to a new request. This also works for streamed responses and function-call outputs. Previous `instructions`, tools, and generation settings are not inherited; send the settings needed for the new turn.
+
+Use `store: false` to avoid storing a response. Such a request may still continue a previously stored response, but its own ID cannot be used for further continuation. Ollama does not additionally enable response storage at the cloud upstream.
+
+History belongs to the running Ollama server and the request's Authorization credential. It is unavailable after a restart, after 30 minutes, or when evicted from the bounded cache (1,024 responses or 64 MiB, whichever comes first). Individual conversations are limited to 20 MiB; a response too large to retain reports `store: false`. An unknown or expired `previous_response_id` returns HTTP 404 with code `previous_response_not_found`; resend the full conversation to recover. Response retrieval/deletion, background requests, and the Conversations API are not supported.
 
 #### Supported features
 
 - [x] Streaming
 - [x] Tools (function calling)
 - [x] Reasoning summaries (for thinking models)
-- [ ] Stateful requests
+- [x] Stateful requests (`previous_response_id`, in-memory history)
 
 #### Supported request fields
 
@@ -338,8 +344,9 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_output_tokens`
-- [ ] `previous_response_id` (stateful v1/responses not supported)
-- [ ] `conversation` (stateful v1/responses not supported)
+- [x] `previous_response_id`
+- [x] `store`
+- [ ] `conversation`
 - [ ] `truncation`
 
 ## Models
