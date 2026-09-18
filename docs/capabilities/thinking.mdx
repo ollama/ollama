@@ -93,10 +93,6 @@ The reasoning output and answer use separate fields. Chat returns `message.think
   </Tab>
 </Tabs>
 
-<Note>
-  GPT-OSS defaults to `"medium"` thinking. Set `"low"` for a shorter trace or `"high"` for a longer trace. `true` maps to the medium default, while `false` requests no thinking output.
-</Note>
-
 ## Stream the reasoning trace
 
 Thinking streams interleave reasoning tokens before answer tokens. Detect the first `thinking` chunk to render a "thinking" section, then switch to the final reply once `message.content` arrives.
