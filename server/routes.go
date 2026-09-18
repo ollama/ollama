@@ -1256,20 +1256,53 @@ func getExistingName(n model.Name) (model.Name, error) {
 	if err != nil {
 		return zero, err
 	}
-	var set model.Name // tracks parts already canonicalized
+	// First pass: look for a full case-insensitive match across all four
+	// parts. If found, return the on-disk canonical name directly.
 	for e := range existing {
-		if set.Host == "" && strings.EqualFold(e.Host, n.Host) {
-			n.Host = e.Host
+		if strings.EqualFold(e.Host, n.Host) &&
+			strings.EqualFold(e.Namespace, n.Namespace) &&
+			strings.EqualFold(e.Model, n.Model) &&
+			strings.EqualFold(e.Tag, n.Tag) {
+			return e, nil
 		}
-		if set.Namespace == "" && strings.EqualFold(e.Namespace, n.Namespace) {
-			n.Namespace = e.Namespace
+	}
+
+	// Second pass: find the single manifest with the longest consecutive
+	// case-insensitive prefix match (host -> namespace -> model) and copy
+	// only the matching prefix parts from that manifest. The tag is left
+	// as-is so that an unrelated manifest with a matching tag cannot
+	// influence the casing of a different model's tag (e.g. pulling
+	// "myorg/mymodel:q8" when "MyOrg/MyModel:q4" and
+	// "OtherOrg/OtherModel:Q8" exist must not produce "MyOrg/MyModel:Q8").
+	var best model.Name
+	bestLen := 0
+	for e := range existing {
+		length := 0
+		if strings.EqualFold(e.Host, n.Host) {
+			length = 1
+			if strings.EqualFold(e.Namespace, n.Namespace) {
+				length = 2
+				if strings.EqualFold(e.Model, n.Model) {
+					length = 3
+				}
+			}
 		}
-		if set.Model == "" && strings.EqualFold(e.Model, n.Model) {
-			n.Model = e.Model
+		if length > bestLen {
+			bestLen = length
+			best = e
 		}
-		if set.Tag == "" && strings.EqualFold(e.Tag, n.Tag) {
-			n.Tag = e.Tag
-		}
+	}
+
+	switch bestLen {
+	case 3:
+		n.Host = best.Host
+		n.Namespace = best.Namespace
+		n.Model = best.Model
+	case 2:
+		n.Host = best.Host
+		n.Namespace = best.Namespace
+	case 1:
+		n.Host = best.Host
 	}
 
 	return n, nil
