@@ -918,13 +918,24 @@ describe("ConnectAppsScreen interactions", () => {
             />,
           );
         });
-        const cards = renderer!.root.findAll(
+        const terminalSection = renderer!.root.findByProps({
+          "aria-labelledby": "terminal-heading",
+        });
+        const rows = terminalSection.findAll(
           (node) =>
-            node.type === "button" && node.props.id?.startsWith("integration-"),
+            node.type === "div" && node.props.id?.startsWith("integration-"),
         );
-        expect(new Set(cards.map((card) => card.props.id))).toEqual(
+        expect(new Set(rows.map((row) => row.props.id))).toEqual(
           new Set(launchers.map((item) => `integration-${item.id}`)),
         );
+        expect(
+          renderer!.root.findByType("main").props.className.split(" "),
+        ).toContain("select-none");
+        for (const row of rows) {
+          expect(row.findByType("code").props.className.split(" ")).toContain(
+            "select-text",
+          );
+        }
         expect(
           renderer!.root.findAll(
             (node) =>
@@ -936,6 +947,7 @@ describe("ConnectAppsScreen interactions", () => {
           await act(async () => {
             await renderer!.root
               .findByProps({ id: `integration-${item.id}` })
+              .findByType("button")
               .props.onClick();
           });
           expect(copyCommand).toHaveBeenLastCalledWith(item.command);
@@ -966,10 +978,12 @@ describe("ConnectAppsScreen interactions", () => {
         );
         await settle();
       });
-      const card = () =>
-        renderer!.root.findByProps({ id: "integration-codex" });
+      const copyButton = () =>
+        renderer!.root
+          .findByProps({ id: "integration-codex" })
+          .findByType("button");
       await act(async () => {
-        await card().props.onClick();
+        await copyButton().props.onClick();
       });
       expect(copyCommand).toHaveBeenCalledExactlyOnceWith(
         "ollama launch codex",
@@ -978,7 +992,7 @@ describe("ConnectAppsScreen interactions", () => {
       expect(notice()).toBeTruthy();
       act(() => vi.advanceTimersByTime(5000));
       await act(async () => {
-        await card().props.onClick();
+        await copyButton().props.onClick();
       });
       act(() => vi.advanceTimersByTime(1001));
       expect(notice()).toBeTruthy();
@@ -1017,21 +1031,26 @@ describe("ConnectAppsScreen interactions", () => {
           );
           await settle();
         });
-        const card = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
+        const copyButton = () =>
+          renderer!.root
+            .findByProps({ id: "integration-codex" })
+            .findByType("button");
         await act(async () => {
-          await card().props.onClick();
+          await copyButton().props.onClick();
         });
         act(() => vi.advanceTimersByTime(20_000));
-        expect(
-          renderer!.root.findByProps({ role: "alert" }).findByType("code")
-            .children,
-        ).toEqual(["ollama launch codex"]);
+        const manualCommand = renderer!.root
+          .findByProps({ role: "alert" })
+          .findByType("code");
+        expect(manualCommand.children).toEqual(["ollama launch codex"]);
+        expect(manualCommand.props.className.split(" ")).toContain(
+          "select-all",
+        );
         expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(
           0,
         );
         await act(async () => {
-          await card().props.onClick();
+          await copyButton().props.onClick();
         });
         expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(
           0,
@@ -1077,10 +1096,12 @@ describe("ConnectAppsScreen interactions", () => {
           );
           await settle();
         });
-        const card = () =>
-          renderer!.root.findByProps({ id: "integration-codex" });
+        const copyButton = () =>
+          renderer!.root
+            .findByProps({ id: "integration-codex" })
+            .findByType("button");
         await act(async () => {
-          await card().props.onClick();
+          await copyButton().props.onClick();
         });
 
         // Selecting the command and unrelated keys must keep it available.
@@ -1110,7 +1131,7 @@ describe("ConnectAppsScreen interactions", () => {
 
         // A later successful copy keeps its usual notification lifetime.
         await act(async () => {
-          await card().props.onClick();
+          await copyButton().props.onClick();
         });
         act(() => {
           events.dispatchEvent(
@@ -1169,6 +1190,7 @@ describe("ConnectAppsScreen interactions", () => {
         await act(async () => {
           await renderer!.root
             .findByProps({ id: "integration-codex" })
+            .findByType("button")
             .props.onClick();
         });
         expect(copyCommand).toHaveBeenCalledWith("ollama launch codex");

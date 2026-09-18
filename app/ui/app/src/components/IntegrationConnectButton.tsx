@@ -20,7 +20,7 @@ export function IntegrationConnectButton({
       aria-label={label}
       aria-pressed={connected}
       aria-busy={busy || undefined}
-      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-neutral-900 px-6 text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-60 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
+      className="inline-flex min-h-8 min-w-24 shrink-0 items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 text-xs font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-60 dark:bg-white dark:text-neutral-950 dark:hover:bg-neutral-200"
     >
       {busy ? (
         <>
