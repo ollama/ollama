@@ -99,6 +99,29 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		p.state = toolsState_Done
 		content = string(p.buffer)
 		p.buffer = []byte{}
+	} else if p.n > 0 && (p.tag == "{" || p.tag == "[") {
+		// after a bare-JSON tool call, decide whether the rest of
+		// the buffer can still be part of tool calling. if it
+		// cannot, stop parsing so the model's remaining output is
+		// sent to the user instead of being buffered forever
+		trimmed := bytes.TrimLeft(p.buffer, " \t\r\n")
+		if p.tag == "[" {
+			// skip list closing brackets, including stray
+			// duplicates some models emit
+			for len(trimmed) > 0 && trimmed[0] == ']' {
+				trimmed = bytes.TrimLeft(trimmed[1:], " \t\r\n")
+			}
+		}
+		switch {
+		case len(trimmed) == 0:
+			// nothing to decide yet
+		case trimmed[0] == '{', p.tag == "[" && trimmed[0] == ',':
+			// may be another tool call, keep buffering
+		default:
+			p.state = toolsState_Done
+			content = string(trimmed)
+			p.buffer = []byte{}
+		}
 	}
 
 	return calls, content
@@ -136,8 +159,10 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 		return nil
 	} else {
 		argsMap = found
-		if i > end {
-			end = i
+		// i is the index of the closing brace of the parsed
+		// object, consume it along with the rest of the call
+		if i >= end {
+			end = i + 1
 		}
 	}
 
