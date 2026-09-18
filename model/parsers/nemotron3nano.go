@@ -97,6 +97,12 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 				p.buffer.Reset()
 				p.buffer.WriteString(trimmed)
 			}
+			if done {
+				thinking = p.buffer.String()
+				p.buffer.Reset()
+				p.maybeThinkingOpenAtBOL = false
+				return "", thinking, nil, nil
+			}
 			return "", "", nil, nil
 		}
 	}
@@ -132,6 +138,10 @@ func (p *Nemotron3NanoParser) Add(s string, done bool) (content string, thinking
 
 	// No end marker - emit unambiguous thinking
 	thinking = p.emitThinking(bufStr)
+	if done {
+		thinking += p.buffer.String()
+		p.buffer.Reset()
+	}
 	return "", thinking, nil, nil
 }
 

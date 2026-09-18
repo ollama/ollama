@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/openai"
 )
 
 func extractModel(body []byte) (string, bool) {
@@ -237,7 +239,7 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 		return body, nil
 	}
 
-	normalizedEffort := normalizeThinkingEffort(effort, metadata.Levels)
+	normalizedEffort := normalizeThinkingEffort(effort, metadata)
 	if normalizedEffort == "" {
 		// Omit stale effort selections so the model can use its default.
 		delete(reasoning, "effort")
@@ -260,7 +262,24 @@ func normalizeOllamaThinking(body []byte, metadata routingThinkingMetadata) ([]b
 	return json.Marshal(payload)
 }
 
-func normalizeThinkingEffort(effort string, levels []string) string {
+func normalizeThinkingEffort(effort string, metadata routingThinkingMetadata) string {
+	levels := metadata.Levels
+	if metadata.Controls.Valid() {
+		if slices.Contains(levels, effort) {
+			return effort
+		}
+		think, err := openai.ThinkingFromReasoningEffort(effort, metadata.Controls)
+		if err != nil || think == nil {
+			return ""
+		}
+		for _, level := range levels {
+			var value any
+			if json.Unmarshal(metadata.Values[level], &value) == nil && value == think.Value {
+				return level
+			}
+		}
+		return ""
+	}
 	var normalized string
 	switch effort {
 	case "minimal":
@@ -271,6 +290,9 @@ func normalizeThinkingEffort(effort string, levels []string) string {
 		normalized = effort
 	default:
 		return ""
+	}
+	if effort == "medium" && slices.Equal(levels, []string{"none", "high"}) && bytes.Equal(bytes.TrimSpace(metadata.Values["high"]), []byte("true")) {
+		return "high"
 	}
 
 	if slices.Equal(levels, []string{"none", "medium"}) && normalized != "none" {

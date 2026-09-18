@@ -11,9 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -590,57 +588,27 @@ func TestGGUFMetadataRemovedForMissingBlob(t *testing.T) {
 }
 
 func TestGGUFMetadataNotPublishedAfterDelete(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	_, digest := createBinFile(t, gguftest.KV{
-		"general.architecture": "llama",
-		"general.description":  strings.Repeat("x", 16<<20),
-	}, nil)
-	createModelFromBlob(t, "delete-during-load", digest, "")
-
-	loaded := make(chan error, 1)
-	go func() {
-		_, err := GetModel("delete-during-load")
-		loaded <- err
-	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		entries, err := os.ReadDir(ggufMetadataDir())
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Fatal(err)
-		}
-		if slices.ContainsFunc(entries, func(entry os.DirEntry) bool {
-			return strings.HasPrefix(entry.Name(), ".gguf-metadata-")
-		}) {
-			break
-		}
-		select {
-		case err := <-loaded:
-			t.Fatalf("GetModel completed before its metadata write could overlap deletion: %v", err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for metadata write")
-		}
-		runtime.Gosched()
+	// Deletion and publication can finish in either order. The deletion tests
+	// above cover metadata that already exists; put deletion first here to
+	// deterministically cover the writer's post-publication blob check.
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
+	blob, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	deleteModelNamed(t, "delete-during-load")
-	select {
-	case err := <-loaded:
-		if err != nil {
-			t.Fatalf("GetModel: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for GetModel")
+	if err := os.Remove(blob); err != nil {
+		t.Fatal(err)
 	}
 
 	path, err := ggufMetadataPath(digest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	writeGGUFMetadata(path, blob, ggufMetadata{KV: map[string]any{
+		"general.architecture": "llama",
+	}})
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("metadata published after model deletion: %v", err)
 	}

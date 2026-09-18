@@ -27,6 +27,7 @@ var (
 	_ model.Model      = (*Model)(nil)
 	_ model.SelfDraft  = (*Model)(nil)
 	_ model.DraftModel = (*mtpDraft)(nil)
+	_ model.MediaModel = (*Model)(nil)
 )
 
 type Config struct {
@@ -81,6 +82,15 @@ type Model struct {
 	LMHead      nn.LinearLayer
 
 	MTP *MTPHead
+
+	VisionEncoder *RadioVisionEncoder
+	Projector     *VisionProjector
+	VisionConfig  *VisionConfig
+
+	imageStartTokenID int32
+	imageTokenID      int32
+	imageEndTokenID   int32
+	visionErr         error
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -322,10 +332,31 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, fmt.Errorf("parse tokenizer: %w", err)
 	}
 
+	var preprocessorData []byte
+	var visionErr error
+	if _, ok := root.Manifest.ConfigLayer("preprocessor_config.json"); ok {
+		data, err := root.Manifest.ReadConfig("preprocessor_config.json")
+		if err != nil {
+			visionErr = fmt.Errorf("load preprocessor_config.json: %w", err)
+		} else {
+			preprocessorData = data
+		}
+	}
+	var visionConfig *VisionConfig
+	if visionErr == nil {
+		visionConfig, visionErr = parseVisionConfig(configData, preprocessorData)
+	}
+
 	m := &Model{
-		Layers: make([]*Layer, cfg.NumHiddenLayers),
-		Config: &cfg,
-		tok:    tok,
+		Layers:    make([]*Layer, cfg.NumHiddenLayers),
+		Config:    &cfg,
+		tok:       tok,
+		visionErr: visionErr,
+	}
+	if visionConfig != nil {
+		if err := m.configureVision(visionConfig); err != nil {
+			m.visionErr = err
+		}
 	}
 	for i, typ := range cfg.LayerTypes {
 		m.Layers[i] = &Layer{Type: typ}
@@ -1078,6 +1109,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
 
 	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+	if m.VisionConfig != nil {
+		if err := m.loadVisionWeights(tensors, linears); err != nil {
+			return err
+		}
+	}
 	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
 	if !useQuantizedExperts && cfg.TensorQuant != nil {
 		for _, tq := range cfg.TensorQuant {
@@ -1453,6 +1489,9 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	B, L := int32(dims[0]), int32(dims[1])
 
 	h := m.EmbedTokens.Forward(tokens)
+	if len(b.Media) > 0 {
+		h = m.scatterMedia(h, b, 0)
+	}
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
@@ -1507,7 +1546,13 @@ func (m *mtpDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
-	emb := m.MTP.Enorm.Forward(m.EmbedTokens.Forward(b.InputIDs), m.LayerNormEpsilon)
+	raw := m.EmbedTokens.Forward(b.InputIDs)
+	if len(b.Media) > 0 {
+		// The pair at slot S embeds the look-ahead token S+1, so each row's
+		// column 0 holds the prompt token one past its offset.
+		raw = (*Model)(m).scatterMedia(raw, b, 1)
+	}
+	emb := m.MTP.Enorm.Forward(raw, m.LayerNormEpsilon)
 	h := m.MTP.Hnorm.Forward(b.Hidden, m.LayerNormEpsilon)
 	fused := m.MTP.FC.Forward(emb.Concatenate(-1, h))
 

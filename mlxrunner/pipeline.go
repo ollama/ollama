@@ -278,7 +278,9 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 	now := time.Now()
 
 	// Release MLX's cached free buffers every clearCacheInterval tokens so the
-	// allocator's pool does not grow unbounded over a long generation.
+	// allocator's pool does not grow unbounded over a long generation. A
+	// speculative round emits several tokens at once, so the clear fires on
+	// crossing a multiple of the interval, not on landing exactly on one.
 	const clearCacheInterval = 256
 
 	generated := 0
@@ -289,6 +291,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 		var done bool
 		var err error
+		before := generated
 		mlx.Scoped(func() {
 			var results []sampler.Result
 			results, err = d.next(request.Options.NumPredict - generated)
@@ -348,7 +351,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 			break
 		}
 
-		if generated%clearCacheInterval == 0 {
+		if generated/clearCacheInterval != before/clearCacheInterval {
 			mlx.ClearCache()
 		}
 	}
