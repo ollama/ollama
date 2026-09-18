@@ -166,6 +166,13 @@ func qwen35RendererNameFromTemplate(chatTemplate string) string {
 	return "qwen3.5"
 }
 
+// IsMiniCPM5ChatTemplate reports whether a chat template uses MiniCPM5's XML
+// tool-call format (<function name="..."><param name="...">...</param></function>).
+func IsMiniCPM5ChatTemplate(chatTemplate string) bool {
+	return strings.Contains(chatTemplate, "<function name=") &&
+		strings.Contains(chatTemplate, "<param name=")
+}
+
 func lagunaRendererParserNameFromTemplate(modelDir, chatTemplate string) (string, error) {
 	const poolsideV1Marker = "laguna_glm_thinking_v8"
 
@@ -218,6 +225,14 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
+
+	// MiniCPM5 identifies as a generic llama architecture, so it cannot be
+	// detected from model identifiers; detect it from its XML tool-call chat
+	// template instead.
+	if IsMiniCPM5ChatTemplate(chatTemplate) {
+		return "minicpm5", nil
+	}
+
 	switch {
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
