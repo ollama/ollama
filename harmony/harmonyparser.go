@@ -11,6 +11,46 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
+// parseToolCallFunctionArguments decodes tool-call arguments from raw model
+// output. It is deliberately tolerant: models sometimes emit a single-element
+// JSON array wrapper or trailing control tokens after the value. We scan for
+// the first top-level JSON value and decode it, so malformed generations do
+// not abort the whole chat request.
+func parseToolCallFunctionArguments(raw string) (api.ToolCallFunctionArguments, error) {
+	var args api.ToolCallFunctionArguments
+
+	// Try the common case first.
+	if err := json.Unmarshal([]byte(raw), &args); err == nil {
+		return args, nil
+	}
+
+	trimmed := strings.TrimSpace(raw)
+
+	// The model may have emitted structural tokens around or after the value
+	// (e.g. `[{"x":1}]<|call|>` or `{"x":1}]`). Scan for the first `{` or `[`
+	// and decode a single value from there; the JSON decoder ignores trailing
+	// text after a complete value.
+	for i := 0; i < len(trimmed); i++ {
+		c := trimmed[i]
+		if c == '{' {
+			decoder := json.NewDecoder(strings.NewReader(trimmed[i:]))
+			decoder.UseNumber()
+			var obj api.ToolCallFunctionArguments
+			if err := decoder.Decode(&obj); err == nil {
+				return obj, nil
+			}
+		} else if c == '[' {
+			decoder := json.NewDecoder(strings.NewReader(trimmed[i:]))
+			var arr []api.ToolCallFunctionArguments
+			if err := decoder.Decode(&arr); err == nil && len(arr) > 0 {
+				return arr[0], nil
+			}
+		}
+	}
+
+	return api.ToolCallFunctionArguments{}, fmt.Errorf("could not parse tool call arguments from %q", raw)
+}
+
 type harmonyParserState int
 
 const (
@@ -440,8 +480,8 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 		if toolName != nil {
 			name := strings.TrimPrefix(*toolName, "functions.")
 			name = h.FunctionNameMap.OriginalFromConverted(name)
-			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			args, err := parseToolCallFunctionArguments(raw)
+			if err != nil {
 				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
 			}
 			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
