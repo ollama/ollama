@@ -12,7 +12,7 @@ A Go-based command-line tool for benchmarking Ollama models with configurable pa
  * Time-to-first-token (TTFT) tracking per epoch
  * Model metadata display (parameter size, quantization level, family)
  * VRAM and CPU memory usage tracking via running process info
- * Controlled prompt token length for reproducible benchmarks
+ * Exact prompt token length for reproducible benchmarks
  * Benchstat and CSV output formats
 
 ## Building from Source
@@ -55,6 +55,26 @@ benchstat -col /name gemma.bench
 ./ollama-bench -model gemma3 -epochs 6 -prompt-tokens 512
 ```
 
+`-prompt-tokens N` makes every warmup and timed request exactly N prompt tokens
+as the server counts them, chat template included. Prompt sizes are reproducible
+across models and can be placed on a chosen boundary, which matters when prefill
+cost depends on how the prompt divides into kernel tiles.
+
+Sizing runs once per model before the timed epochs and costs about 6 extra
+requests, 10 at worst. It packs whole HumanEval problems up to the largest set
+measuring at or under N, then covers the remaining few tokens with single-letter
+pad units in the header comment, one token each. Padding is around 1% of the
+prompt at typical sizes; the coding request is always whole, untruncated
+problems.
+
+Limits:
+
+ * a target below the smallest single problem is an error -- use `-p` instead
+ * a target above what the problem set can build (~15-25k tokens, tokenizer
+   dependent) warns and uses the full set, which stays under N
+ * a request whose prompt size differs from N warns, since a size that moves
+   after sizing leaves the prefill numbers incomparable
+
 ### Advanced Example
 
 ```
@@ -77,7 +97,7 @@ benchstat -col /name gemma.bench
 | -format	| Output format (benchstat, csv)		| benchstat		|
 | -output	| Output file for results			| "" (stdout)		|
 | -warmup	| Number of warmup requests before timing	| 1			|
-| -prompt-tokens	| Generate prompt targeting ~N tokens (0 = use -p)	| 0		|
+| -prompt-tokens	| Generate a prompt of exactly N tokens (0 = use -p)	| 0		|
 | -v		| Verbose mode					| false			|
 | -debug	| Show debug information			| false			|
 
