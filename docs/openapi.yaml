@@ -96,11 +96,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum: [high, medium, low, max]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
+          $ref: "#/components/schemas/ThinkValue"
         raw:
           type: boolean
           description: When true, returns the raw response from the model without any prompt templating
@@ -294,11 +290,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum: [high, medium, low, max]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
+          $ref: "#/components/schemas/ThinkValue"
         keep_alive:
           oneOf:
             - type: string
@@ -410,6 +402,29 @@ components:
         done:
           type: boolean
           description: True for the final event in the stream
+    ThinkValue:
+      description: Controls a model's thinking output. Use `/api/show` to discover the supported values and default for the selected model. `true` requests thinking, `false` requests no thinking output, and `null` uses the model default. String values are model-defined; supported names must match `/api/show` exactly. Numbers are not supported.
+      oneOf:
+        - type: boolean
+        - type: string
+        - type: "null"
+    Thinking:
+      type: object
+      required: [values, default]
+      description: Thinking controls advertised by a model. Models without thinking metadata omit this field.
+      properties:
+        values:
+          type: array
+          description: Values explicitly supported by the model's `think` request field. Booleans represent on/off controls and strings represent model-defined levels. An array containing only `false` identifies a model without thinking support.
+          items:
+            oneOf:
+              - type: boolean
+              - type: string
+        default:
+          description: Value used when `think` is not set. For models that use this metadata for named thinking levels, unsupported names resolve to this default.
+          oneOf:
+            - type: boolean
+            - type: string
     StatusEvent:
       type: object
       properties:
@@ -597,6 +612,8 @@ components:
     ShowResponse:
       type: object
       properties:
+        thinking:
+          $ref: "#/components/schemas/Thinking"
         parameters:
           type: string
           description: Model parameter settings serialized as text
@@ -834,6 +851,15 @@ paths:
             curl http://localhost:11434/api/generate -d '{
               "model": "gemma4",
               "prompt": "Why is the sky blue?",
+              "stream": false
+            }'
+        - lang: bash
+          label: Thinking
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gpt-oss",
+              "prompt": "What is 1+1?",
+              "think": "low",
               "stream": false
             }'
         - lang: bash
@@ -1245,6 +1271,18 @@ paths:
               "model": "gemma4",
               "verbose": true
             }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
       requestBody:
         required: true
         content:
@@ -1265,7 +1303,13 @@ paths:
                 license: "Gemma Terms of Use \n\nLast modified: February 21, 2024..."
                 capabilities:
                   - "completion"
+                  - "thinking"
                   - "vision"
+                thinking:
+                  values:
+                    - false
+                    - true
+                  default: true
                 modified_at: "2025-08-14T15:49:43.634137516-07:00"
                 details:
                   parent_model: ""
