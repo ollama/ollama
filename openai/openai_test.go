@@ -61,6 +61,35 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestChatCompletionRequestAcceptsNestedRequiredObject(t *testing.T) {
+	var req ChatCompletionRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"tools": [{
+			"type": "function",
+			"function": {
+				"name": "calculate_area",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"dimensions": {
+							"type": "object",
+							"required": {"circle": ["radius"]},
+							"properties": {"radius": {"type": "number"}}
+						}
+					}
+				}
+			}
+		}]
+	}`), &req)
+	if err != nil {
+		t.Fatalf("expected nested required object to be ignored, got error: %v", err)
+	}
+	if len(req.Tools) != 1 || req.Tools[0].Function.Name != "calculate_area" {
+		t.Fatalf("unexpected parsed tools: %#v", req.Tools)
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 
