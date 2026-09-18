@@ -161,6 +161,7 @@ func TestFilterIntegratedGPUs(t *testing.T) {
 		got := filterIntegratedGPUs(append([]ml.DeviceInfo{}, devices...))
 		want := []ml.DeviceID{
 			{Library: "CUDA", ID: "0"},
+			{Library: "ROCm", ID: "0"},
 			{Library: "ROCm", ID: "1"},
 			{Library: "Vulkan", ID: "1"},
 		}
