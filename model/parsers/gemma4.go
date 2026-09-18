@@ -193,6 +193,26 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			return events, true
 		}
 
+		// A thinking close tag with no matching open tag is a control token that
+		// escaped its block: the model emitted one spuriously, or it closed a
+		// block the prompt primed but this parser was not initialized to track.
+		// It is in PreservedTokens, so it is never legitimate assistant text --
+		// emitting it verbatim leaks the tag, and the reasoning that preceded
+		// it, into content. Drop it and keep collecting content, the same way
+		// Gemma4IgnoringPostToolCallNoise drops a stray <tool_call|>.
+		if idx := strings.Index(bufStr, gemma4ThinkingCloseTag); idx != -1 {
+			contentBefore := bufStr[:idx]
+			remaining := bufStr[idx+len(gemma4ThinkingCloseTag):]
+
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
+
+			if contentBefore = strings.TrimRightFunc(contentBefore, unicode.IsSpace); len(contentBefore) > 0 {
+				events = append(events, gemma4EventContent{content: contentBefore})
+			}
+			return events, true
+		}
+
 		// Check for tool call open tag
 		if idx := strings.Index(bufStr, gemma4ToolCallOpenTag); idx != -1 {
 			contentBefore := bufStr[:idx]
@@ -210,7 +230,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// Check for partial tag overlap
 		if !done {
-			if overlapLen := longestOverlap(bufStr, gemma4ThinkingOpenTag, gemma4ToolCallOpenTag); overlapLen > 0 {
+			if overlapLen := longestOverlap(bufStr, gemma4ThinkingOpenTag, gemma4ToolCallOpenTag, gemma4ThinkingCloseTag); overlapLen > 0 {
 				beforePartialTag := bufStr[:len(bufStr)-overlapLen]
 				trailingLen := trailingWhitespaceLen(beforePartialTag)
 				ambiguousStart := len(beforePartialTag) - trailingLen
