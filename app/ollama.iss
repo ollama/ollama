@@ -1,7 +1,7 @@
 ; Inno Setup Installer for Ollama
 ;
 ; To build the installer use the build script invoked from the top of the source tree
-; 
+;
 ; powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps
 
 
@@ -98,7 +98,7 @@ Source: "..\dist\windows-amd64\lib\ollama\*"; Excludes: "\mlx_*\*"; DestDir: "{a
 ; For local development, rely on binary compatibility at runtime since we can't cross compile
 #if FileExists("..\dist\windows-ollama-app-arm64.exe")
 Source: "..\dist\windows-ollama-app-arm64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
-#else 
+#else
 Source: "..\dist\windows-ollama-app-amd64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
 #endif
 
@@ -165,7 +165,53 @@ Root: HKCU; Subkey: "Software\Classes\ollama\shell\open\command"; ValueType: str
 
 [Code]
 
-function NeedsAddPath(Param: string): boolean;
+const
+  CoreMsiUpgradeCode = '{7A5B3E2F-1C4D-4F8A-9E6B-0D2A1F3C5E7D}';
+  CoreArm64MsiUpgradeCode = '{B4C6D8E0-2F1A-4E3C-A5D7-9B0E1F2A3C4D}';
+
+var
+  MsiInstallQueryFailed: Boolean;
+
+function MsiProductInstalled(UpgradeCode: String): Boolean;
+var
+  Installer: Variant;
+  Products: Variant;
+begin
+  Result := False;
+
+  try
+    Installer := CreateOleObject('WindowsInstaller.Installer');
+    Products := Installer.RelatedProducts(UpgradeCode);
+    if Products.Count > 0 then begin
+      Log('Detected MSI-managed Ollama install for UpgradeCode ' + UpgradeCode);
+      Result := True;
+    end;
+  except
+    Log('Unable to query MSI products for UpgradeCode ' + UpgradeCode + ': ' + GetExceptionMessage);
+    MsiInstallQueryFailed := True;
+  end;
+end;
+
+function MsiOllamaInstalled(): Boolean;
+begin
+  MsiInstallQueryFailed := False;
+  Result := MsiProductInstalled(CoreMsiUpgradeCode) or
+            MsiProductInstalled(CoreArm64MsiUpgradeCode);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if MsiOllamaInstalled() then begin
+    SuppressibleMsgBox('This Ollama installation is managed by the MSI installer. Please upgrade by running install.ps1 from PowerShell, or uninstall the MSI version before running OllamaSetup.exe.', mbError, MB_OK, IDOK);
+    Result := False;
+  end else if MsiInstallQueryFailed then begin
+    SuppressibleMsgBox('Setup could not determine whether Ollama is managed by the MSI installer. Please run install.ps1 from PowerShell, or uninstall any MSI version before running OllamaSetup.exe.', mbError, MB_OK, IDOK);
+    Result := False;
+  end;
+end;
+
+function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
@@ -237,7 +283,7 @@ begin
     UninstallButton.Height := ctrl.Height;
     UninstallButton.TabOrder := ctrl.TabOrder;
     UninstallButton.Caption := 'Uninstall';
-    UninstallButton.ModalResult := mrOK;    
+    UninstallButton.ModalResult := mrOK;
     UninstallProgressForm.CancelButton.TabOrder := UninstallButton.TabOrder + 1;
     UninstallPage := TNewNotebookPage.Create(UninstallProgressForm);
     UninstallPage.Notebook := UninstallProgressForm.InnerNotebook;
@@ -288,7 +334,7 @@ begin
 
     if UninstallProgressForm.ShowModal = mrCancel then Abort;
 
-    UninstallButton.Visible := False;   
+    UninstallButton.Visible := False;
     UninstallProgressForm.PageNameLabel.Caption := OriginalPageNameLabel;
     UninstallProgressForm.PageDescriptionLabel.Caption := OriginalPageDescriptionLabel;
     UninstallProgressForm.CancelButton.Enabled := OriginalCancelButtonEnabled;
@@ -310,10 +356,10 @@ begin
     if DeleteModelsChecked then begin
       Log('user requested model cleanup');
       if (VarIsEmpty(ModelsDir)) then begin
-        Log('cleaning up home directory models')
+        Log('cleaning up home directory models');
         DelTree(GetEnv('USERPROFILE') + '\.ollama\models', True, True, True);
       end else begin
-        Log('cleaning up custom directory models ' + ModelsDir)
+        Log('cleaning up custom directory models ' + ModelsDir);
         DelTree(ModelsDir + '\blobs', True, True, True);
         DelTree(ModelsDir + '\manifests', True, True, True);
       end;
