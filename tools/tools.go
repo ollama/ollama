@@ -132,13 +132,17 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	}
 
 	var argsMap map[string]any
-	if found, i := findArguments(tool, p.buffer); found == nil {
+	found, i := findArguments(tool, p.buffer)
+	if found == nil && i == 0 {
 		return nil
-	} else {
+	}
+	if found != nil {
 		argsMap = found
-		if i > end {
-			end = i
-		}
+	} else {
+		argsMap = make(map[string]any)
+	}
+	if i > end {
+		end = i
 	}
 
 	args := api.NewToolCallFunctionArguments()
@@ -226,11 +230,10 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 
 // findArguments returns the first object that appears to be
 // arguments for the provided tool in the provided buffer,
-// returning nil if no arguments are found and the end position
-// TODO (jmorganca): this does not support parsing omitted arguments
-// objects for functions that have all-optional parameters
-// e.g. `{"name": "get_conditions", "arguments": {}}` will work but
-// `{"name": "get_conditions"}` will not currently work
+// returning nil if no arguments are found and the end position.
+// When a tool call has no explicit arguments field (e.g.
+// {"name": "get_conditions"}), it returns nil args with a
+// non-zero position to signal that the tool call was recognized.
 func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 	if len(buffer) == 0 {
 		return nil, 0
