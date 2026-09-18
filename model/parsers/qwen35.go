@@ -45,6 +45,12 @@ func (p *Qwen35Parser) HasThinkingSupport() bool {
 	return true
 }
 
+// UnclosedThinking implements ThinkingStateReporter. It reports whether the
+// parser is still in the thinking state, i.e. no closing thinking tag was seen.
+func (p *Qwen35Parser) UnclosedThinking() bool {
+	return p.state == qwen35ParserStateCollectingThinking
+}
+
 func (p *Qwen35Parser) PreservedTokens() []string {
 	return []string{
 		qwen35ThinkingOpenTag,
