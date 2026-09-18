@@ -222,6 +222,17 @@
       "binaryDir": "${sourceDir}/../../build/llama-server-rocm_v7_2"
     },
     {
+      "name": "sycl",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-sycl",
+      "cacheVariables": {
+        "GGML_SYCL": "ON",
+        "GGML_SYCL_TARGET": "INTEL",
+        "OLLAMA_RUNNER_DIR": "sycl",
+        "OLLAMA_GPU_BACKEND": "sycl"
+      }
+    },
+    {
       "name": "vulkan",
       "inherits": ["default"],
       "binaryDir": "${sourceDir}/../../build/llama-server-vulkan",
@@ -327,6 +338,11 @@
       "name": "rocm_v7_2_user_arch",
       "configurePreset": "rocm_v7_2_user_arch",
       "targets": ["ggml-hip"]
+    },
+    {
+      "name": "sycl",
+      "configurePreset": "sycl",
+      "targets": ["ggml-sycl"]
     },
     {
       "name": "vulkan",
