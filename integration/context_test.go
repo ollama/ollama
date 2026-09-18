@@ -44,9 +44,7 @@ func runLongInputContext(t *testing.T) {
 		},
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-			"num_ctx":     128,
+			"num_ctx": 128,
 		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -109,9 +107,7 @@ func runContextExhaustion(t *testing.T) {
 		Think:  &thinkOff,
 		Stream: &stream,
 		Options: map[string]any{
-			"temperature": 0,
-			"seed":        123,
-			"num_ctx":     128,
+			"num_ctx": 128,
 		},
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -177,8 +173,8 @@ func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 			defer wg.Done()
 			k := i % len(req)
 			req[k].Model = modelName
-			for j := 0; j < iterLimit; j++ {
-				if time.Now().Sub(started) > softTimeout {
+			for j := range iterLimit {
+				if time.Since(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}
@@ -224,9 +220,9 @@ func runGenerateWithHistory(t *testing.T) {
 
 	req.Context = DoGenerate(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
 
-	for i := 0; i < len(rainbowFollowups); i++ {
+	for i := range rainbowFollowups {
 		req.Prompt = rainbowFollowups[i]
-		if time.Now().Sub(started) > softTimeout {
+		if time.Since(started) > softTimeout {
 			slog.Info("exceeded soft timeout, winding down test")
 			return
 		}
@@ -269,8 +265,8 @@ func runParallelChatWithHistory(t *testing.T, modelName string) {
 			defer wg.Done()
 			k := i % len(req)
 			req[k].Model = modelName
-			for j := 0; j < iterLimit; j++ {
-				if time.Now().Sub(started) > softTimeout {
+			for j := range iterLimit {
+				if time.Since(started) > softTimeout {
 					slog.Info("exceeded soft timeout, winding down test")
 					return
 				}
@@ -279,7 +275,8 @@ func runParallelChatWithHistory(t *testing.T, modelName string) {
 				// so we allow a much longer initial timeout
 				assistant := DoChat(ctx, t, client, req[k], resp[k], initialTimeout, streamTimeout)
 				if assistant == nil {
-					t.Fatalf("didn't get an assistant response for context")
+					t.Errorf("didn't get an assistant response for context")
+					return
 				}
 				req[k].Messages = append(req[k].Messages,
 					*assistant,
@@ -328,8 +325,8 @@ func runChatWithHistory(t *testing.T) {
 
 	assistant := DoChat(ctx, t, client, req, rainbowExpected, 30*time.Second, 20*time.Second)
 
-	for i := 0; i < len(rainbowFollowups); i++ {
-		if time.Now().Sub(started) > softTimeout {
+	for i := range rainbowFollowups {
+		if time.Since(started) > softTimeout {
 			slog.Info("exceeded soft timeout, winding down test")
 			return
 		}
