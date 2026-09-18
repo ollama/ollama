@@ -929,6 +929,14 @@ describe("ConnectAppsScreen interactions", () => {
           new Set(launchers.map((item) => `integration-${item.id}`)),
         );
         expect(
+          renderer!.root.findByType("main").props.className.split(" "),
+        ).toContain("select-none");
+        for (const row of rows) {
+          expect(row.findByType("code").props.className.split(" ")).toContain(
+            "select-text",
+          );
+        }
+        expect(
           renderer!.root.findAll(
             (node) =>
               node.type === "button" &&
@@ -1031,10 +1039,13 @@ describe("ConnectAppsScreen interactions", () => {
           await copyButton().props.onClick();
         });
         act(() => vi.advanceTimersByTime(20_000));
-        expect(
-          renderer!.root.findByProps({ role: "alert" }).findByType("code")
-            .children,
-        ).toEqual(["ollama launch codex"]);
+        const manualCommand = renderer!.root
+          .findByProps({ role: "alert" })
+          .findByType("code");
+        expect(manualCommand.children).toEqual(["ollama launch codex"]);
+        expect(manualCommand.props.className.split(" ")).toContain(
+          "select-all",
+        );
         expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(
           0,
         );

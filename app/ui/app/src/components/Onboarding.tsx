@@ -1069,7 +1069,7 @@ export function ConnectAppsScreen({
           </div>
         </div>
         <div className="ml-auto flex min-w-0 shrink-0 items-center rounded-lg bg-neutral-100 pl-3 dark:bg-neutral-800">
-          <code className="block flex-1 whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
+          <code className="block flex-1 select-text whitespace-nowrap py-2 pr-2 font-mono text-[13px] text-neutral-500 dark:text-neutral-400">
             {item.command}
           </code>
           <button
@@ -1146,7 +1146,7 @@ export function ConnectAppsScreen({
   ) : null;
 
   return (
-    <main className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
+    <main className="relative flex min-h-0 w-full flex-1 select-none flex-col overflow-hidden bg-white text-neutral-950 dark:bg-neutral-900 dark:text-neutral-100">
       <div
         ref={scrollContainerRef}
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6"
