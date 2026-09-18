@@ -30,35 +30,29 @@ func TestLiveAppUpdate(t *testing.T) {
 
 	oldUpdateStageDir := UpdateStageDir
 	oldUpdateDownloaded := UpdateDownloaded
-	oldVerifyDownload := VerifyDownload
 	oldVersion := version.Version
 	defer func() {
 		UpdateStageDir = oldUpdateStageDir
 		UpdateDownloaded = oldUpdateDownloaded
-		VerifyDownload = oldVerifyDownload
 		version.Version = oldVersion
 	}()
 
 	version.Version = spoofedVersion
 
-	expectedFilename := ""
 	switch runtime.GOOS {
 	case "windows":
 		t.Setenv("LOCALAPPDATA", t.TempDir())
-		expectedFilename = "OllamaSetup.exe"
 	case "darwin":
-		expectedFilename = "Ollama-darwin.zip"
 	default:
 		t.Fatalf("unsupported updater live test OS %q", runtime.GOOS)
 	}
+	expectedFilename := liveExpectedFilename()
 
 	UpdateStageDir = filepath.Join(t.TempDir(), "updates")
 	UpdateDownloaded = false
 	verifyCalled := false
-	VerifyDownload = func() error {
-		verifyCalled = true
-		return verifyDownload()
-	}
+	restoreVerification := wrapLiveUpdateVerification(&verifyCalled)
+	defer restoreVerification()
 
 	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}}
 	defer updater.Store.Close()
@@ -73,10 +67,16 @@ func TestLiveAppUpdate(t *testing.T) {
 	t.Logf("production update version=%q url=%q", updateResp.UpdateVersion, updateResp.UpdateURL)
 
 	if err := updater.DownloadNewRelease(ctx, updateResp); err != nil {
+		if runtime.GOOS == "windows" && strings.Contains(err.Error(), "install.ps1 does not support cache-only mode") {
+			if !verifyCalled {
+				t.Fatal("production install.ps1 lacked cache-only support before signature verification ran")
+			}
+			t.Skipf("production install.ps1 has not shipped app cache-only support yet: %v", err)
+		}
 		t.Fatalf("download production update: %v", err)
 	}
 
-	staged := getStagedUpdate()
+	staged := liveStagedUpdate()
 	if staged == "" {
 		t.Fatal("production update was not staged")
 	}
@@ -100,7 +100,7 @@ func TestLiveAppUpdate(t *testing.T) {
 	}
 
 	if !verifyCalled {
-		t.Fatal("DownloadNewRelease did not call VerifyDownload")
+		t.Fatal("DownloadNewRelease did not verify the staged update")
 	}
 	t.Logf("production updater download path verified staged %s update", runtime.GOOS)
 }
