@@ -521,6 +521,16 @@ type ChatResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
 
+	// Digest is the full manifest digest of the local model selected for this
+	// response. It is only set for models served by this server; it is empty
+	// for proxied cloud or remote model responses.
+	Digest string `json:"digest,omitempty"`
+
+	// ProviderVersion is the version of the Ollama server serving this
+	// response. It is only set for models served by this server; it is empty
+	// for proxied cloud or remote model responses.
+	ProviderVersion string `json:"provider_version,omitempty"`
+
 	// RemoteModel is the name of the upstream model that generated the response.
 	RemoteModel string `json:"remote_model,omitempty"`
 

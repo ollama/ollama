@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	ollamatemplate "github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
 
 // testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
@@ -224,6 +225,24 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV
 	}
 }
 
+// mustGetServedModel resolves a local model name the same way the handlers do
+// and returns the served model, failing the test if it cannot be found.
+func mustGetServedModel(t *testing.T, name string) *Model {
+	t.Helper()
+
+	existingName, err := getExistingName(model.ParseName(name))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := GetModel(existingName.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return m
+}
+
 func TestModelOptionsKeepStoredTypicalP(t *testing.T) {
 	s := &Server{}
 	opts, err := s.modelOptions(&Model{Options: map[string]any{"typical_p": 0.5}}, nil)
@@ -350,6 +369,13 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	}
 	if actual.Message.Content != "chat template response" {
 		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
+	}
+	servedModel := mustGetServedModel(t, "chat-template")
+	if actual.Digest != servedModel.Digest {
+		t.Errorf("expected digest %s, got %s", servedModel.Digest, actual.Digest)
+	}
+	if actual.ProviderVersion != version.Version {
+		t.Errorf("expected provider version %s, got %s", version.Version, actual.ProviderVersion)
 	}
 	if actual.PromptEvalCount != 2 || actual.PromptEvalCachedCount == nil || *actual.PromptEvalCachedCount != 1 {
 		t.Errorf("prompt counts = (%d, %v), want (2, 1)", actual.PromptEvalCount, actual.PromptEvalCachedCount)
@@ -720,9 +746,11 @@ func TestGenerateChatRemote(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
 		resp := api.ChatResponse{
-			Model:      "test",
-			Done:       true,
-			DoneReason: "load",
+			Model:           "test",
+			Done:            true,
+			DoneReason:      "load",
+			Digest:          "sha256:upstream-should-not-leak",
+			ProviderVersion: "upstream-version-should-not-leak",
 		}
 		if err := json.NewEncoder(w).Encode(&resp); err != nil {
 			t.Fatal(err)
@@ -774,6 +802,14 @@ func TestGenerateChatRemote(t *testing.T) {
 
 		if actual.RemoteHost != rs.URL {
 			t.Errorf("expected remote host '%s', got %s", rs.URL, actual.RemoteHost)
+		}
+
+		if actual.Digest != "" {
+			t.Errorf("expected proxied response to have no local digest, got %s", actual.Digest)
+		}
+
+		if actual.ProviderVersion != "" {
+			t.Errorf("expected proxied response to have no provider version, got %s", actual.ProviderVersion)
 		}
 
 		if !actual.Done {
@@ -972,6 +1008,14 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("expected model test, got %s", actual.Model)
 		}
 
+		if actual.Digest != mustGetServedModel(t, "test").Digest {
+			t.Errorf("expected digest of the served model, got %s", actual.Digest)
+		}
+
+		if actual.ProviderVersion != version.Version {
+			t.Errorf("expected provider version %s, got %s", version.Version, actual.ProviderVersion)
+		}
+
 		if !actual.Done {
 			t.Errorf("expected done true, got false")
 		}
@@ -981,7 +1025,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
-	checkChatResponse := func(t *testing.T, body io.Reader, model, content string) {
+	checkChatResponse := func(t *testing.T, body io.Reader, modelName, content string) {
 		t.Helper()
 
 		var actual api.ChatResponse
@@ -989,8 +1033,16 @@ func TestGenerateChat(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if actual.Model != model {
-			t.Errorf("expected model test, got %s", actual.Model)
+		if actual.Model != modelName {
+			t.Errorf("expected model %s, got %s", modelName, actual.Model)
+		}
+
+		if actual.Digest != mustGetServedModel(t, modelName).Digest {
+			t.Errorf("expected digest of served model %s, got %s", modelName, actual.Digest)
+		}
+
+		if actual.ProviderVersion != version.Version {
+			t.Errorf("expected provider version %s, got %s", version.Version, actual.ProviderVersion)
 		}
 
 		if !actual.Done {
@@ -1055,6 +1107,76 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		checkChatResponse(t, w.Body, "test", "Hi!")
+	})
+
+	t.Run("streaming frames carry digest and provider version", func(t *testing.T) {
+		prevCompletionFn := mock.CompletionFn
+		defer func() { mock.CompletionFn = prevCompletionFn }()
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		mock.CompletionFn = func(ctx context.Context, _ llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+
+			chunks := []llm.CompletionResponse{
+				{Content: "Hel", Done: false},
+				{Content: "lo!", Done: false},
+				{Content: "", Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 1, EvalCount: 2},
+			}
+
+			for _, chunk := range chunks {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+					fn(chunk)
+				}
+			}
+			return nil
+		}
+
+		streamRequest := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Stream: &streamRequest,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		expectedDigest := mustGetServedModel(t, "test").Digest
+		if expectedDigest == "" {
+			t.Fatal("expected served model to have a non-empty digest")
+		}
+
+		decoder := json.NewDecoder(w.Body)
+		var frames int
+		for {
+			var frame api.ChatResponse
+			if err := decoder.Decode(&frame); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+
+			if frame.Digest != expectedDigest {
+				t.Errorf("frame %d digest = %q, want %q", frames, frame.Digest, expectedDigest)
+			}
+			if frame.ProviderVersion != version.Version {
+				t.Errorf("frame %d provider version = %q, want %q", frames, frame.ProviderVersion, version.Version)
+			}
+			frames++
+		}
+
+		if frames != 3 {
+			t.Fatalf("expected 3 streamed frames, got %d", frames)
+		}
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{

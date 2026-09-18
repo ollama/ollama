@@ -489,6 +489,13 @@ POST /api/chat
 
 Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `"stream": false`. The final response object will include statistics and additional data from the request.
 
+Each response includes:
+
+- `digest`: the full manifest digest of the local model selected for the request, as returned by [`/api/tags`](#list-local-models)
+- `provider_version`: the version of the Ollama server generating the response
+
+Both fields are only present for models served locally by this server. They are omitted from responses proxied to cloud or other remote servers.
+
 ### Parameters
 
 - `model`: (required) the [model name](#model-names)
@@ -551,6 +558,8 @@ A stream of JSON objects is returned:
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assistant",
@@ -566,6 +575,8 @@ Final response:
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "message": {
     "role": "assistant",
@@ -686,6 +697,8 @@ curl http://localhost:11434/api/chat -d '{
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -1020,6 +1033,8 @@ curl http://localhost:11434/api/chat -d '{
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -1126,6 +1141,8 @@ curl http://localhost:11434/api/chat -d '{
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2024-09-12T21:17:29.110811Z",
   "message": {
     "role": "assistant",
@@ -1157,6 +1174,8 @@ A single JSON object is returned:
 ```json
 {
   "model": "llama3.2",
+  "digest": "sha256:56bb271f639512f84b50d26c03020818eed85dafb922acf90f76230d3b1a873c",
+  "provider_version": "0.34.0",
   "created_at": "2024-09-12T21:33:17.547535Z",
   "message": {
     "role": "assistant",

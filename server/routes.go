@@ -2500,11 +2500,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		s.sched.expireRunner(m)
 
 		c.JSON(http.StatusOK, api.ChatResponse{
-			Model:      req.Model,
-			CreatedAt:  time.Now().UTC(),
-			Message:    api.Message{Role: "assistant"},
-			Done:       true,
-			DoneReason: "unload",
+			Model:           req.Model,
+			CreatedAt:       time.Now().UTC(),
+			Message:         api.Message{Role: "assistant"},
+			Done:            true,
+			DoneReason:      "unload",
+			Digest:          m.Digest,
+			ProviderVersion: version.Version,
 		})
 		return
 	}
@@ -2561,6 +2563,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			resp.Model = origModel
 			resp.RemoteModel = m.Config.RemoteModel
 			resp.RemoteHost = m.Config.RemoteHost
+			// Proxied responses are not local artifacts, so never expose the
+			// local model digest or serving version for them.
+			resp.Digest = ""
+			resp.ProviderVersion = ""
 
 			data, err := json.Marshal(resp)
 			if err != nil {
@@ -2638,11 +2644,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if len(req.Messages) == 0 {
 		c.JSON(http.StatusOK, api.ChatResponse{
-			Model:      req.Model,
-			CreatedAt:  time.Now().UTC(),
-			Message:    api.Message{Role: "assistant"},
-			Done:       true,
-			DoneReason: "load",
+			Model:           req.Model,
+			CreatedAt:       time.Now().UTC(),
+			Message:         api.Message{Role: "assistant"},
+			Done:            true,
+			DoneReason:      "load",
+			Digest:          m.Digest,
+			ProviderVersion: version.Version,
 		})
 		return
 	}
@@ -2701,8 +2709,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	// If debug mode is enabled, return the rendered template instead of calling the model
 	if req.DebugRenderOnly {
 		c.JSON(http.StatusOK, api.ChatResponse{
-			Model:     req.Model,
-			CreatedAt: time.Now().UTC(),
+			Model:           req.Model,
+			CreatedAt:       time.Now().UTC(),
+			Digest:          m.Digest,
+			ProviderVersion: version.Version,
 			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
 				ImageCount:       len(media),
@@ -2803,12 +2813,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 
 				res := api.ChatResponse{
-					Model:     req.Model,
-					CreatedAt: time.Now().UTC(),
-					Message:   api.Message{Role: "assistant", Content: r.Content},
-					Done:      r.Done,
-					Metrics:   metrics,
-					Logprobs:  toAPILogprobs(r.Logprobs),
+					Model:           req.Model,
+					CreatedAt:       time.Now().UTC(),
+					Message:         api.Message{Role: "assistant", Content: r.Content},
+					Done:            r.Done,
+					Metrics:         metrics,
+					Logprobs:        toAPILogprobs(r.Logprobs),
+					Digest:          m.Digest,
+					ProviderVersion: version.Version,
 				}
 
 				if r.Done {
@@ -2995,8 +3007,10 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		}
 
 		c.JSON(http.StatusOK, api.ChatResponse{
-			Model:     req.Model,
-			CreatedAt: time.Now().UTC(),
+			Model:           req.Model,
+			CreatedAt:       time.Now().UTC(),
+			Digest:          m.Digest,
+			ProviderVersion: version.Version,
 			DebugInfo: &api.DebugInfo{
 				RenderedTemplate: prompt,
 				ImageCount:       countChatImages(msgs),
@@ -3022,7 +3036,9 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 					EvalCount:             r.EvalCount,
 					EvalDuration:          r.EvalDuration,
 				},
-				Logprobs: toAPILogprobs(r.Logprobs),
+				Logprobs:        toAPILogprobs(r.Logprobs),
+				Digest:          m.Digest,
+				ProviderVersion: version.Version,
 			}
 
 			if res.Message.Role == "" {
