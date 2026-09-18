@@ -123,14 +123,22 @@ func (b *Buffer) MoveRight() {
 
 func (b *Buffer) MoveRightWord() {
 	if b.Pos < b.Buf.Size() {
+		var foundNonspace bool
 		for {
-			b.MoveRight()
-			v, _ := b.Buf.Get(b.Pos)
-			if v == ' ' {
+			v, ok := b.Buf.Get(b.Pos)
+			if !ok {
 				break
 			}
+			if v == ' ' {
+				if foundNonspace {
+					break
+				}
+			} else {
+				foundNonspace = true
+			}
+			b.MoveRight()
 
-			if b.Pos == b.Buf.Size() {
+			if b.Pos >= b.Buf.Size() {
 				break
 			}
 		}
