@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -574,6 +575,7 @@ type routingThinkingMetadata struct {
 	Supported bool                       `json:"supported"`
 	Levels    []string                   `json:"levels,omitempty"`
 	Values    map[string]json.RawMessage `json:"values,omitempty"`
+	Controls  *model.Thinking            `json:"controls,omitempty"`
 }
 
 type routingModel struct {

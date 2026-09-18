@@ -10,6 +10,8 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
@@ -715,6 +717,29 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		truncationMode = "tokens"
 	}
 
+	supportedReasoningLevels := make([]any, 0)
+	var defaultReasoningLevel any
+	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
+		for _, level := range contract.levels {
+			value := contract.values[level]
+			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
+			if err != nil || converted == nil {
+				continue
+			}
+			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
+			if resolved == nil || resolved.Value != value {
+				continue
+			}
+			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+				"effort":      level,
+				"description": codexAppThinkingLevelDescription(level),
+			})
+		}
+		if contract.defaultLevel != "" {
+			defaultReasoningLevel = contract.defaultLevel
+		}
+	}
+
 	return map[string]any{
 		"slug":                         modelName,
 		"display_name":                 modelName,
@@ -730,7 +755,8 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
 		"supports_reasoning_summaries": false,
-		"supported_reasoning_levels":   []any{},
+		"supported_reasoning_levels":   supportedReasoningLevels,
+		"default_reasoning_level":      defaultReasoningLevel,
 		"experimental_supported_tools": []any{},
 	}
 }
