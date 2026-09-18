@@ -105,7 +105,7 @@ func (qwen3EventThinkingContent) isQwen3Event() {}
 
 func (p *Qwen3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var contentSb strings.Builder
 	var thinkingSb strings.Builder
@@ -130,13 +130,13 @@ func (p *Qwen3Parser) Add(s string, done bool) (content string, thinking string,
 	return contentSb.String(), thinkingSb.String(), calls, nil
 }
 
-func (p *Qwen3Parser) parseEvents() []qwen3Event {
+func (p *Qwen3Parser) parseEvents(done bool) []qwen3Event {
 	var all []qwen3Event
 
 	keepLooping := true
 	for keepLooping {
 		var events []qwen3Event
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -164,7 +164,7 @@ func (p *Qwen3Parser) splitAtTag(tag string, trimAfter bool) (string, string) {
 	return splitAtTag(&p.buffer, tag, trimAfter)
 }
 
-func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
+func (p *Qwen3Parser) eat(done bool) ([]qwen3Event, bool) {
 	var events []qwen3Event
 
 	switch p.state {
@@ -320,7 +320,34 @@ func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
 	case qwen3ParserStateCollectingToolContent:
 		acc := p.buffer.String()
 		if strings.Contains(acc, qwen3ToolCloseTag) {
-			toolContent, _ := p.splitAtTag(qwen3ToolCloseTag, true)
+			// A closing tag inside a JSON string is part of the argument.
+			closeIdx := -1
+			inString, escaped := false, false
+			for i := range len(acc) {
+				switch c := acc[i]; {
+				case escaped:
+					escaped = false
+				case c == '\\' && inString:
+					escaped = true
+				case c == '"':
+					inString = !inString
+				case !inString && strings.HasPrefix(acc[i:], qwen3ToolCloseTag):
+					closeIdx = i
+				}
+				if closeIdx >= 0 {
+					break
+				}
+			}
+			if closeIdx < 0 {
+				if !done {
+					return events, false
+				}
+				// Preserve the JSON error for an unterminated string at EOF.
+				closeIdx = strings.Index(acc, qwen3ToolCloseTag)
+			}
+			toolContent := strings.TrimRightFunc(acc[:closeIdx], unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(strings.TrimLeftFunc(acc[closeIdx+len(qwen3ToolCloseTag):], unicode.IsSpace))
 			if len(toolContent) == 0 {
 				slog.Warn("qwen3 tool call closing tag found but no content before it")
 			}
