@@ -85,6 +85,11 @@ ollama run gemma4
 
 See [ollama.com/library](https://ollama.com/library) for the full list.
 
+Many models are available in multiple parameter sizes and quantization levels.
+Smaller, more quantized models use less memory and disk space and can run
+faster, while larger or less quantized models generally preserve more detail and
+may require more resources.
+
 See the [quickstart guide](https://docs.ollama.com/quickstart) for more details.
 
 ## REST API
