@@ -1003,14 +1003,14 @@ func TestPullManifestRedirectPolicy(t *testing.T) {
 			// Steer all dials at the local servers so tests stay offline.
 			prev := testMakeRequestDialContext
 			testMakeRequestDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, port, err := net.SplitHostPort(addr)
+				host, _, err := net.SplitHostPort(addr)
 				if err != nil {
 					return nil, err
 				}
 				if host == tc.target {
 					addr = net.JoinHostPort("127.0.0.1", cdnPort)
 				} else {
-					_, port, _ = net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+					_, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
 					addr = net.JoinHostPort("127.0.0.1", port)
 				}
 				return new(net.Dialer).DialContext(ctx, network, addr)
