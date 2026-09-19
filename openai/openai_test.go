@@ -61,6 +61,70 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ReasoningContent(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "reasoning field",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":"answer","reasoning":"existing reasoning"}]}`,
+			want:  "existing reasoning",
+		},
+		{
+			name:  "reasoning_content field",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":"answer","reasoning_content":"deepseek reasoning"}]}`,
+			want:  "deepseek reasoning",
+		},
+		{
+			name:  "reasoning takes precedence over reasoning_content",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":"answer","reasoning":"openai reasoning","reasoning_content":"deepseek reasoning"}]}`,
+			want:  "openai reasoning",
+		},
+		{
+			name:  "reasoning_content with null content and tool calls (default path)",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":null,"reasoning_content":"tool reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}]}`,
+			want:  "tool reasoning",
+		},
+		{
+			name:  "reasoning_content with array content and tool calls ([]any path)",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":[{"type":"text","text":"thinking done"}],"reasoning_content":"tool reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}]}`,
+			want:  "tool reasoning",
+		},
+		{
+			name:  "reasoning_content with array content but no tool calls ([]any path, no thinking set)",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":[{"type":"text","text":"answer"}],"reasoning_content":"should be ignored"}]}`,
+			want:  "",
+		},
+		{
+			name:  "reasoning takes precedence with array content and tool calls",
+			input: `{"model":"test-model","messages":[{"role":"assistant","content":[{"type":"text","text":"thinking done"}],"reasoning":"openai reasoning","reasoning_content":"deepseek reasoning","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]}]}`,
+			want:  "openai reasoning",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.input), &req); err != nil {
+				t.Fatalf("failed to unmarshal request: %v", err)
+			}
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(result.Messages) != 1 {
+				t.Fatalf("expected 1 message, got %d", len(result.Messages))
+			}
+			if got := result.Messages[0].Thinking; got != tt.want {
+				t.Errorf("Thinking = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 
