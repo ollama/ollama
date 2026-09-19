@@ -989,7 +989,7 @@ func TestCodexAppLegacyProfileCleanupRejectsStalePID(t *testing.T) {
 }
 
 func TestCodexAppSupportedPlatforms(t *testing.T) {
-	for _, goos := range []string{"darwin", "windows"} {
+	for _, goos := range []string{"darwin", "windows", "linux"} {
 		t.Run(goos, func(t *testing.T) {
 			withCodexAppPlatform(t, goos)
 			if err := codexAppSupported(); err != nil {
@@ -998,13 +998,41 @@ func TestCodexAppSupportedPlatforms(t *testing.T) {
 		})
 	}
 
-	t.Run("linux unsupported", func(t *testing.T) {
-		withCodexAppPlatform(t, "linux")
+	t.Run("freebsd unsupported", func(t *testing.T) {
+		withCodexAppPlatform(t, "freebsd")
 		err := codexAppSupported()
-		if err == nil || !strings.Contains(err.Error(), "macOS and Windows") {
+		if err == nil || !strings.Contains(err.Error(), "macOS, Windows, and Linux") {
 			t.Fatalf("codexAppSupported error = %v, want platform message", err)
 		}
 	})
+}
+
+func TestCodexAppLinuxBundledExecutable(t *testing.T) {
+	withCodexAppPlatform(t, "linux")
+
+	oldStat := codexAppStat
+	info, err := os.Stat(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codexAppStat = func(path string) (os.FileInfo, error) {
+		switch path {
+		case "/usr/lib/chatgpt/ChatGPT", "/usr/lib/chatgpt/resources/codex":
+			return info, nil
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+	t.Setenv("PATH", t.TempDir())
+	t.Cleanup(func() { codexAppStat = oldStat })
+
+	got, err := defaultCodexAppCodexExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/usr/lib/chatgpt/resources/codex"; got != want {
+		t.Fatalf("bundled Codex executable = %q, want %q", got, want)
+	}
 }
 
 func TestCodexAppWindowsAppPathCandidates(t *testing.T) {
@@ -3448,6 +3476,27 @@ func TestCodexAppProcessMatchesMainAndAppServer(t *testing.T) {
 			t.Fatalf("expected helper command not to match Codex App process: %s", command)
 		}
 	}
+
+	t.Run("linux", func(t *testing.T) {
+		withCodexAppPlatform(t, "linux")
+		for _, command := range []string{
+			"/usr/lib/chatgpt/ChatGPT",
+			"/usr/lib/chatgpt/resources/codex -c features.code_mode_host=true app-server --analytics-default-enabled",
+			`"/usr/lib64/chatgpt/resources/codex" "app-server"`,
+		} {
+			if !codexAppProcessMatches(command) {
+				t.Fatalf("expected command to match Linux ChatGPT process: %s", command)
+			}
+		}
+		for _, command := range []string{
+			"/usr/lib/chatgpt/ChatGPT --type=renderer --user-data-dir=/home/test/.config/Codex",
+			"/usr/lib/chatgpt/resources/codex debug models --bundled",
+		} {
+			if codexAppProcessMatches(command) {
+				t.Fatalf("expected Linux helper command not to match ChatGPT process: %s", command)
+			}
+		}
+	})
 }
 
 func TestCodexAppCandidatesIncludeChatGPT(t *testing.T) {
@@ -3458,6 +3507,11 @@ func TestCodexAppCandidatesIncludeChatGPT(t *testing.T) {
 	}
 	if !slices.Contains(candidates, "/Applications/Codex.app") {
 		t.Fatalf("darwin candidates = %v, want legacy Codex app", candidates)
+	}
+
+	withCodexAppPlatform(t, "linux")
+	if candidates := codexAppLinuxAppCandidates(); !slices.Equal(candidates, []string{"/usr/lib/chatgpt/ChatGPT", "/usr/lib64/chatgpt/ChatGPT"}) {
+		t.Fatalf("linux candidates = %v, want official ChatGPT paths", candidates)
 	}
 
 	withCodexAppPlatform(t, "windows")
