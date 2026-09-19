@@ -811,6 +811,16 @@ func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecu
 	return info, resolved, err
 }
 
+// requirePromptForRedirectedOutput errors when interactive input is
+// impossible: stdout is redirected and no prompt was given. Pure function
+// (no syscalls) so the policy is unit testable.
+func requirePromptForRedirectedOutput(prompt string, stdoutIsTerminal bool, model string) error {
+	if !stdoutIsTerminal && prompt == "" {
+		return fmt.Errorf("interactive mode requires a terminal. To redirect output, pass the prompt directly: ollama run %s \"your prompt\" > output.txt", model)
+	}
+	return nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -886,9 +896,15 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(prompts) > 0 {
 		interactive = false
 	}
-	// Be quiet if we're redirecting to a pipe or file
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
+	// Be quiet if we're redirecting to a pipe or file. Without a terminal and
+	// without a prompt there is nothing to run, so abort with guidance
+	// instead of corrupting the redirected output with interactive sequences.
+	stdoutIsTerminal := term.IsTerminal(int(os.Stdout.Fd()))
+	if !stdoutIsTerminal {
 		interactive = false
+	}
+	if err := requirePromptForRedirectedOutput(opts.Prompt, stdoutIsTerminal, args[0]); err != nil {
+		return err
 	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
