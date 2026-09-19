@@ -2338,6 +2338,26 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 		return 0, nil, "", ""
 	}
 
+	// Thinking switched off is not "no preference": it is an answer, and the
+	// model's own think_budget parameter must not overrule it. Without this the
+	// fallback below armed the model's budget on a request that asked for no
+	// reasoning at all -- 25,600 tokens for a `max` parameter against a 32,000
+	// num_predict -- which leaves the runner watching for a thinking block it
+	// was told would not exist, and able to write the forced-close message into
+	// a response whose caller wants no reasoning in it.
+	//
+	// Bool() is the predicate rather than a comparison against false, because
+	// thinking is switched off by more than one route and they do not agree on
+	// the value: `think: false` from the native API, `reasoning_effort: "none"`
+	// from the OpenAI-compatible one (thinkFromReasoningEffort turns it into the
+	// same bool), and `think: 0`, which Bool() already reads as off because a
+	// budget of no tokens is not a budget. A nil think is left alone -- that is
+	// a caller who said nothing, not one who said no, and a model with no
+	// thinking tags is already stopped by the check below.
+	if think != nil && !think.Bool() {
+		return 0, nil, "", ""
+	}
+
 	start, end = parsers.ThinkingTagsForParser(builtinParser)
 	if start == "" || end == "" {
 		start, end = templateStart, templateEnd
@@ -2372,6 +2392,13 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 // arrives — so the count is left at zero and omitted, and the responses report
 // the figure that actually applied.
 func thinkBudgetForShow(think *api.ThinkValue, options map[string]any) (*api.ThinkValue, int) {
+	// The same answer the completion path gives, for the same reason: asked
+	// about a think value that switches thinking off, the model's own
+	// think_budget is not what would apply.
+	if think != nil && !think.Bool() {
+		return nil, 0
+	}
+
 	numCtx, _ := optionAsInt(options["num_ctx"])
 	numPredict, _ := optionAsInt(options["num_predict"])
 	window := api.ThinkBudgetWindow(numCtx, numPredict)
