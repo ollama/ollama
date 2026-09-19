@@ -22,18 +22,19 @@ func canonicalQuantType(quantType string) string {
 
 // modelConfig represents the HuggingFace config.json structure
 type modelConfig struct {
-	Architectures         []string `json:"architectures"`
-	ModelType             string   `json:"model_type"`
-	HiddenSize            int      `json:"hidden_size"`
-	NumHiddenLayers       int      `json:"num_hidden_layers"`
-	MaxPositionEmbeddings int      `json:"max_position_embeddings"`
-	IntermediateSize      int      `json:"intermediate_size"`
-	NumAttentionHeads     int      `json:"num_attention_heads"`
-	NumKeyValueHeads      int      `json:"num_key_value_heads"`
-	VocabSize             int      `json:"vocab_size"`
-	RMSNormEps            float64  `json:"rms_norm_eps"`
-	RopeTheta             float64  `json:"rope_theta"`
-	TorchDtype            string   `json:"torch_dtype"`
+	Architectures         []string     `json:"architectures"`
+	ModelType             string       `json:"model_type"`
+	HiddenSize            int          `json:"hidden_size"`
+	NumHiddenLayers       int          `json:"num_hidden_layers"`
+	MaxPositionEmbeddings int          `json:"max_position_embeddings"`
+	IntermediateSize      int          `json:"intermediate_size"`
+	NumAttentionHeads     int          `json:"num_attention_heads"`
+	NumKeyValueHeads      int          `json:"num_key_value_heads"`
+	VocabSize             int          `json:"vocab_size"`
+	RMSNormEps            float64      `json:"rms_norm_eps"`
+	RopeTheta             float64      `json:"rope_theta"`
+	TorchDtype            string       `json:"torch_dtype"`
+	EncoderConfig         *modelConfig `json:"encoder_config"`
 	TextConfig            *struct {
 		HiddenSize            int `json:"hidden_size"`
 		MaxPositionEmbeddings int `json:"max_position_embeddings"`
@@ -41,7 +42,7 @@ type modelConfig struct {
 	} `json:"text_config"`
 }
 
-// getSafetensorsLLMInfo extracts model information from safetensors LLM models.
+// getSafetensorsLLMInfo extracts model information from safetensors language models.
 // It reads the config.json layer and returns a map compatible with GGML's KV format.
 func getSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
 	mf, err := manifest.ParseNamedManifest(name)
@@ -87,6 +88,11 @@ func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map
 		arch = strings.ToLower(hfArch)
 		arch = strings.TrimSuffix(arch, "forcausallm")
 		arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+	}
+	// GLiNER wraps the transformer dimensions in encoder_config. Keep the
+	// architecture name while reporting the encoder's actual context limit.
+	if arch == "gliner" && config.EncoderConfig != nil {
+		config = *config.EncoderConfig
 	}
 
 	// Use text_config values if they exist (for multimodal models)

@@ -890,6 +890,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	if slices.Contains(m.Capabilities(), model.CapabilityExtraction) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "extraction models do not support embeddings; use /api/extract"})
+		return
+	}
+
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -1099,6 +1104,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	m, err := GetModel(name.String())
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	if slices.Contains(m.Capabilities(), model.CapabilityExtraction) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "extraction models do not support embeddings; use /api/extract"})
 		return
 	}
 
@@ -1457,8 +1467,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		QuantizationLevel: m.Config.FileType,
 	}
 
-	// For safetensors LLM models, populate details from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// For safetensors language models, populate details from config.json.
+	if m.Config.ModelFormat == "safetensors" && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "extraction")) {
 		if info, err := getSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
@@ -1569,8 +1579,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	// For safetensors LLM models, populate ModelInfo from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// Safetensors language models have no GGUF layer to introspect.
+	if m.Config.ModelFormat == "safetensors" && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "extraction")) {
 		if info, err := getSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
 		}
@@ -1927,6 +1937,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
+	r.POST("/api/extract", s.ExtractHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
 	// Inference (OpenAI compatibility)

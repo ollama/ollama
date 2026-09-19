@@ -8,6 +8,7 @@ const (
 	CapabilityInsert     = Capability("insert")
 	CapabilityVision     = Capability("vision")
 	CapabilityEmbedding  = Capability("embedding")
+	CapabilityExtraction = Capability("extraction")
 	CapabilityThinking   = Capability("thinking")
 	CapabilityImage      = Capability("image")
 	CapabilityAudio      = Capability("audio")

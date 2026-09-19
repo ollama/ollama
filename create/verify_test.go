@@ -4,7 +4,18 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/mlxrunner"
 )
+
+func TestGLiNERArchitectureRegistration(t *testing.T) {
+	if !mlxrunner.SupportsArchitecture("GLiNER") {
+		t.Fatal("GLiNER must be accepted by model import validation")
+	}
+	if mlxrunner.SupportsDraftArchitecture("GLiNER") {
+		t.Fatal("GLiNER must not be accepted as a draft model")
+	}
+}
 
 func TestValidateMLXModelRejectsUnsupportedArchitecture(t *testing.T) {
 	err := validateMLXSource(sourceModelConfig{Architectures: []string{"UnsupportedForCausalLM"}}, false, MLXValidationOptions{})
