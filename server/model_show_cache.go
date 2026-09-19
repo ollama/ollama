@@ -88,6 +88,7 @@ type modelShowCache struct {
 type modelShowLocalKey struct {
 	Model   string
 	Verbose bool
+	Think   string
 }
 
 type modelShowLocalEntry struct {
@@ -524,6 +525,29 @@ func modelShowStatusError(resp *http.Response, body []byte) error {
 // modelShowLocalKeyForRequest normalizes a local show request to the canonical
 // on-disk model name and returns the current manifest digest used to validate
 // the cached entry.
+// modelShowThinkKey renders the think value into the cache key. The response
+// carries think_budget and think_budget_tokens, and those are answers about the
+// think value the caller intends to send, so two requests differing only in
+// think are two different questions and must not share a slot.
+//
+// ThinkValue.String() cannot serve here: it renders false, a nil value and an
+// integer budget all as "", which is precisely the collision to avoid -- it
+// would let an answer cached for thinking-on be served to a request that
+// switched thinking off, reporting a budget that will not apply. The marshalled
+// form is total and distinguishes every case.
+func modelShowThinkKey(think *api.ThinkValue) string {
+	if think == nil {
+		return ""
+	}
+	b, err := think.MarshalJSON()
+	if err != nil {
+		// Unkeyable: take a slot no valid value can render to rather than
+		// sharing one.
+		return "\x00unkeyable"
+	}
+	return string(b)
+}
+
 func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, string, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
@@ -542,6 +566,7 @@ func modelShowLocalKeyForRequest(req api.ShowRequest) (modelShowLocalKey, string
 	return modelShowLocalKey{
 		Model:   name.String(),
 		Verbose: req.Verbose,
+		Think:   modelShowThinkKey(req.Think),
 	}, mf.Digest(), nil
 }
 
