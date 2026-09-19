@@ -108,6 +108,21 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+func TestGLiNERRequiresFloat32(t *testing.T) {
+	cfg := sourceModelConfig{Architectures: []string{"GLiNER"}}
+	inv := newInventory(cfg, map[string]string{"weight": "F32"})
+	if _, err := Classify(inv, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Classify(inv, "int4"); err == nil {
+		t.Fatal("accepted quantization")
+	}
+	inv = newInventory(cfg, map[string]string{"weight": "F16"})
+	if _, err := Classify(inv, ""); err == nil {
+		t.Fatal("accepted float16")
+	}
+}
+
 func TestClassifyErrors(t *testing.T) {
 	tests := []struct {
 		name      string

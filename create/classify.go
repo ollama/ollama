@@ -41,6 +41,16 @@ type Classification struct {
 // quantization from the user's requested type, rejecting requests that are not
 // allowed for the kind.
 func Classify(inv Inventory, requested string) (Classification, error) {
+	if inv.Config.Architecture() == "GLiNER" && (requested != "" || detectKind(inv) != SourceFloat) {
+		return Classification{}, fmt.Errorf("GLiNER currently requires unquantized floating-point weights")
+	}
+	if inv.Config.Architecture() == "GLiNER" {
+		for _, name := range sortedTensorNames(inv) {
+			if inv.Tensors[name].Dtype != "F32" {
+				return Classification{}, fmt.Errorf("GLiNER currently requires float32 weights; re-export with scripts/export_gliner.py")
+			}
+		}
+	}
 	requested, err := normalizeRequested(requested)
 	if err != nil {
 		return Classification{}, err

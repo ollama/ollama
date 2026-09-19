@@ -97,12 +97,13 @@ func RegisterDraft(arch string, fn func(root *Root, target Model) (DraftModel, e
 	draftRegistry[arch] = fn
 }
 
-// SupportsArchitecture reports whether a target model constructor is registered.
+// SupportsArchitecture reports whether a generation or extraction model constructor is registered.
 func SupportsArchitecture(arch string) bool {
 	mu.Lock()
 	defer mu.Unlock()
-	_, ok := registry[arch]
-	return ok
+	_, generation := registry[arch]
+	_, extraction := extractors[arch]
+	return generation || extraction
 }
 
 // SupportsDraftArchitecture reports whether a draft model constructor is registered.

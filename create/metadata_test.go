@@ -102,6 +102,11 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 		wantCaps     []string
 	}{
 		{
+			name:     "gliner extraction",
+			config:   `{"architectures":["GLiNER"],"model_type":"gliner"}`,
+			wantCaps: []string{"extraction"},
+		},
+		{
 			name:         "qwen3",
 			config:       `{"architectures":["Qwen3ForCausalLM"]}`,
 			wantParser:   "qwen3",
