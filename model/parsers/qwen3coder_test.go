@@ -343,6 +343,66 @@ func TestQwenParserStreaming(t *testing.T) {
 				},
 			},
 		},
+		{
+			// regression test for <https://github.com/ollama/ollama/issues/18530>:
+			// the model sometimes writes a preamble sentence and omits the
+			// <tool_call> opener while still emitting <function=...></function>
+			// and the closing </tool_call>. Without recognizing "<function=" as an
+			// implicit opener, this whole block was silently passed through as
+			// plain content and the tool call was lost.
+			desc: "implicit tool call opener: model omits <tool_call> after a preamble",
+			steps: []step{
+				{
+					input: "I will first check for all Markdown files.\n\n<function=glob>\n<parameter=pattern>\n**/*.md\n</parameter>\n</function>\n</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "I will first check for all Markdown files."},
+						qwenEventRawToolCall{raw: "<function=glob>\n<parameter=pattern>\n**/*.md\n</parameter>\n</function>\n"},
+					},
+				},
+			},
+		},
+		{
+			desc: "implicit tool call opener: no preamble, straight into <function=",
+			steps: []step{
+				{
+					input: "<function=read>\n<parameter=path>\nfoo.txt\n</parameter>\n</function>\n</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=read>\n<parameter=path>\nfoo.txt\n</parameter>\n</function>\n"},
+					},
+				},
+			},
+		},
+		{
+			desc: "implicit tool call opener: split across chunks",
+			steps: []step{
+				{
+					input:      "before<funct",
+					wantEvents: []qwenEvent{qwenEventContent{content: "before"}},
+				},
+				{
+					input:      "ion=read><parameter=path>foo</paramet",
+					wantEvents: []qwenEvent{},
+				},
+				{
+					input: "er></function></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventRawToolCall{raw: "<function=read><parameter=path>foo</parameter></function>"},
+					},
+				},
+			},
+		},
+		{
+			desc: "a real <function= is still recognized alongside plain preceding content",
+			steps: []step{
+				{
+					input: "abc<function=x></function></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "abc"},
+						qwenEventRawToolCall{raw: "<function=x></function>"},
+					},
+				},
+			},
+		},
 	}
 
 	anyOnlies := false
