@@ -1430,6 +1430,40 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 			wantTags:   true,
 		},
 		{
+			// Thinking switched off must not arm a budget from the model's own
+			// think_budget parameter. Every way of switching it off arrives here
+			// as a ThinkValue whose Bool() is false, and each one reached the
+			// fallback below and came back with the model's budget armed -- so a
+			// forced-close message could be written into a response whose caller
+			// asked for no reasoning at all.
+			name:       "think:false does not inherit the model's think_budget",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: false},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkValue{Value: "max"}},
+			wantBudget: 0,
+			wantTags:   false,
+		},
+		{
+			// reasoning_effort:"none" on the OpenAI-compatible route, which
+			// thinkFromReasoningEffort turns into exactly the value above.
+			name:       "reasoning_effort none does not inherit the model's think_budget",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: false},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
+			wantBudget: 0,
+			wantTags:   false,
+		},
+		{
+			// A zero token count is not a budget of zero, it is "off": Bool()
+			// already reads it that way, and the budget has to agree.
+			name:       "think:0 does not inherit the model's think_budget",
+			parser:     thinkingParser,
+			think:      &api.ThinkValue{Value: 0},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: "high"}},
+			wantBudget: 0,
+			wantTags:   false,
+		},
+		{
 			name:       "the model think_budget level resolves against num_predict too",
 			parser:     thinkingParser,
 			think:      &api.ThinkValue{Value: true},
