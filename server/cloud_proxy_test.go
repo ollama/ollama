@@ -316,3 +316,26 @@ func (r *chunkRecorder) Write(p []byte) (int, error) {
 	r.chunks = append(r.chunks, cp)
 	return len(p), nil
 }
+
+// zeroByteReader returns zero bytes on read without error (violates io.Reader contract)
+type zeroByteReader struct{}
+
+func (r *zeroByteReader) Read(p []byte) (int, error) {
+	// Simulate a reader that returns zero bytes with no error (e.g., broken cloud API)
+	return 0, nil
+}
+
+func TestCopyProxyResponseBody_HandleZeroByteReader(t *testing.T) {
+	rec := &chunkRecorder{header: http.Header{}}
+	src := &zeroByteReader{}
+
+	// This should not hang or infinite loop
+	err := copyProxyResponseBody(rec, src)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(rec.chunks) != 0 {
+		t.Fatalf("expected no data written for zero-byte reader, got %d chunks", len(rec.chunks))
+	}
+}
