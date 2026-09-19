@@ -421,6 +421,11 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
+	if err := llm.AddRunnerToJob(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("assign mlx runner to runner job: %w", err)
+	}
 	c.cmd = cmd
 
 	// Reap subprocess when it exits

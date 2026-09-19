@@ -437,6 +437,12 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	if err = cmd.Start(); err != nil {
 		return nil, 0, err
 	}
+
+	if err = AddRunnerToJob(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, 0, fmt.Errorf("assign llama-server to runner job: %w", err)
+	}
 	return cmd, port, nil
 }
 
