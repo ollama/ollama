@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [nika](https://github.com/supernovae-st/nika) - Intent-as-code AI workflows against local models: reviewable YAML DAGs, cost and permit checks before any token is spent, tamper-evident traces (Ollama works out of the box)
 
 ### Productivity & Apps
 
