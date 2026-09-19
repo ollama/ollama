@@ -473,9 +473,9 @@ func quoteGemma4BareKeys(s string) string {
 
 		keyEnd := gemma4BareKeyEnd(s, i)
 		if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
-			sb.WriteByte('"')
-			sb.WriteString(s[i:keyEnd])
-			sb.WriteByte('"')
+			key := strings.TrimRightFunc(s[i:keyEnd], unicode.IsSpace)
+			quoted, _ := json.Marshal(key)
+			sb.Write(quoted)
 			sb.WriteByte(':')
 			i = keyEnd + 1
 			continue
@@ -489,7 +489,7 @@ func gemma4BareKeyEnd(s string, start int) int {
 	i := start
 	for i < len(s) {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+		if !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r)) {
 			break
 		}
 		i += size
