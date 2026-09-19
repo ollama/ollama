@@ -315,10 +315,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						maybeLevel = args[2]
 					}
 					if maybeLevel != "" {
-						// TODO(drifkin): validate the level, could be model dependent
-						// though... It will also be validated on the server once a call is
-						// made.
-						thinkValue.Value = maybeLevel
+						switch maybeLevel {
+						case "true":
+							thinkValue.Value = true
+						case "false":
+							thinkValue.Value = false
+						default:
+							thinkValue.Value = maybeLevel
+						}
 					}
 					opts.Think = &thinkValue
 					thinkExplicitlySet = true
