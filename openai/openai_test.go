@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -1117,6 +1118,40 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 
 			if result.TopLogprobs != tt.topLogprobs {
 				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
+			}
+		})
+	}
+}
+
+func TestFromChatRequest_KeepAlive(t *testing.T) {
+	// keep_alive is how an OpenAI-API client releases a model; 0 unloads
+	// immediately and a negative value pins it. Both arrive as JSON numbers.
+	for _, tt := range []struct {
+		name string
+		body string
+		want *api.Duration
+	}{
+		{"absent", `{"model":"m","messages":[]}`, nil},
+		{"unload", `{"model":"m","messages":[],"keep_alive":0}`, &api.Duration{Duration: 0}},
+		{"forever", `{"model":"m","messages":[],"keep_alive":-1}`, &api.Duration{Duration: time.Duration(math.MaxInt64)}},
+		{"seconds", `{"model":"m","messages":[],"keep_alive":30}`, &api.Duration{Duration: 30 * time.Second}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.body), &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch {
+			case tt.want == nil && got.KeepAlive != nil:
+				t.Fatalf("expected no KeepAlive, got %v", got.KeepAlive)
+			case tt.want != nil && got.KeepAlive == nil:
+				t.Fatal("expected KeepAlive to be carried through, got nil")
+			case tt.want != nil && got.KeepAlive.Duration != tt.want.Duration:
+				t.Errorf("KeepAlive = %v, want %v", got.KeepAlive.Duration, tt.want.Duration)
 			}
 		})
 	}

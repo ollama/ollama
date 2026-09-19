@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	_ "embed"
@@ -11,6 +13,7 @@ import (
 	"io"
 	"math"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"runtime"
 	"slices"
@@ -38,6 +41,8 @@ type flagOptions struct {
 	warmup       *int
 	promptTokens *int
 	numCtx       *int
+	openaiURL    *string
+	apiKey       *string
 }
 
 type Metrics struct {
@@ -256,19 +261,20 @@ func benchmarkKeepAlive(fOpt flagOptions) *api.Duration {
 	return nil
 }
 
+// Shared by both transports so a given variation is byte-identical on each.
+func benchPromptContent(fOpt flagOptions, variation int, plan promptPlan) string {
+	if *fOpt.promptTokens > 0 {
+		return generateCodePrompt(plan, variation)
+	}
+	// A leading unique nonce defeats prefix cache reuse across runs.
+	return nonceHeader(promptNonce(nonceLetters)) + *fOpt.prompt
+}
+
 // buildChatRequest builds a single-message benchmark request through the
 // model's chat template. plan is the calibrated prompt shape for generated
 // prompts; ignored for -p prompts.
 func buildChatRequest(model string, fOpt flagOptions, imgData api.ImageData, variation int, plan promptPlan) *api.ChatRequest {
-	var content string
-	if *fOpt.promptTokens > 0 {
-		content = generateCodePrompt(plan, variation)
-	} else {
-		// A leading unique nonce defeats prefix cache reuse across runs.
-		content = nonceHeader(promptNonce(nonceLetters)) + *fOpt.prompt
-	}
-
-	msg := api.Message{Role: "user", Content: content}
+	msg := api.Message{Role: "user", Content: benchPromptContent(fOpt, variation, plan)}
 	if imgData != nil {
 		msg.Images = []api.ImageData{imgData}
 	}
@@ -332,7 +338,10 @@ func measurePromptTokens(ctx context.Context, client *api.Client, model string, 
 // TODO: Replace this chat-based calibration with the token-count API when
 // cmd/bench can depend on it. Keep the replacement behind this function so
 // sizing remains outside warmups and timed requests.
-func calibratePrompt(ctx context.Context, client *api.Client, model string, fOpt flagOptions, imgData api.ImageData) (promptPlan, error) {
+//
+// measurePlan is the only transport-specific step, so the OpenAI path
+// calibrates without an Ollama client.
+func calibratePrompt(measurePlan func(promptPlan) (int, error), model string, fOpt flagOptions) (promptPlan, error) {
 	targetTokens := *fOpt.promptTokens
 	maxWords := fullCodePromptWords()
 
@@ -341,7 +350,7 @@ func calibratePrompt(ctx context.Context, client *api.Client, model string, fOpt
 		if tokens, ok := measured[words]; ok {
 			return tokens, nil
 		}
-		tokens, err := measurePromptTokens(ctx, client, model, fOpt, imgData, promptPlan{words: words})
+		tokens, err := measurePlan(promptPlan{words: words})
 		if err != nil {
 			return 0, fmt.Errorf("cannot measure prompt tokens with model '%s': %w", model, err)
 		}
@@ -412,7 +421,7 @@ func calibratePrompt(ctx context.Context, client *api.Client, model string, fOpt
 	// Confirm the padded prompt, and correct once if the model's tokenizer
 	// prices pad letters at anything other than one token each.
 	for range 2 {
-		actual, err := measurePromptTokens(ctx, client, model, fOpt, imgData, plan)
+		actual, err := measurePlan(plan)
 		if err != nil {
 			return promptPlan{}, fmt.Errorf("cannot measure prompt tokens with model '%s': %w", model, err)
 		}
@@ -510,13 +519,18 @@ func outputModelInfo(w io.Writer, format string, info ModelInfo) {
 		info.Name, params, quant, family, memStr, ctxStr)
 }
 
+// Rate steps are tokens/sec; variants suffix the base name (prefill_server).
+func isRateStep(step string) bool {
+	return strings.HasPrefix(step, "prefill") || strings.HasPrefix(step, "generate")
+}
+
 func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) {
 	switch format {
 	case "benchstat":
 		for _, m := range metrics {
-			if m.Step == "generate" || m.Step == "prefill" {
+			if isRateStep(m.Step) {
 				var promptCounts string
-				if m.Step == "prefill" {
+				if strings.HasPrefix(m.Step, "prefill") {
 					promptCounts = fmt.Sprintf(" %d processed-prompt-token", m.Count)
 					if m.CachedPromptCount != nil {
 						promptCounts += fmt.Sprintf(" %d cached-prompt-token", *m.CachedPromptCount)
@@ -545,7 +559,7 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 			if m.CachedPromptCount != nil {
 				cachedPromptCount = fmt.Sprint(*m.CachedPromptCount)
 			}
-			if m.Step == "generate" || m.Step == "prefill" {
+			if isRateStep(m.Step) {
 				var nsPerToken float64
 				var tokensPerSec float64
 				if m.Count > 0 {
@@ -564,6 +578,29 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 
 func BenchmarkModel(fOpt flagOptions) error {
 	models := strings.Split(*fOpt.models, ",")
+	useOpenAI := fOpt.openaiURL != nil && *fOpt.openaiURL != ""
+
+	var out io.Writer = os.Stdout
+	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
+		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
+			return err
+		}
+		defer f.Close()
+		out = f
+	}
+
+	outputFormatHeader(out, *fOpt.format, *fOpt.verbose)
+
+	// Log prompt-tokens info in debug mode
+	if *fOpt.debug && *fOpt.promptTokens > 0 {
+		fmt.Fprintf(os.Stderr, "Generated code prompt of exactly %d tokens (unique per request)\n", *fOpt.promptTokens)
+	}
+
+	if useOpenAI {
+		return benchmarkOpenAI(fOpt, models, out)
+	}
 
 	var imgData api.ImageData
 	var err error
@@ -585,24 +622,6 @@ func BenchmarkModel(fOpt flagOptions) error {
 		return err
 	}
 
-	var out io.Writer = os.Stdout
-	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
-		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0o644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
-			return err
-		}
-		defer f.Close()
-		out = f
-	}
-
-	outputFormatHeader(out, *fOpt.format, *fOpt.verbose)
-
-	// Log prompt-tokens info in debug mode
-	if *fOpt.debug && *fOpt.promptTokens > 0 {
-		fmt.Fprintf(os.Stderr, "Generated code prompt of exactly %d tokens (unique per request)\n", *fOpt.promptTokens)
-	}
-
 	for _, model := range models {
 		// Fetch model info
 		infoCtx, infoCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -614,7 +633,9 @@ func BenchmarkModel(fOpt flagOptions) error {
 		var plan promptPlan
 		if *fOpt.promptTokens > 0 {
 			calCtx, calCancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
-			plan, err = calibratePrompt(calCtx, client, model, fOpt, imgData)
+			plan, err = calibratePrompt(func(p promptPlan) (int, error) {
+				return measurePromptTokens(calCtx, client, model, fOpt, imgData, p)
+			}, model, fOpt)
 			calCancel()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
@@ -830,6 +851,375 @@ func unloadModel(client *api.Client, model string, timeout int) {
 	})
 }
 
+// openaiMetrics holds performance data extracted from an OpenAI-compatible streaming response.
+type openaiMetrics struct {
+	PromptTokens     int
+	CompletionTokens int
+	TTFT             time.Duration
+	TotalDuration    time.Duration
+
+	// Server-reported timings (when available). Zero if not provided.
+	ServerPromptMS    float64
+	ServerPredictedMS float64
+	HasTimings        bool
+
+	// Server-side counts, which differ from the usage totals: a cache hit
+	// shrinks the prompt count, and Splash's decode count omits the
+	// speculative block emitted before the first token.
+	ServerPromptTokens    int
+	ServerPredictedTokens int
+	CachedTokens          int
+	HasCachedTokens       bool
+}
+
+func openaiGenerate(ctx context.Context, baseURL, apiKey, model string, fOpt flagOptions, variation int, plan promptPlan, keepAlive *float64) (*openaiMetrics, error) {
+	body := map[string]any{
+		"model":      model,
+		"stream":     true,
+		"max_tokens": *fOpt.maxTokens,
+		"messages": []map[string]string{
+			{"role": "user", "content": benchPromptContent(fOpt, variation, plan)},
+		},
+	}
+	// Always sent. Omitting it lets each server pick its own default (Splash
+	// 1.0, Ollama 0.8), so a requested temperature of 0 would not be greedy.
+	body["temperature"] = *fOpt.temperature
+	if fOpt.seed != nil && *fOpt.seed > 0 {
+		body["seed"] = *fOpt.seed
+	}
+	// Ollama extension so runs unload between models; others ignore it.
+	if keepAlive != nil {
+		body["keep_alive"] = *keepAlive
+	}
+	body["stream_options"] = map[string]any{"include_usage": true}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	metrics := &openaiMetrics{}
+	var ttftOnce sync.Once
+	chunkTokens := 0
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+					// vLLM spells it "reasoning", Splash "reasoning_content".
+					Reasoning        string `json:"reasoning"`
+					ReasoningContent string `json:"reasoning_content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				// Stock OpenAI; Splash and vLLM both report it.
+				PromptTokensDetails *struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+			} `json:"usage"`
+			// Splash. start_to_first_token excludes queueing; prefill.tokens
+			// excludes what the cache served.
+			Metrics *struct {
+				Prefill *struct {
+					Tokens int `json:"tokens"`
+				} `json:"prefill"`
+				Decode *struct {
+					Tokens int `json:"tokens"`
+				} `json:"decode"`
+				RequestLatency *struct {
+					StartToFirstTokenMS float64 `json:"start_to_first_token_ms"`
+					FirstTokenToDoneMS  float64 `json:"first_token_to_done_ms"`
+				} `json:"request_latency"`
+				Cache *struct {
+					MatchedTokens int `json:"matched_tokens"`
+				} `json:"cache"`
+			} `json:"metrics"`
+			// llama.cpp and Ollama. prompt_n excludes what cache_n served.
+			Timings *struct {
+				CacheN      int     `json:"cache_n"`
+				PromptN     int     `json:"prompt_n"`
+				PromptMS    float64 `json:"prompt_ms"`
+				PredictedN  int     `json:"predicted_n"`
+				PredictedMS float64 `json:"predicted_ms"`
+			} `json:"timings"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		if len(chunk.Choices) > 0 {
+			text := cmp.Or(chunk.Choices[0].Delta.Content, chunk.Choices[0].Delta.Reasoning, chunk.Choices[0].Delta.ReasoningContent)
+			if text != "" {
+				ttftOnce.Do(func() {
+					metrics.TTFT = time.Since(start)
+				})
+				chunkTokens++
+				if *fOpt.debug {
+					fmt.Fprint(os.Stderr, text)
+				}
+			}
+		}
+
+		if chunk.Usage != nil {
+			metrics.PromptTokens = chunk.Usage.PromptTokens
+			metrics.CompletionTokens = chunk.Usage.CompletionTokens
+			if d := chunk.Usage.PromptTokensDetails; d != nil {
+				metrics.CachedTokens = d.CachedTokens
+				metrics.HasCachedTokens = true
+			}
+		}
+
+		// Only the server can separate a cache hit from real prompt processing.
+		switch {
+		case chunk.Timings != nil:
+			metrics.ServerPromptTokens = chunk.Timings.PromptN
+			metrics.ServerPromptMS = chunk.Timings.PromptMS
+			metrics.ServerPredictedTokens = chunk.Timings.PredictedN
+			metrics.ServerPredictedMS = chunk.Timings.PredictedMS
+			metrics.CachedTokens = chunk.Timings.CacheN
+			metrics.HasCachedTokens = true
+			metrics.HasTimings = true
+		case chunk.Metrics != nil && chunk.Metrics.RequestLatency != nil:
+			if p := chunk.Metrics.Prefill; p != nil {
+				metrics.ServerPromptTokens = p.Tokens
+			}
+			metrics.ServerPromptMS = chunk.Metrics.RequestLatency.StartToFirstTokenMS
+			if d := chunk.Metrics.Decode; d != nil {
+				metrics.ServerPredictedTokens = d.Tokens
+			}
+			metrics.ServerPredictedMS = chunk.Metrics.RequestLatency.FirstTokenToDoneMS
+			if c := chunk.Metrics.Cache; c != nil {
+				metrics.CachedTokens = c.MatchedTokens
+				metrics.HasCachedTokens = true
+			}
+			metrics.HasTimings = true
+		}
+	}
+
+	metrics.TotalDuration = time.Since(start)
+
+	if *fOpt.debug {
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if metrics.CompletionTokens == 0 {
+		metrics.CompletionTokens = chunkTokens
+	}
+
+	return metrics, nil
+}
+
+// Capped at one token: calibration only needs the prompt side.
+func measureOpenAIPromptTokens(ctx context.Context, baseURL, apiKey, model string, fOpt flagOptions, plan promptPlan) (int, error) {
+	maxTokens := 1
+	fOpt.maxTokens = &maxTokens
+	m, err := openaiGenerate(ctx, baseURL, apiKey, model, fOpt, 0, plan, nil)
+	if err != nil {
+		return 0, err
+	}
+	if m.PromptTokens == 0 {
+		return 0, errors.New("server reported no prompt_tokens; cannot calibrate prompt size")
+	}
+	return m.PromptTokens, nil
+}
+
+func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
+	apiKey := *fOpt.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+
+	keepAliveForever := float64(-1)
+	keepAliveUnload := float64(0)
+
+	for _, model := range models {
+		info := ModelInfo{Name: model}
+		outputModelInfo(out, *fOpt.format, info)
+
+		// Size the generated prompt against this server, over the same API the
+		// timed requests use, so no Ollama endpoint is required.
+		var plan promptPlan
+		if *fOpt.promptTokens > 0 {
+			calCtx, calCancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+			p, err := calibratePrompt(func(p promptPlan) (int, error) {
+				return measureOpenAIPromptTokens(calCtx, *fOpt.openaiURL, apiKey, model, fOpt, p)
+			}, model, fOpt)
+			calCancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				return err
+			}
+			plan = p
+			if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Prompt resolved to %d tokens for %s: %d problems plus %d pad tokens\n",
+					*fOpt.promptTokens, model, len(codePromptProblems(plan.words, 0)), plan.pad)
+			}
+		}
+
+		for i := range *fOpt.warmup {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+			_, err := openaiGenerate(ctx, *fOpt.openaiURL, apiKey, model, fOpt, i, plan, &keepAliveForever)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: Warmup %d/%d for %s failed: %v\n", i+1, *fOpt.warmup, model, err)
+			} else if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
+			}
+		}
+
+		hasTimings := false
+		shortCount := 0
+		for epoch := range *fOpt.epochs {
+			var oaiMetrics *openaiMetrics
+			var err error
+			short := false
+
+			isLast := epoch == *fOpt.epochs-1
+			ka := &keepAliveForever
+			if isLast {
+				ka = &keepAliveUnload
+			}
+
+			const maxRetries = 3
+			for attempt := range maxRetries + 1 {
+				variation := benchmarkPromptVariation(*fOpt.warmup, *fOpt.epochs, epoch, attempt)
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+				oaiMetrics, err = openaiGenerate(ctx, *fOpt.openaiURL, apiKey, model, fOpt, variation, plan, ka)
+				cancel()
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Couldn't generate with model '%s': %v\n", model, err)
+					break
+				}
+
+				short = *fOpt.maxTokens > 0 && oaiMetrics.CompletionTokens < *fOpt.maxTokens
+				if !short || attempt == maxRetries {
+					break
+				}
+
+				if *fOpt.debug {
+					fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying with different prompt (attempt %d/%d)\n",
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, attempt+1, maxRetries)
+				}
+			}
+
+			if err != nil || oaiMetrics == nil {
+				continue
+			}
+
+			if short {
+				shortCount++
+				if *fOpt.debug {
+					fmt.Fprintf(os.Stderr, "WARNING: Short response (%d/%d tokens) after %d retries for epoch %d\n",
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, maxRetries, epoch+1)
+				}
+			}
+
+			// Client-derived everywhere; within 0.1% of llama-server's own figure.
+			metrics := []Metrics{
+				{
+					Model:    model,
+					Step:     "generate",
+					Count:    oaiMetrics.CompletionTokens,
+					Duration: oaiMetrics.TotalDuration - oaiMetrics.TTFT,
+				},
+			}
+
+			// Server-only: time-to-first-token also carries setup, queueing
+			// and load. A silent server gets no prefill row, just ttft.
+			if oaiMetrics.HasTimings {
+				hasTimings = true
+				prefill := Metrics{
+					Model:    model,
+					Step:     "prefill",
+					Count:    oaiMetrics.ServerPromptTokens,
+					Duration: time.Duration(oaiMetrics.ServerPromptMS * float64(time.Millisecond)),
+				}
+				if oaiMetrics.HasCachedTokens {
+					cached := oaiMetrics.CachedTokens
+					prefill.CachedPromptCount = &cached
+				}
+				metrics = append(metrics, prefill,
+					Metrics{
+						Model:    model,
+						Step:     "generate_server",
+						Count:    oaiMetrics.ServerPredictedTokens,
+						Duration: time.Duration(oaiMetrics.ServerPredictedMS * float64(time.Millisecond)),
+					},
+				)
+			}
+
+			metrics = append(metrics,
+				Metrics{
+					Model:    model,
+					Step:     "ttft",
+					Count:    1,
+					Duration: oaiMetrics.TTFT,
+				},
+				Metrics{
+					Model:    model,
+					Step:     "total",
+					Count:    1,
+					Duration: oaiMetrics.TotalDuration,
+				},
+			)
+
+			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+
+			if *fOpt.debug && *fOpt.promptTokens > 0 {
+				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual prompt_tokens: %d)\n",
+					*fOpt.promptTokens, oaiMetrics.PromptTokens)
+			}
+		}
+
+		if !hasTimings {
+			fmt.Fprintf(os.Stderr, "# NOTE: Server reported no timings; no prefill rate available (see ttft)\n")
+		}
+
+		if shortCount > 0 {
+			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
+				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
+		}
+	}
+
+	return nil
+}
+
 func readImage(filePath string) (api.ImageData, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -863,6 +1253,8 @@ func main() {
 		warmup:       flag.Int("warmup", 1, "Number of warmup requests before timing"),
 		promptTokens: flag.Int("prompt-tokens", 0, "Generate a prompt of exactly N tokens (0 = use -p prompt)"),
 		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
+		openaiURL:    flag.String("openai", "", "OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)"),
+		apiKey:       flag.String("api-key", "", "API key for OpenAI endpoint (default: OPENAI_API_KEY env)"),
 	}
 
 	flag.Usage = func() {
@@ -874,6 +1266,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3,llama3 -epochs 6\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n")
 	}
 	flag.Parse()
 
