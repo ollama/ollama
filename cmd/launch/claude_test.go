@@ -26,6 +26,64 @@ func TestClaudeIntegration(t *testing.T) {
 	})
 }
 
+func TestClaudeReadinessModel(t *testing.T) {
+	c := &Claude{}
+
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{name: "cloud model", model: "deepseek-v4-flash:0731-cloud[1m]", want: "deepseek-v4-flash:0731-cloud"},
+		{name: "local model", model: "gemma4[1m]", want: "gemma4"},
+		{name: "ordinary model", model: "gemma4", want: "gemma4"},
+		{name: "empty base", model: "[1m]", want: "[1m]"},
+		{name: "different suffix", model: "gemma4[200k]", want: "gemma4[200k]"},
+		{name: "case differs", model: "gemma4[1M]", want: "gemma4[1M]"},
+		{name: "suffix is not terminal", model: "gemma4[1m]-custom", want: "gemma4[1m]-custom"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := c.readinessModel(tt.model); got != tt.want {
+				t.Errorf("readinessModel(%q) = %q, want %q", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClaudeRuntimeModel(t *testing.T) {
+	c := &Claude{}
+
+	t.Run("appends 1m suffix for one-million-token cloud models", func(t *testing.T) {
+		got := c.runtimeModel("glm-5.3:cloud", []LaunchModel{{Name: "glm-5.3:cloud", ContextLength: 1_048_576}})
+		if got != "glm-5.3:cloud[1m]" {
+			t.Fatalf("runtimeModel() = %q, want %q", got, "glm-5.3:cloud[1m]")
+		}
+	})
+
+	t.Run("keeps unsuffixed model for smaller cloud contexts", func(t *testing.T) {
+		got := c.runtimeModel("qwen3.5:cloud", []LaunchModel{{Name: "qwen3.5:cloud", ContextLength: 262_144}})
+		if got != "qwen3.5:cloud" {
+			t.Fatalf("runtimeModel() = %q, want %q", got, "qwen3.5:cloud")
+		}
+	})
+
+	t.Run("keeps local model unchanged", func(t *testing.T) {
+		got := c.runtimeModel("gemma4", []LaunchModel{{Name: "gemma4", ContextLength: 1_048_576}})
+		if got != "gemma4" {
+			t.Fatalf("runtimeModel() = %q, want %q", got, "gemma4")
+		}
+	})
+
+	t.Run("preserves existing suffix", func(t *testing.T) {
+		got := c.runtimeModel("glm-5.3:cloud[1m]", []LaunchModel{{Name: "glm-5.3:cloud", ContextLength: 1_048_576}})
+		if got != "glm-5.3:cloud[1m]" {
+			t.Fatalf("runtimeModel() = %q, want %q", got, "glm-5.3:cloud[1m]")
+		}
+	})
+}
+
 func TestClaudeFindPath(t *testing.T) {
 	c := &Claude{}
 
@@ -347,7 +405,7 @@ func TestClaudeEnvVars(t *testing.T) {
 		return m
 	}
 
-	got := envMap(c.envVars("llama3.2"))
+	got := envMap(c.envVars("llama3.2", nil))
 	for key, want := range map[string]string{
 		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
 		"ANTHROPIC_API_KEY":                   "",
@@ -388,7 +446,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	}
 
 	t.Run("maps all Claude model env vars to the provided model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("llama3.2"))
+		got := envMap(c.modelEnvVars("llama3.2", nil))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "llama3.2" {
 			t.Errorf("OPUS = %q, want llama3.2", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -407,7 +465,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	})
 
 	t.Run("supports empty model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars(""))
+		got := envMap(c.modelEnvVars("", nil))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "" {
 			t.Errorf("OPUS = %q, want empty", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -426,16 +484,32 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	})
 
 	t.Run("sets auto compact window for known cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("glm-5:cloud"))
+		got := envMap(c.modelEnvVars("glm-5:cloud", nil))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "202752" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 202752", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
 	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("unknown-model:cloud"))
+		got := envMap(c.modelEnvVars("unknown-model:cloud", nil))
 		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		}
+	})
+
+	t.Run("prefers resolved model context for cloud auto compact", func(t *testing.T) {
+		models := []LaunchModel{{Name: "glm-5.3:cloud", ContextLength: 1_048_576}}
+		got := envMap(c.modelEnvVars("glm-5.3:cloud", models))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "1048576" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 1048576", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		}
+	})
+
+	t.Run("sets compact window when model has 1m suffix", func(t *testing.T) {
+		models := []LaunchModel{{Name: "glm-5.3:cloud", ContextLength: 1_048_576}}
+		got := envMap(c.modelEnvVars("glm-5.3:cloud[1m]", models))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "1048576" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 1048576", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 }
