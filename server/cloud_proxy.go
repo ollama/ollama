@@ -264,7 +264,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 			"request_context_err", ctxErr,
 			"error", err,
 		)
-		return
+		panic(http.ErrAbortHandler)
 	}
 }
 
