@@ -316,6 +316,12 @@ components:
         model:
           type: string
           description: Model name used to generate this message
+        digest:
+          type: string
+          description: Full manifest digest of the local model used for this response. Only present for models served by this server; omitted for proxied cloud or remote model responses.
+        provider_version:
+          type: string
+          description: Version of the Ollama server serving this response. Only present for models served by this server; omitted for proxied cloud or remote model responses.
         created_at:
           type: string
           format: date-time
@@ -381,6 +387,12 @@ components:
         model:
           type: string
           description: Model name used for this stream event
+        digest:
+          type: string
+          description: Full manifest digest of the local model used for this stream event. Only present for models served by this server; omitted for proxied cloud or remote model responses.
+        provider_version:
+          type: string
+          description: Version of the Ollama server serving this stream event. Only present for models served by this server; omitted for proxied cloud or remote model responses.
         created_at:
           type: string
           format: date-time
