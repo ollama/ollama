@@ -25,6 +25,27 @@ type registryChallenge struct {
 	Scope   string
 }
 
+// trustedRealmHosts maps a registry host to the additional hosts it is allowed
+// to delegate token issuance to. Some registries serve their API and their
+// authentication endpoint from different hosts: the default Ollama registry
+// serves its API from registry.ollama.ai but issues tokens from ollama.com.
+var trustedRealmHosts = map[string][]string{
+	"registry.ollama.ai": {"ollama.com"},
+}
+
+// realmHostAllowed reports whether a token realm served from realmHost is
+// trusted for a registry that was contacted at originalHost. It is used to
+// permit known registry/auth host pairs while still rejecting arbitrary
+// cross-origin realms.
+func realmHostAllowed(originalHost, realmHost string) bool {
+	for _, host := range trustedRealmHosts[originalHost] {
+		if host == realmHost {
+			return true
+		}
+	}
+	return false
+}
+
 func (r registryChallenge) URL() (*url.URL, error) {
 	redirectURL, err := url.Parse(r.Realm)
 	if err != nil {
@@ -56,8 +77,10 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge, ori
 		return "", err
 	}
 
-	// Validate that the realm host matches the original request host to prevent sending tokens cross-origin.
-	if redirectURL.Host != originalHost {
+	// Validate that the realm host is allowed for the original request host to
+	// prevent sending tokens cross-origin. The realm host is accepted when it
+	// matches the original host or is a known host of the same registry.
+	if redirectURL.Host != originalHost && !realmHostAllowed(originalHost, redirectURL.Host) {
 		return "", fmt.Errorf("realm host %q does not match original host %q", redirectURL.Host, originalHost)
 	}
 
