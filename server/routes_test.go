@@ -958,6 +958,26 @@ func TestShowThinkBudget(t *testing.T) {
 			t.Errorf("expected no think budget tokens, got %d", resp.ThinkBudgetTokens)
 		}
 	})
+
+	t.Run("says nothing when the caller has switched thinking off", func(t *testing.T) {
+		// `think: false` is the only way to switch thinking off that reaches
+		// here: ThinkValue rejects 0 and "none" at the boundary with a 400, so
+		// the other spellings never get this far. The model still carries its
+		// own think_budget, and arming it anyway is the bug -- the completion
+		// path does not, and an /api/show that disagreed with it would be worse
+		// than no answer, because a caller writes its prompt from this number
+		// before it ever sends the request.
+		resp := showWithThink(t, &s, digest, "show-think-off",
+			map[string]any{"think_budget": "max", "num_ctx": 32768}, nil,
+			&api.ThinkValue{Value: false})
+
+		if resp.ThinkBudget != nil {
+			t.Errorf("expected no think budget, got %#v", resp.ThinkBudget)
+		}
+		if resp.ThinkBudgetTokens != 0 {
+			t.Errorf("expected no think budget tokens, got %d", resp.ThinkBudgetTokens)
+		}
+	})
 }
 
 func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
