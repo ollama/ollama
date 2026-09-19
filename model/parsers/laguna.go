@@ -337,13 +337,32 @@ func (p *LagunaParser) consumeStandaloneJSONTool(done bool) (progress bool, cont
 		return false, "", api.ToolCall{}, false, nil
 	}
 
-	if !done && !json.Valid([]byte(strings.TrimSpace(raw))) {
+	if !json.Valid([]byte(strings.TrimSpace(raw))) {
+		if done {
+			// Trailing incomplete JSON at end of stream is ordinary content,
+			// not a malformed tool call; don't abort the response with a
+			// parse error over it.
+			return false, "", api.ToolCall{}, false, nil
+		}
 		if before != "" {
 			p.buffer.Reset()
 			p.buffer.WriteString(acc[jsonIdx:])
 			return true, before, api.ToolCall{}, true, nil
 		}
 		return false, "", api.ToolCall{}, true, nil
+	}
+
+	// A standalone JSON object is a tool call only when its name field
+	// resolves to one of the declared tools. Ordinary JSON in content
+	// (config snippets, examples, structured answers that happen to use
+	// "name"/"arguments" keys) must be streamed through untouched instead
+	// of being swallowed into a fabricated call.
+	name, nameOk := lagunaToolCallName(raw)
+	if !nameOk {
+		return false, "", api.ToolCall{}, false, nil
+	}
+	if _, resolved := lagunaResolveToolName(name, p.tools); !resolved {
+		return false, "", api.ToolCall{}, false, nil
 	}
 
 	call, err = parseLagunaToolCall(raw, p.tools)
