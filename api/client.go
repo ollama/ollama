@@ -78,6 +78,9 @@ func ClientFromEnvironment() (*Client, error) {
 	}, nil
 }
 
+// NewClient creates a new [Client] with the given base URL and HTTP client.
+// Use [ClientFromEnvironment] to create a Client configured from the
+// OLLAMA_HOST environment variable instead.
 func NewClient(base *url.URL, http *http.Client) *Client {
 	return &Client{
 		base: base,
