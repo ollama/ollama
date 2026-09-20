@@ -79,8 +79,8 @@ func (l *inferenceRequestLogger) middleware(route string) gin.HandlerFunc {
 			}
 		}
 
-		c.Next()
 		l.log(route, method, scheme, host, contentType, body)
+		c.Next()
 	}
 }
 
