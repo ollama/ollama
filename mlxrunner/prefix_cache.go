@@ -32,7 +32,9 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
+	"os"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/ollama/ollama/logutil"
@@ -40,7 +42,21 @@ import (
 	"github.com/ollama/ollama/mlxrunner/cache"
 )
 
-const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
+// maxPagedOutBytes is the eviction threshold for paged-out snapshot memory.
+// The default of 8 GiB was tuned for high-memory machines; on a 16 GB Mac it
+// allowed the runner to grow to ~16 GB resident (weights + paged-out store +
+// buffers), starving the OS of wired memory. Configurable via
+// OLLAMA_MLX_MAX_PAGED_OUT_BYTES (bytes) so memory-constrained hosts can cap it.
+var maxPagedOutBytes int64 = func() int64 {
+	if v := os.Getenv("OLLAMA_MLX_MAX_PAGED_OUT_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			slog.Info("prefix cache: paged-out budget set from environment", "bytes", n)
+			return n
+		}
+		slog.Warn("prefix cache: invalid OLLAMA_MLX_MAX_PAGED_OUT_BYTES, using default", "value", v)
+	}
+	return 8 << 30 // 8 GiB
+}()
 
 type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
