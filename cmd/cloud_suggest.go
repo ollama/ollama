@@ -75,12 +75,21 @@ func cloudSuggestionName(name string, insecure bool) (string, bool) {
 	return ref.Base + ":cloud", true
 }
 
+// cloudSuggestionRetryCommand renders the command hinted at in
+// non-interactive errors for the plain CLI verbs ("run" and "pull").
+func cloudSuggestionRetryCommand(verb string) func(string) string {
+	return func(cloudName string) string {
+		return "ollama " + verb + " " + cloudName
+	}
+}
+
 // pullWithCloudSuggestion pulls `name`, and if the model's default tag
 // doesn't exist but a ":cloud" tag does, offers it: either interactively via
 // a confirmation prompt, or by augmenting the returned error when not at a
-// terminal. It returns the name that was actually pulled. `verb` is the
-// user-facing command ("run" or "pull") used in the hint text.
-func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, verb string) (string, error) {
+// terminal. It returns the name that was actually pulled. `retryCommand`
+// renders the command suggested in the non-interactive hint for a given
+// cloud model name.
+func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, retryCommand func(cloudName string) string) (string, error) {
 	// If a suggestion prompt may follow a failed pull, erase the failed
 	// attempt's progress display instead of leaving its "pulling manifest"
 	// line to stack up against the accepted pull's identical one.
@@ -92,6 +101,24 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 		return name, nil
 	}
 
+	cloudName, err := suggestCloudModel(ctx, client, name, pullErr, insecure, retryCommand)
+	if err != nil {
+		return "", err
+	}
+
+	if err := pullModelWithProgress(ctx, client, cloudName, insecure, false); err != nil {
+		return "", err
+	}
+	return cloudName, nil
+}
+
+// suggestCloudModel offers name's ":cloud" variant after a pull failed with
+// pullErr. It returns the cloud model name only when the user accepts the
+// interactive prompt; in every other case it returns the error the caller
+// should surface: pullErr untouched (not eligible, no cloud variant,
+// declined, cancelled) or pullErr augmented with a retry hint when not at an
+// interactive terminal. Accepting does not pull the cloud model.
+func suggestCloudModel(ctx context.Context, client *api.Client, name string, pullErr error, insecure bool, retryCommand func(cloudName string) string) (string, error) {
 	cloudName, ok := cloudSuggestionCandidate(name, pullErr, insecure)
 	if !ok || ctx.Err() != nil {
 		return "", pullErr
@@ -105,17 +132,16 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 	}
 
 	if !isInteractiveTerminal() {
-		return "", fmt.Errorf("%w\n\n%q is available as a cloud model. Try:\n  ollama %s %s", pullErr, cloudName, verb, cloudName)
+		if retryCommand == nil {
+			return "", fmt.Errorf("%w\n\n%q is available as a cloud model", pullErr, cloudName)
+		}
+		return "", fmt.Errorf("%w\n\n%q is available as a cloud model. Try:\n  %s", pullErr, cloudName, retryCommand(cloudName))
 	}
 
 	accepted, err := confirmCloudSuggestion(fmt.Sprintf("Did you mean %q?", cloudName))
 	if err != nil || !accepted {
 		// Declining or cancelling falls back to the original error.
 		return "", pullErr
-	}
-
-	if err := pullModelWithProgress(ctx, client, cloudName, insecure, false); err != nil {
-		return "", err
 	}
 	return cloudName, nil
 }
