@@ -154,11 +154,17 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 	switch p.state {
 	case DeepSeekCollectingThinking:
 		if strings.Contains(bufStr, deepseekThinkingCloseTag) { // thinking[</think>] -> content
-			split := strings.SplitN(bufStr, deepseekThinkingCloseTag, 2)
-			thinking := split[0]
+			// Use LastIndex + manual split instead of SplitN to find the LAST
+			// occurrence of </think>. DeepSeek models output exactly one structural
+			// think block per message, but the reasoning text may contain literal
+			// mentions of </think> (e.g., when the user asks about think tags).
+			// Splitting at the last occurrence ensures we capture all reasoning
+			// content up to the real structural tag boundary.
+			idx := strings.LastIndex(bufStr, deepseekThinkingCloseTag)
+			thinking := bufStr[:idx]
 			thinking = strings.TrimRightFunc(thinking, unicode.IsSpace)
 
-			remaining := split[1]
+			remaining := bufStr[idx+len(deepseekThinkingCloseTag):]
 			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
 
 			p.buffer.Reset()
