@@ -211,9 +211,13 @@ func (s *Server) scheduleRunner(ctx context.Context, model *Model, caps []model.
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
-	// null is unset, as in Options.FromMap
-	if requestOpts["typical_p"] != nil {
-		return nil, nil, nil, errTypicalPUnsupported
+	// typical_p was removed in 0.34; ignore it on new requests (with a warning)
+	// instead of failing the whole request so clients that always send the
+	// parameter keep working. Existing models that set typical_p still have
+	// it honored through model options below.
+	if v, ok := requestOpts["typical_p"]; ok && v != nil {
+		slog.Warn("ignoring unsupported option", "option", "typical_p")
+		delete(requestOpts, "typical_p")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {

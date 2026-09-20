@@ -1653,19 +1653,16 @@ func TestGenerate(t *testing.T) {
 		}
 	})
 
-	t.Run("rejected option", func(t *testing.T) {
+	t.Run("ignored deprecated option", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:   "test",
 			Prompt:  "Hello!",
 			Options: map[string]any{"typical_p": 0.5},
+			Stream:  &stream,
 		})
 
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
-		}
-
-		if diff := cmp.Diff(w.Body.String(), `{"error":"typical_p is no longer supported"}`); diff != "" {
-			t.Errorf("mismatch (-got +want):\n%s", diff)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
