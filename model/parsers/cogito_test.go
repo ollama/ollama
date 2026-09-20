@@ -565,3 +565,97 @@ func TestCogitoParser_parseToolCallContent(t *testing.T) {
 		})
 	}
 }
+
+func TestCogitoParserFinalizesCompleteToolCallOnDone(t *testing.T) {
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, nil)
+
+	// the model emitted a complete call but the stream ended before the
+	// closing delimiters arrived
+	input := cogitoToolCallsBeginTag + cogitoToolCallBeginTag +
+		"function" + cogitoToolSepTag + "get_weather\n```json\n{\"city\":\"San Francisco\"}\n```"
+
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "" {
+		t.Errorf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Errorf("expected no thinking, got %q", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestCogitoParserRejectsIncompleteToolCallOnDone(t *testing.T) {
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, nil)
+
+	// truncated mid arguments, so there is nothing safe to recover
+	input := cogitoToolCallsBeginTag + cogitoToolCallBeginTag +
+		"function" + cogitoToolSepTag + "get_weather\n```json\n{\"city\":\"San Fran"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err == nil {
+		t.Fatal("expected an error for a truncated tool call, got none")
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestCogitoParserDoesNotFinalizeMidStream(t *testing.T) {
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, nil)
+
+	// same complete call, but the stream is not done yet, so the parser should
+	// keep buffering and wait for the closing delimiter
+	input := cogitoToolCallsBeginTag + cogitoToolCallBeginTag +
+		"function" + cogitoToolSepTag + "get_weather\n```json\n{\"city\":\"San Francisco\"}\n```"
+
+	_, _, calls, err := parser.Add(input, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls before done, got %d", len(calls))
+	}
+
+	// the closing delimiter arrives and the call is emitted exactly once
+	_, _, calls, err = parser.Add(cogitoToolCallEndTag, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestCogitoParserKeepsCompletedToolCallWithTrailingJunkOnDone(t *testing.T) {
+	parser := &CogitoParser{}
+	parser.Init(nil, nil, nil)
+
+	// a complete call, then stray text instead of the outer end delimiter.
+	// the call was already parsed, so finalizing must not turn this into an
+	// error and lose it
+	input := cogitoToolCallsBeginTag + cogitoToolCallBeginTag +
+		"function" + cogitoToolSepTag + "get_weather\n```json\n{\"city\":\"San Francisco\"}\n```" +
+		cogitoToolCallEndTag + "trailing"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}

@@ -3,6 +3,7 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -116,6 +117,17 @@ func (cogitoEventToolCall) isCogitoEvent()        {}
 func (p *CogitoParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
+
+	// an unterminated tool call is still buffered: the begin tag is only
+	// consumed once its matching end tag arrives, so its presence here means
+	// the stream ended mid call
+	if done && p.state == CogitoCollectingToolCalls && strings.Contains(p.buffer.String(), cogitoToolCallBeginTag) {
+		event, err := p.finalizeToolCall()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("incomplete cogito tool call: %v", err)
+		}
+		events = append(events, event)
+	}
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -304,6 +316,32 @@ func (p *CogitoParser) eat() ([]cogitoEvent, bool) {
 	}
 
 	return events, false
+}
+
+// finalizeToolCall handles a tool call that is still buffered when the stream
+// ends. Only the trailing delimiters may be missing: the call itself must still
+// parse, since repairing a truncated call could turn partial model output into
+// a mutating tool call.
+func (p *CogitoParser) finalizeToolCall() (cogitoEventToolCall, error) {
+	raw := p.buffer.String()
+	if idx := strings.Index(raw, cogitoToolCallBeginTag); idx != -1 {
+		raw = raw[idx+len(cogitoToolCallBeginTag):]
+	}
+	// drop a partially emitted closing delimiter
+	for _, tag := range []string{cogitoToolCallEndTag, cogitoToolCallsEndTag} {
+		if overlapLen := overlap(raw, tag); overlapLen > 0 {
+			raw = raw[:len(raw)-overlapLen]
+		}
+	}
+
+	toolCall, err := p.parseToolCallContent(raw)
+	if err != nil {
+		return cogitoEventToolCall{}, err
+	}
+
+	p.buffer.Reset()
+	p.state = CogitoCollectingContent
+	return cogitoEventToolCall{toolCall: toolCall}, nil
 }
 
 func (p *CogitoParser) parseToolCallContent(content string) (api.ToolCall, error) {
