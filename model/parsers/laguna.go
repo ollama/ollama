@@ -2,7 +2,9 @@ package parsers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"unicode"
@@ -287,14 +289,8 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 		}
 	}
 	if len(p.tools) > 0 {
-		if progress, content, call, ok, err := p.consumeStandaloneJSONTool(done); ok || err != nil {
-			if err != nil {
-				return false, "", nil, err
-			}
-			if progress {
-				return true, content, []api.ToolCall{call}, nil
-			}
-			return false, "", nil, nil
+		if progress, content, calls, claimed := p.consumeStandaloneJSONTool(done); claimed {
+			return progress, content, calls, nil
 		}
 	}
 	if done {
@@ -324,51 +320,153 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 	return false, "", nil, nil
 }
 
-func (p *LagunaParser) consumeStandaloneJSONTool(done bool) (progress bool, content string, call api.ToolCall, ok bool, err error) {
+// consumeStandaloneJSONTool handles a tool call the model emits as a bare JSON
+// object, without <tool_call> tags. Content also contains JSON that is not a
+// tool call — configuration examples, API responses, sample data — so a
+// candidate only becomes a call when its first key is "name" or "arguments",
+// the object parses completely, and its name resolves to a declared tool.
+// Every other case is ordinary content, released as soon as the parser can
+// tell. This path never fails a response: prose must not be able to end a
+// generation, so a candidate that turns out not to be a call is emitted as the
+// text it always was.
+//
+// claimed reports whether this function handled the buffer; when it is false
+// the caller continues with its own content rules.
+func (p *LagunaParser) consumeStandaloneJSONTool(done bool) (progress bool, content string, calls []api.ToolCall, claimed bool) {
 	acc := p.buffer.String()
 	jsonIdx := strings.Index(acc, "{")
 	if jsonIdx == -1 {
-		return false, "", api.ToolCall{}, false, nil
+		return false, "", nil, false
 	}
 
+	// Keep the whitespace between the prose and the brace in the buffer: a
+	// candidate that turns out to be content must reproduce the original bytes,
+	// and only an accepted call trims it.
 	before := strings.TrimRightFunc(acc[:jsonIdx], unicode.IsSpace)
-	raw := strings.TrimLeftFunc(acc[jsonIdx:], unicode.IsSpace)
-	if !lagunaLooksLikeJSONToolCall(raw, done) {
-		return false, "", api.ToolCall{}, false, nil
-	}
+	rest := acc[len(before):]
+	raw := strings.TrimLeftFunc(rest, unicode.IsSpace)
 
-	if !done && !json.Valid([]byte(strings.TrimSpace(raw))) {
+	key, decided := lagunaJSONFirstKey(raw)
+	switch {
+	case !decided && done:
+		return false, "", nil, false
+	case !decided:
+		// Not enough bytes to tell. Hold the candidate, and release any prose
+		// before it so content keeps streaming.
 		if before != "" {
 			p.buffer.Reset()
-			p.buffer.WriteString(acc[jsonIdx:])
-			return true, before, api.ToolCall{}, true, nil
+			p.buffer.WriteString(rest)
+			return true, before, nil, true
 		}
-		return false, "", api.ToolCall{}, true, nil
+		return false, "", nil, true
+	case key != "name" && key != "arguments":
+		// A JSON object in content. Hand the whole buffer back to the caller's
+		// content rules, which stream it like any other text.
+		return false, "", nil, false
 	}
 
-	call, err = parseLagunaToolCall(raw, p.tools)
-	if err != nil {
-		return false, "", api.ToolCall{}, true, err
+	end, verdict := lagunaScanJSONValue(raw)
+	if verdict != lagunaJSONComplete {
+		if verdict == lagunaJSONPartial && !done {
+			if before != "" {
+				p.buffer.Reset()
+				p.buffer.WriteString(rest)
+				return true, before, nil, true
+			}
+			return false, "", nil, true
+		}
+		// Truncated at end of stream, or never valid JSON. Either way it is not
+		// a tool call, so it is content.
+		return false, "", nil, false
 	}
-	call.Function.Index = p.callIndex
+
+	var parsed struct {
+		Name      string                        `json:"name"`
+		Arguments api.ToolCallFunctionArguments `json:"arguments"`
+	}
+	if err := json.Unmarshal([]byte(raw[:end]), &parsed); err != nil {
+		return false, "", nil, false
+	}
+	name, ok := lagunaResolveToolName(strings.TrimSpace(parsed.Name), p.tools)
+	if !ok {
+		// A complete object whose name names no declared tool. The model was
+		// writing about JSON, not calling anything.
+		return false, "", nil, false
+	}
+
+	call := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name:      name,
+			Arguments: parsed.Arguments,
+			Index:     p.callIndex,
+		},
+	}
 	p.callIndex++
+	// Anything after the object resumes normal parsing on the next iteration.
 	p.buffer.Reset()
+	p.buffer.WriteString(strings.TrimLeftFunc(raw[end:], unicode.IsSpace))
 	p.state = lagunaParserStateContent
-	return true, before, call, true, nil
+	return true, before, []api.ToolCall{call}, true
 }
 
-func lagunaLooksLikeJSONToolCall(raw string, done bool) bool {
-	trimmed := strings.TrimLeftFunc(raw, unicode.IsSpace)
-	if !strings.HasPrefix(trimmed, "{") {
-		return false
+const (
+	lagunaJSONComplete = iota
+	lagunaJSONPartial
+	lagunaJSONInvalid
+)
+
+// lagunaScanJSONValue reports whether raw begins with a complete JSON value,
+// and where that value ends. Text after the value does not make it incomplete,
+// which matters because a JSON object in content is usually followed by more
+// prose.
+func lagunaScanJSONValue(raw string) (end int, verdict int) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	var v json.RawMessage
+	switch err := dec.Decode(&v); {
+	case err == nil:
+		return int(dec.InputOffset()), lagunaJSONComplete
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return 0, lagunaJSONPartial
+	default:
+		// A syntax error at the very end of the input is a value cut off
+		// mid-token rather than malformed JSON.
+		var syntaxErr *json.SyntaxError
+		if errors.As(err, &syntaxErr) && int(syntaxErr.Offset) >= len(raw) {
+			return 0, lagunaJSONPartial
+		}
+		return 0, lagunaJSONInvalid
 	}
-	if strings.Contains(trimmed, `"name"`) || strings.Contains(trimmed, `"arguments"`) {
+}
+
+// lagunaJSONFirstKey returns the first key of the JSON object beginning raw.
+// decided is false when more bytes are needed to know the key, and the key is
+// empty for an object that starts with anything else.
+func lagunaJSONFirstKey(raw string) (key string, decided bool) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return "", !isLagunaJSONTruncation(err, raw)
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return "", true
+	}
+	tok, err = dec.Token()
+	if err != nil {
+		return "", !isLagunaJSONTruncation(err, raw)
+	}
+	if s, ok := tok.(string); ok {
+		return s, true
+	}
+	// A closing brace: the empty object, which is not a tool call.
+	return "", true
+}
+
+func isLagunaJSONTruncation(err error, raw string) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
-	if done {
-		return false
-	}
-	return strings.HasPrefix(trimmed, `{"`) || strings.HasPrefix(trimmed, "{\n") || strings.HasPrefix(trimmed, "{\r\n")
+	var syntaxErr *json.SyntaxError
+	return errors.As(err, &syntaxErr) && int(syntaxErr.Offset) >= len(raw)
 }
 
 func (p *LagunaParser) parseToolAlias(raw string) (api.ToolCall, bool) {
