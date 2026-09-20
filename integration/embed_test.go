@@ -298,6 +298,59 @@ func runAllMiniLMBatchEmbed(t *testing.T) {
 	}
 }
 
+func runAllMiniLMEmbedNormalize(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	normalized, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
+		Model: "all-minilm",
+		Input: "why is the sky blue?",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	noNormalize := false
+	raw, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
+		Model:     "all-minilm",
+		Input:     "why is the sky blue?",
+		Normalize: &noNormalize,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(normalized.Embeddings) != 1 || len(raw.Embeddings) != 1 {
+		t.Fatalf("expected 1 embedding each, got %d and %d", len(normalized.Embeddings), len(raw.Embeddings))
+	}
+
+	l2Norm := func(v []float32) float64 {
+		var sum float64
+		for _, x := range v {
+			sum += float64(x) * float64(x)
+		}
+		return math.Sqrt(sum)
+	}
+
+	// The default response is L2-normalized (unit length)...
+	if n := l2Norm(normalized.Embeddings[0]); math.Abs(n-1) > 0.01 {
+		t.Fatalf("expected default embedding to be normalized (norm ~1), got %f", n)
+	}
+	// ...while normalize=false returns the raw, non-unit-length embedding.
+	if n := l2Norm(raw.Embeddings[0]); math.Abs(n-1) < 0.01 {
+		t.Fatalf("expected normalize=false embedding to not be unit length, got norm %f", n)
+	}
+	// Both point in the same direction regardless of normalization.
+	if sim := cosineSimilarity(normalized.Embeddings[0], raw.Embeddings[0]); sim < 0.99 {
+		t.Fatalf("expected same direction, cosine similarity %f", sim)
+	}
+}
+
 func runAllMiniLMEmbedTruncate(t *testing.T) {
 	if testModel != "" {
 		t.Skip("uses hardcoded model, not applicable with model override")

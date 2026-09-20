@@ -610,6 +610,9 @@ type EmbedRequest struct {
 	// Truncate truncates the input to fit the model's max sequence length.
 	Truncate *bool `json:"truncate,omitempty"`
 
+	// Normalize normalizes the output embeddings. Defaults to true.
+	Normalize *bool `json:"normalize,omitempty"`
+
 	// Dimensions truncates the output embedding to the specified dimension.
 	Dimensions int `json:"dimensions,omitempty"`
 
