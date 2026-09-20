@@ -3,6 +3,7 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
@@ -106,6 +107,17 @@ func (deepseekEventToolCall) isDeepSeekEvent()        {}
 func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
 	events := p.parseEvents()
+
+	// an unterminated tool call is still buffered: the begin tag is only
+	// consumed once its matching end tag arrives, so its presence here means
+	// the stream ended mid call
+	if done && p.state == DeepSeekCollectingToolCalls && strings.Contains(p.buffer.String(), deepseekToolCallBeginTag) {
+		event, err := p.finalizeToolCall()
+		if err != nil {
+			return "", "", nil, fmt.Errorf("incomplete deepseek tool call: %v", err)
+		}
+		events = append(events, event)
+	}
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -286,6 +298,32 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 	}
 
 	return events, false
+}
+
+// finalizeToolCall handles a tool call that is still buffered when the stream
+// ends. Only the trailing delimiters may be missing: the call itself must still
+// parse, since repairing a truncated call could turn partial model output into
+// a mutating tool call.
+func (p *DeepSeek3Parser) finalizeToolCall() (deepseekEventToolCall, error) {
+	raw := p.buffer.String()
+	if idx := strings.Index(raw, deepseekToolCallBeginTag); idx != -1 {
+		raw = raw[idx+len(deepseekToolCallBeginTag):]
+	}
+	// drop a partially emitted closing delimiter
+	for _, tag := range []string{deepseekToolCallEndTag, deepseekToolCallsEndTag} {
+		if overlapLen := overlap(raw, tag); overlapLen > 0 {
+			raw = raw[:len(raw)-overlapLen]
+		}
+	}
+
+	toolCall, err := p.parseToolCallContent(raw)
+	if err != nil {
+		return deepseekEventToolCall{}, err
+	}
+
+	p.buffer.Reset()
+	p.state = DeepSeekCollectingContent
+	return deepseekEventToolCall{toolCall: toolCall}, nil
 }
 
 func (p *DeepSeek3Parser) parseToolCallContent(content string) (api.ToolCall, error) {
