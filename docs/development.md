@@ -1,6 +1,6 @@
 # Development
 
-Install prerequisites:
+Install the following prerequisites:
 
 - [Go](https://go.dev/doc/install)
 - [CMake](https://cmake.org/download/) 3.24 or newer
