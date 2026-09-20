@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -198,6 +200,18 @@ func (d *DeepSeekHarness) ConfigureWithModels(primary string, models []LaunchMod
 	}
 	if selected, ok := findLaunchModel(models, primary); ok {
 		primary = selected.Name
+	}
+
+	// Use the served num_ctx (from ollama ps) instead of the GGUF native max,
+	// so contextWindow in settings.yaml matches what the server actually allocated.
+	if client, err := api.ClientFromEnvironment(); err == nil {
+		if served := LoadedContextWindow(context.Background(), client, primary); served > 0 {
+			for i, m := range models {
+				if SameModelRef(m.Name, primary) {
+					models[i].ContextLength = served
+				}
+			}
+		}
 	}
 
 	settingsPath, err := deepSeekHarnessSettingsPath()
@@ -392,8 +406,12 @@ func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
 		if item.ContextLength > 0 {
 			entry["contextWindow"] = item.ContextLength
 		}
-		if item.MaxOutputTokens > 0 {
-			entry["maxTokens"] = item.MaxOutputTokens
+		maxOut := item.MaxOutputTokens
+		if maxOut <= 0 {
+			maxOut = item.ContextLength
+		}
+		if maxOut > 0 {
+			entry["maxTokens"] = maxOut
 		}
 		configs = append(configs, entry)
 	}
