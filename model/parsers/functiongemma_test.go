@@ -430,3 +430,130 @@ func TestFunctionGemmaParser_HasSupport(t *testing.T) {
 	assert.True(t, parser.HasToolSupport())
 	assert.False(t, parser.HasThinkingSupport())
 }
+
+func TestFunctionGemmaParserFinalizesCompleteToolCallOnDone(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	// the call is complete but the stream ended before the closing tag
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Francisco}"
+
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "" {
+		t.Errorf("expected no content, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestFunctionGemmaParserFinalizesToolCallWithPartialCloseTagOnDone(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	// the stream died partway through the closing tag, so the fragment has to be
+	// trimmed before the call will match
+	partial := functionGemmaFunctionCallClose[:len(functionGemmaFunctionCallClose)/2]
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Francisco}" + partial
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestFunctionGemmaParserRejectsIncompleteToolCallOnDone(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	// truncated mid arguments. parseToolCall reports this as an empty call
+	// rather than an error, so it must not surface as a nameless tool call
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Fran"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err == nil {
+		t.Fatal("expected an error for a truncated tool call, got none")
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestFunctionGemmaParserDoesNotFinalizeMidStream(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Francisco}"
+
+	_, _, calls, err := parser.Add(input, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls before done, got %d", len(calls))
+	}
+
+	// the closing tag arrives and the call is emitted exactly once
+	_, _, calls, err = parser.Add(functionGemmaFunctionCallClose, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestFunctionGemmaParserKeepsCompletedToolCallOnDone(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	// a properly closed call: eat already emitted it, so the finalize path must
+	// not fire again
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Francisco}" +
+		functionGemmaFunctionCallClose
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestFunctionGemmaParserFinalizesSecondToolCallOnDone(t *testing.T) {
+	parser := &FunctionGemmaParser{}
+	parser.Init(nil, nil, nil)
+
+	// first call closes cleanly, second one does not. the second call carries its
+	// own open tag at the front of the buffer, which has to be stripped
+	input := functionGemmaFunctionCallOpen + "call:get_weather{city:San Francisco}" +
+		functionGemmaFunctionCallClose +
+		functionGemmaFunctionCallOpen + "call:get_time{city:San Francisco}"
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected first call %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+	if calls[1].Function.Name != "get_time" {
+		t.Errorf("expected second call %q, got %q", "get_time", calls[1].Function.Name)
+	}
+}
