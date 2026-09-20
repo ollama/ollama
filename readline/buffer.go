@@ -450,6 +450,24 @@ func (b *Buffer) DeleteWord() {
 	}
 }
 
+func (b *Buffer) DeleteWordForward() {
+	if b.Buf.Size() > 0 && b.Pos < b.Buf.Size() {
+		var foundNonspace bool
+		for b.Pos < b.Buf.Size() {
+			v, _ := b.Buf.Get(b.Pos)
+			if v == ' ' {
+				if foundNonspace {
+					break
+				}
+				b.Delete()
+			} else {
+				foundNonspace = true
+				b.Delete()
+			}
+		}
+	}
+}
+
 func (b *Buffer) ClearScreen() {
 	fmt.Print(ClearScreen + CursorReset + b.Prompt.prompt())
 	if b.IsEmpty() {

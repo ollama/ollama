@@ -7,6 +7,7 @@ import (
 var (
 	ErrInterrupt  = errors.New("Interrupt")
 	ErrEditPrompt = errors.New("EditPrompt")
+	ErrVimHelp    = errors.New("VimHelp")
 )
 
 type InterruptError struct {
