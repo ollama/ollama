@@ -592,3 +592,88 @@ func TestMinistralParser_HasThinkingSupport(t *testing.T) {
 		t.Error("expected HasThinkingSupport to return true")
 	}
 }
+
+func TestMinistralParserIncompleteToolCallOnDone(t *testing.T) {
+	tools := []api.Tool{{Function: api.ToolFunction{Name: "get_weather"}}}
+
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "truncated arguments",
+			input:   ministralToolCallsTag + "get_weather" + ministralArgsTag + `{"city":"San Fran`,
+			wantErr: true,
+		},
+		{
+			name:    "missing args tag",
+			input:   ministralToolCallsTag + "get_weather",
+			wantErr: true,
+		},
+		{
+			name:    "bare tool calls tag",
+			input:   ministralToolCallsTag,
+			wantErr: true,
+		},
+		{
+			name:    "complete call is unaffected",
+			input:   ministralToolCallsTag + "get_weather" + ministralArgsTag + `{"city":"San Francisco"}`,
+			wantErr: false,
+		},
+		{
+			name:    "plain content is unaffected",
+			input:   "here is the weather",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &MinistralParser{}
+			parser.Init(tools, nil, nil)
+
+			content, thinking, calls, err := parser.Add(tt.input, true)
+			if !tt.wantErr {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an error for an incomplete tool call, got none")
+			}
+			// nothing partial should leak out alongside the error
+			if content != "" || thinking != "" || len(calls) != 0 {
+				t.Errorf("expected empty results on error, got content %q thinking %q calls %d", content, thinking, len(calls))
+			}
+		})
+	}
+}
+
+func TestMinistralParserDoesNotReportIncompleteMidStream(t *testing.T) {
+	tools := []api.Tool{{Function: api.ToolFunction{Name: "get_weather"}}}
+	parser := &MinistralParser{}
+	parser.Init(tools, nil, nil)
+
+	// the same truncated arguments are fine while the stream is still open
+	_, _, calls, err := parser.Add(ministralToolCallsTag+"get_weather"+ministralArgsTag+`{"city":"San Fran`, false)
+	if err != nil {
+		t.Fatalf("unexpected error before done: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls yet, got %d", len(calls))
+	}
+
+	// the rest arrives and the call is emitted
+	_, _, calls, err = parser.Add(`cisco"}`, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
