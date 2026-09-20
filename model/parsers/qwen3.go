@@ -115,7 +115,7 @@ func (p *Qwen3Parser) Add(s string, done bool) (content string, thinking string,
 			toolCall, err := parseQwen3ToolCall(event, p.tools)
 			if err != nil {
 				slog.Warn("qwen3 tool call parsing failed", "error", err)
-				return "", "", nil, err
+				return "", "", nil, fmt.Errorf("failed to parse model-generated tool call: %w", err)
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
