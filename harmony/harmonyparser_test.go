@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+
+	"github.com/ollama/ollama/api"
 )
 
 func TestHeaderParsing(t *testing.T) {
@@ -534,5 +536,60 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHarmonyToolCallArrayWrapped(t *testing.T) {
+	handler := NewHarmonyMessageHandler()
+	handler.Init([]api.Tool{
+		{Function: api.ToolFunction{Name: "get_weather"}},
+	}, nil, nil)
+
+	// Stream a tool call whose arguments are wrapped in a JSON array, which
+	// some models emit despite a single call. The parser should extract the
+	// first element instead of failing to parse.
+	content, thinking, calls, err := handler.Add(
+		`<|start|>assistant<|channel|>analysis to=functions.get_weather<|message|>[{"location": "NYC"}]<|end|>`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("Add() returned error for array-wrapped tool call: %v", err)
+	}
+	if content != "" || thinking != "" {
+		t.Errorf("expected empty content/thinking, got content=%q thinking=%q", content, thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("got function name %q, want get_weather", calls[0].Function.Name)
+	}
+	if got, ok := calls[0].Function.Arguments.Get("location"); !ok || got != "NYC" {
+		t.Errorf("got arguments %v, want location=NYC", calls[0].Function.Arguments)
+	}
+}
+
+func TestHarmonyToolCallObjectArguments(t *testing.T) {
+	handler := NewHarmonyMessageHandler()
+	handler.Init([]api.Tool{
+		{Function: api.ToolFunction{Name: "get_weather"}},
+	}, nil, nil)
+
+	// Plain object arguments continue to parse correctly.
+	content, thinking, calls, err := handler.Add(
+		`<|start|>assistant<|channel|>analysis to=functions.get_weather<|message|>{"location": "Boston"}<|end|>`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("Add() returned error for object tool call: %v", err)
+	}
+	if content != "" || thinking != "" {
+		t.Errorf("expected empty content/thinking, got content=%q thinking=%q", content, thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if got, ok := calls[0].Function.Arguments.Get("location"); !ok || got != "Boston" {
+		t.Errorf("got arguments %v, want location=Boston", calls[0].Function.Arguments)
 	}
 }

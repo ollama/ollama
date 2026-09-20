@@ -442,6 +442,15 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 			name = h.FunctionNameMap.OriginalFromConverted(name)
 			var args api.ToolCallFunctionArguments
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+				// Some models wrap a single tool call in an array, e.g.
+				// `[{"key": "value"}]`. Retry by extracting the first element.
+				var wrapped []json.RawMessage
+				if innerErr := json.Unmarshal([]byte(raw), &wrapped); innerErr == nil && len(wrapped) > 0 {
+					if innerErr = json.Unmarshal(wrapped[0], &args); innerErr == nil {
+						calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
+						return content, thinking, calls, nil
+					}
+				}
 				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
 			}
 			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
