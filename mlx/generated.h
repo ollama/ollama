@@ -179,6 +179,7 @@
 #define mlx_fast_cuda_kernel_new mlx_fast_cuda_kernel_new_mlx_gen_orig_
 #define mlx_fast_cuda_kernel_free mlx_fast_cuda_kernel_free_mlx_gen_orig_
 #define mlx_fast_cuda_kernel_apply mlx_fast_cuda_kernel_apply_mlx_gen_orig_
+#define mlx_fast_gated_delta_update mlx_fast_gated_delta_update_mlx_gen_orig_
 #define mlx_fast_layer_norm mlx_fast_layer_norm_mlx_gen_orig_
 #define mlx_fast_metal_kernel_config_new mlx_fast_metal_kernel_config_new_mlx_gen_orig_
 #define mlx_fast_metal_kernel_config_free mlx_fast_metal_kernel_config_free_mlx_gen_orig_
@@ -856,6 +857,7 @@
 #undef mlx_fast_cuda_kernel_new
 #undef mlx_fast_cuda_kernel_free
 #undef mlx_fast_cuda_kernel_apply
+#undef mlx_fast_gated_delta_update
 #undef mlx_fast_layer_norm
 #undef mlx_fast_metal_kernel_config_new
 #undef mlx_fast_metal_kernel_config_free
@@ -1785,6 +1787,16 @@ extern int (*mlx_fast_cuda_kernel_apply_)(
     const mlx_vector_array inputs,
     const mlx_fast_cuda_kernel_config config,
     const mlx_stream stream);
+extern int (*mlx_fast_gated_delta_update_)(
+    mlx_vector_array* res,
+    const mlx_array queries,
+    const mlx_array keys,
+    const mlx_array values,
+    const mlx_array gates,
+    const mlx_array beta_,
+    const mlx_array initial_state /* may be null */,
+    const mlx_array mask /* may be null */,
+    const mlx_stream s);
 extern int (*mlx_fast_layer_norm_)(
     mlx_array* res,
     const mlx_array x,
@@ -4707,6 +4719,18 @@ static inline int mlx_fast_cuda_kernel_apply(
     const mlx_fast_cuda_kernel_config config,
     const mlx_stream stream) {
     return mlx_fast_cuda_kernel_apply_(outputs, cls, inputs, config, stream);
+}
+static inline int mlx_fast_gated_delta_update(
+    mlx_vector_array* res,
+    const mlx_array queries,
+    const mlx_array keys,
+    const mlx_array values,
+    const mlx_array gates,
+    const mlx_array beta_,
+    const mlx_array initial_state /* may be null */,
+    const mlx_array mask /* may be null */,
+    const mlx_stream s) {
+    return mlx_fast_gated_delta_update_(res, queries, keys, values, gates, beta_, initial_state, mask, s);
 }
 static inline int mlx_fast_layer_norm(
     mlx_array* res,

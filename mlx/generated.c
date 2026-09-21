@@ -434,6 +434,16 @@ int (*mlx_fast_cuda_kernel_apply_)(
     const mlx_vector_array inputs,
     const mlx_fast_cuda_kernel_config config,
     const mlx_stream stream) = NULL;
+int (*mlx_fast_gated_delta_update_)(
+    mlx_vector_array* res,
+    const mlx_array queries,
+    const mlx_array keys,
+    const mlx_array values,
+    const mlx_array gates,
+    const mlx_array beta_,
+    const mlx_array initial_state /* may be null */,
+    const mlx_array mask /* may be null */,
+    const mlx_stream s) = NULL;
 int (*mlx_fast_layer_norm_)(
     mlx_array* res,
     const mlx_array x,
@@ -2754,6 +2764,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_fast_cuda_kernel_new);
     CHECK_LOAD(handle, mlx_fast_cuda_kernel_free);
     CHECK_LOAD(handle, mlx_fast_cuda_kernel_apply);
+    CHECK_LOAD(handle, mlx_fast_gated_delta_update);
     CHECK_LOAD(handle, mlx_fast_layer_norm);
     CHECK_LOAD(handle, mlx_fast_metal_kernel_config_new);
     CHECK_LOAD(handle, mlx_fast_metal_kernel_config_free);
