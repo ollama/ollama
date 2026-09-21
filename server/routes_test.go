@@ -89,6 +89,7 @@ func createTestFile(t *testing.T, name string) (string, string) {
 func TestRoutes(t *testing.T) {
 	modelsDir := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", modelsDir)
+	exportDir := ""
 
 	type testCase struct {
 		Name     string
@@ -393,6 +394,98 @@ func TestRoutes(t *testing.T) {
 				}
 				if model.ShortName != "beefsteak:latest" {
 					t.Errorf("expected model name 'beefsteak:latest', got %s", model.ShortName)
+				}
+			},
+		},
+		{
+			Name:   "Export Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/export",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "hamshank")
+				exportDir = t.TempDir()
+
+				exportReq := api.CopyRequest{
+					Source:      "hamshank",
+					Destination: exportDir,
+				}
+
+				jsonData, err := json.Marshal(exportReq)
+				if err != nil {
+					t.Fatalf("failed to marshal export request: %v", err)
+				}
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, body)
+				}
+
+				entries, err := os.ReadDir(exportDir)
+				if err != nil {
+					t.Fatalf("failed to read export directory: %v", err)
+				}
+
+				if len(entries) == 0 {
+					t.Fatal("expected exported model files, directory is empty")
+				}
+			},
+		},
+		{
+			Name:   "Import Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/import",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "beefsteak")
+
+				exportDir = t.TempDir()
+
+				exportReq := api.CopyRequest{
+					Source:      "beefsteak",
+					Destination: exportDir,
+				}
+				name := model.ParseName(exportReq.Source)
+				if !name.IsValid() {
+					t.Fatalf("invalid model name: %v", name)
+				}
+
+				err := ExportModel(context.Background(), exportReq, name, nil)
+				if err != nil {
+					t.Fatalf("Failed to export test model: %v", err)
+				}
+
+				importReq := api.CopyRequest{
+					Source:      exportDir,
+					Destination: "beefsteak-imported",
+				}
+
+				jsonData, err := json.Marshal(importReq)
+				if err != nil {
+					t.Fatalf("failed to marshal import request: %v", err)
+				}
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("expected status 200, got %d: %s", resp.StatusCode, body)
+				}
+
+				importedModel := model.ParseName("beefsteak-imported")
+
+				if _, err := manifest.ParseNamedManifest(importedModel); err != nil {
+					t.Fatalf("expected imported model to exist: %v", err)
 				}
 			},
 		},
