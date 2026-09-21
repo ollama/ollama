@@ -835,7 +835,7 @@ func TestShowThinkBudget(t *testing.T) {
 
 	var s Server
 
-	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
 
 	show := func(t *testing.T, name string, parameters map[string]any) api.ShowResponse {
 		t.Helper()
