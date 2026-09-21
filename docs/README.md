@@ -4,7 +4,7 @@
 * [Quickstart](https://docs.ollama.com/quickstart)
 * [Examples](./examples.md)
 * [Importing models](https://docs.ollama.com/import)
-* [MacOS Documentation](https://docs.ollama.com/macos)
+* [macOS Documentation](https://docs.ollama.com/macos)
 * [Linux Documentation](https://docs.ollama.com/linux)
 * [Windows Documentation](https://docs.ollama.com/windows)
 * [Docker Documentation](https://docs.ollama.com/docker)
