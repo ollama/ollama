@@ -187,6 +187,7 @@ console.log(response.message.content);
 - [Alpaca](https://github.com/Jeffser/Alpaca) - GTK4 client for Linux and macOS
 - [SwiftChat](https://github.com/aws-samples/swift-chat) - Cross-platform including iOS, Android, and Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted) - Native macOS and iOS client
+- [Conduck](https://github.com/GigaDuckAI/conduck) - Native client for iPhone, iPad, Mac, Apple Watch, and CarPlay
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) - Multi-model desktop runner
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) - Evaluate and compare models
 - [macai](https://github.com/Renset/macai) - macOS client for Ollama and ChatGPT
@@ -206,7 +207,7 @@ console.log(response.message.content);
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
 
-> SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
+> SwiftChat, Enchanted, Conduck, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
 ### Code Editors & Development
 
