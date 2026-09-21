@@ -44,6 +44,7 @@ package webview
 void CgoWebViewDispatch(webview_t w, uintptr_t arg);
 void CgoWebViewBind(webview_t w, const char *name, uintptr_t index);
 void CgoWebViewUnbind(webview_t w, const char *name);
+void CgoWebViewReturn(webview_t w, const char *id, int status, const char *result);
 
 void webview_set_zoom(webview_t w, double level);
 double webview_get_zoom(webview_t w);
@@ -141,6 +142,10 @@ type WebView interface {
 	// f must return either value and error or just error
 	Bind(name string, f interface{}) error
 
+	// BindAsync runs the callback on a background goroutine. The callback must
+	// not access native UI objects and must support concurrent calls.
+	BindAsync(name string, f interface{}) error
+
 	// Removes a callback that was previously set by Bind.
 	Unbind(name string) error
 
@@ -153,14 +158,24 @@ type WebView interface {
 }
 
 type webview struct {
-	w C.webview_t
+	w        C.webview_t
+	mu       sync.Mutex
+	bindings map[string]uintptr
+	pending  map[uintptr]struct{}
+}
+
+type binding struct {
+	call  func(id, req string) (interface{}, error)
+	async bool
+	owner *webview
+	name  string
 }
 
 var (
 	m        sync.Mutex
 	index    uintptr
 	dispatch = map[uintptr]func(){}
-	bindings = map[uintptr]func(id, req string) (interface{}, error){}
+	bindings = map[uintptr]*binding{}
 )
 
 func boolToInt(b bool) C.int {
@@ -181,13 +196,30 @@ func New(debug bool) WebView { return NewWindow(debug, nil) }
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
 func NewWindow(debug bool, window unsafe.Pointer) WebView {
-	w := &webview{}
+	w := &webview{bindings: make(map[string]uintptr), pending: make(map[uintptr]struct{})}
 	w.w = C.webview_create(boolToInt(debug), window)
 	return w
 }
 
 func (w *webview) Destroy() {
-	C.webview_destroy(w.w)
+	w.mu.Lock()
+	native := w.w
+	w.w = nil
+	m.Lock()
+	for _, id := range w.bindings {
+		delete(bindings, id)
+	}
+	for id := range w.pending {
+		delete(dispatch, id)
+	}
+	m.Unlock()
+	clear(w.bindings)
+	clear(w.pending)
+	w.mu.Unlock()
+	// Native destruction may drain the dispatch queue, so do not hold mu here.
+	if native != nil {
+		C.webview_destroy(native)
+	}
 }
 
 func (w *webview) Run() {
@@ -241,8 +273,10 @@ func (w *webview) Dispatch(f func()) {
 	for ; dispatch[index] != nil; index++ {
 	}
 	dispatch[index] = f
+	id := index
+	index++
 	m.Unlock()
-	C.CgoWebViewDispatch(w.w, C.uintptr_t(index))
+	C.CgoWebViewDispatch(w.w, C.uintptr_t(id))
 }
 
 //export _webviewDispatchGoCallback
@@ -251,33 +285,94 @@ func _webviewDispatchGoCallback(index unsafe.Pointer) {
 	f := dispatch[uintptr(index)]
 	delete(dispatch, uintptr(index))
 	m.Unlock()
-	f()
+	if f != nil {
+		f()
+	}
 }
 
 //export _webviewBindingGoCallback
 func _webviewBindingGoCallback(w C.webview_t, id *C.char, req *C.char, index uintptr) {
 	m.Lock()
-	f := bindings[index]
+	b := bindings[index]
 	m.Unlock()
-	jsString := func(v interface{}) string { b, _ := json.Marshal(v); return string(b) }
-	status := 0
-	var result string
-	if res, err := f(C.GoString(id), C.GoString(req)); err != nil {
-		status = -1
-		result = jsString(err.Error())
-	} else if b, err := json.Marshal(res); err != nil {
-		status = -1
-		result = jsString(err.Error())
-	} else {
-		status = 0
-		result = string(b)
+	if b == nil {
+		return
 	}
-	s := C.CString(result)
-	defer C.free(unsafe.Pointer(s))
-	C.webview_return(w, id, C.int(status), s)
+	// The C strings belong to the native callback and expire when it returns.
+	requestID, request := C.GoString(id), C.GoString(req)
+	b.invoke(requestID, request, func(status int, result string) {
+		if b.async {
+			b.owner.returnAsync(b.name, index, requestID, status, result)
+			return
+		}
+		s := C.CString(result)
+		defer C.free(unsafe.Pointer(s))
+		C.webview_return(w, id, C.int(status), s)
+	})
+}
+
+func (b *binding) invoke(id, req string, reply func(int, string)) {
+	call := func() {
+		status, result := bindingResult(b.call(id, req))
+		reply(status, result)
+	}
+	if b.async {
+		go call()
+	} else {
+		call()
+	}
+}
+
+func bindingResult(res interface{}, err error) (int, string) {
+	jsString := func(v interface{}) string { b, _ := json.Marshal(v); return string(b) }
+	if err != nil {
+		return -1, jsString(err.Error())
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return -1, jsString(err.Error())
+	}
+	return 0, string(b)
+}
+
+func (w *webview) returnAsync(name string, bindingID uintptr, requestID string, status int, result string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if id, ok := w.bindings[name]; w.w == nil || !ok || id != bindingID {
+		return
+	}
+	m.Lock()
+	for ; dispatch[index] != nil; index++ {
+	}
+	id := index
+	index++
+	w.pending[id] = struct{}{}
+	dispatch[id] = func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		delete(w.pending, id)
+		if current, ok := w.bindings[name]; w.w == nil || !ok || current != bindingID {
+			return
+		}
+		seq, value := C.CString(requestID), C.CString(result)
+		defer C.free(unsafe.Pointer(seq))
+		defer C.free(unsafe.Pointer(value))
+		// Already on the UI thread. Avoid a second dispatch that could outlive w.
+		C.CgoWebViewReturn(w.w, seq, C.int(status), value)
+	}
+	m.Unlock()
+	C.CgoWebViewDispatch(w.w, C.uintptr_t(id))
 }
 
 func (w *webview) Bind(name string, f interface{}) error {
+	return w.bind(name, f, false)
+}
+
+func (w *webview) BindAsync(name string, f interface{}) error {
+	return w.bind(name, f, true)
+}
+
+func (w *webview) bind(name string, f interface{}, async bool) error {
 	v := reflect.ValueOf(f)
 	// f must be a function
 	if v.Kind() != reflect.Func {
@@ -288,7 +383,7 @@ func (w *webview) Bind(name string, f interface{}) error {
 		return errors.New("function may only return a value or a value+error")
 	}
 
-	binding := func(id, req string) (interface{}, error) {
+	call := func(id, req string) (interface{}, error) {
 		raw := []json.RawMessage{}
 		if err := json.Unmarshal([]byte(req), &raw); err != nil {
 			return nil, err
@@ -341,18 +436,40 @@ func (w *webview) Bind(name string, f interface{}) error {
 		}
 	}
 
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.w == nil {
+		return errors.New("webview is destroyed")
+	}
+	if _, ok := w.bindings[name]; ok {
+		return nil
+	}
 	m.Lock()
 	for ; bindings[index] != nil; index++ {
 	}
-	bindings[index] = binding
+	id := index
+	index++
+	bindings[id] = &binding{call: call, async: async, owner: w, name: name}
+	w.bindings[name] = id
 	m.Unlock()
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
-	C.CgoWebViewBind(w.w, cname, C.uintptr_t(index))
+	C.CgoWebViewBind(w.w, cname, C.uintptr_t(id))
 	return nil
 }
 
 func (w *webview) Unbind(name string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.w == nil {
+		return errors.New("webview is destroyed")
+	}
+	m.Lock()
+	if id, ok := w.bindings[name]; ok {
+		delete(bindings, id)
+		delete(w.bindings, name)
+	}
+	m.Unlock()
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 	C.CgoWebViewUnbind(w.w, cname)

@@ -3,6 +3,8 @@ import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings as SettingsType } from "@/gotypes";
 import { Badge } from "./ui/badge";
+import { Switch } from "./ui/switch";
+import { Slider } from "./ui/slider";
 import Settings from "./Settings";
 
 const mocks = vi.hoisted(() => ({
@@ -21,6 +23,9 @@ const mocks = vi.hoisted(() => ({
     invalidateQueries: vi.fn(),
   },
   settings: null as SettingsType | null,
+  settingsLoading: false,
+  settingsError: null as Error | null,
+  cloudStatusKnown: true,
 }));
 
 vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
@@ -67,7 +72,7 @@ vi.mock("@/hooks/useCloudStatus", () => ({
   useCloudStatus: () => ({
     cloudDisabled: false,
     cloudStatus: { disabled: false, source: "none" },
-    isKnown: true,
+    isKnown: mocks.cloudStatusKnown,
   }),
 }));
 
@@ -85,8 +90,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (queryKey[0] === "settings") {
       return {
         data: { settings: mocks.settings },
-        isLoading: false,
-        error: null,
+        isLoading: mocks.settingsLoading,
+        error: mocks.settingsError,
       };
     }
     return { data: { defaultContextLength: 65_536 } };
@@ -161,6 +166,9 @@ describe("Settings reset interactions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isWindows = false;
+    mocks.settingsLoading = false;
+    mocks.settingsError = null;
+    mocks.cloudStatusKnown = true;
     mocks.settings = new SettingsType({ ContextLength: 65_536 });
     mocks.updateSettings.mockResolvedValue({ settings: mocks.settings });
     mocks.updateCloudSetting.mockResolvedValue({
@@ -184,6 +192,91 @@ describe("Settings reset interactions", () => {
       OLLAMA_TOOLS: false,
     });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  });
+
+  it("renders the page before saved settings arrive without guessing values", async () => {
+    mocks.settings = null;
+    mocks.settingsLoading = true;
+    mocks.cloudStatusKnown = false;
+    const menuVisibility = deferred<boolean>();
+    window.getShowAppsInMenu = () => menuVisibility.promise;
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+      });
+      expect(renderer!.root.findAllByType("main")).toHaveLength(1);
+      expect(textContent(renderer!.root)).toContain("Auto-download updates");
+      expect(textContent(renderer!.root)).toContain("Model location");
+      expect(renderer!.root.findAllByType(Switch)).toHaveLength(0);
+      expect(renderer!.root.findAllByType(Slider)).toHaveLength(0);
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "ChatGPT settings" }),
+      ).toHaveLength(1);
+      const reset = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button).includes("Reset to defaults"))!;
+      expect(reset.props.disabled).toBe(true);
+
+      mocks.settings = new SettingsType({
+        AutoUpdateEnabled: false,
+        Expose: true,
+        Models: "/saved/models",
+        ContextLength: 32_768,
+      });
+      mocks.settingsLoading = false;
+      await act(async () => {
+        renderer!.update(<Settings />);
+      });
+      // These settings are usable even while the separate Cloud/menu reads wait.
+      expect(
+        renderer!.root
+          .findAllByType(Switch)
+          .map((control) => control.props.checked),
+      ).toEqual([false, true]);
+      expect(renderer!.root.findByType(Slider).props.value).toBe(32_768);
+      expect(
+        renderer!.root.findByProps({ value: "/saved/models", readOnly: true }),
+      ).toBeTruthy();
+      expect(reset.props.disabled).toBe(true);
+      expect(mocks.updateSettings).not.toHaveBeenCalled();
+
+      await act(async () => {
+        menuVisibility.resolve(false);
+        await menuVisibility.promise;
+      });
+      expect(
+        renderer!.root
+          .findAllByType(Switch)
+          .map((control) => control.props.checked),
+      ).toEqual([false, false, true]);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the page and independent controls available when saved settings fail", async () => {
+    mocks.settings = null;
+    mocks.settingsError = new Error("unavailable");
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+      });
+      expect(renderer!.root.findAllByType("main")).toHaveLength(1);
+      expect(textContent(renderer!.root.findByProps({ role: "alert" }))).toBe(
+        "Failed to load settings",
+      );
+      expect(renderer!.root.findAllByType(Switch)).toHaveLength(2);
+      expect(renderer!.root.findAllByType(Slider)).toHaveLength(0);
+      expect(
+        renderer!.root.findAllByProps({ "aria-label": "ChatGPT settings" }),
+      ).toHaveLength(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
   });
 
   it("locks every control and shows Saved after reset succeeds", async () => {

@@ -43,7 +43,7 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("installCodexDesktop", func() codexDesktopInstallResult {
 		return requestCodexDesktopInstall()
 	})
-	wv.Bind("getCodexDesktopModelsSettings", func() codexDesktopModelsSettingsResult {
+	wv.BindAsync("getCodexDesktopModelsSettings", func() codexDesktopModelsSettingsResult {
 		settings, err := getCodexDesktopModelsSettings()
 		result := codexDesktopModelsSettingsResult{Settings: settings}
 		if err != nil {

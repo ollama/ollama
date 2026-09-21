@@ -55,6 +55,19 @@ function AnimatedDots() {
   );
 }
 
+function SettingPlaceholder({
+  className = "h-5 w-8 rounded-full",
+}: {
+  className?: string;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`animate-pulse bg-neutral-200 dark:bg-neutral-700 ${className}`}
+    />
+  );
+}
+
 interface SettingsDefaultsActions {
   updateSettings: (settings: SettingsType) => Promise<unknown>;
   updateCloud: (enabled: boolean) => Promise<unknown>;
@@ -142,7 +155,9 @@ export default function Settings() {
   const queryClient = useQueryClient();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
-  const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
+  const [showAppsInMenu, setShowAppsInMenuState] = useState<boolean | null>(
+    null,
+  );
   const [showAppsInMenuPending, setShowAppsInMenuPending] = useState(false);
   const [resettingToDefaults, setResettingToDefaults] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -282,12 +297,18 @@ export default function Settings() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    let cancelled = false;
     window
       .getShowAppsInMenu?.()
-      .then(setShowAppsInMenuState)
+      .then((visible) => {
+        if (!cancelled) setShowAppsInMenuState(visible);
+      })
       .catch((error) =>
         console.error("Failed to load menu app visibility:", error),
       );
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -394,6 +415,7 @@ export default function Settings() {
   const handleResetToDefaults = async () => {
     const cloudSource = cloudStatus?.source;
     if (!settings || resettingToDefaults || !cloudSource) return;
+    if (!isWindowsPlatform() && showAppsInMenu === null) return;
 
     setResettingToDefaults(true);
     if (savedConfirmationTimeoutRef.current !== null) {
@@ -414,7 +436,7 @@ export default function Settings() {
         resetClaudeMappings: async () =>
           (await claudeModelsSettingsRef.current?.resetToDefaults()) ?? true,
         currentSettings: settings,
-        currentShowAppsInMenu: showAppsInMenu,
+        currentShowAppsInMenu: showAppsInMenu ?? true,
         cloudSource,
         onSaved: showSavedConfirmation,
       });
@@ -473,19 +495,10 @@ export default function Settings() {
     }
   };
 
-  if (loading) {
-    return null;
-  }
-
-  if (error || !settings) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <div className="text-red-500">Failed to load settings</div>
-      </div>
-    );
-  }
-
   const isWindows = isWindowsPlatform();
+  const contextLength = settings
+    ? settings.ContextLength || defaultContextLength
+    : undefined;
 
   return (
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
@@ -602,8 +615,19 @@ export default function Settings() {
             </div>
           </div>
           {/* Local Configuration */}
-          <div className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
+          <div
+            aria-busy={loading}
+            className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800"
+          >
             <div className="space-y-4 p-4">
+              {(error || (!loading && !settings)) && (
+                <p
+                  role="alert"
+                  className="text-sm text-red-600 dark:text-red-400"
+                >
+                  Failed to load settings
+                </p>
+              )}
               <Field>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start space-x-3 flex-1">
@@ -618,16 +642,20 @@ export default function Settings() {
                     </div>
                   </div>
                   <div className="flex-shrink-0">
-                    <Switch
-                      checked={!cloudDisabled}
-                      disabled={cloudToggleDisabled}
-                      onChange={(checked) => {
-                        if (cloudOverriddenByEnv) {
-                          return;
-                        }
-                        handleCloudUpdate(checked);
-                      }}
-                    />
+                    {cloudStatusKnown ? (
+                      <Switch
+                        checked={!cloudDisabled}
+                        disabled={cloudToggleDisabled}
+                        onChange={(checked) => {
+                          if (cloudOverriddenByEnv) {
+                            return;
+                          }
+                          handleCloudUpdate(checked);
+                        }}
+                      />
+                    ) : (
+                      <SettingPlaceholder />
+                    )}
                   </div>
                 </div>
               </Field>
@@ -645,11 +673,15 @@ export default function Settings() {
                       </div>
                     </div>
                     <div className="flex-shrink-0">
-                      <Switch
-                        checked={showAppsInMenu}
-                        disabled={showAppsInMenuPending}
-                        onChange={handleShowAppsInMenu}
-                      />
+                      {showAppsInMenu !== null ? (
+                        <Switch
+                          checked={showAppsInMenu}
+                          disabled={showAppsInMenuPending}
+                          onChange={handleShowAppsInMenu}
+                        />
+                      ) : (
+                        <SettingPlaceholder />
+                      )}
                     </div>
                   </div>
                 </Field>
@@ -663,19 +695,23 @@ export default function Settings() {
                     <div>
                       <Label>Auto-download updates</Label>
                       <Description>
-                        {settings.AutoUpdateEnabled
+                        {!settings || settings.AutoUpdateEnabled
                           ? "Automatically download updates when available."
                           : "Updates will not be downloaded automatically."}
                       </Description>
                     </div>
                   </div>
                   <div className="flex-shrink-0">
-                    <Switch
-                      checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) =>
-                        handleChange("AutoUpdateEnabled", checked)
-                      }
-                    />
+                    {settings ? (
+                      <Switch
+                        checked={settings.AutoUpdateEnabled}
+                        onChange={(checked) =>
+                          handleChange("AutoUpdateEnabled", checked)
+                        }
+                      />
+                    ) : (
+                      <SettingPlaceholder />
+                    )}
                   </div>
                 </div>
               </Field>
@@ -693,10 +729,14 @@ export default function Settings() {
                     </div>
                   </div>
                   <div className="flex-shrink-0">
-                    <Switch
-                      checked={settings.Expose}
-                      onChange={(checked) => handleChange("Expose", checked)}
-                    />
+                    {settings ? (
+                      <Switch
+                        checked={settings.Expose}
+                        onChange={(checked) => handleChange("Expose", checked)}
+                      />
+                    ) : (
+                      <SettingPlaceholder />
+                    )}
                   </div>
                 </div>
               </Field>
@@ -709,15 +749,22 @@ export default function Settings() {
                     <Label>Model location</Label>
                     <Description>Location where models are stored.</Description>
                     <div className="mt-2 flex items-center space-x-2">
-                      <Input
-                        value={settings.Models || ""}
-                        onChange={(e) => handleChange("Models", e.target.value)}
-                        readOnly
-                      />
+                      {settings ? (
+                        <Input
+                          value={settings.Models || ""}
+                          onChange={(e) =>
+                            handleChange("Models", e.target.value)
+                          }
+                          readOnly
+                        />
+                      ) : (
+                        <SettingPlaceholder className="h-9 w-full rounded-lg" />
+                      )}
                       <Button
                         type="button"
                         color="white"
                         className="px-2"
+                        disabled={!settings}
                         onClick={async () => {
                           if (window.webview?.selectModelsDirectory) {
                             try {
@@ -754,24 +801,26 @@ export default function Settings() {
                       local LLMs can remember and use to generate responses.
                     </Description>
                     <div className="mt-3">
-                      <Slider
-                        value={
-                          settings.ContextLength || defaultContextLength || 0
-                        }
-                        onChange={(value) => {
-                          handleChange("ContextLength", value);
-                        }}
-                        disabled={!defaultContextLength}
-                        options={[
-                          { value: 4096, label: "4k" },
-                          { value: 8192, label: "8k" },
-                          { value: 16384, label: "16k" },
-                          { value: 32768, label: "32k" },
-                          { value: 65536, label: "64k" },
-                          { value: 131072, label: "128k" },
-                          { value: 262144, label: "256k" },
-                        ]}
-                      />
+                      {contextLength !== undefined ? (
+                        <Slider
+                          value={contextLength}
+                          onChange={(value) => {
+                            handleChange("ContextLength", value);
+                          }}
+                          disabled={!defaultContextLength}
+                          options={[
+                            { value: 4096, label: "4k" },
+                            { value: 8192, label: "8k" },
+                            { value: 16384, label: "16k" },
+                            { value: 32768, label: "32k" },
+                            { value: 65536, label: "64k" },
+                            { value: 131072, label: "128k" },
+                            { value: 262144, label: "256k" },
+                          ]}
+                        />
+                      ) : (
+                        <SettingPlaceholder className="h-12 w-full rounded-lg" />
+                      )}
                     </div>
                   </div>
                 </div>
@@ -821,10 +870,14 @@ export default function Settings() {
                         </Description>
                       </div>
                     </div>
-                    <Switch
-                      checked={settings.Agent}
-                      onChange={(checked) => handleChange("Agent", checked)}
-                    />
+                    {settings ? (
+                      <Switch
+                        checked={settings.Agent}
+                        onChange={(checked) => handleChange("Agent", checked)}
+                      />
+                    ) : (
+                      <SettingPlaceholder />
+                    )}
                   </div>
                 </Field>
 
@@ -840,10 +893,14 @@ export default function Settings() {
                         </Description>
                       </div>
                     </div>
-                    <Switch
-                      checked={settings.Tools}
-                      onChange={(checked) => handleChange("Tools", checked)}
-                    />
+                    {settings ? (
+                      <Switch
+                        checked={settings.Tools}
+                        onChange={(checked) => handleChange("Tools", checked)}
+                      />
+                    ) : (
+                      <SettingPlaceholder />
+                    )}
                   </div>
                 </Field>
               </div>
@@ -866,7 +923,12 @@ export default function Settings() {
               type="button"
               color="white"
               className="px-3"
-              disabled={resettingToDefaults || !cloudStatusKnown}
+              disabled={
+                resettingToDefaults ||
+                !settings ||
+                !cloudStatusKnown ||
+                (!isWindows && showAppsInMenu === null)
+              }
               onClick={() => void handleResetToDefaults()}
             >
               {resettingToDefaults && (
