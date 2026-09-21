@@ -2424,6 +2424,121 @@ func TestChatLogprobs(t *testing.T) {
 	})
 }
 
+// A reply that is not a tool call is flushed by the tool parser as content.
+// The final completion chunk carries no content, so the chat route falls back
+// to the parser's remaining buffer; that buffer must no longer hold what was
+// already sent, or the client receives it twice.
+func TestChatToolTagContentNotRepeated(t *testing.T) {
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	const reply = `Here is an example: {"a": 1}`
+
+	mock := &mockRunner{}
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+		fn(llm.CompletionResponse{Content: reply})
+		fn(llm.CompletionResponse{
+			Content:            "",
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		})
+		return nil
+	}
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*gguftest.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	stream := false
+	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-tool-content",
+		Files: map[string]string{"file.gguf": digest},
+		Template: `{{- if .Tools }}tools: available
+{{ end }}
+{{- range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}`,
+		Stream: &stream,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{
+		Model:    "test-tool-content",
+		Messages: []api.Message{{Role: "user", Content: "show me some json"}},
+		Tools: []api.Tool{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get the current weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{"location"},
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"location": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		}},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ChatResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if diff := cmp.Diff(reply, resp.Message.Content); diff != "" {
+		t.Errorf("content mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 	gin.SetMode(gin.TestMode)
