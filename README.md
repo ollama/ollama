@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [gokin](https://github.com/ginkida/gokin) - AI coding agent for the terminal that runs on local models via Ollama
 
 ### Productivity & Apps
 
