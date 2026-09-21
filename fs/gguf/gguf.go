@@ -538,6 +538,10 @@ func (f *File) validateTensorData() error {
 func (f *File) tensorRange(tensor TensorInfo, fileSize int64) (int64, int64, error) {
 	numBytes, ok := tensor.numBytes()
 	if !ok || numBytes == 0 {
+		switch tensor.Type {
+		case tensorTypePQ2_0, tensorTypePTQ1_0:
+			return 0, 0, fmt.Errorf("%w tensor %q uses Prism ternary quantization %s (ggml type %d), which ollama does not support yet; support is tracked at https://github.com/ollama/ollama/issues/18521", ErrUnsupported, tensor.Name, tensor.Type, uint32(tensor.Type))
+		}
 		return 0, 0, fmt.Errorf("%w tensor %q size overflows", ErrUnsupported, tensor.Name)
 	}
 	if tensor.Offset > maxInt64() {
