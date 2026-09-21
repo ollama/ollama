@@ -319,6 +319,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [LivChart](https://livchart.com) - Local-first AI analytics platform for charts, dashboards and PDF reports using Ollama
 
 ### Observability & Monitoring
 
