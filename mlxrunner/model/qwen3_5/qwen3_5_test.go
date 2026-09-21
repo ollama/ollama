@@ -2,11 +2,13 @@ package qwen3_5
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 func TestSanitizeConvWeight(t *testing.T) {
@@ -243,6 +245,63 @@ func TestLoadSwitchMLPGlobalScaleFusion(t *testing.T) {
 			}()
 		}
 	})
+}
+
+func TestDenseMLPScalingPaths(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		quantized  bool
+		withScales bool
+	}{
+		{name: "plain"},
+		{name: "quantized", quantized: true},
+		{name: "quantized with global scales", quantized: true, withScales: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mlxtest.Run(t, func(t *mlxtest.T) {
+				if tt.quantized && !mlx.MetalIsAvailable() && !mlx.CUDAIsAvailable() {
+					t.Skip("nvfp4 quantized_matmul requires a GPU backend")
+				}
+				const width, group = 64, 16
+
+				weightValues := make([]float32, width*width)
+				downValues := make([]float32, width*width)
+				for i := range weightValues {
+					weightValues[i] = float32((i%23)-11) * 0.011
+					if i%(width+1) == 0 {
+						downValues[i] = 1
+					}
+				}
+				weight := mlx.FromValues(weightValues, width, width).AsType(mlx.DTypeBFloat16)
+				var gate, up nn.LinearLayer
+				if tt.quantized {
+					gateQuantized := nn.NewQuantizedLinear(weight, nil, group, 4, "nvfp4")
+					upQuantized := nn.NewQuantizedLinear(weight, nil, group, 4, "nvfp4")
+					if tt.withScales {
+						gateQuantized.GlobalScale = mlx.FromValue(float32(mlx.Nvfp4MaxProduct) * 0.75)
+						upQuantized.GlobalScale = mlx.FromValue(float32(mlx.Nvfp4MaxProduct) * 1.25)
+					}
+					gate, up = gateQuantized, upQuantized
+				} else {
+					gate, up = nn.NewLinear(weight, nil), nn.NewLinear(weight, nil)
+				}
+				down := nn.NewLinear(mlx.FromValues(downValues, width, width).AsType(mlx.DTypeBFloat16), nil)
+				mlp := &DenseMLP{GateProj: gate, UpProj: up, DownProj: down}
+
+				xValues := make([]float32, width)
+				for i := range xValues {
+					xValues[i] = float32(i%7-3) / 8
+				}
+				x := mlx.FromValues(xValues, 1, 1, width).AsType(mlx.DTypeBFloat16)
+				got := mlp.Forward(x, nil).AsType(mlx.DTypeFloat32)
+				want := down.Forward(mlx.SwiGLU(gate.Forward(x), up.Forward(x))).AsType(mlx.DTypeFloat32)
+				mlx.Eval(got, want)
+				if gotValues, wantValues := got.Floats(), want.Floats(); !slices.Equal(gotValues, wantValues) {
+					t.Fatalf("DenseMLP.Forward() = %v, want %v", gotValues, wantValues)
+				}
+			})
+		})
+	}
 }
 
 func TestResolveTensorPathLayout(t *testing.T) {

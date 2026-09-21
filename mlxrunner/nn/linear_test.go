@@ -2,6 +2,7 @@ package nn
 
 import (
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -80,9 +81,17 @@ func TestQuantizedLinearGlobalScaleMatchesDequantized(t *testing.T) {
 		x := mlx.FromValues(xValues, 1, cols).AsType(mlx.DTypeBFloat16)
 
 		got := linear.Forward(x).AsType(mlx.DTypeFloat32)
+		unscaled, pending := ForwardDeferScale(linear, x)
+		if pending != globalScale {
+			t.Fatalf("ForwardDeferScale() pending = %p, want %p", pending, globalScale)
+		}
+		wantUnscaled := mlx.QuantizedMatmul(x, packed, scales, nil, true, group, 4, "nvfp4", nil)
 		dense := mlx.Dequantize(packed, scales, nil, group, 4, "nvfp4", globalScale)
 		want := mlx.Matmul(x.AsType(mlx.DTypeFloat32), mlx.Transpose(dense.AsType(mlx.DTypeFloat32), 1, 0))
-		mlx.Eval(got, want)
+		mlx.Eval(got, wantUnscaled, unscaled, want)
+		if gotUnscaled, wantUnscaled := unscaled.AsType(mlx.DTypeFloat32).Floats(), wantUnscaled.AsType(mlx.DTypeFloat32).Floats(); !slices.Equal(gotUnscaled, wantUnscaled) {
+			t.Fatalf("ForwardDeferScale() unscaled output = %v, want %v", gotUnscaled, wantUnscaled)
+		}
 
 		gotValues, wantValues := got.Floats(), want.Floats()
 		if len(gotValues) != len(wantValues) {
@@ -97,6 +106,24 @@ func TestQuantizedLinearGlobalScaleMatchesDequantized(t *testing.T) {
 			if delta > tolerance {
 				t.Fatalf("output[%d] = %v, want %v (delta %v > %v)", i, gotValues[i], wantValues[i], delta, tolerance)
 			}
+		}
+
+		biased := *linear
+		biasValues := make([]float32, rows)
+		for i := range biasValues {
+			biasValues[i] = float32(i%5-2) / 4
+		}
+		biased.Bias = mlx.FromValues(biasValues, rows).AsType(mlx.DTypeBFloat16)
+		biasedOut, pending := ForwardDeferScale(&biased, x)
+		if pending != nil {
+			t.Fatalf("ForwardDeferScale() with bias returned pending scale %p", pending)
+		}
+		wantBiased := linear.Forward(x).Add(biased.Bias)
+		mlx.Eval(biasedOut, wantBiased)
+		gotBiased := biasedOut.AsType(mlx.DTypeFloat32).Floats()
+		wantBiasedValues := wantBiased.AsType(mlx.DTypeFloat32).Floats()
+		if !slices.Equal(gotBiased, wantBiasedValues) {
+			t.Fatalf("ForwardDeferScale() with bias = %v, want %v", gotBiased, wantBiasedValues)
 		}
 	})
 }
