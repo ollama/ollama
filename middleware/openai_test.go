@@ -689,7 +689,9 @@ func TestChatWriter_StreamMetricsTrailerSkipsEmptyContentChunk(t *testing.T) {
 		Metrics: api.Metrics{
 			PromptEvalCount:       3,
 			PromptEvalCachedCount: testIntPtr(1),
+			PromptEvalDuration:    30 * time.Millisecond,
 			EvalCount:             1,
+			EvalDuration:          20 * time.Millisecond,
 		},
 	}
 	data, err = json.Marshal(trailer)
@@ -717,6 +719,12 @@ func TestChatWriter_StreamMetricsTrailerSkipsEmptyContentChunk(t *testing.T) {
 	}
 	if !strings.Contains(frames[2], `"prompt_tokens_details":{"cached_tokens":1}`) {
 		t.Fatalf("expected usage frame with cached prompt tokens, got %s", frames[2])
+	}
+	if !strings.Contains(frames[2], `"timings":{"prompt_n":3,"prompt_ms":30`) {
+		t.Fatalf("expected usage frame to carry timings, got %s", frames[2])
+	}
+	if strings.Contains(strings.Join(frames[:2], ""), `"timings"`) {
+		t.Fatalf("expected timings only in the usage frame, got %s", recorder.Body.String())
 	}
 	if frames[3] != "[DONE]" {
 		t.Fatalf("expected final frame [DONE], got %q", frames[3])

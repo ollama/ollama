@@ -98,6 +98,9 @@ Limits:
 | -output	| Output file for results			| "" (stdout)		|
 | -warmup	| Number of warmup requests before timing	| 1			|
 | -prompt-tokens	| Generate a prompt of exactly N tokens (0 = use -p)	| 0		|
+| -num-ctx	| Context size (0 = server default)		| 0		|
+| -openai	| OpenAI-compatible API base URL		| ""		|
+| -api-key	| API key for OpenAI endpoint (or OPENAI_API_KEY)	| ""		|
 | -v		| Verbose mode					| false			|
 | -debug	| Show debug information			| false			|
 

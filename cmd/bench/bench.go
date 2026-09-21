@@ -157,9 +157,9 @@ func promptNonce(n int) string {
 	return string(letters)
 }
 
-// nonceHeader is the per-request cache-busting prefix. It reads like a
-// vendored-file header rather than benchmark scaffolding, which reasoning
-// models take as a cue to analyze the harness instead of writing code.
+// nonceHeader puts the request-unique cache key before the stable code prompt.
+// A Python file header keeps the prefix consistent with the coding workload;
+// benchmark-oriented prose can make reasoning models analyze the harness.
 func nonceHeader(cacheBuster string) string {
 	return "# -*- coding: utf-8 -*-\n# checksum: " + cacheBuster + "\n\n\n"
 }
@@ -233,8 +233,9 @@ func generateCodePrompt(plan promptPlan, variation int) string {
 	return nonceHeader(promptNonce(nonceLetters+plan.pad)) + codePromptBody(plan.words, variation)
 }
 
-// benchmarkPromptVariation keeps primary epoch windows consecutive while
-// assigning retries to disjoint windows after them.
+// benchmarkPromptVariation maps each epoch and retry to a unique prompt.
+// Warmups occupy the first window, primary epochs the next, and every retry
+// gets another epochs-wide window so it cannot reuse a measured prompt.
 func benchmarkPromptVariation(warmups, epochs, epoch, attempt int) int {
 	return warmups + attempt*epochs + epoch
 }
@@ -1068,9 +1069,6 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 	keepAliveUnload := float64(0)
 
 	for _, model := range models {
-		info := ModelInfo{Name: model}
-		outputModelInfo(out, *fOpt.format, info)
-
 		// Size the generated prompt against this server, over the same API the
 		// timed requests use, so no Ollama endpoint is required.
 		var plan promptPlan
@@ -1090,6 +1088,9 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 					*fOpt.promptTokens, model, len(codePromptProblems(plan.words, 0)), plan.pad)
 			}
 		}
+
+		info := ModelInfo{Name: model}
+		outputModelInfo(out, *fOpt.format, info)
 
 		for i := range *fOpt.warmup {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
@@ -1115,8 +1116,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 				ka = &keepAliveUnload
 			}
 
-			const maxRetries = 3
-			for attempt := range maxRetries + 1 {
+			for attempt := range maxShortResponseRetries + 1 {
 				variation := benchmarkPromptVariation(*fOpt.warmup, *fOpt.epochs, epoch, attempt)
 				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
 				oaiMetrics, err = openaiGenerate(ctx, *fOpt.openaiURL, apiKey, model, fOpt, variation, plan, ka)
@@ -1128,13 +1128,13 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 				}
 
 				short = *fOpt.maxTokens > 0 && oaiMetrics.CompletionTokens < *fOpt.maxTokens
-				if !short || attempt == maxRetries {
+				if !short || attempt == maxShortResponseRetries {
 					break
 				}
 
 				if *fOpt.debug {
 					fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying with different prompt (attempt %d/%d)\n",
-						oaiMetrics.CompletionTokens, *fOpt.maxTokens, attempt+1, maxRetries)
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, attempt+1, maxShortResponseRetries)
 				}
 			}
 
@@ -1146,7 +1146,7 @@ func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
 				shortCount++
 				if *fOpt.debug {
 					fmt.Fprintf(os.Stderr, "WARNING: Short response (%d/%d tokens) after %d retries for epoch %d\n",
-						oaiMetrics.CompletionTokens, *fOpt.maxTokens, maxRetries, epoch+1)
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, maxShortResponseRetries, epoch+1)
 				}
 			}
 

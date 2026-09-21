@@ -36,6 +36,9 @@ func createTestFlagOptions() flagOptions {
 	debug := false
 	warmup := 0
 	promptTokens := 0
+	numCtx := 0
+	openaiURL := ""
+	apiKey := ""
 
 	return flagOptions{
 		models:       &models,
@@ -52,6 +55,9 @@ func createTestFlagOptions() flagOptions {
 		debug:        &debug,
 		warmup:       &warmup,
 		promptTokens: &promptTokens,
+		numCtx:       &numCtx,
+		openaiURL:    &openaiURL,
+		apiKey:       &apiKey,
 	}
 }
 
@@ -1371,6 +1377,166 @@ func TestBuildChatRequest_VariesByAttempt(t *testing.T) {
 
 	if body0 == body1 {
 		t.Error("Expected different prompts for different attempts")
+	}
+}
+
+func TestOpenAIGenerate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("path = %q, want /v1/chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q, want Bearer secret", got)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if got := body["stream"]; got != true {
+			t.Errorf("stream = %v, want true", got)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"hello"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5,"prompt_tokens_details":{"cached_tokens":2}},"timings":{"cache_n":2,"prompt_n":10,"prompt_ms":20,"predicted_n":5,"predicted_ms":50}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	fOpt := createTestFlagOptions()
+	metrics, err := openaiGenerate(t.Context(), server.URL+"/v1", "secret", "test-model", fOpt, 0, promptPlan{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.PromptTokens != 12 || metrics.CompletionTokens != 5 {
+		t.Errorf("usage = (%d, %d), want (12, 5)", metrics.PromptTokens, metrics.CompletionTokens)
+	}
+	if !metrics.HasTimings || metrics.ServerPromptTokens != 10 || metrics.ServerPredictedTokens != 5 {
+		t.Errorf("server timings = %+v", metrics)
+	}
+	if !metrics.HasCachedTokens || metrics.CachedTokens != 2 {
+		t.Errorf("cached tokens = (%d, %t), want (2, true)", metrics.CachedTokens, metrics.HasCachedTokens)
+	}
+}
+
+func TestOpenAIGenerateSplashMetrics(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5},"metrics":{"prefill":{"tokens":10},"decode":{"tokens":4},"request_latency":{"start_to_first_token_ms":20,"first_token_to_done_ms":40},"cache":{"matched_tokens":2}}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	fOpt := createTestFlagOptions()
+	metrics, err := openaiGenerate(t.Context(), server.URL, "", "test-model", fOpt, 0, promptPlan{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !metrics.HasTimings || metrics.ServerPromptTokens != 10 || metrics.ServerPromptMS != 20 {
+		t.Errorf("Splash prompt metrics = %+v", metrics)
+	}
+	if metrics.ServerPredictedTokens != 4 || metrics.ServerPredictedMS != 40 {
+		t.Errorf("Splash generation metrics = %+v", metrics)
+	}
+	if !metrics.HasCachedTokens || metrics.CachedTokens != 2 {
+		t.Errorf("Splash cache metrics = %+v", metrics)
+	}
+}
+
+func TestOpenAIGenerateUsageOnly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, "data: not-json")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"hello"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":5}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	fOpt := createTestFlagOptions()
+	metrics, err := openaiGenerate(t.Context(), server.URL, "", "test-model", fOpt, 0, promptPlan{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.PromptTokens != 12 || metrics.CompletionTokens != 5 {
+		t.Errorf("usage = (%d, %d), want (12, 5)", metrics.PromptTokens, metrics.CompletionTokens)
+	}
+	if metrics.HasTimings {
+		t.Errorf("standards-only response unexpectedly has server timings: %+v", metrics)
+	}
+}
+
+func TestBenchmarkOpenAI(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if got := body["keep_alive"]; got != float64(0) {
+			t.Errorf("keep_alive = %v, want 0", got)
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"hello"}}]}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":50},"timings":{"prompt_n":12,"prompt_ms":24,"predicted_n":50,"predicted_ms":100}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	fOpt := createTestFlagOptions()
+	openaiURL := server.URL
+	fOpt.openaiURL = &openaiURL
+	var out bytes.Buffer
+	if err := benchmarkOpenAI(fOpt, []string{"test-model"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	for _, want := range []string{"Model: test-model", "step=prefill", "step=generate", "step=generate_server"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestBenchmarkOpenAICalibrationFailureBeforeOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"choices":[],"usage":{"prompt_tokens":0,"completion_tokens":1}}`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "data: [DONE]")
+	}))
+	defer server.Close()
+
+	fOpt := createTestFlagOptions()
+	openaiURL := server.URL
+	promptTokens := 100
+	fOpt.openaiURL = &openaiURL
+	fOpt.promptTokens = &promptTokens
+	var out bytes.Buffer
+	if err := benchmarkOpenAI(fOpt, []string{"test-model"}, &out); err == nil {
+		t.Fatal("benchmarkOpenAI() succeeded, want calibration error")
+	}
+	if out.Len() != 0 {
+		t.Errorf("output before calibration failure = %q, want empty", out.String())
 	}
 }
 

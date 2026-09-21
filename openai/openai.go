@@ -274,6 +274,10 @@ func ToUsage(r api.ChatResponse) Usage {
 
 // ToTimings converts api.Metrics to Timings
 func ToTimings(m api.Metrics) *Timings {
+	if m.PromptEvalCount == 0 && m.PromptEvalDuration == 0 && m.EvalCount == 0 && m.EvalDuration == 0 {
+		return nil
+	}
+
 	promptMS := float64(m.PromptEvalDuration.Milliseconds())
 	predictedMS := float64(m.EvalDuration.Milliseconds())
 	return &Timings{
@@ -344,7 +348,6 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 			}(r.DoneReason),
 			Logprobs: logprobs,
 		}}, Usage: ToUsage(r),
-		Timings:   ToTimings(r.Metrics),
 		DebugInfo: r.DebugInfo,
 	}
 }
@@ -476,8 +479,7 @@ func ToCompletion(id string, r api.GenerateResponse) Completion {
 				return nil
 			}(r.DoneReason),
 		}},
-		Usage:   ToUsageGenerate(r),
-		Timings: ToTimings(r.Metrics),
+		Usage: ToUsageGenerate(r),
 	}
 }
 
