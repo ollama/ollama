@@ -400,6 +400,42 @@ func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
 	return nil
 }
 
+// ExportProgressFunc is a function that [Client.Export] invokes every time there
+// is progress with a "export" request sent to the service. If this function
+// returns an error, [Client.Export] will stop the process and return this error.
+type ExportProgressFunc func(ProgressResponse) error
+
+// ImportProgressFunc is a function that [Client.Import] invokes every time there
+// is progress with a "import" request sent to the service. If this function
+// returns an error, [Client.Import] will stop the process and return this error.
+type ImportProgressFunc func(ProgressResponse) error
+
+// Export copies a model - creating a model with a human readable directory
+// layout
+func (c *Client) Export(ctx context.Context, req *CopyRequest, fn ExportProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/export", req, func(bts []byte) error {
+		var resp ProgressResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
+// Import copies a model - creating a model using ollama's internal blob storage
+// model
+func (c *Client) Import(ctx context.Context, req *CopyRequest, fn ImportProgressFunc) error {
+	return c.stream(ctx, http.MethodPost, "/api/import", req, func(bts []byte) error {
+		var resp ProgressResponse
+		if err := json.Unmarshal(bts, &resp); err != nil {
+			return err
+		}
+
+		return fn(resp)
+	})
+}
+
 // Delete deletes a model and its data.
 func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 	if err := c.do(ctx, http.MethodDelete, "/api/delete", req, nil); err != nil {

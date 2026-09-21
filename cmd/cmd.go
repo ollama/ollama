@@ -1598,6 +1598,54 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func ExportHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := api.CopyRequest{Source: args[0], Destination: args[1]}
+
+	err = withProgress(cmd.Context(), func(fn func(api.ProgressResponse) error) error {
+		return client.Export(cmd.Context(), &req, fn)
+	}, ProgressOptions{
+		Step: "exporting",
+		ClearOnError: func(err error) bool {
+			return false
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+	fmt.Printf("exported '%s' to '%s'\n", args[0], args[1])
+	return nil
+}
+
+func ImportHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := api.CopyRequest{Source: args[0], Destination: args[1]}
+
+	err = withProgress(cmd.Context(), func(fn func(api.ProgressResponse) error) error {
+		return client.Import(cmd.Context(), &req, fn)
+	}, ProgressOptions{
+		Step: "importing",
+		ClearOnError: func(err error) bool {
+			return false
+		},
+	})
+
+	if err != nil {
+		return err
+	}
+	fmt.Printf("imported '%s' to '%s'\n", args[0], args[1])
+	return nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
@@ -1613,43 +1661,52 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return err
 }
 
+type ProgressOptions struct {
+	Step         string
+	ClearOnError func(error) bool
+}
+
 // pullModelWithProgress pulls name, rendering progress to stderr. When
 // clearNotFound is set and the pull fails because the model doesn't exist,
 // the progress display is erased rather than left behind; callers set it
 // when a ":cloud" suggestion prompt may immediately follow the failure.
 func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
+	err := withProgress(ctx, func(fn func(api.ProgressResponse) error) error {
+		request := api.PullRequest{
+			Name:     name,
+			Insecure: insecure,
+		}
+		return client.Pull(ctx, &request, fn)
+	}, ProgressOptions{
+		Step: "pulling",
+		ClearOnError: func(err error) bool {
+			return clearNotFound && isPullNotFoundErr(err)
+		},
+	})
+	return err
+}
+
+func withProgress(
+	ctx context.Context,
+	run func(func(api.ProgressResponse) error) error,
+	opts ProgressOptions,
+) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
 	bars := make(map[string]*progress.Bar)
-
 	var status string
 	var spinner *progress.Spinner
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
 			if resp.Completed == 0 {
-				// This is the initial status update for the
-				// layer, which the server sends before
-				// beginning the download, for clients to
-				// compute total size and prepare for
-				// downloads, if needed.
-				//
-				// Skipping this here to avoid showing a 0%
-				// progress bar, which *should* clue the user
-				// into the fact that many things are being
-				// downloaded and that the current active
-				// download is not that last. However, in rare
-				// cases it seems to be triggering to some, and
-				// it isn't worth explaining, so just ignore
-				// and regress to the old UI that keeps giving
-				// you the "But wait, there is more!" after
-				// each "100% done" bar, which is "better."
 				return nil
 			}
 
 			if spinner != nil {
 				spinner.Stop()
+				spinner = nil
 			}
 
 			bar, ok := bars[resp.Digest]
@@ -1659,13 +1716,26 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 				if isDigest {
 					name = name[:min(12, len(name))]
 				}
-				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
+
+				msg := resp.Status
+				if msg == "" {
+					msg = fmt.Sprintf("%s %s...", opts.Step, resp.Digest[7:19])
+				}
+
+				bar = progress.NewBar(
+					msg,
+					resp.Total,
+					resp.Completed,
+				)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
 
 			bar.Set(resp.Completed)
-		} else if status != resp.Status {
+			return nil
+		}
+
+		if status != resp.Status {
 			if spinner != nil {
 				spinner.Stop()
 			}
@@ -1678,12 +1748,12 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 		return nil
 	}
 
-	request := api.PullRequest{Name: name, Insecure: insecure}
-	err := client.Pull(ctx, &request, fn)
-	if clearNotFound && isPullNotFoundErr(err) {
-		// The deferred Stop becomes a no-op after this.
+	err := run(fn)
+
+	if opts.ClearOnError != nil && opts.ClearOnError(err) {
 		p.StopAndClear()
 	}
+
 	return err
 }
 
@@ -2558,6 +2628,22 @@ func NewCLI() *cobra.Command {
 		RunE:    CopyHandler,
 	}
 
+	exportCmd := &cobra.Command{
+		Use:     "export MODEL TARGET_DIR",
+		Short:   "Export a model",
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ExportHandler,
+	}
+
+	importCmd := &cobra.Command{
+		Use:     "import SOURCE_DIR MODEL",
+		Short:   "Import a model",
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ImportHandler,
+	}
+
 	deleteCmd := &cobra.Command{
 		Use:     "rm MODEL [MODEL...]",
 		Short:   "Remove a model",
@@ -2602,6 +2688,8 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		psCmd,
 		copyCmd,
+		exportCmd,
+		importCmd,
 		deleteCmd,
 		serveCmd,
 	} {
@@ -2652,6 +2740,8 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		psCmd,
 		copyCmd,
+		exportCmd,
+		importCmd,
 		deleteCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
