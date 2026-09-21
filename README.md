@@ -311,6 +311,7 @@ console.log(response.message.content);
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
+- [Lumi Eggcracker](https://github.com/noqt/Lumi-Eggcracker) - External fail-closed process-tree containment for exact qualified native Ollama builds on supported Linux
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
 - [Writeopia](https://github.com/Writeopia/Writeopia) - Text editor with Ollama integration
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) - GitHub code repository understanding
