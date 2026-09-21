@@ -18,7 +18,7 @@ func testIntPtr(v int) *int {
 
 func TestRequestGrammar(t *testing.T) {
 	schema := `{"type":"object","properties":{"answer":{"type":"string"}}}`
-	tag := `{"type":"structural_tag","format":{"type":"json_schema","json_schema":` + schema + `}}`
+	tag := `{"type":"structural_tag","format":{"type":"json_schema","json_schema":` + schema + `,"max_whitespace_cnt":32}}`
 	for _, tt := range []struct {
 		name string
 		req  llm.CompletionRequest
@@ -30,7 +30,7 @@ func TestRequestGrammar(t *testing.T) {
 		{
 			name: "json",
 			req:  llm.CompletionRequest{Format: json.RawMessage(`"json"`)},
-			want: `{"type":"structural_tag","format":{"type":"json_schema","json_schema":{"type":"object"}}}`,
+			want: `{"type":"structural_tag","format":{"type":"json_schema","json_schema":{"type":"object"},"max_whitespace_cnt":32}}`,
 		},
 		{name: "schema", req: llm.CompletionRequest{Format: json.RawMessage(schema)}, want: tag},
 	} {
