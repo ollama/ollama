@@ -18,8 +18,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
@@ -179,7 +179,7 @@ func TestModelShowCacheKeysOnTheThinkValue(t *testing.T) {
 	// matters -- it reports an armed budget for a request that switched
 	// thinking off, the opposite of what the completion path will do, and a
 	// client writes its prompt from that number.
-	_, digest := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
 	var create Server
 	w := createRequest(t, create.CreateHandler, api.CreateRequest{
 		Model:      "show-cache-think",
