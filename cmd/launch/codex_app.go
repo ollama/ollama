@@ -2160,12 +2160,7 @@ func defaultCodexAppIsRunning() bool {
 	case "windows":
 		return len(codexAppMatchingProcessIDs()) > 0
 	case "darwin":
-		out, err := exec.Command("osascript", "-e", `tell application "System Events" to exists process "ChatGPT"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
-			return true
-		}
-		out, err = exec.Command("osascript", "-e", `tell application "System Events" to exists process "Codex"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
+		if err := exec.Command("pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
 			return true
 		}
 		return len(codexAppMatchingProcessIDs()) > 0
