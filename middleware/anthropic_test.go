@@ -2711,7 +2711,6 @@ func TestWebSearchLoopMaxLimit(t *testing.T) {
 			if result.StopReason != "end_turn" {
 				t.Fatalf("expected end_turn, got %q", result.StopReason)
 			}
-
 		})
 	}
 }
