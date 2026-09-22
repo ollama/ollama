@@ -268,24 +268,36 @@ function checkEnv {
         $script:WINDOWS_ARM64_CROSS_COMPILE = $false
     }
 
-    # Locate ROCm installations
-    $rocm7Dir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
-    if ($null -ne $rocm7Dir) {
-        $script:HIP_PATH_V7=$rocm7Dir.FullName
-    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]7\.') {
-        $script:HIP_PATH_V7=$env:HIP_PATH
+    # Locate ROCm 10, preferring an explicit SDK, then worktree-local and
+    # shared caches, followed by a system installation.
+    if ($env:HIP_PATH -and (isRocm10Root $env:HIP_PATH)) {
+        $script:HIP_PATH_V10=$env:HIP_PATH
+    } else {
+        if ($env:HIP_PATH) {
+            Write-Output "Ignoring non-ROCm 10 HIP_PATH: $env:HIP_PATH"
+        }
+        $rocmRootFiles = @((Join-Path $script:SRC_DIR ".cache\rocm\windows-10.0.0\root.txt"))
+        $common = (& git rev-parse --path-format=absolute --git-common-dir 2>$null)
+        if ($common -and (Split-Path -Leaf $common.Trim()) -eq ".git") {
+            $rocmRootFiles += Join-Path (Split-Path -Parent $common.Trim()) ".cache\rocm\windows-10.0.0\root.txt"
+        }
+        foreach ($rocmRootFile in $rocmRootFiles) {
+            if (Test-Path -LiteralPath $rocmRootFile) {
+                $rocmRoot = (Get-Content -LiteralPath $rocmRootFile -Raw).Trim()
+                if (isRocm10Root $rocmRoot) {
+                    $script:HIP_PATH_V10 = $rocmRoot
+                    break
+                }
+            }
+        }
+        if (-not $script:HIP_PATH_V10) {
+            $rocm10Dir=(get-item "C:\Program Files\AMD\ROCm\*" -ea 'silentlycontinue' | Where-Object { isRocm10Root $_.FullName } | sort-object { [version]$_.Name } -Descending | select-object -First 1)
+            if ($null -ne $rocm10Dir) {
+                $script:HIP_PATH_V10=$rocm10Dir.FullName
+            }
+        }
     }
-    $rocm6Dir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object { [version]$_.Name } -Descending | select-object -First 1)
-    if ($null -ne $rocm6Dir) {
-        $script:HIP_PATH_V6=$rocm6Dir.FullName
-    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
-        $script:HIP_PATH_V6=$env:HIP_PATH
-    }
-    # Default to v7
-    $script:HIP_PATH=$script:HIP_PATH_V7
-    if (-not $script:HIP_PATH) {
-        $script:HIP_PATH=$script:HIP_PATH_V6
-    }
+    $script:HIP_PATH=$script:HIP_PATH_V10
     
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
     if ($inoSetup.length -gt 0) {
@@ -363,6 +375,27 @@ function checkEnv {
         }
     }
     Write-Output "Build parallelism: $script:JOBS (set OLLAMA_BUILD_PARALLEL to override)"
+}
+
+function isRocm10Root {
+    param([string]$root)
+
+    if (-not $root -or -not (Test-Path -LiteralPath $root)) {
+        return $false
+    }
+
+    $versionFile = Join-Path $root ".info\version"
+    if (Test-Path -LiteralPath $versionFile) {
+        return (Get-Content -LiteralPath $versionFile -Raw).Trim() -match '^10\.0(?:\.|$)'
+    }
+
+    $hipVersionFile = Join-Path $root "bin\.hipVersion"
+    if (Test-Path -LiteralPath $hipVersionFile) {
+        $hipVersion = Get-Content -LiteralPath $hipVersionFile
+        return $hipVersion -contains 'HIP_VERSION_MAJOR=7' -and $hipVersion -contains 'HIP_VERSION_MINOR=15'
+    }
+
+    return $false
 }
 
 
@@ -713,63 +746,45 @@ function cuda13Arm64IfAvailable {
     cudaArm64Common "13" "13.4" -Optional
 }
 
-function rocm6 {
-    # KNOWN ISSUE: ROCm v6 on Windows is currently broken with upstream llama.cpp b8591+.
-    # The vendors/hip.h guard (#if HIP_VERSION >= 60200000) assumes __hip_fp8_e4m3 exists,
-    # but Windows ROCm 6.2 only has the _fnuz variant (__hip_fp8_e4m3_fnuz).
-    # This causes a compile error in ggml-cuda/vendors/hip.h:240.
-    # Use rocm7 instead, or wait for an upstream fix.
+function rocm10 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
-        if ($script:HIP_PATH_V6) {
-            Write-Output "WARNING: ROCm v6 build is currently broken (FP8 type mismatch). Skipping."
-            Write-Output "Use rocm7 instead."
-        } else {
-            Write-Output "ROCm v6 not detected, skipping"
-        }
-    }
-}
-
-function rocm7 {
-    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
-    if ($script:ARCH -ne "arm64") {
-        if ($script:HIP_PATH_V7) {
-            Write-Output "Building llama-server ROCm v7 backend $script:HIP_PATH_V7"
-            $rocmVersion = Split-Path -Leaf $script:HIP_PATH_V7
-            if ($rocmVersion -notmatch '^(\d+)\.(\d+)') {
-                Write-Output "Unable to determine ROCm version from $script:HIP_PATH_V7"
-                exit(1)
-            }
-            $rocmBackend = "rocm_v$($Matches[1])_$($Matches[2])"
-            $rocmPreset = "${rocmBackend}_windows"
+        if ($script:HIP_PATH_V10) {
+            Write-Output "Building llama-server ROCm v10 backend $script:HIP_PATH_V10"
+            $rocmBackend = "rocm_v10_0"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
-            $oldHIPCXX = $env:HIPCXX
-            $oldHIP_PLATFORM = $env:HIP_PLATFORM
-            $oldCMAKE_PREFIX_PATH = $env:CMAKE_PREFIX_PATH
-            $oldCC = $env:CC
-            $oldCXX = $env:CXX
-            $env:HIPCXX="${script:HIP_PATH_V7}\bin\clang++.exe"
-            $env:HIP_PLATFORM="amd"
-            $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
-            $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
-            $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
-            & cmake -S llama\server --preset $rocmPreset -G Ninja `
-                --install-prefix $script:DIST_DIR
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            $env:HIPCXX=$oldHIPCXX
-            $env:HIP_PLATFORM=$oldHIP_PLATFORM
-            $env:CMAKE_PREFIX_PATH=$oldCMAKE_PREFIX_PATH
-            $env:CC=$oldCC
-            $env:CXX=$oldCXX
-            & cmake --build "build\llama-server-$rocmBackend" --config Release --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install "build\llama-server-$rocmBackend" --component llama-server --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            $clangBin = @(
+                (Join-Path $script:HIP_PATH_V10 "bin")
+                (Join-Path $script:HIP_PATH_V10 "lib\llvm\bin")
+                (Join-Path $script:HIP_PATH_V10 "llvm\bin")
+            ) | Where-Object { Test-Path -LiteralPath (Join-Path $_ "clang.exe") } | Select-Object -First 1
+            if (-not $clangBin) {
+                throw "Unable to find the ROCm clang toolchain under $script:HIP_PATH_V10"
+            }
+            $oldEnvironment = saveEnvironment
+            try {
+                $env:HIP_PATH = $script:HIP_PATH_V10
+                $env:HIP_PLATFORM = "amd"
+                $env:CC = Join-Path $clangBin "clang.exe"
+                $env:CXX = Join-Path $clangBin "clang++.exe"
+                $env:HIPCXX = $env:CXX
+                $env:CMAKE_PREFIX_PATH = $env:HIP_PATH
+                $env:Path = @((Join-Path $env:HIP_PATH "bin"), $clangBin, $env:Path) -join ";"
+                & cmake -S llama\server --preset rocm_v10_0_windows -G Ninja `
+                    --install-prefix $script:DIST_DIR
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+                & cmake --build "build\llama-server-$rocmBackend" --config Release --parallel $script:JOBS
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+                & cmake --install "build\llama-server-$rocmBackend" --component llama-server --strip
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            } finally {
+                restoreEnvironment $oldEnvironment
+            }
         } else {
-            Write-Output "ROCm v7 not detected, skipping"
+            Write-Output "ROCm v10 not detected, skipping"
         }
     }
 }
@@ -1240,6 +1255,10 @@ function zip {
         if (Test-Path -Path $amd64Dir) {
             # Stage ROCm into its own directory for independent compression.
             if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm_v*" "ROCm") {
+                $kpackDir = "${amd64Dir}\lib\ollama\.kpack"
+                if (Test-Path -LiteralPath $kpackDir) {
+                    Move-Item -LiteralPath $kpackDir -Destination "${distDir}\windows-amd64-rocm\lib\ollama\.kpack"
+                }
                 Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
                 $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
                 $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir
@@ -1306,7 +1325,7 @@ try {
         if ($script:ARCH -ne "arm64") {
             cuda13Arm64IfAvailable
         }
-        rocm7
+        rocm10
         vulkan
         mlxCuda13
         ollama
