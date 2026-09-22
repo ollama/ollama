@@ -127,6 +127,13 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// LogprobTokens is a list of specific tokens to return the log probability of at
+	// each generated position, regardless of whether they rank within TopLogprobs.
+	// Each entry must encode to exactly one token for the model in use, or the request
+	// fails with an error naming the offending entry. Independent of Logprobs/TopLogprobs:
+	// requesting LogprobTokens does not require Logprobs to also be set.
+	LogprobTokens []string `json:"logprob_tokens,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -176,6 +183,13 @@ type ChatRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// LogprobTokens is a list of specific tokens to return the log probability of at
+	// each generated position, regardless of whether they rank within TopLogprobs.
+	// Each entry must encode to exactly one token for the model in use, or the request
+	// fails with an error naming the offending entry. Independent of Logprobs/TopLogprobs:
+	// requesting LogprobTokens does not require Logprobs to also be set.
+	LogprobTokens []string `json:"logprob_tokens,omitempty"`
 }
 
 type Tools []Tool
@@ -512,6 +526,11 @@ type Logprob struct {
 	// TopLogprobs contains the most likely tokens and their log probabilities
 	// at this position, if requested via TopLogprobs parameter.
 	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+
+	// RequestedLogprobs contains the log probabilities of the tokens named in
+	// LogprobTokens at this position, in the same order they were requested,
+	// regardless of whether they also appear in TopLogprobs.
+	RequestedLogprobs []TokenLogprob `json:"requested_logprobs,omitempty"`
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
