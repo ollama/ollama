@@ -117,6 +117,14 @@ components:
         top_logprobs:
           type: integer
           description: Number of most likely tokens to return at each token position when logprobs are enabled
+        logprob_tokens:
+          type: array
+          items:
+            type: string
+          description: >-
+            Specific tokens to return the log probability of at each generated position,
+            regardless of whether they rank within top_logprobs. Each entry must encode to
+            exactly one token for the model in use. Does not require logprobs to be set.
     GenerateResponse:
       type: object
       properties:
@@ -310,6 +318,14 @@ components:
         top_logprobs:
           type: integer
           description: Number of most likely tokens to return at each token position when logprobs are enabled
+        logprob_tokens:
+          type: array
+          items:
+            type: string
+          description: >-
+            Specific tokens to return the log probability of at each generated position,
+            regardless of whether they rank within top_logprobs. Each entry must encode to
+            exactly one token for the model in use. Does not require logprobs to be set.
     ChatResponse:
       type: object
       properties:
@@ -806,6 +822,13 @@ components:
           items:
             $ref: "#/components/schemas/TokenLogprob"
           description: Most likely tokens and their log probabilities at this position
+        requested_logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLogprob"
+          description: >-
+            Log probabilities of the tokens named in logprob_tokens, in the order requested.
+            A token is omitted if the backend could not report it (see logprob_tokens).
     ErrorResponse:
       type: object
       properties:
