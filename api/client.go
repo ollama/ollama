@@ -47,7 +47,10 @@ func checkError(resp *http.Response, body []byte) error {
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		authError := AuthorizationError{StatusCode: resp.StatusCode}
-		json.Unmarshal(body, &authError)
+		if err := json.Unmarshal(body, &authError); err != nil {
+			// Use the full body as the message if we fail to decode a response.
+			authError.Status = string(body)
+		}
 		return authError
 	}
 
