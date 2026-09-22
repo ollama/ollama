@@ -32,7 +32,7 @@ The response includes a top-level `thinking` object:
 - `values` can contain booleans (`true` or `false`) for on/off controls. It can also contain model-defined strings for named levels.
 - `default` is used when `think` is not set.
 - `values: [false]` means the model does not support thinking.
-- If `thinking` is omitted, the model has no thinking metadata. Ollama keeps its existing behavior.
+- If `thinking` is omitted, the model has no thinking metadata. The model might conduct thinking based on its existing behavior.
 
 ## Enable thinking in API calls
 
@@ -43,7 +43,7 @@ Set the `think` field on a chat or generate request:
 - `null`: use the model default.
 - A string: select a supported level from `thinking.values`. Use the exact value from `/api/show`. Numbers are not supported.
 
-If the model resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default. GPT-OSS supports `low`, `medium`, and `high`, with `medium` as the default.
+If the model resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default. 
 
 The reasoning output and answer use separate fields. Chat returns `message.thinking` and `message.content`. Generate returns `thinking` and `response`.
 
