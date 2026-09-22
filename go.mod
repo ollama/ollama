@@ -15,6 +15,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	golang.org/x/sync v0.17.0
 	golang.org/x/sys v0.37.0
+	github.com/shirou/gopsutil/v3 v3.24.5
 )
 
 require (
