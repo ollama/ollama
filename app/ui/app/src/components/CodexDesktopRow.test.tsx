@@ -72,6 +72,72 @@ function connectionButton(renderer: ReactTestRenderer) {
 }
 
 describe("CodexDesktopRow", () => {
+  it.each(["loaded", "failed"])(
+    "shows progress on the first Connect click after initial status %s",
+    async (outcome) => {
+      const initial = deferred<CodexDesktopStatus>();
+      const action = deferred<{ status: CodexDesktopStatus }>();
+      const getStatus = vi
+        .fn()
+        .mockReturnValueOnce(initial.promise)
+        .mockResolvedValue(status());
+      const connect = vi.fn().mockReturnValue(action.promise);
+      const install = vi.fn();
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        getCodexDesktopStatus: getStatus,
+        setCodexDesktopConnected: connect,
+        installCodexDesktop: install,
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={{ ...integration, installed: false }}
+            />,
+          );
+        });
+        const button = () => connectionButton(renderer!);
+        expect(button().props.disabled).toBe(true);
+        expect(button().findByProps({ role: "status" }).children).toEqual([
+          "Checking…",
+        ]);
+        await act(async () => button().props.onClick());
+        expect(connect).not.toHaveBeenCalled();
+        expect(install).not.toHaveBeenCalled();
+
+        await act(async () => {
+          if (outcome === "failed")
+            initial.reject(new Error("status unavailable"));
+          else initial.resolve(status());
+        });
+        expect(button().props.disabled).toBe(false);
+        if (outcome === "failed") {
+          expect(
+            renderer!.root.findByProps({ role: "alert" }).children,
+          ).toEqual(["Ollama could not read the ChatGPT connection status."]);
+        }
+        await act(async () => button().props.onClick());
+        expect(connect).toHaveBeenCalledExactlyOnceWith(true, false);
+        expect(install).not.toHaveBeenCalled();
+        expect(button().props.disabled).toBe(true);
+        expect(button().findByProps({ role: "status" }).children).toEqual([
+          "Connecting…",
+        ]);
+        await act(async () => {
+          action.resolve({ status: status({ connected: true }) });
+        });
+        expect(button().props.disabled).toBe(false);
+        expect(button().children).toEqual(["Disconnect"]);
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
+
   it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow

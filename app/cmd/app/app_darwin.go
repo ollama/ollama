@@ -1470,6 +1470,9 @@ func setClaudeDesktopConnection(enabled, restartConfirmed bool) error {
 }
 
 func prepareClaudeDesktopConnection() error {
+	claudeLifecycleMu.Lock()
+	defer claudeLifecycleMu.Unlock()
+
 	if !claudeDesktopInstalled() {
 		return errors.New("Claude Desktop is not installed")
 	}

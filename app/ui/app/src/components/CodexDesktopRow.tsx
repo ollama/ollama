@@ -91,6 +91,9 @@ export function CodexDesktopRow({
   const [status, setStatus] = useState<CodexDesktopStatus | null>(
     initialStatus ?? null,
   );
+  const [initialStatusSettled, setInitialStatusSettled] = useState(
+    Boolean(initialStatus),
+  );
   const [phase, setPhase] = useState<CodexConnectPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -169,7 +172,11 @@ export function CodexDesktopRow({
   }, [acknowledgmentStatus]);
 
   const refreshStatus = useCallback(async () => {
-    if (operationInFlight.current || !window.getCodexDesktopStatus) return;
+    if (operationInFlight.current) return;
+    if (!window.getCodexDesktopStatus) {
+      setInitialStatusSettled(true);
+      return;
+    }
     const request = ++statusRequest.current;
     const isCurrent = () =>
       mounted.current &&
@@ -187,6 +194,8 @@ export function CodexDesktopRow({
     } catch {
       if (isCurrent())
         setError("Ollama could not read the ChatGPT connection status.");
+    } finally {
+      if (isCurrent()) setInitialStatusSettled(true);
     }
   }, []);
 
@@ -363,12 +372,17 @@ export function CodexDesktopRow({
 
   const toggleConnection = async (fromIntro = false) => {
     const enabled = fromIntro || !connected;
-    const nextPhase = enabled
-      ? installed
+    let nextPhase: CodexConnectPhase = enabled
+      ? installed || !status
         ? "connecting"
         : "installing"
       : "disconnecting";
-    if (pending || (showIntro && !fromIntro) || !beginOperation(nextPhase))
+    if (
+      !initialStatusSettled ||
+      pending ||
+      (showIntro && !fromIntro) ||
+      !beginOperation(nextPhase)
+    )
       return;
     let finalPhase: CodexConnectPhase = "idle";
     let restartConfirmed = fromIntro && introRestartConfirmed.current;
@@ -381,7 +395,24 @@ export function CodexDesktopRow({
         setError("The ChatGPT integration is unavailable.");
         return;
       }
-      if (enabled && !installed) {
+      let currentStatus = status;
+      if (!currentStatus) {
+        if (!window.getCodexDesktopStatus) {
+          setError("Ollama could not read the ChatGPT connection status.");
+          return;
+        }
+        try {
+          currentStatus = await window.getCodexDesktopStatus();
+        } catch {
+          setError("Ollama could not read the ChatGPT connection status.");
+          return;
+        }
+        if (!mounted.current) return;
+        setStatus(currentStatus);
+        nextPhase = currentStatus.installed ? "connecting" : "installing";
+        setPhase(nextPhase);
+      }
+      if (enabled && !currentStatus.installed) {
         if (!window.installCodexDesktop || !window.getCodexDesktopStatus) {
           setError("Ollama could not install ChatGPT.");
           return;
@@ -393,7 +424,7 @@ export function CodexDesktopRow({
           setError("Ollama could not install ChatGPT.");
         return;
       }
-      if (fromIntro || (enabled && !status?.used && !used.current)) {
+      if (fromIntro || (enabled && !currentStatus.used && !used.current)) {
         if (!window.getCodexDesktopStatus) {
           setError("Ollama could not read the ChatGPT connection status.");
           return;
@@ -506,16 +537,18 @@ export function CodexDesktopRow({
         )}
         <IntegrationConnectButton
           connected={displayedConnected}
-          busy={pending}
+          busy={!initialStatusSettled || pending}
           progress={statusLabel}
           label={
-            showIntro
-              ? "Finish connecting ChatGPT"
-              : connected
-                ? "Remove Ollama models from ChatGPT"
-                : pending
-                  ? "Connecting ChatGPT"
-                  : "Add Ollama models to ChatGPT"
+            !initialStatusSettled
+              ? "Checking ChatGPT connection"
+              : showIntro
+                ? "Finish connecting ChatGPT"
+                : connected
+                  ? "Remove Ollama models from ChatGPT"
+                  : pending
+                    ? "Connecting ChatGPT"
+                    : "Add Ollama models to ChatGPT"
           }
           title={
             connected
@@ -524,7 +557,7 @@ export function CodexDesktopRow({
                 ? "Add Ollama models"
                 : "Install ChatGPT and add Ollama models"
           }
-          disabled={pending || showIntro}
+          disabled={!initialStatusSettled || pending || showIntro}
           onClick={() => void toggleConnection()}
         />
       </div>

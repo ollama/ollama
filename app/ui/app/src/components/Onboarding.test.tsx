@@ -786,6 +786,70 @@ describe("ConnectAppsScreen interactions", () => {
     });
   }
 
+  it("shows progress on Claude's first Connect click through slow native work and stale focus refreshes", async () => {
+    const disconnected = { ...DISCONNECTED_CLAUDE, used: true };
+    const connected = { ...disconnected, configured: true, connected: true };
+    let finishRefresh!: (status: typeof disconnected) => void;
+    let finishConnect!: (result: { status: typeof connected }) => void;
+    const refresh = new Promise<typeof disconnected>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const action = new Promise<{ status: typeof connected }>((resolve) => {
+      finishConnect = resolve;
+    });
+    const getStatus = vi
+      .fn()
+      .mockReturnValueOnce(refresh)
+      .mockResolvedValue(disconnected);
+    const connect = vi.fn().mockReturnValue(action);
+    let onFocus: (() => void) | undefined;
+    stubAppsWindow({
+      getClaudeDesktopConnectionSummary: getStatus,
+      setClaudeDesktopConnected: connect,
+      addEventListener: vi.fn((event: string, handler: () => void) => {
+        if (event === "focus") onFocus = handler;
+      }),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ConnectAppsScreen initialIntegrations={appsIntegrations(true)} />,
+        );
+      });
+      await act(async () => onFocus?.());
+      const button = () => claudeConnectionButton(renderer!);
+      await act(async () => {
+        void button().props.onClick();
+        await settle();
+      });
+      expect(connect).toHaveBeenCalledExactlyOnceWith(true, false);
+      expect(button().props.disabled).toBe(true);
+      expect(button().findByProps({ role: "status" }).children).toEqual([
+        "Connecting…",
+      ]);
+      await act(async () => {
+        void button().props.onClick();
+        onFocus?.();
+        finishRefresh(connected);
+        await settle();
+      });
+      expect(connect).toHaveBeenCalledExactlyOnceWith(true, false);
+      expect(getStatus).toHaveBeenCalledTimes(3);
+      expect(
+        renderer!.root
+          .findByProps({ id: "integration-claude-desktop" })
+          .findAllByType("p")[1].children,
+      ).toEqual(["Connecting Claude to Ollama…"]);
+      await act(async () => finishConnect({ status: connected }));
+      expect(button().props.disabled).toBe(false);
+      expect(button().children).toEqual(["Disconnect"]);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it.each([false, true])(
     "honors the native Claude disconnect confirmation: %s",
     async (confirmed) => {

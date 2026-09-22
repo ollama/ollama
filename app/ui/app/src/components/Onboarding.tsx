@@ -470,7 +470,14 @@ export function ConnectAppsScreen({
   const [claudeStatus, setClaudeStatus] = useState<ClaudeDesktopStatus | null>(
     initialClaudeStatus ?? null,
   );
-  const [claudePhase, setClaudePhase] = useState<ClaudeConnectPhase>("idle");
+  const [claudePhase, updateClaudePhase] = useState<ClaudeConnectPhase>("idle");
+  const claudeOperationInFlight = useRef(false);
+  const claudeStatusRequest = useRef(0);
+  const setClaudePhase = useCallback((phase: ClaudeConnectPhase) => {
+    claudeOperationInFlight.current = phase !== "idle";
+    ++claudeStatusRequest.current;
+    updateClaudePhase(phase);
+  }, []);
   const [showClaudeConnectedIntro, setShowClaudeConnectedIntro] =
     useState(false);
   const claudeConnectedIntroPending = useRef(false);
@@ -543,24 +550,31 @@ export function ConnectAppsScreen({
   }, [copyNotice?.copied, copyNotice?.visible]);
 
   const refreshClaudeStatus = useCallback(async () => {
-    if (isWindows) return null;
+    if (isWindows || claudeOperationInFlight.current) return null;
     if (
       !window.getClaudeDesktopConnectionSummary &&
       !window.getClaudeDesktopStatus
     ) {
       return null;
     }
+    const request = ++claudeStatusRequest.current;
+    const isCurrent = () =>
+      screenMounted.current &&
+      request === claudeStatusRequest.current &&
+      !claudeOperationInFlight.current;
     try {
       const status = await getClaudeConnectionSummary();
-      if (!status || !screenMounted.current) return null;
+      if (!status || !isCurrent()) return null;
       setClaudeStatus(status);
       setClaudeError(null);
       return status;
     } catch {
-      if (screenMounted.current) {
+      if (isCurrent()) {
         setClaudeError("Ollama could not read the Claude connection status.");
       }
       return null;
+    } finally {
+      if (isCurrent()) setInitialClaudeStatusSettled(true);
     }
   }, [isWindows]);
 
@@ -588,18 +602,20 @@ export function ConnectAppsScreen({
 
   useEffect(() => {
     let active = true;
+    const request = ++claudeStatusRequest.current;
+    const isCurrent = () => active && request === claudeStatusRequest.current;
     const claude = initialClaudeStatus
       ? Promise.resolve(initialClaudeStatus)
       : getClaudeConnectionSummary();
 
     void claude.then(
       (status) => {
-        if (!active) return;
+        if (!isCurrent()) return;
         setClaudeStatus(status);
         setInitialClaudeStatusSettled(true);
       },
       () => {
-        if (!active) return;
+        if (!isCurrent()) return;
         setClaudeError("Ollama could not read the Claude connection status.");
         setInitialClaudeStatusSettled(true);
       },
@@ -681,7 +697,8 @@ export function ConnectAppsScreen({
   );
 
   const dismissClaudeConnectedIntro = async () => {
-    if (!window.setClaudeDesktopConnected || claudePhase !== "idle") return;
+    if (!window.setClaudeDesktopConnected || claudeOperationInFlight.current)
+      return;
     setClaudePhase("launching");
     try {
       const liveStatus = await withClaudeConnectionTimeout(
@@ -842,7 +859,12 @@ export function ConnectAppsScreen({
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [claudePhase, finishClaudeConnection, reconcileLateClaudeAction]);
+  }, [
+    claudePhase,
+    finishClaudeConnection,
+    reconcileLateClaudeAction,
+    setClaudePhase,
+  ]);
 
   const copyLaunchCommand = async (item: IntegrationStatus) => {
     if (!item.command || copyInFlight.current) return;
@@ -867,7 +889,7 @@ export function ConnectAppsScreen({
   };
 
   const connectClaude = async () => {
-    if (claudePhase !== "idle") return;
+    if (claudeOperationInFlight.current) return;
     if (
       (!window.getClaudeDesktopConnectionSummary &&
         !window.getClaudeDesktopStatus) ||
