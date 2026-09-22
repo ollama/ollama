@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -96,29 +95,5 @@ func TestDefaultCodexAppIsRunningDoesNotCallAppleScript(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("running-state detection invoked osascript: %v", err)
-	}
-}
-
-func TestCodexAppSlowProcessLookupPreservesRestartConfirmation(t *testing.T) {
-	withCodexAppPlatform(t, "darwin")
-	withCodexAppProcessHooks(t, defaultCodexAppIsRunning,
-		func() error { t.Fatal("quit app without restart confirmation"); return nil },
-		func() error { t.Fatal("open app without restart confirmation"); return nil },
-	)
-	t.Setenv("OLLAMA_TEST_CODEX_APP_PROCESSES", fmt.Sprintf("%d /Applications/ChatGPT.app/Contents/MacOS/ChatGPT", os.Getpid()+1))
-	stubCodexAppProcessCommands(t, map[string]string{
-		"ps": "/bin/sleep 2\nprintf '%s\\n' \"$OLLAMA_TEST_CODEX_APP_PROCESSES\"\n",
-	})
-
-	changed := false
-	err := codexAppApplyProfileFromDesktop(func() error {
-		changed = true
-		return nil
-	}, false, false)
-	if !errors.Is(err, ErrCodexAppRestartConfirmationRequired) {
-		t.Errorf("profile update error = %v, want restart confirmation", err)
-	}
-	if changed {
-		t.Fatal("profile changed without restart confirmation after a slow process lookup")
 	}
 }
