@@ -213,6 +213,16 @@ type CompletionRequest struct {
 
 	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
 	TopLogprobs int
+
+	// LogprobTokens are specific tokens to return the log probability of at each
+	// generated position, regardless of rank. Already resolved to this model's
+	// token ids by the caller (see server/routes.go), since only the caller knows
+	// which tokenizer applies.
+	LogprobTokens []int
+
+	// LogprobTokenStrings is the original string form of LogprobTokens, same order,
+	// used only to label the response -- backends must not re-tokenize these.
+	LogprobTokenStrings []string
 }
 
 type ChatRequest struct {
@@ -225,6 +235,10 @@ type ChatRequest struct {
 
 	Logprobs    bool
 	TopLogprobs int
+
+	// LogprobTokens / LogprobTokenStrings: see CompletionRequest.
+	LogprobTokens       []int
+	LogprobTokenStrings []string
 }
 
 type ChatResponse struct {
@@ -269,6 +283,10 @@ type TokenLogprob struct {
 type Logprob struct {
 	TokenLogprob
 	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+
+	// RequestedLogprobs holds the logprob of each LogprobTokens entry, in the
+	// same order requested, regardless of whether it also appears in TopLogprobs.
+	RequestedLogprobs []TokenLogprob `json:"requested_logprobs,omitempty"`
 }
 
 type CompletionResponse struct {

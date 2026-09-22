@@ -250,6 +250,35 @@ func signinURL() (string, error) {
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
+// resolveLogprobTokens tokenizes each of tokens with r's tokenizer and returns the
+// resulting single token ids, in order, alongside the original strings for labeling
+// the response later. Only the caller knows which tokenizer applies to this request's
+// model, so backends receive already-resolved ids rather than tokenizing themselves.
+// A token that doesn't encode to exactly one id is a 400, naming the offending entry --
+// silently dropping or mangling it would make the returned logprobs mean the wrong thing.
+func resolveLogprobTokens(ctx context.Context, r llm.LlamaServer, tokens []string) ([]int, []string, error) {
+	if len(tokens) == 0 {
+		return nil, nil, nil
+	}
+	ids := make([]int, len(tokens))
+	for i, t := range tokens {
+		enc, err := r.Tokenize(ctx, t)
+		if err != nil {
+			return nil, nil, fmt.Errorf("logprob_tokens: tokenizing %q: %w", t, err)
+		}
+		if len(enc) != 1 {
+			return nil, nil, api.StatusError{
+				StatusCode: http.StatusBadRequest,
+				ErrorMessage: fmt.Sprintf(
+					"logprob_tokens: %q does not encode to exactly one token for this model (got %d); "+
+						"pick a different surface form, e.g. with or without a leading space", t, len(enc)),
+			}
+		}
+		ids[i] = enc[0]
+	}
+	return ids, tokens, nil
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -594,14 +623,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
 			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
 			if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+				logprobIDs, logprobStrs, lerr := resolveLogprobTokens(c.Request.Context(), r, req.LogprobTokens)
+				if lerr != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": lerr.Error()})
+					return
+				}
 				nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
-					Messages:    values.Messages,
-					Format:      req.Format,
-					Options:     opts,
-					Think:       req.Think,
-					Shift:       req.Shift == nil || *req.Shift,
-					Logprobs:    req.Logprobs,
-					TopLogprobs: req.TopLogprobs,
+					Messages:            values.Messages,
+					Format:              req.Format,
+					Options:             opts,
+					Think:               req.Think,
+					Shift:               req.Shift == nil || *req.Shift,
+					Logprobs:            req.Logprobs,
+					TopLogprobs:         req.TopLogprobs,
+					LogprobTokens:       logprobIDs,
+					LogprobTokenStrings: logprobStrs,
 				}, genTruncate)
 				if err != nil {
 					slog.Error("chat template prompt error", "error", err)
@@ -684,6 +720,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
+	genLogprobIDs, genLogprobStrs, err := resolveLogprobTokens(c.Request.Context(), r, req.LogprobTokens)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ch := make(chan any)
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
@@ -695,16 +737,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var parserErr error
 
 		if err := r.Completion(ctx, llm.CompletionRequest{
-			Prompt:          prompt,
-			Media:           media,
-			Format:          req.Format,
-			Options:         opts,
-			Shift:           req.Shift == nil || *req.Shift,
-			Truncate:        req.Truncate == nil || *req.Truncate,
-			Logprobs:        req.Logprobs,
-			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
-			LeadingBOS:      leadingBOS,
+			Prompt:              prompt,
+			Media:               media,
+			Format:              req.Format,
+			Options:             opts,
+			Shift:               req.Shift == nil || *req.Shift,
+			Truncate:            req.Truncate == nil || *req.Truncate,
+			Logprobs:            req.Logprobs,
+			TopLogprobs:         req.TopLogprobs,
+			LogprobTokens:       genLogprobIDs,
+			LogprobTokenStrings: genLogprobStrs,
+			PreservedTokens:     preservedTokensForCompletion(builtinParser),
+			LeadingBOS:          leadingBOS,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2790,6 +2834,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		structuredOutputsState_Applying
 	)
 
+	chatLogprobIDs, chatLogprobStrs, err := resolveLogprobTokens(c.Request.Context(), r, req.LogprobTokens)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -2830,6 +2880,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Truncate:                   truncate,
 				Logprobs:                   req.Logprobs,
 				TopLogprobs:                req.TopLogprobs,
+				LogprobTokens:              chatLogprobIDs,
+				LogprobTokenStrings:        chatLogprobStrs,
 				PreservedTokens:            preservedTokensForCompletion(builtinParser),
 				ToolCallTag:                toolCallTagForCompletion(toolParser),
 				LeadingBOS:                 leadingBOSForModel(m),
@@ -3015,15 +3067,22 @@ func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, 
 
 func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model, r llm.LlamaServer, opts *api.Options, msgs []api.Message, checkpointStart, checkpointLoaded time.Time) {
 	truncate := req.Truncate == nil || *req.Truncate
+	logprobIDs, logprobStrs, lerr := resolveLogprobTokens(c.Request.Context(), r, req.LogprobTokens)
+	if lerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": lerr.Error()})
+		return
+	}
 	nativeReq, err := prepareNativeChatRequest(c.Request.Context(), m, r, opts, llm.ChatRequest{
-		Messages:    msgs,
-		Tools:       req.Tools,
-		Format:      req.Format,
-		Options:     opts,
-		Think:       req.Think,
-		Shift:       req.Shift == nil || *req.Shift,
-		Logprobs:    req.Logprobs,
-		TopLogprobs: req.TopLogprobs,
+		Messages:            msgs,
+		Tools:               req.Tools,
+		Format:              req.Format,
+		Options:             opts,
+		Think:               req.Think,
+		Shift:               req.Shift == nil || *req.Shift,
+		Logprobs:            req.Logprobs,
+		TopLogprobs:         req.TopLogprobs,
+		LogprobTokens:       logprobIDs,
+		LogprobTokenStrings: logprobStrs,
 	}, truncate)
 	if err != nil {
 		slog.Error("chat template prompt error", "error", err)
