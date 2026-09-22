@@ -273,8 +273,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+	if req.TopLogprobs < 0 || req.TopLogprobs > 100 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 100"})
 		return
 	}
 
@@ -315,8 +315,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+	if req.TopLogprobs < 0 || req.TopLogprobs > 100 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 100"})
 		return
 	}
 
@@ -2486,8 +2486,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+	if req.TopLogprobs < 0 || req.TopLogprobs > 100 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 100"})
 		return
 	}
 
@@ -2528,8 +2528,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+	if req.TopLogprobs < 0 || req.TopLogprobs > 100 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 100"})
 		return
 	}
 

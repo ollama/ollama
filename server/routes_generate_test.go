@@ -1975,7 +1975,7 @@ func TestGenerateLogprobs(t *testing.T) {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 100"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -1986,14 +1986,14 @@ func TestGenerateLogprobs(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:       "test",
 			Prompt:      "Hello",
-			TopLogprobs: 21,
+			TopLogprobs: 101,
 		})
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 100"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -2261,7 +2261,7 @@ func TestChatLogprobs(t *testing.T) {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 100"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -2274,14 +2274,14 @@ func TestChatLogprobs(t *testing.T) {
 			Messages: []api.Message{
 				{Role: "user", Content: "Hello"},
 			},
-			TopLogprobs: 21,
+			TopLogprobs: 101,
 		})
 
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 20"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"top_logprobs must be between 0 and 100"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

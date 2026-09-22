@@ -125,7 +125,7 @@ type GenerateRequest struct {
 
 	// TopLogprobs is the number of most likely tokens to return at each token position,
 	// each with an associated log probability. Only applies when Logprobs is true.
-	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	// Valid values are 0-100. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 
@@ -174,7 +174,7 @@ type ChatRequest struct {
 
 	// TopLogprobs is the number of most likely tokens to return at each token position,
 	// each with an associated log probability. Only applies when Logprobs is true.
-	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	// Valid values are 0-100. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 

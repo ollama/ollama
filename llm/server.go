@@ -211,7 +211,7 @@ type CompletionRequest struct {
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
 
-	// TopLogprobs specifies the number of most likely alternative tokens to return (0-20)
+	// TopLogprobs specifies the number of most likely alternative tokens to return (0-100)
 	TopLogprobs int
 }
 
