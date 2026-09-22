@@ -616,7 +616,8 @@ func TestCodexAppManagedAuthLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := info.Mode().Perm(); got != 0o600 {
+		// Windows reports writable files as 0666, independent of the requested mode.
+		if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 			t.Fatalf("auth mode = %o, want 600", got)
 		}
 
