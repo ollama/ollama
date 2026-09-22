@@ -1594,6 +1594,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	if req.Logprobs {
 		lsReq.NProbs = max(req.TopLogprobs, 1)
 	}
+	if len(req.LogprobTokens) > 0 {
+		// Widen the window so the named tokens are likely to appear in it.
+		lsReq.NProbs = max(lsReq.NProbs, logprobTokensProbeN)
+	}
 
 	// Handle format: pass JSON schema directly to llama-server, or use grammar
 	if len(req.Format) > 0 {
@@ -1724,7 +1728,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 					resp.EvalCount = lsResp.Timings.PredictN
 					resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
 				}
-				resp.Logprobs = convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0)
+				resp.Logprobs = convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0, req.LogprobTokenStrings)
 				fn(resp)
 			}
 
@@ -1812,9 +1816,61 @@ func (s *llamaServerRunner) statusErrorMessage(body []byte) string {
 	return errMsg
 }
 
+// logprobTokensProbeN is how wide a top-N window llama-server is asked for when
+// a request names specific LogprobTokens. Unlike the native runner, llama.cpp
+// exposes no gather-by-token-id: the only lever is asking for more ranks and
+// matching by token text. 200 comfortably covers plausible answer tokens for
+// classification-style use without returning an unreasonable payload per token.
+const logprobTokensProbeN = 200
+
+// matchRequestedLogprobs picks the entries for wanted out of a position's
+// alternatives, preserving the order they were requested in. A wanted token
+// that llama-server did not return -- because it fell outside the requested
+// rank window -- is omitted rather than reported at a made-up floor value;
+// callers can detect this by comparing lengths. See LogprobTokens in api.
+func matchRequestedLogprobs(p llamaServerTokenProb, wanted []string) []TokenLogprob {
+	if len(wanted) == 0 {
+		return nil
+	}
+	alts := p.TopLogprobs
+	if len(alts) == 0 {
+		alts = p.TopProbs
+	}
+	at := make(map[string]float64, len(alts)+1)
+	// The sampled token itself is not repeated in the alternatives list on
+	// every llama-server path, so seed it first and let alternatives win.
+	if p.Token != "" {
+		lp := p.Logprob
+		if lp == 0 && p.Prob != 0 {
+			lp = p.Prob
+		}
+		at[p.Token] = lp
+	}
+	for _, a := range alts {
+		lp := a.Logprob
+		if lp == 0 && a.Prob != 0 {
+			lp = a.Prob
+		}
+		at[a.Token] = lp
+	}
+	out := make([]TokenLogprob, 0, len(wanted))
+	for _, w := range wanted {
+		// llama-server reports tokens with their leading space intact, which is
+		// the form resolveLogprobTokens validated against the tokenizer.
+		if lp, ok := at[w]; ok {
+			out = append(out, TokenLogprob{Token: w, Logprob: lp})
+			continue
+		}
+		if lp, ok := at[" "+w]; ok {
+			out = append(out, TokenLogprob{Token: w, Logprob: lp})
+		}
+	}
+	return out
+}
+
 // convertLogprobs converts llama-server's completion_probabilities to Ollama's Logprob format.
 // includeTop controls whether top alternatives are included in the output.
-func convertLogprobs(probs []llamaServerTokenProb, includeTop bool) []Logprob {
+func convertLogprobs(probs []llamaServerTokenProb, includeTop bool, wanted []string) []Logprob {
 	if len(probs) == 0 {
 		return nil
 	}
@@ -1830,6 +1886,7 @@ func convertLogprobs(probs []llamaServerTokenProb, includeTop bool) []Logprob {
 				Token:   p.Token,
 				Logprob: logprob,
 			},
+			RequestedLogprobs: matchRequestedLogprobs(p, wanted),
 		}
 
 		if !includeTop {
@@ -2014,7 +2071,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 					Content:  choice.Delta.Content,
 					Thinking: choice.Delta.ReasoningContent,
 				},
-				Logprobs: convertLogprobs(choice.Logprobs.Content, req.TopLogprobs > 0),
+				Logprobs: convertLogprobs(choice.Logprobs.Content, req.TopLogprobs > 0, req.LogprobTokenStrings),
 			}
 
 			for _, tc := range choice.Delta.ToolCalls {
@@ -2193,6 +2250,13 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	if req.Logprobs {
 		body["logprobs"] = true
 		body["top_logprobs"] = max(req.TopLogprobs, 1)
+	}
+	if len(req.LogprobTokens) > 0 {
+		// The OpenAI-compatible endpoint caps top_logprobs at 20, so named
+		// tokens outside the top 20 cannot be recovered on this path; they are
+		// omitted from RequestedLogprobs rather than guessed at.
+		body["logprobs"] = true
+		body["top_logprobs"] = 20
 	}
 	if kwargs := llamaServerChatTemplateKwargs(req.Think); kwargs != nil {
 		body["chat_template_kwargs"] = kwargs

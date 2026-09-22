@@ -3847,3 +3847,99 @@ func fakeRunningCmd() *exec.Cmd {
 	// SIGKILL children when the test process exits.
 	return cmd
 }
+
+func TestMatchRequestedLogprobs(t *testing.T) {
+	// llama-server reports tokens with a leading space; resolveLogprobTokens
+	// validated the caller's strings in that same form, so both spellings must
+	// resolve to the caller's original label.
+	prob := llamaServerTokenProb{
+		Token:   "Yes",
+		Logprob: -0.3,
+		TopLogprobs: []llamaServerTokenProb{
+			{Token: "Yes", Logprob: -0.3},
+			{Token: " No", Logprob: -1.4},
+		},
+	}
+
+	got := matchRequestedLogprobs(prob, []string{"No", "Yes", "Maybe"})
+
+	// "Maybe" is outside the window llama-server returned, so it is omitted
+	// rather than reported at an invented value; order otherwise follows the
+	// request, not the ranking.
+	want := []TokenLogprob{
+		{Token: "No", Logprob: -1.4},
+		{Token: "Yes", Logprob: -0.3},
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Errorf("matchRequestedLogprobs = %+v, want %+v", got, want)
+	}
+
+	if got := matchRequestedLogprobs(prob, nil); got != nil {
+		t.Errorf("expected nil for no requested tokens, got %v", got)
+	}
+}
+
+func TestLlamaServerCompletionWithRequestedLogprobs(t *testing.T) {
+	// A caller naming specific tokens gets them back even without Logprobs set,
+	// and gets a widened n_probs window on the wire.
+	var gotNProbs int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if v, ok := body["n_probs"].(float64); ok {
+			gotNProbs = int(v)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"Yes","stop":false,"completion_probabilities":[{"token":"Yes","logprob":-0.3,"top_logprobs":[{"token":"Yes","logprob":-0.3},{"token":" No","logprob":-1.4}]}]}`)
+		fmt.Fprintln(w, ``)
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:              "test",
+		Options:             &opts,
+		LogprobTokens:       []int{1, 2},
+		LogprobTokenStrings: []string{"Yes", "No"},
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion: %v", err)
+	}
+
+	if gotNProbs != logprobTokensProbeN {
+		t.Errorf("n_probs = %d, want %d", gotNProbs, logprobTokensProbeN)
+	}
+
+	var found []TokenLogprob
+	for _, r := range responses {
+		for _, lp := range r.Logprobs {
+			found = append(found, lp.RequestedLogprobs...)
+		}
+	}
+	want := []TokenLogprob{
+		{Token: "Yes", Logprob: -0.3},
+		{Token: "No", Logprob: -1.4},
+	}
+	if !reflect.DeepEqual(want, found) {
+		t.Errorf("requested logprobs = %+v, want %+v", found, want)
+	}
+}
