@@ -728,7 +728,7 @@ func TestWebSearchResponsesWriterFinalizesAtSearchLimit(t *testing.T) {
 					}
 				}
 				response := api.ChatResponse{Done: true, Message: api.Message{Role: "assistant"}, Metrics: api.Metrics{PromptEvalCount: 5, PromptEvalCachedCount: testIntPtr(2), EvalCount: 3}}
-				if searches < maxWebSearchLoops {
+				if searches < 10 {
 					if !reflect.DeepEqual(tools, originalTools) {
 						t.Fatalf("tools removed before search limit: %#v", tools)
 					}
@@ -767,8 +767,8 @@ func TestWebSearchResponsesWriterFinalizesAtSearchLimit(t *testing.T) {
 			if _, err := writer.Write(data); err != nil {
 				t.Fatal(err)
 			}
-			if searches != maxWebSearchLoops || followUps != maxWebSearchLoops {
-				t.Fatalf("searches=%d follow-ups=%d, want %d each", searches, followUps, maxWebSearchLoops)
+			if searches != 10 || followUps != 10 {
+				t.Fatalf("searches=%d follow-ups=%d, want 10 each", searches, followUps)
 			}
 			if !reflect.DeepEqual(chat.Tools, originalTools) {
 				t.Fatalf("original request tools mutated: %#v", chat.Tools)
@@ -793,15 +793,15 @@ func TestWebSearchResponsesWriterFinalizesAtSearchLimit(t *testing.T) {
 			} else if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if recorder.Code != http.StatusOK || response.Status != "completed" || len(response.Output) != maxWebSearchLoops+1 {
+			if recorder.Code != http.StatusOK || response.Status != "completed" || len(response.Output) != 11 {
 				t.Fatalf("unexpected final response: %s", body)
 			}
-			for _, item := range response.Output[:maxWebSearchLoops] {
+			for _, item := range response.Output[:10] {
 				if item.Type != "web_search_call" || item.Status != "completed" {
 					t.Fatalf("search output lost: %#v", item)
 				}
 			}
-			final := response.Output[maxWebSearchLoops]
+			final := response.Output[10]
 			if test.clientTool {
 				if final.Type != "function_call" || final.Name != "get_weather" || final.CallID != "call_weather" {
 					t.Fatalf("client tool output lost: %#v", final)
@@ -809,8 +809,8 @@ func TestWebSearchResponsesWriterFinalizesAtSearchLimit(t *testing.T) {
 			} else if final.Type != "message" || len(final.Content) != 1 || final.Content[0].Text != "Rain expected, based on the available results." {
 				t.Fatalf("final answer lost: %#v", final)
 			}
-			if response.Usage == nil || response.Usage.InputTokens != 20 || response.Usage.OutputTokens != 12 || response.Usage.InputTokensDetails.CachedTokens != 8 {
-				t.Fatalf("usage = %#v, want all four model responses", response.Usage)
+			if response.Usage == nil || response.Usage.InputTokens != 55 || response.Usage.OutputTokens != 33 || response.Usage.InputTokensDetails.CachedTokens != 22 {
+				t.Fatalf("usage = %#v, want all eleven model responses", response.Usage)
 			}
 		})
 	}
@@ -824,7 +824,7 @@ func TestWebSearchResponsesWriterFinalizationFailure(t *testing.T) {
 			status  int
 			message string
 		}{
-			{name: "model requests another search", status: http.StatusBadGateway, message: "web_search exceeded the maximum"},
+			{name: "model requests another search", status: http.StatusBadGateway, message: "web_search exceeded the maximum of 10 calls"},
 			{name: "model request fails", err: api.StatusError{StatusCode: http.StatusServiceUnavailable, ErrorMessage: "model unavailable"}, status: http.StatusServiceUnavailable, message: "model unavailable"},
 		} {
 			t.Run(fmt.Sprintf("%s/stream=%t", test.name, stream), func(t *testing.T) {
@@ -844,7 +844,7 @@ func TestWebSearchResponsesWriterFinalizationFailure(t *testing.T) {
 					},
 					followUpChat: func(context.Context, []api.Message, api.Tools) (api.ChatResponse, error) {
 						followUps++
-						if followUps == maxWebSearchLoops && test.err != nil {
+						if followUps == 10 && test.err != nil {
 							return api.ChatResponse{}, test.err
 						}
 						return api.ChatResponse{Done: true, Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{call}}}, nil
@@ -855,8 +855,8 @@ func TestWebSearchResponsesWriterFinalizationFailure(t *testing.T) {
 				if _, err := writer.Write(data); err != nil {
 					t.Fatal(err)
 				}
-				if searches != maxWebSearchLoops || followUps != maxWebSearchLoops {
-					t.Fatalf("searches=%d follow-ups=%d, want %d each", searches, followUps, maxWebSearchLoops)
+				if searches != 10 || followUps != 10 {
+					t.Fatalf("searches=%d follow-ups=%d, want 10 each", searches, followUps)
 				}
 				body := recorder.Body.String()
 				if !strings.Contains(body, test.message) {

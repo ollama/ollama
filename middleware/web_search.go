@@ -6,7 +6,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const maxWebSearchLoops = 3
+const maxWebSearchLoops = 10
 
 // doFollowUpChat sends a non-streaming /api/chat request with the accumulated
 // messages and tools so the model can continue after a web search result.

@@ -219,7 +219,15 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 }
 
 func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initialResponse api.ChatResponse, initialToolCall api.ToolCall, initialUsage anthropic.Usage) (anthropic.MessagesResponse, *webSearchLoopError) {
-	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
+	// Omitted or non-positive max_uses retains the server default.
+	maxLoops := maxWebSearchLoops
+	for _, tool := range w.req.Tools {
+		if strings.HasPrefix(tool.Type, "web_search") && tool.MaxUses > 0 {
+			maxLoops = min(maxLoops, tool.MaxUses)
+		}
+	}
+
+	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxLoops*2)
 	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
 
 	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
@@ -229,7 +237,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		"tool_call", anthropic.TraceToolCall(initialToolCall),
 		"messages", len(followUpMessages),
 		"tools", len(followUpTools),
-		"max_loops", maxWebSearchLoops,
+		"max_loops", maxLoops,
 	)
 
 	currentResponse := initialResponse
@@ -237,7 +245,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	var serverContent []anthropic.ContentBlock
 
-	for loop := 1; loop <= maxWebSearchLoops; loop++ {
+	for loop := 1; loop <= maxLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",
 			"loop", loop,
@@ -340,7 +348,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	}
 
 	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
-	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
+	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxLoops+1)
 	serverContent = append(serverContent,
 		anthropic.ContentBlock{
 			Type:  "server_tool_use",
