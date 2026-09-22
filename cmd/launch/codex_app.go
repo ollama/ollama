@@ -2157,9 +2157,14 @@ func defaultCodexAppQuitApp() error {
 
 func defaultCodexAppIsRunning() bool {
 	switch codexAppGOOS {
-	case "darwin", "windows":
-		// System Events can block waiting for other apps' Accessibility responses.
-		// Use the process list for running-state checks on macOS as well.
+	case "windows":
+		return len(codexAppMatchingProcessIDs()) > 0
+	case "darwin":
+		// Match exact process names to detect renamed bundles without System Events.
+		// Include ancestors when Ollama is launched from ChatGPT/Codex.
+		if err := exec.Command("pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
+			return true
+		}
 		return len(codexAppMatchingProcessIDs()) > 0
 	default:
 		return false
