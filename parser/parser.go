@@ -242,11 +242,23 @@ func canonicalLocalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(abs)
 }
 
+// hasWildcard reports whether path has a glob wildcard outside its volume
+// name, which may legitimately contain "?" (e.g. \\?\C:\).
+func hasWildcard(path string) bool {
+	return strings.ContainsAny(path[len(filepath.VolumeName(path)):], "*?")
+}
+
 func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
 	fi, err := os.Stat(path)
 	if err != nil {
+		// Windows rejects wildcard characters in os.Stat with an invalid
+		// name error rather than ErrNotExist. A pattern that reaches here
+		// matched nothing, so report it as missing like other platforms do.
+		if runtime.GOOS == "windows" && hasWildcard(path) {
+			return nil, fmt.Errorf("%w: %s", os.ErrNotExist, path)
+		}
 		return nil, err
 	}
 

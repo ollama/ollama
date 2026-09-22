@@ -154,6 +154,13 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// maxGrammarWhitespace caps how many whitespace characters the grammar allows
+// in a row between JSON tokens. Without a cap whitespace is always a valid
+// continuation, and a model that prefers it over the next token (e.g. the
+// opening quote of a property name) can emit it until num_predict runs out.
+// 32 leaves room for newline plus indentation on deeply nested output.
+const maxGrammarWhitespace = 32
+
 // requestGrammar returns the structural tag the runner decodes under: the
 // API's format wrapped into a json_schema tag.
 func requestGrammar(req llm.CompletionRequest) json.RawMessage {
@@ -168,6 +175,8 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 	tag := make(json.RawMessage, 0, len(schema)+64)
 	tag = append(tag, `{"type":"structural_tag","format":{"type":"json_schema","json_schema":`...)
 	tag = append(tag, schema...)
+	tag = append(tag, `,"max_whitespace_cnt":`...)
+	tag = strconv.AppendInt(tag, maxGrammarWhitespace, 10)
 	return append(tag, `}}`...)
 }
 

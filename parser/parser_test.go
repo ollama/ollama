@@ -967,6 +967,23 @@ func TestCreateRequestFileGlobNoMatchUsesModelName(t *testing.T) {
 	}
 }
 
+func TestHasWildcard(t *testing.T) {
+	for _, tt := range []struct {
+		path string
+		want bool
+	}{
+		{"model.gguf", false},
+		{"model-*.gguf", true},
+		{"model-?.gguf", true},
+		{filepath.Join("dir", "*.gguf"), true},
+		{filepath.Join("dir", "model.gguf"), false},
+	} {
+		if got := hasWildcard(tt.path); got != tt.want {
+			t.Errorf("hasWildcard(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestCreateRequestFileGlobRejectsBadPattern(t *testing.T) {
 	modelfile, err := ParseFile(strings.NewReader("FROM [\n"))
 	if err != nil {
