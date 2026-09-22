@@ -8,32 +8,37 @@ import (
 const (
 	Byte = 1
 
+	// Decimal prefixes (1000-based) - used for buffer sizes, memory capacity
 	KiloByte = Byte * 1000
 	MegaByte = KiloByte * 1000
 	GigaByte = MegaByte * 1000
 	TeraByte = GigaByte * 1000
 
+	// Binary prefixes (1024-based) - used for file sizes
 	KibiByte = Byte * 1024
 	MebiByte = KibiByte * 1024
 	GibiByte = MebiByte * 1024
+	TebiByte = GibiByte * 1024
 )
 
+// HumanBytes formats bytes using binary prefixes (1024-based) with short unit names.
+// This follows the convention used by most file systems and tools for file sizes.
 func HumanBytes(b int64) string {
 	var value float64
 	var unit string
 
 	switch {
-	case b >= TeraByte:
-		value = float64(b) / TeraByte
+	case b >= TebiByte:
+		value = float64(b) / TebiByte
 		unit = "TB"
-	case b >= GigaByte:
-		value = float64(b) / GigaByte
+	case b >= GibiByte:
+		value = float64(b) / GibiByte
 		unit = "GB"
-	case b >= MegaByte:
-		value = float64(b) / MegaByte
+	case b >= MebiByte:
+		value = float64(b) / MebiByte
 		unit = "MB"
-	case b >= KiloByte:
-		value = float64(b) / KiloByte
+	case b >= KibiByte:
+		value = float64(b) / KibiByte
 		unit = "KB"
 	default:
 		return fmt.Sprintf("%d B", b)
