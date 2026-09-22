@@ -2157,17 +2157,9 @@ func defaultCodexAppQuitApp() error {
 
 func defaultCodexAppIsRunning() bool {
 	switch codexAppGOOS {
-	case "windows":
-		return len(codexAppMatchingProcessIDs()) > 0
-	case "darwin":
-		out, err := exec.Command("osascript", "-e", `tell application "System Events" to exists process "ChatGPT"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
-			return true
-		}
-		out, err = exec.Command("osascript", "-e", `tell application "System Events" to exists process "Codex"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
-			return true
-		}
+	case "darwin", "windows":
+		// System Events can block waiting for other apps' Accessibility responses.
+		// Use the process list for running-state checks on macOS as well.
 		return len(codexAppMatchingProcessIDs()) > 0
 	default:
 		return false
