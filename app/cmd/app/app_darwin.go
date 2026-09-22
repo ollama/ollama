@@ -1355,6 +1355,12 @@ func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 }
 
 func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return claudeDesktopConnectionStatus(ctx)
+}
+
+func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
@@ -1368,7 +1374,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
 		claudeProxyMu.Unlock()
 		var accessErr error
-		accessState, accessErr = claudeAccessStateResolver(context.Background())
+		accessState, accessErr = claudeAccessStateResolver(ctx)
 		if accessErr != nil {
 			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
 		}
@@ -1379,7 +1385,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		if accessErr == nil && accessState.Cloud == proxy.ClaudeDesktopCloudOn {
 			// Local-only startup deliberately seeds the cache with only the active
 			// routes. Settings still needs the recommendation catalog when Cloud is on.
-			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, !cachedCatalogHasCloud)
+			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(ctx, current, !cachedCatalogHasCloud)
 		} else {
 			selectedModels = current
 			if len(selectedModels) == 0 {
@@ -1398,7 +1404,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	var localNames []string
 	var localErr error
 	if len(availableModels) > 0 {
-		localNames, localErr = claudeLocalModelsResolver(context.Background())
+		localNames, localErr = claudeLocalModelsResolver(ctx)
 		if localErr != nil {
 			slog.Debug("could not load local models for Claude Settings", "error", localErr)
 		}

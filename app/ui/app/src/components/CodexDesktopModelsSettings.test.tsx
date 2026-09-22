@@ -1,3 +1,4 @@
+import { queryClient } from "@/lib/queryClient";
 import type {
   CodexDesktopModelsSettings as ModelsSettings,
   CodexDesktopStatus,
@@ -139,6 +140,7 @@ function codexStatus(
 }
 
 afterEach(() => {
+  queryClient.clear();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -1091,4 +1093,49 @@ describe("CodexDesktopModelsSettings", () => {
       await act(async () => renderer?.unmount());
     }
   });
+});
+
+it("shows saved selections before discovering models on picker open", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const summary = settings({
+    selected: ["saved-model"],
+    available: [],
+    models: [],
+  });
+  let resolve!: (value: { settings: ModelsSettings }) => void;
+  const pending = new Promise<{ settings: ModelsSettings }>((done) => {
+    resolve = done;
+  });
+  const read = vi.fn((catalog: boolean) =>
+    catalog ? pending : Promise.resolve({ settings: summary }),
+  );
+  vi.stubGlobal("window", {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getCodexDesktopModelsSettings: read,
+  });
+  let renderer: ReturnType<typeof create> | undefined;
+  try {
+    await act(async () => {
+      renderer = create(<CodexDesktopModelsSettings />);
+    });
+    expect(read.mock.calls).toEqual([[false]]);
+    expect(textContent(renderer!.root)).toContain("saved-model");
+    await act(async () => {
+      renderer!.root
+        .findAllByType("button")
+        .find((button) => button.props["aria-label"] === "Add ChatGPT model")!
+        .props.onClick({});
+    });
+    expect(read.mock.calls).toEqual([[false], [false], [true]]);
+    expect(textContent(renderer!.root)).toContain("Loading models…");
+    expect(textContent(renderer!.root)).toContain("saved-model");
+    await act(async () => {
+      resolve({ settings: settings({ selected: ["saved-model"] }) });
+    });
+    expect(textContent(renderer!.root)).not.toContain("Loading models…");
+  } finally {
+    resolve({ settings: summary });
+    await act(async () => renderer?.unmount());
+  }
 });

@@ -10,9 +10,7 @@ import (
 )
 
 func bindClaudeDesktop(wv webview.WebView) {
-	wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
-		return getClaudeDesktopConnectionStatus()
-	})
+	bindDesktopModelSettings(wv, "getClaudeDesktopStatus", "claude-desktop")
 	wv.Bind("getClaudeDesktopConnectionSummary", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionSummary()
 	})

@@ -1,3 +1,4 @@
+import { desktopModels, invalidateDesktopModels } from "@/lib/desktopModels";
 import { getClaudeDesktopAvailableModels } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Description, Field, Label } from "@/components/ui/fieldset";
@@ -37,6 +38,7 @@ interface ClaudeDesktopModelsSettingsProps {
   initialLocalModels?: string[];
   initialCloudModels?: string[];
   includeCloudModels?: boolean;
+  accountKey?: string;
   onDraftChange?: (hasChanges: boolean) => void;
   showSectionHeading?: boolean;
 }
@@ -137,6 +139,8 @@ interface ClaudeModelPickerProps {
   models: ClaudeDesktopModelStatus[];
   disabled: boolean;
   onChange: (model: string) => void;
+  onOpen: () => void;
+  loading: boolean;
 }
 
 function ClaudeModelPicker({
@@ -146,11 +150,14 @@ function ClaudeModelPicker({
   models,
   disabled,
   onChange,
+  onOpen,
+  loading,
 }: ClaudeModelPickerProps) {
   return (
     <Popover className="relative min-w-0">
       <PopoverButton
         id={id}
+        onClick={onOpen}
         aria-label={`Ollama model for ${routeName}`}
         aria-haspopup="listbox"
         disabled={disabled}
@@ -169,15 +176,22 @@ function ClaudeModelPicker({
         className="z-50 flex w-[var(--button-width)] min-w-64 flex-col overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 [--anchor-max-height:19rem] dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white"
       >
         {({ close }) => (
-          <ClaudeModelPickerOptions
-            routeName={routeName}
-            value={value}
-            models={models}
-            onChange={(model) => {
-              onChange(model);
-              close();
-            }}
-          />
+          <>
+            {loading && (
+              <p role="status" className="px-3 py-2 text-neutral-400">
+                Loading models…
+              </p>
+            )}
+            <ClaudeModelPickerOptions
+              routeName={routeName}
+              value={value}
+              models={models}
+              onChange={(model) => {
+                onChange(model);
+                close();
+              }}
+            />
+          </>
         )}
       </PopoverPanel>
     </Popover>
@@ -266,6 +280,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     initialLocalModels,
     initialCloudModels,
     includeCloudModels = false,
+    accountKey,
     onDraftChange,
     showSectionHeading = true,
   },
@@ -289,7 +304,8 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
     initialCloudModels ?? [],
   );
-  const [modelsLoading, setModelsLoading] = useState(false);
+  const catalogRequested = useRef(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [resettingMappings, setResettingMappings] = useState(false);
@@ -319,59 +335,85 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     [],
   );
 
-  const refreshStatus = useCallback(async () => {
-    if (!window.getClaudeDesktopStatus) return;
-    const request = ++statusRequestRef.current;
-    try {
-      const next = await window.getClaudeDesktopStatus();
-      if (
-        request === statusRequestRef.current &&
-        !operationInFlightRef.current
-      ) {
-        applyStatus(next, true);
+  const refreshStatus = useCallback(
+    async (catalog = catalogRequested.current) => {
+      if (!window.getClaudeDesktopStatus) return;
+      const request = ++statusRequestRef.current;
+      try {
+        const summary = await window.getClaudeDesktopStatus(false);
+        if (
+          request !== statusRequestRef.current ||
+          operationInFlightRef.current
+        )
+          return;
+        const discover = catalog && summary.used && summary.installed;
+        const [next, installed] = await Promise.all([
+          discover
+            ? desktopModels(
+                [
+                  "claude",
+                  accountKey,
+                  includeCloudModels,
+                  { ...summary, routedRequests: undefined },
+                ],
+                () => window.getClaudeDesktopStatus!(true),
+              )
+            : Promise.resolve(summary),
+          discover && !initialLocalModels
+            ? desktopModels(
+                ["claude-inventory", accountKey, includeCloudModels],
+                () => getClaudeDesktopAvailableModels(includeCloudModels),
+              )
+            : Promise.resolve(null),
+        ]);
+        if (
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          applyStatus(
+            { ...next, routedRequests: summary.routedRequests },
+            true,
+          );
+          if (installed) {
+            setLocalModels(installed.map((model) => model.model));
+            setAccountCloudModels(
+              installed
+                .filter((model) => model.isCloud())
+                .map((model) => model.model),
+            );
+          }
+        }
+      } catch {
+        if (
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          setError("Ollama could not read the Claude connection status.");
+        }
       }
-    } catch {
-      if (
-        request === statusRequestRef.current &&
-        !operationInFlightRef.current
-      ) {
-        setError("Ollama could not read the Claude connection status.");
-      }
-    }
-  }, [applyStatus]);
+    },
+    [accountKey, includeCloudModels, initialLocalModels, applyStatus],
+  );
 
   useEffect(() => {
     if (!initialStatus) void refreshStatus();
     const handleFocus = () => void refreshStatus();
     window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
+    return () => {
+      ++statusRequestRef.current;
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [initialStatus, refreshStatus]);
 
-  useEffect(() => {
-    if (initialLocalModels || !status?.used) return;
-    let cancelled = false;
-    setModelsLoading(true);
-    void getClaudeDesktopAvailableModels(includeCloudModels)
-      .then((installed) => {
-        if (!cancelled) {
-          setLocalModels(installed.map((model) => model.model));
-          setAccountCloudModels(
-            installed
-              .filter((model) => model.isCloud())
-              .map((model) => model.model),
-          );
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError("Ollama could not load your models.");
-      })
-      .finally(() => {
-        if (!cancelled) setModelsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [includeCloudModels, initialLocalModels, status?.used]);
+  const openCatalog = async () => {
+    catalogRequested.current = true;
+    setCatalogLoading(true);
+    try {
+      await refreshStatus(true);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
 
   const catalogModels = useMemo(() => {
     const current = new Set(models.map((model) => model.name));
@@ -458,7 +500,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       setError("Choose at least one Ollama model for Claude.");
       return;
     }
-    if (hasInvalidMapping) {
+    if (hasDraftChanges && hasInvalidMapping) {
       setError("Choose models available to your account and device.");
       return;
     }
@@ -469,6 +511,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     setError(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
+    await invalidateDesktopModels();
     try {
       await runMappingAction(
         (restartConfirmed) => applyMappings(mappingsToApply, restartConfirmed),
@@ -476,6 +519,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       );
     } finally {
       ++statusRequestRef.current;
+      await invalidateDesktopModels();
       operationInFlightRef.current = false;
       setApplying(false);
     }
@@ -491,6 +535,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     setAutoModeApplying(true);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
+    await invalidateDesktopModels();
     try {
       let result = await window.setClaudeDesktopAutoMode(checked, false);
       if (result.restartConfirmationRequired) {
@@ -511,6 +556,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       setError("Ollama could not update Claude auto mode.");
     } finally {
       ++statusRequestRef.current;
+      await invalidateDesktopModels();
       operationInFlightRef.current = false;
       setAutoModeOverride(null);
       setAutoModeApplying(false);
@@ -530,6 +576,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     setError(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
+    await invalidateDesktopModels();
     try {
       return await runMappingAction(
         resetMappings,
@@ -537,6 +584,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       );
     } finally {
       ++statusRequestRef.current;
+      await invalidateDesktopModels();
       operationInFlightRef.current = false;
       setResettingMappings(false);
     }
@@ -619,7 +667,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                 disabled={
                   busy ||
                   assignedModels.length === 0 ||
-                  hasInvalidMapping ||
+                  (hasDraftChanges && hasInvalidMapping) ||
                   (status.running && !hasDraftChanges)
                 }
                 className="flex-shrink-0"
@@ -659,7 +707,9 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                       id={`claude-route-${mapping.routeId}`}
                       routeName={mapping.routeName}
                       value={mapping.model ?? ""}
-                      disabled={busy || modelsLoading}
+                      disabled={busy}
+                      loading={catalogLoading}
+                      onOpen={() => void openCatalog()}
                       models={catalogModels}
                       onChange={(model) =>
                         updateMapping(mapping.routeId, model)
