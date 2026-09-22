@@ -111,11 +111,27 @@ func setROCmGFXTarget(device *ml.DeviceInfo, gfx string) {
 	device.ComputeMajor, device.ComputeMinor = parseGFXTarget(gfx)
 }
 
-// rocblasGFXTargets scans the rocblas library directory for supported gfx targets
-// by looking for TensileLibrary_lazy_gfxNNNN.dat files.
+// rocblasGFXTargets scans the ROCm payload for bundled BLAS kernels.
 func rocblasGFXTargets(libDirs []string) map[string]bool {
 	targets := make(map[string]bool)
 	for _, dir := range libDirs {
+		kpackDirs := []string{
+			filepath.Join(dir, ".kpack"),
+			filepath.Join(filepath.Dir(dir), ".kpack"),
+		}
+		for _, kpackDir := range kpackDirs {
+			files, _ := filepath.Glob(filepath.Join(kpackDir, "blas_lib_gfx*.kpack"))
+			for _, f := range files {
+				base := filepath.Base(f)
+				if target, ok := strings.CutPrefix(base, "blas_lib_"); ok {
+					if target, ok = strings.CutSuffix(target, ".kpack"); ok {
+						targets[target] = true
+					}
+				}
+			}
+		}
+
+		// Keep recognizing older ROCm payloads that use Tensile databases.
 		files, _ := filepath.Glob(filepath.Join(dir, "rocblas", "library", "TensileLibrary_lazy_gfx*.dat"))
 		for _, f := range files {
 			base := filepath.Base(f)
