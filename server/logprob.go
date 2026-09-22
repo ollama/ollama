@@ -26,6 +26,16 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 				}
 			}
 		}
+		if len(lp.RequestedLogprobs) > 0 {
+			result[i].RequestedLogprobs = make([]api.TokenLogprob, len(lp.RequestedLogprobs))
+			for j, rlp := range lp.RequestedLogprobs {
+				result[i].RequestedLogprobs[j] = api.TokenLogprob{
+					Token:   rlp.Token,
+					Bytes:   stringToByteInts(rlp.Token),
+					Logprob: rlp.Logprob,
+				}
+			}
+		}
 	}
 	return result
 }
