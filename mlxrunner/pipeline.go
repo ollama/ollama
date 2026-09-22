@@ -262,9 +262,13 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 	}()
 
 	detok := detokenizer{
-		tokenizer:       r.Tokenizer,
-		wantLogprobs:    request.SamplerOpts.Logprobs,
-		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
+		tokenizer:        r.Tokenizer,
+		wantLogprobs:     request.SamplerOpts.Logprobs,
+		wantTopLogprobs:  request.SamplerOpts.TopLogprobs,
+		wantTokenStrings: request.LogprobTokenStrings,
+	}
+	if set := request.SamplerOpts.LogprobTokens; set != nil {
+		detok.wantTokens = set.IDs
 	}
 
 	cachedPromptCount := len(session.inputs) - len(session.remaining)
@@ -499,11 +503,13 @@ func (t *pipelinedDecoder) close() {
 // with those bytes so Content and Logprobs stay aligned when a chunk does
 // flush.
 type detokenizer struct {
-	tokenizer       *tokenizer.Tokenizer
-	buf             bytes.Buffer
-	logprobs        []llm.Logprob
-	wantLogprobs    bool
-	wantTopLogprobs int
+	tokenizer        *tokenizer.Tokenizer
+	buf              bytes.Buffer
+	logprobs         []llm.Logprob
+	wantLogprobs     bool
+	wantTopLogprobs  int
+	wantTokens       []int32
+	wantTokenStrings []string
 }
 
 // clampLogprobs floors logprobs at -9999, the OpenAI-compatible bound;
@@ -521,7 +527,7 @@ func clampLogprobs(logprobs []llm.Logprob) {
 func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) {
 	output := res.Token.Int()
 	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
-	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.tokenizer.Decode)
+	logprobs := buildLogprob(res, d.wantLogprobs, d.wantTopLogprobs, d.wantTokens, d.wantTokenStrings, d.tokenizer.Decode)
 	clampLogprobs(logprobs)
 	d.logprobs = append(d.logprobs, logprobs...)
 
@@ -539,8 +545,11 @@ func (d *detokenizer) detokenize(res sampler.Result) (CompletionResponse, bool) 
 // tensors whenever any registered slot requested them, so the caller must
 // gate emission on its own request config (wantLogprobs / wantTopLogprobs)
 // rather than on whether the tensors happen to be non-nil.
-func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int, decode func([]int32) string) []llm.Logprob {
-	if !wantLogprobs || sample.Logprob == nil {
+func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int, wantTokens []int32, wantTokenStrings []string, decode func([]int32) string) []llm.Logprob {
+	if sample.Logprob == nil {
+		return nil
+	}
+	if !wantLogprobs && len(wantTokens) == 0 {
 		return nil
 	}
 	tok := func(id int32) string { return decode([]int32{id}) }
@@ -550,6 +559,35 @@ func buildLogprob(sample sampler.Result, wantLogprobs bool, wantTopLogprobs int,
 			Token:   tok(sample.Token.Int()),
 			Logprob: float64(sample.Logprob.Floats()[0]),
 		},
+	}
+
+	// The sampler gathers the union of every registered slot's requested ids,
+	// so pick out this caller's own, in the order it asked for them.
+	if len(wantTokens) > 0 && sample.RequestedTokens != nil {
+		gotIDs := sample.RequestedTokens.Ints()
+		gotVals := sample.RequestedLogprobs.Floats()
+		at := make(map[int32]float64, len(gotIDs))
+		for i, id := range gotIDs {
+			at[id] = float64(gotVals[i])
+		}
+		pairs := make([]llm.TokenLogprob, 0, len(wantTokens))
+		for i, id := range wantTokens {
+			v, ok := at[id]
+			if !ok {
+				continue
+			}
+			label := tok(id)
+			if i < len(wantTokenStrings) {
+				label = wantTokenStrings[i]
+			}
+			pairs = append(pairs, llm.TokenLogprob{Token: label, Logprob: v})
+		}
+		out.RequestedLogprobs = pairs
+	}
+
+	if !wantLogprobs {
+		// Caller asked only for specific tokens: don't volunteer top-K.
+		return []llm.Logprob{out}
 	}
 
 	if wantTopLogprobs > 0 && sample.TopTokens != nil {

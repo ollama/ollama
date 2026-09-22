@@ -141,6 +141,9 @@ func Execute(args []string) error {
 			Logprobs:         request.Logprobs,
 			TopLogprobs:      request.TopLogprobs,
 		}
+		if len(request.LogprobTokens) > 0 {
+			request.SamplerOpts.LogprobTokens = &sample.LogprobTokenSet{IDs: request.LogprobTokens}
+		}
 
 		if err := runner.Prepare(&request); err != nil {
 			var statusErr api.StatusError

@@ -120,6 +120,8 @@ type CompletionRequest struct {
 	Options                    api.Options
 	Logprobs                   bool
 	TopLogprobs                int
+	LogprobTokens              []int32
+	LogprobTokenStrings        []string
 	IncludeIntermediateMetrics bool
 }
 
@@ -171,6 +173,19 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 	return append(tag, `}}`...)
 }
 
+// toInt32s narrows the token ids llm.CompletionRequest carries as []int to the
+// []int32 the runner and mlx tensors use.
+func toInt32s(ids []int) []int32 {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]int32, len(ids))
+	for i, id := range ids {
+		out[i] = int32(id)
+	}
+	return out
+}
+
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := CompletionRequest{
@@ -179,6 +194,8 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		Format:                     requestGrammar(req),
 		Logprobs:                   req.Logprobs,
 		TopLogprobs:                req.TopLogprobs,
+		LogprobTokens:              toInt32s(req.LogprobTokens),
+		LogprobTokenStrings:        req.LogprobTokenStrings,
 		IncludeIntermediateMetrics: req.IncludeIntermediateMetrics,
 	}
 	if req.Options != nil {

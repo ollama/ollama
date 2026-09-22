@@ -24,6 +24,20 @@ type Options struct {
 	// token's log-probability. TopLogprobs (when > 0) adds top-K pairs.
 	Logprobs    bool
 	TopLogprobs int
+
+	// LogprobTokens names specific token ids whose log-probabilities are
+	// reported regardless of rank, for callers scoring a fixed candidate
+	// set (classification/routing) rather than inspecting what was
+	// generated. Independent of Logprobs/TopLogprobs. Pointer-shaped so
+	// Options stays comparable (see recomputeInvariants).
+	LogprobTokens *LogprobTokenSet
+}
+
+// LogprobTokenSet is an immutable set of token ids to report logprobs for.
+// Callers build one per request and share the pointer; it must not be
+// mutated after being handed to a Sampler.
+type LogprobTokenSet struct {
+	IDs []int32
 }
 
 // Result bundles the outputs of one decode step. Logprob/TopTokens/
@@ -35,13 +49,20 @@ type Result struct {
 	Logprob     *mlx.Array // sampled-token logprobs,  shape [B,1];    nil unless any registered slot has Logprobs
 	TopTokens   *mlx.Array // top-K token ids,         shape [B,maxK]; nil unless any registered slot has TopLogprobs>0
 	TopLogprobs *mlx.Array // top-K logprobs,          shape [B,maxK]; same
+
+	// RequestedTokens/RequestedLogprobs hold the union of every registered
+	// slot's Options.LogprobTokens and their logprobs, shape [B,len(union)];
+	// nil unless some slot requested them. Consumers filter to their own
+	// slot's ids, the same way they filter Top*.
+	RequestedTokens   *mlx.Array
+	RequestedLogprobs *mlx.Array
 }
 
 // Arrays returns the tensor fields as a slice so callers can drive the mlx
 // lifecycle verbs (Eval, AsyncEval, a held scope's Attach) over the whole
 // group. Unset fields stay nil; the mlx helpers skip them.
 func (r Result) Arrays() []*mlx.Array {
-	return []*mlx.Array{r.Token, r.Logprob, r.TopTokens, r.TopLogprobs}
+	return []*mlx.Array{r.Token, r.Logprob, r.TopTokens, r.TopLogprobs, r.RequestedTokens, r.RequestedLogprobs}
 }
 
 // Distribution is the filtered probability distribution used by the sampler.
@@ -186,6 +207,10 @@ type Sampler struct {
 	// current call.
 	anyLogprobs    bool
 	maxTopLogprobs int
+
+	// requestedTokens is the ordered union of every slot's
+	// Options.LogprobTokens ids; nil when no slot requested any.
+	requestedTokens []int32
 
 	// numCtx is the runner's context window; normalize uses it to
 	// resolve the repeat_last_n == -1 sentinel.
@@ -333,12 +358,15 @@ func (s *Sampler) recomputeInvariants() {
 		s.allSameOpts = true
 		s.anyLogprobs = false
 		s.maxTopLogprobs = 0
+		s.requestedTokens = nil
 		return
 	}
 	first := s.slots[0].opts
 	s.allSameOpts = true
 	s.anyLogprobs = false
 	s.maxTopLogprobs = 0
+	s.requestedTokens = nil
+	seen := map[int32]bool{}
 	for _, slot := range s.slots {
 		if slot.opts != first {
 			s.allSameOpts = false
@@ -347,6 +375,14 @@ func (s *Sampler) recomputeInvariants() {
 			s.anyLogprobs = true
 			if slot.opts.TopLogprobs > s.maxTopLogprobs {
 				s.maxTopLogprobs = slot.opts.TopLogprobs
+			}
+		}
+		if set := slot.opts.LogprobTokens; set != nil {
+			for _, id := range set.IDs {
+				if !seen[id] {
+					seen[id] = true
+					s.requestedTokens = append(s.requestedTokens, id)
+				}
 			}
 		}
 	}
@@ -430,13 +466,30 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 		}
 
 		res = Result{Token: token}
-		if s.anyLogprobs {
+		if s.anyLogprobs || len(s.requestedTokens) > 0 {
 			// Log-softmax over original logits so every row holds a truthful
 			// value (compute-for-all; consumers filter per-slot). Subtract
 			// max first for numerical stability in the logsumexp.
 			lp := logits.AsType(mlx.DTypeFloat32)
 			lp = lp.Subtract(lp.MaxAxis(-1, true))
 			lp = lp.Subtract(lp.LogsumexpAxis(-1, true))
+			if len(s.requestedTokens) > 0 {
+				// Gather the caller's ids straight out of the full-vocab
+				// log-softmax, before any top-K truncation, so rank is
+				// irrelevant. Same TakeAlongAxis gather the top-K path uses,
+				// with explicit ids instead of argpartition's.
+				b := lp.Dim(0)
+				ids := make([]int32, 0, b*len(s.requestedTokens))
+				for range b {
+					ids = append(ids, s.requestedTokens...)
+				}
+				idx := mlx.NewArrayInt32(ids, []int32{int32(b), int32(len(s.requestedTokens))})
+				res.RequestedTokens = idx
+				res.RequestedLogprobs = lp.TakeAlongAxis(idx, -1)
+			}
+			// Always fill the selected token's logprob once lp exists: it is a
+			// single gather, and leaving it unset would force consumers that
+			// asked only for LogprobTokens to report a bogus zero.
 			res.Logprob = lp.TakeAlongAxis(token.ExpandDims(-1), -1)
 			if s.maxTopLogprobs > 0 {
 				k := s.maxTopLogprobs
