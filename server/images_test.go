@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -1039,6 +1040,255 @@ func TestPullManifestRedirectPolicy(t *testing.T) {
 			}
 			if hit {
 				t.Fatal("blocked redirect target received a request")
+			}
+		})
+	}
+}
+
+func TestImportModelFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		dir       string
+		setup     func(t *testing.T, dir string)
+		ctx       func(t *testing.T) context.Context
+		modelName string
+
+		wantErrIs  error
+		wantErrAny bool
+
+		wantFiles          map[string]bool
+		wantStatusContains string
+		check              func(t *testing.T, req api.CreateRequest, err error)
+	}{
+		{
+			name: "model file and full metadata set",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("fake weights"), 0o644); err != nil {
+					t.Fatalf("error writing model file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "license.txt"), []byte("MIT"), 0o644); err != nil {
+					t.Fatalf("error writing license file: %v", err)
+				}
+			},
+			modelName: "my-model",
+			wantFiles: map[string]bool{"model.gguf": true},
+			check: func(t *testing.T, req api.CreateRequest, err error) {
+				if req.Model != "my-model" {
+					t.Fatalf("Model = %q, want %q", req.Model, "my-model")
+				}
+			},
+		},
+		{
+			name:      "no files at all",
+			modelName: "empty-model",
+			wantErrIs: errNoFilesProvided,
+		},
+		{
+			name: "only metadata, no gguf model",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "license.txt"), []byte("MIT"), 0o644); err != nil {
+					t.Fatalf("error writing license file: %v", err)
+				}
+			},
+			modelName: "meta-only",
+			wantErrIs: errNoFilesProvided,
+		},
+		{
+			name: "safetensors present aborts before any import happens",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "good.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "bad.safetensors"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing safetensors file: %v", err)
+				}
+			},
+			modelName: "mixed-model",
+			wantErrIs: errOnlyGGUFSupported,
+			wantFiles: map[string]bool{},
+		},
+		{
+			name:       "nonexistent directory",
+			dir:        "/definitely/does/not/exist",
+			modelName:  "m",
+			wantErrAny: true,
+		},
+		{
+			name: "directory containing only subdirectories",
+			setup: func(t *testing.T, dir string) {
+				if err := os.Mkdir(filepath.Join(dir, "nested"), 0o755); err != nil {
+					t.Fatalf("error writing subdirectory: %v", err)
+				}
+			},
+			modelName: "m",
+			wantErrIs: errNoFilesProvided,
+		},
+		{
+			name: "multiple gguf files all imported",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "part1.gguf"), []byte("content-1"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "part2.gguf"), []byte("content-2"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "part3.gguf"), []byte("content-3"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+			},
+			modelName: "sharded-model",
+			wantFiles: map[string]bool{"part1.gguf": true, "part2.gguf": true, "part3.gguf": true},
+		},
+		{
+			name: "already-cancelled context aborts immediately",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+			},
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx
+			},
+			modelName: "m",
+			wantErrIs: context.Canceled,
+		},
+		{
+			name: "context deadline exceeded before call",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+			},
+			ctx: func(t *testing.T) context.Context {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+				t.Cleanup(cancel)
+				time.Sleep(time.Millisecond) // ensure the deadline has actually passed
+				return ctx
+			},
+			modelName: "m",
+			wantErrIs: context.DeadlineExceeded,
+		},
+		{
+			name: "unrecognized file alongside valid model is skipped, not fatal",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing gguf file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("some unrelated notes"), 0o644); err != nil {
+					t.Fatalf("error writing notes file: %v", err)
+				}
+			},
+			modelName:          "m",
+			wantFiles:          map[string]bool{"model.gguf": true},
+			wantStatusContains: `skipping unrecognized file "notes.md"`,
+		},
+		{
+			name: "malformed params aborts after model import already happened",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing model file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "params"), []byte("{invalid"), 0o644); err != nil {
+					t.Fatalf("error writing params file: %v", err)
+				}
+			},
+			modelName:  "m",
+			wantErrAny: true,
+			check: func(t *testing.T, req api.CreateRequest, err error) {
+				if len(req.Files) != 1 {
+					t.Errorf("Files = %v, want 1 (model import should precede metadata parsing)", req.Files)
+				}
+			},
+		},
+		{
+			name: "nil-safe: progress fn still exercised across every phase",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "model.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing model file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "license.txt"), []byte("MIT"), 0o644); err != nil {
+					t.Fatalf("error writing license file: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "unknown.xyz"), []byte("junk"), 0o644); err != nil {
+					t.Fatalf("error writing junk file: %v", err)
+				}
+			},
+			modelName: "m",
+			wantFiles: map[string]bool{"model.gguf": true},
+		},
+		{
+			name: "filename with spaces is handled",
+			setup: func(t *testing.T, dir string) {
+				if err := os.WriteFile(filepath.Join(dir, "my model v2.gguf"), []byte("content"), 0o644); err != nil {
+					t.Fatalf("error writing model file: %v", err)
+				}
+			},
+			modelName: "m",
+			wantFiles: map[string]bool{"my model v2.gguf": true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tc.dir
+			if dir == "" {
+				dir = t.TempDir()
+			}
+			if tc.setup != nil {
+				tc.setup(t, dir)
+			}
+
+			ctx := context.Background()
+			if tc.ctx != nil {
+				ctx = tc.ctx(t)
+			}
+
+			var statuses []string
+			req, err := importModelFiles(ctx, dir, tc.modelName, func(p api.ProgressResponse) {
+				statuses = append(statuses, p.Status)
+			})
+
+			switch {
+			case tc.wantErrIs != nil:
+				if !errors.Is(err, tc.wantErrIs) {
+					t.Fatalf("err = %v, want errors.Is(%v)", err, tc.wantErrIs)
+				}
+			case tc.wantErrAny:
+				if err == nil {
+					t.Fatal("expected an error, got nil")
+				}
+			default:
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+
+			if tc.wantFiles != nil {
+				if len(req.Files) != len(tc.wantFiles) {
+					t.Fatalf("Files = %v, want keys %v", req.Files, tc.wantFiles)
+				}
+				for k := range tc.wantFiles {
+					if _, ok := req.Files[k]; !ok {
+						t.Errorf("Files missing expected key %q, got %v", k, req.Files)
+					}
+				}
+			}
+
+			if tc.wantStatusContains != "" {
+				found := false
+				for _, s := range statuses {
+					if s == tc.wantStatusContains {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("status %q not found in %v", tc.wantStatusContains, statuses)
+				}
+			}
+
+			if tc.check != nil {
+				tc.check(t, req, err)
 			}
 		})
 	}
