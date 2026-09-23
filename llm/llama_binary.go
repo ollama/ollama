@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,17 @@ func defaultLlamaCppBinarySearch() llamaCppBinarySearch {
 		goos:          runtime.GOOS,
 		goarch:        runtime.GOARCH,
 	}
+}
+
+// FindLlamaCppBinary locates a named llama.cpp binary (e.g. "llama-rpc-server")
+// in lib/ollama/, for callers outside this package that need a binary other
+// than llama-server.
+func FindLlamaCppBinary(name string) (string, error) {
+	path, candidates, err := findLlamaCppBinary(name, defaultLlamaCppBinarySearch())
+	if err != nil {
+		return "", fmt.Errorf("%s binary not found (checked: %s)", name, strings.Join(candidates, ", "))
+	}
+	return path, nil
 }
 
 func findLlamaCppBinary(name string, search llamaCppBinarySearch) (string, []string, error) {

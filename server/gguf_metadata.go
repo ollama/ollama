@@ -98,6 +98,27 @@ func (m ggufMetadata) lookup(key string) (any, bool) {
 	return v, ok
 }
 
+// ggufMetadataSplitNo reports the zero-based split index of a cached GGUF
+// metadata block, if it carries split metadata. The split.no/split.count keys
+// are stored unprefixed by llama.cpp's gguf-split, unlike architecture-scoped
+// keys, so they must be read directly from KV rather than through the
+// prefix-aware lookup that String/Valid/Bool use.
+func ggufMetadataSplitNo(md ggufMetadata) (no uint64, ok bool) {
+	v, present := md.KV["split.no"]
+	if !present {
+		return 0, false
+	}
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	i, err := n.Int64()
+	if err != nil || i < 0 {
+		return 0, false
+	}
+	return uint64(i), true
+}
+
 func ggufMetadataPath(digest string) (string, error) {
 	if err := manifest.ValidateDigest(digest); err != nil {
 		return "", fmt.Errorf("%w: %q", err, digest)

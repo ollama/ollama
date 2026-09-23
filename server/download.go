@@ -733,3 +733,22 @@ func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit b
 
 	return false, nil
 }
+
+// copyFile is a fallback for os.Rename across filesystems (e.g. blobs
+// directory on a different device than the download temp dir).
+func copyFile(src, dst string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	return err
+}
