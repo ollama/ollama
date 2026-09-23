@@ -1049,159 +1049,200 @@ func importModelFiles(
 		return req, err
 	}
 
-	var skipped []string
+	if err := validateModelFiles(ctx, entries); err != nil {
+		return req, err
+	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		if err := ctx.Err(); err != nil {
-			return req, err
-		}
-
-		filename := entry.Name()
-		name := filepath.ToSlash(filename)
-		path := filepath.Join(dir, filename)
-
-		mediaType, ok := ImportMediaTypeMap[strings.ToLower(name)]
-		if ok {
-			switch mediaType {
-			case "application/vnd.ollama.image.license":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-				req.License = string(data)
-
-			case "application/vnd.ollama.image.params":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-				if err := json.Unmarshal(data, &req.Parameters); err != nil {
-					return req, err
-				}
-
-			case "application/vnd.ollama.image.system":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-				req.System = string(data)
-
-			case "application/vnd.ollama.image.template":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-				req.Template = string(data)
-
-			case "application/vnd.ollama.image.prompt":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-
-				req.Messages = []api.Message{
-					{
-						Role:    "user",
-						Content: string(data),
-					},
-				}
-
-			case "application/vnd.ollama.image.json":
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return req, err
-				}
-				if err := json.Unmarshal(data, &req.Info); err != nil {
-					return req, err
-				}
-			}
-			if fn != nil {
-				fn(api.ProgressResponse{
-					Status: fmt.Sprintf("imported file %s", filename),
-				})
-			}
-			continue
-		}
-
-		// Ignore files that are not part of the Ollama export format.
-		if !isModelFile(filename) {
-			skipped = append(skipped, filename)
-			if fn != nil {
-				fn(api.ProgressResponse{
-					Status: fmt.Sprintf("skipping unrecognized file %q", filename),
-				})
-			}
-			continue
-		}
-
-		file, err := os.Open(path)
-		if err != nil {
-			return req, err
-		}
-
-		info, err := file.Stat()
-		if err != nil {
-			file.Close()
-			return req, err
-		}
-
-		var completed int64
-
-		// Real digest isn't known until NewLayer finishes hashing the content,
-		pseudoDigest := "import:" + filename
-
-		layer, err := manifest.NewLayer(&progressReader{
-			ctx: ctx,
-			r:   file,
-			onRead: func(n int) {
-				completed += int64(n)
-				if fn != nil {
-					fn(api.ProgressResponse{
-						Status:    fmt.Sprintf("importing %s", filename),
-						Total:     info.Size(),
-						Digest:    pseudoDigest,
-						Completed: completed,
-					})
-				}
-			},
-		}, "")
-
-		if err != nil {
-			return req, err
-		}
-
-		closeErr := file.Close()
-
-		if closeErr != nil {
-			return req, closeErr
-		}
-
-		req.Files[filename] = layer.Digest
-
-		if fn != nil {
-			fn(api.ProgressResponse{
-				Status: fmt.Sprintf("imported %s", filename),
-			})
-		}
+	if err := importLayers(ctx, dir, entries, &req, fn); err != nil {
+		return req, err
 	}
 
 	if len(req.Files) == 0 {
 		return req, errNoFilesProvided
 	}
 
+	if err := importMetadata(ctx, dir, entries, &req, fn); err != nil {
+		return req, err
+	}
+
 	return req, nil
 }
 
-func isModelFile(name string) bool {
+func validateModelFiles(ctx context.Context, entries []os.DirEntry) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := isModelFile(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func importLayers(
+	ctx context.Context,
+	dir string,
+	entries []os.DirEntry,
+	req *api.CreateRequest,
+	fn func(api.ProgressResponse)) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		filename := entry.Name()
+		isModel, err := isModelFile(filename)
+		if err != nil {
+			return err
+		}
+		if !isModel {
+			continue
+		}
+
+		digest, err := importLayer(ctx, filepath.Join(dir, filename), filename, fn)
+		if err != nil {
+			return err
+		}
+		req.Files[filename] = digest
+
+		if fn != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("imported %s", filename)})
+		}
+	}
+	return nil
+}
+
+func importLayer(
+	ctx context.Context,
+	path,
+	filename string,
+	fn func(api.ProgressResponse)) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	var completed int64
+	pseudoDigest := "import:" + filename
+
+	layer, err := manifest.NewLayer(&progressReader{
+		ctx: ctx,
+		r:   file,
+		onRead: func(n int) {
+			completed += int64(n)
+			if fn != nil {
+				fn(api.ProgressResponse{
+					Status:    fmt.Sprintf("importing %s", filename),
+					Total:     info.Size(),
+					Digest:    pseudoDigest,
+					Completed: completed,
+				})
+			}
+		},
+	}, "")
+	if err != nil {
+		return "", err
+	}
+
+	return layer.Digest, nil
+}
+
+func importMetadata(
+	ctx context.Context,
+	dir string,
+	entries []os.DirEntry,
+	req *api.CreateRequest,
+	fn func(api.ProgressResponse)) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		filename := entry.Name()
+
+		isModel, err := isModelFile(filename)
+		if err != nil {
+			return err
+		}
+		if isModel {
+			continue
+		}
+
+		mediaType, ok := ImportMediaTypeMap[strings.ToLower(filepath.ToSlash(filename))]
+		if !ok {
+			if fn != nil {
+				fn(api.ProgressResponse{Status: fmt.Sprintf("skipping unrecognized file %q", filename)})
+			}
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(dir, filename))
+		if err != nil {
+			return err
+		}
+
+		if err := applyMetadata(req, mediaType, data); err != nil {
+			return err
+		}
+
+		if fn != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("imported file %s", filename)})
+		}
+	}
+	return nil
+}
+
+func applyMetadata(req *api.CreateRequest, mediaType string, data []byte) error {
+	switch mediaType {
+	case "application/vnd.ollama.image.license":
+		req.License = string(data)
+
+	case "application/vnd.ollama.image.params":
+		if err := json.Unmarshal(data, &req.Parameters); err != nil {
+			return err
+		}
+
+	case "application/vnd.ollama.image.system":
+		req.System = string(data)
+
+	case "application/vnd.ollama.image.template":
+		req.Template = string(data)
+
+	case "application/vnd.ollama.image.prompt":
+		req.Messages = []api.Message{{Role: "user", Content: string(data)}}
+
+	case "application/vnd.ollama.image.json":
+		if err := json.Unmarshal(data, &req.Info); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isModelFile(name string) (bool, error) {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".gguf", ".safetensors":
-		return true
+	case ".gguf":
+		return true, nil
+	case ".safetensors":
+		return false, errOnlyGGUFSupported
 	default:
-		return false
+		return false, nil
 	}
 }
 
