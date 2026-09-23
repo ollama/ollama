@@ -187,9 +187,6 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
-		if !reqBody.TimingsPerToken {
-			t.Error("timings_per_token should be true")
-		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
@@ -212,9 +209,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	var responses []CompletionResponse
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:                     "test prompt",
-		Options:                    &opts,
-		IncludeIntermediateMetrics: true,
+		Prompt:  "test prompt",
+		Options: &opts,
 	}, func(cr CompletionResponse) {
 		responses = append(responses, cr)
 	})
@@ -233,28 +229,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].Done {
 		t.Error("response[0] should not be done")
 	}
-	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
-		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
-	}
-	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[0] cached prompt count = %v, want 2", got)
-	}
-	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
-		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
-	}
 
 	// Second token
 	if responses[1].Content != " world" {
 		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
-	}
-	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
-		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
-	}
-	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[1] cached prompt count = %v, want 2", got)
-	}
-	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
-		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
 	}
 
 	// Final response
@@ -3848,154 +3826,115 @@ func fakeRunningCmd() *exec.Cmd {
 	return cmd
 }
 
-// TestPredictServerVRAMSplitModel checks that a split GGUF is sized from every
-// shard. Only the first shard is passed around as the model path, and for a
-// model whose first shard holds just metadata that is a tiny fraction of the
-// real weights.
-func TestPredictServerVRAMSplitModel(t *testing.T) {
-	dir := t.TempDir()
-
-	const count = 3
-	kv := gguftest.KV{
-		"general.architecture":          "llama",
-		"llama.block_count":             uint32(1),
-		"llama.embedding_length":        uint32(64),
-		"llama.attention.head_count":    uint32(1),
-		"llama.attention.head_count_kv": uint32(1),
+// TestLlamaServerCompletionThinkingFormat checks that a format on a thinking
+// response is one request carrying a grammar: a schema is converted by an
+// empty completion once per schema, "json" needs no conversion, the grammar
+// wraps the format rules behind the closing string, and content and metrics
+// pass through unchanged.
+func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	converted := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
+	sseLines := []string{
+		`data: {"content":"Let me think.</think>","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":3,"predicted_ms":15}}`,
+		`data: {"content":"{}","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
 	}
 
-	// The remaining shards carry the bulk of the weights, as produced by
-	// llama.cpp's gguf-split; the first shard holds just metadata, a tiny
-	// fraction of the real weights.
-	const shardSize = 8 << 20
-	names := make([]string, count)
-	for i := 1; i <= count; i++ {
-		names[i-1] = filepath.Join(dir, fmt.Sprintf("model-%05d-of-%05d.gguf", i, count))
-		var tensors []*gguftest.Tensor
-		if i > 1 {
-			tensors = []*gguftest.Tensor{testGGUFTensor(fmt.Sprintf("blk.%d.weight", i), gguf.TensorTypeF32, []uint64{shardSize / 4})}
+	var conversions atomic.Int32
+	grammars := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
 		}
-		w, err := os.Create(names[i-1])
+		var reqBody struct {
+			Prompt         any             `json:"prompt"`
+			NPredict       *int            `json:"n_predict"`
+			JsonSchema     json.RawMessage `json:"json_schema"`
+			Grammar        string          `json:"grammar"`
+			ResponseFields []string        `json:"response_fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		if len(reqBody.ResponseFields) > 0 {
+			conversions.Add(1)
+			if !reflect.DeepEqual(reqBody.Prompt, []any{[]any{}}) || reqBody.NPredict == nil || *reqBody.NPredict != 0 {
+				t.Errorf("conversion request prompt %v n_predict %v, want an empty token prompt and no generation", reqBody.Prompt, reqBody.NPredict)
+			}
+			if !bytes.Equal(reqBody.JsonSchema, schema) || !reflect.DeepEqual(reqBody.ResponseFields, []string{"generation_settings/grammar"}) {
+				t.Errorf("conversion request schema %s fields %v", reqBody.JsonSchema, reqBody.ResponseFields)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"generation_settings/grammar": converted})
+			return
+		}
+		if reqBody.JsonSchema != nil {
+			t.Errorf("completion carried schema %s", reqBody.JsonSchema)
+		}
+		grammars <- reqBody.Grammar
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, line := range sseLines {
+			fmt.Fprintln(w, line)
+			fmt.Fprintln(w)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	complete := func(format json.RawMessage) string {
+		var responses []CompletionResponse
+		opts := api.DefaultOptions()
+		err := runner.Completion(t.Context(), CompletionRequest{
+			Prompt:        "test prompt",
+			Format:        format,
+			ThinkingClose: []string{"</think>"},
+			Options:       &opts,
+		}, func(cr CompletionResponse) {
+			responses = append(responses, cr)
+		})
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("Completion error: %v", err)
 		}
-		if err := gguftest.Write(w, kv, tensors); err != nil {
-			t.Fatal(err)
+		var content strings.Builder
+		for _, resp := range responses[:len(responses)-1] {
+			content.WriteString(resp.Content)
 		}
-		w.Close()
+		if got := content.String(); got != "Let me think.</think>{}" {
+			t.Errorf("streamed content = %q", got)
+		}
+		final := responses[len(responses)-1]
+		if !final.Done || final.DoneReason != DoneReasonStop || final.EvalCount != 4 || final.PromptEvalCount != 5 {
+			t.Errorf("final response = %+v, want done with 4 generated and 5 prompt tokens", final)
+		}
+		return <-grammars
 	}
 
-	first := names[0]
-	f, err := LoadModel(first, 0, names[1:]...)
-	if err != nil {
-		t.Fatal(err)
+	for range 2 {
+		grammar := complete(schema)
+		if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format ::= \"{\" space \"}\"\n") {
+			t.Errorf("grammar does not wrap the converted schema:\n%s", grammar)
+		}
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("schema converted %d times, want once", got)
 	}
 
-	firstInfo, err := os.Stat(first)
-	if err != nil {
-		t.Fatal(err)
+	grammar := complete(json.RawMessage(`"json"`))
+	if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format   ::= object\n") {
+		t.Errorf("grammar does not wrap the json grammar:\n%s", grammar)
 	}
-
-	got := PredictServerVRAM(first, f, 128)
-	if got < uint64(shardSize)*(count-1) {
-		t.Fatalf("PredictServerVRAM = %d, want at least the %d bytes held by the trailing shards", got, shardSize*(count-1))
-	}
-	// Sizing from the first shard alone would miss almost all of the weights.
-	if got <= uint64(firstInfo.Size())*count {
-		t.Fatalf("PredictServerVRAM = %d looks like it sized from the first shard only", got)
-	}
-}
-
-// TestPredictServerVRAMUsesModelHeadDims checks that the KV cache estimate
-// honours attention.key_length/value_length. Architectures with compressed
-// attention size these independently of embedding_length/head_count, and
-// deriving them understates the cache several-fold.
-func TestPredictServerVRAMUsesModelHeadDims(t *testing.T) {
-	const (
-		layers  = 43
-		ctx     = 16384
-		keyLen  = 512
-		valLen  = 512
-		kvHeads = 1
-	)
-
-	modelPath, f := writeTestGGUF(t, gguftest.KV{
-		"general.architecture":              "deepseek4",
-		"deepseek4.block_count":             uint32(layers),
-		"deepseek4.embedding_length":        uint32(4096),
-		"deepseek4.attention.head_count":    uint32(64),
-		"deepseek4.attention.head_count_kv": uint32(kvHeads),
-		"deepseek4.attention.key_length":    uint32(keyLen),
-		"deepseek4.attention.value_length":  uint32(valLen),
-	}, nil)
-
-	info, err := os.Stat(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// deepseek4's decoupled MLA head dims (key_length/value_length) diverge
-	// from embedding_length/head_count; deriving them instead would
-	// understate the cache several-fold.
-	wantKV := uint64(layers) * kvHeads * (keyLen + valLen) * uint64(ctx) * 2
-	if wantKV == 0 {
-		t.Fatal("expected kv cache is zero; the test model is not being read")
-	}
-
-	want := uint64(info.Size()) + wantKV
-	if got := PredictServerVRAM(modelPath, f, ctx); got != want {
-		t.Fatalf("PredictServerVRAM = %d, want %d", got, want)
-	}
-
-	derivedKV := uint64(layers) * kvHeads * (64 + 64) * ctx * 2
-	if wantKV <= derivedKV {
-		t.Fatalf("test does not distinguish the head dims: %d vs %d", wantKV, derivedKV)
-	}
-}
-
-func TestPredictServerVRAMQuantizedKVCache(t *testing.T) {
-	const (
-		layers  = 36
-		ctx     = 131072
-		keyLen  = 64
-		valLen  = 64
-		kvHeads = 8
-	)
-
-	modelPath, f := writeTestGGUF(t, gguftest.KV{
-		"general.architecture":            "gpt-oss",
-		"gpt-oss.block_count":             uint32(layers),
-		"gpt-oss.embedding_length":        uint32(2880),
-		"gpt-oss.attention.head_count":    uint32(64),
-		"gpt-oss.attention.head_count_kv": uint32(kvHeads),
-		"gpt-oss.attention.key_length":    uint32(keyLen),
-		"gpt-oss.attention.value_length":  uint32(valLen),
-	}, nil)
-
-	info, err := os.Stat(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// A quantized cache holds roughly half of what f16 does. Billing it as f16
-	// overstates the model by gigabytes at long contexts, which is enough to
-	// push it past the single-device fit threshold in the scheduler and spread
-	// it across machines it did not need.
-	t.Setenv("OLLAMA_KV_CACHE_TYPE", "q8_0")
-	gotQuantized := PredictServerVRAM(modelPath, f, ctx)
-
-	t.Setenv("OLLAMA_KV_CACHE_TYPE", "")
-	gotF16 := PredictServerVRAM(modelPath, f, ctx)
-
-	if gotQuantized >= gotF16 {
-		t.Fatalf("quantized cache should predict less than f16: q8_0 = %d, f16 = %d", gotQuantized, gotF16)
-	}
-
-	// The flat layers*heads*dim*context*2 estimate this replaced ignored that
-	// gpt-oss alternates full-context and sliding-window layers, so it came out
-	// several times over the real usage.
-	flat := uint64(layers) * kvHeads * (keyLen + valLen) * ctx * 2
-	if kv := gotF16 - uint64(info.Size()); kv >= flat {
-		t.Fatalf("estimate did not account for sliding-window layers: %d vs flat %d", kv, flat)
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }

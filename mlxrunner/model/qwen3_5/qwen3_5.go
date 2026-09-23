@@ -1197,7 +1197,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
-	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
+	return m.DownProj.Forward(nn.SwiGLU(m.GateProj, m.UpProj, x))
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
