@@ -153,7 +153,7 @@ export function History({
                 role="status"
                 className="mb-3 break-words select-text text-sm text-neutral-500 dark:text-neutral-400"
               >
-                Saved to {result.directory}
+                Saved to {result.path}
                 {result.warnings?.map((warning) => (
                   <span key={warning} className="block">
                     {warning}

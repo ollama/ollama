@@ -279,7 +279,25 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			return history.Export(chat, directory)
+			result, err := history.Export(chat, directory)
+			if err == nil {
+				revealHistoryExport(result, filepath.Join(result.Path, "conversation.md"))
+			}
+			return result, err
+		},
+		ExportAllChats: func() (*history.Result, error) {
+			path, err := dialog.File().Title("Export all chats").Filter("ZIP archive", "zip").SetStartFile("ollama-chats.zip").Save()
+			if errors.Is(err, dialog.ErrCancelled) {
+				return nil, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			result, err := history.ExportAll(st, path)
+			if err == nil {
+				revealHistoryExport(result, result.Path)
+			}
+			return result, err
 		},
 	}
 
@@ -487,6 +505,24 @@ func handleConnectURLScheme() {
 	}
 
 	openInBrowser(connectURL)
+}
+
+// Reveal completed exports without opening attachments or extracting ZIPs.
+func revealHistoryExport(result *history.Result, path string) {
+	var err error
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("explorer.exe", "/select,"+path)
+		err = cmd.Start()
+		if err == nil {
+			go cmd.Wait()
+		}
+	} else {
+		err = exec.Command("open", "-R", path).Run()
+	}
+	if err != nil {
+		slog.Warn("failed to reveal chat export", "path", path, "error", err)
+		result.Warnings = append(result.Warnings, "Export saved, but the folder could not be opened. You can find it at the saved path.")
+	}
 }
 
 // openInBrowser opens the specified URL in the default browser

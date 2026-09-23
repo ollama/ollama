@@ -3,10 +3,13 @@
 package history
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,17 +44,17 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 	}
 	read := func(name string) []byte {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(result.Directory, filepath.FromSlash(name)))
+		data, err := os.ReadFile(filepath.Join(result.Path, filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return data
 	}
-	entries, err := os.ReadDir(result.Directory)
+	entries, err := os.ReadDir(result.Path)
 	if err != nil || len(entries) != 2 || entries[0].Name() != "attachments" || !entries[0].IsDir() || entries[1].Name() != "conversation.md" {
 		t.Fatalf("export should contain only Markdown and attachments: %v, %v", entries, err)
 	}
-	metadata := readArchiveDetails(t, result.Directory)
+	metadata := readArchiveDetails(t, result.Path)
 	if !metadata.Complete || len(result.Warnings) != 0 || metadata.MessageCount != 3 || len(metadata.Attachments) != 3 {
 		t.Fatalf("wrong manifest: %+v", metadata)
 	}
@@ -80,10 +83,10 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		t.Fatal("transcript is missing the usage note")
 	}
 	second, err := Export(chat, parent)
-	if err != nil || second.Directory == result.Directory {
+	if err != nil || second.Path == result.Path {
 		t.Fatalf("second export overwrote the first: %+v, %v", second, err)
 	}
-	if !bytes.Equal(read("conversation.md"), mustRead(t, filepath.Join(second.Directory, "conversation.md"))) {
+	if !bytes.Equal(read("conversation.md"), mustRead(t, filepath.Join(second.Path, "conversation.md"))) {
 		t.Fatal("repeated export changed the original")
 	}
 }
@@ -96,7 +99,7 @@ func TestExportReportsIncompleteHistory(t *testing.T) {
 	if len(result.Warnings) != 2 {
 		t.Fatalf("missing warnings: %+v", result)
 	}
-	metadata := readArchiveDetails(t, result.Directory)
+	metadata := readArchiveDetails(t, result.Path)
 	if metadata.Complete || metadata.Attachments[0].Status != "missing" || len(metadata.Warnings) != 2 {
 		t.Fatal("incomplete archive reported as complete")
 	}
@@ -110,6 +113,93 @@ func TestExportRejectsCorruptHistory(t *testing.T) {
 	entries, err := os.ReadDir(parent)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("failed export left files behind: %v", err)
+	}
+}
+
+func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
+	st := &store.Store{DBPath: filepath.Join(t.TempDir(), "app.sqlite")}
+	defer st.Close()
+	if _, err := st.Settings(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", st.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for i := 1; i <= 2; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		if _, err := db.Exec(`INSERT INTO chats (id, title) VALUES (?, 'Same title');
+			INSERT INTO messages (chat_id, role, content, model_name, stream) VALUES (?, 'assistant', ?, 'gpt-oss:120b-cloud', ?);
+			INSERT INTO attachments (message_id, filename, data) VALUES (last_insert_rowid(), '../notes.txt', ?);`,
+			id, id, "Saved answer for "+id, i == 2, []byte{0, byte(i), 255}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "chats.zip")
+	result, err := ExportAll(st, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Path != path || len(result.Warnings) != 1 {
+		t.Fatalf("missing saved path or unfinished-message warning: %+v", result)
+	}
+	data := mustRead(t, path)
+	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archive.File) != 4 {
+		t.Fatalf("expected two transcripts and two attachments, got %d entries", len(archive.File))
+	}
+	seen := map[string]bool{}
+	for _, file := range archive.File {
+		if !fs.ValidPath(file.Name) || strings.Contains(file.Name, "..") {
+			t.Fatalf("unsafe ZIP path: %s", file.Name)
+		}
+		if !strings.HasSuffix(file.Name, "/conversation.md") {
+			continue
+		}
+		markdown, err := fs.ReadFile(archive, file.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var metadata manifest
+		start := bytes.IndexByte(markdown, '{')
+		if start < 0 {
+			t.Fatal("missing archive details")
+		}
+		if err := json.NewDecoder(bytes.NewReader(markdown[start:])).Decode(&metadata); err != nil {
+			t.Fatal(err)
+		}
+		if metadata.Title != "Same title" || metadata.MessageCount != 1 || len(metadata.Attachments) != 1 || !bytes.Contains(markdown, []byte("Saved answer for "+metadata.ChatID)) || !bytes.Contains(markdown, []byte("gpt-oss:120b-cloud")) {
+			t.Fatalf("incomplete conversation: %s", markdown)
+		}
+		folder := strings.TrimSuffix(file.Name, "conversation.md")
+		attachment, err := fs.ReadFile(archive, folder+metadata.Attachments[0].Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if metadata.ChatID != "chat-1" && metadata.ChatID != "chat-2" || !bytes.Equal(attachment, []byte{0, metadata.ChatID[len(metadata.ChatID)-1] - '0', 255}) {
+			t.Fatalf("attachment changed or belongs to another chat: %s", metadata.ChatID)
+		}
+		seen[metadata.ChatID] = true
+	}
+	if len(seen) != 2 {
+		t.Fatal("same-titled conversations were not kept separately")
+	}
+	if _, err := db.Exec(`UPDATE chats SET browser_state = '{broken' WHERE id = 'chat-2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportAll(st, path); err == nil {
+		t.Fatal("export silently discarded corrupt history")
+	}
+	if !bytes.Equal(data, mustRead(t, path)) {
+		t.Fatal("failed export replaced the previous ZIP")
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("failed export left temporary files behind: %v, %v", entries, err)
 	}
 }
 

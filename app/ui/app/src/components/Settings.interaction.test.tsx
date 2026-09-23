@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   resetChatGPTModels: vi.fn(),
   updateSettings: vi.fn(),
   updateCloudSetting: vi.fn(),
+  exportAllChats: vi.fn(),
   setShowAppsInMenu: vi.fn(),
   refetchUser: vi.fn(),
   disconnectUser: vi.fn(),
@@ -141,6 +142,7 @@ vi.mock("@/api", () => ({
   getInferenceCompute: vi.fn(),
   updateSettings: mocks.updateSettings,
   updateCloudSetting: mocks.updateCloudSetting,
+  exportAllChats: mocks.exportAllChats,
 }));
 
 function textContent(node: ReactTestInstance): string {

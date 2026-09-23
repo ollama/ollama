@@ -4,6 +4,7 @@
 package history
 
 import (
+	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -17,8 +18,8 @@ import (
 )
 
 type Result struct {
-	Directory string   `json:"directory"`
-	Warnings  []string `json:"warnings,omitempty"`
+	Path     string   `json:"path"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type attachment struct {
@@ -52,15 +53,75 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	finished := false
-	defer func() {
-		if !finished {
-			os.RemoveAll(directory)
+	warnings, err := writeChat(chat, func(name string, data []byte) error {
+		path := filepath.Join(directory, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
 		}
-	}()
-	write := func(name string, data []byte) error {
-		return os.WriteFile(filepath.Join(directory, filepath.FromSlash(name)), data, 0o600)
+		return os.WriteFile(path, data, 0o600)
+	})
+	if err != nil {
+		os.RemoveAll(directory)
+		return nil, err
 	}
+	return &Result{Path: directory, Warnings: warnings}, nil
+}
+
+// ExportAll writes one conversation at a time, keeping attachment memory bounded
+// to a single chat. The chosen destination is replaced only after the ZIP closes.
+func ExportAll(source *store.Store, path string) (*Result, error) {
+	chats, err := source.Chats()
+	if err != nil {
+		return nil, err
+	}
+	if len(chats) == 0 {
+		return nil, fmt.Errorf("there are no chats to export")
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".ollama-chats-*.zip")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(file.Name())
+	defer file.Close()
+	archive := zip.NewWriter(file)
+	defer archive.Close()
+	result := &Result{Path: path}
+	for i, summary := range chats {
+		chat, err := source.Chat(summary.ID)
+		if err != nil {
+			return nil, fmt.Errorf("export chat %q: %w", summary.Title, err)
+		}
+		folder := fmt.Sprintf("%04d-%s", i+1, safeFilename(chat.Title))
+		warnings, err := writeChat(*chat, func(name string, data []byte) error {
+			header := &zip.FileHeader{Name: folder + "/" + name, Method: zip.Deflate}
+			header.SetMode(0o600)
+			entry, err := archive.CreateHeader(header)
+			if err != nil {
+				return err
+			}
+			_, err = entry.Write(data)
+			return err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("export chat %q: %w", chat.Title, err)
+		}
+		for _, warning := range warnings {
+			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", folder, warning))
+		}
+	}
+	if err := archive.Close(); err != nil {
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(file.Name(), path); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, error) {
 	metadata := manifest{
 		Version: 1, ChatID: chat.ID, Title: chat.Title, CreatedAt: chat.CreatedAt,
 		MessageCount: len(chat.Messages), Complete: true,
@@ -100,9 +161,6 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 				record.Bytes = len(file.Data)
 				record.SHA256 = fmt.Sprintf("%x", sha256.Sum256(file.Data))
 				record.Status = "saved"
-				if err := os.MkdirAll(filepath.Join(directory, "attachments"), 0o700); err != nil {
-					return nil, err
-				}
 				if err := write(record.Path, file.Data); err != nil {
 					return nil, err
 				}
@@ -130,8 +188,7 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 	if err := write("conversation.md", markdown.Bytes()); err != nil {
 		return nil, err
 	}
-	finished = true
-	return &Result{Directory: directory, Warnings: metadata.Warnings}, nil
+	return metadata.Warnings, nil
 }
 
 func safeFilename(name string) string {

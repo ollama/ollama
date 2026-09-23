@@ -249,20 +249,23 @@ export async function getChat(chatId: string) {
 }
 
 export interface ExportResult {
-  directory: string;
+  path: string;
   warnings?: string[];
 }
 
 export async function exportChat(chatId: string): Promise<ExportResult | null> {
-  const response = await fetch(
-    `${API_BASE}/api/v1/chat/${encodeURIComponent(chatId)}/export`,
-    {
-      method: "POST",
-    },
-  );
+  return requestExport(`/api/v1/chat/${encodeURIComponent(chatId)}/export`);
+}
+
+export async function exportAllChats(): Promise<ExportResult | null> {
+  return requestExport("/api/v1/chats/export");
+}
+
+async function requestExport(path: string): Promise<ExportResult | null> {
+  const response = await fetch(`${API_BASE}${path}`, { method: "POST" });
   const data = await response.json();
   if (!response.ok)
-    throw new Error(data.error ?? "Could not export this chat.");
+    throw new Error(data.error ?? "Could not export your chats.");
   return data;
 }
 

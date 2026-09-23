@@ -37,6 +37,7 @@ import {
   updateCloudSetting,
   updateSettings,
   getInferenceCompute,
+  exportAllChats,
 } from "@/api";
 
 function AnimatedDots() {
@@ -138,6 +139,11 @@ export async function applySettingsDefaults({
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const chatExport = useMutation({
+    mutationFn: exportAllChats,
+    retry: false,
+    networkMode: "always",
+  });
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
@@ -776,6 +782,57 @@ export default function Settings() {
               </Field>
             </div>
           </div>
+
+          <section
+            aria-label="Chat history"
+            className="space-y-3 rounded-xl bg-white p-4 dark:bg-neutral-800"
+          >
+            <Field>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <Label>Chat history</Label>
+                  <Description>
+                    Save all chats and attachments in a ZIP file.
+                  </Description>
+                </div>
+                <Button
+                  type="button"
+                  color="white"
+                  disabled={chatExport.isPending}
+                  aria-busy={chatExport.isPending || undefined}
+                  onClick={() => chatExport.mutate()}
+                >
+                  {chatExport.isPending ? (
+                    <ArrowPathIcon data-slot="icon" className="animate-spin" />
+                  ) : (
+                    <ArrowDownTrayIcon data-slot="icon" />
+                  )}
+                  {chatExport.isPending ? "Exporting…" : "Export all chats"}
+                </Button>
+              </div>
+            </Field>
+            {chatExport.error && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {chatExport.error.message}
+              </p>
+            )}
+            {chatExport.data && (
+              <p
+                role="status"
+                className="break-words select-text text-sm text-neutral-500 dark:text-neutral-400"
+              >
+                Saved to {chatExport.data.path}
+                {chatExport.data.warnings?.map((warning) => (
+                  <span key={warning} className="block">
+                    {warning}
+                  </span>
+                ))}
+              </p>
+            )}
+          </section>
 
           {!isWindows && (
             <section

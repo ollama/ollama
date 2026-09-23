@@ -87,6 +87,7 @@ type Server struct {
 	IntegrationInstalled func(string) bool
 	ListCloudModels      func(context.Context) (*api.ListResponse, error)
 	ExportChat           func(store.Chat) (*history.Result, error)
+	ExportAllChats       func() (*history.Result, error)
 }
 
 func (s *Server) log() *slog.Logger {
@@ -255,6 +256,7 @@ func (s *Server) Handler() http.Handler {
 
 	// API routes - handle first to take precedence
 	mux.Handle("POST /api/v1/chat/{id}/export", handle(s.exportChat))
+	mux.Handle("POST /api/v1/chats/export", handle(s.exportAllChats))
 	mux.Handle("GET /api/v1/chats", handle(s.listChats))
 	mux.Handle("GET /api/v1/chat/{id}", handle(s.getChat))
 	mux.Handle("DELETE /api/v1/chat/{id}", handle(s.deleteChat))
@@ -524,6 +526,18 @@ func (s *Server) exportChat(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	result, err := s.ExportChat(*chat)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(result)
+}
+
+func (s *Server) exportAllChats(w http.ResponseWriter, _ *http.Request) error {
+	if s.ExportAllChats == nil {
+		return errors.New("Export is unavailable in this window")
+	}
+	result, err := s.ExportAllChats()
 	if err != nil {
 		return err
 	}

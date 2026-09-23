@@ -95,7 +95,7 @@ beforeEach(() => {
     .mockImplementation(async (id) => (id === first.id ? first : second));
   vi.mocked(exportChat)
     .mockReset()
-    .mockResolvedValue({ directory: "/exports/Garden" });
+    .mockResolvedValue({ path: "/exports/Garden" });
   vi.mocked(deleteChat).mockReset().mockResolvedValue(undefined);
 });
 
@@ -167,7 +167,7 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   expect(
     renderer.root.findByProps({ title: "Another conversation" }).props.disabled,
   ).toBe(true);
-  await act(async () => resolve({ directory: "/exports/Garden" }));
+  await act(async () => resolve({ path: "/exports/Garden" }));
   expect(page()).toContain("/exports/Garden");
   vi.mocked(exportChat).mockRejectedValueOnce(new Error("Disk is full"));
   await click("Export");
