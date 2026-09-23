@@ -87,7 +87,7 @@ Ollama requires an AMD ROCm v7 / HIP7-capable driver stack on Windows.
 
 Ollama leverages the AMD ROCm library, which does not support all AMD GPUs. In
 some cases you can force the system to try to use a similar LLVM target that is
-close. For example The Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
+close. For example, the Radeon RX 5400 is `gfx1034` (also known as 10.3.4)
 however, ROCm does not currently support this target. The closest support is
 `gfx1030`. You can use the environment variable `HSA_OVERRIDE_GFX_VERSION` with
 `x.y.z` syntax. So for example, to force the system to run on the RX 5400, you
@@ -142,7 +142,7 @@ Ollama supports GPU acceleration on Apple devices via the Metal API.
 
 Additional GPU support on Windows and Linux is provided via
 [Vulkan](https://www.vulkan.org/). Vulkan is enabled by default when the
-backend is installed. On Windows most GPU vendors drivers come
+backend is installed. On Windows most GPU vendors' drivers come
 bundled with Vulkan support and require no additional setup steps. Most Linux
 distributions require installing additional components, and you may have
 multiple options for Vulkan drivers between Mesa and GPU Vendor specific packages
