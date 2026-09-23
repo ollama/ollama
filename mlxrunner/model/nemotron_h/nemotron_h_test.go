@@ -2,6 +2,7 @@ package nemotron_h
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"slices"
 	"strings"
@@ -53,6 +54,9 @@ func TestParseConfigNestedWrapper(t *testing.T) {
 	if got, want := cfg.RoutedScalingFactor, float32(2.5); got != want {
 		t.Fatalf("RoutedScalingFactor = %v, want %v", got, want)
 	}
+	if cfg.MambaRoundIntermediates {
+		t.Fatal("legacy architecture unexpectedly changed Mamba precision")
+	}
 }
 
 func TestParseConfigLayersBlockType(t *testing.T) {
@@ -96,6 +100,46 @@ func TestParseConfigRejectsUnknownLayerBlockType(t *testing.T) {
 	}`))
 	if err == nil || !strings.Contains(err.Error(), `unsupported layers_block_type "dense" at layer 1`) {
 		t.Fatalf("parseConfig error = %v, want unsupported layer type error", err)
+	}
+}
+
+func TestParseSuperConfig(t *testing.T) {
+	cfg, err := parseConfig([]byte(`{
+		"architectures": ["NemotronH_Omni_Reasoning_V3"],
+		"llm_config": {
+			"hidden_size": 4096,
+			"num_attention_heads": 32,
+			"num_key_value_heads": 2,
+			"moe_latent_size": 1024,
+			"layers_block_type": ["mamba", "moe", "attention"]
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MoELatentSize != 1024 || cfg.NumHiddenLayers != 3 || string(cfg.LayerTypes) != "ME*" || !cfg.MambaRoundIntermediates {
+		t.Fatalf("unexpected super config: %+v", cfg)
+	}
+}
+
+func TestNestedMTPPaths(t *testing.T) {
+	present := &mlx.Array{}
+	tensors := map[string]*mlx.Array{
+		"language_model.mtp.layers.0.eh_proj.weight":                 present,
+		"language_model.mtp.layers.0.mixer.q_proj.weight":            present,
+		"language_model.mtp.layers.1.mixer.experts.0.up_proj.weight": present,
+		"mtp.layers.99.mixer.q_proj.weight":                          present,
+	}
+	const prefix = "language_model.mtp."
+	if !hasMTPHeadTensors(tensors, prefix) {
+		t.Fatal("nested MTP fusion not detected")
+	}
+	got, err := mtpLayerPrefixes(tensors, prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{prefix + "layers.0", prefix + "layers.1"}; !slices.Equal(got, want) {
+		t.Fatalf("prefixes = %v, want %v", got, want)
 	}
 }
 
@@ -302,7 +346,7 @@ func TestMTPLayerPrefixes(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := mtpLayerPrefixes(tt.tensors)
+			got, err := mtpLayerPrefixes(tt.tensors, "mtp.")
 			if tt.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 					t.Fatalf("mtpLayerPrefixes error = %v, want %q", err, tt.wantErr)
@@ -343,7 +387,7 @@ func TestHasMTPHeadTensors(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := hasMTPHeadTensors(tt.tensors); got != tt.want {
+			if got := hasMTPHeadTensors(tt.tensors, "mtp."); got != tt.want {
 				t.Fatalf("hasMTPHeadTensors() = %v, want %v", got, tt.want)
 			}
 		})
@@ -416,6 +460,41 @@ func TestGatedGroupRMSNormMatchesElementwiseReference(t *testing.T) {
 
 		mlx.Eval(got, ref)
 		assertAllClose(t, "gated group rmsnorm", got.Floats(), ref.Floats(), 1e-5)
+	})
+}
+
+func TestMambaIntermediateRounding(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.EnableCompile()
+		cfg := &Config{MambaNumHeads: 1, MambaHeadDim: 2, NGroups: 1, MambaRoundIntermediates: true}
+		scan := mlx.FromValues([]float32{1.004, 2}, 1, 1, 2)
+		gate := mlx.FromValues([]float32{1, 1}, 1, 1, 2).AsType(mlx.DTypeBFloat16)
+		weight := mlx.FromValues([]float32{1.015625, 1.015625}, 2).AsType(mlx.DTypeBFloat16)
+		got := gatedGroupRMSNorm(scan, gate, weight, cfg, mlx.DTypeBFloat16).AsType(mlx.DTypeFloat32)
+		mlx.Eval(got)
+		// Scan rounds to [129/128, 2]. Equal gates cancel in RMS normalization
+		// with epsilon zero, giving BF16 [163/256, 81/64] before scaling by 65/64.
+		assertAllClose(t, "intermediate rounding", got.Floats(), []float32{166.0 / 256, 165.0 / 128}, 0)
+	})
+}
+
+func TestLatentMoEKeepsSharedExpertAtHiddenWidth(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		cfg := &Config{HiddenSize: 2, MoELatentSize: 1, NRoutedExperts: 2, NumExpertsPerTok: 2, NormTopKProb: true, RoutedScalingFactor: 1}
+		m := &SparseMoE{
+			RouterWeight: mlx.Zeros(mlx.DTypeFloat32, 2, 2),
+			LatentIn:     nn.NewLinear(mlx.FromValues([]float32{1, 0}, 1, 2), nil),
+			LatentOut:    nn.NewLinear(mlx.FromValues([]float32{1, 3}, 2, 1), nil),
+			UpWeight:     mlx.FromValues([]float32{1, 2}, 2, 1, 1),
+			DownWeight:   mlx.FromValues([]float32{1, 1}, 2, 1, 1),
+			SharedUp:     nn.NewLinear(mlx.FromValues([]float32{0, 1}, 1, 2), nil),
+			SharedDown:   nn.NewLinear(mlx.FromValues([]float32{1, 2}, 2, 1), nil),
+		}
+		got := m.Forward(mlx.FromValues([]float32{2, 3}, 1, 1, 2), cfg)
+		mlx.Eval(got)
+		// Routed: (2² + 4²)/2 = 10, projected to [10, 30].
+		// Shared: 3² = 9, projected to [9, 18].
+		assertAllClose(t, "latent and shared experts", got.Floats(), []float32{19, 48}, 0)
 	})
 }
 
@@ -547,6 +626,11 @@ func TestFoldSharedExpertsExtendsGlobalScales(t *testing.T) {
 		}
 		if dims := m.UpWeightQ.Dims(); dims[0] != routed {
 			t.Fatalf("skipped fold mutated the weight bank: dims = %v", dims)
+		}
+
+		cfg.MoELatentSize = hidden / 2
+		if foldSharedExperts(newMoE(nil, nil), cfg) {
+			t.Fatal("foldSharedExperts accepted different routed and shared widths")
 		}
 	})
 }
@@ -768,6 +852,23 @@ func TestLoadVisionWeightsRejectsNonSquarePositionGrid(t *testing.T) {
 	})
 }
 
+func TestResizeRadioImagePreservesFloatRange(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+	copy(src.Pix, []byte{0, 0, 0, 255, 255, 255, 255, 255})
+	got := resizeRadioImage(src, 1, 4)
+	// The half-pixel bicubic filter overshoots at the ends and produces
+	// fractional interior values; neither may be clamped or rounded to uint8.
+	want := []float32{-22.5, 255 * 29.0 / 140, 255 * 111.0 / 140, 277.5}
+	if len(got) != 3*len(want) {
+		t.Fatalf("pixel count = %d, want %d", len(got), 3*len(want))
+	}
+	for i, v := range got {
+		if math.IsNaN(float64(v)) || math.Abs(float64(v-want[i%len(want)])) > 3e-5 {
+			t.Fatalf("pixel[%d] = %v, want %v", i, v, want[i%len(want)])
+		}
+	}
+}
+
 func TestResizeGrid2DPreservesSourceDType(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		x := mlx.FromValues([]float32{0, 1, 2, 3}, 1, 2, 2, 1).AsType(mlx.DTypeBFloat16)
@@ -777,6 +878,25 @@ func TestResizeGrid2DPreservesSourceDType(t *testing.T) {
 			t.Fatalf("resizeGrid2D dtype = %s, want bfloat16", got.DType())
 		}
 	})
+}
+
+func TestResizeRadioImageChannels(t *testing.T) {
+	src := image.NewNRGBA(image.Rect(3, 5, 5, 7))
+	copy(src.Pix, []byte{0, 10, 20, 255, 40, 50, 60, 255, 80, 90, 100, 255, 120, 130, 140, 255})
+	for _, tt := range []struct {
+		height, width int
+		want          []float32
+	}{
+		{1, 1, []float32{60, 70, 80}},
+		{1, 2, []float32{40, 80, 50, 90, 60, 100}},
+		{2, 2, []float32{0, 40, 80, 120, 10, 50, 90, 130, 20, 60, 100, 140}},
+	} {
+		t.Run(fmt.Sprintf("%dx%d", tt.width, tt.height), func(t *testing.T) {
+			if got := resizeRadioImage(src, tt.height, tt.width); !slices.Equal(got, tt.want) {
+				t.Errorf("pixels = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestNemotronImagePatchBudget(t *testing.T) {
@@ -813,13 +933,25 @@ func TestNemotronImagePatchGrid(t *testing.T) {
 		wantMax    int
 		wantMin    int
 		wantFactor int
+		wantErr    bool
 	}{
 		{name: "square minimum", height: 512, width: 512, budget: 1024, wantMax: 1024, wantMin: 1024, wantFactor: 2},
 		{name: "large square capped", height: 2048, width: 2048, budget: 13312, wantMax: 13312, wantMin: 1024, wantFactor: 2},
 		{name: "wide image capped", height: 512, width: 2048, budget: 4096, wantMax: 4096, wantMin: 1024, wantFactor: 2},
+		{name: "extremely wide image", height: 16, width: 131072, budget: 13312, wantErr: true},
+		{name: "extremely tall image", height: 131072, width: 16, budget: 13312, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			patchH, patchW := nemotronImagePatchGrid(tt.height, tt.width, tt.budget, cfg)
+			patchH, patchW, err := nemotronImagePatchGrid(tt.height, tt.width, tt.budget, cfg)
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "exceeds the patch budget") {
+					t.Fatalf("error = %v, want patch budget error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 			if got := patchH * patchW; got > tt.wantMax || got < tt.wantMin {
 				t.Fatalf("patches = %d (%dx%d), want within [%d,%d]", got, patchH, patchW, tt.wantMin, tt.wantMax)
 			}

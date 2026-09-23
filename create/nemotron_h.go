@@ -38,6 +38,7 @@ func newNemotronHImportTransform(rawConfig json.RawMessage) (quantizePolicy, err
 // Nemotron's modality tower names do not match the shared predicates.
 func nemotronHIsVisionTower(name string) bool {
 	return strings.HasPrefix(name, "vision_model.") ||
+		strings.HasPrefix(name, "vision_projector.") ||
 		strings.HasPrefix(name, "mlp1.")
 }
 
@@ -51,6 +52,8 @@ func nemotronHShouldKeepBF16ForDirectNonAffine(name string) bool {
 	case strings.HasSuffix(name, ".mixer.gate.weight"):
 		return true
 	case strings.HasSuffix(name, ".mixer.conv1d.weight"):
+		return true
+	case strings.HasSuffix(name, ".mixer.fc1_latent_proj.weight"), strings.HasSuffix(name, ".mixer.fc2_latent_proj.weight"):
 		return true
 	default:
 		return false
@@ -75,7 +78,7 @@ func (t nemotronHImportTransform) promoteSensitive(name string) bool {
 	// The detached MTP module is a one-layer assistant, not layer zero of the
 	// target stack. Do not apply the target's early/late promotion schedule to
 	// its expert projections.
-	if strings.HasPrefix(name, "mtp.") {
+	if strings.HasPrefix(name, "mtp.") || strings.HasPrefix(name, "language_model.mtp.") {
 		return false
 	}
 	layerIdx := layerIndex(name)

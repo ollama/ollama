@@ -449,6 +449,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
+	"NemotronH_Omni_Reasoning_V3":           newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
 }

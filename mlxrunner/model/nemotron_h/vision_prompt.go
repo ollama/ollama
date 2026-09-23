@@ -116,9 +116,22 @@ func (m *Model) preprocessImage(data []byte, maxPatches int) (pixels []float32, 
 		return nil, 0, 0, fmt.Errorf("invalid image dimensions %dx%d", srcW, srcH)
 	}
 
-	patchH, patchW := nemotronImagePatchGrid(srcH, srcW, maxPatches, cfg)
+	patchH, patchW, err := nemotronImagePatchGrid(srcH, srcW, maxPatches, cfg)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	targetH := patchH * int(cfg.PatchSize)
 	targetW := patchW * int(cfg.PatchSize)
+	if cfg.FloatImageResize {
+		pixels = resizeRadioImage(src, targetH, targetW)
+		plane := targetH * targetW
+		for c := range 3 {
+			for i := range plane {
+				pixels[c*plane+i] = (pixels[c*plane+i]/255 - cfg.Mean[c]) / cfg.Std[c]
+			}
+		}
+		return pixels, targetH, targetW, nil
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, bounds, draw.Src, nil)
 
@@ -141,7 +154,7 @@ func nemotronImagePatchBudget(cfg *VisionConfig) int {
 	return max(cfg.MinNumPatches, min(cfg.MaxNumPatches, (cfg.MaxModelLen-nemotronVisionReservedTokens)*int(cfg.DownsampleFactor)*int(cfg.DownsampleFactor)))
 }
 
-func nemotronImagePatchGrid(srcH, srcW, maxPatches int, cfg *VisionConfig) (int, int) {
+func nemotronImagePatchGrid(srcH, srcW, maxPatches int, cfg *VisionConfig) (int, int, error) {
 	patchSize := float64(cfg.PatchSize)
 	closestH := max(1, int(math.RoundToEven(float64(srcH)/patchSize+0.5)))
 	closestW := max(1, int(math.RoundToEven(float64(srcW)/patchSize+0.5)))
@@ -175,5 +188,8 @@ func nemotronImagePatchGrid(srcH, srcW, maxPatches int, cfg *VisionConfig) (int,
 		}
 	}
 
-	return targetH, targetW
+	if targetH > budget/targetW {
+		return 0, 0, fmt.Errorf("image %dx%d exceeds the patch budget after resize", srcW, srcH)
+	}
+	return targetH, targetW, nil
 }
