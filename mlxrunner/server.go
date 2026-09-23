@@ -87,6 +87,7 @@ func Execute(args []string) error {
 	)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/score", runner.scoreHandler)
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(statusResponse{
 			Status:        0,
