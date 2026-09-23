@@ -1,0 +1,75 @@
+name: test-xgrammar
+
+on:
+  pull_request:
+    paths:
+      - 'cmake/mlx/CMakeLists.txt'
+      - 'mlxrunner/xgrammar/**'
+      - '.github/workflows/test-xgrammar.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  standalone:
+    runs-on: macos-latest
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cache MLX Darwin release payload
+        uses: actions/cache@v4
+        with:
+          path: .cache/mlx-darwin-release
+          key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'mlx/CMakeLists.txt', 'mlx/compat/**', 'mlxrunner/xgrammar/native/**') }}
+      - name: Prepare MLX Darwin release payload
+        run: .github/scripts/prepare_mlx_darwin.sh
+      - name: Install pinned xgrammar into a prefix
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^set(XGRAMMAR_VERSION \(.*\))$/\1/p' cmake/mlx/CMakeLists.txt)"
+          [ -n "${version}" ] || { echo "XGRAMMAR_VERSION not found in cmake/mlx/CMakeLists.txt" >&2; exit 1; }
+          echo "XGRAMMAR_VERSION=${version}" >>"${GITHUB_ENV}"
+          src="${RUNNER_TEMP}/xgrammar-src"
+          build="${RUNNER_TEMP}/xgrammar-build"
+          git clone --depth 1 --branch "${version}" --recurse-submodules --shallow-submodules \
+            https://github.com/mlc-ai/xgrammar.git "${src}"
+          # xgrammar's cmake/config.cmake overrides -D options unless the build dir has its own.
+          mkdir -p "${build}"
+          echo 'set(XGRAMMAR_BUILD_PYTHON_BINDINGS OFF)' >"${build}/config.cmake"
+          cmake -S "${src}" -B "${build}" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/xgrammar-prefix"
+          cmake --build "${build}" --parallel
+          cmake --install "${build}"
+      - name: Build xgrammar library against installed xgrammar
+        run: |
+          set -euo pipefail
+          cmake -S mlxrunner/xgrammar/native -B build/xgrammar-standalone \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/xgrammar-prefix" \
+            -DXGRAMMAR_VERSION="${XGRAMMAR_VERSION}"
+          cmake --build build/xgrammar-standalone
+      - name: Verify only the ollama_xgrammar API is exported
+        run: |
+          set -euo pipefail
+          lib=build/xgrammar-standalone/libollama_xgrammar.dylib
+          if nm -gU "${lib}" | awk '{print $3}' | grep -v '^_ollama_xgrammar_'; then
+            echo "unexpected exported symbols in ${lib}" >&2
+            exit 1
+          fi
+      - name: Replace the payload's xgrammar library
+        run: |
+          set -euo pipefail
+          for variant in build/lib/ollama/mlx_metal_v*; do
+            cp -f build/xgrammar-standalone/libollama_xgrammar.dylib "${variant}/"
+          done
+      - name: go test
+        run: |
+          set -euo pipefail
+          # The tests skip when the library is missing; treat a skip as failure.
+          go test -count=1 -v ./mlxrunner/xgrammar/... | tee "${RUNNER_TEMP}/xgrammar-test.log"
+          if grep -- '--- SKIP' "${RUNNER_TEMP}/xgrammar-test.log"; then
+            exit 1
+          fi
