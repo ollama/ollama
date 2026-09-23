@@ -406,6 +406,8 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 	var think *api.ThinkValue
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
+	} else if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
 	}
 	if r.Thinking != nil && r.Thinking.Type == "disabled" {
 		think = &api.ThinkValue{Value: false}
