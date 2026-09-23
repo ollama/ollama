@@ -288,7 +288,9 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
+        const base = model.name
+          .replace(/:latest$/, "")
+          .replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;

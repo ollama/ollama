@@ -1355,9 +1355,7 @@ func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 }
 
 func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return claudeDesktopConnectionStatus(ctx)
+	return claudeDesktopConnectionStatus(context.Background())
 }
 
 func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
