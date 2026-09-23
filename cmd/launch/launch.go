@@ -1456,15 +1456,26 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 func (c *launcherClient) resolveRunModels(ctx context.Context, integration string, models []string) []LaunchModel {
 	recommendations := c.recommendations(ctx)
 	resolved := c.modelInventory().Resolve(ctx, models)
-	byName := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
+	byName := make(map[string]ModelItem, len(recommendations))
 	for _, recommendation := range recommendations {
-		if recommendation.Thinking != nil {
-			byName[launchModelRecommendationKey(recommendation.Name)] = recommendation.Thinking
-		}
+		byName[launchModelRecommendationKey(recommendation.Name)] = recommendation
 	}
 	for i := range resolved {
-		if thinking := byName[launchModelRecommendationKey(resolved[i].Name)]; thinking != nil {
-			resolved[i].Thinking = thinking.Clone()
+		recommendation, ok := byName[launchModelRecommendationKey(resolved[i].Name)]
+		if !ok {
+			continue
+		}
+		if recommendation.Thinking != nil {
+			resolved[i].Thinking = recommendation.Thinking.Clone()
+		}
+		if resolved[i].ContextLength <= 0 && recommendation.Details.ContextLength > 0 {
+			resolved[i].ContextLength = recommendation.Details.ContextLength
+		}
+		if resolved[i].Details.ContextLength <= 0 && recommendation.Details.ContextLength > 0 {
+			resolved[i].Details.ContextLength = recommendation.Details.ContextLength
+		}
+		if resolved[i].MaxOutputTokens <= 0 && recommendation.MaxOutputTokens > 0 {
+			resolved[i].MaxOutputTokens = recommendation.MaxOutputTokens
 		}
 	}
 	if integration != "codex" && integration != chatGPTIntegrationName && integration != codexAppIntegrationName {

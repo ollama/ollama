@@ -73,6 +73,15 @@ func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
 	if !slices.Equal(models[0].Thinking.Values, []any{false, true, "max"}) || models[0].Thinking.Default != true {
 		t.Fatalf("thinking = %#v, want exact endpoint values/default", models[0].Thinking)
 	}
+	if models[0].ContextLength != 1_048_576 {
+		t.Fatalf("contextLength = %d, want 1048576", models[0].ContextLength)
+	}
+	if models[0].Details.ContextLength != 1_048_576 {
+		t.Fatalf("details.contextLength = %d, want 1048576", models[0].Details.ContextLength)
+	}
+	if models[0].MaxOutputTokens != 65_536 {
+		t.Fatalf("maxOutputTokens = %d, want 65536", models[0].MaxOutputTokens)
+	}
 }
 
 func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
