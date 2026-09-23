@@ -501,7 +501,7 @@ func (m *Model) forwardVision(pixelValues *mlx.Array) *mlx.Array {
 }
 
 func (p *VisionProjector) Forward(x *mlx.Array) *mlx.Array {
-	x = p.Norm.Forward(x, 0)
+	x = p.Norm.Forward(x.AsType(mlx.DTypeFloat32), 0).AsType(x.DType())
 	x = p.FC1.Forward(x)
 	x = mlx.ReLUSquared(x)
 	return p.FC2.Forward(x)
@@ -509,14 +509,19 @@ func (p *VisionProjector) Forward(x *mlx.Array) *mlx.Array {
 
 func radioVisionLayerForward(layer *RadioVisionLayer, x *mlx.Array, B int32, cfg *VisionConfig) *mlx.Array {
 	S := int32(x.Dim(1))
-	normed := layer.Norm1.Forward(x)
+	normed := radioLayerNorm(layer.Norm1, x)
 	attn := radioAttentionForward(layer, normed, B, S, cfg)
 	h := mlx.Add(x, attn)
-	mlp := layer.FC1.Forward(layer.Norm2.Forward(h))
+	mlp := layer.FC1.Forward(radioLayerNorm(layer.Norm2, h))
 	mlpDType := mlp.DType()
 	mlp = mlx.GELU(mlp.AsType(mlx.DTypeFloat32)).AsType(mlpDType)
 	mlp = layer.FC2.Forward(mlp)
 	return mlx.Add(h, mlp)
+}
+
+func radioLayerNorm(norm *nn.LayerNorm, x *mlx.Array) *mlx.Array {
+	// Avoid BF16 rounding between normalization and the affine transform.
+	return norm.Forward(x.AsType(mlx.DTypeFloat32)).AsType(x.DType())
 }
 
 func radioAttentionForward(layer *RadioVisionLayer, x *mlx.Array, B, S int32, cfg *VisionConfig) *mlx.Array {

@@ -834,7 +834,7 @@ func TestParseSafetensorsAllHeaders(t *testing.T) {
 			wantQuants: []string{"int4", "int4"},
 		},
 		{
-			name: "nvfp4 global scale is hidden",
+			name: "nvfp4 companions",
 			header: map[string]any{
 				"__metadata__": map[string]any{
 					"quant_type": "nvfp4",
@@ -855,11 +855,19 @@ func TestParseSafetensorsAllHeaders(t *testing.T) {
 					"shape":        []int64{1},
 					"data_offsets": []int64{3686400, 3686404},
 				},
+				"model.layers.0.mlp.up_proj.weight.input_scale": map[string]any{
+					"dtype":        "F32",
+					"shape":        []int64{},
+					"data_offsets": []int64{3686404, 3686408},
+				},
 			},
-			wantCount:  1,
-			wantNames:  []string{"model.layers.0.mlp.up_proj.weight"},
-			wantDtypes: []string{"U32"},
-			wantQuants: []string{"nvfp4"},
+			wantCount: 2,
+			wantNames: []string{
+				"model.layers.0.mlp.up_proj.weight",
+				"model.layers.0.mlp.up_proj.weight.input_scale",
+			},
+			wantDtypes: []string{"U32", "F32"},
+			wantQuants: []string{"nvfp4", ""},
 		},
 		{
 			name: "packed mixed-precision blob (no global metadata)",

@@ -59,7 +59,8 @@ for (int i = 0; i < n_per_t; ++i) {
 for (int t = 0; t < T; ++t) {
   auto bth = (b_idx * T + t) * H + h_idx;
   float dt_raw = static_cast<float>(dt[bth]) + static_cast<float>(dt_bias[h_idx]);
-  float dt_val = log(1.0f + exp(dt_raw));
+  // Stable softplus: large trained timesteps must not overflow exp().
+  float dt_val = max(dt_raw, 0.0f) + log1p(exp(-abs(dt_raw)));
   float decay = exp(dt_val * static_cast<float>(a[h_idx]));
   float x_val = static_cast<float>(hidden[bth * D + d_idx]);
 
@@ -181,7 +182,7 @@ func mamba2ScanGraph(hidden, bState, cState, dt, state, a, d, dtBias *Array, cap
 		ct := sliceMambaTime(cState, t)
 
 		dtt := Add(sliceMambaTime(dt, t), bias2)
-		dtt = Log(AddScalar(Exp(dtt), 1))
+		dtt = Softplus(dtt)
 		dA := Exp(Mul(Reshape(dtt, B, H, 1, 1), a4))
 		dB := Mul(Reshape(dtt, B, H, 1), bt)
 

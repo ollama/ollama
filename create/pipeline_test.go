@@ -1,6 +1,7 @@
 package create
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -22,7 +23,12 @@ func (f blobStoreFunc) WriteBlob(r io.Reader, mediaType, name string) (LayerInfo
 
 func TestCreatePipeline(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	modelConfig := []byte(`{"architectures":["TestModel"],"quantization_config":{"kv_cache_scheme":{"type":"float","num_bits":4}}}`)
+	writeConfigJSON(t, dir, string(modelConfig))
+	kvConfig := []byte(`{"quantization":{"kv_cache_quant_algo":"NVFP4"}}`)
+	if err := os.WriteFile(filepath.Join(dir, "hf_quant_config.json"), kvConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
 		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
 		st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 8*2)),
@@ -62,13 +68,19 @@ func TestCreatePipeline(t *testing.T) {
 	if gotClass.Kind != SourceFloat || gotClass.Quantize != "" {
 		t.Errorf("classification = {%s %q}, want {float %q}", gotClass.Kind, gotClass.Quantize, "")
 	}
-	if len(gotLayers) != 3 {
-		t.Fatalf("manifest layers = %d, want 3 (2 tensors + config.json)", len(gotLayers))
+	if len(gotLayers) != 4 {
+		t.Fatalf("manifest layers = %d, want 4 (2 tensors + 2 configs)", len(gotLayers))
 	}
-	for _, n := range []string{"model.embed_tokens.weight", "model.norm.weight", "config.json"} {
+	for _, n := range []string{"model.embed_tokens.weight", "model.norm.weight", "config.json", "hf_quant_config.json"} {
 		if _, ok := store.blobs[n]; !ok {
 			t.Errorf("missing written blob %q (have %v)", n, store.names())
 		}
+	}
+	if got := store.blobs["hf_quant_config.json"]; !bytes.Equal(got, kvConfig) {
+		t.Errorf("hf_quant_config.json = %q, want exact source bytes %q", got, kvConfig)
+	}
+	if got := store.blobs["config.json"]; !bytes.Equal(got, modelConfig) {
+		t.Errorf("config.json = %q, want exact source bytes %q", got, modelConfig)
 	}
 }
 
