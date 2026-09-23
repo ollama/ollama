@@ -157,7 +157,13 @@ func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, err
 				metadata.Warnings = append(metadata.Warnings, fmt.Sprintf("Message %d, attachment %d (%s): file data is missing.", i+1, j+1, file.Filename))
 				messages.WriteString("File data is missing.\n\n")
 			} else {
-				record.Path = fmt.Sprintf("attachments/%04d-%04d-%s", i+1, j+1, safeFilename(file.Filename))
+				name := filepath.Base(strings.ReplaceAll(file.Filename, "\\", "/"))
+				ext := filepath.Ext(name)
+				name = safeFilename(strings.TrimSuffix(name, ext))
+				if ext != "" && ext != "." {
+					name += "." + safeFilename(ext)
+				}
+				record.Path = fmt.Sprintf("attachments/%04d-%04d-%s", i+1, j+1, name)
 				record.Bytes = len(file.Data)
 				record.SHA256 = fmt.Sprintf("%x", sha256.Sum256(file.Data))
 				record.Status = "saved"

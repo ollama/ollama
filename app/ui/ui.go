@@ -508,6 +508,21 @@ func (s *Server) getChat(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
+	// Older chats saved the browser state in tool results instead of on the chat.
+	if len(chat.BrowserState) == 0 {
+		for i := len(chat.Messages) - 1; i >= 0; i-- {
+			result := chat.Messages[i].ToolResult
+			if result == nil {
+				continue
+			}
+			var state responses.BrowserStateData
+			if err := json.Unmarshal(*result, &state); err == nil && (len(state.PageStack) > 0 || len(state.URLToPage) > 0) {
+				chat.BrowserState = *result
+				break
+			}
+		}
+	}
+
 	data := responses.ChatResponse{
 		Chat: *chat,
 	}

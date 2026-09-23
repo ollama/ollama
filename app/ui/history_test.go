@@ -4,6 +4,7 @@ package ui
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ollama/ollama/app/history"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/ui/responses"
 )
 
 func TestReadOnlyChatExportAndDeletion(t *testing.T) {
@@ -97,5 +99,34 @@ func TestReadOnlyChatExportAndDeletion(t *testing.T) {
 	}
 	if _, err := st.Chat("saved-chat"); err == nil {
 		t.Fatal("deleted chat remains in the store")
+	}
+
+	latestState := `{"page_stack":["https://example.com/latest"]}`
+	if _, err := db.Exec(`INSERT INTO chats (id) VALUES ('legacy');
+		INSERT INTO messages (chat_id, role, tool_result) VALUES ('legacy', 'tool', '{"page_stack":["https://example.com/older"]}');
+		INSERT INTO messages (chat_id, role, tool_result) VALUES ('legacy', 'tool', ?);
+		INSERT INTO messages (chat_id, role, tool_result) VALUES ('legacy', 'tool', '{"answer":"unrelated tool result"}');`, latestState); err != nil {
+		t.Fatal(err)
+	}
+	for _, storedState := range []string{"", `{"page_stack":["https://example.com/saved"]}`} {
+		if _, err := db.Exec(`UPDATE chats SET browser_state = ? WHERE id = 'legacy'`, storedState); err != nil {
+			t.Fatal(err)
+		}
+		w := request("GET", "/api/v1/chat/legacy", s.Token)
+		var data responses.ChatResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil || w.Code != http.StatusOK {
+			t.Fatalf("read legacy chat: %d %s, %v", w.Code, w.Body.String(), err)
+		}
+		want := storedState
+		if want == "" {
+			want = latestState
+		}
+		if string(data.Chat.BrowserState) != want {
+			t.Fatalf("wrong citation state: got %s, want %s", data.Chat.BrowserState, want)
+		}
+		chat, err := st.Chat("legacy")
+		if err != nil || string(chat.BrowserState) != storedState {
+			t.Fatalf("reading citations changed saved history: %v", err)
+		}
 	}
 }

@@ -30,6 +30,7 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 				{Filename: "../../photo.png", Data: []byte{0x89, 'P', 'N', 'G', 0, 255}},
 				{Filename: `C:\notes\photo.png`, Data: []byte("different file")},
 				{Filename: "empty.txt", Data: []byte{}},
+				{Filename: strings.Repeat("quarterly-report-", 6) + "2026.pdf", Data: []byte("original PDF bytes")},
 			}},
 			{Role: "assistant", Content: "Answer", Thinking: "Saved thinking", Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: now, ThinkingTimeStart: &now, ThinkingTimeEnd: &now, ToolCalls: []store.ToolCall{
 				{Type: "function", Function: store.ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: toolResult}},
@@ -55,7 +56,7 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		t.Fatalf("export should contain only Markdown and attachments: %v, %v", entries, err)
 	}
 	metadata := readArchiveDetails(t, result.Path)
-	if !metadata.Complete || len(result.Warnings) != 0 || metadata.MessageCount != 3 || len(metadata.Attachments) != 3 {
+	if !metadata.Complete || len(result.Warnings) != 0 || metadata.MessageCount != 3 || len(metadata.Attachments) != 4 {
 		t.Fatalf("wrong manifest: %+v", metadata)
 	}
 	if metadata.ChatID != chat.ID || metadata.Title != chat.Title || !metadata.CreatedAt.Equal(now) {
@@ -68,6 +69,9 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		data := read(file.Path)
 		if !bytes.Equal(data, chat.Messages[0].Attachments[i].Data) || file.SHA256 != fmt.Sprintf("%x", sha256.Sum256(data)) || file.Status != "saved" {
 			t.Fatalf("attachment %d changed", i)
+		}
+		if filepath.Ext(file.Path) != filepath.Ext(file.OriginalName) {
+			t.Fatalf("attachment lost its extension: %s -> %s", file.OriginalName, file.Path)
 		}
 	}
 	markdown := string(read("conversation.md"))
@@ -131,8 +135,8 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 		id := fmt.Sprintf("chat-%d", i)
 		if _, err := db.Exec(`INSERT INTO chats (id, title) VALUES (?, 'Same title');
 			INSERT INTO messages (chat_id, role, content, model_name, stream) VALUES (?, 'assistant', ?, 'gpt-oss:120b-cloud', ?);
-			INSERT INTO attachments (message_id, filename, data) VALUES (last_insert_rowid(), '../notes.txt', ?);`,
-			id, id, "Saved answer for "+id, i == 2, []byte{0, byte(i), 255}); err != nil {
+			INSERT INTO attachments (message_id, filename, data) VALUES (last_insert_rowid(), ?, ?);`,
+			id, id, "Saved answer for "+id, i == 2, "../"+strings.Repeat("notes-", 20)+".txt", []byte{0, byte(i), 255}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -176,6 +180,9 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 			t.Fatalf("incomplete conversation: %s", markdown)
 		}
 		folder := strings.TrimSuffix(file.Name, "conversation.md")
+		if filepath.Ext(metadata.Attachments[0].Path) != ".txt" {
+			t.Fatal("zipped attachment lost its extension")
+		}
 		attachment, err := fs.ReadFile(archive, folder+metadata.Attachments[0].Path)
 		if err != nil {
 			t.Fatal(err)
