@@ -47,21 +47,16 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		}
 		return data
 	}
-	original, _ := json.Marshal(chat)
-	var restored store.Chat
-	if err := json.Unmarshal(read("source-chat.json"), &restored); err != nil {
-		t.Fatal(err)
+	entries, err := os.ReadDir(result.Directory)
+	if err != nil || len(entries) != 2 || entries[0].Name() != "attachments" || !entries[0].IsDir() || entries[1].Name() != "conversation.md" {
+		t.Fatalf("export should contain only Markdown and attachments: %v, %v", entries, err)
 	}
-	reencoded, _ := json.Marshal(restored)
-	if !bytes.Equal(original, reencoded) {
-		t.Fatal("source archive did not preserve every conversation field")
-	}
-	var metadata manifest
-	if err := json.Unmarshal(read("manifest.json"), &metadata); err != nil {
-		t.Fatal(err)
-	}
+	metadata := readArchiveDetails(t, result.Directory)
 	if !metadata.Complete || len(result.Warnings) != 0 || metadata.MessageCount != 3 || len(metadata.Attachments) != 3 {
 		t.Fatalf("wrong manifest: %+v", metadata)
+	}
+	if metadata.ChatID != chat.ID || metadata.Title != chat.Title || !metadata.CreatedAt.Equal(now) {
+		t.Fatal("transcript did not preserve conversation metadata")
 	}
 	for i, file := range metadata.Attachments {
 		if !filepath.IsLocal(file.Path) || !strings.HasPrefix(file.Path, "attachments/") || strings.Contains(file.Path, "..") {
@@ -81,14 +76,14 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 	if !(strings.Index(markdown, "## Message 1") < strings.Index(markdown, "## Message 2") && strings.Index(markdown, "## Message 2") < strings.Index(markdown, "## Message 3")) {
 		t.Fatal("message order changed")
 	}
-	if strings.Contains(string(read("conversation.html")), "<script>") || !strings.Contains(string(read("continue.txt")), "My next question:") {
-		t.Fatal("unsafe preview or missing continuation prompt")
+	if !strings.Contains(markdown, "attach this file and any needed files from attachments/") {
+		t.Fatal("transcript is missing the usage note")
 	}
 	second, err := Export(chat, parent)
 	if err != nil || second.Directory == result.Directory {
 		t.Fatalf("second export overwrote the first: %+v, %v", second, err)
 	}
-	if !bytes.Equal(read("source-chat.json"), mustRead(t, filepath.Join(second.Directory, "source-chat.json"))) {
+	if !bytes.Equal(read("conversation.md"), mustRead(t, filepath.Join(second.Directory, "conversation.md"))) {
 		t.Fatal("repeated export changed the original")
 	}
 }
@@ -101,11 +96,8 @@ func TestExportReportsIncompleteHistory(t *testing.T) {
 	if len(result.Warnings) != 2 {
 		t.Fatalf("missing warnings: %+v", result)
 	}
-	var metadata manifest
-	if err := json.Unmarshal(mustRead(t, filepath.Join(result.Directory, "manifest.json")), &metadata); err != nil {
-		t.Fatal(err)
-	}
-	if metadata.Complete || metadata.Attachments[0].Status != "missing" {
+	metadata := readArchiveDetails(t, result.Directory)
+	if metadata.Complete || metadata.Attachments[0].Status != "missing" || len(metadata.Warnings) != 2 {
 		t.Fatal("incomplete archive reported as complete")
 	}
 }
@@ -119,6 +111,20 @@ func TestExportRejectsCorruptHistory(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("failed export left files behind: %v", err)
 	}
+}
+
+func readArchiveDetails(t *testing.T, directory string) manifest {
+	t.Helper()
+	markdown := string(mustRead(t, filepath.Join(directory, "conversation.md")))
+	start := strings.Index(markdown, "{")
+	if start < 0 {
+		t.Fatal("transcript is missing archive details")
+	}
+	var metadata manifest
+	if err := json.NewDecoder(strings.NewReader(markdown[start:])).Decode(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	return metadata
 }
 
 func mustRead(t *testing.T, path string) []byte {
