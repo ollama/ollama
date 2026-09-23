@@ -408,6 +408,45 @@ func TestFromChatRequest_LogprobsDefault(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		MaxCompletionTokens: testIntPtr(120),
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if numPredict, ok := result.Options["num_predict"].(int); !ok || numPredict != 120 {
+		t.Fatalf("expected num_predict 120, got %v", result.Options["num_predict"])
+	}
+}
+
+func TestFromChatRequest_MaxCompletionTokensPrecedence(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		MaxTokens:           testIntPtr(40),
+		MaxCompletionTokens: testIntPtr(90),
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if numPredict, ok := result.Options["num_predict"].(int); !ok || numPredict != 90 {
+		t.Fatalf("expected num_predict 90, got %v", result.Options["num_predict"])
+	}
+}
+
 func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	logprobsVal := 5
 
