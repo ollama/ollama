@@ -9,6 +9,15 @@ import (
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
+var linearAttentionOutputGate = mlx.Compile2(
+	"Qwen4LinearAttentionOutputGate",
+	func(out, gate *mlx.Array) *mlx.Array {
+		dtype := out.DType()
+		return mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.Sigmoid(gate.AsType(mlx.DTypeFloat32))).AsType(dtype)
+	},
+	mlx.Shapeless(),
+)
+
 func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	branch, state := l.AttentionConnection.Prepare(x, cfg)
 	if l.Linear != nil {
@@ -54,8 +63,7 @@ func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, c
 	out = mlx.RMSNormFn(out, a.NormWeight, cfg.RMSNormEps)
 	// Qwen 4 uses a sigmoid Gated DeltaNet output gate rather than the SiLU
 	// gate used by Qwen3.5.
-	gate := mlx.Sigmoid(z.AsType(mlx.DTypeFloat32))
-	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), gate).AsType(outType)
+	out = linearAttentionOutputGate(out.AsType(outType), z)
 	out = a.Out.Forward(mlx.Reshape(out, B, L, valueDim))
 	if recurrent != nil {
 		recurrent.Put(b, convState, deltaState)

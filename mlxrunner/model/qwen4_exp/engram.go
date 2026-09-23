@@ -7,6 +7,19 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 )
 
+var streamRMSNormFn = mlx.Compile(
+	"Qwen4StreamRMSNorm",
+	func(in ...*mlx.Array) []*mlx.Array {
+		x, weight, eps := in[0], in[1], in[2]
+		dtype := x.DType()
+		values := x.AsType(mlx.DTypeFloat32)
+		meanSquare := mlx.Mean(mlx.Mul(values, values), -1, true)
+		invRMS := mlx.Div(mlx.NewScalarArray(1), mlx.Add(meanSquare, eps).Sqrt())
+		return []*mlx.Array{mlx.Mul(mlx.Mul(values, invRMS), weight.AsType(mlx.DTypeFloat32)).AsType(dtype)}
+	},
+	mlx.Shapeless(),
+)
+
 func (n *streamRMSNorm) Forward(x *mlx.Array, eps float32) *mlx.Array {
 	originalShape := x.Dims()
 	if originalShape[len(originalShape)-1] == n.Weight.Size() {
@@ -14,11 +27,8 @@ func (n *streamRMSNorm) Forward(x *mlx.Array, eps float32) *mlx.Array {
 		shape = append(shape, n.Weight.Dim(0), n.Weight.Dim(1))
 		x = x.Reshape(shape...)
 	}
-	dtype := x.DType()
-	values := x.AsType(mlx.DTypeFloat32)
-	meanSquare := mlx.Mean(mlx.Mul(values, values), -1, true)
-	invRMS := mlx.Div(mlx.NewScalarArray(1), mlx.AddScalar(meanSquare, eps).Sqrt())
-	normalized := mlx.Mul(mlx.Mul(values, invRMS), n.Weight.AsType(mlx.DTypeFloat32)).AsType(dtype)
+	epsArray := mlx.NewScalarArray(eps)
+	normalized := streamRMSNormFn(x, n.Weight, epsArray)[0]
 	return normalized.Reshape(originalShape...)
 }
 
