@@ -26,6 +26,19 @@ func TestQwen3ParserThinkingEnabled(t *testing.T) {
 	}
 }
 
+func TestQwen3ParserFactorySupportsExplicitThinking(t *testing.T) {
+	parser := ParserForName("qwen3")
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, thinking, _, err := parser.Add("reasoning</think>answer", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "reasoning" || content != "answer" {
+		t.Fatalf("expected thinking/content split, got thinking=%q content=%q", thinking, content)
+	}
+}
+
 func TestQwen3ParserThinkingEnabledWithExplicitOpeningTag(t *testing.T) {
 	parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	parser.Init(nil, nil, &api.ThinkValue{Value: true})
