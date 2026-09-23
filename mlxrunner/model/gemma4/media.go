@@ -14,11 +14,10 @@ import (
 // multimodalConfig carries the top-level config.json fields the text_config
 // unwrap in parseTextConfig discards.
 type multimodalConfig struct {
-	VisionConfig             *VisionConfig `json:"vision_config"`
-	ImageTokenID             int32         `json:"image_token_id"`
-	BOITokenID               int32         `json:"boi_token_id"`
-	EOITokenID               int32         `json:"eoi_token_id"`
-	VisionSoftTokensPerImage int32         `json:"vision_soft_tokens_per_image"`
+	VisionConfig *VisionConfig `json:"vision_config"`
+	ImageTokenID int32         `json:"image_token_id"`
+	BOITokenID   int32         `json:"boi_token_id"`
+	EOITokenID   int32         `json:"eoi_token_id"`
 
 	AudioConfig  *AudioConfig `json:"audio_config"`
 	AudioTokenID int32        `json:"audio_token_id"`
@@ -45,9 +44,6 @@ func parseMultimodalConfig(configData []byte) (multimodalConfig, error) {
 		if v.PoolingKernelSize == 0 {
 			v.PoolingKernelSize = 3
 		}
-		if v.DefaultOutputLen == 0 {
-			v.DefaultOutputLen = 280
-		}
 		if v.RMSNormEps == 0 {
 			v.RMSNormEps = 1e-6
 		}
@@ -61,9 +57,6 @@ func parseMultimodalConfig(configData []byte) (multimodalConfig, error) {
 		}
 		if v.PoolingKernelSize == 0 {
 			v.PoolingKernelSize = 3
-		}
-		if v.NumSoftTokens == 0 {
-			v.NumSoftTokens = 280
 		}
 		if v.RMSNormEps == 0 {
 			v.RMSNormEps = 1e-6
