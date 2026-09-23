@@ -24,6 +24,7 @@ func Host() *url.URL {
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
 	scheme, hostport, ok := strings.Cut(s, "://")
+	scheme = strings.ToLower(scheme)
 	switch {
 	case !ok:
 		scheme, hostport = "http", s
