@@ -1,19 +1,22 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
@@ -66,7 +69,7 @@ func TestGenerationDefaultsFromMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ggml.WriteGGUF(file, ggml.KV{
+	if err := gguftest.Write(file, gguftest.KV{
 		"general.architecture":             "llama",
 		"general.sampling.top_k":           uint32(40),
 		"general.sampling.top_p":           int32(1),
@@ -123,7 +126,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{{ bos_token }}{{ messages[0]['content'] }}",
 		}, nil)
@@ -148,7 +151,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -170,7 +173,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}",
 		}, nil)
@@ -195,7 +198,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
 {% for message in messages %}
@@ -226,7 +229,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{%- if tools and not available_tools -%}
 {{- set available_tools = tools -}}
@@ -264,7 +267,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -286,7 +289,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "0")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
@@ -308,7 +311,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 		}, nil)
 		writeTestModelManifest(t, "missing-chat-template", digest, customTemplate)
@@ -376,48 +379,48 @@ func loadTestMetadata(t *testing.T, m *Model) {
 
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
-	completionModelPath, _ := createBinFile(t, ggml.KV{
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	ggufToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
+	ggufToolTemplateModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": `{% if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+	audioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "pixtral",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	nemotronOmniModelPath, _ := createBinFile(t, ggml.KV{
+	nemotronOmniModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":                 "nemotron_h_omni",
 		"nemotron_h_omni.vision.block_count":   uint32(1),
 		"nemotron_h_omni.audio.block_count":    uint32(1),
 		"nemotron_h_omni.embedding_length":     uint32(1),
 		"nemotron_h_omni.attention.head_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	suppressedAudioProjectorPath, _ := createBinFile(t, ggml.KV{
+	suppressedAudioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "gemma4v",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
@@ -597,7 +600,7 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
-			name: "nemotron3 safetensors suppresses vision and audio but keeps thinking",
+			name: "nemotron3 safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -607,7 +610,20 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
+		},
+		{
+			name: "nemotron3.5 safetensors exposes vision and suppresses audio",
+			model: Model{
+				Config: model.ConfigV2{
+					ModelFormat:  "safetensors",
+					Parser:       "nemotron-3.5-nano",
+					Renderer:     "nemotron-3.5-nano",
+					Capabilities: []string{"completion", "vision", "audio"},
+				},
+				Template: chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
 		},
 	}
 
@@ -651,21 +667,21 @@ func TestModelCapabilities(t *testing.T) {
 
 func TestModelCheckCapabilities(t *testing.T) {
 	// Create simple model file for tests that don't depend on GGUF content
-	completionModelPath, _ := createBinFile(t, ggml.KV{
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
@@ -899,5 +915,131 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	err = PullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
 	if !errors.Is(err, errDigestMismatch) {
 		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
+	}
+}
+
+// TestPullManifestRejectsCrossHostRedirect: a registry can't redirect a
+// pull at an internal address; cross-host redirects to public addresses
+// (hf.co's CDN) are fine. --insecure opts out.
+func TestPullManifestRejectsCrossHostRedirect(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var internalHit atomic.Bool
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internalHit.Store(true)
+	}))
+	defer internal.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer ts.Close()
+
+	requestURL, err := url.Parse(ts.URL + "/v2/test/attack/manifests/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Default policy: cross-host redirect is refused before any request
+	// leaves for the internal host. (regOpts nil exercises the makeRequest
+	// default; the insecure protocol check doesn't apply at this level.)
+	blockedResp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+	// On a CheckRedirect failure the client returns the pre-redirect
+	// response with its body already closed; close again defensively to
+	// satisfy bodyclose (double close is a no-op).
+	if blockedResp != nil && blockedResp.Body != nil {
+		blockedResp.Body.Close()
+	}
+	if !errors.Is(err, errBlockedRedirect) {
+		t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+	}
+	if internalHit.Load() {
+		t.Fatal("internal host received a request despite the blocked redirect")
+	}
+
+	// Insecure opts out: the cross-host redirect is followed.
+	resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{Insecure: true})
+	if err != nil {
+		t.Fatalf("makeRequest with Insecure = %v, want redirect followed", err)
+	}
+	resp.Body.Close()
+	if !internalHit.Load() {
+		t.Fatal("redirect target was not reached with Insecure set")
+	}
+}
+
+// TestPullManifestRedirectPolicy: cross-host redirects are blocked by
+// default except between allowlisted hosts.
+func TestPullManifestRedirectPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		origin  string // registry host receiving the initial request
+		target  string // redirect target
+		allowed bool
+	}{
+		{name: "hf to cdn sibling", origin: "hf.co", target: "us.aws.cdn.hf.co", allowed: true},
+		{name: "hf to huggingface", origin: "hf.co", target: "huggingface.co", allowed: true},
+		{name: "ollama registry to cdn", origin: "registry.ollama.ai", target: "cdn.ollama.com", allowed: true},
+		{name: "public third party", origin: "hf.co", target: "93.184.216.34", allowed: false},
+		{name: "other registry cross-host", origin: "registry.example.com", target: "cdn.example.com", allowed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit bool
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hit = true
+				w.Write([]byte("ok"))
+			}))
+			defer cdn.Close()
+			_, cdnPort, err := net.SplitHostPort(strings.TrimPrefix(cdn.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://"+net.JoinHostPort(tc.target, cdnPort)+r.URL.Path, http.StatusFound)
+			}))
+			defer ts.Close()
+
+			// Steer all dials at the local servers so tests stay offline.
+			prev := testMakeRequestDialContext
+			testMakeRequestDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				if host == tc.target {
+					addr = net.JoinHostPort("127.0.0.1", cdnPort)
+				} else {
+					_, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+					addr = net.JoinHostPort("127.0.0.1", port)
+				}
+				return new(net.Dialer).DialContext(ctx, network, addr)
+			}
+			defer func() { testMakeRequestDialContext = prev }()
+
+			requestURL, err := url.Parse(ts.URL + "/v2/unsloth/model/manifests/latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestURL.Host = net.JoinHostPort(tc.origin, requestURL.Port())
+
+			resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("makeRequest = %v, want %s -> %s followed", err, tc.origin, tc.target)
+				}
+				resp.Body.Close()
+				if !hit {
+					t.Fatal("redirect target not reached")
+				}
+				return
+			}
+			if !errors.Is(err, errBlockedRedirect) {
+				t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+			}
+			if hit {
+				t.Fatal("blocked redirect target received a request")
+			}
+		})
 	}
 }

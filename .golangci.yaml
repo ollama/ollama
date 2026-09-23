@@ -5,6 +5,7 @@ linters:
     - bidichk
     - bodyclose
     - containedctx
+    - depguard
     - gocheckcompilerdirectives
     - intrange
     - makezero
@@ -20,6 +21,20 @@ linters:
     - errcheck
     - usestdlibvars
   settings:
+    depguard:
+      rules:
+        test-only-packages:
+          files:
+            - $all
+            - "!$test"
+            - "!**/mlx/mlxtest/*.go"
+          deny:
+            - pkg: github.com/ollama/ollama/internal/testutil
+              desc: test helpers may only be imported by test files
+            - pkg: github.com/ollama/ollama/mlx/mlxtest
+              desc: test helpers may only be imported by test files
+            - pkg: github.com/ollama/ollama/mlx/mlxthread/mlxthreadtest
+              desc: test helpers may only be imported by test files
     govet:
       disable:
         - unusedresult

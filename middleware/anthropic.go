@@ -743,7 +743,7 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anth
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
-func AnthropicMessagesMiddleware() gin.HandlerFunc {
+func AnthropicMessagesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 
@@ -769,7 +769,8 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := anthropic.FromMessagesRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := anthropic.FromMessagesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
 			return

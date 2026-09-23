@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // ResponsesContent is a discriminated union for input content types.
@@ -556,8 +557,9 @@ type ResponsesRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 }
 
-// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest
-func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
+// FromResponsesRequest converts a ResponsesRequest to api.ChatRequest.
+// An optional thinking descriptor preserves model-defined effort names for rendering.
+func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	// Nothing resolves this id, so the conversation it names is not part of the
 	// prompt. Ignoring it produced a completed response with empty output,
 	// which a client cannot tell from a finished turn -- say so instead.
@@ -761,8 +763,13 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		if !think.IsValid() {
 			return nil, fmt.Errorf("invalid think value")
 		}
+		if len(thinking) == 0 || !thinking[0].Valid() {
+			if err := api.ValidateLegacyThinking(think); err != nil {
+				return nil, err
+			}
+		}
 	} else {
-		converted, err := thinkFromReasoningEffort(r.Reasoning.Effort)
+		converted, err := ThinkingFromReasoningEffort(r.Reasoning.Effort, thinking...)
 		if err != nil {
 			return nil, err
 		}

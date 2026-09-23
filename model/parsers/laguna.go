@@ -50,6 +50,13 @@ func (p *LagunaParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *LagunaParser) ThinkingClose() []string {
+	if p.state == lagunaParserStateThinking {
+		return []string{lagunaThinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *LagunaParser) PreservedTokens() []string {
 	return []string{
 		lagunaThinkingOpenTag,

@@ -59,7 +59,7 @@ foreach(_cudnn_var CUDNN_INCLUDE_PATH CUDNN_LIBRARY_PATH)
         set(${_cudnn_var} "$ENV{${_cudnn_var}}" CACHE PATH "")
     endif()
 endforeach()
-add_subdirectory(${OLLAMA_SOURCE_DIR}/x/mlxrunner/mlx ${CMAKE_BINARY_DIR}/x/mlxrunner/mlx)
+add_subdirectory(${OLLAMA_SOURCE_DIR}/mlx ${CMAKE_BINARY_DIR}/mlx)
 
 include(FetchContent)
 set(XGRAMMAR_VERSION v0.2.5)
@@ -88,9 +88,9 @@ target_compile_definitions(xgrammar PUBLIC
     XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
 
 add_library(ollama_xgrammar SHARED
-    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/xgrammar/native/xgrammar.cpp")
+    "${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native/xgrammar.cpp")
 target_include_directories(ollama_xgrammar PRIVATE
-    "${OLLAMA_SOURCE_DIR}/x/mlxrunner/xgrammar/native")
+    "${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native")
 target_compile_definitions(ollama_xgrammar PRIVATE
     OLLAMA_XGRAMMAR_BUILD=1
     OLLAMA_XGRAMMAR_VERSION="${XGRAMMAR_VERSION}")

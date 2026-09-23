@@ -441,6 +441,8 @@ static NSImage *ollamaApplicationIcon(void) {
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
+            } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
+                [self appsUI];
             } else {
                 [self openUI];
             }
@@ -593,7 +595,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [fileMenu addItem:newChatItem];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(hide:) keyEquivalent:@"w"];
+    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
     [fileMenu addItem:closeItem];
     [fileMenuItem setSubmenu:fileMenu];
     [mainMenu addItem:fileMenuItem];
@@ -1484,7 +1486,8 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (BOOL)windowShouldClose:(id)sender {
-    [NSApp hide:nil];
+    // Keep the webview alive without restoring the window on app activation.
+    [sender orderOut:nil];
     return NO;
 }
 

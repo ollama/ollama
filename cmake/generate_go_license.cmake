@@ -57,27 +57,11 @@ foreach(_target IN LISTS TARGETS)
             "GOOS=${_goos}" "GOARCH=${_goarch}" "CGO_ENABLED=1"
             "${_tool}" save ${_packages}
             --save_path "${_target_staging_dir}" --force
-            --ignore github.com/apache/arrow/go/arrow
         WORKING_DIRECTORY "${SOURCE_DIR}"
         COMMAND_ERROR_IS_FATAL ANY)
 
     file(COPY "${_target_staging_dir}/" DESTINATION "${_staging_dir}")
 endforeach()
-
-# Arrow's aggregate license includes a license that go-licenses cannot classify.
-execute_process(
-    COMMAND "${GO_EXECUTABLE}" list -m -f "{{.Dir}}" github.com/apache/arrow/go/arrow
-    WORKING_DIRECTORY "${SOURCE_DIR}"
-    OUTPUT_VARIABLE _arrow_dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY)
-if(NOT EXISTS "${_arrow_dir}/LICENSE.txt")
-    message(FATAL_ERROR "failed to locate the Apache Arrow license")
-endif()
-
-set(_arrow_output_dir "${_staging_dir}/github.com/apache/arrow/go/arrow")
-file(MAKE_DIRECTORY "${_arrow_output_dir}")
-file(COPY "${_arrow_dir}/LICENSE.txt" DESTINATION "${_arrow_output_dir}")
 
 file(GLOB_RECURSE _license_files
     LIST_DIRECTORIES FALSE

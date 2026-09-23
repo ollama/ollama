@@ -18,7 +18,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
@@ -110,6 +111,30 @@ func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func (m mockRunner) ContextLength() int { return m.contextLength }
 
+func TestLlamaServerConfigForModelSplitPaths(t *testing.T) {
+	m := &Model{
+		Digest:          strings.Repeat("a", 64),
+		DraftPath:       "draft-00001-of-00002.gguf",
+		DraftShardPaths: []string{"draft-00002-of-00002.gguf"},
+	}
+
+	got := llamaServerConfigForModel(m)
+	if got.ManifestDigest != m.Digest {
+		t.Fatalf("manifest digest = %q, want %q", got.ManifestDigest, m.Digest)
+	}
+	if got.DraftModelPath != m.DraftPath {
+		t.Fatalf("draft model path = %q, want %q", got.DraftModelPath, m.DraftPath)
+	}
+	if !slices.Equal(got.DraftModelShardPaths, m.DraftShardPaths) {
+		t.Fatalf("draft shard paths = %q, want %q", got.DraftModelShardPaths, m.DraftShardPaths)
+	}
+
+	got.DraftModelShardPaths[0] = "changed"
+	if m.DraftShardPaths[0] == "changed" {
+		t.Fatal("llama-server config aliases model shard slices")
+	}
+}
+
 func TestOptionsForPromptUsesEffectiveContextLength(t *testing.T) {
 	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
 
@@ -134,8 +159,8 @@ func TestOptionsForPromptLeavesLargerRunnerContext(t *testing.T) {
 	}
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *gguf.Model, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -165,10 +190,10 @@ func newServerWithMockRunner(t *testing.T, mock *mockRunner) *Server {
 	return s
 }
 
-func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tmpl string, info map[string]any) {
+func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV, tmpl string, info map[string]any) {
 	t.Helper()
 
-	base := ggml.KV{
+	base := gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -183,7 +208,7 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tm
 		base[k] = v
 	}
 
-	_, digest := createBinFile(t, base, []*ggml.Tensor{
+	_, digest := createBinFile(t, base, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
 
@@ -196,6 +221,17 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tm
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200 creating model, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestModelOptionsKeepStoredTypicalP(t *testing.T) {
+	s := &Server{}
+	opts, err := s.modelOptions(&Model{Options: map[string]any{"typical_p": 0.5}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.TypicalP != 0.5 {
+		t.Fatalf("typical_p = %v, want 0.5", opts.TypicalP)
 	}
 }
 
@@ -292,7 +328,7 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
+	createMinimalGGUFModel(t, s, "chat-template", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "", nil)
 
@@ -353,7 +389,7 @@ func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "chat-template-truncate", ggml.KV{
+	createMinimalGGUFModel(t, s, "chat-template-truncate", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "", nil)
 
@@ -399,7 +435,7 @@ func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "go-template", ggml.KV{
+	createMinimalGGUFModel(t, s, "go-template", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}", nil)
 
@@ -500,7 +536,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -531,7 +567,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-preferred-chat-template", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-preferred-chat-template", gguftest.KV{
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, "{{ range .Messages }}go-template: {{ .Content }}{{ end }}", nil)
 
@@ -602,7 +638,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template-context", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template-context", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -641,7 +677,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template-images", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template-images", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -791,7 +827,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -801,7 +837,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -891,10 +927,10 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []*ggml.Tensor{})
+		}, []*gguftest.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -1511,7 +1547,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -1521,7 +1557,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -1573,10 +1609,10 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []*ggml.Tensor{})
+		}, []*gguftest.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
@@ -1614,6 +1650,35 @@ func TestGenerate(t *testing.T) {
 
 		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support insert"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("rejected option", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test",
+			Prompt:  "Hello!",
+			Options: map[string]any{"typical_p": 0.5},
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"typical_p is no longer supported"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("null option is unset", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test",
+			Prompt:  "Hello!",
+			Options: map[string]any{"typical_p": nil},
+			Stream:  &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -1991,7 +2056,7 @@ func TestGenerateLogprobs(t *testing.T) {
 
 		go s.sched.Run(t.Context())
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -2001,7 +2066,7 @@ func TestGenerateLogprobs(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2121,7 +2186,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -2131,7 +2196,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2285,7 +2350,7 @@ func TestChatLogprobs(t *testing.T) {
 
 		go s.sched.Run(t.Context())
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -2295,7 +2360,7 @@ func TestChatLogprobs(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2398,7 +2463,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		go s.sched.Run(t.Context())
 
 		// Create a model with thinking support
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -2408,7 +2473,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2581,331 +2646,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
 		}
 	})
-
-	earlyFirstPassMetrics := api.Metrics{
-		PromptEvalCount:       4,
-		PromptEvalCachedCount: testIntPtr(1),
-		PromptEvalDuration:    5 * time.Millisecond,
-		EvalCount:             6,
-		EvalDuration:          7 * time.Millisecond,
-	}
-	firstPassMetrics := api.Metrics{
-		PromptEvalCount:       10,
-		PromptEvalCachedCount: testIntPtr(4),
-		PromptEvalDuration:    11 * time.Millisecond,
-		EvalCount:             12,
-		EvalDuration:          13 * time.Millisecond,
-	}
-	secondPassMetrics := api.Metrics{
-		PromptEvalCount:       20_000,
-		PromptEvalCachedCount: testIntPtr(19_000),
-		PromptEvalDuration:    21 * time.Millisecond,
-		EvalCount:             22,
-		EvalDuration:          23 * time.Millisecond,
-	}
-	wantMetrics := api.Metrics{
-		PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-		PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-		PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-		EvalCount:             firstPassMetrics.EvalCount + secondPassMetrics.EvalCount,
-		EvalDuration:          firstPassMetrics.EvalDuration + secondPassMetrics.PromptEvalDuration + secondPassMetrics.EvalDuration,
-	}
-
-	t.Run("structured outputs restart non-stream", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:               " I am thinking through this problem.",
-					Done:                  false,
-					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
-					EvalCount:             earlyFirstPassMetrics.EvalCount,
-					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
-				})
-				fn(llm.CompletionResponse{
-					Content:               " </think> {\"answer\":\"42\"}",
-					Done:                  false,
-					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-					EvalCount:             firstPassMetrics.EvalCount,
-					EvalDuration:          firstPassMetrics.EvalDuration,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:               `{"answer":"42"}`,
-					Done:                  true,
-					DoneReason:            llm.DoneReasonStop,
-					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
-					EvalCount:             secondPassMetrics.EvalCount,
-					EvalDuration:          secondPassMetrics.EvalDuration,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := false
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-		if !requests[0].IncludeIntermediateMetrics {
-			t.Error("expected first completion to request per-token metrics")
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-		if requests[1].IncludeIntermediateMetrics {
-			t.Error("expected second completion to use terminal metrics")
-		}
-
-		var resp api.ChatResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatal(err)
-		}
-
-		if resp.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Message.Thinking)
-		}
-
-		if resp.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
-		}
-
-		if !resp.Done {
-			t.Errorf("expected response to be done")
-		}
-
-		if resp.DoneReason != "stop" {
-			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
-		}
-		if resp.PromptEvalCount != wantMetrics.PromptEvalCount || resp.EvalCount != wantMetrics.EvalCount {
-			t.Errorf("response counts = (%d, %d), want (%d, %d)", resp.PromptEvalCount, resp.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
-		}
-		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, resp.PromptEvalCachedCount); diff != "" {
-			t.Errorf("response cached prompt count mismatch (-want +got):\n%s", diff)
-		}
-		if resp.PromptEvalDuration != wantMetrics.PromptEvalDuration || resp.EvalDuration != wantMetrics.EvalDuration {
-			t.Errorf("response durations = (%s, %s), want (%s, %s)", resp.PromptEvalDuration, resp.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
-		}
-	})
-
-	t.Run("structured outputs restart streaming", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:               " I am thinking through this problem.",
-					Done:                  false,
-					PromptEvalCount:       earlyFirstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: earlyFirstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    earlyFirstPassMetrics.PromptEvalDuration,
-					EvalCount:             earlyFirstPassMetrics.EvalCount,
-					EvalDuration:          earlyFirstPassMetrics.EvalDuration,
-				})
-				fn(llm.CompletionResponse{
-					Content:               " </think> {\"answer\":\"42\"}",
-					Done:                  false,
-					PromptEvalCount:       firstPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: firstPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    firstPassMetrics.PromptEvalDuration,
-					EvalCount:             firstPassMetrics.EvalCount,
-					EvalDuration:          firstPassMetrics.EvalDuration,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:               `{"answer":"42"}`,
-					Done:                  true,
-					DoneReason:            llm.DoneReasonStop,
-					PromptEvalCount:       secondPassMetrics.PromptEvalCount,
-					PromptEvalCachedCount: secondPassMetrics.PromptEvalCachedCount,
-					PromptEvalDuration:    secondPassMetrics.PromptEvalDuration,
-					EvalCount:             secondPassMetrics.EvalCount,
-					EvalDuration:          secondPassMetrics.EvalDuration,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := true
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-		if !requests[0].IncludeIntermediateMetrics {
-			t.Error("expected first completion to request per-token metrics")
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-		if requests[1].IncludeIntermediateMetrics {
-			t.Error("expected second completion to use terminal metrics")
-		}
-
-		decoder := json.NewDecoder(w.Body)
-		var events []api.ChatResponse
-		for {
-			var event api.ChatResponse
-			if err := decoder.Decode(&event); err == io.EOF {
-				break
-			} else if err != nil {
-				t.Fatal(err)
-			}
-			events = append(events, event)
-			if event.Done {
-				break
-			}
-		}
-
-		if len(events) < 2 {
-			t.Fatalf("expected at least two streaming events, got %d", len(events))
-		}
-
-		first := events[0]
-		var thinking strings.Builder
-		for _, event := range events {
-			thinking.WriteString(event.Message.Thinking)
-			if !event.Done && (event.PromptEvalCount != 0 || event.PromptEvalCachedCount != nil || event.PromptEvalDuration != 0 || event.EvalCount != 0 || event.EvalDuration != 0) {
-				t.Errorf("non-terminal event unexpectedly exposed metrics: %+v", event.Metrics)
-			}
-		}
-		if got := thinking.String(); got != "I am thinking through this problem. " {
-			t.Errorf("thinking = %q, want %q", got, "I am thinking through this problem. ")
-		}
-
-		if first.Message.Content != "" {
-			t.Errorf("expected first event content to be empty, got %q", first.Message.Content)
-		}
-
-		if first.Done {
-			t.Error("expected first event to be non-terminal")
-		}
-		last := events[len(events)-1]
-		if last.Message.Thinking != "" {
-			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
-		}
-
-		if last.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected final event content %q, got %q", `{"answer":"42"}`, last.Message.Content)
-		}
-
-		if !last.Done {
-			t.Error("expected final event to be done")
-		}
-
-		if last.DoneReason != "stop" {
-			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
-		}
-		if last.PromptEvalCount != wantMetrics.PromptEvalCount || last.EvalCount != wantMetrics.EvalCount {
-			t.Errorf("final counts = (%d, %d), want (%d, %d)", last.PromptEvalCount, last.EvalCount, wantMetrics.PromptEvalCount, wantMetrics.EvalCount)
-		}
-		if diff := cmp.Diff(wantMetrics.PromptEvalCachedCount, last.PromptEvalCachedCount); diff != "" {
-			t.Errorf("final cached prompt count mismatch (-want +got):\n%s", diff)
-		}
-		if last.PromptEvalDuration != wantMetrics.PromptEvalDuration || last.EvalDuration != wantMetrics.EvalDuration {
-			t.Errorf("final durations = (%s, %s), want (%s, %s)", last.PromptEvalDuration, last.EvalDuration, wantMetrics.PromptEvalDuration, wantMetrics.EvalDuration)
-		}
-	})
 }
 
 // TestChatFormatWithThinkFalse verifies that when a model uses a builtin
@@ -2953,7 +2693,7 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 
 			go s.sched.Run(t.Context())
 
-			_, digest := createBinFile(t, ggml.KV{
+			_, digest := createBinFile(t, gguftest.KV{
 				"general.architecture":          "llama",
 				"llama.block_count":             uint32(1),
 				"llama.context_length":          uint32(8192),
@@ -2963,7 +2703,7 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 				"tokenizer.ggml.tokens":         []string{""},
 				"tokenizer.ggml.scores":         []float32{0},
 				"tokenizer.ggml.token_type":     []int32{0},
-			}, []*ggml.Tensor{
+			}, []*gguftest.Tensor{
 				{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 				{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 				{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -3062,7 +2802,7 @@ func TestGenerateUnload(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -3072,7 +2812,7 @@ func TestGenerateUnload(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -3166,7 +2906,7 @@ func TestGenerateWithImages(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -3176,7 +2916,7 @@ func TestGenerateWithImages(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},

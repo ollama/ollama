@@ -27,16 +27,17 @@ import (
 )
 
 type uploader struct {
-	client     *http.Client
-	baseURL    string
-	srcDir     string
-	repository string // Repository path for blob URLs (e.g., "library/model")
-	tokenMu    sync.RWMutex
-	token      string
-	getToken   func(context.Context, AuthChallenge) (string, error)
-	userAgent  string
-	progress   *progressTracker
-	logger     *slog.Logger
+	client       *http.Client
+	baseURL      string
+	srcDir       string
+	repository   string // Repository path for blob URLs (e.g., "library/model")
+	tokenMu      sync.RWMutex
+	token        string
+	getToken     func(context.Context, AuthChallenge) (string, error)
+	userAgent    string
+	progress     *progressTracker
+	logger       *slog.Logger
+	allowPrivate bool
 	// bodySem caps the number of simultaneous body-bearing transfers so a
 	// modest home uplink isn't saturated. Always set by upload(); nil only
 	// when tests build uploader directly (in which case holdBody is a no-op).
@@ -92,14 +93,15 @@ func upload(ctx context.Context, opts UploadOptions) error {
 	}
 
 	u := &uploader{
-		client:     cmp.Or(opts.Client, defaultClient),
-		baseURL:    opts.BaseURL,
-		srcDir:     opts.SrcDir,
-		repository: cmp.Or(opts.Repository, "library/_"),
-		token:      opts.Token,
-		getToken:   opts.GetToken,
-		userAgent:  cmp.Or(opts.UserAgent, defaultUserAgent),
-		logger:     opts.Logger,
+		client:       cmp.Or(opts.Client, checkedClient(opts.BaseURL, opts.AllowPrivateHosts)),
+		baseURL:      opts.BaseURL,
+		srcDir:       opts.SrcDir,
+		repository:   cmp.Or(opts.Repository, "library/_"),
+		token:        opts.Token,
+		getToken:     opts.GetToken,
+		userAgent:    cmp.Or(opts.UserAgent, defaultUserAgent),
+		logger:       opts.Logger,
+		allowPrivate: opts.AllowPrivateHosts,
 	}
 	// 0 or negative serializes; never unbounded.
 	u.bodySem = semaphore.NewWeighted(int64(max(1, opts.BodyConcurrency)))
@@ -224,7 +226,7 @@ func (u *uploader) upload(ctx context.Context, blob Blob) error {
 		u.progress.add(-n)
 		lastErr = err
 	}
-	return fmt.Errorf("%w: %v", errMaxRetriesExceeded, lastErr)
+	return fmt.Errorf("%w: %w", errMaxRetriesExceeded, lastErr)
 }
 
 func (u *uploader) uploadOnce(ctx context.Context, blob Blob) (int64, error) {
@@ -370,9 +372,17 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (uploadEndpoint, e
 		}
 
 		sessionURL, _ := url.Parse(loc)
+		base, _ := url.Parse(u.baseURL)
 		if !sessionURL.IsAbs() {
-			base, _ := url.Parse(u.baseURL)
 			sessionURL = base.ResolveReference(sessionURL)
+		}
+		if err := validateRedirectScheme(sessionURL, u.baseURL); err != nil {
+			return uploadEndpoint{}, err
+		}
+		if base != nil && sessionURL.Host != base.Host {
+			if err := validateRedirectTarget(ctx, sessionURL, u.baseURL, u.allowPrivate); err != nil {
+				return uploadEndpoint{}, err
+			}
 		}
 
 		ep := uploadEndpoint{sessionURL: sessionURL.String()}
@@ -387,6 +397,9 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (uploadEndpoint, e
 			// (percent-encoding case, query ordering) which can change the
 			// canonical form a signed URL was computed over.
 			if d, err := url.Parse(directURL); err == nil && d.IsAbs() {
+				if err := validateRedirectTarget(ctx, d, u.baseURL, u.allowPrivate); err != nil {
+					return uploadEndpoint{}, err
+				}
 				ep.directUploadURL = directURL
 				ep.signedHeaders = make(http.Header)
 				const signedPrefix = "X-Signed-Header-"
@@ -519,7 +532,7 @@ func (u *uploader) bodylessRegistryPUT(ctx context.Context, url string, op strin
 			lastErr = fmt.Errorf("%s: status %d: %s", op, resp.StatusCode, body)
 		}
 	}
-	return fmt.Errorf("%w: %v", errMaxRetriesExceeded, lastErr)
+	return fmt.Errorf("%w: %w", errMaxRetriesExceeded, lastErr)
 }
 
 // putChunked is the fallback used when the server doesn't return a
@@ -656,6 +669,9 @@ func (u *uploader) uploadOnePart(ctx context.Context, sessionURL *url.URL, part 
 		redirectURL, _ := resp.Location()
 		if redirectURL == nil {
 			return nil, nil, pr.bytes(), fmt.Errorf("patch part %d: 307 without Location", part.n)
+		}
+		if err := validateRedirectTarget(ctx, redirectURL, u.baseURL, u.allowPrivate); err != nil {
+			return nil, nil, pr.bytes(), err
 		}
 		// The PATCH attempt's progress is wasted — we re-upload to CDN.
 		// We can't safely Reset partHash here: the http transport's

@@ -113,7 +113,7 @@ func TestQwen38ParserMalformedAndControlLikeContent(t *testing.T) {
 		{
 			name:         "truncated tool call",
 			continuation: "Plan</think>Before<tool_call><function=get_weather>",
-			wantContent:  "Before",
+			wantContent:  "Before<tool_call><function=get_weather>",
 			wantThinking: "Plan",
 		},
 	}

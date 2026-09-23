@@ -505,44 +505,51 @@ func openInBrowser(url string) {
 }
 
 // parseURLScheme parses an ollama:// URL and validates it
-// Supports: ollama:// (open app) and ollama://connect (OAuth)
-func parseURLScheme(urlSchemeRequest string) (isConnect bool, err error) {
+// Supports: ollama:// (open app), ollama://apps, and ollama://connect (OAuth).
+func parseURLScheme(urlSchemeRequest string) (action string, err error) {
 	parsedURL, err := url.Parse(urlSchemeRequest)
 	if err != nil {
-		return false, fmt.Errorf("invalid URL: %w", err)
+		return "", fmt.Errorf("invalid URL: %w", err)
 	}
 
 	// Check if this is a connect URL
 	if parsedURL.Host == "connect" || strings.TrimPrefix(parsedURL.Path, "/") == "connect" {
-		return true, nil
+		return "connect", nil
+	}
+
+	if parsedURL.Host == "apps" || strings.TrimPrefix(parsedURL.Path, "/") == "apps" {
+		return "apps", nil
 	}
 
 	// Allow bare ollama:// or ollama:/// to open the app
 	if (parsedURL.Host == "" && parsedURL.Path == "") || parsedURL.Path == "/" {
-		return false, nil
+		return "", nil
 	}
 
-	return false, fmt.Errorf("unsupported ollama:// URL path: %s", urlSchemeRequest)
+	return "", fmt.Errorf("unsupported ollama:// URL path: %s", urlSchemeRequest)
 }
 
 // handleURLSchemeInCurrentInstance processes URL scheme requests in the current instance
 func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, func() {
 		openUI("/")
-	})
+	}, openAppsUI)
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlSchemeRequest, "error", err)
 	}
 }
 
-func dispatchURLSchemeRequest(urlSchemeRequest string, connect, open func()) error {
-	isConnect, err := parseURLScheme(urlSchemeRequest)
+func dispatchURLSchemeRequest(urlSchemeRequest string, connect, open, apps func()) error {
+	action, err := parseURLScheme(urlSchemeRequest)
 	if err != nil {
 		return err
 	}
-	if isConnect {
+	switch action {
+	case "connect":
 		connect()
-	} else {
+	case "apps":
+		apps()
+	default:
 		open()
 	}
 	return nil

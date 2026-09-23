@@ -749,6 +749,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     needs: [darwin-build, windows-app, docker-build-push]
+    concurrency:
+      group: release-publish
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -784,28 +788,59 @@ jobs:
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist
-      - name: Create or update Release for tag
+      - name: Publish release artifacts
+        shell: bash
         run: |
-          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::Attempt $attempt failed; retrying in $((attempt * 15))s: $*"
+                sleep "$((attempt * 15))"
+              fi
+            done
+            echo "::error::Failed after 3 attempts: $*"
+            return 1
+          }
+
+          delete_assets() {
+            local assets asset
+            # Re-list on each attempt: a failed DELETE may still have removed the asset.
+            assets=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/$1/assets" --jq '.[].url') || return 1
+            while IFS= read -r asset; do
+              [ -z "$asset" ] && continue
+              gh api --method DELETE "$asset" || return 1
+            done <<< "$assets"
+          }
+
+          RELEASE_VERSION="${GITHUB_REF_NAME%%-*}"
           echo "Looking for existing release for ${RELEASE_VERSION}"
-          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
+          OLD_TAG=$(gh release ls --json name,tagName | jq -r --arg version "$RELEASE_VERSION" '.[] | select(.name == $version) | .tagName')
           if [ -n "$OLD_TAG" ]; then
+            RELEASE_ID=$(gh release view "$OLD_TAG" --json databaseId --jq .databaseId)
+            echo "Deleting old assets from ${OLD_TAG}"
+            retry delete_assets "$RELEASE_ID"
             echo "Updating release ${RELEASE_VERSION} to point to new tag ${GITHUB_REF_NAME}"
-            gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
+            gh release edit "$OLD_TAG" --tag "$GITHUB_REF_NAME"
           else
             echo "Creating new release ${RELEASE_VERSION} pointing to tag ${GITHUB_REF_NAME}"
-            gh release create ${GITHUB_REF_NAME} \
-              --title ${RELEASE_VERSION} \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$RELEASE_VERSION" \
               --draft \
               --generate-notes \
               --prerelease
           fi
-      - name: Upload release artifacts
-        run: |
+
+          shopt -s nullglob
           pids=()
           for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
+            # Publish the checksum manifest only after every payload has succeeded.
+            [ "$payload" = dist/sha256sum.txt ] && continue
             echo "Uploading $payload"
-            gh release upload ${GITHUB_REF_NAME} $payload --clobber &
+            retry gh release upload "$GITHUB_REF_NAME" "$payload" --clobber &
             pids+=($!)
             sleep 1
           done
@@ -821,4 +856,5 @@ jobs:
             echo "One or more uploads failed"
             exit 1
           fi
+          retry gh release upload "$GITHUB_REF_NAME" dist/sha256sum.txt --clobber
           echo "done"

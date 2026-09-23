@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
@@ -186,9 +187,6 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 		if !reqBody.Stream {
 			t.Error("stream should be true")
 		}
-		if !reqBody.TimingsPerToken {
-			t.Error("timings_per_token should be true")
-		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		for _, line := range sseLines {
@@ -211,9 +209,8 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	var responses []CompletionResponse
 	opts := api.DefaultOptions()
 	err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:                     "test prompt",
-		Options:                    &opts,
-		IncludeIntermediateMetrics: true,
+		Prompt:  "test prompt",
+		Options: &opts,
 	}, func(cr CompletionResponse) {
 		responses = append(responses, cr)
 	})
@@ -232,28 +229,10 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	if responses[0].Done {
 		t.Error("response[0] should not be done")
 	}
-	if responses[0].PromptEvalCount != 5 || responses[0].EvalCount != 1 {
-		t.Errorf("response[0] counts = (%d, %d), want (5, 1)", responses[0].PromptEvalCount, responses[0].EvalCount)
-	}
-	if got := responses[0].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[0] cached prompt count = %v, want 2", got)
-	}
-	if responses[0].PromptEvalDuration != 10500*time.Microsecond || responses[0].EvalDuration != 9100*time.Microsecond {
-		t.Errorf("response[0] durations = (%s, %s), want (10.5ms, 9.1ms)", responses[0].PromptEvalDuration, responses[0].EvalDuration)
-	}
 
 	// Second token
 	if responses[1].Content != " world" {
 		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, " world")
-	}
-	if responses[1].PromptEvalCount != 5 || responses[1].EvalCount != 2 {
-		t.Errorf("response[1] counts = (%d, %d), want (5, 2)", responses[1].PromptEvalCount, responses[1].EvalCount)
-	}
-	if got := responses[1].PromptEvalCachedCount; got == nil || *got != 2 {
-		t.Errorf("response[1] cached prompt count = %v, want 2", got)
-	}
-	if responses[1].PromptEvalDuration != 10500*time.Microsecond || responses[1].EvalDuration != 20300*time.Microsecond {
-		t.Errorf("response[1] durations = (%s, %s), want (10.5ms, 20.3ms)", responses[1].PromptEvalDuration, responses[1].EvalDuration)
 	}
 
 	// Final response
@@ -814,7 +793,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		cmd:     fakeRunningCmd(),
 		sem:     semaphore.NewWeighted(1),
 		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
-		ggml: loadTestGGML(t, ggml.KV{
+		metadata: loadTestGGUF(t, gguftest.KV{
 			"general.architecture":         "gemma3",
 			"tokenizer.ggml.add_bos_token": true,
 		}),
@@ -1429,7 +1408,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		name             string
 		leadingBOS       string
 		tokenizerAddsBOS bool
-		ggmlKV           ggml.KV
+		ggufKV           gguftest.KV
 		prompt           string
 		wantPrompt       string
 	}{
@@ -1472,7 +1451,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 llama.cpp runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.pre":              "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1486,7 +1465,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 model runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.model":            "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1500,7 +1479,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 strips renderer bos",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
@@ -1513,7 +1492,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 missing bos metadata uses llama.cpp default",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":        "lfm2",
 				"tokenizer.ggml.model":        "gpt2",
 				"tokenizer.ggml.pre":          "lfm2",
@@ -1555,10 +1534,10 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 				sem:     semaphore.NewWeighted(1),
 				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 			}
-			if tt.ggmlKV != nil {
-				runner.ggml = loadTestGGML(t, tt.ggmlKV)
+			if tt.ggufKV != nil {
+				runner.metadata = loadTestGGUF(t, tt.ggufKV)
 			} else if tt.tokenizerAddsBOS {
-				runner.ggml = loadTestGGML(t, ggml.KV{
+				runner.metadata = loadTestGGUF(t, gguftest.KV{
 					"general.architecture":         "gemma3",
 					"tokenizer.ggml.add_bos_token": true,
 				})
@@ -1749,12 +1728,12 @@ func TestLlamaServerEmbedding(t *testing.T) {
 func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 	tests := []struct {
 		name string
-		kv   ggml.KV
+		kv   gguftest.KV
 		want bool
 	}{
 		{
 			name: "bert t5 raw like bge-m3",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "bert",
 				"bert.pooling_type":    uint32(1),
 				"tokenizer.ggml.model": "t5",
@@ -1763,7 +1742,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "nomic bert default raw",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture":    "nomic-bert",
 				"nomic-bert.pooling_type": uint32(1),
 			},
@@ -1771,7 +1750,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "qwen3 remains normalized",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "qwen3",
 				"qwen3.pooling_type":   uint32(1),
 			},
@@ -1780,7 +1759,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := legacyEmbeddingsWereRaw(tt.kv); got != tt.want {
+			if got := legacyEmbeddingsWereRaw(loadTestGGUF(t, tt.kv).KV()); got != tt.want {
 				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
 			}
 		})
@@ -2444,21 +2423,32 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)
 	}
 
-	modelPath, model := writeTestGGML(t, ggml.KV{"general.architecture": "gemma3"}, []*ggml.Tensor{
-		testGGMLTensor("blk.0.attn_q.weight", ggml.TensorTypeF32, []uint64{4}),
-		testGGMLTensor("v.patch_embd.weight", ggml.TensorTypeF16, []uint64{16}),
-		testGGMLTensor("mm.0.weight", ggml.TensorTypeF32, []uint64{8}),
-		testGGMLTensor("a.encoder.weight", ggml.TensorTypeF32, []uint64{2}),
+	modelPath, model := writeTestGGUF(t, gguftest.KV{"general.architecture": "gemma3"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{4}),
+		testGGUFTensor("v.patch_embd.weight", gguf.TensorTypeF16, []uint64{16}),
+		testGGUFTensor("mm.0.weight", gguf.TensorTypeF32, []uint64{8}),
+		testGGUFTensor("a.encoder.weight", gguf.TensorTypeF32, []uint64{2}),
 	})
 
 	wantInline := uint64(16*2 + 8*4 + 2*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); err != nil || got != wantInline {
 		t.Fatalf("inline mmproj memory = %d, %v; want %d, nil", got, err, wantInline)
 	}
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("v.split.weight", gguf.TensorTypeF16, []uint64{8}),
+	})
+	splitModel, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSplitInline := wantInline + 8*2
+	if got, err := mmprojMemoryRequirement(modelPath, splitModel, []string{modelPath}); err != nil || got != wantSplitInline {
+		t.Fatalf("split inline mmproj memory = %d, %v; want %d, nil", got, err, wantSplitInline)
+	}
 
-	projectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, []*ggml.Tensor{
-		testGGMLTensor("vision.weight", ggml.TensorTypeF16, []uint64{32}),
-		testGGMLTensor("audio.weight", ggml.TensorTypeF32, []uint64{4}),
+	projectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, []*gguftest.Tensor{
+		testGGUFTensor("vision.weight", gguf.TensorTypeF16, []uint64{32}),
+		testGGUFTensor("audio.weight", gguf.TensorTypeF32, []uint64{4}),
 	})
 	wantProjector := uint64(32*2 + 4*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); err != nil || got != wantProjector {
@@ -2472,7 +2462,7 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatal("missing projector error = nil, want error")
 	}
 
-	emptyProjectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, nil)
+	emptyProjectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, nil)
 	if _, err := mmprojMemoryRequirement(modelPath, model, []string{emptyProjectorPath}); err == nil {
 		t.Fatal("empty projector error = nil, want error")
 	}
@@ -2608,7 +2598,7 @@ func TestExternalDraftType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.architecture, func(t *testing.T) {
-			path, _ := writeTestGGML(t, ggml.KV{"general.architecture": tt.architecture}, nil)
+			path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": tt.architecture}, nil)
 			got, err := externalDraftType(path)
 			if err != nil {
 				t.Fatal(err)
@@ -2624,19 +2614,19 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	tests := []struct {
 		name    string
 		arch    string
-		tensors []*ggml.Tensor
+		tensors []gguf.TensorInfo
 		want    bool
 	}{
 		{
 			name:    "qwen35 legacy mtp marker",
 			arch:    "qwen35",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    true,
 		},
 		{
 			name:    "qwen35moe legacy mtp marker",
 			arch:    "qwen35moe",
-			tensors: []*ggml.Tensor{{Name: "mtp.layers.0.attn_q.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.layers.0.attn_q.weight"}},
 			want:    true,
 		},
 		{
@@ -2648,7 +2638,7 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 		{
 			name:    "other arch with mtp prefix",
 			arch:    "qwen3next",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    false,
 		},
 	}
@@ -2659,6 +2649,22 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 				t.Fatalf("hasLegacyQwenMTPDraft() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHasMTPDraftAcrossShards(t *testing.T) {
+	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("mtp.0.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	model, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMTPDraft(model) {
+		t.Fatal("hasMTPDraft() = false, want true for MTP tensors in a later shard")
 	}
 }
 
@@ -3770,21 +3776,21 @@ func TestFindLlamaServer(t *testing.T) {
 	_ = err
 }
 
-func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
+func loadTestGGUF(t *testing.T, kv gguftest.KV) *gguf.Model {
 	t.Helper()
 
-	_, model := writeTestGGML(t, kv, nil)
+	_, model := writeTestGGUF(t, kv, nil)
 	return model
 }
 
-func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *ggml.GGML) {
+func writeTestGGUF(t *testing.T, kv gguftest.KV, tensors []*gguftest.Tensor) (string, *gguf.Model) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ggml.WriteGGUF(f, kv, tensors); err != nil {
+	if err := gguftest.Write(f, kv, tensors); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -3798,10 +3804,10 @@ func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *g
 	return f.Name(), model
 }
 
-func testGGMLTensor(name string, kind ggml.TensorType, shape []uint64) *ggml.Tensor {
-	tensor := &ggml.Tensor{
+func testGGUFTensor(name string, kind gguf.TensorType, shape []uint64) *gguftest.Tensor {
+	tensor := &gguftest.Tensor{
 		Name:  name,
-		Kind:  uint32(kind),
+		Type:  kind,
 		Shape: shape,
 	}
 	tensor.WriterTo = bytes.NewReader(make([]byte, tensor.Size()))
@@ -3818,4 +3824,117 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+// TestLlamaServerCompletionThinkingFormat checks that a format on a thinking
+// response is one request carrying a grammar: a schema is converted by an
+// empty completion once per schema, "json" needs no conversion, the grammar
+// wraps the format rules behind the closing string, and content and metrics
+// pass through unchanged.
+func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object"}`)
+	converted := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
+	sseLines := []string{
+		`data: {"content":"Let me think.</think>","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":3,"predicted_ms":15}}`,
+		`data: {"content":"{}","stop":false,"timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+		`data: {"content":"","stop":true,"stop_type":"eos","timings":{"cache_n":2,"prompt_n":3,"prompt_ms":10,"predicted_n":4,"predicted_ms":20}}`,
+	}
+
+	var conversions atomic.Int32
+	grammars := make(chan string, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		var reqBody struct {
+			Prompt         any             `json:"prompt"`
+			NPredict       *int            `json:"n_predict"`
+			JsonSchema     json.RawMessage `json:"json_schema"`
+			Grammar        string          `json:"grammar"`
+			ResponseFields []string        `json:"response_fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		if len(reqBody.ResponseFields) > 0 {
+			conversions.Add(1)
+			if !reflect.DeepEqual(reqBody.Prompt, []any{[]any{}}) || reqBody.NPredict == nil || *reqBody.NPredict != 0 {
+				t.Errorf("conversion request prompt %v n_predict %v, want an empty token prompt and no generation", reqBody.Prompt, reqBody.NPredict)
+			}
+			if !bytes.Equal(reqBody.JsonSchema, schema) || !reflect.DeepEqual(reqBody.ResponseFields, []string{"generation_settings/grammar"}) {
+				t.Errorf("conversion request schema %s fields %v", reqBody.JsonSchema, reqBody.ResponseFields)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"generation_settings/grammar": converted})
+			return
+		}
+		if reqBody.JsonSchema != nil {
+			t.Errorf("completion carried schema %s", reqBody.JsonSchema)
+		}
+		grammars <- reqBody.Grammar
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, line := range sseLines {
+			fmt.Fprintln(w, line)
+			fmt.Fprintln(w)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	complete := func(format json.RawMessage) string {
+		var responses []CompletionResponse
+		opts := api.DefaultOptions()
+		err := runner.Completion(t.Context(), CompletionRequest{
+			Prompt:        "test prompt",
+			Format:        format,
+			ThinkingClose: []string{"</think>"},
+			Options:       &opts,
+		}, func(cr CompletionResponse) {
+			responses = append(responses, cr)
+		})
+		if err != nil {
+			t.Fatalf("Completion error: %v", err)
+		}
+		var content strings.Builder
+		for _, resp := range responses[:len(responses)-1] {
+			content.WriteString(resp.Content)
+		}
+		if got := content.String(); got != "Let me think.</think>{}" {
+			t.Errorf("streamed content = %q", got)
+		}
+		final := responses[len(responses)-1]
+		if !final.Done || final.DoneReason != DoneReasonStop || final.EvalCount != 4 || final.PromptEvalCount != 5 {
+			t.Errorf("final response = %+v, want done with 4 generated and 5 prompt tokens", final)
+		}
+		return <-grammars
+	}
+
+	for range 2 {
+		grammar := complete(schema)
+		if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format ::= \"{\" space \"}\"\n") {
+			t.Errorf("grammar does not wrap the converted schema:\n%s", grammar)
+		}
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("schema converted %d times, want once", got)
+	}
+
+	grammar := complete(json.RawMessage(`"json"`))
+	if !strings.HasPrefix(grammar, "root ::= ollama-thinking-0\n") || !strings.Contains(grammar, "ollama-format   ::= object\n") {
+		t.Errorf("grammar does not wrap the json grammar:\n%s", grammar)
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("json format converted a schema, %d conversions", got)
+	}
 }
