@@ -73,7 +73,42 @@ volumes:
 You can just add RPC clients to OLLAMA_RPC_SERVERS by appending them with a comma. `127.0.0.1:50053,192.168.1.1:50053,192.168.1.12:50053 etc.`
 
 The `--cache` flag enables a persistent on-disk tensor cache on the worker. The `rpc_cache` volume keeps it across restarts so warm model reloads skip the network transfer.
-  
+
+## Video input
+
+This fork adds video support via llama.cpp's native mtmd video pipeline. Any vision-capable model (one with a projector/mmproj, e.g. `gemma3`, `qwen3-vl`) accepts video the same way it accepts images — mtmd extracts frames and feeds them through the model's existing vision tower.
+
+**Runtime requirement:** `ffmpeg` (providing `ffprobe`) must be present in the container. Both `rocm7-final` and the Ubuntu-based runtime image install it, so an image built from this Dockerfile has it out of the box. If you're running an older image tag, `ffprobe` will be missing and video requests fail with `"Failed to load image or audio file"` (check server logs for `ffprobe failed on buffer (is ffprobe in PATH?)` to confirm) — rebuild and redeploy the image to pick up the fix, or install `ffmpeg` into the running container as a stopgap (`dnf install -y epel-release && dnf install -y --nogpgcheck https://download1.rpmfusion.org/free/el/rpmfusion-free-release-8.noarch.rpm && dnf install -y ffmpeg` on the AlmaLinux/ROCm image).
+
+**CLI:** attach a video file the same way you'd attach an image (supported extensions: `.mp4 .mov .webm .mkv .avi`):
+```
+ollama run gemma3
+>>> What's happening in this clip? /path/to/video.mp4
+```
+
+**`/api/chat`:** raw base64 video bytes go in the `images` array, same as images — no video-specific field:
+```bash
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma3",
+  "messages": [{"role": "user", "content": "What is happening in this video?", "images": ["<base64>"]}],
+  "stream": false
+}'
+```
+
+**OpenAI-compatible `/v1/chat/completions`:** use an `input_video` content part with a base64 data URI (remote URLs are not supported):
+```json
+{
+  "model": "gemma3",
+  "messages": [{
+    "role": "user",
+    "content": [
+      {"type": "text", "text": "What is happening in this video?"},
+      {"type": "input_video", "input_video": {"data": "data:video/mp4;base64,<...>"}}
+    ]
+  }]
+}
+```
+
 <p align="center">
   <a href="https://ollama.com">
     <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
