@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
@@ -58,7 +58,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a model with a built-in renderer (qwen3-coder)
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "qwen3",
 		"qwen3.block_count":             uint32(1),
 		"qwen3.context_length":          uint32(8192),
@@ -68,7 +68,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -243,7 +243,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a model with a built-in renderer
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "qwen3",
 		"qwen3.block_count":             uint32(1),
 		"qwen3.context_length":          uint32(8192),
@@ -253,7 +253,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},

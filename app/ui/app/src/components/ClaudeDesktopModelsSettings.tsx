@@ -38,6 +38,7 @@ interface ClaudeDesktopModelsSettingsProps {
   initialCloudModels?: string[];
   includeCloudModels?: boolean;
   onDraftChange?: (hasChanges: boolean) => void;
+  showSectionHeading?: boolean;
 }
 
 const fallbackRoutes: ClaudeDesktopMappingStatus[] = [
@@ -266,6 +267,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     initialCloudModels,
     includeCloudModels = false,
     onDraftChange,
+    showSectionHeading = true,
   },
   ref,
 ) {
@@ -575,13 +577,18 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       : null);
 
   return (
-    <section aria-labelledby="apps-settings-heading" className="space-y-2">
-      <h2
-        id="apps-settings-heading"
-        className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
-      >
-        Apps
-      </h2>
+    <div
+      aria-label={showSectionHeading ? undefined : "Claude settings"}
+      className="space-y-2"
+    >
+      {showSectionHeading && (
+        <h2
+          id="apps-settings-heading"
+          className="px-1 text-xs font-medium uppercase tracking-wider text-neutral-400 dark:text-neutral-500"
+        >
+          Apps
+        </h2>
+      )}
       <div
         aria-labelledby="claude-settings-heading"
         className="overflow-visible rounded-xl bg-white p-4 dark:bg-neutral-800"
@@ -689,6 +696,6 @@ export const ClaudeDesktopModelsSettings = forwardRef<
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 });

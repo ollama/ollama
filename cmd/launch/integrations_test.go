@@ -57,7 +57,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"claude mixed case", "Claude", true, "Claude Code"},
 		{"claude desktop", "claude-desktop", true, "Claude Desktop"},
 		{"claude desktop alias", "claude-app", true, "Claude Desktop"},
-		{"codex", "codex", true, "Codex"},
+		{"codex", "codex", true, "Codex CLI"},
 		{"chatgpt", "chatgpt", true, "ChatGPT"},
 		{"codex app legacy alias", "codex-app", true, "ChatGPT"},
 		{"codex app desktop alias", "codex-desktop", true, "ChatGPT"},

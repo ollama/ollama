@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Qwen3VLRenderer struct {
@@ -146,4 +147,12 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 	}
 
 	return sb.String(), nil
+}
+
+func (r *Qwen3VLRenderer) Thinking() *model.Thinking {
+	values := []any{false}
+	if r.isThinking {
+		values = append(values, true)
+	}
+	return &model.Thinking{Values: values, Default: r.isThinking}
 }

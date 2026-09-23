@@ -97,6 +97,14 @@
       "destination": "/integrations/openclaw"
     },
     {
+      "source": "/integrations/codex-app",
+      "destination": "/integrations/chatgpt"
+    },
+    {
+      "source": "/integrations/codex-app.mdx",
+      "destination": "/integrations/chatgpt"
+    },
+    {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
     }
@@ -171,8 +179,8 @@
               "/integrations/opencode",
               "/integrations/deepseek-harness",
               "/integrations/cline-cli",
-              "/integrations/codex-app",
               "/integrations/codex",
+              "/integrations/chatgpt",
               "/integrations/copilot-cli",
               "/integrations/droid",
               "/integrations/goose",

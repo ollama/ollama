@@ -30,6 +30,7 @@ type FunctionGemmaParser struct {
 
 func (p *FunctionGemmaParser) HasToolSupport() bool     { return true }
 func (p *FunctionGemmaParser) HasThinkingSupport() bool { return false }
+func (p *FunctionGemmaParser) ThinkingClose() []string  { return nil }
 
 func (p *FunctionGemmaParser) PreservedTokens() []string {
 	return []string{

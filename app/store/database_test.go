@@ -563,3 +563,38 @@ func loadV2Schema(t *testing.T, dbPath string) *database {
 
 	return &database{conn: conn}
 }
+
+func TestCodexDesktopUsedMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "codex-intro.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read settings: %v", err)
+	}
+	if settings.CodexDesktopUsed {
+		t.Fatal("expected fresh installs to have no ChatGPT intro acknowledgment")
+	}
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN codex_desktop_used;
+		UPDATE settings SET schema_version = 18;
+	`); err != nil {
+		t.Fatalf("failed to seed v18 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v18 to v19 failed: %v", err)
+	}
+
+	settings, err = db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read migrated settings: %v", err)
+	}
+	if settings.CodexDesktopUsed {
+		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
+	}
+}

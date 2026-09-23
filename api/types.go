@@ -102,9 +102,9 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models. Needs to be a pointer so we can distinguish between false
-	// (request that thinking _not_ be used) and unset (use the old behavior
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// Needs to be a pointer so we can distinguish between false (request that
+	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
 
@@ -154,8 +154,7 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models.
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -555,12 +554,13 @@ type DebugInfo struct {
 }
 
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TotalDuration         time.Duration `json:"total_duration,omitempty"`
+	LoadDuration          time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount       int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalCachedCount *int          `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount             int           `json:"eval_count,omitempty"`
+	EvalDuration          time.Duration `json:"eval_duration,omitempty"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -575,7 +575,7 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"` // Deprecated: rejected on new requests and models; still honored from existing model parameters
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
@@ -656,10 +656,10 @@ type CreateRequest struct {
 	// Stream specifies whether the response is streaming; it is true by default.
 	Stream *bool `json:"stream,omitempty"`
 
-	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
+	// Quantize is the quantization format to apply when importing safetensors weights.
 	Quantize string `json:"quantize,omitempty"`
 
-	// DraftQuantize is the quantization format for the draft model.
+	// DraftQuantize is the quantization format to apply when importing safetensors draft weights.
 	DraftQuantize string `json:"draft_quantize,omitempty"`
 
 	// From is the name of the model or file to use as the source.
@@ -668,13 +668,15 @@ type CreateRequest struct {
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
 
-	// Files is a map of files include when creating the model.
+	// Files maps source file names to their SHA-256 digests.
 	Files map[string]string `json:"files,omitempty"`
 
-	// DraftFiles is a map of draft model files to include when creating the model.
+	// DraftFiles maps draft source file names to their SHA-256 digests.
 	DraftFiles map[string]string `json:"draft_files,omitempty"`
 
 	// Adapters is a map of LoRA adapters to include when creating the model.
+	//
+	// Deprecated: LoRA adapters are no longer supported.
 	Adapters map[string]string `json:"adapters,omitempty"`
 
 	// Template is the template used when constructing a request to the model.
@@ -735,6 +737,7 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
+	Thinking      *model.Thinking    `json:"thinking,omitempty"`
 	License       string             `json:"license,omitempty"`
 	Modelfile     string             `json:"modelfile,omitempty"`
 	Parameters    string             `json:"parameters,omitempty"`
@@ -815,13 +818,19 @@ type ModelRecommendationMappings map[string]ModelRecommendationMapping
 
 // ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
 type ModelRecommendation struct {
-	Model           string `json:"model"`
-	Description     string `json:"description"`
-	ContextLength   int    `json:"context_length,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
-	VRAMBytes       int64  `json:"vram_bytes,omitempty"`
-	RequiredPlan    string `json:"required_plan,omitempty"`
+	Model           string                       `json:"model"`
+	Description     string                       `json:"description"`
+	ContextLength   int                          `json:"context_length,omitempty"`
+	MaxOutputTokens int                          `json:"max_output_tokens,omitempty"`
+	VRAMBytes       int64                        `json:"vram_bytes,omitempty"`
+	RequiredPlan    string                       `json:"required_plan,omitempty"`
+	Thinking        *ModelRecommendationThinking `json:"thinking,omitempty"`
 }
+
+// ModelRecommendationThinking advertises the controls a model honors and its
+// default. Values may be booleans or named effort levels; other strings may
+// still be accepted by the endpoint and fall back to the default.
+type ModelRecommendationThinking = model.Thinking
 
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
@@ -983,9 +992,18 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
 	}
 
+	cached := 0
+	if m.PromptEvalCachedCount != nil {
+		cached = *m.PromptEvalCachedCount
+	}
+	if cached > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval cached:   %d token(s)\n", cached)
+	}
+
 	if m.PromptEvalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", m.PromptEvalDuration)
-		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(m.PromptEvalCount)/m.PromptEvalDuration.Seconds())
+		uncached := max(0, m.PromptEvalCount-cached)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(uncached)/m.PromptEvalDuration.Seconds())
 	}
 
 	if m.EvalCount > 0 {
@@ -1132,111 +1150,21 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low", "max")
-type ThinkValue struct {
-	// Value can be a bool or string
-	Value interface{}
-}
+// ThinkValue represents a boolean or model-defined thinking level.
+type ThinkValue = model.ThinkValue
 
-// IsValid checks if the ThinkValue is valid
-func (t *ThinkValue) IsValid() bool {
-	if t == nil || t.Value == nil {
-		return true // nil is valid (means not set)
-	}
-
-	switch v := t.Value.(type) {
-	case bool:
-		return true
-	case string:
-		return v == "high" || v == "medium" || v == "low" || v == "max"
-	default:
-		return false
-	}
-}
-
-// IsBool returns true if the value is a boolean
-func (t *ThinkValue) IsBool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(bool)
-	return ok
-}
-
-// IsString returns true if the value is a string
-func (t *ThinkValue) IsString() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(string)
-	return ok
-}
-
-// Bool returns the value as a bool (true if enabled in any way)
-func (t *ThinkValue) Bool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-
-	switch v := t.Value.(type) {
-	case bool:
-		return v
-	case string:
-		// Any string value ("high", "medium", "low", "max") means thinking is enabled
-		return v == "high" || v == "medium" || v == "low" || v == "max"
-	default:
-		return false
-	}
-}
-
-// String returns the value as a string
-func (t *ThinkValue) String() string {
-	if t == nil || t.Value == nil {
-		return ""
-	}
-
-	switch v := t.Value.(type) {
-	case string:
-		return v
-	case bool:
-		if v {
-			return "medium" // Default level when just true
-		}
-		return ""
-	default:
-		return ""
-	}
-}
-
-// UnmarshalJSON implements json.Unmarshaler
-func (t *ThinkValue) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as bool first
-	var b bool
-	if err := json.Unmarshal(data, &b); err == nil {
-		t.Value = b
+// ValidateLegacyThinking checks named levels for models without thinking metadata.
+// Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
+func ValidateLegacyThinking(think *ThinkValue) error {
+	if !think.IsString() {
 		return nil
 	}
-
-	// Try to unmarshal as string
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		// Validate string values
-		if s != "high" && s != "medium" && s != "low" && s != "max" {
-			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", s)
-		}
-		t.Value = s
+	switch think.String() {
+	case "low", "medium", "high", "max":
 		return nil
+	default:
+		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
-
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", \"max\", true, or false)")
-}
-
-// MarshalJSON implements json.Marshaler
-func (t *ThinkValue) MarshalJSON() ([]byte, error) {
-	if t == nil || t.Value == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(t.Value)
 }
 
 type Duration struct {

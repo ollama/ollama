@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -248,6 +249,42 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 	})
 
+	t.Run("tool_search_call item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"order lookup","limit":5}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		call, ok := got.(ResponsesToolSearchCall)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesToolSearchCall", got)
+		}
+		if call.CallID != "call_search" || call.Execution != "client" {
+			t.Fatalf("call = %#v", call)
+		}
+		if query, ok := call.Arguments.Get("query"); !ok || query != "order lookup" {
+			t.Fatalf("query = %#v, %v", query, ok)
+		}
+	})
+
+	t.Run("tool_search_output item", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[{"type":"function","name":"lookup_order","x_client_field":true}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		output, ok := got.(ResponsesToolSearchOutput)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesToolSearchOutput", got)
+		}
+		if output.CallID != "call_search" || len(output.Tools) != 1 {
+			t.Fatalf("output = %#v", output)
+		}
+		if !json.Valid(output.Tools[0]) {
+			t.Fatalf("tool is not valid JSON: %s", output.Tools[0])
+		}
+	})
+
 	t.Run("web_search_call item", func(t *testing.T) {
 		got, err := unmarshalResponsesInputItem([]byte(`{"type":"web_search_call","id":"ws_123","status":"completed","action":{"type":"search","query":"Parth Sareen"}}`))
 		if err != nil {
@@ -292,6 +329,57 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+}
+
+func TestResponsesStandaloneFunctionOutput(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		fields    string
+		wantName  string
+		wantError bool
+	}{
+		{"omitted call ID", `"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"null call ID", `"call_id":null,"name":"handoff","namespace":"workspace",`, "workspace.handoff", false},
+		{"no namespace", `"name":"handoff",`, "handoff", false},
+		{"null namespace", `"name":"handoff","namespace":null,`, "handoff", false},
+		{"empty call ID", `"call_id":"","name":"handoff",`, "", true},
+		{"blank call ID", `"call_id":"  ","name":"handoff",`, "", true},
+		{"missing name", ``, "", true},
+		{"null name", `"name":null,`, "", true},
+		{"empty name", `"name":"",`, "", true},
+		{"blank name", `"name":"  ",`, "", true},
+		{"namespace only", `"namespace":"workspace",`, "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"function_call_output","id":"fco_handoff",` + tt.fields + `"output":[{"type":"input_text","text":"Continue the task."}]}]}`)
+			var request ResponsesRequest
+			err := json.Unmarshal(body, &request)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("accepted invalid standalone output")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			output := request.Input.Items[0].(ResponsesFunctionCallOutput)
+			if output.ID != "fco_handoff" || output.Name != "handoff" || output.CallID != "" || len(output.OutputItems) != 1 {
+				t.Fatalf("standalone identity or content changed: %+v", output)
+			}
+			chat, err := FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chat.Messages) != 1 {
+				t.Fatalf("got %d messages, want the standalone output only", len(chat.Messages))
+			}
+			message := chat.Messages[0]
+			if message.Role != "tool" || message.ToolName != tt.wantName || message.ToolCallID != "" || len(message.ToolCalls) != 0 || message.Content != "Continue the task." {
+				t.Fatalf("standalone output lost its name/content or gained a call: %+v", message)
+			}
+		})
+	}
 }
 
 func TestFromResponsesRequestIgnoresReplayedWebSearchCall(t *testing.T) {
@@ -352,6 +440,41 @@ func TestFromResponsesRequestMergesMessageAfterFunctionCall(t *testing.T) {
 	tool := chat.Messages[2]
 	if tool.Role != "tool" || tool.ToolCallID != "call_test" || tool.Content != "/tmp" {
 		t.Fatalf("tool message = %#v", tool)
+	}
+}
+
+func TestFromResponsesRequestAgentMessage(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [
+			{"role": "user", "content": "Delegate the parser analysis."},
+			{"type": "function_call", "call_id": "call_spawn", "namespace": "collaboration", "name": "spawn_agent", "arguments": "{\"task_name\":\"worker\"}"},
+			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
+			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
+				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+			]}
+		]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 4 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+
+	agentMsg := chat.Messages[3]
+	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
+		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+		"Analyze the parser module and report issues."
+	if agentMsg.Role != "user" || agentMsg.Content != want {
+		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
 
@@ -524,6 +647,212 @@ func TestFromResponsesRequest_WebSearchTool(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_ToolSearch(t *testing.T) {
+	description := "Find the project tools needed to continue."
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{
+			{
+				Type:        "tool_search",
+				Execution:   "client",
+				Description: &description,
+				Parameters: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{"query": map[string]any{"type": "string"}},
+					"required":   []any{"query"},
+				},
+			},
+			{Type: "function", Name: "tool_search"},
+			{Type: "function", Name: "exec_command"},
+		},
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Tools) != 2 {
+		t.Fatalf("tools = %#v, want tool_search and exec_command", chat.Tools)
+	}
+	if got := chat.Tools[0].Function.Name; got != "tool_search" {
+		t.Fatalf("tool name = %q", got)
+	}
+	if got := chat.Tools[0].Function.Description; got != description {
+		t.Fatalf("description = %q", got)
+	}
+	if got := chat.Tools[0].Function.Parameters.Required; len(got) != 1 || got[0] != "query" {
+		t.Fatalf("required = %#v", got)
+	}
+	if got := chat.Tools[1].Function.Name; got != "exec_command" {
+		t.Fatalf("core tool name = %q", got)
+	}
+}
+
+func TestFromResponsesRequestRejectsHostedToolSearch(t *testing.T) {
+	_, err := FromResponsesRequest(ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "server"}}})
+	if err == nil {
+		t.Fatal("expected hosted tool search to be rejected")
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputBecomesToolContent(t *testing.T) {
+	var request ResponsesRequest
+	if err := json.Unmarshal([]byte(`{
+		"model":"test",
+		"tools":[{
+			"type":"tool_search",
+			"execution":"client",
+			"description":"Find tools",
+			"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}
+		}],
+		"input":[
+			{"type":"tool_search_call","id":"tsc_1","call_id":"call_search","execution":"client","status":"completed","arguments":{"query":"orders","limit":5}},
+			{"type":"tool_search_output","id":"tso_1","call_id":"call_search","execution":"client","status":"completed","tools":[
+				{"type":"function","name":"lookup_order","description":"Look up an order","defer_loading":true,"x_client_field":"preserved","parameters":{"type":"object"}}
+			]}
+		]
+	}`), &request); err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 2 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	call := chat.Messages[0]
+	if call.Role != "assistant" || len(call.ToolCalls) != 1 || call.ToolCalls[0].Function.Name != "tool_search" {
+		t.Fatalf("search call message = %#v", call)
+	}
+	if query, ok := call.ToolCalls[0].Function.Arguments.Get("query"); !ok || query != "orders" {
+		t.Fatalf("query = %#v, %v", query, ok)
+	}
+	output := chat.Messages[1]
+	if output.Role != "tool" || output.ToolName != "tool_search" || output.ToolCallID != "call_search" {
+		t.Fatalf("search output message = %#v", output)
+	}
+	var content []map[string]any
+	if err := json.Unmarshal([]byte(output.Content), &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 1 || content[0]["name"] != "lookup_order" || content[0]["x_client_field"] != "preserved" {
+		t.Fatalf("content = %#v", content)
+	}
+	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
+		t.Fatalf("native tools = %#v; discovered tool must remain content-only", chat.Tools)
+	}
+}
+
+func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testing.T) {
+	namespace := json.RawMessage(`{
+		"type":"namespace",
+		"name":"mcp__openaiDeveloperDocs",
+		"description":"Official OpenAI documentation tools",
+		"tools":[
+			{"type":"function","name":"search_openai_docs","description":"Search docs","strict":false,"defer_loading":true,"x_client_field":true,"parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}
+		]
+	}`)
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}},
+		Input: ResponsesInput{Items: []ResponsesInputItem{
+			ResponsesToolSearchCall{
+				Type:      "tool_search_call",
+				CallID:    "call_search",
+				Execution: "client",
+			},
+			ResponsesToolSearchOutput{
+				Type:      "tool_search_output",
+				CallID:    "call_search",
+				Execution: "client",
+				Tools: []json.RawMessage{
+					namespace,
+					json.RawMessage(`{"type":"namespace","name":"mcp__codex_apps__github","tools":[{"type":"function","name":"_search","parameters":{"type":"object"}}]}`),
+					json.RawMessage(`{"type":"function","name":"plain","x_client_field":"preserved"}`),
+				},
+			},
+		}},
+	}
+
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 2 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	var content []map[string]any
+	if err := json.Unmarshal([]byte(chat.Messages[1].Content), &content); err != nil {
+		t.Fatal(err)
+	}
+	if len(content) != 3 {
+		t.Fatalf("tools = %#v", content)
+	}
+	if got := content[0]["name"]; got != "mcp__openaiDeveloperDocs.search_openai_docs" {
+		t.Fatalf("docs tool name = %#v", got)
+	}
+	if got := content[0]["description"]; got != "Search docs" {
+		t.Fatalf("docs description = %#v", got)
+	}
+	if got := content[0]["strict"]; got != false {
+		t.Fatalf("docs strict = %#v", got)
+	}
+	if got := content[0]["defer_loading"]; got != true {
+		t.Fatalf("docs defer_loading = %#v", got)
+	}
+	parameters, ok := content[0]["parameters"].(map[string]any)
+	if !ok || parameters["type"] != "object" {
+		t.Fatalf("docs parameters = %#v", content[0]["parameters"])
+	}
+	properties, ok := parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("docs parameter properties = %#v", parameters["properties"])
+	}
+	query, ok := properties["query"].(map[string]any)
+	if !ok || query["type"] != "string" {
+		t.Fatalf("docs query parameter = %#v", properties["query"])
+	}
+	required, ok := parameters["required"].([]any)
+	if !ok || len(required) != 1 || required[0] != "query" {
+		t.Fatalf("docs required parameters = %#v", parameters["required"])
+	}
+	if got := content[0]["x_client_field"]; got != true {
+		t.Fatalf("docs custom field = %#v", got)
+	}
+	if got := content[1]["name"]; got != "mcp__codex_apps__github._search" {
+		t.Fatalf("app tool name = %#v", got)
+	}
+	if got := content[2]["name"]; got != "plain" {
+		t.Fatalf("plain tool name = %#v", got)
+	}
+	if got := string(request.Input.Items[1].(ResponsesToolSearchOutput).Tools[0]); got != string(namespace) {
+		t.Fatalf("Responses tool_search_output was mutated: %s", got)
+	}
+	if len(chat.Tools) != 1 || chat.Tools[0].Function.Name != "tool_search" {
+		t.Fatalf("native tools = %#v; discovered tools must remain content-only", chat.Tools)
+	}
+}
+
+func TestFromResponsesRequestRejectsIncompleteToolSearchNamespace(t *testing.T) {
+	tests := []json.RawMessage{
+		json.RawMessage(`{"type":"namespace","tools":[{"type":"function","name":"search"}]}`),
+		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function"}]}`),
+	}
+	for _, tool := range tests {
+		t.Run(string(tool), func(t *testing.T) {
+			_, err := FromResponsesRequest(ResponsesRequest{
+				Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesToolSearchOutput{
+					Type:  "tool_search_output",
+					Tools: []json.RawMessage{tool},
+				}}},
+			})
+			if err == nil {
+				t.Fatal("expected incomplete namespace to be rejected")
+			}
+		})
+	}
+}
+
 func TestFromResponsesRequest_WebSearchIgnoresUnknownControls(t *testing.T) {
 	for _, declaration := range []string{
 		`{"type":"web_search","filters":{"allowed_domains":["example.com"]}}`,
@@ -637,12 +966,281 @@ func TestFromResponsesRequest_NamespaceTools(t *testing.T) {
 	}
 }
 
-func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
+func TestConvertToolsQualifiesNamespaceMemberNames(t *testing.T) {
 	tests := []struct {
 		name      string
-		effort    string
-		wantThink any
-		wantErr   bool
+		namespace string
+		member    string
+		want      string
+	}{
+		{name: "dot member", namespace: "muse", member: "bash", want: "muse.bash"},
+		{name: "qualified dot member", namespace: "muse", member: "muse.read_file", want: "muse.read_file"},
+		{name: "Codex plugin member", namespace: "mcp__codex_apps__notion", member: "_search", want: "mcp__codex_apps__notion_search"},
+		{name: "qualified Codex plugin member", namespace: "mcp__codex_apps__notion", member: "mcp__codex_apps__notion_search", want: "mcp__codex_apps__notion_search"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools, err := convertTools(ResponsesTool{
+				Type: "namespace",
+				Name: tt.namespace,
+				Tools: []ResponsesTool{{
+					Type: "function",
+					Name: tt.member,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tools) != 1 {
+				t.Fatalf("tools = %#v, want one tool", tools)
+			}
+			if got := tools[0].Function.Name; got != tt.want {
+				t.Fatalf("tool name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		call      ResponsesFunctionCall
+		want      string
+		withTools bool
+	}{
+		{
+			name: "namespaced call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Namespace: "mcp__codex_apps__notion",
+				Name:      "_search",
+				Arguments: `{}`,
+			},
+			want: "mcp__codex_apps__notion_search",
+		},
+		{
+			name: "legacy dotted call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Name:      "mcp__codex_apps__notion._search",
+				Arguments: `{}`,
+			},
+			want:      "mcp__codex_apps__notion_search",
+			withTools: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ResponsesRequest{
+				Model: "test",
+				Input: ResponsesInput{Items: []ResponsesInputItem{tt.call}},
+			}
+			if tt.withTools {
+				req.Tools = []ResponsesTool{{
+					Type:  "namespace",
+					Name:  "mcp__codex_apps__notion",
+					Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+				}}
+			}
+
+			chatReq, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := chatReq.Messages[0].ToolCalls[0].Function.Name; got != tt.want {
+				t.Fatalf("tool name = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToResponseRestoresFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_1",
+			Function: api.ToolCallFunction{
+				Name:      "mcp__codex_apps__notion_search",
+				Arguments: api.ToolCallFunctionArguments{},
+			},
+		}}},
+	}, request)
+
+	if len(response.Output) != 1 {
+		t.Fatalf("output = %#v, want one function call", response.Output)
+	}
+	if got := response.Output[0].Namespace; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := response.Output[0].Name; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestToResponseEmitsClientToolSearchCall(t *testing.T) {
+	response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_search",
+			Function: api.ToolCallFunction{
+				Name:      "tool_search",
+				Arguments: testArgs(map[string]any{"query": "orders", "limit": 5}),
+			},
+		}}},
+	}, ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}})
+
+	if len(response.Output) != 1 {
+		t.Fatalf("output = %#v", response.Output)
+	}
+	item := response.Output[0]
+	if item.Type != "tool_search_call" || item.CallID != "call_search" || item.Execution != "client" || item.Status != "completed" ||
+		!strings.HasPrefix(item.ID, "tsc_") {
+		t.Fatalf("item = %#v", item)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Arguments["query"] != "orders" || wire.Arguments["limit"] != float64(5) {
+		t.Fatalf("arguments = %#v; want an object, not a JSON string", wire.Arguments)
+	}
+}
+
+func TestToResponseRestoresNamespaceFromToolSearchOutput(t *testing.T) {
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}},
+		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesToolSearchOutput{
+			Type:      "tool_search_output",
+			CallID:    "call_search",
+			Execution: "client",
+			Tools: []json.RawMessage{
+				json.RawMessage(`{"type":"namespace","name":"mcp__codex_apps__notion","tools":[{"type":"function","name":"_search"}]}`),
+				json.RawMessage(`{"type":"namespace","name":"mcp__openaiDeveloperDocs","tools":[{"type":"function","name":"search_openai_docs"}]}`),
+			},
+		}}},
+	}
+
+	tests := []struct {
+		callName      string
+		wantNamespace string
+		wantName      string
+	}{
+		{callName: "mcp__openaiDeveloperDocs.search_openai_docs", wantNamespace: "mcp__openaiDeveloperDocs", wantName: "search_openai_docs"},
+		{callName: "mcp__openaiDeveloperDocs:search_openai_docs", wantNamespace: "mcp__openaiDeveloperDocs", wantName: "search_openai_docs"},
+		{callName: "mcp__codex_apps__notion._search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__codex_apps__notion:_search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__codex_apps__notion_search", wantNamespace: "mcp__codex_apps__notion", wantName: "_search"},
+		{callName: "mcp__other:search", wantName: "mcp__other:search"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.callName, func(t *testing.T) {
+			response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+				Message: api.Message{ToolCalls: []api.ToolCall{{
+					ID: "call_1",
+					Function: api.ToolCallFunction{
+						Name:      tt.callName,
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				}}},
+			}, request)
+
+			if len(response.Output) != 1 {
+				t.Fatalf("output = %#v", response.Output)
+			}
+			if got := response.Output[0].Namespace; got != tt.wantNamespace {
+				t.Fatalf("namespace = %q, want %q", got, tt.wantNamespace)
+			}
+			if got := response.Output[0].Name; got != tt.wantName {
+				t.Fatalf("name = %q, want %q", got, tt.wantName)
+			}
+		})
+	}
+}
+
+func TestResponsesStreamConverterRestoresFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	converter := NewResponsesStreamConverter("resp_1", "item_1", "test", request)
+	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+		ID: "call_1",
+		Function: api.ToolCallFunction{
+			Name:      "mcp__codex_apps__notion_search",
+			Arguments: api.ToolCallFunctionArguments{},
+		},
+	}}}})
+
+	var item map[string]any
+	for _, event := range events {
+		if event.Event == "response.output_item.done" {
+			item = event.Data.(map[string]any)["item"].(map[string]any)
+		}
+	}
+	if item == nil {
+		t.Fatal("missing response.output_item.done")
+	}
+	if got := item["namespace"]; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := item["name"]; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestResponsesStreamConverterRestoresLegacyDottedFunctionCallNamespace(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{
+		Type:  "namespace",
+		Name:  "mcp__codex_apps__notion",
+		Tools: []ResponsesTool{{Type: "function", Name: "_search"}},
+	}}}
+	converter := NewResponsesStreamConverter("resp_1", "item_1", "test", request)
+	events := converter.Process(api.ChatResponse{Message: api.Message{ToolCalls: []api.ToolCall{{
+		ID: "call_1",
+		Function: api.ToolCallFunction{
+			Name:      "mcp__codex_apps__notion._search",
+			Arguments: api.ToolCallFunctionArguments{},
+		},
+	}}}})
+
+	var item map[string]any
+	for _, event := range events {
+		if event.Event == "response.output_item.done" {
+			item = event.Data.(map[string]any)["item"].(map[string]any)
+		}
+	}
+	if item == nil {
+		t.Fatal("missing response.output_item.done")
+	}
+	if got := item["namespace"]; got != "mcp__codex_apps__notion" {
+		t.Fatalf("namespace = %q", got)
+	}
+	if got := item["name"]; got != "_search" {
+		t.Fatalf("name = %q", got)
+	}
+}
+
+func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name        string
+		effort      string
+		directThink *api.ThinkValue
+		wantThink   any
+		wantErr     bool
 	}{
 		{
 			name: "unset",
@@ -688,6 +1286,23 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			wantThink: false,
 		},
 		{
+			name:        "Ollama boolean override takes precedence",
+			effort:      "medium",
+			directThink: &api.ThinkValue{Value: true},
+			wantThink:   true,
+		},
+		{
+			name:        "Ollama string override stays exact",
+			effort:      "high",
+			directThink: &api.ThinkValue{Value: "max"},
+			wantThink:   "max",
+		},
+		{
+			name:        "invalid Ollama override",
+			directThink: &api.ThinkValue{Value: 3},
+			wantErr:     true,
+		},
+		{
 			name:    "invalid",
 			effort:  "extreme",
 			wantErr: true,
@@ -699,6 +1314,7 @@ func TestFromResponsesRequest_ReasoningEffort(t *testing.T) {
 			req := ResponsesRequest{
 				Model: "deepseek-v4-flash",
 				Input: ResponsesInput{Text: "hi"},
+				Think: tt.directThink,
 			}
 			if tt.effort != "" {
 				req.Reasoning.Effort = tt.effort
@@ -742,7 +1358,7 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 		"input": [
 			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
 			{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
-			{"type": "function_call_output", "call_id": "call_abc123", "output": "sunny, 72F"}
+			{"type": "function_call_output", "call_id": "call_abc123", "name": "stale_name", "namespace": "stale_namespace", "output": "sunny, 72F"}
 		]
 	}`
 
@@ -815,6 +1431,9 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	}
 	if toolMsg.ToolCallID != "call_abc123" {
 		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
+	}
+	if toolMsg.ToolName != "" {
+		t.Errorf("paired output name %q would override the original call's name", toolMsg.ToolName)
 	}
 }
 
@@ -1397,6 +2016,50 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
+	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
+	converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", request)
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{
+			ID: "call_search",
+			Function: api.ToolCallFunction{
+				Name:      "tool_search",
+				Arguments: testArgs(map[string]any{"query": "orders", "limit": 5}),
+			},
+		}}},
+	})
+
+	if len(events) != 4 {
+		t.Fatalf("events = %#v; want created, in_progress, item added, and item done", events)
+	}
+	if events[2].Event != "response.output_item.added" || events[3].Event != "response.output_item.done" {
+		t.Fatalf("events = %#v", events)
+	}
+	item := events[3].Data.(map[string]any)["item"].(map[string]any)
+	if item["type"] != "tool_search_call" || item["call_id"] != "call_search" || item["execution"] != "client" || item["status"] != "completed" ||
+		!strings.HasPrefix(item["id"].(string), "tsc_") {
+		t.Fatalf("item = %#v", item)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Arguments map[string]any `json:"arguments"`
+	}
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Arguments["query"] != "orders" || wire.Arguments["limit"] != float64(5) {
+		t.Fatalf("arguments = %#v", wire.Arguments)
+	}
+	for _, event := range events {
+		if event.Event == "response.function_call_arguments.delta" || event.Event == "response.function_call_arguments.done" {
+			t.Fatalf("tool_search_call must not use function_call argument events: %#v", events)
+		}
+	}
+}
+
 func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "gpt-oss:20b", ResponsesRequest{})
 
@@ -1740,6 +2403,34 @@ func TestToResponse_WithReasoning(t *testing.T) {
 	}
 	if response.Output[1].Content[0].Text != "The answer is 42" {
 		t.Errorf("Content[0].Text = %q, want %q", response.Output[1].Content[0].Text, "The answer is 42")
+	}
+}
+
+func TestToResponse_UsageIncludesCachedTokens(t *testing.T) {
+	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", api.ChatResponse{
+		CreatedAt: time.Now(),
+		Message:   api.Message{Content: "The answer is 42"},
+		Done:      true,
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             3,
+		},
+	}, ResponsesRequest{})
+
+	if response.Usage == nil {
+		t.Fatal("expected usage")
+	}
+	if response.Usage.InputTokens != 10 || response.Usage.InputTokensDetails.CachedTokens != 4 || response.Usage.TotalTokens != 13 {
+		t.Errorf("unexpected usage: %+v", response.Usage)
+	}
+
+	data, err := json.Marshal(response.Usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"input_tokens_details":{"cached_tokens":4}`) {
+		t.Errorf("unexpected usage json: %s", data)
 	}
 }
 
@@ -2143,6 +2834,11 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 	events := converter.Process(api.ChatResponse{
 		Message: api.Message{},
 		Done:    true,
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             3,
+		},
 	})
 
 	// Find the response.completed event
@@ -2171,6 +2867,11 @@ func TestResponsesStreamConverter_ResponseCompletedIncludesOutput(t *testing.T) 
 	item := output[0].(map[string]any)
 	if item["type"] != "message" {
 		t.Errorf("output[0].type = %q, want %q", item["type"], "message")
+	}
+	usage := response["usage"].(map[string]any)
+	inputDetails := usage["input_tokens_details"].(map[string]any)
+	if inputDetails["cached_tokens"] != 4 {
+		t.Errorf("cached_tokens = %v, want 4", inputDetails["cached_tokens"])
 	}
 }
 
@@ -2440,5 +3141,52 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 		if got, want := item["id"], doneIDs[outputIndex]; got != want {
 			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
 		}
+	}
+}
+
+func TestFromResponsesRequestAgentMessageWithoutRouting(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "agent_message", "content": [
+			{"type": "encrypted_content", "encrypted_content": "bare payload"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 {
+		t.Fatalf("messages = %#v", chat.Messages)
+	}
+	// No routing fields: payload passes through without an envelope.
+	if chat.Messages[0].Role != "user" || chat.Messages[0].Content != "bare payload" {
+		t.Fatalf("agent message = %#v", chat.Messages[0])
+	}
+}
+
+func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
+	var req ResponsesRequest
+	err := json.Unmarshal([]byte(`{
+		"model": "test-model",
+		"input": [{"type": "message", "role": "user", "content": [
+			{"type": "input_text", "text": "prefix "},
+			{"type": "encrypted_content", "encrypted_content": "opaque to us"}
+		]}]
+	}`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chat, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 1 || chat.Messages[0].Content != "prefix opaque to us" {
+		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }

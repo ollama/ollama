@@ -1,4 +1,4 @@
-//go:build integration && !fast && !release && !library && !imagegen
+//go:build integration && !fast && !release && !library
 
 package integration
 

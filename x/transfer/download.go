@@ -39,6 +39,7 @@ type downloader struct {
 	progress     *progressTracker
 	speeds       *speedTracker
 	logger       *slog.Logger
+	allowPrivate bool
 	// bodySem caps the number of simultaneous body-bearing transfers so a
 	// modest home downlink isn't saturated. Always set by download(); nil
 	// only when tests build downloader directly (in which case holdBody is
@@ -120,7 +121,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 	progress.add(alreadyCompleted) // Report already-downloaded bytes upfront
 
 	d := &downloader{
-		client:       cmp.Or(opts.Client, defaultClient),
+		client:       cmp.Or(opts.Client, checkedClient(opts.BaseURL, opts.AllowPrivateHosts)),
 		baseURL:      opts.BaseURL,
 		destDir:      opts.DestDir,
 		repository:   cmp.Or(opts.Repository, "library/_"),
@@ -131,6 +132,7 @@ func download(ctx context.Context, opts DownloadOptions) error {
 		progress:     progress,
 		speeds:       &speedTracker{},
 		logger:       opts.Logger,
+		allowPrivate: opts.AllowPrivateHosts,
 	}
 	// 0 or negative serializes; never unbounded.
 	d.bodySem = semaphore.NewWeighted(int64(max(1, opts.BodyConcurrency)))
@@ -211,7 +213,7 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		}
 		lastErr = err
 	}
-	return fmt.Errorf("%w: %v", errMaxRetriesExceeded, lastErr)
+	return fmt.Errorf("%w: %w", errMaxRetriesExceeded, lastErr)
 }
 
 func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error) {
@@ -428,7 +430,13 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 			}
 		case http.StatusTemporaryRedirect, http.StatusFound, http.StatusMovedPermanently:
 			loc, _ := resp.Location()
+			if err := validateRedirectScheme(loc, d.baseURL); err != nil {
+				return nil, err
+			}
 			if loc.Host != u.Host {
+				if err := validateRedirectTarget(ctx, loc, d.baseURL, d.allowPrivate); err != nil {
+					return nil, err
+				}
 				return loc, nil
 			}
 			u = loc

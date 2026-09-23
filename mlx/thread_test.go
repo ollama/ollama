@@ -1,0 +1,80 @@
+package mlx
+
+import (
+	"context"
+	"runtime"
+	"sync"
+	"testing"
+
+	"github.com/ollama/ollama/mlx/mlxthread/mlxthreadtest"
+)
+
+var testThread = sync.OnceValues(func() (*mlxthreadtest.Thread, error) {
+	return mlxthreadtest.Start("mlx-test", func() error {
+		if err := CheckInit(); err != nil {
+			return err
+		}
+		if GPUIsAvailable() {
+			SetDefaultDeviceGPU()
+		}
+		return nil
+	})
+})
+
+func mlxTestThread(tb testing.TB) *mlxthreadtest.Thread {
+	tb.Helper()
+
+	thread, err := testThread()
+	if err != nil {
+		tb.Skipf("MLX not available: %v", err)
+	}
+
+	return thread
+}
+
+func withMLXThread(t *testing.T, fn func(*mlxthreadtest.T)) {
+	t.Helper()
+	mlxthreadtest.Run(t, mlxTestThread(t), fn)
+}
+
+func TestThreadedMLXOperations(t *testing.T) {
+	thread := mlxTestThread(t)
+
+	oldProcs := runtime.GOMAXPROCS(8)
+	defer runtime.GOMAXPROCS(oldProcs)
+
+	const goroutines = 8
+	const iterations = 8
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines)
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			for range iterations {
+				if err := thread.Do(context.Background(), func() error {
+					Scoped(func() {
+						a := FromValues([]float32{1, 2, 3, 4}, 2, 2)
+						b := Matmul(a, a)
+						AsyncEval(b)
+						Eval(b)
+					})
+					ClearCache()
+					return nil
+				}); err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}

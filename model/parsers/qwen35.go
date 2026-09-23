@@ -51,6 +51,13 @@ func (p *Qwen35Parser) UnclosedThinking() bool {
 	return p.state == qwen35ParserStateCollectingThinking
 }
 
+func (p *Qwen35Parser) ThinkingClose() []string {
+	if p.state == qwen35ParserStateCollectingThinking {
+		return []string{qwen35ThinkingCloseTag}
+	}
+	return nil
+}
+
 func (p *Qwen35Parser) PreservedTokens() []string {
 	return []string{
 		qwen35ThinkingOpenTag,
