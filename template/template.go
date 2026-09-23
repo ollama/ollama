@@ -602,11 +602,11 @@ func deleteNode(n parse.Node, fn func(parse.Node) bool) parse.Node {
 			t.Nodes = nodes
 			return t
 		case *parse.IfNode:
-			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+			t.BranchNode = *walk(&t.BranchNode).(*parse.BranchNode)
 		case *parse.WithNode:
-			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+			t.BranchNode = *walk(&t.BranchNode).(*parse.BranchNode)
 		case *parse.RangeNode:
-			t.BranchNode = *(walk(&t.BranchNode).(*parse.BranchNode))
+			t.BranchNode = *walk(&t.BranchNode).(*parse.BranchNode)
 		case *parse.BranchNode:
 			t.List = walk(t.List).(*parse.ListNode)
 			if t.ElseList != nil {

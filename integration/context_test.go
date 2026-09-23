@@ -136,7 +136,7 @@ func containsEmoji(s string) bool {
 	return false
 }
 
-// Send multiple generate requests with prior context and ensure the response is coherant and expected
+// Send multiple generate requests with prior context and ensure the response is coherent and expected
 func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 	if testModel != "" {
 		// The Generate API's Context field (token array continuation) is not
@@ -194,7 +194,7 @@ func runParallelGenerateWithHistory(t *testing.T, modelName string) {
 	wg.Wait()
 }
 
-// Send generate requests with prior context and ensure the response is coherant and expected
+// Send generate requests with prior context and ensure the response is coherent and expected
 func runGenerateWithHistory(t *testing.T) {
 	if testModel != "" {
 		// The Generate API's Context field (token array continuation) is not
@@ -234,7 +234,7 @@ func runGenerateWithHistory(t *testing.T) {
 	}
 }
 
-// Send multiple chat requests with prior context and ensure the response is coherant and expected
+// Send multiple chat requests with prior context and ensure the response is coherent and expected
 func runParallelChatWithHistory(t *testing.T, modelName string) {
 	req, resp := ChatRequests()
 	numParallel := 2
@@ -299,7 +299,7 @@ func prepareParallelHistoryModel(ctx context.Context, t *testing.T, client *api.
 	skipIfModelTooLargeForSweepVRAM(ctx, t, client, modelName)
 }
 
-// Send generate requests with prior context and ensure the response is coherant and expected
+// Send generate requests with prior context and ensure the response is coherent and expected
 func runChatWithHistory(t *testing.T) {
 	req := api.ChatRequest{
 		Model:     smol,

@@ -10,6 +10,8 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
@@ -18,7 +20,7 @@ import (
 // Codex implements Runner for Codex integration
 type Codex struct{}
 
-func (c *Codex) String() string { return "Codex" }
+func (c *Codex) String() string { return "Codex CLI" }
 
 const (
 	codexProfileName           = "ollama-launch"
@@ -30,6 +32,7 @@ const (
 	codexRootModelKey            = "model"
 	codexRootModelProviderKey    = "model_provider"
 	codexRootModelCatalogJSONKey = "model_catalog_json"
+	codexRootOpenAIBaseURLKey    = "openai_base_url"
 )
 
 func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
@@ -389,24 +392,6 @@ func codexValidateProfileConfigText(config codexParsedConfig, profileName, model
 	return nil
 }
 
-func codexUpsertSection(text, header string, lines []string) string {
-	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
-
-	if targetPath, ok := codexTableHeaderPath(header); ok {
-		if start, end, found := codexSectionRange(text, targetPath); found {
-			return text[:start] + block + text[end:]
-		}
-	}
-
-	if text != "" && !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if text != "" {
-		text += "\n"
-	}
-	return text + block
-}
-
 func codexRemoveSection(text, header string) string {
 	targetPath, ok := codexTableHeaderPath(header)
 	if !ok {
@@ -732,6 +717,29 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		truncationMode = "tokens"
 	}
 
+	supportedReasoningLevels := make([]any, 0)
+	var defaultReasoningLevel any
+	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
+		for _, level := range contract.levels {
+			value := contract.values[level]
+			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
+			if err != nil || converted == nil {
+				continue
+			}
+			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
+			if resolved == nil || resolved.Value != value {
+				continue
+			}
+			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+				"effort":      level,
+				"description": codexAppThinkingLevelDescription(level),
+			})
+		}
+		if contract.defaultLevel != "" {
+			defaultReasoningLevel = contract.defaultLevel
+		}
+	}
+
 	return map[string]any{
 		"slug":                         modelName,
 		"display_name":                 modelName,
@@ -747,7 +755,8 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
 		"supports_reasoning_summaries": false,
-		"supported_reasoning_levels":   []any{},
+		"supported_reasoning_levels":   supportedReasoningLevels,
+		"default_reasoning_level":      defaultReasoningLevel,
 		"experimental_supported_tools": []any{},
 	}
 }

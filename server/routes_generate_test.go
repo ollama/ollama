@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +18,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
@@ -111,6 +111,30 @@ func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func (m mockRunner) ContextLength() int { return m.contextLength }
 
+func TestLlamaServerConfigForModelSplitPaths(t *testing.T) {
+	m := &Model{
+		Digest:          strings.Repeat("a", 64),
+		DraftPath:       "draft-00001-of-00002.gguf",
+		DraftShardPaths: []string{"draft-00002-of-00002.gguf"},
+	}
+
+	got := llamaServerConfigForModel(m)
+	if got.ManifestDigest != m.Digest {
+		t.Fatalf("manifest digest = %q, want %q", got.ManifestDigest, m.Digest)
+	}
+	if got.DraftModelPath != m.DraftPath {
+		t.Fatalf("draft model path = %q, want %q", got.DraftModelPath, m.DraftPath)
+	}
+	if !slices.Equal(got.DraftModelShardPaths, m.DraftShardPaths) {
+		t.Fatalf("draft shard paths = %q, want %q", got.DraftModelShardPaths, m.DraftShardPaths)
+	}
+
+	got.DraftModelShardPaths[0] = "changed"
+	if m.DraftShardPaths[0] == "changed" {
+		t.Fatal("llama-server config aliases model shard slices")
+	}
+}
+
 func TestOptionsForPromptUsesEffectiveContextLength(t *testing.T) {
 	opts := &api.Options{Runner: api.Runner{NumCtx: 4096}}
 
@@ -135,8 +159,8 @@ func TestOptionsForPromptLeavesLargerRunnerContext(t *testing.T) {
 	}
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *gguf.Model, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -166,10 +190,10 @@ func newServerWithMockRunner(t *testing.T, mock *mockRunner) *Server {
 	return s
 }
 
-func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tmpl string, info map[string]any) {
+func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV, tmpl string, info map[string]any) {
 	t.Helper()
 
-	base := ggml.KV{
+	base := gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -184,7 +208,7 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tm
 		base[k] = v
 	}
 
-	_, digest := createBinFile(t, base, []*ggml.Tensor{
+	_, digest := createBinFile(t, base, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
 
@@ -197,6 +221,17 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv ggml.KV, tm
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status 200 creating model, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestModelOptionsKeepStoredTypicalP(t *testing.T) {
+	s := &Server{}
+	opts, err := s.modelOptions(&Model{Options: map[string]any{"typical_p": 0.5}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.TypicalP != 0.5 {
+		t.Fatalf("typical_p = %v, want 0.5", opts.TypicalP)
 	}
 }
 
@@ -280,19 +315,20 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	mock := mockRunner{
 		ChatFn: func(_ context.Context, req llm.ChatRequest, fn func(llm.ChatResponse)) error {
 			fn(llm.ChatResponse{
-				Message:            api.Message{Role: "assistant", Content: "chat template response"},
-				Done:               true,
-				DoneReason:         llm.DoneReasonStop,
-				PromptEvalCount:    1,
-				PromptEvalDuration: time.Millisecond,
-				EvalCount:          2,
-				EvalDuration:       2 * time.Millisecond,
+				Message:               api.Message{Role: "assistant", Content: "chat template response"},
+				Done:                  true,
+				DoneReason:            llm.DoneReasonStop,
+				PromptEvalCount:       2,
+				PromptEvalCachedCount: testIntPtr(1),
+				PromptEvalDuration:    time.Millisecond,
+				EvalCount:             2,
+				EvalDuration:          2 * time.Millisecond,
 			})
 			return nil
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "chat-template", ggml.KV{
+	createMinimalGGUFModel(t, s, "chat-template", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "", nil)
 
@@ -314,6 +350,9 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	}
 	if actual.Message.Content != "chat template response" {
 		t.Fatalf("expected chat template response, got %q", actual.Message.Content)
+	}
+	if actual.PromptEvalCount != 2 || actual.PromptEvalCachedCount == nil || *actual.PromptEvalCachedCount != 1 {
+		t.Errorf("prompt counts = (%d, %v), want (2, 1)", actual.PromptEvalCount, actual.PromptEvalCachedCount)
 	}
 	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
 		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
@@ -350,7 +389,7 @@ func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "chat-template-truncate", ggml.KV{
+	createMinimalGGUFModel(t, s, "chat-template-truncate", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "", nil)
 
@@ -396,7 +435,7 @@ func TestChatHandlerTemplateEnvUsesRenderedRoute(t *testing.T) {
 		},
 	}
 	s := newServerWithMockRunner(t, &mock)
-	createMinimalGGUFModel(t, s, "go-template", ggml.KV{
+	createMinimalGGUFModel(t, s, "go-template", gguftest.KV{
 		"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 	}, "{{ range .Messages }}{{ .Role }}: {{ .Content }}\n{{ end }}", nil)
 
@@ -497,7 +536,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -528,7 +567,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-preferred-chat-template", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-preferred-chat-template", gguftest.KV{
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, "{{ range .Messages }}go-template: {{ .Content }}{{ end }}", nil)
 
@@ -599,7 +638,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template-context", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template-context", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -638,7 +677,7 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 			},
 		}
 		s := newServerWithMockRunner(t, &mock)
-		createMinimalGGUFModel(t, s, "generate-chat-template-images", ggml.KV{
+		createMinimalGGUFModel(t, s, "generate-chat-template-images", gguftest.KV{
 			"tokenizer.chat_template": "{{ messages[0]['content'] }}",
 		}, "", nil)
 
@@ -754,12 +793,13 @@ func TestGenerateChat(t *testing.T) {
 
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
-			Done:               true,
-			DoneReason:         llm.DoneReasonStop,
-			PromptEvalCount:    1,
-			PromptEvalDuration: 1,
-			EvalCount:          1,
-			EvalDuration:       1,
+			Done:                  true,
+			DoneReason:            llm.DoneReasonStop,
+			PromptEvalCount:       2,
+			PromptEvalCachedCount: testIntPtr(1),
+			PromptEvalDuration:    1,
+			EvalCount:             1,
+			EvalDuration:          1,
 		},
 	}
 
@@ -787,7 +827,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -797,7 +837,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -887,10 +927,10 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []*ggml.Tensor{})
+		}, []*gguftest.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -970,6 +1010,9 @@ func TestGenerateChat(t *testing.T) {
 
 		if actual.PromptEvalCount == 0 {
 			t.Errorf("expected prompt eval count > 0, got 0")
+		}
+		if actual.PromptEvalCachedCount == nil || *actual.PromptEvalCachedCount != 1 {
+			t.Errorf("expected cached prompt eval count 1, got %v", actual.PromptEvalCachedCount)
 		}
 
 		if actual.PromptEvalDuration == 0 {
@@ -1504,7 +1547,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -1514,7 +1557,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -1566,10 +1609,10 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []*ggml.Tensor{})
+		}, []*gguftest.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
@@ -1607,6 +1650,35 @@ func TestGenerate(t *testing.T) {
 
 		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support insert"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("rejected option", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test",
+			Prompt:  "Hello!",
+			Options: map[string]any{"typical_p": 0.5},
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"typical_p is no longer supported"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("null option is unset", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:   "test",
+			Prompt:  "Hello!",
+			Options: map[string]any{"typical_p": nil},
+			Stream:  &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
 		}
 	})
 
@@ -1984,7 +2056,7 @@ func TestGenerateLogprobs(t *testing.T) {
 
 		go s.sched.Run(t.Context())
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -1994,7 +2066,7 @@ func TestGenerateLogprobs(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2114,7 +2186,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -2124,7 +2196,7 @@ func TestGenerateLogprobsWithBuiltinParser(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2278,7 +2350,7 @@ func TestChatLogprobs(t *testing.T) {
 
 		go s.sched.Run(t.Context())
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -2288,7 +2360,7 @@ func TestChatLogprobs(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2391,7 +2463,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		go s.sched.Run(t.Context())
 
 		// Create a model with thinking support
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":          "llama",
 			"llama.block_count":             uint32(1),
 			"llama.context_length":          uint32(8192),
@@ -2401,7 +2473,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			"tokenizer.ggml.tokens":         []string{""},
 			"tokenizer.ggml.scores":         []float32{0},
 			"tokenizer.ggml.token_type":     []int32{0},
-		}, []*ggml.Tensor{
+		}, []*gguftest.Tensor{
 			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2574,240 +2646,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
 		}
 	})
-
-	t.Run("structured outputs restart non-stream", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := false
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-
-		var resp api.ChatResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatal(err)
-		}
-
-		if resp.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected thinking %q, got %q", "I am thinking through this problem. ", resp.Message.Thinking)
-		}
-
-		if resp.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
-		}
-
-		if !resp.Done {
-			t.Errorf("expected response to be done")
-		}
-
-		if resp.DoneReason != "stop" {
-			t.Errorf("expected done reason stop, got %s", resp.DoneReason)
-		}
-	})
-
-	t.Run("structured outputs restart streaming", func(t *testing.T) {
-		var (
-			requestsMu sync.Mutex
-			requests   []llm.CompletionRequest
-			wg         sync.WaitGroup
-		)
-
-		wg.Add(2)
-
-		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
-
-		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-			defer wg.Done()
-
-			requestsMu.Lock()
-			requests = append(requests, r)
-			callNum := len(requests)
-			requestsMu.Unlock()
-
-			switch callNum {
-			case 1:
-				fn(llm.CompletionResponse{
-					Content:            " I am thinking through this problem. </think> {\"answer\":\"42\"}",
-					Done:               false,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-				})
-
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(time.Second):
-					t.Fatalf("timeout waiting for structured outputs cancellation")
-					return nil
-				}
-			case 2:
-				fn(llm.CompletionResponse{
-					Content:            `{"answer":"42"}`,
-					Done:               true,
-					DoneReason:         llm.DoneReasonStop,
-					PromptEvalCount:    1,
-					PromptEvalDuration: 1,
-					EvalCount:          1,
-					EvalDuration:       1,
-				})
-				return nil
-			default:
-				t.Fatalf("unexpected number of completion calls: %d", callNum)
-				return nil
-			}
-		}
-
-		think := true
-		streamRequest := true
-		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model:    "test-thinking",
-			Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
-			Think:    &api.ThinkValue{Value: think},
-			Stream:   &streamRequest,
-			Format:   format,
-		})
-
-		wg.Wait()
-		mock.CompletionFn = nil
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("expected status 200, got %d", w.Code)
-		}
-
-		if len(requests) != 2 {
-			t.Fatalf("expected two completion calls, got %d", len(requests))
-		}
-
-		if requests[0].Format != nil {
-			t.Errorf("expected first completion format to be nil, got %q", requests[0].Format)
-		}
-
-		if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
-			t.Errorf("expected second completion format to match original format")
-		}
-
-		decoder := json.NewDecoder(w.Body)
-		var events []api.ChatResponse
-		for {
-			var event api.ChatResponse
-			if err := decoder.Decode(&event); err == io.EOF {
-				break
-			} else if err != nil {
-				t.Fatal(err)
-			}
-			events = append(events, event)
-			if event.Done {
-				break
-			}
-		}
-
-		if len(events) < 2 {
-			t.Fatalf("expected at least two streaming events, got %d", len(events))
-		}
-
-		first := events[0]
-		if first.Message.Thinking != "I am thinking through this problem. " {
-			t.Errorf("expected first event thinking %q, got %q", "I am thinking through this problem. ", first.Message.Thinking)
-		}
-
-		if first.Message.Content != "" {
-			t.Errorf("expected first event content to be empty, got %q", first.Message.Content)
-		}
-
-		if first.Done {
-			t.Error("expected first event to be non-terminal")
-		}
-
-		last := events[len(events)-1]
-		if last.Message.Thinking != "" {
-			t.Errorf("expected final event thinking to be empty, got %q", last.Message.Thinking)
-		}
-
-		if last.Message.Content != `{"answer":"42"}` {
-			t.Errorf("expected final event content %q, got %q", `{"answer":"42"}`, last.Message.Content)
-		}
-
-		if !last.Done {
-			t.Error("expected final event to be done")
-		}
-
-		if last.DoneReason != "stop" {
-			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
-		}
-	})
 }
 
 // TestChatFormatWithThinkFalse verifies that when a model uses a builtin
@@ -2855,7 +2693,7 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 
 			go s.sched.Run(t.Context())
 
-			_, digest := createBinFile(t, ggml.KV{
+			_, digest := createBinFile(t, gguftest.KV{
 				"general.architecture":          "llama",
 				"llama.block_count":             uint32(1),
 				"llama.context_length":          uint32(8192),
@@ -2865,7 +2703,7 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 				"tokenizer.ggml.tokens":         []string{""},
 				"tokenizer.ggml.scores":         []float32{0},
 				"tokenizer.ggml.token_type":     []int32{0},
-			}, []*ggml.Tensor{
+			}, []*gguftest.Tensor{
 				{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 				{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 				{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -2964,7 +2802,7 @@ func TestGenerateUnload(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -2974,7 +2812,7 @@ func TestGenerateUnload(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -3068,7 +2906,7 @@ func TestGenerateWithImages(t *testing.T) {
 
 	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -3078,7 +2916,7 @@ func TestGenerateWithImages(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -3185,108 +3023,7 @@ func TestGenerateWithImages(t *testing.T) {
 	})
 }
 
-// TestImageGenerateStreamFalse tests that image generation respects stream=false
-// and returns a single JSON response instead of streaming ndjson.
-func TestImageGenerateStreamFalse(t *testing.T) {
-	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
-	gin.SetMode(gin.TestMode)
-
-	p := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", p)
-
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		fn(llm.CompletionResponse{Step: 2, TotalSteps: 3, Done: false})
-		fn(llm.CompletionResponse{Step: 3, TotalSteps: 3, Done: true, DoneReason: llm.DoneReasonStop, Image: "base64image"})
-		return nil
-	}
-
-	// Create model manifest with image capability
-	n := model.ParseName("test-image")
-	cfg := model.ConfigV2{Capabilities: []string{"image"}}
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(&cfg); err != nil {
-		t.Fatal(err)
-	}
-	configLayer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	loadedModel, err := GetModel("test-image")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts, err := (&Server{}).modelOptions(loadedModel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				schedulerModelKey(loadedModel): {
-					llama:       &mock,
-					Options:     &opts,
-					model:       loadedModel,
-					isImagegen:  true,
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(&mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-
-	streamFalse := false
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-		Model:  "test-image",
-		Prompt: "test prompt",
-		Stream: &streamFalse,
-	})
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
-		t.Errorf("expected Content-Type 'application/json; charset=utf-8', got %q", ct)
-	}
-
-	body := w.Body.String()
-	lines := strings.Split(strings.TrimSpace(body), "\n")
-	if len(lines) != 1 {
-		t.Errorf("expected 1 response line, got %d:\n%s", len(lines), body)
-	}
-
-	var resp api.GenerateResponse
-	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
-	}
-
-	if resp.Image != "base64image" {
-		t.Errorf("expected image 'base64image', got %q", resp.Image)
-	}
-
-	if !resp.Done {
-		t.Errorf("expected done=true")
-	}
-}
-
-func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
-	t.Helper()
-
+func TestImageGenerateUnsupported(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
@@ -3307,99 +3044,15 @@ func newImageGenerateTestServer(t *testing.T, mock *mockRunner) Server {
 		t.Fatal(err)
 	}
 
-	loadedModel, err := GetModel("test-image")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	opts, err := (&Server{}).modelOptions(loadedModel, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				schedulerModelKey(loadedModel): {
-					llama:       mock,
-					Options:     &opts,
-					model:       loadedModel,
-					isImagegen:  true,
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-	return s
-}
-
-func TestImageGenerateStreamFalseErrorAfterProgress(t *testing.T) {
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		return errors.New("runner died")
-	}
-	s := newImageGenerateTestServer(t, &mock)
-
-	streamFalse := false
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-		Model:  "test-image",
-		Prompt: "test prompt",
-		Stream: &streamFalse,
-	})
-
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status 500, got %d: %s", w.Code, w.Body.String())
-	}
-	if !strings.Contains(w.Body.String(), "runner died") {
-		t.Fatalf("expected runner error in body, got %q", w.Body.String())
-	}
-}
-
-func TestImageGenerateStreamingErrorAfterProgress(t *testing.T) {
-	mock := mockRunner{}
-	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
-		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
-		return errors.New("runner died")
-	}
-	s := newImageGenerateTestServer(t, &mock)
-
-	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+	w := createRequest(t, (&Server{}).GenerateHandler, api.GenerateRequest{
 		Model:  "test-image",
 		Prompt: "test prompt",
 	})
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200 after streaming started, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 	}
-	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected progress and error lines, got %d:\n%s", len(lines), w.Body.String())
-	}
-
-	var progress api.GenerateResponse
-	if err := json.Unmarshal([]byte(lines[0]), &progress); err != nil {
-		t.Fatalf("failed to parse progress response: %v", err)
-	}
-	if progress.Completed != 1 || progress.Total != 3 || progress.Done {
-		t.Fatalf("progress response = %+v", progress)
-	}
-
-	var errorResponse struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(lines[1]), &errorResponse); err != nil {
-		t.Fatalf("failed to parse error response: %v", err)
-	}
-	if errorResponse.Error != "runner died" {
-		t.Fatalf("error = %q, want runner died", errorResponse.Error)
+	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
+		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type FunctionGemmaRenderer struct{}
@@ -288,4 +289,8 @@ func (r *FunctionGemmaRenderer) formatArrayValue(arr []any) string {
 
 	sb.WriteString("]")
 	return sb.String()
+}
+
+func (r *FunctionGemmaRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }

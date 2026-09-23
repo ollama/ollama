@@ -199,13 +199,9 @@ var (
 	cudaRuntimeDirRegex = regexp.MustCompile(`^cuda_v(\d+)$`)
 )
 
-// parseLlamaServerDevices parses the combined output of llama-server discovery.
-// It extracts device info, ROCm gfx targets, CUDA compute capabilities, and
-// CUDA compiled architecture lists.
-func parseLlamaServerDevices(output string, libDirs []string) []ml.DeviceInfo {
-	return parseLlamaServerDevicesWithNative(output, "", libDirs, nil)
-}
-
+// parseLlamaServerDevicesWithNative parses the combined output of llama-server
+// discovery. It extracts device info, ROCm gfx targets, CUDA compute
+// capabilities, and CUDA compiled architecture lists.
 func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []string, nativeDevices []nativeProbeDevice) []ml.DeviceInfo {
 	combined := output
 	if nativeOutput != "" {

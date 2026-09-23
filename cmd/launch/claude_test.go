@@ -353,6 +353,7 @@ func TestClaudeEnvVars(t *testing.T) {
 		"ANTHROPIC_API_KEY":                   "",
 		"ANTHROPIC_AUTH_TOKEN":                "ollama",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":   "off",
 		"DISABLE_ERROR_REPORTING":             "1",
 		"DISABLE_FEEDBACK_COMMAND":            "1",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",

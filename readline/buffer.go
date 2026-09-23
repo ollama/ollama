@@ -294,7 +294,7 @@ func (b *Buffer) drawRemaining() {
 
 	// render the other lines
 	if remLength > currLineSpace {
-		remaining := (remainingText[len(currLine):])
+		remaining := remainingText[len(currLine):]
 		var totalLines int
 		var displayLength int
 		var lineLength int = currLineSpace

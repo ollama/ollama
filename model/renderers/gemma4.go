@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Gemma4Renderer renders prompts using Gemma 4's chat format with
@@ -834,4 +835,8 @@ func (r *Gemma4Renderer) formatArrayValue(arr []any) string {
 	}
 	sb.WriteString("]")
 	return sb.String()
+}
+
+func (r *Gemma4Renderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: false}
 }

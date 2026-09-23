@@ -96,11 +96,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum: [high, medium, low, max]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
+          $ref: "#/components/schemas/ThinkValue"
         raw:
           type: boolean
           description: When true, returns the raw response from the model without any prompt templating
@@ -147,9 +143,12 @@ components:
         prompt_eval_count:
           type: integer
           description: Number of input tokens in the prompt
+        prompt_eval_cached_count:
+          type: integer
+          description: Number of prompt tokens read from the cache
         prompt_eval_duration:
           type: integer
-          description: Time spent evaluating the prompt in nanoseconds
+          description: Time spent evaluating uncached prompt tokens in nanoseconds
         eval_count:
           type: integer
           description: Number of output tokens generated in the response
@@ -191,9 +190,12 @@ components:
         prompt_eval_count:
           type: integer
           description: Number of input tokens in the prompt
+        prompt_eval_cached_count:
+          type: integer
+          description: Number of prompt tokens read from the cache
         prompt_eval_duration:
           type: integer
-          description: Time spent evaluating the prompt in nanoseconds
+          description: Time spent evaluating uncached prompt tokens in nanoseconds
         eval_count:
           type: integer
           description: Number of output tokens generated in the response
@@ -288,11 +290,7 @@ components:
           type: boolean
           default: true
         think:
-          oneOf:
-            - type: boolean
-            - type: string
-              enum: [high, medium, low, max]
-          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low", "max") for supported models, with "max" requesting the highest thinking level.
+          $ref: "#/components/schemas/ThinkValue"
         keep_alive:
           oneOf:
             - type: string
@@ -352,9 +350,12 @@ components:
         prompt_eval_count:
           type: integer
           description: Number of tokens in the prompt
+        prompt_eval_cached_count:
+          type: integer
+          description: Number of prompt tokens read from the cache
         prompt_eval_duration:
           type: integer
-          description: Time spent evaluating the prompt in nanoseconds
+          description: Time spent evaluating uncached prompt tokens in nanoseconds
         eval_count:
           type: integer
           description: Number of tokens generated in the response
@@ -401,6 +402,29 @@ components:
         done:
           type: boolean
           description: True for the final event in the stream
+    ThinkValue:
+      description: Controls a model's thinking output. Use `/api/show` to discover the supported values and default for the selected model. `true` requests thinking, `false` requests no thinking output, and `null` uses the model default. String values are model-defined; supported names must match `/api/show` exactly. Numbers are not supported.
+      oneOf:
+        - type: boolean
+        - type: string
+        - type: "null"
+    Thinking:
+      type: object
+      required: [values, default]
+      description: Thinking controls advertised by a model. Models without thinking metadata omit this field.
+      properties:
+        values:
+          type: array
+          description: Values explicitly supported by the model's `think` request field. Booleans represent on/off controls and strings represent model-defined levels. An array containing only `false` identifies a model without thinking support.
+          items:
+            oneOf:
+              - type: boolean
+              - type: string
+        default:
+          description: Value used when `think` is not set. For models that use this metadata for named thinking levels, unsupported names resolve to this default.
+          oneOf:
+            - type: boolean
+            - type: string
     StatusEvent:
       type: object
       properties:
@@ -489,6 +513,16 @@ components:
         parser:
           type: string
           description: Name of the parser for the model
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          description: Source file names mapped to their SHA-256 digests. Split GGUF models must include each shard under its original split filename.
+        draft_files:
+          type: object
+          additionalProperties:
+            type: string
+          description: Draft source file names mapped to their SHA-256 digests
         license:
           oneOf:
             - type: string
@@ -509,7 +543,13 @@ components:
             $ref: "#/components/schemas/ChatMessage"
         quantize:
           type: string
-          description: Quantization level to apply (e.g. `q4_K_M`, `q8_0`)
+          description: Quantization level to apply during import (e.g. `nvfp4`)
+        draft_quantize:
+          type: string
+          description: Quantization level to apply to draft weights during import
+        requires:
+          type: string
+          description: Minimum Ollama version required by the model
         stream:
           type: boolean
           default: true
@@ -572,6 +612,8 @@ components:
     ShowResponse:
       type: object
       properties:
+        thinking:
+          $ref: "#/components/schemas/Thinking"
         parameters:
           type: string
           description: Model parameter settings serialized as text
@@ -809,6 +851,15 @@ paths:
             curl http://localhost:11434/api/generate -d '{
               "model": "gemma4",
               "prompt": "Why is the sky blue?",
+              "stream": false
+            }'
+        - lang: bash
+          label: Thinking
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gpt-oss",
+              "prompt": "What is 1+1?",
+              "think": "low",
               "stream": false
             }'
         - lang: bash
@@ -1220,6 +1271,18 @@ paths:
               "model": "gemma4",
               "verbose": true
             }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
+        - lang: bash
+          label: Thinking controls
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gpt-oss"
+            }'
       requestBody:
         required: true
         content:
@@ -1240,7 +1303,13 @@ paths:
                 license: "Gemma Terms of Use \n\nLast modified: February 21, 2024..."
                 capabilities:
                   - "completion"
+                  - "thinking"
                   - "vision"
+                thinking:
+                  values:
+                    - false
+                    - true
+                  default: true
                 modified_at: "2025-08-14T15:49:43.634137516-07:00"
                 details:
                   parent_model: ""
@@ -1331,12 +1400,13 @@ paths:
               "system": "You are Ollama the llama."
             }'
         - lang: bash
-          label: Quantize
+          label: Create from GGUF
           source: |
             curl http://localhost:11434/api/create -d '{
-              "model": "llama3.1:8b-instruct-Q4_K_M",
-              "from": "llama3.1:8b-instruct-fp16",
-              "quantize": "q4_K_M"
+              "model": "my-gguf-model",
+              "files": {
+                "model.gguf": "sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+              }
             }'
       requestBody:
         required: true
@@ -1362,6 +1432,62 @@ paths:
                 $ref: "#/components/schemas/StatusEvent"
               example:
                 status: "success"
+  /api/blobs/{digest}:
+    head:
+      summary: Check if a blob exists
+      operationId: headBlob
+      parameters:
+        - $ref: "#/components/parameters/DigestParam"
+      responses:
+        "200":
+          description: Blob exists
+        "400":
+          description: Invalid digest
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Blob not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to inspect blob
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Push a blob
+      operationId: createBlob
+      parameters:
+        - $ref: "#/components/parameters/DigestParam"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Blob already exists
+        "201":
+          description: Blob created
+        "400":
+          description: Invalid digest or blob content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to write blob
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/copy:
     post:
       summary: Copy a model

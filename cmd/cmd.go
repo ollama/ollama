@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -41,22 +42,21 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
-	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
-	xcreate "github.com/ollama/ollama/x/create"
-	xcreateclient "github.com/ollama/ollama/x/create/client"
-	"github.com/ollama/ollama/x/imagegen"
 )
 
 func init() {
@@ -153,8 +153,6 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
 }
 
-var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
-
 func getModelfileName(cmd *cobra.Command) (string, error) {
 	filename, _ := cmd.Flags().GetString("file")
 
@@ -186,37 +184,134 @@ func isLocalhost() bool {
 	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
-func resolveExperimentalLocalModelDir(ref, filename string) string {
+func resolveCreateLocalModelDir(ref, filename string) string {
 	if ref == "" || filepath.IsAbs(ref) || filename == "" {
 		return ref
 	}
 
 	candidate := filepath.Join(filepath.Dir(filename), ref)
-	if xcreate.IsSafetensorsModelDir(candidate) || xcreate.IsTensorModelDir(candidate) {
+	if create.IsSafetensorsModelDir(candidate) {
 		return candidate
 	}
 
 	return ref
 }
 
-func resolveExperimentalDraftDir(ref, filename string) (string, error) {
+func resolveCreateDraftDir(ref, filename string) (string, error) {
 	if ref == "" {
 		return "", nil
 	}
 	if filepath.IsAbs(ref) {
-		if xcreate.IsSafetensorsModelDir(ref) {
+		if create.IsSafetensorsModelDir(ref) {
 			return ref, nil
 		}
 		return "", fmt.Errorf("draft %s is not a supported safetensors model directory", ref)
 	}
 	if filename != "" {
 		candidate := filepath.Join(filepath.Dir(filename), ref)
-		if xcreate.IsSafetensorsModelDir(candidate) {
+		if create.IsSafetensorsModelDir(candidate) {
 			return candidate, nil
 		}
 	}
 
-	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
+	return "", fmt.Errorf("DRAFT model references must be local safetensors directories for safetensors create: %s", ref)
+}
+
+func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) {
+	var reader io.Reader
+	filename, err := getModelfileName(cmd)
+	if errors.Is(err, os.ErrNotExist) || filename == "" {
+		reader = strings.NewReader("FROM .\n")
+	} else if err != nil {
+		return nil, "", err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return nil, "", err
+		}
+		defer f.Close()
+		reader = f
+	}
+
+	modelfile, err := parser.ParseFile(reader)
+	if err != nil {
+		return nil, "", err
+	}
+	return modelfile, filename, nil
+}
+
+func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName string) (createOptions, bool, error) {
+	modelDir, mfConfig, err := configFromModelfile(modelfile)
+	if err != nil {
+		return createOptions{}, false, err
+	}
+
+	modelDir = resolveCreateLocalModelDir(modelDir, filename)
+	isSafetensors := create.IsSafetensorsModelDir(modelDir)
+	isBaseModelWithDraft := mfConfig.Draft != "" && !isSafetensors && create.IsSafetensorsLLMModel(modelDir)
+	if !isSafetensors && !isBaseModelWithDraft {
+		return createOptions{}, false, nil
+	}
+
+	if mfConfig.Draft != "" {
+		draftDir, err := resolveCreateDraftDir(mfConfig.Draft, filename)
+		if err != nil {
+			if isSafetensors {
+				return createOptions{}, false, err
+			}
+			// Existing safetensors models may still use a GGUF DRAFT layer;
+			// leave that combination on the standard create path.
+			return createOptions{}, false, nil
+		}
+		mfConfig.Draft = draftDir
+	}
+
+	var modelCount, draftCount int
+	for _, command := range modelfile.Commands {
+		switch command.Name {
+		case "model":
+			modelCount++
+		case "draft":
+			draftCount++
+		}
+	}
+	if modelCount != 1 {
+		return createOptions{}, false, errors.New("safetensors imports require exactly one FROM source")
+	}
+	if draftCount > 1 {
+		return createOptions{}, false, errors.New("safetensors imports support at most one DRAFT source")
+	}
+
+	return createOptions{
+		ModelName: modelName,
+		ModelDir:  modelDir,
+		Modelfile: mfConfig,
+	}, true, nil
+}
+
+var (
+	errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
+	errForceLocalOnly      = errors.New("--force is only supported for local MLX safetensors imports")
+	errTypicalPUnsupported = errors.New("typical_p is no longer supported")
+)
+
+// createSafetensorsModel imports in-process when the server is local and
+// otherwise uploads the source files for the server to import.
+func createSafetensorsModel(cmd *cobra.Command, args []string, opts createOptions, p *progress.Progress) error {
+	if !envconfig.CreateRemote() && isLocalhost() {
+		return createModel(cmd.Context(), opts, p)
+	}
+	if opts.Force {
+		return errForceLocalOnly
+	}
+	if err := checkServerHeartbeat(cmd, args); err != nil {
+		return err
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	return createModelRemote(cmd.Context(), client, opts, p)
 }
 
 func CreateHandler(cmd *cobra.Command, args []string) error {
@@ -230,89 +325,38 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid model name: %s", modelName)
 	}
 
-	// Check for --experimental flag for safetensors model creation
-	// This gates both safetensors LLM and imagegen model creation
-	experimental, _ := cmd.Flags().GetBool("experimental")
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
-	if experimental {
-		if !isLocalhost() {
-			return errors.New("remote safetensor model creation not yet supported")
-		}
-
-		// Get Modelfile content - either from -f flag or default to "FROM ."
-		var reader io.Reader
-		filename, err := getModelfileName(cmd)
-		if os.IsNotExist(err) || filename == "" {
-			// No Modelfile specified or found - use default
-			reader = strings.NewReader("FROM .\n")
-		} else if err != nil {
-			return err
-		} else {
-			f, err := os.Open(filename)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			reader = f
-		}
-
-		// Parse the Modelfile
-		modelfile, err := parser.ParseFile(reader)
-		if err != nil {
-			return fmt.Errorf("failed to parse Modelfile: %w", err)
-		}
-
-		modelDir, mfConfig, err := xcreateclient.ConfigFromModelfile(modelfile)
-		if err != nil {
-			return err
-		}
-
-		modelDir = resolveExperimentalLocalModelDir(modelDir, filename)
-		if mfConfig.Draft != "" {
-			draftDir, err := resolveExperimentalDraftDir(mfConfig.Draft, filename)
-			if err != nil {
-				return err
-			}
-			mfConfig.Draft = draftDir
-		}
-
-		quantize, _ := cmd.Flags().GetString("quantize")
-		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-			ModelName:     modelName,
-			ModelDir:      modelDir,
-			Quantize:      quantize,
-			DraftQuantize: draftQuantize,
-			Modelfile:     mfConfig,
-		}, p)
-	}
-
-	// Standard Modelfile + API path
-	var reader io.Reader
-
-	filename, err := getModelfileName(cmd)
-	if os.IsNotExist(err) {
-		if filename == "" {
-			reader = strings.NewReader("FROM .\n")
-		} else {
-			return errModelfileNotFound
-		}
-	} else if err != nil {
-		return err
-	} else {
-		f, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-
-		reader = f
-		defer f.Close()
-	}
-
-	modelfile, err := parser.ParseFile(reader)
+	quantize, _ := cmd.Flags().GetString("quantize")
+	force, _ := cmd.Flags().GetBool("force")
+	modelfile, filename, err := readCreateModelfile(cmd)
 	if err != nil {
 		return err
 	}
+	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "adapter" }) {
+		return errAdaptersUnsupported
+	}
+	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "typical_p" }) {
+		return errTypicalPUnsupported
+	}
 
+	opts, isSafetensorsCreate, err := safetensorsCreateOptions(modelfile, filename, modelName)
+	if err != nil {
+		return err
+	}
+	if isSafetensorsCreate {
+		opts.Quantize = quantize
+		opts.DraftQuantize = draftQuantize
+		opts.Force = force
+		return createSafetensorsModel(cmd, args, opts, p)
+	}
+	if quantize != "" {
+		return errors.New("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing")
+	}
+	if force {
+		return errForceLocalOnly
+	}
+
+	// Standard Modelfile + API path
 	status := "gathering model components"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
@@ -324,21 +368,21 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner.Stop()
 
 	req.Model = modelName
-	quantize, _ := cmd.Flags().GetString("quantize")
-	if quantize != "" {
-		req.Quantize = quantize
-	}
 	if draftQuantize != "" {
 		if len(req.DraftFiles) == 0 {
 			return errors.New("--draft-quantize requires a DRAFT model")
 		}
-		req.DraftQuantize = draftQuantize
+		return errors.New("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models before importing")
 	}
-
+	if err := checkServerHeartbeat(cmd, args); err != nil {
+		return err
+	}
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
+	// A FROM-only create has nothing to transfer, so skip the store probe.
+	local := len(req.Files)+len(req.DraftFiles) > 0 && sharedBlobStore(cmd.Context(), client)
 
 	var g errgroup.Group
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
@@ -347,7 +391,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	fileNames := createRequestFileNames(req.Files)
 	for f, digest := range req.Files {
 		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
 				return err
 			}
 
@@ -356,24 +400,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		})
 	}
 
-	adapters := syncmap.NewSyncMap[string, string]()
-	adapterNames := createRequestFileNames(req.Adapters)
-	for f, digest := range req.Adapters {
-		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
-				return err
-			}
-
-			adapters.Store(adapterNames[f], digest)
-			return nil
-		})
-	}
-
 	draftFiles := syncmap.NewSyncMap[string, string]()
 	draftFileNames := createRequestFileNames(req.DraftFiles)
 	for f, digest := range req.DraftFiles {
 		g.Go(func() error {
-			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+			if _, err := createBlob(cmd, client, f, digest, p, local); err != nil {
 				return err
 			}
 
@@ -387,7 +418,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req.Files = files.Items()
-	req.Adapters = adapters.Items()
 	req.DraftFiles = draftFiles.Items()
 
 	bars := make(map[string]*progress.Bar)
@@ -485,7 +515,42 @@ func commonFileRoot(files map[string]string) (string, bool) {
 	return root, root != ""
 }
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
+// sharedBlobStore reports whether the server reads blobs from this process's
+// models directory, in which case create can write blobs there directly
+// instead of streaming them over HTTP. A throwaway blob is written and the
+// server asked whether it can see it, so a server with a different
+// OLLAMA_MODELS (a systemd-managed install, for example) falls back to upload.
+func sharedBlobStore(ctx context.Context, client *api.Client) bool {
+	if envconfig.CreateRemote() || !isLocalhost() {
+		return false
+	}
+	probe := make([]byte, 32)
+	if _, err := rand.Read(probe); err != nil {
+		return false
+	}
+	layer, err := manifest.NewLayer(bytes.NewReader(probe), "")
+	if err != nil {
+		return false
+	}
+	defer func() {
+		if blob, err := manifest.BlobsPath(layer.Digest); err == nil {
+			os.Remove(blob)
+		}
+	}()
+	exists, err := client.HeadBlob(ctx, layer.Digest)
+	return err == nil && exists
+}
+
+// createBlob makes the file at path available to the server under digest,
+// writing it straight into the shared blob store when local is set and
+// uploading it otherwise. Blobs the server already has are skipped.
+func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress, local bool) (string, error) {
+	if exists, err := client.HeadBlob(cmd.Context(), digest); err != nil {
+		return "", err
+	} else if exists {
+		return digest, nil
+	}
+
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
@@ -527,7 +592,18 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		}
 	}()
 
-	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
+	reader := io.TeeReader(bin, &pw)
+	if local {
+		layer, err := manifest.NewLayer(reader, "")
+		if err != nil {
+			return "", err
+		}
+		if layer.Digest != digest {
+			return "", fmt.Errorf("%s changed during create: expected digest %s, got %s", path, digest, layer.Digest)
+		}
+		return digest, nil
+	}
+	if err := client.CreateBlob(cmd.Context(), digest, reader); err != nil {
 		return "", err
 	}
 	return digest, nil
@@ -709,6 +785,32 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 	return false
 }
 
+// showOrPullModel returns model info for name, pulling the model if it isn't
+// available locally. If the pull finds no default tag but a ":cloud" tag
+// exists, the user may be offered the cloud model instead (see
+// pullWithCloudSuggestion), in which case the returned name is the cloud
+// name the caller should continue with. verb is the user-facing command
+// ("run" or "pull") used in hint text.
+func showOrPullModel(cmd *cobra.Command, client *api.Client, name string, insecure bool, verb string) (*api.ShowResponse, string, error) {
+	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name})
+	if err == nil {
+		return info, name, nil
+	}
+
+	var se api.StatusError
+	if !errors.As(err, &se) || se.StatusCode != http.StatusNotFound || modelref.HasExplicitCloudSource(name) {
+		return nil, name, err
+	}
+
+	resolved, err := pullWithCloudSuggestion(cmd.Context(), client, name, insecure, verb)
+	if err != nil {
+		return nil, name, err
+	}
+
+	info, err = client.Show(cmd.Context(), &api.ShowRequest{Model: resolved})
+	return info, resolved, err
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -739,10 +841,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			opts.Think = &api.ThinkValue{Value: true}
 		case "false":
 			opts.Think = &api.ThinkValue{Value: false}
-		case "high", "medium", "low", "max":
-			opts.Think = &api.ThinkValue{Value: thinkStr}
 		default:
-			return fmt.Errorf("invalid value for --think: %q (must be true, false, high, medium, low, or max)", thinkStr)
+			opts.Think = &api.ThinkValue{Value: thinkStr}
 		}
 	} else {
 		opts.Think = nil
@@ -808,30 +908,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	name := args[0]
-	requestedCloud := modelref.HasExplicitCloudSource(name)
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
 
-	info, err := func() (*api.ShowResponse, error) {
-		showReq := &api.ShowRequest{Name: name}
-		info, err := client.Show(cmd.Context(), showReq)
-		var se api.StatusError
-		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
-			if requestedCloud {
-				return nil, err
-			}
-			if err := PullHandler(cmd, []string{name}); err != nil {
-				return nil, err
-			}
-			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
-		}
-		return info, err
-	}()
+	info, name, err := showOrPullModel(cmd, client, args[0], insecure, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
+	// The model may have been resolved to a different name (e.g. its ":cloud"
+	// variant), so make sure downstream requests use it.
+	opts.Model = name
 
 	ensureCloudStub(cmd.Context(), client, name)
 
@@ -881,12 +972,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
-	// Check if this is an image generation model
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
-		if opts.Prompt == "" && !interactive {
-			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
-		}
-		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+		return errors.New("image generation models are not currently supported")
 	}
 
 	if interactive {
@@ -1251,6 +1338,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if slices.Contains(resp.Capabilities, model.CapabilityImage) {
+		return errors.New("image generation models are not currently supported")
+	}
+
 	if flagsSet == 1 {
 		switch showType {
 		case "license":
@@ -1340,6 +1431,16 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		tableRender("Capabilities", func() (rows [][]string) {
 			for _, capability := range resp.Capabilities {
 				rows = append(rows, []string{"", capability.String()})
+				if capability == model.CapabilityThinking && resp.Thinking.Valid() {
+					values := make([]string, len(resp.Thinking.Values))
+					for i, value := range resp.Thinking.Values {
+						values[i] = fmt.Sprint(value)
+					}
+					rows = append(rows,
+						[]string{"", "    levels", strings.Join(values, ", ")},
+						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
+					)
+				}
 			}
 			return
 		})
@@ -1512,6 +1613,15 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], insecure, "pull")
+	return err
+}
+
+// pullModelWithProgress pulls name, rendering progress to stderr. When
+// clearNotFound is set and the pull fails because the model doesn't exist,
+// the progress display is erased rather than left behind; callers set it
+// when a ":cloud" suggestion prompt may immediately follow the failure.
+func pullModelWithProgress(ctx context.Context, client *api.Client, name string, insecure, clearNotFound bool) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1572,8 +1682,13 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	request := api.PullRequest{Name: name, Insecure: insecure}
+	err := client.Pull(ctx, &request, fn)
+	if clearNotFound && isPullNotFoundErr(err) {
+		// The deferred Stop becomes a no-op after this.
+		p.StopAndClear()
+	}
+	return err
 }
 
 type generateContextKey string
@@ -2060,7 +2175,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
 			return err
 		}
-		if err := startApp(cmd.Context(), client); err != nil {
+		if err := startApp(cmd.Context(), client); err != nil { //nolint:staticcheck,nolintlint // startApp always returns non-nil on Linux (start_default.go) but can return nil on macOS/Windows
 			return err
 		}
 	}
@@ -2103,32 +2218,52 @@ Environment Variables:
 }
 
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
+	opts := runOptions{
+		Model:       modelName,
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	opts := agentTUIOptions{
-		Model:   modelName,
-		Options: map[string]any{},
-	}
-	info, err := prepareAgentModel(cmd, client, &opts, false)
+	info, resolvedModel, err := showOrPullModel(cmd, client, modelName, false, "run")
 	if err != nil {
 		if handleCloudAuthorizationError(err) {
 			return nil
 		}
 		return err
 	}
-	opts.System = info.System
+	opts.Model = resolvedModel
+	ensureCloudStub(cmd.Context(), client, opts.Model)
 
-	if err := saveLastAgentModel(opts.Model); err != nil {
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
+	if err != nil {
 		return err
 	}
-	if err := GenerateAgentTUI(cmd, client, opts); err != nil {
-		if handleCloudAuthorizationError(err) {
-			return nil
+
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for key := range info.ModelInfo {
+		if strings.Contains(key, ".vision.") {
+			opts.MultiModal = true
+			break
 		}
-		return fmt.Errorf("error running agent: %w", err)
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
+	if err := loadOrUnloadModel(cmd, &opts); err != nil {
+		return fmt.Errorf("error loading model: %w", err)
+	}
+	if err := generateInteractive(cmd, opts); err != nil {
+		return fmt.Errorf("error running model: %w", err)
 	}
 	return nil
 }
@@ -2273,6 +2408,12 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			if err := runWelcome(cmd.Context()); err != nil {
+				if !errors.Is(err, launch.ErrCancelled) {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				}
+				return
+			}
 			runInteractiveTUI(cmd)
 		},
 	}
@@ -2285,20 +2426,15 @@ func NewCLI() *cobra.Command {
 		Use:   "create MODEL",
 		Short: "Create a model",
 		Args:  cobra.ExactArgs(1),
-		PreRunE: func(cmd *cobra.Command, args []string) error {
-			// Skip server check for experimental mode (writes directly to disk)
-			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
-				return nil
-			}
-			return checkServerHeartbeat(cmd, args)
-		},
-		RunE: CreateHandler,
+		RunE:  CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
-	createCmd.Flags().String("draft-quantize", "", "Quantize draft model to this level")
-	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize safetensors model to this level (e.g. nvfp4)")
+	createCmd.Flags().String("draft-quantize", "", "Quantize safetensors draft model to this level")
+	createCmd.Flags().Bool("force", false, "Continue local creation when MLX validation fails")
+	createCmd.Flags().Bool("experimental", false, "Deprecated no-op")
+	createCmd.Flags().MarkHidden("experimental")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -2333,12 +2469,6 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
-
-	// Image generation flags (width, height, steps, seed, etc.)
-	imagegen.RegisterFlags(runCmd)
-
-	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
-	runCmd.Flags().MarkHidden("imagegen")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2444,12 +2574,12 @@ func NewCLI() *cobra.Command {
 		Use:    "runner",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runner.Execute(os.Args[1:])
+			return mlxrunner.Execute(os.Args[2:])
 		},
 		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 	}
 	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		_ = runner.Execute(args[1:])
+		_ = mlxrunner.Execute([]string{"--help"})
 	})
 
 	var gpuDiscoverLibDirs []string
@@ -2481,7 +2611,6 @@ func NewCLI() *cobra.Command {
 	} {
 		switch cmd {
 		case runCmd:
-			imagegen.AppendFlagsDocs(cmd)
 			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{

@@ -16,7 +16,7 @@ import (
 
 const (
 	_ = iota
-	openUIMenuID
+	openAppsMenuID
 	settingsUIMenuID
 	updateSeparatorMenuID
 	updateAvailableMenuID
@@ -28,7 +28,7 @@ const (
 )
 
 func (t *winTray) initMenus() error {
-	if err := t.addOrUpdateMenuItem(openUIMenuID, 0, openUIMenuTitle, false); err != nil {
+	if err := t.addOrUpdateMenuItem(openAppsMenuID, 0, openAppsMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addOrUpdateMenuItem(settingsUIMenuID, 0, settingsUIMenuTitle, false); err != nil {

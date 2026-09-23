@@ -190,6 +190,37 @@ func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 	}
 }
 
+// stopChecker cancels the background update checker and waits for its
+// goroutine to return. Tests must join it before returning: the goroutine
+// reads package-level knobs (UpdateCheckURLBase, UpdateCheckInterval, ...)
+// that the next test rewrites.
+func stopChecker(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
+	t.Helper()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Error("background update checker did not stop")
+	}
+}
+
+// waitDownloadIdle blocks until no download is in flight, so staged-file
+// handles close before t.TempDir cleanup removes the stage directory. After
+// the context is cancelled a new download can't write (it aborts at the HEAD
+// request), so reaching idle makes cleanup race-free.
+func (u *Updater) waitDownloadIdle() {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		u.cancelDownloadLock.Lock()
+		idle := u.cancelDownload == nil
+		u.cancelDownloadLock.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 	UpdateStageDir = t.TempDir()
 	oldInstaller := Installer
@@ -272,10 +303,12 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 	defer cancel()
 
 	callbacks := make(chan string, 4)
-	updater.StartBackgroundUpdaterChecker(ctx, func(ver string) error {
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, func(ver string) error {
 		callbacks <- ver
 		return nil
 	})
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	for range 2 {
 		select {
@@ -316,10 +349,16 @@ func TestBackgoundChecker(t *testing.T) {
 	UpdateStageDir = t.TempDir()
 	haveUpdate := false
 	verified := false
-	done := make(chan int)
+	// Buffered + non-blocking send: the checker keeps calling cb every
+	// UpdateCheckInterval, and a blocking send would wedge its goroutine once
+	// the test stops receiving.
+	done := make(chan int, 1)
 	cb := func(ver string) error {
 		haveUpdate = true
-		done <- 0
+		select {
+		case done <- 0:
+		default:
+		}
 		return nil
 	}
 	stallTimer := time.NewTimer(5 * time.Second)
@@ -363,7 +402,9 @@ func TestBackgoundChecker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 	select {
 	case <-stallTimer.C:
 		t.Fatal("stalled")
@@ -421,11 +462,13 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 	}
 
 	cb := func(ver string) error {
-		t.Fatal("callback should not be called when auto-update is disabled")
+		t.Error("callback should not be called when auto-update is disabled")
 		return nil
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait enough time for multiple check cycles
 	time.Sleep(50 * time.Millisecond)
@@ -487,7 +530,9 @@ func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
 		return nil
 	}
 
-	upd.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := upd.startBackgroundUpdaterChecker(ctx, cb)
+	defer upd.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for a few cycles with auto-update disabled - no download should happen
 	time.Sleep(50 * time.Millisecond)
@@ -556,7 +601,9 @@ func TestCancelOngoingDownload(t *testing.T) {
 	_, resp := updater.checkForUpdate(ctx)
 
 	// Start download in goroutine
+	downloadDone := make(chan struct{})
 	go func() {
+		defer close(downloadDone)
 		_ = updater.DownloadNewRelease(ctx, resp)
 	}()
 
@@ -577,6 +624,10 @@ func TestCancelOngoingDownload(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("download cancellation was not received by server")
 	}
+
+	// Wait for the download goroutine to unwind: it drags along a background
+	// update-check loop that reads package-level knobs the next test rewrites.
+	<-downloadDone
 }
 
 func TestTriggerImmediateCheck(t *testing.T) {
@@ -614,7 +665,9 @@ func TestTriggerImmediateCheck(t *testing.T) {
 		return nil
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for the initial check that fires after the initial delay
 	select {
