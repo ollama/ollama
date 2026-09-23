@@ -1,4 +1,5 @@
 import { queryClient } from "@/lib/queryClient";
+import { invalidateDesktopModels } from "@/lib/desktopModels";
 import type {
   CodexDesktopModelsSettings as ModelsSettings,
   CodexDesktopStatus,
@@ -1138,4 +1139,316 @@ it("shows saved selections before discovering models on picker open", async () =
     resolve({ settings: summary });
     await act(async () => renderer?.unmount());
   }
+});
+
+describe("implicit recommendation defaults", () => {
+  const summary = settings({
+    usesDefaults: true,
+    selected: null as unknown as string[],
+    available: [],
+    models: [],
+  });
+  const catalog = settings({ usesDefaults: true });
+
+  function pendingCatalog() {
+    let resolve!: (value: { settings: ModelsSettings }) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<{ settings: ModelsSettings }>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    return { promise, resolve, reject };
+  }
+
+  function stubReads(catalogResponse = Promise.resolve({ settings: catalog })) {
+    let focus: (() => void) | undefined;
+    const read = vi.fn((includeCatalog: boolean) =>
+      includeCatalog ? catalogResponse : Promise.resolve({ settings: summary }),
+    );
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      getCodexDesktopModelsSettings: read,
+      addEventListener: vi.fn((event, handler) => {
+        if (event === "focus") focus = handler;
+      }),
+      removeEventListener: vi.fn((event, handler) => {
+        if (event === "focus" && focus === handler) focus = undefined;
+      }),
+    });
+    return { read, focus: () => focus?.() };
+  }
+
+  function selectedModels(renderer: ReturnType<typeof create>) {
+    return renderer.root
+      .findAllByType("button")
+      .filter((button) => button.props["aria-label"]?.startsWith("Remove "))
+      .map((button) => button.props["aria-label"].slice(7));
+  }
+
+  async function openPicker(renderer: ReturnType<typeof create>) {
+    await act(async () => {
+      renderer.root
+        .findAllByType("button")
+        .find((button) => button.props["aria-label"] === "Add ChatGPT model")!
+        .props.onClick({});
+    });
+  }
+
+  it("shows usable settings while defaults load, then fills the names without a click", async () => {
+    vi.useFakeTimers();
+    const pending = pendingCatalog();
+    const { read } = stubReads(pending.promise);
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings accountKey="account-a" />,
+        );
+      });
+      expect(textContent(renderer!.root)).toContain("Recommended models");
+      expect(read.mock.calls).toEqual([[false], [true]]);
+      expect(selectedModels(renderer!)).toEqual([]);
+      const picker = renderer!.root
+        .findAllByType("button")
+        .find((button) => button.props["aria-label"] === "Add ChatGPT model")!;
+      expect(picker.props.disabled).toBe(false);
+      const start = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Start ChatGPT")!;
+      expect(Boolean(start.props.disabled)).toBe(false);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      expect(textContent(renderer!.root)).toContain("Recommended models");
+      expect(picker.props.disabled).toBe(false);
+      await act(async () => {
+        pending.resolve({ settings: catalog });
+      });
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      expect(textContent(renderer!.root)).not.toContain("Recommended models");
+      expect(read.mock.calls).toEqual([[false], [true]]);
+    } finally {
+      pending.resolve({ settings: catalog });
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("shares background discovery with a picker opened while it is pending", async () => {
+    const pending = pendingCatalog();
+    const { read } = stubReads(pending.promise);
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings accountKey="account-a" />,
+        );
+      });
+      await openPicker(renderer!);
+      expect(textContent(renderer!.root)).toContain("Loading models…");
+      expect(read.mock.calls).toEqual([[false], [true], [false]]);
+      await act(async () => {
+        pending.resolve({ settings: catalog });
+      });
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      expect(textContent(renderer!.root)).not.toContain("Loading models…");
+      expect(read.mock.calls).toEqual([[false], [true], [false]]);
+    } finally {
+      pending.resolve({ settings: catalog });
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it.each([false, true])(
+    "shows cached names during background refresh and preserves edits=%s",
+    async (edit) => {
+      vi.useFakeTimers();
+      const { read } = stubReads();
+      const pending = pendingCatalog();
+      let renderer: ReturnType<typeof create> | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopModelsSettings accountKey="account-a" />,
+          );
+        });
+        expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+        await act(async () => renderer!.unmount());
+        await vi.advanceTimersByTimeAsync(35_000);
+        read.mockImplementation((includeCatalog) =>
+          includeCatalog
+            ? pending.promise
+            : Promise.resolve({ settings: summary }),
+        );
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopModelsSettings accountKey="account-a" />,
+          );
+        });
+        expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+        expect(read.mock.calls).toEqual([[false], [true], [false], [true]]);
+        if (edit) {
+          await act(async () => {
+            renderer!.root
+              .findByProps({
+                "aria-label": `Remove ${recommendationDefaults[4]}`,
+              })
+              .props.onClick({ stopPropagation: vi.fn() });
+          });
+        }
+        const updated = [...recommendationDefaults].reverse();
+        await act(async () => {
+          pending.resolve({
+            settings: settings({ usesDefaults: true, selected: updated }),
+          });
+        });
+        expect(selectedModels(renderer!)).toEqual(
+          edit ? recommendationDefaults.slice(0, 4) : updated,
+        );
+      } finally {
+        pending.resolve({ settings: catalog });
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
+
+  it.each(["account", "invalidation", "saved selection"])(
+    "does not restore defaults after %s changes",
+    async (change) => {
+      const { read } = stubReads();
+      const pending = pendingCatalog();
+      let renderer: ReturnType<typeof create> | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopModelsSettings accountKey="account-a" />,
+          );
+        });
+        await act(async () => renderer!.unmount());
+        if (change === "invalidation") await invalidateDesktopModels("chatgpt");
+        read.mockImplementation((includeCatalog) =>
+          includeCatalog
+            ? pending.promise
+            : Promise.resolve({
+                settings:
+                  change === "saved selection"
+                    ? settings({ selected: ["saved-model"] })
+                    : summary,
+              }),
+        );
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopModelsSettings
+              accountKey={change === "account" ? "account-b" : "account-a"}
+            />,
+          );
+        });
+        expect(selectedModels(renderer!)).toEqual(
+          change === "saved selection" ? ["saved-model"] : [],
+        );
+        if (change !== "saved selection") {
+          expect(textContent(renderer!.root)).toContain("Recommended models");
+        }
+        expect(read.mock.calls).toEqual(
+          change === "saved selection"
+            ? [[false], [true], [false]]
+            : [[false], [true], [false], [true]],
+        );
+      } finally {
+        pending.resolve({ settings: catalog });
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
+
+  it("keeps settings usable after a failed background fetch and retries on picker open", async () => {
+    const pending = pendingCatalog();
+    const { read } = stubReads(pending.promise);
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings accountKey="account-a" />,
+        );
+      });
+      await act(async () => {
+        pending.reject(new Error("offline"));
+      });
+      expect(textContent(renderer!.root)).toContain("Recommended models");
+      expect(textContent(renderer!.root)).toContain("could not load");
+      const picker = renderer!.root
+        .findAllByType("button")
+        .find((button) => button.props["aria-label"] === "Add ChatGPT model")!;
+      expect(picker.props.disabled).toBe(false);
+      read.mockImplementation(async (includeCatalog) => ({
+        settings: includeCatalog ? catalog : summary,
+      }));
+      await openPicker(renderer!);
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      expect(textContent(renderer!.root)).not.toContain("could not load");
+      expect(read.mock.calls).toEqual([[false], [true], [false], [true]]);
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("keeps defaults returned by reset through focus and remount before opening a picker", async () => {
+    const { read, focus } = stubReads();
+    const reset = vi.fn().mockResolvedValue({ settings: catalog });
+    window.resetCodexDesktopModels = reset;
+    const ref = createRef<CodexDesktopModelsSettingsHandle>();
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings
+            ref={ref}
+            accountKey="account-a"
+            initialSettings={settings({ selected: ["saved-model"] })}
+          />,
+        );
+      });
+      await act(async () => {
+        await ref.current!.resetToDefaults();
+      });
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      await act(async () => {
+        focus();
+      });
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      await act(async () => renderer!.unmount());
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings accountKey="account-a" />,
+        );
+      });
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      expect(read.mock.calls).toEqual([[false], [false]]);
+      expect(reset).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("does not describe an empty edited selection as recommended defaults", async () => {
+    stubReads();
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings initialSettings={catalog} />,
+        );
+      });
+      for (const model of recommendationDefaults) {
+        await act(async () => {
+          renderer!.root
+            .findByProps({ "aria-label": `Remove ${model}` })
+            .props.onClick({ stopPropagation: vi.fn() });
+        });
+      }
+      expect(textContent(renderer!.root)).toContain("Select models");
+      expect(textContent(renderer!.root)).not.toContain("Recommended models");
+    } finally {
+      await act(async () => renderer?.unmount());
+    }
+  });
 });

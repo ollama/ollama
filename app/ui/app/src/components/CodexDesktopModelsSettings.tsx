@@ -1,4 +1,9 @@
-import { desktopModels, invalidateDesktopModels } from "@/lib/desktopModels";
+import {
+  cacheDesktopModels,
+  cachedDesktopModels,
+  desktopModels,
+  invalidateDesktopModels,
+} from "@/lib/desktopModels";
 import { Button } from "@/components/ui/button";
 import type {
   CodexDesktopModelStatus,
@@ -95,6 +100,36 @@ function normalizeSettings(
       })),
     maxModels: settings.maxModels || 5,
   };
+}
+
+function modelsCacheKey(settings: ModelsSettings, accountKey?: string) {
+  // Catalog and mutation responses include resolved defaults and inventory;
+  // match them to the saved-settings summary used before opening a picker.
+  return [
+    "chatgpt",
+    accountKey,
+    {
+      ...settings,
+      selected: settings.usesDefaults ? null : settings.selected,
+      available: [],
+      models: [],
+    },
+  ];
+}
+
+function rememberDefaults(
+  result: CodexDesktopModelsSettingsResult | undefined,
+  accountKey?: string,
+) {
+  if (
+    result?.settings.usesDefaults &&
+    result.settings.selected?.length &&
+    !result.error &&
+    !result.warning &&
+    !result.restartConfirmationRequired
+  ) {
+    cacheDesktopModels(modelsCacheKey(result.settings, accountKey), result);
+  }
 }
 
 function modelIsAvailable(model: CodexDesktopModelStatus): boolean {
@@ -327,6 +362,7 @@ export const CodexDesktopModelsSettings = forwardRef<
         );
         setWarning(null);
         setLoading(false);
+        setCatalogLoading(false);
         return;
       }
       const request = ++statusRequestRef.current;
@@ -337,13 +373,21 @@ export const CodexDesktopModelsSettings = forwardRef<
           operationInFlightRef.current
         )
           return;
-        const result =
-          catalog && summary.settings.installed
-            ? await desktopModels(
-                ["chatgpt", accountKey, summary.settings],
-                () => window.getCodexDesktopModelsSettings!(true),
-              )
-            : summary;
+        const key = modelsCacheKey(summary.settings, accountKey);
+        const cachedDefaults = summary.settings.usesDefaults
+          ? cachedDesktopModels<CodexDesktopModelsSettingsResult>(key)
+          : undefined;
+        // Let Settings render and accept input while the async catalog resolves
+        // implicit defaults. Explicit saved choices are already in the summary.
+        applyResult(cachedDefaults ?? summary, true);
+        setLoading(false);
+        const needsDefaults =
+          summary.settings.usesDefaults && !summary.settings.selected?.length;
+        if (!summary.settings.installed || (!catalog && !needsDefaults)) return;
+        setCatalogLoading(true);
+        const result = await desktopModels(key, () =>
+          window.getCodexDesktopModelsSettings!(true),
+        );
         if (result.warning) await invalidateDesktopModels("chatgpt");
         if (
           request === statusRequestRef.current &&
@@ -360,20 +404,19 @@ export const CodexDesktopModelsSettings = forwardRef<
           setWarning(null);
         }
       } finally {
-        if (request === statusRequestRef.current) setLoading(false);
+        if (request === statusRequestRef.current) {
+          setLoading(false);
+          setCatalogLoading(false);
+        }
       }
     },
     [accountKey, applyResult],
   );
 
-  const openCatalog = async () => {
+  const openCatalog = () => {
     catalogRequested.current = true;
     setCatalogLoading(true);
-    try {
-      await refresh(true);
-    } finally {
-      setCatalogLoading(false);
-    }
+    void refresh(true);
   };
 
   useEffect(() => {
@@ -439,16 +482,18 @@ export const CodexDesktopModelsSettings = forwardRef<
     if (operationInFlightRef.current) return;
 
     setApplying(true);
+    setCatalogLoading(false);
     setLaunchAction(settings?.running ? "restart" : "start");
     setError(null);
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     await invalidateDesktopModels();
+    let result: CodexDesktopModelsSettingsResult | undefined;
     try {
       const modelsToApply =
         !hasChanges && settings?.usesDefaults ? [] : selected;
-      let result = await window.applyCodexDesktopModels(modelsToApply, false);
+      result = await window.applyCodexDesktopModels(modelsToApply, false);
       if (result.restartConfirmationRequired) {
         applyResult(result, true);
         if (
@@ -476,22 +521,23 @@ export const CodexDesktopModelsSettings = forwardRef<
         return;
       }
       if (openedStatus) {
-        setSettings((current) =>
-          current
-            ? {
-                ...current,
-                installed: openedStatus.installed,
-                connected: openedStatus.connected,
-                running: openedStatus.running,
-              }
-            : current,
-        );
+        result = {
+          ...result,
+          settings: {
+            ...result.settings,
+            installed: openedStatus.installed,
+            connected: openedStatus.connected,
+            running: openedStatus.running,
+          },
+        };
+        setSettings(normalizeSettings(result.settings));
       }
     } catch {
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
       ++statusRequestRef.current;
       await invalidateDesktopModels();
+      rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setApplying(false);
     }
@@ -507,13 +553,15 @@ export const CodexDesktopModelsSettings = forwardRef<
     }
 
     setResetting(true);
+    setCatalogLoading(false);
     setError(null);
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
     await invalidateDesktopModels();
+    let result: CodexDesktopModelsSettingsResult | undefined;
     try {
-      const result = await resetModels();
+      result = await resetModels();
       ++statusRequestRef.current;
       if (result.error) {
         setSettings(normalizeSettings(result.settings));
@@ -529,10 +577,11 @@ export const CodexDesktopModelsSettings = forwardRef<
     } finally {
       ++statusRequestRef.current;
       await invalidateDesktopModels();
+      rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setResetting(false);
     }
-  }, [applyResult]);
+  }, [accountKey, applyResult]);
 
   useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 
@@ -642,7 +691,11 @@ export const CodexDesktopModelsSettings = forwardRef<
                   ))}
                   {selected.length === 0 && (
                     <span className="px-1 py-1 text-sm text-neutral-400">
-                      {loading ? "Loading models…" : "Select models"}
+                      {loading
+                        ? "Loading models…"
+                        : settings?.usesDefaults && !hasChanges
+                          ? "Recommended models"
+                          : "Select models"}
                     </span>
                   )}
                 </div>
