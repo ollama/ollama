@@ -166,7 +166,9 @@ func TestScoreValidation(t *testing.T) {
 	tok := newTestTokenizer(t, []int32{7})
 	r := &Runner{Tokenizer: tok, contextLength: 10}
 	for _, input := range []llm.ScoreRequest{
-		{}, {MaxTokens: 10}, {MaxTokens: 11, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2"}}}},
+		{},
+		{MaxTokens: 10},
+		{MaxTokens: 11, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2"}}}},
 		{MaxTokens: 1, Rows: []llm.ScoreRow{{Prompt: "12", Candidates: []string{"3"}}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "", Candidates: []string{"1"}}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "1"}}},
