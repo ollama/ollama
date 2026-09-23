@@ -10,11 +10,11 @@ queryClient.setQueryDefaults(["desktopModels"], {
 // Native actions still validate current model access before changing configuration.
 export function desktopModels<T>(
   key: readonly unknown[],
-  load: () => Promise<T>,
+  load: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   return queryClient.fetchQuery({
     queryKey: ["desktopModels", ...key],
-    queryFn: load,
+    queryFn: ({ signal }) => load(signal),
   });
 }
 

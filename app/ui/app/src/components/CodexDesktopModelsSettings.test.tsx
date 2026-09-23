@@ -1,5 +1,6 @@
 import { queryClient } from "@/lib/queryClient";
-import { invalidateDesktopModels } from "@/lib/desktopModels";
+import { getCodexDesktopModelsSettings } from "@/api";
+import { desktopModels, invalidateDesktopModels } from "@/lib/desktopModels";
 import type {
   CodexDesktopModelsSettings as ModelsSettings,
   CodexDesktopStatus,
@@ -12,11 +13,13 @@ import type {
 } from "react";
 import { createRef } from "react";
 import { act, create } from "react-test-renderer";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CodexDesktopModelsSettings,
   type CodexDesktopModelsSettingsHandle,
 } from "./CodexDesktopModelsSettings";
+
+vi.mock("@/api", () => ({ getCodexDesktopModelsSettings: vi.fn() }));
 
 vi.mock("@headlessui/react", async (importOriginal) => {
   const React = await import("react");
@@ -140,6 +143,13 @@ function codexStatus(
   };
 }
 
+beforeEach(() => {
+  // Native-action tests can leave unrelated settings reads pending.
+  vi.mocked(getCodexDesktopModelsSettings)
+    .mockReset()
+    .mockReturnValue(new Promise(() => {}));
+});
+
 afterEach(() => {
   queryClient.clear();
   vi.useRealTimers();
@@ -148,6 +158,14 @@ afterEach(() => {
 
 describe("CodexDesktopModelsSettings", () => {
   it("resets to native recommendation defaults through its settings handle", async () => {
+    let finishClaude!: (models: string[]) => void;
+    const claudeDiscovery = desktopModels(
+      ["claude", "account-a"],
+      () => new Promise<string[]>((resolve) => (finishClaude = resolve)),
+    ).then(
+      (models) => ({ models }),
+      (error) => ({ error }),
+    );
     const resetModels = vi.fn().mockResolvedValue({
       settings: settings({
         usesDefaults: true,
@@ -178,6 +196,8 @@ describe("CodexDesktopModelsSettings", () => {
       });
 
       expect(succeeded).toBe(true);
+      finishClaude(["claude-model"]);
+      expect(await claudeDiscovery).toEqual({ models: ["claude-model"] });
       expect(resetModels).toHaveBeenCalledWith();
       expect(
         renderer!.root.findAllByProps({
@@ -193,6 +213,7 @@ describe("CodexDesktopModelsSettings", () => {
         renderer!.root.findAllByProps({ "aria-label": "Remove qwen3:8b" }),
       ).toHaveLength(0);
     } finally {
+      finishClaude([]);
       await act(async () => renderer?.unmount());
     }
   });
@@ -243,7 +264,10 @@ describe("CodexDesktopModelsSettings", () => {
     }
   });
 
-  it("stops loading and explains when the native settings bridge is unavailable", async () => {
+  it("stops loading and explains when the settings request fails", async () => {
+    vi.mocked(getCodexDesktopModelsSettings).mockRejectedValue(
+      new Error("unavailable"),
+    );
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
@@ -256,7 +280,7 @@ describe("CodexDesktopModelsSettings", () => {
       });
 
       expect(textContent(renderer!.root)).toContain(
-        "ChatGPT model settings are unavailable in this Ollama build.",
+        "Ollama could not load the ChatGPT model settings.",
       );
       expect(textContent(renderer!.root)).not.toContain("Loading models…");
     } finally {
@@ -265,20 +289,20 @@ describe("CodexDesktopModelsSettings", () => {
   });
 
   it("keeps restart available when live model inventory cannot refresh", async () => {
+    vi.mocked(getCodexDesktopModelsSettings).mockResolvedValue({
+      settings: settings({
+        connected: true,
+        running: true,
+        selected: ["qwen3:8b"],
+        available: [],
+      }),
+      warning:
+        "Couldn’t refresh available models. Your saved models are unchanged.",
+    });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
-      getCodexDesktopModelsSettings: vi.fn().mockResolvedValue({
-        settings: settings({
-          connected: true,
-          running: true,
-          selected: ["qwen3:8b"],
-          available: [],
-        }),
-        warning:
-          "Couldn’t refresh available models. Your saved models are unchanged.",
-      }),
     });
 
     let renderer;
@@ -422,11 +446,11 @@ describe("CodexDesktopModelsSettings", () => {
         selected: recommendationDefaults,
       }),
     });
+    vi.mocked(getCodexDesktopModelsSettings).mockImplementation(refresh);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
-      getCodexDesktopModelsSettings: refresh,
     });
 
     let renderer;
@@ -929,6 +953,7 @@ describe("CodexDesktopModelsSettings", () => {
           resolveRefresh = resolve;
         }),
     );
+    vi.mocked(getCodexDesktopModelsSettings).mockImplementation(refresh);
     const apply = vi.fn().mockResolvedValue({
       settings: settings({ connected: true, running: true, selected: next }),
     });
@@ -939,7 +964,6 @@ describe("CodexDesktopModelsSettings", () => {
         if (event === "focus") focusHandler = handler;
       }),
       removeEventListener: vi.fn(),
-      getCodexDesktopModelsSettings: refresh,
       applyCodexDesktopModels: apply,
       confirm: vi.fn(() => true),
     });
@@ -1110,10 +1134,12 @@ it("shows saved selections before discovering models on picker open", async () =
   const read = vi.fn((catalog: boolean) =>
     catalog ? pending : Promise.resolve({ settings: summary }),
   );
+  vi.mocked(getCodexDesktopModelsSettings).mockImplementation((catalog) =>
+    read(catalog),
+  );
   vi.stubGlobal("window", {
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
-    getCodexDesktopModelsSettings: read,
   });
   let renderer: ReturnType<typeof create> | undefined;
   try {
@@ -1151,12 +1177,17 @@ describe("implicit recommendation defaults", () => {
   const catalog = settings({ usesDefaults: true });
 
   function pendingCatalog() {
-    let resolve!: (value: { settings: ModelsSettings }) => void;
+    let resolve!: (value: {
+      settings: ModelsSettings;
+      warning?: string;
+    }) => void;
     let reject!: (error: Error) => void;
-    const promise = new Promise<{ settings: ModelsSettings }>((done, fail) => {
-      resolve = done;
-      reject = fail;
-    });
+    const promise = new Promise<{ settings: ModelsSettings; warning?: string }>(
+      (done, fail) => {
+        resolve = done;
+        reject = fail;
+      },
+    );
     return { promise, resolve, reject };
   }
 
@@ -1165,9 +1196,11 @@ describe("implicit recommendation defaults", () => {
     const read = vi.fn((includeCatalog: boolean) =>
       includeCatalog ? catalogResponse : Promise.resolve({ settings: summary }),
     );
+    vi.mocked(getCodexDesktopModelsSettings).mockImplementation((catalog) =>
+      read(catalog),
+    );
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
-      getCodexDesktopModelsSettings: read,
       addEventListener: vi.fn((event, handler) => {
         if (event === "focus") focus = handler;
       }),
@@ -1254,6 +1287,44 @@ describe("implicit recommendation defaults", () => {
       expect(read.mock.calls).toEqual([[false], [true], [false]]);
     } finally {
       pending.resolve({ settings: catalog });
+      await act(async () => renderer?.unmount());
+    }
+  });
+
+  it("ignores an old warning without canceling the current discovery", async () => {
+    const first = pendingCatalog();
+    const latest = pendingCatalog();
+    const { read, focus } = stubReads();
+    let summaries = 0;
+    read.mockImplementation((catalog) =>
+      catalog
+        ? summaries === 1
+          ? first.promise
+          : latest.promise
+        : Promise.resolve({
+            settings: { ...summary, running: summaries++ > 0 },
+          }),
+    );
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <CodexDesktopModelsSettings accountKey="account-a" />,
+        );
+      });
+      await act(async () => focus());
+      await act(async () =>
+        first.resolve({ settings: summary, warning: "Old discovery failed" }),
+      );
+      await act(async () =>
+        latest.resolve({ settings: { ...catalog, running: true } }),
+      );
+      expect(selectedModels(renderer!)).toEqual(recommendationDefaults);
+      expect(textContent(renderer!.root)).not.toContain("could not load");
+      expect(textContent(renderer!.root)).not.toContain("Old discovery failed");
+    } finally {
+      first.resolve({ settings: catalog });
+      latest.resolve({ settings: catalog });
       await act(async () => renderer?.unmount());
     }
   });

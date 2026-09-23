@@ -5,11 +5,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/ollama/ollama/app/webview"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/proxy"
 )
@@ -51,18 +49,6 @@ func desktopModelSettingsHandler() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(result)
 	})
-}
-
-func bindDesktopModelSettings(wv webview.WebView, name, integration string) {
-	baseURL := ""
-	if devMode {
-		baseURL = "http://127.0.0.1:3001"
-	}
-	wv.Init(fmt.Sprintf(`window.%s = async (catalog = true) => {
-		const response = await fetch('%s/api/v1/integrations/%s/models?catalog=' + catalog);
-		if (!response.ok) throw new Error('Could not load app model settings');
-		return response.json();
-	};`, name, baseURL, integration))
 }
 
 func claudeDesktopSettingsSummary() claudeDesktopStatus {

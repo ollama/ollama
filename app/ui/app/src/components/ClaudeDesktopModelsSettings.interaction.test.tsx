@@ -1,3 +1,5 @@
+import { getClaudeDesktopModelsSettings } from "@/api";
+import { queryClient } from "@/lib/queryClient";
 import {
   act,
   create,
@@ -11,12 +13,24 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Switch } from "./ui/switch";
 import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "./ClaudeDesktopModelsSettings";
+
+vi.mock("@/api", () => ({
+  getClaudeDesktopModelsSettings: vi.fn(),
+  getClaudeDesktopAvailableModels: vi.fn().mockResolvedValue([]),
+}));
+
+beforeEach(() => {
+  vi.mocked(getClaudeDesktopModelsSettings)
+    .mockReset()
+    .mockReturnValue(new Promise(() => {}));
+});
+afterEach(() => queryClient.clear());
 
 vi.mock("@headlessui/react", async (importOriginal) => {
   const React = await import("react");
@@ -171,6 +185,55 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
+  it("keeps the picker loading until the latest refresh finishes", async () => {
+    let focusHandler: (() => void) | undefined;
+    let finishFirst!: (status: ReturnType<typeof testStatus>) => void;
+    let finishLatest!: (status: ReturnType<typeof testStatus>) => void;
+    const first = new Promise<ReturnType<typeof testStatus>>(
+      (resolve) => (finishFirst = resolve),
+    );
+    const latest = new Promise<ReturnType<typeof testStatus>>(
+      (resolve) => (finishLatest = resolve),
+    );
+    let summaries = 0;
+    vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((catalog) =>
+      catalog
+        ? summaries === 1
+          ? first
+          : latest
+        : Promise.resolve(testStatus("glm-5.2:cloud", summaries++ > 0)),
+    );
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event, handler) => {
+        if (event === "focus") focusHandler = handler;
+      }),
+      removeEventListener: vi.fn(),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings
+            initialStatus={testStatus()}
+            initialLocalModels={[]}
+          />,
+        );
+      });
+      await act(async () => pickerButton(renderer!).props.onClick());
+      await act(async () => focusHandler?.());
+      await act(async () => finishFirst(testStatus()));
+      expect(textContent(renderer!.root)).toContain("Loading models…");
+      await act(async () => finishLatest(testStatus("glm-5.2:cloud", true)));
+      expect(textContent(renderer!.root)).not.toContain("Loading models…");
+    } finally {
+      finishFirst(testStatus());
+      finishLatest(testStatus());
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("opens below without scrolling and disables auto mode for draft changes", async () => {
     class TestHTMLElement {
       focus() {}
@@ -432,13 +495,13 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         resolveRefresh = resolve;
       },
     );
+    vi.mocked(getClaudeDesktopModelsSettings).mockReturnValue(staleRefresh);
     vi.stubGlobal("window", {
       addEventListener: vi.fn((event: string, handler: () => void) => {
         if (event === "focus") focusHandler = handler;
       }),
       removeEventListener: vi.fn(),
       HTMLElement: TestHTMLElement,
-      getClaudeDesktopStatus: vi.fn(() => staleRefresh),
       applyClaudeDesktopMappings: vi.fn().mockResolvedValue({
         status: testStatus("kimi-k3:cloud"),
         mappingsApplied: true,

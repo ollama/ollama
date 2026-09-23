@@ -1,5 +1,8 @@
 import { desktopModels, invalidateDesktopModels } from "@/lib/desktopModels";
-import { getClaudeDesktopAvailableModels } from "@/api";
+import {
+  getClaudeDesktopAvailableModels,
+  getClaudeDesktopModelsSettings,
+} from "@/api";
 import { Button } from "@/components/ui/button";
 import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Switch } from "@/components/ui/switch";
@@ -337,16 +340,16 @@ export const ClaudeDesktopModelsSettings = forwardRef<
 
   const refreshStatus = useCallback(
     async (catalog = catalogRequested.current) => {
-      if (!window.getClaudeDesktopStatus) return;
       const request = ++statusRequestRef.current;
       try {
-        const summary = await window.getClaudeDesktopStatus(false);
+        const summary = await getClaudeDesktopModelsSettings(false);
         if (
           request !== statusRequestRef.current ||
           operationInFlightRef.current
         )
           return;
         const discover = catalog && summary.used && summary.installed;
+        setCatalogLoading(discover);
         const [next, installed] = await Promise.all([
           discover
             ? desktopModels(
@@ -356,12 +359,12 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                   includeCloudModels,
                   { ...summary, routedRequests: undefined },
                 ],
-                () => window.getClaudeDesktopStatus!(true),
+                (signal) => getClaudeDesktopModelsSettings(true, signal),
               )
             : Promise.resolve(summary),
           discover && !initialLocalModels
             ? desktopModels(
-                ["claude-inventory", accountKey, includeCloudModels],
+                ["claude", "inventory", accountKey, includeCloudModels],
                 () => getClaudeDesktopAvailableModels(includeCloudModels),
               )
             : Promise.resolve(null),
@@ -390,6 +393,8 @@ export const ClaudeDesktopModelsSettings = forwardRef<
         ) {
           setError("Ollama could not read the Claude connection status.");
         }
+      } finally {
+        if (request === statusRequestRef.current) setCatalogLoading(false);
       }
     },
     [accountKey, includeCloudModels, initialLocalModels, applyStatus],
@@ -405,14 +410,10 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     };
   }, [initialStatus, refreshStatus]);
 
-  const openCatalog = async () => {
+  const openCatalog = () => {
     catalogRequested.current = true;
     setCatalogLoading(true);
-    try {
-      await refreshStatus(true);
-    } finally {
-      setCatalogLoading(false);
-    }
+    void refreshStatus(true);
   };
 
   const catalogModels = useMemo(() => {
@@ -508,10 +509,11 @@ export const ClaudeDesktopModelsSettings = forwardRef<
 
     const mappingsToApply = mappingRecord(mappings);
     setApplying(true);
+    setCatalogLoading(false);
     setError(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
-    await invalidateDesktopModels();
+    await invalidateDesktopModels("claude");
     try {
       await runMappingAction(
         (restartConfirmed) => applyMappings(mappingsToApply, restartConfirmed),
@@ -519,7 +521,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       );
     } finally {
       ++statusRequestRef.current;
-      await invalidateDesktopModels();
+      await invalidateDesktopModels("claude");
       operationInFlightRef.current = false;
       setApplying(false);
     }
@@ -533,9 +535,10 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     setError(null);
     setAutoModeOverride(checked);
     setAutoModeApplying(true);
+    setCatalogLoading(false);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
-    await invalidateDesktopModels();
+    await invalidateDesktopModels("claude");
     try {
       let result = await window.setClaudeDesktopAutoMode(checked, false);
       if (result.restartConfirmationRequired) {
@@ -556,7 +559,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       setError("Ollama could not update Claude auto mode.");
     } finally {
       ++statusRequestRef.current;
-      await invalidateDesktopModels();
+      await invalidateDesktopModels("claude");
       operationInFlightRef.current = false;
       setAutoModeOverride(null);
       setAutoModeApplying(false);
@@ -573,10 +576,11 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     }
 
     setResettingMappings(true);
+    setCatalogLoading(false);
     setError(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
-    await invalidateDesktopModels();
+    await invalidateDesktopModels("claude");
     try {
       return await runMappingAction(
         resetMappings,
@@ -584,7 +588,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       );
     } finally {
       ++statusRequestRef.current;
-      await invalidateDesktopModels();
+      await invalidateDesktopModels("claude");
       operationInFlightRef.current = false;
       setResettingMappings(false);
     }

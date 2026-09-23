@@ -29,15 +29,16 @@ it("shares pending and recent inventory but separates accounts", async () => {
 
 it("does not restore stale inventory after an action invalidates it", async () => {
   let resolve!: (models: string[]) => void;
-  const pending = desktopModels(
-    ["claude"],
-    () =>
-      new Promise<string[]>((done) => {
-        resolve = done;
-      }),
-  );
+  let signal!: AbortSignal;
+  const pending = desktopModels(["claude"], (requestSignal) => {
+    signal = requestSignal;
+    return new Promise<string[]>((done) => {
+      resolve = done;
+    });
+  });
   const canceled = expect(pending).rejects.toThrow();
   await invalidateDesktopModels();
+  expect(signal.aborted).toBe(true);
   resolve(["old-model"]);
   await canceled;
   expect(await desktopModels(["claude"], async () => ["new-model"])).toEqual([

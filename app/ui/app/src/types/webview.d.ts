@@ -130,9 +130,6 @@ declare global {
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;
-    getClaudeDesktopStatus?: (
-      catalog?: boolean,
-    ) => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
@@ -149,9 +146,6 @@ declare global {
       restartConfirmed: boolean,
     ) => Promise<CodexDesktopActionResult>;
     installCodexDesktop?: () => Promise<CodexDesktopInstallResult>;
-    getCodexDesktopModelsSettings?: (
-      catalog?: boolean,
-    ) => Promise<CodexDesktopModelsSettingsResult>;
     applyCodexDesktopModels?: (
       models: string[],
       restartConfirmed: boolean,

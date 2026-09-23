@@ -1,3 +1,4 @@
+import { getCodexDesktopModelsSettings } from "@/api";
 import {
   cacheDesktopModels,
   cachedDesktopModels,
@@ -356,18 +357,9 @@ export const CodexDesktopModelsSettings = forwardRef<
 
   const refresh = useCallback(
     async (catalog = catalogRequested.current) => {
-      if (!window.getCodexDesktopModelsSettings) {
-        setError(
-          "ChatGPT model settings are unavailable in this Ollama build.",
-        );
-        setWarning(null);
-        setLoading(false);
-        setCatalogLoading(false);
-        return;
-      }
       const request = ++statusRequestRef.current;
       try {
-        const summary = await window.getCodexDesktopModelsSettings(false);
+        const summary = await getCodexDesktopModelsSettings(false);
         if (
           request !== statusRequestRef.current ||
           operationInFlightRef.current
@@ -385,10 +377,16 @@ export const CodexDesktopModelsSettings = forwardRef<
           summary.settings.usesDefaults && !summary.settings.selected?.length;
         if (!summary.settings.installed || (!catalog && !needsDefaults)) return;
         setCatalogLoading(true);
-        const result = await desktopModels(key, () =>
-          window.getCodexDesktopModelsSettings!(true),
+        const result = await desktopModels(key, (signal) =>
+          getCodexDesktopModelsSettings(true, signal),
         );
-        if (result.warning) await invalidateDesktopModels("chatgpt");
+        if (
+          result.warning &&
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          await invalidateDesktopModels("chatgpt");
+        }
         if (
           request === statusRequestRef.current &&
           !operationInFlightRef.current
@@ -488,7 +486,7 @@ export const CodexDesktopModelsSettings = forwardRef<
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
-    await invalidateDesktopModels();
+    await invalidateDesktopModels("chatgpt");
     let result: CodexDesktopModelsSettingsResult | undefined;
     try {
       const modelsToApply =
@@ -536,7 +534,7 @@ export const CodexDesktopModelsSettings = forwardRef<
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
       ++statusRequestRef.current;
-      await invalidateDesktopModels();
+      await invalidateDesktopModels("chatgpt");
       rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setApplying(false);
@@ -558,7 +556,7 @@ export const CodexDesktopModelsSettings = forwardRef<
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
-    await invalidateDesktopModels();
+    await invalidateDesktopModels("chatgpt");
     let result: CodexDesktopModelsSettingsResult | undefined;
     try {
       result = await resetModels();
@@ -576,7 +574,7 @@ export const CodexDesktopModelsSettings = forwardRef<
       return false;
     } finally {
       ++statusRequestRef.current;
-      await invalidateDesktopModels();
+      await invalidateDesktopModels("chatgpt");
       rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setResetting(false);

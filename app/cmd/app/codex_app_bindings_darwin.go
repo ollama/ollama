@@ -43,7 +43,6 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("installCodexDesktop", func() codexDesktopInstallResult {
 		return requestCodexDesktopInstall()
 	})
-	bindDesktopModelSettings(wv, "getCodexDesktopModelsSettings", "chatgpt")
 	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool) codexDesktopModelsSettingsResult {
 		err := applyCodexDesktopModels(models, restartConfirmed)
 		settings, statusErr := getCodexDesktopModelsSettings()
