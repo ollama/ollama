@@ -49,7 +49,7 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 	if parent == "" {
 		return nil, fmt.Errorf("choose a folder for the export")
 	}
-	directory, err := os.MkdirTemp(parent, "ollama-"+safeFilename(chat.Title)+"-")
+	directory, err := os.MkdirTemp(parent, "ollama-"+chatFilename(chat)+"-")
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func ExportAll(source *store.Store, path string) (*Result, error) {
 		if err != nil {
 			return nil, fmt.Errorf("export chat %q: %w", summary.Title, err)
 		}
-		folder := fmt.Sprintf("%04d-%s", i+1, safeFilename(chat.Title))
+		folder := fmt.Sprintf("%04d-%s", i+1, chatFilename(*chat))
 		warnings, err := writeChat(*chat, func(name string, data []byte) error {
 			header := &zip.FileHeader{Name: folder + "/" + name, Method: zip.Deflate}
 			header.SetMode(0o600)
@@ -189,6 +189,24 @@ func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, err
 		return nil, err
 	}
 	return metadata.Warnings, nil
+}
+
+// Use the sidebar's title, first user message, then creation date fallback.
+func chatFilename(chat store.Chat) string {
+	name := chat.Title
+	if name == "" {
+		for _, message := range chat.Messages {
+			if message.Role == "user" {
+				name = message.Content
+				break
+			}
+		}
+	}
+	if name == "" {
+		name = chat.CreatedAt.Local().Format("2006-01-02 15-04-05")
+	}
+	// Slashes in chat labels are text, not directory separators.
+	return safeFilename(strings.NewReplacer("/", "_", "\\", "_").Replace(name))
 }
 
 func safeFilename(name string) string {
