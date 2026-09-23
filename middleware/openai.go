@@ -56,12 +56,6 @@ type RetrieveWriter struct {
 	model string
 }
 
-type EmbedWriter struct {
-	BaseWriter
-	model          string
-	encodingFormat string
-}
-
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	if err := json.Unmarshal(data, &serr); err != nil {
@@ -300,31 +294,6 @@ func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	return w.writeResponse(data)
 }
 
-func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
-	var embedResponse api.EmbedResponse
-	err := json.Unmarshal(data, &embedResponse)
-	if err != nil {
-		return 0, err
-	}
-
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.ToEmbeddingList(w.model, embedResponse, w.encodingFormat))
-	if err != nil {
-		return 0, err
-	}
-
-	return len(data), nil
-}
-
-func (w *EmbedWriter) Write(data []byte) (int, error) {
-	code := w.ResponseWriter.Status()
-	if code != http.StatusOK {
-		return w.writeError(data)
-	}
-
-	return w.writeResponse(data)
-}
-
 func ListMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		w := &ListWriter{
@@ -389,57 +358,6 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer = w
-		c.Next()
-	}
-}
-
-func EmbeddingsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req openai.EmbedRequest
-		err := c.ShouldBindJSON(&req)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
-			return
-		}
-
-		// Validate encoding_format parameter
-		if req.EncodingFormat != "" {
-			if !strings.EqualFold(req.EncodingFormat, "float") && !strings.EqualFold(req.EncodingFormat, "base64") {
-				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, fmt.Sprintf("Invalid value for 'encoding_format' = %s. Supported values: ['float', 'base64'].", req.EncodingFormat)))
-				return
-			}
-		}
-
-		if req.Input == "" {
-			req.Input = []string{""}
-		}
-
-		if req.Input == nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "invalid input"))
-			return
-		}
-
-		if v, ok := req.Input.([]any); ok && len(v) == 0 {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "invalid input"))
-			return
-		}
-
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(api.EmbedRequest{Model: req.Model, Input: req.Input, Dimensions: req.Dimensions}); err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
-			return
-		}
-
-		c.Request.Body = io.NopCloser(&b)
-
-		w := &EmbedWriter{
-			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
-			model:          req.Model,
-			encodingFormat: req.EncodingFormat,
-		}
-
-		c.Writer = w
-
 		c.Next()
 	}
 }
