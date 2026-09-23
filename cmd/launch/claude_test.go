@@ -1,7 +1,9 @@
 package launch
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -312,24 +314,48 @@ func TestClaudeArgs(t *testing.T) {
 	c := &Claude{}
 
 	tests := []struct {
-		name  string
-		model string
-		args  []string
-		want  []string
+		name       string
+		model      string
+		args       []string
+		wantPrefix []string
+		wantExtra  []string
 	}{
-		{"with model", "llama3.2", nil, []string{"--model", "llama3.2"}},
-		{"empty model", "", nil, nil},
-		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
-		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
-		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2", "--allowedTools", "Read,Write,Bash"}},
-		{"with channels", "llama3.2", []string{"--channels", "plugin:telegram@claude-plugins-official"}, []string{"--model", "llama3.2", "--channels", "plugin:telegram@claude-plugins-official"}},
+		{"with model", "llama3.2", nil, []string{"--model", "llama3.2"}, nil},
+		{"empty model", "", nil, nil, nil},
+		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2"}, []string{"--verbose"}},
+		{"empty model with help", "", []string{"--help"}, nil, []string{"--help"}},
+		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2"}, []string{"--allowedTools", "Read,Write,Bash"}},
+		{"with channels", "llama3.2", []string{"--channels", "plugin:telegram@claude-plugins-official"}, []string{"--model", "llama3.2"}, []string{"--channels", "plugin:telegram@claude-plugins-official"}},
+		{"user settings remain last", "llama3.2", []string{"--settings", `{"env":{"CUSTOM":"1"}}`}, []string{"--model", "llama3.2"}, []string{"--settings", `{"env":{"CUSTOM":"1"}}`}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.args(tt.model, tt.args)
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
+			got, err := c.args(tt.model, tt.args)
+			if err != nil {
+				t.Fatalf("args(%q, %v) error = %v", tt.model, tt.args, err)
+			}
+			if !slices.Equal(got[:len(tt.wantPrefix)], tt.wantPrefix) {
+				t.Fatalf("args(%q, %v) prefix = %v, want %v", tt.model, tt.args, got[:len(tt.wantPrefix)], tt.wantPrefix)
+			}
+			settingsIndex := len(tt.wantPrefix)
+			if got[settingsIndex] != "--settings" {
+				t.Fatalf("args(%q, %v)[%d] = %q, want --settings", tt.model, tt.args, settingsIndex, got[settingsIndex])
+			}
+			var settings struct {
+				Env map[string]string `json:"env"`
+			}
+			if err := json.Unmarshal([]byte(got[settingsIndex+1]), &settings); err != nil {
+				t.Fatalf("settings are not valid JSON: %v", err)
+			}
+			if settings.Env["ANTHROPIC_BASE_URL"] != envconfig.Host().String() {
+				t.Errorf("ANTHROPIC_BASE_URL = %q, want %q", settings.Env["ANTHROPIC_BASE_URL"], envconfig.Host().String())
+			}
+			if settings.Env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != tt.model {
+				t.Errorf("ANTHROPIC_DEFAULT_SONNET_MODEL = %q, want %q", settings.Env["ANTHROPIC_DEFAULT_SONNET_MODEL"], tt.model)
+			}
+			if gotExtra := got[settingsIndex+2:]; !slices.Equal(gotExtra, tt.wantExtra) {
+				t.Errorf("args(%q, %v) extra = %v, want %v", tt.model, tt.args, gotExtra, tt.wantExtra)
 			}
 		})
 	}
@@ -357,6 +383,10 @@ func TestClaudeEnvVars(t *testing.T) {
 		"DISABLE_ERROR_REPORTING":             "1",
 		"DISABLE_FEEDBACK_COMMAND":            "1",
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+		"CLAUDE_CODE_USE_BEDROCK":             "",
+		"CLAUDE_CODE_USE_VERTEX":              "",
+		"CLAUDE_CODE_USE_FOUNDRY":             "",
+		"CLAUDE_CODE_USE_MANTLE":              "",
 		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "llama3.2",
 		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "llama3.2",
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "llama3.2",
@@ -372,6 +402,37 @@ func TestClaudeEnvVars(t *testing.T) {
 		if _, ok := got[key]; ok {
 			t.Errorf("%s must not be set by Ollama", key)
 		}
+	}
+}
+
+func TestClaudeSettingsMatchEnvVars(t *testing.T) {
+	c := &Claude{}
+
+	for _, model := range []string{"llama3.2", "glm-5:cloud"} {
+		t.Run(model, func(t *testing.T) {
+			encoded, err := c.settings(model)
+			if err != nil {
+				t.Fatalf("settings(%q) error = %v", model, err)
+			}
+
+			var settings struct {
+				Env map[string]string `json:"env"`
+			}
+			if err := json.Unmarshal([]byte(encoded), &settings); err != nil {
+				t.Fatalf("settings(%q) are not valid JSON: %v", model, err)
+			}
+
+			want := make(map[string]string)
+			for _, entry := range c.envVars(model) {
+				key, value, ok := strings.Cut(entry, "=")
+				if ok {
+					want[key] = value
+				}
+			}
+			if !maps.Equal(settings.Env, want) {
+				t.Errorf("settings env = %v, want %v", settings.Env, want)
+			}
+		})
 	}
 }
 
