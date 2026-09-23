@@ -17,8 +17,6 @@ import {
 import {
   WifiIcon,
   FolderIcon,
-  BoltIcon,
-  WrenchIcon,
   CloudIcon,
   CogIcon,
   ArrowDownTrayIcon,
@@ -804,50 +802,6 @@ export default function Settings() {
                 onDraftChange={setHasCodexDraftChanges}
               />
             </section>
-          )}
-
-          {/* Agent Mode */}
-          {window.OLLAMA_TOOLS && (
-            <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
-              <div className="space-y-4 p-4">
-                <Field>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start space-x-3">
-                      <BoltIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Enable Agent Mode</Label>
-                        <Description>
-                          Use multi-turn tools to fulfill user requests
-                        </Description>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={settings.Agent}
-                      onChange={(checked) => handleChange("Agent", checked)}
-                    />
-                  </div>
-                </Field>
-
-                {/* Tools Mode */}
-                <Field>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start space-x-3">
-                      <WrenchIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Enable Tools Mode</Label>
-                        <Description>
-                          Use single-turn tools to fulfill user requests
-                        </Description>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={settings.Tools}
-                      onChange={(checked) => handleChange("Tools", checked)}
-                    />
-                  </div>
-                </Field>
-              </div>
-            </div>
           )}
 
           {/* Reset button */}

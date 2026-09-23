@@ -23,10 +23,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/auth"
+	"github.com/ollama/ollama/app/dialog"
+	"github.com/ollama/ollama/app/history"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
-	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
@@ -209,6 +210,7 @@ func main() {
 		}
 	}
 	appStore = st
+	defer st.Close()
 
 	// Enable CORS in development mode
 	if devMode {
@@ -232,10 +234,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-	// Initialize tools registry
-	toolRegistry := tools.NewRegistry()
-	slog.Info("initialized tools registry", "tool_count", len(toolRegistry.List()))
 
 	// ctx is the app-level context that will be used to stop the app
 	ctx, cancel := context.WithCancel(context.Background())
@@ -266,13 +264,22 @@ func main() {
 				done <- osrv.Run(octx)
 			}()
 		},
-		Store:        st,
-		ToolRegistry: toolRegistry,
-		Dev:          devMode,
-		Logger:       slog.Default(),
-		Updater:      upd,
+		Store:   st,
+		Dev:     devMode,
+		Logger:  slog.Default(),
+		Updater: upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
+		},
+		ExportChat: func(chat store.Chat) (*history.Result, error) {
+			directory, err := dialog.Directory().Title("Export conversation to…").Browse()
+			if errors.Is(err, dialog.ErrCancelled) {
+				return nil, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			return history.Export(chat, directory)
 		},
 	}
 

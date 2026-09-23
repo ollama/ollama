@@ -9,53 +9,22 @@ import React, { useState, useMemo, useRef } from "react";
 const Message = React.memo(
   ({
     message,
-    onEditMessage,
-    messageIndex,
-    isStreaming,
-    isFaded,
     browserToolResult,
     lastToolQuery,
   }: {
     message: MessageType;
-    onEditMessage?: (content: string, index: number) => void;
-    messageIndex?: number;
-    isStreaming: boolean;
-    isFaded?: boolean;
-    // TODO(drifkin): this type isn't right
     browserToolResult?: BrowserToolResult;
     lastToolQuery?: string;
-  }) => {
-    if (message.role === "user") {
-      return (
-        <UserMessage
-          message={message}
-          onEditMessage={onEditMessage}
-          messageIndex={messageIndex}
-          isFaded={isFaded}
-        />
-      );
-    } else {
-      return (
-        <OtherRoleMessage
-          message={message}
-          isStreaming={isStreaming}
-          isFaded={isFaded}
-          browserToolResult={browserToolResult}
-          lastToolQuery={lastToolQuery}
-        />
-      );
-    }
-  },
-  (prevProps, nextProps) => {
-    return (
-      prevProps.message === nextProps.message &&
-      prevProps.onEditMessage === nextProps.onEditMessage &&
-      prevProps.messageIndex === nextProps.messageIndex &&
-      prevProps.isStreaming === nextProps.isStreaming &&
-      prevProps.isFaded === nextProps.isFaded &&
-      prevProps.browserToolResult === nextProps.browserToolResult
-    );
-  },
+  }) =>
+    message.role === "user" ? (
+      <UserMessage message={message} />
+    ) : (
+      <OtherRoleMessage
+        message={message}
+        browserToolResult={browserToolResult}
+        lastToolQuery={lastToolQuery}
+      />
+    ),
 );
 
 export default Message;
@@ -772,27 +741,9 @@ function ToolCallDisplay({
   );
 }
 
-function UserMessage({
-  message,
-  onEditMessage,
-  messageIndex,
-  isFaded,
-}: {
-  message: MessageType;
-  onEditMessage?: (content: string, index: number) => void;
-  messageIndex?: number;
-  isFaded?: boolean;
-}) {
-  const handleEdit = () => {
-    if (onEditMessage && messageIndex !== undefined) {
-      onEditMessage(message.content, messageIndex);
-    }
-  };
-
+function UserMessage({ message }: { message: MessageType }) {
   return (
-    <div
-      className={`flex flex-col transition-opacity duration-300 ${isFaded ? "opacity-50" : "opacity-100"}`}
-    >
+    <div className="flex flex-col">
       {/* Show image attachments above the message background */}
       {message.attachments && message.attachments.length > 0 && (
         <div className="flex gap-2 mb-2 overflow-x-auto justify-end max-w-md self-end">
@@ -854,20 +805,6 @@ function UserMessage({
           <div className="message-content whitespace-pre-line break-words">
             {message.content}
           </div>
-
-          {/* Edit button */}
-          <button
-            type="button"
-            className={`edit-button absolute -bottom-5 right-1 text-xs
-                     ${
-                       isFaded
-                         ? "opacity-30"
-                         : "opacity-0 group-hover/message:opacity-100 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 cursor-pointer"
-                     }`}
-            onClick={isFaded ? undefined : handleEdit}
-          >
-            edit
-          </button>
         </div>
       </div>
     </div>
@@ -876,15 +813,10 @@ function UserMessage({
 
 function OtherRoleMessage({
   message,
-  isStreaming,
-  isFaded,
   browserToolResult,
   lastToolQuery,
 }: {
   message: MessageType;
-  previousMessage?: MessageType;
-  isStreaming: boolean;
-  isFaded?: boolean;
   // TODO(drifkin): this type isn't right
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
@@ -892,9 +824,7 @@ function OtherRoleMessage({
   const messageRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div
-      className={`flex mb-8 flex-col transition-opacity duration-300 space-y-4 ${isFaded ? "opacity-50" : "opacity-100"}`}
-    >
+    <div className="flex mb-8 flex-col space-y-4">
       <div className="flex-1 flex flex-col justify-start relative group max-w-none text-wrap break-words">
         {/* Thinking area */}
         {message.thinking && (
@@ -939,7 +869,6 @@ function OtherRoleMessage({
               ) : (
                 <StreamingMarkdownContent
                   content={message.content}
-                  isStreaming={isStreaming}
                   browserToolResult={browserToolResult as BrowserToolResult}
                 />
               )}
@@ -967,8 +896,7 @@ function OtherRoleMessage({
         />
       )}
 
-      {!isStreaming &&
-        message.role === "assistant" &&
+      {message.role === "assistant" &&
         message.content &&
         message.content.trim() &&
         (!message.tool_calls || message.tool_calls.length === 0) &&

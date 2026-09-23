@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/ollama/ollama/app/types/not"
 )
 
 // currentSchemaVersion defines the current database schema version.
@@ -639,6 +640,27 @@ func columnNotExists(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such column")
 }
 
+// chatReader keeps a conversation and its attachments in one database snapshot.
+type chatReader struct {
+	conn *sql.Tx
+}
+
+func (db *database) getChat(id string) (*Chat, error) {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	chat, err := (chatReader{conn: tx}).getChat(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return chat, nil
+}
+
 func (db *database) getAllChats() ([]Chat, error) {
 	// Query chats with their first user message and latest update time
 	query := `
@@ -666,7 +688,7 @@ func (db *database) getAllChats() ([]Chat, error) {
 	}
 	defer rows.Close()
 
-	var chats []Chat
+	chats := []Chat{}
 	for rows.Next() {
 		var chat Chat
 		var createdAt time.Time
@@ -710,7 +732,7 @@ func (db *database) getAllChats() ([]Chat, error) {
 	return chats, nil
 }
 
-func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Chat, error) {
+func (db chatReader) getChat(id string) (*Chat, error) {
 	query := `
 		SELECT id, title, created_at, browser_state
 		FROM chats
@@ -729,7 +751,7 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, fmt.Errorf("chat not found")
+			return nil, sql.ErrNoRows
 		}
 		return nil, fmt.Errorf("query chat: %w", err)
 	}
@@ -739,10 +761,12 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 		var raw json.RawMessage
 		if err := json.Unmarshal([]byte(browserState.String), &raw); err == nil {
 			chat.BrowserState = raw
+		} else {
+			return nil, fmt.Errorf("read browser history: %w", err)
 		}
 	}
 
-	messages, err := db.getMessages(id, loadAttachmentData)
+	messages, err := db.getMessages(id)
 	if err != nil {
 		return nil, fmt.Errorf("get messages: %w", err)
 	}
@@ -751,79 +775,18 @@ func (db *database) getChatWithOptions(id string, loadAttachmentData bool) (*Cha
 	return &chat, nil
 }
 
-func (db *database) saveChat(chat Chat) error {
-	tx, err := db.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Use COALESCE for browser_state to avoid wiping an existing
-	// chat-level browser_state when saving a chat that doesn't include a new state payload.
-	// Many code paths call SetChat to update metadata/messages only; without COALESCE the
-	// UPSERT would overwrite browser_state with NULL, breaking revisit rendering that relies
-	// on the last persisted full tool state.
-	query := `
-		INSERT INTO chats (id, title, created_at, browser_state)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			title = excluded.title,
-			browser_state = COALESCE(excluded.browser_state, chats.browser_state)
-	`
-
-	var browserState sql.NullString
-	if chat.BrowserState != nil {
-		browserState = sql.NullString{String: string(chat.BrowserState), Valid: true}
-	}
-
-	_, err = tx.Exec(query,
-		chat.ID,
-		chat.Title,
-		chat.CreatedAt,
-		browserState,
-	)
-	if err != nil {
-		return fmt.Errorf("save chat: %w", err)
-	}
-
-	// Delete existing messages (we'll re-insert all)
-	_, err = tx.Exec("DELETE FROM messages WHERE chat_id = ?", chat.ID)
-	if err != nil {
-		return fmt.Errorf("delete messages: %w", err)
-	}
-
-	// Insert messages
-	for _, msg := range chat.Messages {
-		messageID, err := db.insertMessage(tx, chat.ID, msg)
-		if err != nil {
-			return fmt.Errorf("insert message: %w", err)
-		}
-
-		// Insert tool calls if any
-		for _, toolCall := range msg.ToolCalls {
-			err := db.insertToolCall(tx, messageID, toolCall)
-			if err != nil {
-				return fmt.Errorf("insert tool call: %w", err)
-			}
-		}
-	}
-
-	return tx.Commit()
-}
-
-// updateChatBrowserState updates only the browser_state for a chat
-func (db *database) updateChatBrowserState(chatID string, state json.RawMessage) error {
-	_, err := db.conn.Exec(`UPDATE chats SET browser_state = ? WHERE id = ?`, string(state), chatID)
-	if err != nil {
-		return fmt.Errorf("update chat browser state: %w", err)
-	}
-	return nil
-}
-
 func (db *database) deleteChat(id string) error {
-	_, err := db.conn.Exec("DELETE FROM chats WHERE id = ?", id)
+	result, err := db.conn.Exec("DELETE FROM chats WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete chat: %w", err)
+	}
+
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return not.Found
 	}
 
 	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -831,121 +794,7 @@ func (db *database) deleteChat(id string) error {
 	return nil
 }
 
-func (db *database) updateLastMessage(chatID string, msg Message) error {
-	tx, err := db.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Get the ID of the last message
-	var messageID int64
-	err = tx.QueryRow(`
-		SELECT MAX(id) FROM messages WHERE chat_id = ?
-	`, chatID).Scan(&messageID)
-	if err != nil {
-		return fmt.Errorf("get last message id: %w", err)
-	}
-
-	query := `
-		UPDATE messages 
-		SET content = ?, thinking = ?, model_name = ?, updated_at = ?, thinking_time_start = ?, thinking_time_end = ?, tool_result = ?
-		WHERE id = ?
-	`
-
-	var thinkingTimeStart, thinkingTimeEnd sql.NullTime
-	if msg.ThinkingTimeStart != nil {
-		thinkingTimeStart = sql.NullTime{Time: *msg.ThinkingTimeStart, Valid: true}
-	}
-	if msg.ThinkingTimeEnd != nil {
-		thinkingTimeEnd = sql.NullTime{Time: *msg.ThinkingTimeEnd, Valid: true}
-	}
-
-	var modelName sql.NullString
-	if msg.Model != "" {
-		modelName = sql.NullString{String: msg.Model, Valid: true}
-	}
-
-	var toolResultJSON sql.NullString
-	if msg.ToolResult != nil {
-		resultBytes, err := json.Marshal(msg.ToolResult)
-		if err != nil {
-			return fmt.Errorf("marshal tool result: %w", err)
-		}
-		toolResultJSON = sql.NullString{String: string(resultBytes), Valid: true}
-	}
-
-	result, err := tx.Exec(query,
-		msg.Content,
-		msg.Thinking,
-		modelName,
-		msg.UpdatedAt,
-		thinkingTimeStart,
-		thinkingTimeEnd,
-		toolResultJSON,
-		messageID,
-	)
-	if err != nil {
-		return fmt.Errorf("update last message: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rowsAffected == 0 {
-		return fmt.Errorf("no message found to update")
-	}
-
-	_, err = tx.Exec("DELETE FROM attachments WHERE message_id = ?", messageID)
-	if err != nil {
-		return fmt.Errorf("delete existing attachments: %w", err)
-	}
-	for _, att := range msg.Attachments {
-		err := db.insertAttachment(tx, messageID, att)
-		if err != nil {
-			return fmt.Errorf("insert attachment: %w", err)
-		}
-	}
-
-	_, err = tx.Exec("DELETE FROM tool_calls WHERE message_id = ?", messageID)
-	if err != nil {
-		return fmt.Errorf("delete existing tool calls: %w", err)
-	}
-	for _, toolCall := range msg.ToolCalls {
-		err := db.insertToolCall(tx, messageID, toolCall)
-		if err != nil {
-			return fmt.Errorf("insert tool call: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-func (db *database) appendMessage(chatID string, msg Message) error {
-	tx, err := db.conn.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	messageID, err := db.insertMessage(tx, chatID, msg)
-	if err != nil {
-		return fmt.Errorf("insert message: %w", err)
-	}
-
-	// Insert tool calls if any
-	for _, toolCall := range msg.ToolCalls {
-		err := db.insertToolCall(tx, messageID, toolCall)
-		if err != nil {
-			return fmt.Errorf("insert tool call: %w", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Message, error) {
+func (db chatReader) getMessages(chatID string) ([]Message, error) {
 	query := `
 		SELECT id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
 		FROM messages
@@ -959,7 +808,7 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 	}
 	defer rows.Close()
 
-	var messages []Message
+	messages := []Message{}
 	for rows.Next() {
 		var msg Message
 		var messageID int64
@@ -984,7 +833,7 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 
-		attachments, err := db.getAttachments(messageID, loadAttachmentData)
+		attachments, err := db.getAttachments(messageID)
 		if err != nil {
 			return nil, fmt.Errorf("get attachments: %w", err)
 		}
@@ -1002,6 +851,8 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 			var result json.RawMessage
 			if err := json.Unmarshal([]byte(toolResult.String), &result); err == nil {
 				msg.ToolResult = &result
+			} else {
+				return nil, fmt.Errorf("read tool result: %w", err)
 			}
 		}
 
@@ -1027,83 +878,8 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 	return messages, nil
 }
 
-func (db *database) insertMessage(tx *sql.Tx, chatID string, msg Message) (int64, error) {
-	query := `
-		INSERT INTO messages (chat_id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	var thinkingTimeStart, thinkingTimeEnd sql.NullTime
-	if msg.ThinkingTimeStart != nil {
-		thinkingTimeStart = sql.NullTime{Time: *msg.ThinkingTimeStart, Valid: true}
-	}
-	if msg.ThinkingTimeEnd != nil {
-		thinkingTimeEnd = sql.NullTime{Time: *msg.ThinkingTimeEnd, Valid: true}
-	}
-
-	var modelName sql.NullString
-	if msg.Model != "" {
-		modelName = sql.NullString{String: msg.Model, Valid: true}
-	}
-
-	var toolResultJSON sql.NullString
-	if msg.ToolResult != nil {
-		resultBytes, err := json.Marshal(msg.ToolResult)
-		if err != nil {
-			return 0, fmt.Errorf("marshal tool result: %w", err)
-		}
-		toolResultJSON = sql.NullString{String: string(resultBytes), Valid: true}
-	}
-
-	result, err := tx.Exec(query,
-		chatID,
-		msg.Role,
-		msg.Content,
-		msg.Thinking,
-		msg.Stream,
-		modelName,
-		msg.CreatedAt,
-		msg.UpdatedAt,
-		thinkingTimeStart,
-		thinkingTimeEnd,
-		toolResultJSON,
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	messageID, err := result.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-
-	for _, att := range msg.Attachments {
-		err := db.insertAttachment(tx, messageID, att)
-		if err != nil {
-			return 0, fmt.Errorf("insert attachment: %w", err)
-		}
-	}
-
-	return messageID, nil
-}
-
-func (db *database) getAttachments(messageID int64, loadData bool) ([]File, error) {
-	var query string
-	if loadData {
-		query = `
-			SELECT filename, data
-			FROM attachments
-			WHERE message_id = ?
-			ORDER BY id ASC
-		`
-	} else {
-		query = `
-			SELECT filename, '' as data
-			FROM attachments
-			WHERE message_id = ?
-			ORDER BY id ASC
-		`
-	}
+func (db chatReader) getAttachments(messageID int64) ([]File, error) {
+	query := `SELECT filename, data FROM attachments WHERE message_id = ? ORDER BY id ASC`
 
 	rows, err := db.conn.Query(query, messageID)
 	if err != nil {
@@ -1128,7 +904,7 @@ func (db *database) getAttachments(messageID int64, loadData bool) ([]File, erro
 	return attachments, nil
 }
 
-func (db *database) getToolCalls(messageID int64) ([]ToolCall, error) {
+func (db chatReader) getToolCalls(messageID int64) ([]ToolCall, error) {
 	query := `
 		SELECT type, function_name, function_arguments, function_result
 		FROM tool_calls
@@ -1162,6 +938,8 @@ func (db *database) getToolCalls(messageID int64) ([]ToolCall, error) {
 			var result json.RawMessage
 			if err := json.Unmarshal([]byte(functionResult.String), &result); err == nil {
 				tc.Function.Result = &result
+			} else {
+				return nil, fmt.Errorf("read tool call result: %w", err)
 			}
 		}
 
@@ -1173,41 +951,6 @@ func (db *database) getToolCalls(messageID int64) ([]ToolCall, error) {
 	}
 
 	return toolCalls, nil
-}
-
-func (db *database) insertAttachment(tx *sql.Tx, messageID int64, file File) error {
-	query := `
-		INSERT INTO attachments (message_id, filename, data)
-		VALUES (?, ?, ?)
-	`
-	_, err := tx.Exec(query, messageID, file.Filename, file.Data)
-	return err
-}
-
-func (db *database) insertToolCall(tx *sql.Tx, messageID int64, tc ToolCall) error {
-	query := `
-		INSERT INTO tool_calls (message_id, type, function_name, function_arguments, function_result)
-		VALUES (?, ?, ?, ?, ?)
-	`
-
-	var functionResult sql.NullString
-	if tc.Function.Result != nil {
-		// Convert result to JSON
-		resultJSON, err := json.Marshal(tc.Function.Result)
-		if err != nil {
-			return fmt.Errorf("marshal tool result: %w", err)
-		}
-		functionResult = sql.NullString{String: string(resultJSON), Valid: true}
-	}
-
-	_, err := tx.Exec(query,
-		messageID,
-		tc.Type,
-		tc.Function.Name,
-		tc.Function.Arguments,
-		functionResult,
-	)
-	return err
 }
 
 // Settings operations

@@ -3,25 +3,14 @@ import { Settings } from "@/gotypes";
 import { getSettings, updateSettings } from "@/api";
 import { useMemo, useCallback } from "react";
 
-// TODO(hoyyeva): remove turboEnabled when we remove Migration logic in useSelectedModel.ts
 interface SettingsState {
-  turboEnabled: boolean;
-  webSearchEnabled: boolean;
-  selectedModel: string;
   sidebarOpen: boolean;
   lastHomeView: string;
   onboardingVersion: number;
-  thinkEnabled: boolean;
-  thinkLevel: string;
 }
 
 // Type for partial settings updates
 type SettingsUpdate = Partial<{
-  TurboEnabled: boolean;
-  WebSearchEnabled: boolean;
-  ThinkEnabled: boolean;
-  ThinkLevel: string;
-  SelectedModel: string;
   SidebarOpen: boolean;
   LastHomeView: string;
   OnboardingVersion: number;
@@ -51,11 +40,6 @@ export function useSettings({
   // Extract settings with defaults
   const settings: SettingsState = useMemo(
     () => ({
-      turboEnabled: settingsData?.settings?.TurboEnabled ?? false,
-      webSearchEnabled: settingsData?.settings?.WebSearchEnabled ?? false,
-      thinkEnabled: settingsData?.settings?.ThinkEnabled ?? false,
-      thinkLevel: settingsData?.settings?.ThinkLevel ?? "none",
-      selectedModel: settingsData?.settings?.SelectedModel ?? "",
       sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
       lastHomeView: settingsData?.settings?.LastHomeView ?? "chat",
       onboardingVersion: settingsData?.settings?.OnboardingVersion ?? 0,

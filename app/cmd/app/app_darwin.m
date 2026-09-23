@@ -588,13 +588,6 @@ static NSImage *ollamaApplicationIcon(void) {
     NSMenuItem *fileMenuItem = [[NSMenuItem alloc] init];
     NSMenu *fileMenu        = [[NSMenu alloc] initWithTitle:@"File"];
 
-    NSMenuItem *newChatItem = [[NSMenuItem alloc] initWithTitle:@"New Chat"
-                                                    action:@selector(newChat)
-                                                keyEquivalent:@"n"];
-    [newChatItem setTarget:self];
-    [fileMenu addItem:newChatItem];
-    [fileMenu addItem:[NSMenuItem separatorItem]];
-
     NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
     [fileMenu addItem:closeItem];
     [fileMenuItem setSubmenu:fileMenu];
@@ -1414,10 +1407,6 @@ didCompleteWithError:(NSError *)error {
 
 - (void)appsUI {
     [self uiRequest:@"/connect"];
-}
-
-- (void)newChat {
-    [self uiRequest:@"/c/new"];
 }
 
 - (void)uiRequest:(NSString *)path {

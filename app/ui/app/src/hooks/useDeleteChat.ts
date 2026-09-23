@@ -1,24 +1,22 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { deleteChat } from "@/api";
-import { useNavigate } from "@tanstack/react-router";
+import type { ChatInfo } from "@/gotypes";
 
 export function useDeleteChat() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
 
   return useMutation({
     mutationFn: (chatId: string) => deleteChat(chatId),
+    retry: false,
+    networkMode: "always",
     onSuccess: (_, chatId) => {
-      // If we're currently viewing the deleted chat, navigate away
-      const currentPath = window.location.pathname;
-      if (currentPath === `/c/${chatId}`) {
-        navigate({ to: "/c/$chatId", params: { chatId: "new" } });
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["chats"] });
-    },
-    onError: (error, chatId) => {
-      console.error("Failed to delete chat:", chatId, error);
+      queryClient.setQueryData<ChatInfo[]>(["history-chats"], (chats) =>
+        chats?.filter((chat) => chat.id !== chatId),
+      );
+      queryClient.removeQueries({
+        queryKey: ["history-chat", chatId],
+        exact: true,
+      });
     },
   });
 }

@@ -11,28 +11,10 @@ export default function Thinking({
   endTime?: Date;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
-  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [contentHeight, setContentHeight] = useState<number>(0);
   const [hasOverflow, setHasOverflow] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-
-  const activelyThinking = startTime && !endTime;
-  const finishedThinking = startTime && endTime;
-
-  // Auto-collapse when thinking is done (only if user hasn't manually interacted)
-  useEffect(() => {
-    if (endTime && !hasUserInteracted) {
-      setIsCollapsed(true);
-    }
-  }, [endTime, hasUserInteracted]);
-
-  // Reset user interaction flag when a new thinking session starts
-  useEffect(() => {
-    if (activelyThinking) {
-      setHasUserInteracted(false);
-    }
-  }, [activelyThinking]);
 
   // Measure content height for animations
   useEffect(() => {
@@ -70,22 +52,14 @@ export default function Thinking({
     }
   }, [thinking, isCollapsed]);
 
-  useEffect(() => {
-    if (activelyThinking && wrapperRef.current && !isCollapsed) {
-      // When expanded and actively thinking, scroll to bottom
-      wrapperRef.current.scrollTop = wrapperRef.current.scrollHeight;
-    }
-  }, [thinking, activelyThinking, isCollapsed]);
-
   const handleToggle = () => {
     setIsCollapsed(!isCollapsed);
-    setHasUserInteracted(true);
   };
 
   // Calculate max height for smooth animations
   const getMaxHeight = () => {
     if (isCollapsed) {
-      return finishedThinking ? "0px" : "12rem";
+      return "0px";
     }
     // When expanded, use the content height or grow naturally
     return contentHeight ? `${contentHeight}px` : "none";
@@ -93,7 +67,7 @@ export default function Thinking({
 
   return (
     <div
-      className={`flex mb-4 flex-col w-full ${activelyThinking || !isCollapsed ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-600 dark:text-neutral-400"}
+      className={`flex mb-4 flex-col w-full ${!isCollapsed ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-600 dark:text-neutral-400"}
          hover:text-neutral-800
         dark:hover:text-neutral-200 transition-colors`}
     >
@@ -129,17 +103,11 @@ export default function Thinking({
         </svg>
 
         <h3 className="ml-6 select-text">
-          {activelyThinking
-            ? "Thinking..."
-            : finishedThinking
-              ? (() => {
-                  const thinkingTime =
-                    (endTime.getTime() - startTime.getTime()) / 1000;
-                  return thinkingTime < 2
-                    ? "Thought for a moment"
-                    : `Thought for ${thinkingTime.toFixed(1)} seconds`;
-                })()
-              : "Thinking..."}
+          {startTime && endTime
+            ? endTime.getTime() - startTime.getTime() < 2000
+              ? "Thought for a moment"
+              : `Thought for ${((endTime.getTime() - startTime.getTime()) / 1000).toFixed(1)} seconds`
+            : "Thinking"}
         </h3>
       </div>
       <div
@@ -149,18 +117,14 @@ export default function Thinking({
           ${isCollapsed ? "overflow-hidden" : "overflow-y-auto"}`}
         style={{
           maxHeight: isCollapsed ? getMaxHeight() : undefined,
-          opacity: isCollapsed && finishedThinking ? 0 : 1,
+          opacity: isCollapsed ? 0 : 1,
         }}
       >
         <div
           ref={contentRef}
           className="transition-transform duration-300 opacity-75 select-text"
         >
-          <StreamingMarkdownContent
-            content={thinking}
-            isStreaming={activelyThinking}
-            size="sm"
-          />
+          <StreamingMarkdownContent content={thinking} size="sm" />
         </div>
 
         {/* Gradient overlay for fade effect when collapsed and scrolled */}

@@ -323,82 +323,6 @@ export class ModelCapabilitiesResponse {
         this.capabilities = source["capabilities"];
     }
 }
-export class ChatEvent {
-    eventName: "chat" | "thinking" | "assistant_with_tools" | "tool_call" | "tool" | "tool_result" | "done" | "chat_created";
-    content?: string;
-    thinking?: string;
-    thinkingTimeStart?: Date | undefined;
-    thinkingTimeEnd?: Date | undefined;
-    toolCalls?: ToolCall[];
-    toolCall?: ToolCall;
-    toolName?: string;
-    toolResult?: boolean;
-    toolResultData?: any;
-    chatId?: string;
-    toolState?: any;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.eventName = source["eventName"];
-        this.content = source["content"];
-        this.thinking = source["thinking"];
-        this.thinkingTimeStart = source["thinkingTimeStart"] && new Date(source["thinkingTimeStart"]);
-        this.thinkingTimeEnd = source["thinkingTimeEnd"] && new Date(source["thinkingTimeEnd"]);
-        this.toolCalls = this.convertValues(source["toolCalls"], ToolCall);
-        this.toolCall = this.convertValues(source["toolCall"], ToolCall);
-        this.toolName = source["toolName"];
-        this.toolResult = source["toolResult"];
-        this.toolResultData = source["toolResultData"];
-        this.chatId = source["chatId"];
-        this.toolState = source["toolState"];
-    }
-
-	convertValues(a: any, classs: any, asMap: boolean = false): any {
-	    if (!a) {
-	        return a;
-	    }
-	    if (Array.isArray(a)) {
-	        return (a as any[]).map(elem => this.convertValues(elem, classs));
-	    } else if ("object" === typeof a) {
-	        if (asMap) {
-	            for (const key of Object.keys(a)) {
-	                a[key] = new classs(a[key]);
-	            }
-	            return a;
-	        }
-	        return new classs(a);
-	    }
-	    return a;
-	}
-}
-export class DownloadEvent {
-    eventName: "download";
-    total: number;
-    completed: number;
-    done: boolean;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.eventName = source["eventName"];
-        this.total = source["total"];
-        this.completed = source["completed"];
-        this.done = source["done"];
-    }
-}
-export class ErrorEvent {
-    eventName: "error";
-    error: string;
-    code?: string;
-    details?: string;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.eventName = source["eventName"];
-        this.error = source["error"];
-        this.code = source["code"];
-        this.details = source["details"];
-    }
-}
 export class Settings {
     Expose: boolean;
     Browser: boolean;
@@ -418,6 +342,7 @@ export class Settings {
     OnboardingVersion: number;
     AutoUpdateEnabled: boolean;
     ClaudeDesktopUsed: boolean;
+    CodexDesktopUsed: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -439,6 +364,7 @@ export class Settings {
         this.OnboardingVersion = source["OnboardingVersion"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
         this.ClaudeDesktopUsed = source["ClaudeDesktopUsed"];
+        this.CodexDesktopUsed = source["CodexDesktopUsed"];
     }
 }
 export class SettingsResponse {
@@ -497,71 +423,11 @@ export class User {
         this.plan = source["plan"];
     }
 }
-export class Attachment {
-    filename: string;
-    data?: string;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.filename = source["filename"];
-        this.data = source["data"];
-    }
-}
-export class ChatRequest {
-    model: string;
-    prompt: string;
-    index?: number;
-    attachments?: Attachment[];
-    web_search?: boolean;
-    file_tools?: boolean;
-    forceUpdate?: boolean;
-    think?: any;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.model = source["model"];
-        this.prompt = source["prompt"];
-        this.index = source["index"];
-        this.attachments = this.convertValues(source["attachments"], Attachment);
-        this.web_search = source["web_search"];
-        this.file_tools = source["file_tools"];
-        this.forceUpdate = source["forceUpdate"];
-        this.think = source["think"];
-    }
-
-	convertValues(a: any, classs: any, asMap: boolean = false): any {
-	    if (!a) {
-	        return a;
-	    }
-	    if (Array.isArray(a)) {
-	        return (a as any[]).map(elem => this.convertValues(elem, classs));
-	    } else if ("object" === typeof a) {
-	        if (asMap) {
-	            for (const key of Object.keys(a)) {
-	                a[key] = new classs(a[key]);
-	            }
-	            return a;
-	        }
-	        return new classs(a);
-	    }
-	    return a;
-	}
-}
 export class Error {
     error: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
-        this.error = source["error"];
-    }
-}
-export class ModelUpstreamResponse {
-    stale: boolean;
-    error?: string;
-
-    constructor(source: any = {}) {
-        if ('string' === typeof source) source = JSON.parse(source);
-        this.stale = source["stale"];
         this.error = source["error"];
     }
 }

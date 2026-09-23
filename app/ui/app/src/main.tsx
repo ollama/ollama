@@ -4,7 +4,6 @@ import { RouterProvider, createRouter } from "@tanstack/react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { fetchUser } from "./api";
-import { StreamingProvider } from "./contexts/StreamingContext";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,9 +40,7 @@ if (!rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <StreamingProvider>
-          <RouterProvider router={router} />
-        </StreamingProvider>
+        <RouterProvider router={router} />
       </QueryClientProvider>
     </StrictMode>,
   );
