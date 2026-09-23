@@ -71,9 +71,50 @@
   will-change: opacity, transform;
 }
 
+.apps-copy-hint {
+  transition:
+    opacity 320ms ease-in-out,
+    transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.apps-copy-hint[data-closed] {
+  opacity: 0;
+  transform: translateX(16px);
+}
+
+.apps-copy-hint[data-leave] {
+  transition-duration: 400ms;
+  transition-timing-function: ease-in-out;
+}
+
+@keyframes apps-copy-card-flash {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  25%,
+  50% {
+    opacity: 1;
+  }
+}
+
+.apps-copy-card-feedback {
+  animation: apps-copy-card-flash 1800ms ease-in-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .claude-connected-backdrop,
-  .claude-connected-dialog {
+  .claude-connected-dialog,
+  .apps-copy-card-feedback {
     animation: none;
+  }
+
+  .apps-copy-hint,
+  .apps-copy-hint[data-leave] {
+    transition: none;
+  }
+
+  .apps-copy-hint[data-closed] {
+    transform: none;
   }
 }

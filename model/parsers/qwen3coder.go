@@ -60,6 +60,18 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	p.acc.WriteString(s)
 
 	events := p.parseEvents()
+	if done {
+		switch p.state {
+		case qwenParserState_LookingForToolStart:
+			if p.acc.Len() > 0 {
+				events = append(events, qwenEventContent{content: p.acc.String()})
+			}
+		case qwenParserState_CollectingToolContent:
+			events = append(events, qwenEventContent{content: toolOpenTag + p.acc.String()})
+		}
+		p.acc.Reset()
+		p.state = qwenParserState_LookingForToolStart
+	}
 
 	var toolCalls []api.ToolCall
 	var sb strings.Builder

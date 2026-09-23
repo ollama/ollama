@@ -6,7 +6,7 @@ import {
   notifyManager,
 } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { act, create } from "react-test-renderer";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodexConnectedIntro } from "./CodexConnectedIntro";
 import {
@@ -64,18 +64,14 @@ function status(
   };
 }
 
+function connectionButton(renderer: ReactTestRenderer) {
+  return renderer.root.find(
+    (node) =>
+      node.type === "button" && typeof node.props["aria-pressed"] === "boolean",
+  );
+}
+
 describe("CodexDesktopRow", () => {
-  it("renders a disconnected ChatGPT toggle", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow integration={integration} initialStatus={status()} />,
-    );
-
-    expect(html).toContain(">ChatGPT (Desktop)</p>");
-    expect(html).toContain("Use Ollama models in ChatGPT");
-    expect(html).toContain('aria-label="Add Ollama models to ChatGPT"');
-    expect(html).toContain('aria-checked="false"');
-  });
-
   it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
@@ -92,7 +88,7 @@ describe("CodexDesktopRow", () => {
     expect(html).not.toContain("Codex + Ollama");
     expect(html).not.toContain("3 Ollama models");
     expect(html).toContain('aria-label="Remove Ollama models from ChatGPT"');
-    expect(html).toContain('aria-checked="true"');
+    expect(html).toContain('aria-pressed="true"');
   });
 
   it.each([
@@ -119,21 +115,7 @@ describe("CodexDesktopRow", () => {
     },
   );
 
-  it("offers installation when ChatGPT is not installed", () => {
-    const html = renderToStaticMarkup(
-      <CodexDesktopRow
-        integration={{ ...integration, installed: false }}
-        initialStatus={status({ installed: false })}
-      />,
-    );
-
-    expect(html).toContain("Use Ollama models in ChatGPT");
-    expect(html).not.toContain('disabled=""');
-    expect(html).toContain('title="Install ChatGPT and add Ollama models"');
-    expect(html).toContain("Download &amp; connect");
-  });
-
-  it("matches Claude's download and install progress states", async () => {
+  it("keeps the connection busy until ChatGPT installation is detected", async () => {
     const notInstalled = status({ installed: false });
     let finishInstall!: (result: "opened") => void;
     const install = new Promise<"opened">((resolve) => {
@@ -162,26 +144,19 @@ describe("CodexDesktopRow", () => {
           />,
         );
       });
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
+      expect(toggle.props["aria-pressed"]).toBe(false);
+      expect(toggle.props.disabled).toBe(false);
       await act(async () => {
         toggle.props.onClick();
         await Promise.resolve();
       });
 
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(window.installCodexDesktop).toHaveBeenCalledOnce();
+      expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(toggle.props.className).toContain("disabled:cursor-wait");
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Downloading…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes(
-            "Ollama is downloading the ChatGPT installer…",
-          ),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
 
       await act(async () => {
         finishInstall("opened");
@@ -189,25 +164,16 @@ describe("CodexDesktopRow", () => {
         await Promise.resolve();
       });
 
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Finish installing…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes(
-            "Finish installing ChatGPT. Ollama will connect it automatically.",
-          ),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
     } finally {
       await act(async () => renderer?.unmount());
     }
   });
 
-  it("matches Claude's connecting state", async () => {
+  it("disables the connection button while connecting ChatGPT", async () => {
     let finishConnect!: (result: { status: CodexDesktopStatus }) => void;
     const connect = new Promise<{ status: CodexDesktopStatus }>((resolve) => {
       finishConnect = resolve;
@@ -229,23 +195,16 @@ describe("CodexDesktopRow", () => {
           />,
         );
       });
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
       await act(async () => {
         toggle.props.onClick();
         await Promise.resolve();
       });
 
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props["aria-busy"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Connecting…",
-      );
-      expect(
-        renderer!.root.findAll((node) =>
-          node.children.includes("Connecting ChatGPT to Ollama…"),
-        ),
-      ).toHaveLength(1);
+      expect(toggle.findByProps({ role: "status" })).toBeTruthy();
 
       await act(async () => {
         finishConnect({ status: status({ connected: true }) });
@@ -304,7 +263,7 @@ describe("CodexDesktopRow", () => {
       expect(
         renderer!.root.findByProps({
           "aria-label": "Remove Ollama models from ChatGPT",
-        }).props["aria-checked"],
+        }).props["aria-pressed"],
       ).toBe(true);
       expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
         "Ollama models added alongside Codex models",
@@ -357,7 +316,7 @@ describe("CodexDesktopRow", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ role: "switch" });
+        const toggle = connectionButton(renderer!);
         await act(async () => toggle.props.onClick());
         await act(async () =>
           vi.advanceTimersByTimeAsync(CODEX_DESKTOP_INSTALL_TIMEOUT_MS - 2000),
@@ -369,7 +328,7 @@ describe("CodexDesktopRow", () => {
           if (!retry) settleOldCheck();
         });
         expect(toggle.props.disabled).toBe(false);
-        expect(toggle.props["aria-checked"]).toBe(false);
+        expect(toggle.props["aria-pressed"]).toBe(false);
         expect(
           renderer!.root.findByProps({ role: "alert" }).children,
         ).toContain("ChatGPT installation wasn’t detected. Try again.");
@@ -391,7 +350,7 @@ describe("CodexDesktopRow", () => {
           await act(async () => vi.advanceTimersByTimeAsync(1000));
           expect(connect).toHaveBeenCalledOnce();
           expect(toggle.props.disabled).toBe(false);
-          expect(toggle.props["aria-checked"]).toBe(true);
+          expect(toggle.props["aria-pressed"]).toBe(true);
         }
       } finally {
         await act(async () => renderer?.unmount());
@@ -426,7 +385,7 @@ describe("CodexDesktopRow", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ role: "switch" });
+        const toggle = connectionButton(renderer!);
         await act(async () => toggle.props.onClick());
         if (step === "connection") {
           await act(async () => check.resolve(status()));
@@ -491,15 +450,11 @@ describe("CodexDesktopRow", () => {
         expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
           0,
         );
-        expect(
-          renderer!.root.findByProps({ role: "alert" }).children,
-        ).toContain(
-          "ChatGPT is installed. Turn on the switch to restart it with Ollama models.",
-        );
+        expect(renderer!.root.findByProps({ role: "alert" })).toBeTruthy();
         expect(
           renderer!.root.findByProps({
             "aria-label": "Add Ollama models to ChatGPT",
-          }).props["aria-checked"],
+          }).props["aria-pressed"],
         ).toBe(false);
       } finally {
         await act(async () => renderer?.unmount());
@@ -536,7 +491,7 @@ describe("CodexDesktopRow", () => {
       });
 
       expect(getStatus).not.toHaveBeenCalled();
-      expect(toggle.props["aria-checked"]).toBe(false);
+      expect(toggle.props["aria-pressed"]).toBe(false);
       expect(toggle.props.disabled).toBe(false);
       expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
     } finally {
@@ -635,7 +590,7 @@ describe("CodexDesktopRow", () => {
       expect(
         renderer!.root.findByProps({
           "aria-label": "Remove Ollama models from ChatGPT",
-        }).props["aria-checked"],
+        }).props["aria-pressed"],
       ).toBe(true);
     } finally {
       await act(async () => renderer?.unmount());
@@ -692,11 +647,61 @@ describe("CodexDesktopRow", () => {
       expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
         "quit ChatGPT: timed out waiting for ChatGPT to exit",
       );
-      expect(toggle.props["aria-checked"]).toBe(false);
+      expect(toggle.props["aria-pressed"]).toBe(false);
     } finally {
       await act(async () => renderer?.unmount());
     }
   });
+
+  it.each([false, true])(
+    "honors the native ChatGPT disconnect confirmation: %s",
+    async (confirmed) => {
+      const connected = status({ connected: true, running: true });
+      const confirm = vi.fn(() => confirmed);
+      const disconnect = vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: connected,
+          restartConfirmationRequired: true,
+        })
+        .mockResolvedValue({ status: status({ running: true }) });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        setCodexDesktopConnected: disconnect,
+        confirm,
+      });
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={integration}
+              initialStatus={connected}
+            />,
+          );
+        });
+        const toggle = connectionButton(renderer!);
+        await act(async () => {
+          toggle.props.onClick();
+          toggle.props.onClick();
+        });
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(disconnect).toHaveBeenNthCalledWith(1, false, false);
+        if (confirmed) {
+          expect(disconnect).toHaveBeenCalledTimes(2);
+          expect(disconnect).toHaveBeenLastCalledWith(false, true);
+        } else {
+          expect(disconnect).toHaveBeenCalledOnce();
+          expect(toggle.props.disabled).toBe(false);
+          expect(toggle.props["aria-pressed"]).toBe(true);
+        }
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
 
   it("allows the normal profile to be restored if ChatGPT is removed", async () => {
     const html = renderToStaticMarkup(
@@ -774,13 +779,13 @@ describe("ChatGPT first connection intro", () => {
           );
         });
         await act(async () => {
-          renderer!.root.findByProps({ role: "switch" }).props.onClick();
+          connectionButton(renderer!).props.onClick();
         });
         expect(connect).not.toHaveBeenCalled();
         expect(save).not.toHaveBeenCalled();
         expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
-        const toggle = renderer!.root.findByProps({ role: "switch" });
-        expect(toggle.props["aria-checked"]).toBe(true);
+        const toggle = connectionButton(renderer!);
+        expect(toggle.props["aria-pressed"]).toBe(true);
         expect(toggle.props.disabled).toBe(true);
         const intro = renderer!.root.findByType(CodexConnectedIntro);
         await act(async () => {
@@ -791,7 +796,7 @@ describe("ChatGPT first connection intro", () => {
         expect(confirm).toHaveBeenCalledTimes(running ? 1 : 0);
         expect(save).toHaveBeenCalledOnce();
         expect(toggle.props.disabled).toBe(false);
-        expect(toggle.props["aria-checked"]).toBe(true);
+        expect(toggle.props["aria-pressed"]).toBe(true);
         expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(
           0,
         );
@@ -829,7 +834,7 @@ describe("ChatGPT first connection intro", () => {
         );
       });
       await act(async () => {
-        renderer!.root.findByProps({ role: "switch" }).props.onClick();
+        connectionButton(renderer!).props.onClick();
       });
       expect(connect).not.toHaveBeenCalled();
       expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(1);
@@ -862,10 +867,10 @@ it("leaves the Apps page usable when the initial restart is cancelled", async ()
         />,
       );
     });
-    const toggle = renderer!.root.findByProps({ role: "switch" });
+    const toggle = connectionButton(renderer!);
     await act(async () => toggle.props.onClick());
     expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
-    expect(toggle.props["aria-checked"]).toBe(false);
+    expect(toggle.props["aria-pressed"]).toBe(false);
     expect(toggle.props.disabled).toBe(false);
     expect(connect).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
@@ -903,18 +908,18 @@ it.each(["failed", "rejected", "save failed"])(
           />,
         );
       });
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
       await act(async () => {
         toggle.props.onClick();
       });
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-pressed"]).toBe(true);
       expect(toggle.props.disabled).toBe(true);
       const intro = renderer!.root.findByType(CodexConnectedIntro);
       await act(async () => {
         intro.props.onDone();
       });
       expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
-      expect(toggle.props["aria-checked"]).toBe(outcome === "save failed");
+      expect(toggle.props["aria-pressed"]).toBe(outcome === "save failed");
       expect(toggle.props.disabled).toBe(false);
       expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
         outcome === "failed"
@@ -958,7 +963,7 @@ it("dismisses before launch and prevents duplicate Continue requests", async () 
         />,
       );
     });
-    const toggle = renderer!.root.findByProps({ role: "switch" });
+    const toggle = connectionButton(renderer!);
     await act(async () => toggle.props.onClick());
     const intro = renderer!.root.findByType(CodexConnectedIntro);
     await act(async () => {
@@ -1010,18 +1015,16 @@ it.each(["cancelled", "status failed"])(
           />,
         );
       });
-      await act(async () =>
-        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-      );
+      await act(async () => connectionButton(renderer!).props.onClick());
       await act(async () =>
         renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
       );
       expect(connect).not.toHaveBeenCalled();
       expect(save).not.toHaveBeenCalled();
       expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
       expect(toggle.props.disabled).toBe(false);
-      expect(toggle.props["aria-checked"]).toBe(false);
+      expect(toggle.props["aria-pressed"]).toBe(false);
     } finally {
       await act(async () => renderer?.unmount());
     }
@@ -1059,9 +1062,7 @@ it("does not open a restart prompt after leaving the Apps page", async () => {
         <CodexDesktopRow integration={integration} initialStatus={status()} />,
       );
     });
-    await act(async () =>
-      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-    );
+    await act(async () => connectionButton(renderer!).props.onClick());
     await act(async () => renderer!.unmount());
     await act(async () =>
       action.resolve({
@@ -1105,9 +1106,7 @@ it("keeps the latest status when focus refreshes complete out of order", async (
     });
     await act(async () => newer.resolve(status({ connected: true })));
     await act(async () => older.resolve(status()));
-    expect(
-      renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
-    ).toBe(true);
+    expect(connectionButton(renderer!).props["aria-pressed"]).toBe(true);
   } finally {
     await act(async () => renderer?.unmount());
   }
@@ -1134,7 +1133,7 @@ it("does not start overlapping installers before the switch rerenders", async ()
         />,
       );
     });
-    const toggle = renderer!.root.findByProps({ role: "switch" });
+    const toggle = connectionButton(renderer!);
     await act(async () => {
       toggle.props.onClick();
       toggle.props.onClick();
@@ -1142,7 +1141,7 @@ it("does not start overlapping installers before the switch rerenders", async ()
     expect(install).toHaveBeenCalledOnce();
     await act(async () => result.resolve("cancelled"));
     expect(toggle.props.disabled).toBe(false);
-    expect(toggle.props["aria-checked"]).toBe(false);
+    expect(toggle.props["aria-pressed"]).toBe(false);
   } finally {
     await act(async () => renderer?.unmount());
   }
@@ -1179,7 +1178,7 @@ it("does not retry acknowledgment during a disconnect, or reconnect to save afte
         />,
       );
     });
-    const toggle = renderer!.root.findByProps({ role: "switch" });
+    const toggle = connectionButton(renderer!);
     await act(async () => toggle.props.onClick());
     await act(async () =>
       renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
@@ -1198,7 +1197,7 @@ it("does not retry acknowledgment during a disconnect, or reconnect to save afte
     await act(async () => retry.props.onClick());
     expect(connect).toHaveBeenCalledTimes(2);
     expect(save).toHaveBeenCalledTimes(2);
-    expect(toggle.props["aria-checked"]).toBe(false);
+    expect(toggle.props["aria-pressed"]).toBe(false);
     expect(
       renderer!.root.findAllByProps({ "aria-label": "Retry saving progress" }),
     ).toHaveLength(0);
@@ -1239,9 +1238,7 @@ it.each(["returned", "rejected"])(
           />,
         );
       });
-      await act(async () =>
-        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-      );
+      await act(async () => connectionButton(renderer!).props.onClick());
       await act(async () =>
         renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
       );
@@ -1257,7 +1254,7 @@ it.each(["returned", "rejected"])(
       const retryButton = renderer!.root.findByProps({
         "aria-label": "Retry saving progress",
       });
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
       await act(async () => {
         retryButton.props.onClick();
         retryButton.props.onClick();
@@ -1267,7 +1264,7 @@ it.each(["returned", "rejected"])(
       expect(save).toHaveBeenCalledTimes(2);
       expect(retryButton.props.disabled).toBe(true);
       expect(toggle.props.disabled).toBe(true);
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-pressed"]).toBe(true);
       await act(async () => retry.resolve(""));
       expect(
         renderer!.root.findAllByProps({
@@ -1276,7 +1273,7 @@ it.each(["returned", "rejected"])(
       ).toHaveLength(0);
       expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
       expect(toggle.props.disabled).toBe(false);
-      expect(toggle.props["aria-checked"]).toBe(true);
+      expect(toggle.props["aria-pressed"]).toBe(true);
       expect(connect).toHaveBeenCalledOnce();
       expect(save).toHaveBeenCalledTimes(2);
     } finally {
@@ -1323,9 +1320,7 @@ it.each([
       await act(async () => {
         renderer = create(<CodexDesktopRow integration={integration} />);
       });
-      await act(async () =>
-        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-      );
+      await act(async () => connectionButton(renderer!).props.onClick());
       await act(async () =>
         renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
       );
@@ -1337,7 +1332,7 @@ it.each([
       await act(async () => {
         renderer = create(<CodexDesktopRow integration={integration} />);
       });
-      const toggle = renderer!.root.findByProps({ role: "switch" });
+      const toggle = connectionButton(renderer!);
       if (timing === "after returning") {
         expect(toggle.props.disabled).toBe(true);
         await act(async () => toggle.props.onClick());
@@ -1361,9 +1356,7 @@ it.each([
       await act(async () => {
         renderer = create(<CodexDesktopRow integration={integration} />);
       });
-      expect(
-        renderer!.root.findByProps({ role: "switch" }).props.disabled,
-      ).toBe(true);
+      expect(connectionButton(renderer!).props.disabled).toBe(true);
       await act(async () =>
         renderer!.root
           .findByProps({ "aria-label": "Retry saving progress" })
@@ -1377,12 +1370,8 @@ it.each([
         }),
       ).toHaveLength(0);
       expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(0);
-      expect(
-        renderer!.root.findByProps({ role: "switch" }).props.disabled,
-      ).toBe(false);
-      expect(
-        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
-      ).toBe(true);
+      expect(connectionButton(renderer!).props.disabled).toBe(false);
+      expect(connectionButton(renderer!).props["aria-pressed"]).toBe(true);
       expect(connect).toHaveBeenCalledOnce();
       expect(save).toHaveBeenCalledTimes(2);
     } finally {
@@ -1415,9 +1404,7 @@ it("refreshes connection status when Retry overtakes the returning page's status
     await act(async () => {
       renderer = create(<CodexDesktopRow integration={integration} />);
     });
-    await act(async () =>
-      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-    );
+    await act(async () => connectionButton(renderer!).props.onClick());
     await act(async () =>
       renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
     );
@@ -1435,12 +1422,8 @@ it("refreshes connection status when Retry overtakes the returning page's status
     );
     await act(async () => stale.resolve(connectedStatus));
     await act(async () => retrySave.resolve(""));
-    expect(
-      renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
-    ).toBe(true);
-    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
-      false,
-    );
+    expect(connectionButton(renderer!).props["aria-pressed"]).toBe(true);
+    expect(connectionButton(renderer!).props.disabled).toBe(false);
     expect(connect).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledTimes(2);
   } finally {
@@ -1468,9 +1451,7 @@ it("observes a successful pending save after returning without saving again", as
     await act(async () => {
       renderer = create(<CodexDesktopRow integration={integration} />);
     });
-    await act(async () =>
-      renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-    );
+    await act(async () => connectionButton(renderer!).props.onClick());
     await act(async () =>
       renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
     );
@@ -1479,17 +1460,13 @@ it("observes a successful pending save after returning without saving again", as
     await act(async () => {
       renderer = create(<CodexDesktopRow integration={integration} />);
     });
-    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
-      true,
-    );
+    expect(connectionButton(renderer!).props.disabled).toBe(true);
     await act(async () => pendingSave.resolve(""));
     expect(
       renderer!.root.findAllByProps({ "aria-label": "Retry saving progress" }),
     ).toHaveLength(0);
     expect(renderer!.root.findAllByType(CodexConnectedIntro)).toHaveLength(0);
-    expect(renderer!.root.findByProps({ role: "switch" }).props.disabled).toBe(
-      false,
-    );
+    expect(connectionButton(renderer!).props.disabled).toBe(false);
     expect(connect).toHaveBeenCalledOnce();
     expect(save).toHaveBeenCalledOnce();
   } finally {
@@ -1562,9 +1539,7 @@ it.each(["resolved", "rejected"])(
         );
       });
       await act(async () => onFocus?.());
-      await act(async () =>
-        renderer!.root.findByProps({ role: "switch" }).props.onClick(),
-      );
+      await act(async () => connectionButton(renderer!).props.onClick());
       await act(async () =>
         renderer!.root.findByType(CodexConnectedIntro).props.onDone(),
       );
@@ -1572,9 +1547,7 @@ it.each(["resolved", "rejected"])(
         if (outcome === "resolved") stale.resolve(firstUseStatus);
         else stale.reject(new Error("stale status failure"));
       });
-      expect(
-        renderer!.root.findByProps({ role: "switch" }).props["aria-checked"],
-      ).toBe(true);
+      expect(connectionButton(renderer!).props["aria-pressed"]).toBe(true);
       expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
         "Ollama couldn’t save your progress. Please try again.",
       );

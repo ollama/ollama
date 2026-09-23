@@ -571,10 +571,9 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			expectedThinking: &ThinkValue{Value: "max"},
 		},
 		{
-			name:             "invalid_string",
-			input:            `{ "think": "invalid" }`,
-			expectedThinking: nil,
-			expectedError:    true,
+			name:             "unknown_string",
+			input:            `{ "think": "future-level" }`,
+			expectedThinking: &ThinkValue{Value: "future-level"},
 		},
 	}
 
@@ -984,4 +983,75 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 		expected := `{"outer":{"type":"object","properties":{"z_field":{"type":"string"},"a_field":{"type":"number"}}}}`
 		assert.Equal(t, expected, string(data))
 	})
+}
+
+func TestValidateLegacyThinking(t *testing.T) {
+	for _, tt := range []struct {
+		input string
+		valid bool
+	}{
+		{`null`, true},
+		{`true`, true},
+		{`false`, true},
+		{`"low"`, true},
+		{`"medium"`, true},
+		{`"high"`, true},
+		{`"max"`, true},
+		{`"xhigh"`, false},
+		{`"minimal"`, false},
+		{`"future"`, false},
+		{`""`, false},
+		{`"HIGH"`, false},
+		{`" high "`, false},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think *ThinkValue
+			if err := json.Unmarshal([]byte(tt.input), &think); err != nil {
+				t.Fatal(err)
+			}
+			if !think.IsValid() {
+				t.Fatal("legacy validation must not restrict transport types")
+			}
+			if err := ValidateLegacyThinking(think); (err == nil) != tt.valid {
+				t.Fatalf("ValidateLegacyThinking(%s) = %v, want valid=%v", tt.input, err, tt.valid)
+			}
+		})
+	}
+}
+
+func TestThinkValueTransportTypes(t *testing.T) {
+	for _, tt := range []struct {
+		input   string
+		want    any
+		invalid bool
+	}{
+		{`null`, nil, false},
+		{`true`, true, false},
+		{`false`, false, false},
+		{`"xhigh"`, "xhigh", false},
+		{`"minimal"`, "minimal", false},
+		{`""`, "", false},
+		{`75`, nil, true},
+		{`0.75`, nil, true},
+		{`[]`, nil, true},
+		{`{}`, nil, true},
+		{`tru`, nil, true},
+	} {
+		t.Run(tt.input, func(t *testing.T) {
+			var think ThinkValue
+			err := json.Unmarshal([]byte(tt.input), &think)
+			if (err != nil) != tt.invalid {
+				t.Fatalf("error = %v, invalid = %v", err, tt.invalid)
+			}
+			if err != nil {
+				return
+			}
+			if think.Value != tt.want {
+				t.Fatalf("got %#v, want %#v", think.Value, tt.want)
+			}
+			if think.IsString() && !think.Bool() {
+				t.Fatal("named effort must express intent to think")
+			}
+		})
+	}
 }

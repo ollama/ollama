@@ -18,6 +18,11 @@ type Value struct {
 	value any
 }
 
+// Any returns Value as stored, without conversion. If it is not set, it returns nil.
+func (v Value) Any() any {
+	return v.value
+}
+
 func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 	vv := reflect.ValueOf(v.value)
 	if slices.Contains(kinds, vv.Kind()) {

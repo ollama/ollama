@@ -55,8 +55,8 @@ For build prerequisites, platform notes, and backend selection, see the
   marker, or response cadence on paths Ollama parses directly.
 - Model and conversion surfaces: new architectures, tensor names, GGUF
   metadata, tokenizer behavior, speculative/MTP paths, sampler defaults, and
-  server capabilities that may require updates under `convert/`, `model/`,
-  `x/create/`, `llm/`, or `llama/compat/`. A model load alone is not enough;
+  server capabilities that may require updates under `model/`,
+  `create/`, `llm/`, or `llama/compat/`. A model load alone is not enough;
   affected paths should run a real request and assert the expected result.
 
 ### Compatibility patches

@@ -22,7 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/ml"
 
 	"github.com/ollama/ollama/api"
@@ -814,7 +815,7 @@ func TestLlamaServerCompletionContextShiftAvoidsOneTokenHeadroomRegression(t *te
 		cmd:     fakeRunningCmd(),
 		sem:     semaphore.NewWeighted(1),
 		options: api.Options{Runner: api.Runner{NumCtx: 4096}},
-		ggml: loadTestGGML(t, ggml.KV{
+		metadata: loadTestGGUF(t, gguftest.KV{
 			"general.architecture":         "gemma3",
 			"tokenizer.ggml.add_bos_token": true,
 		}),
@@ -1429,7 +1430,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		name             string
 		leadingBOS       string
 		tokenizerAddsBOS bool
-		ggmlKV           ggml.KV
+		ggufKV           gguftest.KV
 		prompt           string
 		wantPrompt       string
 	}{
@@ -1472,7 +1473,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 llama.cpp runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.pre":              "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1486,7 +1487,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "gemma4 model runtime bos override",
 			leadingBOS: "<bos>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":            "gemma4",
 				"tokenizer.ggml.model":            "gemma4",
 				"tokenizer.ggml.add_bos_token":    false,
@@ -1500,7 +1501,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 strips renderer bos",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
@@ -1513,7 +1514,7 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 		{
 			name:       "lfm2 missing bos metadata uses llama.cpp default",
 			leadingBOS: "<|startoftext|>",
-			ggmlKV: ggml.KV{
+			ggufKV: gguftest.KV{
 				"general.architecture":        "lfm2",
 				"tokenizer.ggml.model":        "gpt2",
 				"tokenizer.ggml.pre":          "lfm2",
@@ -1555,10 +1556,10 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 				sem:     semaphore.NewWeighted(1),
 				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 			}
-			if tt.ggmlKV != nil {
-				runner.ggml = loadTestGGML(t, tt.ggmlKV)
+			if tt.ggufKV != nil {
+				runner.metadata = loadTestGGUF(t, tt.ggufKV)
 			} else if tt.tokenizerAddsBOS {
-				runner.ggml = loadTestGGML(t, ggml.KV{
+				runner.metadata = loadTestGGUF(t, gguftest.KV{
 					"general.architecture":         "gemma3",
 					"tokenizer.ggml.add_bos_token": true,
 				})
@@ -1749,12 +1750,12 @@ func TestLlamaServerEmbedding(t *testing.T) {
 func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 	tests := []struct {
 		name string
-		kv   ggml.KV
+		kv   gguftest.KV
 		want bool
 	}{
 		{
 			name: "bert t5 raw like bge-m3",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "bert",
 				"bert.pooling_type":    uint32(1),
 				"tokenizer.ggml.model": "t5",
@@ -1763,7 +1764,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "nomic bert default raw",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture":    "nomic-bert",
 				"nomic-bert.pooling_type": uint32(1),
 			},
@@ -1771,7 +1772,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 		},
 		{
 			name: "qwen3 remains normalized",
-			kv: ggml.KV{
+			kv: gguftest.KV{
 				"general.architecture": "qwen3",
 				"qwen3.pooling_type":   uint32(1),
 			},
@@ -1780,7 +1781,7 @@ func TestLegacyEmbeddingsWereRaw(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := legacyEmbeddingsWereRaw(tt.kv); got != tt.want {
+			if got := legacyEmbeddingsWereRaw(loadTestGGUF(t, tt.kv).KV()); got != tt.want {
 				t.Fatalf("legacyEmbeddingsWereRaw() = %v, want %v", got, tt.want)
 			}
 		})
@@ -2195,6 +2196,7 @@ func TestAppendMMProjArgs(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		modelArch    string
 		projectors   []string
 		opts         api.Options
 		gpus         []ml.DeviceInfo
@@ -2299,12 +2301,23 @@ func TestAppendMMProjArgs(t *testing.T) {
 			retry:        true,
 			want:         []string{"base", "--mmproj", "model.gguf", "--no-mmproj-offload"},
 		},
+		{
+			name:         "gemma3n keeps projector offload under partial text offload",
+			modelArch:    "gemma3n",
+			projectors:   []string{"model.gguf"},
+			opts:         partialOpts,
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+			want:         []string{"base", "--mmproj", "model.gguf"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := appendMMProjArgs([]string{"base"}, llamaServerLaunchConfig{
 				modelPath:            "model.gguf",
+				modelArch:            tt.modelArch,
 				projectors:           tt.projectors,
 				mmprojMemory:         tt.mmprojMemory,
 				opts:                 tt.opts,
@@ -2314,6 +2327,45 @@ func TestAppendMMProjArgs(t *testing.T) {
 			})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendMMProjArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldRetryMMProjCPUOffload(t *testing.T) {
+	launch := func(modelArch string) llamaServerLaunchConfig {
+		return llamaServerLaunchConfig{
+			modelArch:    modelArch,
+			projectors:   []string{"mmproj.gguf"},
+			opts:         api.DefaultOptions(),
+			gpus:         []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, FreeMemory: 24 << 30}},
+			mmprojMemory: 933 << 20,
+			modelLayers:  81,
+		}
+	}
+
+	tests := []struct {
+		name   string
+		launch llamaServerLaunchConfig
+		want   bool
+	}{
+		{
+			name:   "oom retries with projector on cpu",
+			launch: launch("qwen3vl"),
+			want:   true,
+		},
+		{
+			name:   "gemma3n oom does not retry with projector on cpu",
+			launch: launch("gemma3n"),
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{launch: tt.launch}
+			if got := s.shouldRetryMMProjCPUOffload(errors.New("out of memory")); got != tt.want {
+				t.Fatalf("shouldRetryMMProjCPUOffload = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -2393,21 +2445,32 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatalf("no projector memory = %d, %v; want 0, nil", got, err)
 	}
 
-	modelPath, model := writeTestGGML(t, ggml.KV{"general.architecture": "gemma3"}, []*ggml.Tensor{
-		testGGMLTensor("blk.0.attn_q.weight", ggml.TensorTypeF32, []uint64{4}),
-		testGGMLTensor("v.patch_embd.weight", ggml.TensorTypeF16, []uint64{16}),
-		testGGMLTensor("mm.0.weight", ggml.TensorTypeF32, []uint64{8}),
-		testGGMLTensor("a.encoder.weight", ggml.TensorTypeF32, []uint64{2}),
+	modelPath, model := writeTestGGUF(t, gguftest.KV{"general.architecture": "gemma3"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{4}),
+		testGGUFTensor("v.patch_embd.weight", gguf.TensorTypeF16, []uint64{16}),
+		testGGUFTensor("mm.0.weight", gguf.TensorTypeF32, []uint64{8}),
+		testGGUFTensor("a.encoder.weight", gguf.TensorTypeF32, []uint64{2}),
 	})
 
 	wantInline := uint64(16*2 + 8*4 + 2*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{modelPath}); err != nil || got != wantInline {
 		t.Fatalf("inline mmproj memory = %d, %v; want %d, nil", got, err, wantInline)
 	}
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("v.split.weight", gguf.TensorTypeF16, []uint64{8}),
+	})
+	splitModel, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSplitInline := wantInline + 8*2
+	if got, err := mmprojMemoryRequirement(modelPath, splitModel, []string{modelPath}); err != nil || got != wantSplitInline {
+		t.Fatalf("split inline mmproj memory = %d, %v; want %d, nil", got, err, wantSplitInline)
+	}
 
-	projectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, []*ggml.Tensor{
-		testGGMLTensor("vision.weight", ggml.TensorTypeF16, []uint64{32}),
-		testGGMLTensor("audio.weight", ggml.TensorTypeF32, []uint64{4}),
+	projectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, []*gguftest.Tensor{
+		testGGUFTensor("vision.weight", gguf.TensorTypeF16, []uint64{32}),
+		testGGUFTensor("audio.weight", gguf.TensorTypeF32, []uint64{4}),
 	})
 	wantProjector := uint64(32*2 + 4*4)
 	if got, err := mmprojMemoryRequirement(modelPath, model, []string{projectorPath}); err != nil || got != wantProjector {
@@ -2421,7 +2484,7 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 		t.Fatal("missing projector error = nil, want error")
 	}
 
-	emptyProjectorPath, _ := writeTestGGML(t, ggml.KV{"general.architecture": "clip"}, nil)
+	emptyProjectorPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "clip"}, nil)
 	if _, err := mmprojMemoryRequirement(modelPath, model, []string{emptyProjectorPath}); err == nil {
 		t.Fatal("empty projector error = nil, want error")
 	}
@@ -2557,7 +2620,7 @@ func TestExternalDraftType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.architecture, func(t *testing.T) {
-			path, _ := writeTestGGML(t, ggml.KV{"general.architecture": tt.architecture}, nil)
+			path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": tt.architecture}, nil)
 			got, err := externalDraftType(path)
 			if err != nil {
 				t.Fatal(err)
@@ -2573,19 +2636,19 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	tests := []struct {
 		name    string
 		arch    string
-		tensors []*ggml.Tensor
+		tensors []gguf.TensorInfo
 		want    bool
 	}{
 		{
 			name:    "qwen35 legacy mtp marker",
 			arch:    "qwen35",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    true,
 		},
 		{
 			name:    "qwen35moe legacy mtp marker",
 			arch:    "qwen35moe",
-			tensors: []*ggml.Tensor{{Name: "mtp.layers.0.attn_q.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.layers.0.attn_q.weight"}},
 			want:    true,
 		},
 		{
@@ -2597,7 +2660,7 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 		{
 			name:    "other arch with mtp prefix",
 			arch:    "qwen3next",
-			tensors: []*ggml.Tensor{{Name: "mtp.fc.weight"}},
+			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
 			want:    false,
 		},
 	}
@@ -2608,6 +2671,22 @@ func TestHasLegacyQwenMTPDraft(t *testing.T) {
 				t.Fatalf("hasLegacyQwenMTPDraft() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHasMTPDraftAcrossShards(t *testing.T) {
+	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, []*gguftest.Tensor{
+		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+		testGGUFTensor("mtp.0.weight", gguf.TensorTypeF32, []uint64{1}),
+	})
+	model, err := LoadModel(modelPath, 0, shardPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasMTPDraft(model) {
+		t.Fatal("hasMTPDraft() = false, want true for MTP tensors in a later shard")
 	}
 }
 
@@ -3719,21 +3798,21 @@ func TestFindLlamaServer(t *testing.T) {
 	_ = err
 }
 
-func loadTestGGML(t *testing.T, kv ggml.KV) *ggml.GGML {
+func loadTestGGUF(t *testing.T, kv gguftest.KV) *gguf.Model {
 	t.Helper()
 
-	_, model := writeTestGGML(t, kv, nil)
+	_, model := writeTestGGUF(t, kv, nil)
 	return model
 }
 
-func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *ggml.GGML) {
+func writeTestGGUF(t *testing.T, kv gguftest.KV, tensors []*gguftest.Tensor) (string, *gguf.Model) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "*.gguf")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ggml.WriteGGUF(f, kv, tensors); err != nil {
+	if err := gguftest.Write(f, kv, tensors); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -3747,10 +3826,10 @@ func writeTestGGML(t *testing.T, kv ggml.KV, tensors []*ggml.Tensor) (string, *g
 	return f.Name(), model
 }
 
-func testGGMLTensor(name string, kind ggml.TensorType, shape []uint64) *ggml.Tensor {
-	tensor := &ggml.Tensor{
+func testGGUFTensor(name string, kind gguf.TensorType, shape []uint64) *gguftest.Tensor {
+	tensor := &gguftest.Tensor{
 		Name:  name,
-		Kind:  uint32(kind),
+		Type:  kind,
 		Shape: shape,
 	}
 	tensor.WriterTo = bytes.NewReader(make([]byte, tensor.Size()))
@@ -3777,41 +3856,37 @@ func TestPredictServerVRAMSplitModel(t *testing.T) {
 	dir := t.TempDir()
 
 	const count = 3
-	// A metadata-only first shard, as produced by llama.cpp's gguf-split.
-	kv := ggml.KV{
+	kv := gguftest.KV{
 		"general.architecture":          "llama",
-		"tokenizer.ggml.tokens":         []string{" "},
 		"llama.block_count":             uint32(1),
 		"llama.embedding_length":        uint32(64),
 		"llama.attention.head_count":    uint32(1),
 		"llama.attention.head_count_kv": uint32(1),
 	}
 
-	first := filepath.Join(dir, fmt.Sprintf("model-%05d-of-%05d.gguf", 1, count))
-	w, err := os.Create(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ggml.WriteGGUF(w, kv, nil); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	// The remaining shards carry the bulk of the weights.
+	// The remaining shards carry the bulk of the weights, as produced by
+	// llama.cpp's gguf-split; the first shard holds just metadata, a tiny
+	// fraction of the real weights.
 	const shardSize = 8 << 20
-	for i := 2; i <= count; i++ {
-		name := filepath.Join(dir, fmt.Sprintf("model-%05d-of-%05d.gguf", i, count))
-		if err := os.WriteFile(name, make([]byte, shardSize), 0o644); err != nil {
+	names := make([]string, count)
+	for i := 1; i <= count; i++ {
+		names[i-1] = filepath.Join(dir, fmt.Sprintf("model-%05d-of-%05d.gguf", i, count))
+		var tensors []*gguftest.Tensor
+		if i > 1 {
+			tensors = []*gguftest.Tensor{testGGUFTensor(fmt.Sprintf("blk.%d.weight", i), gguf.TensorTypeF32, []uint64{shardSize / 4})}
+		}
+		w, err := os.Create(names[i-1])
+		if err != nil {
 			t.Fatal(err)
 		}
+		if err := gguftest.Write(w, kv, tensors); err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
 	}
 
-	r, err := os.Open(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	f, err := ggml.Decode(r, -1)
+	first := names[0]
+	f, err := LoadModel(first, 0, names[1:]...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3836,9 +3911,6 @@ func TestPredictServerVRAMSplitModel(t *testing.T) {
 // attention size these independently of embedding_length/head_count, and
 // deriving them understates the cache several-fold.
 func TestPredictServerVRAMUsesModelHeadDims(t *testing.T) {
-	dir := t.TempDir()
-	modelPath := filepath.Join(dir, "model.gguf")
-
 	const (
 		layers  = 43
 		ctx     = 16384
@@ -3847,49 +3919,27 @@ func TestPredictServerVRAMUsesModelHeadDims(t *testing.T) {
 		kvHeads = 1
 	)
 
-	w, err := os.Create(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ggml.WriteGGUF(w, ggml.KV{
+	modelPath, f := writeTestGGUF(t, gguftest.KV{
 		"general.architecture":              "deepseek4",
-		"tokenizer.ggml.tokens":             []string{" "},
 		"deepseek4.block_count":             uint32(layers),
 		"deepseek4.embedding_length":        uint32(4096),
 		"deepseek4.attention.head_count":    uint32(64),
 		"deepseek4.attention.head_count_kv": uint32(kvHeads),
 		"deepseek4.attention.key_length":    uint32(keyLen),
 		"deepseek4.attention.value_length":  uint32(valLen),
-	}, nil); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	r, err := os.Open(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	f, err := ggml.Decode(r, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, nil)
 
 	info, err := os.Stat(modelPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// The prediction defers to the shared estimator, which knows this
-	// architecture's decoupled MLA head dims. Deriving them from
-	// embedding_length/head_count instead would understate the cache severalfold.
-	kvPerLayer, _, _ := f.GraphSize(ctx, 0, 1, "", ml.FlashAttentionDisabled)
-	var wantKV uint64
-	for _, layer := range kvPerLayer {
-		wantKV += layer
-	}
+	// deepseek4's decoupled MLA head dims (key_length/value_length) diverge
+	// from embedding_length/head_count; deriving them instead would
+	// understate the cache several-fold.
+	wantKV := uint64(layers) * kvHeads * (keyLen + valLen) * uint64(ctx) * 2
 	if wantKV == 0 {
-		t.Fatal("estimator returned no kv cache; the test model is not being read")
+		t.Fatal("expected kv cache is zero; the test model is not being read")
 	}
 
 	want := uint64(info.Size()) + wantKV
@@ -3904,9 +3954,6 @@ func TestPredictServerVRAMUsesModelHeadDims(t *testing.T) {
 }
 
 func TestPredictServerVRAMQuantizedKVCache(t *testing.T) {
-	dir := t.TempDir()
-	modelPath := filepath.Join(dir, "model.gguf")
-
 	const (
 		layers  = 36
 		ctx     = 131072
@@ -3915,33 +3962,15 @@ func TestPredictServerVRAMQuantizedKVCache(t *testing.T) {
 		kvHeads = 8
 	)
 
-	w, err := os.Create(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ggml.WriteGGUF(w, ggml.KV{
+	modelPath, f := writeTestGGUF(t, gguftest.KV{
 		"general.architecture":            "gpt-oss",
-		"tokenizer.ggml.tokens":           []string{" "},
 		"gpt-oss.block_count":             uint32(layers),
 		"gpt-oss.embedding_length":        uint32(2880),
 		"gpt-oss.attention.head_count":    uint32(64),
 		"gpt-oss.attention.head_count_kv": uint32(kvHeads),
 		"gpt-oss.attention.key_length":    uint32(keyLen),
 		"gpt-oss.attention.value_length":  uint32(valLen),
-	}, nil); err != nil {
-		t.Fatal(err)
-	}
-	w.Close()
-
-	r, err := os.Open(modelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	f, err := ggml.Decode(r, -1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, nil)
 
 	info, err := os.Stat(modelPath)
 	if err != nil {

@@ -354,6 +354,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 					params := args[3:]
+					if args[2] == "typical_p" {
+						fmt.Printf("Couldn't set parameter: %q\n", errTypicalPUnsupported)
+						continue
+					}
 					fp, err := api.FormatParams(map[string][]string{args[2]: params})
 					if err != nil {
 						fmt.Printf("Couldn't set parameter: %q\n", err)

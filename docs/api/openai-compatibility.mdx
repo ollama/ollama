@@ -2,9 +2,43 @@
 title: OpenAI compatibility
 ---
 
-Ollama provides compatibility with parts of the [OpenAI API](https://platform.openai.com/docs/api-reference) to help connect existing applications to Ollama.
+Connect OpenAI clients to Ollama. Ollama supports a subset of the [OpenAI API](https://platform.openai.com/docs/api-reference).
 
-## Usage
+## Direct cloud access
+
+Set your [API key](https://ollama.com/settings/keys) in `OLLAMA_API_KEY`. Install the client with `pip install openai`. No Ollama installation required.
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://ollama.com/v1",
+    api_key=os.environ["OLLAMA_API_KEY"],
+)
+
+response = client.chat.completions.create(
+    model="gemma4:31b",
+    messages=[{"role": "user", "content": "Say hello in one sentence."}],
+)
+print(response.choices[0].message.content)
+```
+
+The same client supports stateless Responses requests:
+
+```python
+response = client.responses.create(
+    model="gemma4:31b",
+    input="Say hello in one sentence.",
+)
+print(response.output_text)
+```
+
+Choose a [cloud model](https://ollama.com/search?c=cloud). The cloud API does not support stateful Responses, built-in web search through `/v1/responses`, or custom/freeform tool-call replay.
+
+## Local server usage
+
+These examples connect to your local Ollama server. The client requires an API key value, but Ollama ignores it. To use cloud models through this server, [sign in to Ollama](/api/authentication#signing-in).
 
 ### Simple `/v1/chat/completions` example
 
@@ -279,7 +313,9 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [x] `dimensions`
 - [ ] `user`
 
-### `/v1/responses`
+### Responses API
+
+`POST /v1/responses`
 
 > Note: Added in Ollama v0.13.3
 
@@ -308,13 +344,15 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 
 ## Models
 
-Before using a model, pull it locally `ollama pull`:
+For local inference, download a model before using it:
 
 ```shell
 ollama pull llama3.2
 ```
 
-### Default model names
+Direct cloud requests use the identifiers from `https://ollama.com/api/tags` and do not require a pull. Through a signed-in local server, select a cloud model such as `gemma4:cloud`.
+
+### Default model names on a local server
 
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
@@ -338,7 +376,7 @@ curl http://localhost:11434/v1/chat/completions \
     }'
 ```
 
-### Setting the context size
+### Setting the local context size
 
 The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
 
