@@ -83,10 +83,16 @@ func (ql *QuantizedLinear) matmul(x, globalScale *mlx.Array) *mlx.Array {
 		ql.GroupSize, ql.Bits, ql.Mode, globalScale)
 }
 
-// ForwardDeferScale projects x and returns a pending quantization global scale
-// when l is quantized and has no bias. The caller must apply a non-nil pending
-// scale before consuming the completed projection.
-func ForwardDeferScale(l LinearLayer, x *mlx.Array) (out, pending *mlx.Array) {
+// SwiGLU applies gate and up projections followed by a SwiGLU activation.
+// Quantized projections without bias defer their global scales so the scale
+// and activation operations can be fused.
+func SwiGLU(gate, up LinearLayer, x *mlx.Array) *mlx.Array {
+	gateOut, gateScale := forwardDeferScale(gate, x)
+	upOut, upScale := forwardDeferScale(up, x)
+	return mlx.SwiGLUScaled(gateOut, gateScale, upOut, upScale)
+}
+
+func forwardDeferScale(l LinearLayer, x *mlx.Array) (out, pending *mlx.Array) {
 	if ql, ok := l.(*QuantizedLinear); ok && ql.GlobalScale != nil && ql.Bias == nil {
 		return ql.matmul(x, nil), ql.GlobalScale
 	}

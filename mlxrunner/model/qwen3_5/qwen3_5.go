@@ -1197,9 +1197,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
-	gate, gateScale := nn.ForwardDeferScale(m.GateProj, x)
-	up, upScale := nn.ForwardDeferScale(m.UpProj, x)
-	return m.DownProj.Forward(mlx.SwiGLUScaled(gate, gateScale, up, upScale))
+	return m.DownProj.Forward(nn.SwiGLU(m.GateProj, m.UpProj, x))
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
