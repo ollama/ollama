@@ -76,6 +76,12 @@ func (c *Claude) envVars(model string) []string {
 		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1",
 	}
 
+	// Ollama does not provide Anthropic's server-side auto-mode checks.
+	// Use Claude Code's client classifier by default, preserving explicit settings.
+	if _, ok := os.LookupEnv("CLAUDE_CODE_AUTO_MODE_SERVER"); !ok {
+		env = append(env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
+	}
+
 	env = append(env, c.modelEnvVars(model)...)
 	return env
 }

@@ -375,6 +375,58 @@ func TestClaudeEnvVars(t *testing.T) {
 	}
 }
 
+func TestClaudeRunAutoModeServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	for _, model := range []string{"llama3.2", "glm-5:cloud"} {
+		for _, tt := range []struct {
+			name  string
+			value string
+			unset bool
+			want  string
+		}{
+			{name: "default", unset: true, want: "0"},
+			{name: "disabled", value: "0", want: "0"},
+			{name: "enabled", value: "1", want: "1"},
+			{name: "empty", value: "", want: ""},
+		} {
+			t.Run(model+"/"+tt.name, func(t *testing.T) {
+				t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", tt.value)
+				if tt.unset {
+					if err := os.Unsetenv("CLAUDE_CODE_AUTO_MODE_SERVER"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				dir := t.TempDir()
+				output := filepath.Join(dir, "env-and-args")
+				t.Setenv("PATH", dir)
+				t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+				script := `#!/bin/sh
+printf '%s\n' "${CLAUDE_CODE_AUTO_MODE_SERVER-unset}" "$ANTHROPIC_DEFAULT_SONNET_MODEL" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+				if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+
+				if err := (&Claude{}).Run(model, nil, []string{"--permission-mode", "auto"}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := strings.Join([]string{tt.want, model, "--model", model, "--permission-mode", "auto", ""}, "\n")
+				if string(got) != want {
+					t.Fatalf("child environment and arguments = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
 func TestClaudeModelEnvVars(t *testing.T) {
 	c := &Claude{}
 
