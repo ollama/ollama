@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useState } from "react";
 import StreamingMarkdownContent from "./StreamingMarkdownContent";
 
 export default function Thinking({
@@ -11,59 +11,6 @@ export default function Thinking({
   endTime?: Date;
 }) {
   const [isCollapsed, setIsCollapsed] = useState(true);
-  const [contentHeight, setContentHeight] = useState<number>(0);
-  const [hasOverflow, setHasOverflow] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-
-  // Measure content height for animations
-  useEffect(() => {
-    if (contentRef.current) {
-      const resizeObserver = new ResizeObserver(() => {
-        if (contentRef.current) {
-          setContentHeight(contentRef.current.scrollHeight);
-        }
-      });
-      resizeObserver.observe(contentRef.current);
-      return () => resizeObserver.disconnect();
-    }
-  }, [thinking]);
-
-  // Position content to show bottom when collapsed
-  useEffect(() => {
-    if (isCollapsed && contentRef.current && wrapperRef.current) {
-      requestAnimationFrame(() => {
-        if (!contentRef.current || !wrapperRef.current) return;
-
-        const contentHeight = contentRef.current.scrollHeight;
-        const wrapperHeight = wrapperRef.current.clientHeight;
-        if (contentHeight > wrapperHeight) {
-          const translateY = -(contentHeight - wrapperHeight);
-          contentRef.current.style.transform = `translateY(${translateY}px)`;
-          setHasOverflow(true);
-        } else {
-          contentRef.current.style.transform = "translateY(0)";
-          setHasOverflow(false);
-        }
-      });
-    } else if (contentRef.current) {
-      contentRef.current.style.transform = "translateY(0)";
-      setHasOverflow(false);
-    }
-  }, [thinking, isCollapsed]);
-
-  const handleToggle = () => {
-    setIsCollapsed(!isCollapsed);
-  };
-
-  // Calculate max height for smooth animations
-  const getMaxHeight = () => {
-    if (isCollapsed) {
-      return "0px";
-    }
-    // When expanded, use the content height or grow naturally
-    return contentHeight ? `${contentHeight}px` : "none";
-  };
 
   return (
     <div
@@ -73,7 +20,7 @@ export default function Thinking({
     >
       <div
         className="flex items-center cursor-pointer group/thinking self-start relative select-text"
-        onClick={handleToggle}
+        onClick={() => setIsCollapsed(!isCollapsed)}
       >
         {/* Light bulb */}
         <svg
@@ -111,26 +58,17 @@ export default function Thinking({
         </h3>
       </div>
       <div
-        ref={wrapperRef}
         className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md
           transition-[max-height,opacity] duration-300 ease-in-out relative ml-6 mt-2
           ${isCollapsed ? "overflow-hidden" : "overflow-y-auto"}`}
         style={{
-          maxHeight: isCollapsed ? getMaxHeight() : undefined,
+          maxHeight: isCollapsed ? 0 : undefined,
           opacity: isCollapsed ? 0 : 1,
         }}
       >
-        <div
-          ref={contentRef}
-          className="transition-transform duration-300 opacity-75 select-text"
-        >
+        <div className="opacity-75 select-text">
           <StreamingMarkdownContent content={thinking} size="sm" />
         </div>
-
-        {/* Gradient overlay for fade effect when collapsed and scrolled */}
-        {isCollapsed && hasOverflow && (
-          <div className="absolute inset-x-0 -top-1 h-8 pointer-events-none bg-gradient-to-b from-white dark:from-neutral-900 to-transparent" />
-        )}
       </div>
     </div>
   );

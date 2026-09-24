@@ -1,20 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Settings } from "@/gotypes";
 import { getSettings, updateSettings } from "@/api";
-import { useMemo, useCallback } from "react";
-
-interface SettingsState {
-  sidebarOpen: boolean;
-  lastHomeView: string;
-  onboardingVersion: number;
-}
-
-// Type for partial settings updates
-type SettingsUpdate = Partial<{
-  SidebarOpen: boolean;
-  LastHomeView: string;
-  OnboardingVersion: number;
-}>;
+import { useCallback } from "react";
 
 export function useSettings({
   refetchInterval,
@@ -37,19 +24,8 @@ export function useSettings({
     },
   });
 
-  // Extract settings with defaults
-  const settings: SettingsState = useMemo(
-    () => ({
-      sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
-      lastHomeView: settingsData?.settings?.LastHomeView ?? "chat",
-      onboardingVersion: settingsData?.settings?.OnboardingVersion ?? 0,
-    }),
-    [settingsData?.settings],
-  );
-
-  // Single function to update most settings
   const setSettings = useCallback(
-    async (updates: SettingsUpdate) => {
+    async (updates: Pick<Settings, "OnboardingVersion">) => {
       if (!settingsData?.settings) return;
 
       const updatedSettings = new Settings({
@@ -62,13 +38,9 @@ export function useSettings({
     [settingsData?.settings, updateSettingsMutation],
   );
 
-  return useMemo(
-    () => ({
-      settings,
-      settingsData: settingsData?.settings,
-      error,
-      setSettings,
-    }),
-    [settings, settingsData?.settings, error, setSettings],
-  );
+  return {
+    settingsData: settingsData?.settings,
+    error,
+    setSettings,
+  };
 }

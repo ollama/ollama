@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/app/store"
-	"github.com/ollama/ollama/types/model"
 )
 
 type ChatInfo struct {
@@ -31,10 +30,6 @@ type Model struct {
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 }
 
-type ModelsResponse struct {
-	Models []Model `json:"models"`
-}
-
 type InferenceCompute struct {
 	Library string `json:"library"`
 	Variant string `json:"variant"`
@@ -49,16 +44,8 @@ type InferenceComputeResponse struct {
 	DefaultContextLength int                `json:"defaultContextLength"`
 }
 
-type ModelCapabilitiesResponse struct {
-	Capabilities []model.Capability `json:"capabilities"`
-}
-
 type SettingsResponse struct {
 	Settings store.Settings `json:"settings"`
-}
-
-type HealthResponse struct {
-	Healthy bool `json:"healthy"`
 }
 
 type User struct {
