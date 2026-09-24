@@ -259,6 +259,7 @@ console.log(response.message.content);
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama) - PHP AI framework
 
 ### Frameworks & Agents
+* [vestige](https://github.com/samvallad33/vestige) - Memory system for coding agents over MCP. Backfill reaches backward through weeks of history to rank earlier records as candidate causes of a fresh failure, the composed-graph engine surfaces untried combinations of your own past decisions, and retrieval decays on an FSRS-6 schedule. Single Rust binary, data never leaves the machine.
 
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
