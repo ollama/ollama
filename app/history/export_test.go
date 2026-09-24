@@ -6,7 +6,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -22,7 +21,8 @@ import (
 )
 
 func TestExportPreservesConversationAndFiles(t *testing.T) {
-	now := time.Now().UTC()
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	end := now.Add(3 * time.Second)
 	toolResult := json.RawMessage(`{"answer":"saved result"}`)
 	chat := store.Chat{
 		ID: "saved-chat", Title: "Garden <script>alert(1)</script>", CreatedAt: now,
@@ -34,7 +34,7 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 				{Filename: "empty.txt", Data: []byte{}},
 				{Filename: strings.Repeat("quarterly-report-", 6) + "2026.pdf", Data: []byte("original PDF bytes")},
 			}},
-			{Role: "assistant", Content: "Answer", Thinking: "Saved thinking", Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: now, ThinkingTimeStart: &now, ThinkingTimeEnd: &now, ToolCalls: []store.ToolCall{
+			{Role: "assistant", Content: "Answer", Thinking: "Saved thinking", Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: end, ThinkingTimeStart: &now, ThinkingTimeEnd: &end, ToolCall: &store.ToolCall{Type: "function", Function: store.ToolFunction{Name: "web_fetch", Arguments: `{"url":"https://example.com"}`}}, ToolCalls: []store.ToolCall{
 				{Type: "function", Function: store.ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: toolResult}},
 			}},
 			{Role: "tool", Content: "Tool output", ToolName: "web_search", ToolResult: &toolResult, CreatedAt: now, UpdatedAt: now},
@@ -54,39 +54,43 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		return data
 	}
 	entries, err := os.ReadDir(result.Path)
-	if err != nil || len(entries) != 2 || entries[0].Name() != "attachments" || !entries[0].IsDir() || entries[1].Name() != "conversation.md" {
-		t.Fatalf("export should contain only Markdown and attachments: %v, %v", entries, err)
+	if err != nil || len(entries) != 3 || entries[0].Name() != "README.md" || entries[1].Name() != "attachments" || !entries[1].IsDir() || entries[2].Name() != "conversation.md" {
+		t.Fatalf("export should contain a README, transcript, and attachments: %v, %v", entries, err)
 	}
-	metadata := readArchiveDetails(t, result.Path)
-	if !metadata.Complete || len(result.Warnings) != 0 || metadata.MessageCount != 3 || len(metadata.Attachments) != 4 {
-		t.Fatalf("wrong manifest: %+v", metadata)
-	}
-	if metadata.ChatID != chat.ID || metadata.Title != chat.Title || !metadata.CreatedAt.Equal(now) {
-		t.Fatal("transcript did not preserve conversation metadata")
-	}
-	for i, file := range metadata.Attachments {
-		if !filepath.IsLocal(file.Path) || !strings.HasPrefix(file.Path, "attachments/") || strings.Contains(file.Path, "..") {
-			t.Fatalf("unsafe attachment path: %s", file.Path)
-		}
-		data := read(file.Path)
-		if !bytes.Equal(data, chat.Messages[0].Attachments[i].Data) || file.SHA256 != fmt.Sprintf("%x", sha256.Sum256(data)) || file.Status != "saved" {
-			t.Fatalf("attachment %d changed", i)
-		}
-		if filepath.Ext(file.Path) != filepath.Ext(file.OriginalName) {
-			t.Fatalf("attachment lost its extension: %s -> %s", file.OriginalName, file.Path)
-		}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected export warnings: %v", result.Warnings)
 	}
 	markdown := string(read("conversation.md"))
-	for _, content := range []string{chat.Messages[0].Content, "Saved thinking", "gpt-oss:120b-cloud", "web_search", "saved result", "page_stack", "````text"} {
+	if !strings.HasPrefix(markdown, "# Garden \\<script\\>alert(1)\\</script\\>\n") || !strings.Contains(markdown, "Created: 2026-09-01 10:00:00 +00:00") || !strings.Contains(markdown, "Messages: 3") {
+		t.Fatal("transcript did not preserve the title, date, or message count")
+	}
+	files, err := os.ReadDir(filepath.Join(result.Path, "attachments"))
+	if err != nil || len(files) != 4 {
+		t.Fatalf("missing attachments: %v, %v", files, err)
+	}
+	for i, file := range files {
+		path := "attachments/" + file.Name()
+		if !filepath.IsLocal(path) || strings.Contains(path, "..") || !strings.Contains(markdown, "]("+path+")") {
+			t.Fatalf("unsafe or missing attachment link: %s", path)
+		}
+		original := chat.Messages[0].Attachments[i]
+		if !bytes.Equal(read(path), original.Data) {
+			t.Fatalf("attachment %d changed", i)
+		}
+		if filepath.Ext(path) != filepath.Ext(original.Filename) {
+			t.Fatalf("attachment lost its extension: %s -> %s", original.Filename, path)
+		}
+	}
+	for _, content := range []string{"> Question\n> ```\n> <script>alert(1)</script>", "> Saved thinking", "Model: gpt-oss:120b-cloud", "Started: 2026-09-01 10:00:00 +00:00", "Ended: 2026-09-01 10:00:03 +00:00", "Updated: 2026-09-01 10:00:03 +00:00", "web_search", "web_fetch", "saved result", "page_stack", "```json"} {
 		if !strings.Contains(markdown, content) {
 			t.Errorf("transcript is missing %q", content)
 		}
 	}
-	if !(strings.Index(markdown, "## Message 1") < strings.Index(markdown, "## Message 2") && strings.Index(markdown, "## Message 2") < strings.Index(markdown, "## Message 3")) {
+	if !(strings.Index(markdown, "## 1. User") < strings.Index(markdown, "## 2. Assistant") && strings.Index(markdown, "## 2. Assistant") < strings.Index(markdown, "## 3. Tool")) {
 		t.Fatal("message order changed")
 	}
-	if !strings.Contains(markdown, "attach this file and any needed files from attachments/") {
-		t.Fatal("transcript is missing the usage note")
+	if !strings.Contains(string(read("README.md")), "Do not replay past tool calls") || strings.Contains(markdown, "Continue in another app") {
+		t.Fatal("continuation instructions should be in the README")
 	}
 	second, err := Export(chat, parent)
 	if err != nil || second.Path == result.Path {
@@ -105,9 +109,34 @@ func TestExportReportsIncompleteHistory(t *testing.T) {
 	if len(result.Warnings) != 2 {
 		t.Fatalf("missing warnings: %+v", result)
 	}
-	metadata := readArchiveDetails(t, result.Path)
-	if metadata.Complete || metadata.Attachments[0].Status != "missing" || len(metadata.Warnings) != 2 {
-		t.Fatal("incomplete archive reported as complete")
+	markdown := string(mustRead(t, filepath.Join(result.Path, "conversation.md")))
+	if !strings.Contains(markdown, "## Export notes") {
+		t.Fatal("missing incomplete-history notes")
+	}
+	for _, warning := range result.Warnings {
+		if !strings.Contains(markdown, warning) {
+			t.Fatalf("missing warning in transcript: %s", warning)
+		}
+	}
+}
+
+func TestExportKeepsRepeatedMessagesAndEmptyRepliesReadable(t *testing.T) {
+	result, err := Export(store.Chat{Messages: []store.Message{
+		{Role: "user", Content: "tell me about ollama"},
+		{Role: "user", Content: "tell me about ollama"},
+		{Role: "assistant", Model: "gemma4:26b"},
+	}}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown := string(mustRead(t, filepath.Join(result.Path, "conversation.md")))
+	if !strings.HasPrefix(markdown, "# tell me about ollama\n") || strings.Count(markdown, "> tell me about ollama\n") != 2 || !strings.Contains(markdown, "## 3. Assistant\n\nModel: gemma4:26b\n\n_No content was saved for this message._") {
+		t.Fatalf("repeated messages or empty reply were lost: %s", markdown)
+	}
+	for _, noise := range []string{"Archive details", "schema_version", "chat_id", `"content":`, `"thinking":`, `"stream":`, "### Content"} {
+		if strings.Contains(markdown, noise) {
+			t.Fatalf("transcript contains unnecessary metadata: %s", noise)
+		}
 	}
 }
 
@@ -167,8 +196,11 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(archive.File) != 4 {
-		t.Fatalf("expected two transcripts and two attachments, got %d entries", len(archive.File))
+	if len(archive.File) != 5 {
+		t.Fatalf("expected one README, two transcripts, and two attachments, got %d entries", len(archive.File))
+	}
+	if readme, err := fs.ReadFile(archive, "README.md"); err != nil || !bytes.Contains(readme, []byte("## Continue in another app")) {
+		t.Fatalf("ZIP is missing its README: %v", err)
 	}
 	seen := map[string]bool{}
 	for _, file := range archive.File {
@@ -182,29 +214,30 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var metadata manifest
-		start := bytes.IndexByte(markdown, '{')
-		if start < 0 {
-			t.Fatal("missing archive details")
+		id := "chat-1"
+		if bytes.Contains(markdown, []byte("Saved answer for chat-2")) {
+			id = "chat-2"
 		}
-		if err := json.NewDecoder(bytes.NewReader(markdown[start:])).Decode(&metadata); err != nil {
-			t.Fatal(err)
-		}
-		if metadata.Title != "Same title" || metadata.MessageCount != 1 || len(metadata.Attachments) != 1 || !bytes.Contains(markdown, []byte("Saved answer for "+metadata.ChatID)) || !bytes.Contains(markdown, []byte("gpt-oss:120b-cloud")) {
+		if !bytes.HasPrefix(markdown, []byte("# Same title\n")) || !bytes.Contains(markdown, []byte("Messages: 1")) || !bytes.Contains(markdown, []byte("Saved answer for "+id)) || !bytes.Contains(markdown, []byte("gpt-oss:120b-cloud")) {
 			t.Fatalf("incomplete conversation: %s", markdown)
 		}
 		folder := strings.TrimSuffix(file.Name, "conversation.md")
-		if filepath.Ext(metadata.Attachments[0].Path) != ".txt" {
+		files, err := fs.ReadDir(archive, folder+"attachments")
+		if err != nil || len(files) != 1 {
+			t.Fatalf("missing attachment: %v, %v", files, err)
+		}
+		path := "attachments/" + files[0].Name()
+		if filepath.Ext(path) != ".txt" || !bytes.Contains(markdown, []byte("]("+path+")")) {
 			t.Fatal("zipped attachment lost its extension")
 		}
-		attachment, err := fs.ReadFile(archive, folder+metadata.Attachments[0].Path)
+		attachment, err := fs.ReadFile(archive, folder+path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if metadata.ChatID != "chat-1" && metadata.ChatID != "chat-2" || !bytes.Equal(attachment, []byte{0, metadata.ChatID[len(metadata.ChatID)-1] - '0', 255}) {
-			t.Fatalf("attachment changed or belongs to another chat: %s", metadata.ChatID)
+		if !bytes.Equal(attachment, []byte{0, id[len(id)-1] - '0', 255}) {
+			t.Fatalf("attachment changed or belongs to another chat: %s", id)
 		}
-		seen[metadata.ChatID] = true
+		seen[id] = true
 	}
 	if len(seen) != 2 {
 		t.Fatal("same-titled conversations were not kept separately")
@@ -239,20 +272,6 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("failed export left temporary files behind: %v, %v", entries, err)
 	}
-}
-
-func readArchiveDetails(t *testing.T, directory string) manifest {
-	t.Helper()
-	markdown := string(mustRead(t, filepath.Join(directory, "conversation.md")))
-	start := strings.Index(markdown, "{")
-	if start < 0 {
-		t.Fatal("transcript is missing archive details")
-	}
-	var metadata manifest
-	if err := json.NewDecoder(strings.NewReader(markdown[start:])).Decode(&metadata); err != nil {
-		t.Fatal(err)
-	}
-	return metadata
 }
 
 func mustRead(t *testing.T, path string) []byte {
