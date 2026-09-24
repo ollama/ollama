@@ -224,17 +224,6 @@ func createMinimalGGUFModel(t *testing.T, s *Server, name string, kv gguftest.KV
 	}
 }
 
-func TestModelOptionsKeepStoredTypicalP(t *testing.T) {
-	s := &Server{}
-	opts, err := s.modelOptions(&Model{Options: map[string]any{"typical_p": 0.5}}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.TypicalP != 0.5 {
-		t.Fatalf("typical_p = %v, want 0.5", opts.TypicalP)
-	}
-}
-
 func TestChatModeForModel(t *testing.T) {
 	t.Setenv("OLLAMA_GO_TEMPLATE", "")
 	if got := chatModeForModel(&Model{HasChatTemplate: true, HasGoTemplate: true}); got != chatExecutionModeRendered {
@@ -1653,32 +1642,19 @@ func TestGenerate(t *testing.T) {
 		}
 	})
 
-	t.Run("rejected option", func(t *testing.T) {
+	t.Run("deprecated option passes through", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:   "test",
 			Prompt:  "Hello!",
 			Options: map[string]any{"typical_p": 0.5},
-		})
-
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
-		}
-
-		if diff := cmp.Diff(w.Body.String(), `{"error":"typical_p is no longer supported"}`); diff != "" {
-			t.Errorf("mismatch (-got +want):\n%s", diff)
-		}
-	})
-
-	t.Run("null option is unset", func(t *testing.T) {
-		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-			Model:   "test",
-			Prompt:  "Hello!",
-			Options: map[string]any{"typical_p": nil},
 			Stream:  &stream,
 		})
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+		if mock.CompletionRequest.Options.TypicalP != 0.5 {
+			t.Errorf("typical_p = %v, want 0.5", mock.CompletionRequest.Options.TypicalP)
 		}
 	})
 
