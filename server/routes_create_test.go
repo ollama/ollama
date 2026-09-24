@@ -819,7 +819,7 @@ func TestCreateFromBin(t *testing.T) {
 		}
 	})
 
-	t.Run("rejected parameter", func(t *testing.T) {
+	t.Run("deprecated parameter is rejected", func(t *testing.T) {
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:       "my-gguf-model",
 			Files:      map[string]string{"0.gguf": digest},
@@ -828,10 +828,10 @@ func TestCreateFromBin(t *testing.T) {
 		})
 
 		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected status 400, got %d", w.Code)
+			t.Fatalf("expected status 400, got %d: %s", w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), "typical_p is no longer supported") {
-			t.Errorf("expected removed parameter error, got:\n%s", w.Body.String())
+		if !strings.Contains(w.Body.String(), errTypicalPDeprecated.Error()) {
+			t.Errorf("expected deprecated parameter error, got:\n%s", w.Body.String())
 		}
 	})
 }
