@@ -62,6 +62,22 @@ type EmbedWriter struct {
 	encodingFormat string
 }
 
+// streamErrorMessage reports whether data is the error envelope that the
+// server writes when generation fails after a stream is already underway, and
+// returns its message. api.ChatResponse has no counterpart field, so the
+// envelope would otherwise unmarshal into a zero value and be written out as
+// an empty chunk. The message itself can be empty, so presence of the field is
+// what marks the envelope.
+func streamErrorMessage(data []byte) (string, bool) {
+	var envelope struct {
+		Error *string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Error == nil {
+		return "", false
+	}
+	return *envelope.Error, true
+}
+
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	if err := json.Unmarshal(data, &serr); err != nil {
@@ -513,6 +529,20 @@ func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
 }
 
 func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
+	if message, ok := streamErrorMessage(data); ok && w.stream {
+		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+		events := w.converter.ProcessError(message)
+		if len(events) == 0 {
+			slog.Warn("generation failed after the response already ended", "error", message)
+		}
+		for _, event := range events {
+			if err := w.writeEvent(event.Event, event.Data); err != nil {
+				return 0, err
+			}
+		}
+		return len(data), nil
+	}
+
 	var chatResponse api.ChatResponse
 	if err := json.Unmarshal(data, &chatResponse); err != nil {
 		return 0, err
@@ -603,6 +633,16 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 	}
 	if w.Status() != http.StatusOK {
 		return len(data), w.writeWebSearchError(decodeWebSearchResponseError(w.Status(), data), api.Metrics{})
+	}
+
+	if w.inner.stream {
+		// Otherwise, while a web search is pending, an error envelope
+		// unmarshals into an empty api.ChatResponse and is buffered like any
+		// other chunk, leaving the stream to end with no terminal event.
+		if _, ok := streamErrorMessage(data); ok {
+			w.done = true
+			return w.inner.writeResponse(data)
+		}
 	}
 
 	var response api.ChatResponse
@@ -1140,15 +1180,10 @@ func (w *WebSearchResponsesWriter) writeWebSearchError(err error, usage api.Metr
 			"input_tokens_details": map[string]any{"cached_tokens": optionalIntValue(usage.PromptEvalCachedCount)},
 		},
 	}
-	initialEvents := w.inner.converter.Process(api.ChatResponse{})
-	for _, event := range initialEvents {
+	for _, event := range w.inner.converter.ResponseFailed(response) {
 		if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
 			return err
 		}
-	}
-	event := w.inner.converter.ResponseFailed(response)
-	if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-		return err
 	}
 	w.done = true
 	return nil
