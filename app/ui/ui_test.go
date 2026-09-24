@@ -199,6 +199,7 @@ func TestGetIntegrationStatuses(t *testing.T) {
 func TestHandlePostApiCloudSetting(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome) // os.UserHomeDir uses USERPROFILE on Windows.
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 
 	testStore := &store.Store{
@@ -260,6 +261,7 @@ func TestHandlePostApiCloudSetting(t *testing.T) {
 func TestHandleGetApiCloudSetting(t *testing.T) {
 	tmpHome := t.TempDir()
 	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome) // os.UserHomeDir uses USERPROFILE on Windows.
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 
 	testStore := &store.Store{
