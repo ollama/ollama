@@ -12,11 +12,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ollama/ollama/manifest"
 )
 
 // chunkedSession tracks accumulated PATCH body bytes for an upload session.
@@ -81,6 +84,35 @@ func createTestBlob(t *testing.T, dir string, size int) (Blob, []byte) {
 	}
 
 	return Blob{Digest: digest, Size: int64(size)}, data
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTransferDigests(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "blobs")
+	blob, data := createTestBlob(t, dir, 8)
+	// A traversal must be rejected even when it resolves to a same-size cached file.
+	if err := os.WriteFile(filepath.Join(root, "outside"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, digest := range []string{"", "../outside", `..\outside`, "sha256:../outside", "sha256:" + strings.Repeat("a", 63), "sha256:" + strings.Repeat("z", 64)} {
+		t.Run(digest, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				t.Error("invalid digest reached HTTP transport")
+				return nil, errors.New("unexpected request")
+			})}
+			blobs := []Blob{blob, {Digest: digest, Size: blob.Size}}
+			if err := Download(t.Context(), DownloadOptions{Blobs: blobs, DestDir: dir, Client: client}); !errors.Is(err, manifest.ErrInvalidDigestFormat) {
+				t.Errorf("Download: got %v, want invalid digest", err)
+			}
+			if err := Upload(t.Context(), UploadOptions{Blobs: blobs, SrcDir: dir, Client: client}); !errors.Is(err, manifest.ErrInvalidDigestFormat) {
+				t.Errorf("Upload: got %v, want invalid digest", err)
+			}
+		})
+	}
 }
 
 func TestDownload(t *testing.T) {
@@ -1798,6 +1830,61 @@ func TestResumeFromPartialFile(t *testing.T) {
 	finalHash := sha256.Sum256(finalData)
 	if fmt.Sprintf("sha256:%x", finalHash) != digest {
 		t.Error("Final file hash mismatch")
+	}
+}
+
+// A connection that always stalls must eventually fail the download. Stall
+// retries are budgeted rather than unlimited, so the loop cannot spin forever.
+func TestDownloadStallGivesUp(t *testing.T) {
+	const blobSize = 4096
+	blob, data := createTestBlob(t, t.TempDir(), blobSize)
+
+	release := make(chan struct{})
+
+	// Each attempt issues two GETs: resolve, then the body. Answer the resolve
+	// normally and stall only the body, so the stall lands in copy.
+	var gets atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(blobSize))
+		if r.Method == http.MethodHead {
+			return
+		}
+		if gets.Add(1)%2 == 1 {
+			w.Write(data)
+			return
+		}
+		// Headers only: the body never arrives, so the transfer stalls.
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer server.Close()
+	// Released before Close so the parked handlers cannot block shutdown.
+	defer close(release)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Download(context.Background(), DownloadOptions{
+			Blobs:        []Blob{blob},
+			BaseURL:      server.URL,
+			DestDir:      t.TempDir(),
+			StallTimeout: 20 * time.Millisecond,
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Download() = nil, want an error after repeated stalls")
+		}
+		if !errors.Is(err, errMaxRetriesExceeded) {
+			t.Fatalf("Download() = %v, want %v", err, errMaxRetriesExceeded)
+		}
+	// maxTransientRetries + maxRetries attempts, each detected on the watchdog's
+	// one-second tick, plus backoff: ~13s here. The budget is loose because only
+	// the unbounded-retry case has to fail, and that case never finishes at all.
+	case <-time.After(90 * time.Second):
+		t.Fatal("Download retried forever after repeated stalls")
 	}
 }
 

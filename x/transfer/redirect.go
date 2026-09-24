@@ -48,12 +48,12 @@ func isPublicIP(ip net.IP) bool {
 	return true
 }
 
-// validateRedirectScheme rejects redirects that downgrade an https session
+// ValidateRedirectScheme rejects redirects that downgrade an https session
 // to cleartext http, even when the target host is unchanged — a hostile or
 // compromised registry must not be able to strip TLS off follow-up requests.
 // It applies even under allowPrivate (the --insecure opt-in), which relaxes
 // address checks but never scheme checks.
-func validateRedirectScheme(loc *url.URL, baseURL string) error {
+func ValidateRedirectScheme(loc *url.URL, baseURL string) error {
 	if loc == nil {
 		return fmt.Errorf("%w: missing Location", errRedirectNotAllowed)
 	}
@@ -69,16 +69,16 @@ func validateRedirectScheme(loc *url.URL, baseURL string) error {
 	return nil
 }
 
-// validateRedirectTarget rejects redirect targets that aren't public HTTPS
+// ValidateRedirectTarget rejects redirect targets that aren't public HTTPS
 // endpoints, unless allowPrivate is set.
-func validateRedirectTarget(ctx context.Context, loc *url.URL, baseURL string, allowPrivate bool) error {
+func ValidateRedirectTarget(ctx context.Context, loc *url.URL, baseURL string, allowPrivate bool) error {
 	if loc == nil {
 		return fmt.Errorf("%w: missing Location", errRedirectNotAllowed)
 	}
 	if allowPrivate {
 		return nil
 	}
-	if err := validateRedirectScheme(loc, baseURL); err != nil {
+	if err := ValidateRedirectScheme(loc, baseURL); err != nil {
 		return err
 	}
 	host := loc.Hostname()
@@ -142,6 +142,22 @@ func checkedDialer(d *net.Dialer, allowPrivate bool) func(ctx context.Context, n
 		}
 		return conn, nil
 	}
+}
+
+// NewRedirectClient returns a client for download URLs supplied by a registry.
+func NewRedirectClient(baseURL string, allowPrivate bool) *http.Client {
+	// Redirect destinations do not get the registry host's exemption.
+	client := checkedClient("", allowPrivate)
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if err := ValidateRedirectScheme(req.URL, baseURL); err != nil {
+			return err
+		}
+		return ValidateRedirectTarget(req.Context(), req.URL, baseURL, allowPrivate)
+	}
+	return client
 }
 
 // checkedClient returns an HTTP client using checkedDialer; the registry
