@@ -392,12 +392,14 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 }
 
 // Copy copies a model - creating a model with another name from an existing
-// model.
-func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
-	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
-		return err
+// model. Status carries a warning when the copy drops manifest list children
+// that are not held locally.
+func (c *Client) Copy(ctx context.Context, req *CopyRequest) (*ProgressResponse, error) {
+	var resp ProgressResponse
+	if err := c.do(ctx, http.MethodPost, "/api/copy", req, &resp); err != nil {
+		return nil, err
 	}
-	return nil
+	return &resp, nil
 }
 
 // Delete deletes a model and its data.

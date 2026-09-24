@@ -186,9 +186,11 @@ func upload(ctx context.Context, opts UploadOptions) error {
 	}
 
 	if len(opts.Manifest) > 0 && opts.ManifestRef != "" && opts.Repository != "" {
+		if opts.ManifestMediaType == "" {
+			return errors.New("manifest push requires a manifest media type")
+		}
 		logutil.Trace("pushing manifest", "repo", opts.Repository, "ref", opts.ManifestRef, "size", len(opts.Manifest))
-		mediaType := cmp.Or(opts.ManifestMediaType, "application/vnd.docker.distribution.manifest.v2+json")
-		if err := u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest, mediaType); err != nil {
+		if err := u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest, opts.ManifestMediaType); err != nil {
 			logutil.Trace("manifest push failed", "error", err)
 			return err
 		}

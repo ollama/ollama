@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -670,14 +671,14 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
-// GetModelForRunner returns model metadata for name, selecting runner from a
-// manifest list when one is specified.
 // GetModel loads a model without constraining the runner, letting manifest
 // lists resolve to the preferred child.
 func GetModel(name string) (*Model, error) {
 	return GetModelForRunner(name, "")
 }
 
+// GetModelForRunner returns model metadata for name, selecting runner from a
+// manifest list when one is specified.
 func GetModelForRunner(name, runner string) (*Model, error) {
 	n := model.ParseName(name)
 	mf, err := manifest.ParseNamedManifestForRunner(n, runner)
@@ -835,24 +836,79 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 	return m, nil
 }
 
-func CopyModel(src, dst model.Name) error {
+// CopyModel copies src to dst, returning a warning when a manifest list is
+// narrowed to the children held locally.
+func CopyModel(src, dst model.Name) (string, error) {
 	if !dst.IsFullyQualified() {
-		return model.Unqualified(dst)
+		return "", model.Unqualified(dst)
 	}
 	if !src.IsFullyQualified() {
-		return model.Unqualified(src)
+		return "", model.Unqualified(src)
 	}
 
 	if src.Filepath() == dst.Filepath() {
-		return nil
+		return "", nil
 	}
 
 	data, err := manifest.ReadManifestData(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	return manifest.WriteManifestData(dst, data)
+	data, warning, err := narrowManifestListToLocal(data)
+	if err != nil {
+		return "", err
+	}
+
+	return warning, manifest.WriteManifestData(dst, data)
+}
+
+// narrowManifestListToLocal drops manifest list children whose manifests are
+// not local, returning the rewritten document and a warning naming what went.
+func narrowManifestListToLocal(data []byte) ([]byte, string, error) {
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, "", err
+	}
+	if mf.MediaType != manifest.MediaTypeManifestList {
+		return data, "", nil
+	}
+
+	var kept []manifest.Manifest
+	var dropped []string
+	for _, child := range mf.Manifests {
+		if _, err := resolveShowManifestChild(child); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, "", err
+			}
+			dropped = append(dropped, cmp.Or(child.Runner, "unknown"))
+			continue
+		}
+		kept = append(kept, child)
+	}
+
+	if len(dropped) == 0 {
+		return data, "", nil
+	}
+	if len(kept) == 0 {
+		return nil, "", fmt.Errorf("%w: pull one of %s before copying", manifest.ErrNoCompatibleManifest, strings.Join(dropped, ", "))
+	}
+
+	narrowed := mf
+	narrowed.Manifests = kept
+	out, err := json.Marshal(narrowed)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var runners []string
+	for _, child := range kept {
+		runners = append(runners, cmp.Or(child.Runner, "unknown"))
+	}
+	warning := fmt.Sprintf("Warning: discarded %s (not pulled locally); copy contains %s",
+		strings.Join(dropped, ", "), strings.Join(runners, ", "))
+
+	return out, warning, nil
 }
 
 func PruneLayers() error {
@@ -1028,13 +1084,8 @@ func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, erro
 		if childDigest == "" {
 			return nil, errors.New("manifest list child is missing digest")
 		}
-		if err := addLayer(manifest.Layer{
-			MediaType: manifest.MediaTypeManifest,
-			Digest:    childDigest,
-		}); err != nil {
-			return nil, err
-		}
-
+		// Resolve before sizing the child: its descriptor carries no size, so
+		// addLayer would stat a missing blob and lose the actionable error.
 		resolved, err := resolveShowManifestChild(child)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -1044,6 +1095,14 @@ func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, erro
 			}
 			return nil, err
 		}
+
+		if err := addLayer(manifest.Layer{
+			MediaType: manifest.MediaTypeManifest,
+			Digest:    childDigest,
+		}); err != nil {
+			return nil, err
+		}
+
 		for _, layer := range resolved.Layers {
 			if err := addLayer(layer); err != nil {
 				return nil, err
@@ -1087,13 +1146,6 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
-	if hasTensorLayers(mf.Layers) {
-		if err := mlx.CheckInit(); err != nil {
-			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
-			return errors.New("this model requires MLX support, but the MLX runtime is not available")
-		}
-	}
-
 	selectedChildDigest := ""
 	if mf.MediaType == manifest.MediaTypeManifestList {
 		var childDigest string
@@ -1110,6 +1162,15 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 		// is local, so they proceed as before.
 		if mf.Runner != "" && !strings.EqualFold(mf.Runner, runner) {
 			return fmt.Errorf("%w for runners: %s", manifest.ErrNoCompatibleManifest, runner)
+		}
+	}
+
+	// Checked against the selected child: a manifest list carries no layers of
+	// its own, so testing the parent would skip the gate entirely.
+	if requiresMLX(mf) {
+		if err := mlx.CheckInit(); err != nil {
+			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
+			return errors.New("this model requires MLX support, but the MLX runtime is not available")
 		}
 	}
 
@@ -1203,6 +1264,16 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 	fn(api.ProgressResponse{Status: "success"})
 
 	return nil
+}
+
+// requiresMLX reports whether serving mf needs the MLX runtime. A declared
+// runner is authoritative; manifests predating runner metadata are judged by
+// their tensor layers.
+func requiresMLX(mf *manifest.Manifest) bool {
+	if mf.Runner != "" {
+		return strings.EqualFold(mf.Runner, manifest.RunnerMLX)
+	}
+	return hasTensorLayers(mf.Layers)
 }
 
 // hasTensorLayers checks if any layer has tensor media type.
@@ -1416,13 +1487,13 @@ func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.L
 // pre-manifest-list daemon can load the model and its garbage collector
 // retains the referenced blobs.
 func writePullDowngradeAnchor(n model.Name, mf *manifest.Manifest, manifestData []byte, selectedChildDigest string) {
-	docDigests := []string{fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))}
+	manifestDigests := []string{fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))}
 	if selectedChildDigest != "" {
-		docDigests = append(docDigests, selectedChildDigest)
+		manifestDigests = append(manifestDigests, selectedChildDigest)
 	}
 	// Best effort: the pull itself succeeded, so a failed downgrade anchor is
 	// logged rather than failing the request.
-	if err := manifest.WriteLegacyAnchor(n, mf, docDigests...); err != nil {
+	if err := manifest.WriteLegacyAnchor(n, mf, manifestDigests...); err != nil {
 		slog.Warn("couldn't write downgrade anchor for pulled model", "model", n.DisplayShortest(), "error", err)
 	}
 }

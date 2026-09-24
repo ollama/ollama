@@ -330,6 +330,22 @@ func migrationSourceFromManifest(parent *manifest.Manifest) (*manifest.Manifest,
 	return source, refs, false, nil
 }
 
+// RunnerForManifest reports the runner a GGUF manifest should carry: ggml when
+// a compatibility detector fires, llamacpp otherwise. It reads GGUF headers
+// only, so it is cheap enough to run whenever a manifest is written.
+func RunnerForManifest(source model.Name, mf *manifest.Manifest) (string, error) {
+	src, err := loadSourceModelFromManifest(source, mf)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+
+	if compatibilityMigratorForSource(src) != nil {
+		return manifest.RunnerGGML, nil
+	}
+	return manifest.RunnerLlamaCPP, nil
+}
+
 func compatibilityMigratorForSource(src *SourceModel) Migrator {
 	arch := strings.ToLower(strings.TrimSpace(src.GGUF.KeyValue("general.architecture").String()))
 	if arch == "" {

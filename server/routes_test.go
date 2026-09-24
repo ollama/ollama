@@ -212,6 +212,24 @@ func TestHandleScheduleErrorNoCompatibleManifest(t *testing.T) {
 	}
 }
 
+// Show answers a missing runner variant with 404 so the client's
+// show-then-pull path fetches it, unlike the schedule path above.
+func TestWriteShowErrorNoCompatibleManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	writeShowError(c, "test", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"no compatible manifest found for runners: mlx"}` {
+		t.Fatalf("response = %s", got)
+	}
+}
+
 func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
 
@@ -1138,8 +1156,9 @@ func TestShowAllManifestsNonListReturnsSingleManifest(t *testing.T) {
 	if len(resp.Manifests) != 1 {
 		t.Fatalf("manifest count = %d, want 1", len(resp.Manifests))
 	}
-	if resp.Manifests[0].Runner != manifest.RunnerGGML {
-		t.Fatalf("runner = %q, want %q", resp.Manifests[0].Runner, manifest.RunnerGGML)
+	// No compatibility detector fires for this GGUF, so it is llama.cpp's.
+	if resp.Manifests[0].Runner != manifest.RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", resp.Manifests[0].Runner, manifest.RunnerLlamaCPP)
 	}
 	if resp.Manifests[0].Details.Format != manifest.FormatGGUF {
 		t.Fatalf("format = %q, want %q", resp.Manifests[0].Details.Format, manifest.FormatGGUF)

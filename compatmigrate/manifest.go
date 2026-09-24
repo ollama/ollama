@@ -22,15 +22,15 @@ func writeCompatibilityManifestList(name model.Name, source *manifest.Manifest, 
 	if source != nil {
 		// TODO: remove this downgrade anchor once rollback to pre-manifest-list
 		// Ollama versions is no longer supported.
-		docDigests := []string{parentDigest}
+		manifestDigests := []string{parentDigest}
 		for _, child := range manifests {
 			digest, err := manifest.ChildManifestDigest(child)
 			if err != nil {
 				return false, err
 			}
-			docDigests = append(docDigests, digest)
+			manifestDigests = append(manifestDigests, digest)
 		}
-		if err := manifest.WriteLegacyAnchor(name, source, docDigests...); err != nil {
+		if err := manifest.WriteLegacyAnchor(name, source, manifestDigests...); err != nil {
 			return false, err
 		}
 	}

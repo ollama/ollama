@@ -917,11 +917,12 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 	fn(api.ProgressResponse{Status: "writing manifest"})
 	runner, format := manifest.MetadataForConfig(*config)
 	if format == manifest.FormatGGUF {
-		runner = manifest.RunnerLlamaCPP
-		for _, layer := range baseLayers {
-			if layer.GGUF.IsGGML() {
-				runner = manifest.RunnerGGML
-			}
+		// On failure the conservative ggml default stands: it flags the model
+		// for inspection rather than failing the create.
+		if detected, err := compatmigrate.RunnerForManifest(name, &manifest.Manifest{Config: *configLayer, Layers: layers}); err != nil {
+			slog.Warn("couldn't detect runner for created model", "model", name.DisplayShortest(), "error", err)
+		} else {
+			runner = detected
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -981,6 +982,15 @@ func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.P
 		if err := manifest.FillMetadata(&child); err != nil {
 			return fmt.Errorf("manifest list entry %s: %w", ref, err)
 		}
+		if child.Format == manifest.FormatGGUF {
+			// On failure the conservative ggml default stands: it flags the
+			// model for inspection rather than failing the create.
+			if runner, err := compatmigrate.RunnerForManifest(childName, &child); err != nil {
+				slog.Warn("couldn't detect runner for manifest list entry", "entry", ref, "error", err)
+			} else {
+				child.Runner = runner
+			}
+		}
 
 		signature, err := newManifestListChildSignature(ref, childName, &child)
 		if err != nil {
@@ -1032,15 +1042,15 @@ func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.P
 
 	// Extra layers reference the manifest blobs so a downgrade's garbage
 	// collector cannot delete them.
-	docDigests := []string{parentDigest}
+	manifestDigests := []string{parentDigest}
 	for _, childRef := range manifests {
 		digest, err := manifest.ChildManifestDigest(childRef)
 		if err != nil {
 			return err
 		}
-		docDigests = append(docDigests, digest)
+		manifestDigests = append(manifestDigests, digest)
 	}
-	return manifest.WriteLegacyAnchor(name, anchorChild, docDigests...)
+	return manifest.WriteLegacyAnchor(name, anchorChild, manifestDigests...)
 }
 
 func validateCreateManifestListRequest(r api.CreateRequest) error {

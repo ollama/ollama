@@ -91,7 +91,7 @@ type UploadOptions struct {
 
 	// Manifest fields (optional) - if set, manifest is pushed after all blobs complete
 	Manifest          []byte // Raw manifest JSON to push
-	ManifestMediaType string // Manifest Content-Type; defaults to Docker manifest v2
+	ManifestMediaType string // Manifest Content-Type; required when Manifest is set
 	ManifestRef       string // Tag or digest for the manifest (e.g., "latest", "sha256:...")
 	Repository        string // Repository path for manifest URL (e.g., "library/model")
 }

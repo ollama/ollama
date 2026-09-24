@@ -1830,10 +1830,16 @@ func (s *Server) CopyHandler(c *gin.Context) {
 		return
 	}
 
-	if err := CopyModel(src, dst); errors.Is(err, os.ErrNotExist) {
+	warning, err := CopyModel(src, dst)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found", r.Source)})
-	} else if err != nil {
+	case errors.Is(err, manifest.ErrNoCompatibleManifest):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusOK, api.ProgressResponse{Status: cmp.Or(warning, "success")})
 	}
 }
 

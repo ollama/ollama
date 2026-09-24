@@ -1551,10 +1551,12 @@ func TestDefaultUserAgent(t *testing.T) {
 
 // TestManifestPush verifies that manifest is pushed after blobs
 func TestManifestPush(t *testing.T) {
+	const mediaType = "application/vnd.docker.distribution.manifest.v2+json"
+
 	clientDir := t.TempDir()
 	blob, _ := createTestBlob(t, clientDir, 1000)
 
-	testManifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`)
+	testManifest := []byte(`{"schemaVersion":2,"mediaType":"` + mediaType + `"}`)
 	testRepo := "library/test-model"
 	testRef := "latest"
 
@@ -1594,12 +1596,13 @@ func TestManifestPush(t *testing.T) {
 	serverURL = server.URL
 
 	err := Upload(context.Background(), UploadOptions{
-		Blobs:       []Blob{blob},
-		BaseURL:     server.URL,
-		SrcDir:      clientDir,
-		Manifest:    testManifest,
-		ManifestRef: testRef,
-		Repository:  testRepo,
+		Blobs:             []Blob{blob},
+		BaseURL:           server.URL,
+		SrcDir:            clientDir,
+		Manifest:          testManifest,
+		ManifestMediaType: mediaType,
+		ManifestRef:       testRef,
+		Repository:        testRepo,
 	})
 	if err != nil {
 		t.Fatalf("Upload failed: %v", err)
@@ -1619,7 +1622,7 @@ func TestManifestPush(t *testing.T) {
 		t.Errorf("Manifest path mismatch: got %s, want %s", manifestPath, expectedPath)
 	}
 
-	if manifestContentType != "application/vnd.docker.distribution.manifest.v2+json" {
+	if manifestContentType != mediaType {
 		t.Errorf("Manifest content type mismatch: got %s", manifestContentType)
 	}
 

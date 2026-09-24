@@ -483,6 +483,116 @@ func TestPushLayersForManifestListIncludesChildManifests(t *testing.T) {
 	}
 }
 
+func TestCopyModelNarrowsManifestListToLocalChildren(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeChild := func(name, runner, formatName string) manifest.Manifest {
+		t.Helper()
+
+		config, err := manifest.NewLayer(strings.NewReader(name+" config"), "application/vnd.docker.container.image.v1+json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer, err := manifest.NewLayer(strings.NewReader(name+" layer"), "application/vnd.ollama.image.model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifestWithMetadata(model.ParseName(name), config, []manifest.Layer{layer}, runner, formatName); err != nil {
+			t.Fatal(err)
+		}
+		mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *mf
+	}
+
+	local := writeChild("library/narrow-local:latest", manifest.RunnerGGML, manifest.FormatGGUF)
+	localRef, err := manifest.NewManifestReference(local.BlobDigest(), local.Runner, local.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A child the registry advertised but pull never materialized.
+	absentRef, err := manifest.NewManifestReference(fmt.Sprintf("sha256:%064d", 1), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeList := func(name string, refs []manifest.Manifest) model.Name {
+		t.Helper()
+		n := model.ParseName(name)
+		if _, err := manifest.WriteManifestList(n, refs); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	t.Run("drops absent children and warns", func(t *testing.T) {
+		src := writeList("library/narrow-src:latest", []manifest.Manifest{localRef, absentRef})
+		dst := model.ParseName("library/narrow-dst:latest")
+
+		warning, err := CopyModel(src, dst)
+		if err != nil {
+			t.Fatalf("CopyModel() = %v, want nil", err)
+		}
+		if !strings.Contains(warning, manifest.RunnerMLX) {
+			t.Errorf("warning = %q, want it to name the dropped %s child", warning, manifest.RunnerMLX)
+		}
+
+		data, err := manifest.ReadManifestData(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var copied manifest.Manifest
+		if err := json.Unmarshal(data, &copied); err != nil {
+			t.Fatal(err)
+		}
+		if len(copied.Manifests) != 1 {
+			t.Fatalf("copy has %d children, want 1: %#v", len(copied.Manifests), copied.Manifests)
+		}
+		if got := copied.Manifests[0].BlobDigest(); got != local.BlobDigest() {
+			t.Errorf("copied child digest = %q, want %q", got, local.BlobDigest())
+		}
+	})
+
+	t.Run("fully local list is copied verbatim", func(t *testing.T) {
+		src := writeList("library/intact-src:latest", []manifest.Manifest{localRef})
+		dst := model.ParseName("library/intact-dst:latest")
+
+		warning, err := CopyModel(src, dst)
+		if err != nil {
+			t.Fatalf("CopyModel() = %v, want nil", err)
+		}
+		if warning != "" {
+			t.Errorf("warning = %q, want none", warning)
+		}
+
+		srcData, err := manifest.ReadManifestData(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dstData, err := manifest.ReadManifestData(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(srcData, dstData) {
+			t.Errorf("copy differs from source:\n got %s\nwant %s", dstData, srcData)
+		}
+	})
+
+	t.Run("no local children is an error", func(t *testing.T) {
+		src := writeList("library/empty-src:latest", []manifest.Manifest{absentRef})
+		dst := model.ParseName("library/empty-dst:latest")
+
+		if _, err := CopyModel(src, dst); !errors.Is(err, manifest.ErrNoCompatibleManifest) {
+			t.Fatalf("CopyModel() = %v, want ErrNoCompatibleManifest", err)
+		}
+		if _, err := manifest.ReadManifestData(dst); err == nil {
+			t.Error("destination manifest was written despite the error")
+		}
+	})
+}
+
 func TestPullModelManifestListDownloadsSelectedChildOnly(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

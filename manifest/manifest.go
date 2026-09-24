@@ -581,8 +581,6 @@ func totalSizeForManifestData(data []byte) (int64, error) {
 	return addManifest(m)
 }
 
-// RemoveUnreferencedBlobs removes candidate blob digests that are not reachable
-// from any current manifest. It returns the number of blobs removed.
 // RemoveUnreferencedBlobs removes the candidate blobs that no other manifest
 // references. The digests it removed are returned even alongside an error, so
 // callers can clean up anything derived from them.
@@ -600,7 +598,6 @@ func removeUnreferencedBlobs(candidates ...string) ([]string, error) {
 	}
 
 	var removed []string
-	seen := make(map[string]struct{})
 	for _, digest := range candidates {
 		if digest == "" {
 			continue
@@ -609,10 +606,6 @@ func removeUnreferencedBlobs(candidates ...string) ([]string, error) {
 		if err != nil {
 			return removed, err
 		}
-		if _, ok := seen[digest]; ok {
-			continue
-		}
-		seen[digest] = struct{}{}
 		if _, used := inUse[digest]; used {
 			continue
 		}
@@ -1151,19 +1144,19 @@ func writeManifestData(name model.Name, data []byte, removeLegacy bool) error {
 }
 
 // WriteLegacyAnchor writes mf as a legacy manifest at name with the v2
-// manifest document blobs referenced by docDigests appended as layers. The
-// extra layers exist only so a pre-manifest-list daemon's garbage collector,
-// which retains just the digests listed by legacy manifests, cannot delete
-// the manifest blobs during a downgrade.
-func WriteLegacyAnchor(name model.Name, mf *Manifest, docDigests ...string) error {
+// manifest blobs named by manifestDigests appended as layers. The extra layers
+// exist only so a pre-manifest-list daemon's garbage collector, which retains
+// just the digests listed by legacy manifests, cannot delete the manifest
+// blobs during a downgrade.
+func WriteLegacyAnchor(name model.Name, mf *Manifest, manifestDigests ...string) error {
 	if mf == nil {
 		return errors.New("downgrade anchor requires a manifest")
 	}
 
 	anchor := *mf
 	anchor.Layers = slices.Clone(mf.Layers)
-	for _, docDigest := range docDigests {
-		digest, err := canonicalBlobDigest(docDigest)
+	for _, manifestDigest := range manifestDigests {
+		digest, err := canonicalBlobDigest(manifestDigest)
 		if err != nil {
 			return err
 		}

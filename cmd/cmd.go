@@ -1700,10 +1700,12 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	req := api.CopyRequest{Source: args[0], Destination: args[1]}
-	if err := client.Copy(cmd.Context(), &req); err != nil {
+	resp, err := client.Copy(cmd.Context(), &req)
+	if err != nil {
 		return err
 	}
 	fmt.Printf("copied '%s' to '%s'\n", args[0], args[1])
+	fmt.Println(resp.Status)
 	return nil
 }
 

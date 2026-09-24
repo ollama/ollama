@@ -22,7 +22,9 @@ func writeShowError(c *gin.Context, model string, err error) {
 	case os.IsNotExist(err):
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", model)})
 	case errors.Is(err, manifest.ErrNoCompatibleManifest):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		// Not found rather than bad request: the client's show-then-pull path
+		// treats 404 as "fetch it", which is what a missing runner variant needs.
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case errors.As(err, &statusErr):
 		c.JSON(statusErr.StatusCode, gin.H{"error": statusErr.ErrorMessage})
 	case err.Error() == errtypes.InvalidModelNameErrMsg:

@@ -1491,6 +1491,12 @@ curl http://localhost:11434/api/copy -d '{
 
 Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't exist.
 
+```json
+{
+  "status": "success"
+}
+```
+
 ## Delete a Model
 
 ```
