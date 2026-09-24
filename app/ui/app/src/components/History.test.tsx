@@ -176,13 +176,15 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   ).toBe(true);
   await click("Exporting…");
   await act(async () => vi.advanceTimersByTimeAsync(20));
+  expect(exportChat).not.toHaveBeenCalled();
+  await act(async () => vi.advanceTimersByTimeAsync(20));
   expect(exportChat).toHaveBeenCalledExactlyOnceWith("first");
   notifyManager.setScheduler(queueMicrotask);
   await act(async () => resolve({ path: "/exports/Garden" }));
   expect(page()).toContain("/exports/Garden");
   vi.mocked(exportChat).mockRejectedValueOnce(new Error("Disk is full"));
   await click("Export");
-  await act(async () => vi.advanceTimersByTimeAsync(20));
+  await act(async () => vi.advanceTimersByTimeAsync(40));
   expect(page()).toContain("Disk is full");
   expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
   await click("Another conversation");
@@ -190,7 +192,7 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   expect(page()).not.toContain("/exports/Garden");
   vi.mocked(exportChat).mockResolvedValueOnce(null);
   await click("Export");
-  await act(async () => vi.advanceTimersByTimeAsync(20));
+  await act(async () => vi.advanceTimersByTimeAsync(40));
   expect(exportChat).toHaveBeenLastCalledWith("second");
   expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
   expect(page()).not.toContain("Saved to");

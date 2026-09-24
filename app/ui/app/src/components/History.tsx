@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { ArrowDownTrayIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { exportChat, getChat, getChats } from "@/api";
@@ -48,10 +49,10 @@ export function History({
   const [isExporting, setIsExporting] = useState(false);
   const exporting = useMutation({
     mutationFn: exportChat,
-    // Paint the disabled button before the native save dialog opens.
+    // Allow a painted frame before the native save dialog takes over.
     onMutate: () =>
       new Promise<void>((resolve) => {
-        requestAnimationFrame(() => setTimeout(resolve, 0));
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       }),
     onSettled: () => setIsExporting(false),
     retry: false,
@@ -180,7 +181,7 @@ export function History({
               <button
                 onClick={() => {
                   if (busy) return;
-                  setIsExporting(true);
+                  flushSync(() => setIsExporting(true));
                   exporting.mutate(selectedID);
                 }}
                 disabled={!selectedChat || busy || messageLoading}
