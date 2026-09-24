@@ -597,6 +597,10 @@ func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
 		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
 		Options:     &opts,
 		numParallel: 1,
+		// Every runner the scheduler builds records this; one built by hand
+		// must too, or it reads as a runner whose flags disagree with the
+		// request and the reuse these tests are about never happens.
+		llamaConfig: llamaServerConfigForModel(loadedModel),
 	}
 
 	s.loadedMu.Lock()
@@ -634,6 +638,10 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
 		Options:     &opts,
 		numParallel: 1,
+		// Every runner the scheduler builds records this; one built by hand
+		// must too, or it reads as a runner whose flags disagree with the
+		// request and the reuse these tests are about never happens.
+		llamaConfig: llamaServerConfigForModel(loadedModel),
 	}
 
 	s.loadedMu.Lock()
@@ -2261,4 +2269,41 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}
+
+func TestSchedNeedsReloadWhenTagsShareABlobButNotTheirFlags(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	// Two tags over one blob: a Modelfile built FROM another tag shares its
+	// ModelPath, which is what schedulerModelKey() keys the runner on. The
+	// rendered tag carries a parser, so usesOllamaRenderedChat() sets
+	// DisableJinja and its runner is launched with --no-jinja; the bare tag
+	// needs --jinja to accept tools. Reusing one runner for the other breaks
+	// tool calls with "tools param requires --jinja flag".
+	const sharedBlob = "/models/blobs/sha256-shared"
+
+	rendered := &Model{ModelPath: sharedBlob, Config: model.ConfigV2{Parser: "qwen3.5"}}
+	bare := &Model{ModelPath: sharedBlob}
+
+	require.Equal(t, schedulerModelKey(rendered), schedulerModelKey(bare),
+		"the two tags must share a scheduler key for this test to be meaningful")
+	require.NotEqual(t, llamaServerConfigForModel(rendered), llamaServerConfigForModel(bare),
+		"the two tags must need different llama-server flags")
+
+	opts := api.DefaultOptions()
+	runner := &runnerRef{
+		model:       rendered,
+		Options:     &opts,
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		numParallel: 1,
+		// Both tags resolve the same context shift; it is the flags that differ.
+		contextShift: resolveContextShift(nil, rendered),
+		llamaConfig:  llamaServerConfigForModel(rendered),
+	}
+
+	require.False(t, runner.needsReload(ctx, &LlmRequest{model: rendered, opts: api.DefaultOptions()}),
+		"the same tag must not force a reload")
+	require.True(t, runner.needsReload(ctx, &LlmRequest{model: bare, opts: api.DefaultOptions()}),
+		"a tag needing different llama-server flags must force a reload")
 }
