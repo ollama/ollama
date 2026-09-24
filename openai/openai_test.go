@@ -431,6 +431,160 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
+	tests := []struct {
+		name                string
+		maxTokens           *int
+		maxCompletionTokens *int
+		wantNumPredict      any
+	}{
+		{
+			name:                "max_completion_tokens set alone",
+			maxCompletionTokens: testIntPtr(150),
+			wantNumPredict:      150,
+		},
+		{
+			name:           "max_tokens set alone",
+			maxTokens:      testIntPtr(200),
+			wantNumPredict: 200,
+		},
+		{
+			name:                "max_completion_tokens takes precedence over max_tokens",
+			maxTokens:           testIntPtr(200),
+			maxCompletionTokens: testIntPtr(150),
+			wantNumPredict:      150,
+		},
+		{
+			name:           "neither set",
+			wantNumPredict: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:               "test-model",
+				Messages:            []Message{{Role: "user", Content: "Hello"}},
+				MaxTokens:           tt.maxTokens,
+				MaxCompletionTokens: tt.maxCompletionTokens,
+			}
+
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantNumPredict == nil {
+				if _, ok := result.Options["num_predict"]; ok {
+					t.Fatalf("expected num_predict to not be set, got %v", result.Options["num_predict"])
+				}
+			} else {
+				got, ok := result.Options["num_predict"]
+				if !ok {
+					t.Fatalf("expected num_predict to be set to %v, but was missing", tt.wantNumPredict)
+				}
+				if got != tt.wantNumPredict {
+					t.Errorf("num_predict = %v, want %v", got, tt.wantNumPredict)
+				}
+			}
+		})
+	}
+}
+
+func TestFromCompleteRequest_MaxCompletionTokens(t *testing.T) {
+	tests := []struct {
+		name                string
+		maxTokens           *int
+		maxCompletionTokens *int
+		wantNumPredict      any
+	}{
+		{
+			name:                "max_completion_tokens set alone",
+			maxCompletionTokens: testIntPtr(150),
+			wantNumPredict:      150,
+		},
+		{
+			name:           "max_tokens set alone",
+			maxTokens:      testIntPtr(200),
+			wantNumPredict: 200,
+		},
+		{
+			name:                "max_completion_tokens takes precedence over max_tokens",
+			maxTokens:           testIntPtr(200),
+			maxCompletionTokens: testIntPtr(150),
+			wantNumPredict:      150,
+		},
+		{
+			name:           "neither set",
+			wantNumPredict: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := CompletionRequest{
+				Model:               "test-model",
+				Prompt:              "Hello",
+				MaxTokens:           tt.maxTokens,
+				MaxCompletionTokens: tt.maxCompletionTokens,
+			}
+
+			result, err := FromCompleteRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantNumPredict == nil {
+				if _, ok := result.Options["num_predict"]; ok {
+					t.Fatalf("expected num_predict to not be set, got %v", result.Options["num_predict"])
+				}
+			} else {
+				got, ok := result.Options["num_predict"]
+				if !ok {
+					t.Fatalf("expected num_predict to be set to %v, but was missing", tt.wantNumPredict)
+				}
+				if got != tt.wantNumPredict {
+					t.Errorf("num_predict = %v, want %v", got, tt.wantNumPredict)
+				}
+			}
+		})
+	}
+}
+
+func TestChatCompletionRequest_UnmarshalMaxCompletionTokens(t *testing.T) {
+	payload := []byte(`{
+		"model": "gpt-4o",
+		"messages": [{"role": "user", "content": "hi"}],
+		"max_completion_tokens": 512
+	}`)
+
+	var req ChatCompletionRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		t.Fatalf("unexpected unmarshal error: %v", err)
+	}
+
+	if req.MaxCompletionTokens == nil || *req.MaxCompletionTokens != 512 {
+		t.Fatalf("expected MaxCompletionTokens = 512, got %v", req.MaxCompletionTokens)
+	}
+}
+
+func TestCompletionRequest_UnmarshalMaxCompletionTokens(t *testing.T) {
+	payload := []byte(`{
+		"model": "gpt-3.5-turbo-instruct",
+		"prompt": "hi",
+		"max_completion_tokens": 256
+	}`)
+
+	var req CompletionRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		t.Fatalf("unexpected unmarshal error: %v", err)
+	}
+
+	if req.MaxCompletionTokens == nil || *req.MaxCompletionTokens != 256 {
+		t.Fatalf("expected MaxCompletionTokens = 256, got %v", req.MaxCompletionTokens)
+	}
+}
+
 func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	modified := time.Unix(1234567890, 0).UTC()
 
