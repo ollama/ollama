@@ -253,12 +253,50 @@ export interface ExportResult {
   warnings?: string[];
 }
 
+export interface ExportProgress {
+  completed: number;
+  total: number;
+}
+
 export async function exportChat(chatId: string): Promise<ExportResult | null> {
   return requestExport(`/api/v1/chat/${encodeURIComponent(chatId)}/export`);
 }
 
-export async function exportAllChats(): Promise<ExportResult | null> {
-  return requestExport("/api/v1/chats/export");
+export async function exportAllChats(
+  signal: AbortSignal,
+  onProgress: (progress: ExportProgress) => void,
+): Promise<ExportResult | null> {
+  const response = await fetch(`${API_BASE}/api/v1/chats/export`, {
+    method: "POST",
+    signal,
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error ?? "Could not export your chats.");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Could not read export progress.");
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      const lines = pending.split("\n");
+      pending = lines.pop()!;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const update: ExportProgress | ExportResult | { error: string } | null =
+          JSON.parse(line);
+        if (update === null || "path" in update) return update;
+        if ("error" in update) throw new Error(update.error);
+        onProgress(update);
+      }
+      if (done) throw new Error("Export stopped before it finished.");
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function requestExport(path: string): Promise<ExportResult | null> {

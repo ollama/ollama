@@ -38,6 +38,7 @@ import {
   updateSettings,
   getInferenceCompute,
   exportAllChats,
+  type ExportProgress,
 } from "@/api";
 
 function AnimatedDots() {
@@ -140,17 +141,32 @@ export async function applySettingsDefaults({
 export default function Settings() {
   const queryClient = useQueryClient();
   const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
+    null,
+  );
+  const exportController = useRef<AbortController | null>(null);
   const chatExport = useMutation({
-    mutationFn: exportAllChats,
+    mutationFn: async (controller: AbortController) => {
+      try {
+        return await exportAllChats(controller.signal, setExportProgress);
+      } catch (error) {
+        if (controller.signal.aborted) return null;
+        throw error;
+      }
+    },
     // Paint the disabled button before the native save dialog opens.
     onMutate: () =>
       new Promise<void>((resolve) => {
         requestAnimationFrame(() => setTimeout(resolve, 0));
       }),
-    onSettled: () => setIsExporting(false),
+    onSettled: () => {
+      exportController.current = null;
+      setIsExporting(false);
+    },
     retry: false,
     networkMode: "always",
   });
+  useEffect(() => () => exportController.current?.abort(), []);
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
@@ -802,26 +818,61 @@ export default function Settings() {
                     Save all chats and attachments in a ZIP file.
                   </Description>
                 </div>
-                <Button
-                  type="button"
-                  color="white"
-                  disabled={isExporting}
-                  aria-busy={isExporting || undefined}
-                  onClick={() => {
-                    if (isExporting) return;
-                    setIsExporting(true);
-                    chatExport.mutate();
-                  }}
-                >
-                  {isExporting ? (
-                    <ArrowPathIcon data-slot="icon" className="animate-spin" />
-                  ) : (
-                    <ArrowDownTrayIcon data-slot="icon" />
+                <div className="flex items-center gap-2">
+                  {isExporting && (
+                    <Button
+                      type="button"
+                      plain
+                      onClick={() => exportController.current?.abort()}
+                    >
+                      Cancel
+                    </Button>
                   )}
-                  {isExporting ? "Exporting…" : "Export all chats"}
-                </Button>
+                  <Button
+                    type="button"
+                    color="white"
+                    disabled={isExporting}
+                    aria-busy={isExporting || undefined}
+                    onClick={() => {
+                      if (exportController.current) return;
+                      const controller = new AbortController();
+                      exportController.current = controller;
+                      setExportProgress(null);
+                      setIsExporting(true);
+                      chatExport.mutate(controller);
+                    }}
+                  >
+                    {isExporting ? (
+                      <ArrowPathIcon
+                        data-slot="icon"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <ArrowDownTrayIcon data-slot="icon" />
+                    )}
+                    {isExporting ? "Exporting…" : "Export all chats"}
+                  </Button>
+                </div>
               </div>
             </Field>
+            {isExporting && (
+              <div className="space-y-1">
+                <progress
+                  aria-label="Chat export progress"
+                  value={exportProgress?.completed}
+                  max={exportProgress?.total ?? 1}
+                  className="block h-2 w-full overflow-hidden rounded-full accent-neutral-900 dark:accent-white"
+                />
+                <p
+                  role="status"
+                  className="text-sm text-neutral-500 dark:text-neutral-400"
+                >
+                  {exportProgress
+                    ? `${exportProgress.completed} of ${exportProgress.total} chats exported`
+                    : "Preparing export…"}
+                </p>
+              </div>
+            )}
             {chatExport.error && (
               <p
                 role="alert"

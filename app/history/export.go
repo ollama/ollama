@@ -6,6 +6,7 @@ package history
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,11 @@ import (
 type Result struct {
 	Path     string   `json:"path"`
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+type Progress struct {
+	Completed int `json:"completed"`
+	Total     int `json:"total"`
 }
 
 type attachment struct {
@@ -53,7 +59,7 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	warnings, err := writeChat(chat, func(name string, data []byte) error {
+	warnings, err := writeChat(context.Background(), chat, func(name string, data []byte) error {
 		path := filepath.Join(directory, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return err
@@ -69,13 +75,21 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 
 // ExportAll writes one conversation at a time, keeping attachment memory bounded
 // to a single chat. The chosen destination is replaced only after the ZIP closes.
-func ExportAll(source *store.Store, path string) (*Result, error) {
+func ExportAll(ctx context.Context, source *store.Store, path string, progress func(Progress) error) (*Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	chats, err := source.Chats()
 	if err != nil {
 		return nil, err
 	}
 	if len(chats) == 0 {
 		return nil, fmt.Errorf("there are no chats to export")
+	}
+	if progress != nil {
+		if err := progress(Progress{Total: len(chats)}); err != nil {
+			return nil, err
+		}
 	}
 	file, err := os.CreateTemp(filepath.Dir(path), ".ollama-chats-*.zip")
 	if err != nil {
@@ -87,26 +101,47 @@ func ExportAll(source *store.Store, path string) (*Result, error) {
 	defer archive.Close()
 	result := &Result{Path: path}
 	for i, summary := range chats {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		chat, err := source.Chat(summary.ID)
 		if err != nil {
 			return nil, fmt.Errorf("export chat %q: %w", summary.Title, err)
 		}
 		folder := fmt.Sprintf("%04d-%s", i+1, chatFilename(*chat))
-		warnings, err := writeChat(*chat, func(name string, data []byte) error {
+		warnings, err := writeChat(ctx, *chat, func(name string, data []byte) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			header := &zip.FileHeader{Name: folder + "/" + name, Method: zip.Deflate}
 			header.SetMode(0o600)
 			entry, err := archive.CreateHeader(header)
 			if err != nil {
 				return err
 			}
-			_, err = entry.Write(data)
-			return err
+			// Check cancellation between chunks, including large attachments.
+			for len(data) > 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				n := min(len(data), 64*1024)
+				if _, err := entry.Write(data[:n]); err != nil {
+					return err
+				}
+				data = data[n:]
+			}
+			return nil
 		})
 		if err != nil {
 			return nil, fmt.Errorf("export chat %q: %w", chat.Title, err)
 		}
 		for _, warning := range warnings {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("%s: %s", folder, warning))
+		}
+		if progress != nil {
+			if err := progress(Progress{Completed: i + 1, Total: len(chats)}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if err := archive.Close(); err != nil {
@@ -115,13 +150,16 @@ func ExportAll(source *store.Store, path string) (*Result, error) {
 	if err := file.Close(); err != nil {
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := os.Rename(file.Name(), path); err != nil {
 		return nil, err
 	}
 	return result, nil
 }
 
-func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, error) {
+func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) error) ([]string, error) {
 	metadata := manifest{
 		Version: 1, ChatID: chat.ID, Title: chat.Title, CreatedAt: chat.CreatedAt,
 		MessageCount: len(chat.Messages), Complete: true,
@@ -129,6 +167,9 @@ func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, err
 	}
 	var messages bytes.Buffer
 	for i, message := range chat.Messages {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		fmt.Fprintf(&messages, "## Message %d\n\n", i+1)
 		if message.Stream {
 			metadata.Warnings = append(metadata.Warnings, fmt.Sprintf("Message %d was unfinished when it was saved.", i+1))
@@ -150,6 +191,9 @@ func writeChat(chat store.Chat, write func(string, []byte) error) ([]string, err
 			writeFence(&messages, message.Thinking)
 		}
 		for j, file := range message.Attachments {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			record := attachment{Message: i + 1, Number: j + 1, OriginalName: file.Filename, Status: "missing"}
 			fmt.Fprintf(&messages, "### Attachment %d\n\n", j+1)
 			writeFence(&messages, file.Filename)

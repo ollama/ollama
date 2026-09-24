@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/app/history"
 	"github.com/ollama/ollama/app/store"
@@ -41,7 +43,7 @@ func TestReadOnlyChatExportAndDeletion(t *testing.T) {
 		}
 		return history.Export(chat, t.TempDir())
 	}}
-	s.ExportAllChats = func() (*history.Result, error) {
+	s.ExportAllChats = func(context.Context, func(history.Progress) error) (*history.Result, error) {
 		calls++
 		return &history.Result{Path: "chats.zip"}, nil
 	}
@@ -81,13 +83,19 @@ func TestReadOnlyChatExportAndDeletion(t *testing.T) {
 	}
 	for _, path := range []string{"/api/v1/chat/saved-chat/export", "/api/v1/chats/export"} {
 		s.ExportChat = func(store.Chat) (*history.Result, error) { return nil, nil }
-		s.ExportAllChats = func() (*history.Result, error) { return nil, nil }
+		s.ExportAllChats = func(context.Context, func(history.Progress) error) (*history.Result, error) { return nil, nil }
 		if w := request("POST", path, s.Token); w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "null" {
 			t.Fatal("cancellation should not be an error")
 		}
 		s.ExportChat = func(store.Chat) (*history.Result, error) { return nil, errors.New("disk is full") }
-		s.ExportAllChats = func() (*history.Result, error) { return nil, errors.New("disk is full") }
-		if w := request("POST", path, s.Token); w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "disk is full") {
+		s.ExportAllChats = func(context.Context, func(history.Progress) error) (*history.Result, error) {
+			return nil, errors.New("disk is full")
+		}
+		status := http.StatusInternalServerError
+		if path == "/api/v1/chats/export" {
+			status = http.StatusOK // Streaming exports report errors in the response body.
+		}
+		if w := request("POST", path, s.Token); w.Code != status || !strings.Contains(w.Body.String(), "disk is full") {
 			t.Fatal("export failure should be visible")
 		}
 	}
@@ -128,5 +136,40 @@ func TestReadOnlyChatExportAndDeletion(t *testing.T) {
 		if err != nil || string(chat.BrowserState) != storedState {
 			t.Fatalf("reading citations changed saved history: %v", err)
 		}
+	}
+}
+
+func TestExportAllStreamsProgressAndStopsWhenRequestIsCancelled(t *testing.T) {
+	stopped := make(chan struct{})
+	s := &Server{Dev: true, ExportAllChats: func(ctx context.Context, progress func(history.Progress) error) (*history.Result, error) {
+		defer close(stopped)
+		if err := progress(history.Progress{Completed: 1, Total: 3}); err != nil {
+			return nil, err
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	server := httptest.NewServer(s.Handler())
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/api/v1/chats/export", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var progress history.Progress
+	if err := json.NewDecoder(response.Body).Decode(&progress); err != nil || progress.Completed != 1 || progress.Total != 3 {
+		t.Fatalf("progress was not delivered before completion: %+v, %v", progress, err)
+	}
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("export continued after the request was cancelled")
 	}
 }

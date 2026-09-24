@@ -5,9 +5,11 @@ package history
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -141,12 +143,24 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 		}
 	}
 	path := filepath.Join(t.TempDir(), "chats.zip")
-	result, err := ExportAll(st, path)
+	var updates []Progress
+	result, err := ExportAll(context.Background(), st, path, func(progress Progress) error {
+		updates = append(updates, progress)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Path != path || len(result.Warnings) != 1 {
 		t.Fatalf("missing saved path or unfinished-message warning: %+v", result)
+	}
+	if len(updates) != 3 {
+		t.Fatalf("missing export progress: %v", updates)
+	}
+	for i, progress := range updates {
+		if progress.Completed != i || progress.Total != 2 {
+			t.Fatalf("incorrect export progress: %v", updates)
+		}
 	}
 	data := mustRead(t, path)
 	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -195,10 +209,27 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 	if len(seen) != 2 {
 		t.Fatal("same-titled conversations were not kept separately")
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err = ExportAll(ctx, st, path, func(progress Progress) error {
+		if progress.Completed == 1 {
+			cancel()
+		}
+		if progress.Completed > 1 {
+			t.Fatal("export continued after cancellation")
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || !bytes.Equal(data, mustRead(t, path)) {
+		t.Fatalf("cancelled export must preserve the previous ZIP: %v", err)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(path)); err != nil || len(entries) != 1 {
+		t.Fatalf("cancelled export left temporary files behind: %v, %v", entries, err)
+	}
 	if _, err := db.Exec(`UPDATE chats SET browser_state = '{broken' WHERE id = 'chat-2'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ExportAll(st, path); err == nil {
+	if _, err := ExportAll(context.Background(), st, path, nil); err == nil {
 		t.Fatal("export silently discarded corrupt history")
 	}
 	if !bytes.Equal(data, mustRead(t, path)) {

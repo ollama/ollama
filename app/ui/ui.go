@@ -87,7 +87,7 @@ type Server struct {
 	IntegrationInstalled func(string) bool
 	ListCloudModels      func(context.Context) (*api.ListResponse, error)
 	ExportChat           func(store.Chat) (*history.Result, error)
-	ExportAllChats       func() (*history.Result, error)
+	ExportAllChats       func(context.Context, func(history.Progress) error) (*history.Result, error)
 }
 
 func (s *Server) log() *slog.Logger {
@@ -548,16 +548,30 @@ func (s *Server) exportChat(w http.ResponseWriter, r *http.Request) error {
 	return json.NewEncoder(w).Encode(result)
 }
 
-func (s *Server) exportAllChats(w http.ResponseWriter, _ *http.Request) error {
+func (s *Server) exportAllChats(w http.ResponseWriter, r *http.Request) error {
 	if s.ExportAllChats == nil {
 		return errors.New("Export is unavailable in this window")
 	}
-	result, err := s.ExportAllChats()
-	if err != nil {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(w)
+	send := func(value any) error {
+		if err := encoder.Encode(value); err != nil {
+			return err
+		}
+		return http.NewResponseController(w).Flush()
+	}
+	result, err := s.ExportAllChats(r.Context(), func(progress history.Progress) error {
+		return send(progress)
+	})
+	if err := r.Context().Err(); err != nil {
 		return err
 	}
-	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(result)
+	if err != nil {
+		return send(map[string]string{"error": err.Error()})
+	}
+	return send(result)
 }
 
 func (s *Server) deleteChat(w http.ResponseWriter, r *http.Request) error {

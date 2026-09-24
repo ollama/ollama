@@ -304,13 +304,21 @@ describe("Settings reset interactions", () => {
     }
   });
 
-  it("disables export all before opening the dialog and unlocks on cancel", async () => {
+  it("shows export progress and stops the export when Cancel is clicked", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
       setTimeout(() => callback(0), 16),
     );
-    const pendingExport = deferred<null>();
-    mocks.exportAllChats.mockReturnValueOnce(pendingExport.promise);
+    let exportSignal: AbortSignal;
+    mocks.exportAllChats.mockImplementationOnce((signal, onProgress) => {
+      exportSignal = signal;
+      onProgress({ completed: 1, total: 4 });
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () =>
+          reject(new DOMException("Export cancelled", "AbortError")),
+        );
+      });
+    });
     let renderer;
     try {
       await act(async () => {
@@ -326,9 +334,16 @@ describe("Settings reset interactions", () => {
       await act(async () => button.props.onClick());
       await act(async () => vi.advanceTimersByTimeAsync(20));
       expect(mocks.exportAllChats).toHaveBeenCalledOnce();
-      await act(async () => pendingExport.resolve(null));
+      expect(renderer!.root.findByType("progress").props.value).toBe(1);
+      expect(renderer!.root.findByType("progress").props.max).toBe(4);
+      const cancel = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Cancel")!;
+      await act(async () => cancel.props.onClick());
+      expect(exportSignal!.aborted).toBe(true);
       expect(button.props.disabled).toBeFalsy();
       expect(textContent(button)).toBe("Export all chats");
+      expect(renderer!.root.findAllByType("progress")).toHaveLength(0);
     } finally {
       await act(async () => renderer?.unmount());
       vi.useRealTimers();

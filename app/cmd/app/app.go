@@ -285,7 +285,10 @@ func main() {
 			}
 			return result, err
 		},
-		ExportAllChats: func() (*history.Result, error) {
+		ExportAllChats: func(ctx context.Context, progress func(history.Progress) error) (*history.Result, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			path, err := dialog.File().Title("Export all chats").Filter("ZIP archive", "zip").SetStartFile("ollama-chats.zip").Save()
 			if errors.Is(err, dialog.ErrCancelled) {
 				return nil, nil
@@ -293,7 +296,7 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			result, err := history.ExportAll(st, path)
+			result, err := history.ExportAll(ctx, st, path, progress)
 			if err == nil {
 				revealHistoryExport(result, result.Path)
 			}

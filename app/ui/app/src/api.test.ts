@@ -8,7 +8,53 @@ import {
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
   getIntegrationStatuses,
+  exportAllChats,
 } from "./api";
+
+describe("exportAllChats", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads progress and the saved path across stream chunks", async () => {
+    const data = new TextEncoder().encode(
+      '{"completed":0,"total":2}\n{"completed":1,"total":2}\n{"path":"/exports/café.zip"}\n',
+    );
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const byte of data) controller.enqueue(Uint8Array.of(byte));
+        controller.close();
+      },
+    });
+    const fetch = vi.fn().mockResolvedValue(new Response(stream));
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController();
+    const progress = vi.fn();
+    await expect(exportAllChats(controller.signal, progress)).resolves.toEqual({
+      path: "/exports/café.zip",
+    });
+    expect(progress.mock.calls).toEqual([
+      [{ completed: 0, total: 2 }],
+      [{ completed: 1, total: 2 }],
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/api/v1/chats/export",
+      { method: "POST", signal: controller.signal },
+    );
+  });
+
+  it.each([
+    ["null\n", null],
+    ['{"error":"Disk is full"}\n', "Disk is full"],
+    ['{"completed":1,"total":2}\n', "Export stopped before it finished."],
+  ])(
+    "handles cancellation, errors, and incomplete exports: %s",
+    async (body, error) => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body)));
+      const result = exportAllChats(new AbortController().signal, vi.fn());
+      if (error) await expect(result).rejects.toThrow(error);
+      else await expect(result).resolves.toBeNull();
+    },
+  );
+});
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {
