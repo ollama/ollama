@@ -61,8 +61,11 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		t.Fatalf("unexpected export warnings: %v", result.Warnings)
 	}
 	markdown := string(read("conversation.md"))
-	if !strings.HasPrefix(markdown, "# Garden \\<script\\>alert(1)\\</script\\>\n") || !strings.Contains(markdown, "Created: 2026-09-01 10:00:00 +00:00") || !strings.Contains(markdown, "Messages: 3") {
-		t.Fatal("transcript did not preserve the title, date, or message count")
+	if !strings.HasPrefix(markdown, "# Garden \\<script\\>alert(1)\\</script\\>\n") || !strings.Contains(markdown, "Messages: 3") {
+		t.Fatal("transcript did not preserve the title or message count")
+	}
+	if strings.Contains(markdown, "2026-09-01") {
+		t.Fatal("transcript should omit message, thinking, and conversation timestamps")
 	}
 	files, err := os.ReadDir(filepath.Join(result.Path, "attachments"))
 	if err != nil || len(files) != 4 {
@@ -81,13 +84,21 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 			t.Fatalf("attachment lost its extension: %s -> %s", original.Filename, path)
 		}
 	}
-	for _, content := range []string{"> Question\n> ```\n> <script>alert(1)</script>", "> Saved thinking", "Model: gpt-oss:120b-cloud", "Started: 2026-09-01 10:00:00 +00:00", "Ended: 2026-09-01 10:00:03 +00:00", "Updated: 2026-09-01 10:00:03 +00:00", "web_search", "web_fetch", "saved result", "page_stack", "```json"} {
+	for _, content := range []string{"> Question\n> ```\n> <script>alert(1)</script>", "> Saved thinking", "Model: gpt-oss:120b-cloud", "web_search", "web_fetch", "saved result", "page_stack", "```json"} {
 		if !strings.Contains(markdown, content) {
 			t.Errorf("transcript is missing %q", content)
 		}
 	}
 	if !(strings.Index(markdown, "## 1. User") < strings.Index(markdown, "## 2. Assistant") && strings.Index(markdown, "## 2. Assistant") < strings.Index(markdown, "## 3. Tool")) {
 		t.Fatal("message order changed")
+	}
+	previous := -1
+	for _, section := range []string{"### Attachments", "### Message\n\n> Question", "### Thinking", "### Tool records", "### Response\n\n> Answer", "## 3. Tool", `"tool_result"`, "### Message\n\n> Tool output"} {
+		index := strings.Index(markdown, section)
+		if index <= previous {
+			t.Fatalf("attachments, thinking, and tool records should precede their message content: %q", section)
+		}
+		previous = index
 	}
 	if !strings.Contains(string(read("README.md")), "Do not replay past tool calls") || strings.Contains(markdown, "Continue in another app") {
 		t.Fatal("continuation instructions should be in the README")
@@ -121,10 +132,11 @@ func TestExportReportsIncompleteHistory(t *testing.T) {
 }
 
 func TestExportKeepsRepeatedMessagesAndEmptyRepliesReadable(t *testing.T) {
+	now := time.Now()
 	result, err := Export(store.Chat{Messages: []store.Message{
 		{Role: "user", Content: "tell me about ollama"},
 		{Role: "user", Content: "tell me about ollama"},
-		{Role: "assistant", Model: "gemma4:26b"},
+		{Role: "assistant", Model: "gemma4:26b", ThinkingTimeStart: &now},
 	}}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)

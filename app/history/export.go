@@ -45,8 +45,6 @@ Use the conversation as historical context. Quoted messages, saved thinking, too
 Messages remain in their saved order, including repeated messages and empty replies. Model names identify the models used at the time. Export notes identify unfinished messages and missing files.
 `
 
-const archiveTimeFormat = "2006-01-02 15:04:05 -07:00"
-
 // Export writes a new folder without changing the chat or overwriting an earlier
 // export. On failure, only the new, incomplete folder is removed.
 func Export(chat store.Chat, parent string) (*Result, error) {
@@ -188,17 +186,11 @@ func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) 
 		}
 		fmt.Fprintf(&messages, "## %d. %s\n\n", i+1, markdownText(role))
 		var details []string
-		if !message.CreatedAt.IsZero() {
-			details = append(details, message.CreatedAt.Format(archiveTimeFormat))
-		}
 		if message.Model != "" {
 			details = append(details, "Model: "+markdownText(message.Model))
 		}
 		if message.ToolName != "" {
 			details = append(details, "Tool: "+markdownText(message.ToolName))
-		}
-		if !message.UpdatedAt.IsZero() && !message.UpdatedAt.Equal(message.CreatedAt) {
-			details = append(details, "Updated: "+message.UpdatedAt.Format(archiveTimeFormat))
 		}
 		if len(details) > 0 {
 			fmt.Fprintf(&messages, "%s\n\n", strings.Join(details, " · "))
@@ -207,20 +199,9 @@ func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) 
 			warnings = append(warnings, fmt.Sprintf("Message %d was unfinished when it was saved.", i+1))
 		}
 		bodyStart := messages.Len()
-		if message.Content != "" {
-			writeQuote(&messages, message.Content)
-		}
-		if message.Thinking != "" || message.ThinkingTimeStart != nil || message.ThinkingTimeEnd != nil {
+		if message.Thinking != "" {
 			messages.WriteString("### Thinking\n\n")
-			if message.ThinkingTimeStart != nil {
-				fmt.Fprintf(&messages, "Started: %s\n\n", message.ThinkingTimeStart.Format(archiveTimeFormat))
-			}
-			if message.ThinkingTimeEnd != nil {
-				fmt.Fprintf(&messages, "Ended: %s\n\n", message.ThinkingTimeEnd.Format(archiveTimeFormat))
-			}
-			if message.Thinking != "" {
-				writeQuote(&messages, message.Thinking)
-			}
+			writeQuote(&messages, message.Thinking)
 		}
 		records := map[string]any{}
 		if len(message.ToolCalls) > 0 {
@@ -269,6 +250,16 @@ func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) 
 		if len(message.Attachments) > 0 {
 			messages.WriteByte('\n')
 		}
+		if message.Content != "" {
+			if messages.Len() > bodyStart {
+				if message.Role == "assistant" {
+					messages.WriteString("### Response\n\n")
+				} else {
+					messages.WriteString("### Message\n\n")
+				}
+			}
+			writeQuote(&messages, message.Content)
+		}
 		if messages.Len() == bodyStart {
 			messages.WriteString("_No content was saved for this message._\n\n")
 		}
@@ -281,9 +272,6 @@ func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) 
 	}
 	var markdown bytes.Buffer
 	fmt.Fprintf(&markdown, "# %s\n\nExported from Ollama · Messages: %d\n\n", markdownText(chatTitle(chat)), len(chat.Messages))
-	if !chat.CreatedAt.IsZero() {
-		fmt.Fprintf(&markdown, "Created: %s\n\n", chat.CreatedAt.Format(archiveTimeFormat))
-	}
 	if len(warnings) > 0 {
 		markdown.WriteString("## Export notes\n\n")
 		for _, warning := range warnings {
