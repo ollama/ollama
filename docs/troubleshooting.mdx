@@ -73,6 +73,26 @@ If you run into problems on Linux and want to install an older version, or you'd
 curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
+
+## Unknown model architecture
+
+Pulling a model succeeds but `ollama run` (or `POST /api/generate`) fails with an error like:
+
+```
+Error: llama runner process has terminated: exit status 1: error loading model: unknown model architecture: 'muse-glimmer'
+```
+
+The model uses a newer architecture than your installed Ollama supports. New architectures land in Ollama shortly after they land in the vendored llama.cpp — the manifest (`ollama pull`) succeeds because it does not touch the weights, but the load fails because the runner does not recognise the arch string.
+
+Check the installed version and compare to the latest release:
+
+```shell
+ollama --version
+```
+
+against the tags at https://github.com/ollama/ollama/releases. Upgrading to the newest release usually resolves this.
+
+If you have already upgraded to the latest release and still see the error, the architecture may not yet have Ollama runtime support (it is in llama.cpp `main` but not yet in an Ollama release). Open an issue at https://github.com/ollama/ollama/issues and include the model id and full error text.
 ## Linux tmp noexec
 
 If your system is configured with the "noexec" flag where Ollama stores its temporary executable files, you can specify an alternate location by setting OLLAMA_TMPDIR to a location writable by the user ollama runs as. For example OLLAMA_TMPDIR=/usr/share/ollama/
