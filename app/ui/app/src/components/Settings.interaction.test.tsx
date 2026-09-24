@@ -334,8 +334,9 @@ describe("Settings reset interactions", () => {
       await act(async () => button.props.onClick());
       await act(async () => vi.advanceTimersByTimeAsync(20));
       expect(mocks.exportAllChats).toHaveBeenCalledOnce();
-      expect(renderer!.root.findByType("progress").props.value).toBe(1);
-      expect(renderer!.root.findByType("progress").props.max).toBe(4);
+      const progress = renderer!.root.findByProps({ role: "progressbar" });
+      expect(progress.props["aria-valuenow"]).toBe(1);
+      expect(progress.props["aria-valuemax"]).toBe(4);
       const cancel = renderer!.root
         .findAllByType("button")
         .find((button) => textContent(button) === "Cancel")!;
@@ -343,7 +344,9 @@ describe("Settings reset interactions", () => {
       expect(exportSignal!.aborted).toBe(true);
       expect(button.props.disabled).toBeFalsy();
       expect(textContent(button)).toBe("Export all chats");
-      expect(renderer!.root.findAllByType("progress")).toHaveLength(0);
+      expect(
+        renderer!.root.findAllByProps({ role: "progressbar" }),
+      ).toHaveLength(0);
     } finally {
       await act(async () => renderer?.unmount());
       vi.useRealTimers();

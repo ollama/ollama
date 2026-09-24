@@ -857,12 +857,21 @@ export default function Settings() {
             </Field>
             {isExporting && (
               <div className="space-y-1">
-                <progress
+                <div
+                  role="progressbar"
                   aria-label="Chat export progress"
-                  value={exportProgress?.completed}
-                  max={exportProgress?.total ?? 1}
-                  className="block h-2 w-full overflow-hidden rounded-full accent-neutral-900 dark:accent-white"
-                />
+                  aria-valuemin={0}
+                  aria-valuenow={exportProgress?.completed}
+                  aria-valuemax={exportProgress?.total ?? 1}
+                  className="relative h-1.5 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700"
+                >
+                  <div
+                    className="absolute top-0 left-0 h-full rounded-full bg-neutral-700 dark:bg-neutral-500"
+                    style={{
+                      width: `${exportProgress?.total ? (exportProgress.completed / exportProgress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
                 <p
                   role="status"
                   className="text-sm text-neutral-500 dark:text-neutral-400"
