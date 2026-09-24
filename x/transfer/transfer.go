@@ -109,6 +109,11 @@ const (
 	maxRetries                 = 6
 	defaultUserAgent           = "ollama-transfer/1.0"
 
+	// maxTransientRetries is how many stalled or slow transfers a blob may
+	// absorb before they start counting against maxRetries. Both are usually
+	// recoverable, but a connection that only ever stalls still has to give up.
+	maxTransientRetries = 3
+
 	// resumeThreshold is the minimum blob size for resume support.
 	// Only blobs above this size keep partial .tmp files on failure.
 	resumeThreshold = 64 << 20 // 64 MB

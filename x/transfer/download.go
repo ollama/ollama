@@ -167,12 +167,14 @@ func download(ctx context.Context, opts DownloadOptions) error {
 
 func (d *downloader) download(ctx context.Context, blob Blob) error {
 	var lastErr error
-	var slowRetries int
+	var slowRetries, stallRetries, retries int
 	attempt := 0
 
 	for attempt < maxRetries {
-		if attempt > 0 {
-			if err := backoff(ctx, attempt, time.Second<<uint(attempt-1)); err != nil {
+		// Keyed to every retry, not just the ones that count against the limit,
+		// so repeated stalls cannot spin without pausing.
+		if retries > 0 {
+			if err := backoff(ctx, retries, time.Second<<uint(min(retries, maxRetries)-1)); err != nil {
 				return err
 			}
 		}
@@ -199,14 +201,18 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 			os.Remove(dest + ".tmp")
 		}
 
+		retries++
+
 		switch {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
 		case errors.Is(err, errStalled):
-			// Don't count stall retries against limit
+			if stallRetries++; stallRetries >= maxTransientRetries {
+				attempt++
+			}
 		case errors.Is(err, errSlow):
-			if slowRetries++; slowRetries >= 3 {
-				attempt++ // Only count after 3 slow retries
+			if slowRetries++; slowRetries >= maxTransientRetries {
+				attempt++
 			}
 		default:
 			attempt++
@@ -251,6 +257,11 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		}
 	}
 
+	// The body read is cancelled through this context, so the stall watchdog in
+	// copy can actually interrupt a request that has stopped delivering bytes.
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	req.Header.Set("User-Agent", d.userAgent)
 	// Add auth only for same-host (not CDN)
@@ -279,10 +290,10 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	return d.save(ctx, blob, resp.Body, existingSize)
+	return d.save(ctx, cancel, blob, resp.Body, existingSize)
 }
 
-func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
+func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
 	os.MkdirAll(filepath.Dir(dest), 0o755)
@@ -320,7 +331,7 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 	}
 	defer f.Close()
 
-	n, err := d.copy(ctx, f, r, h)
+	n, err := d.copy(ctx, cancel, f, r, h)
 	if err != nil {
 		// Don't remove .tmp here — download() handles cleanup based on blob size
 		return existingSize + n, err
@@ -339,20 +350,26 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 	return totalWritten, os.Rename(tmp, dest)
 }
 
-func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h io.Writer) (int64, error) {
-	var n int64
+// copy streams src to dst, cancelling the caller's request context when the
+// transfer stalls or falls far behind the median speed.
+func (d *downloader) copy(ctx context.Context, cancel context.CancelCauseFunc, dst io.Writer, src io.Reader, h io.Writer) (int64, error) {
+	var n atomic.Int64
 	var lastRead atomic.Int64
 	lastRead.Store(time.Now().UnixNano())
 	start := time.Now()
 
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
+	// The watchdog cancels the caller's context, so it has to stop when this
+	// copy ends rather than when that context does.
+	done := make(chan struct{})
+	defer close(done)
 
 	go func() {
 		tick := time.NewTicker(time.Second)
 		defer tick.Stop()
 		for {
 			select {
+			case <-done:
+				return
 			case <-ctx.Done():
 				return
 			case <-tick.C:
@@ -361,7 +378,7 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 					return
 				}
 				if e := time.Since(start); e > 5*time.Second {
-					if m := d.speeds.median(); m > 0 && float64(n)/e.Seconds() < m*0.1 {
+					if m := d.speeds.median(); m > 0 && float64(n.Load())/e.Seconds() < m*0.1 {
 						cancel(errSlow)
 						return
 					}
@@ -374,9 +391,9 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 	for {
 		if err := ctx.Err(); err != nil {
 			if c := context.Cause(ctx); c != nil {
-				return n, c
+				return n.Load(), c
 			}
-			return n, err
+			return n.Load(), err
 		}
 
 		nr, err := src.Read(buf)
@@ -385,13 +402,13 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 			dst.Write(buf[:nr])
 			h.Write(buf[:nr])
 			d.progress.add(int64(nr))
-			n += int64(nr)
+			n.Add(int64(nr))
 		}
 		if err == io.EOF {
-			return n, nil
+			return n.Load(), nil
 		}
 		if err != nil {
-			return n, err
+			return n.Load(), err
 		}
 	}
 }
