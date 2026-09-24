@@ -1079,7 +1079,7 @@ func defaultClaudeDesktopRunning(ctx context.Context) (bool, error) {
 			return false, nil
 		}
 	case "windows":
-		out, err = exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
+		out, err = backgroundCommandContext(ctx, "powershell.exe", "-NoProfile", "-Command", `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`).Output()
 	default:
 		return false, nil
 	}
@@ -1140,7 +1140,7 @@ func defaultClaudeDesktopRunningAppPath() string {
 		return ""
 	}
 	script := `(Get-Process claude -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object -First 1 -ExpandProperty Path)`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-Command", script).Output()
+	out, err := backgroundCommandContext(context.Background(), "powershell.exe", "-NoProfile", "-Command", script).Output()
 	if err != nil {
 		return ""
 	}
