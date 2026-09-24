@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [toptop](https://github.com/ur-grue/toptop) - Terminal monitor for local inference: live tokens/sec, KV-cache and GPU offload from `/api/ps`, VRAM-spill and bandwidth-bound verdicts
 
 ### Productivity & Apps
 
