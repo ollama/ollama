@@ -212,6 +212,26 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				p.state = qwen35ParserStateCollectingContent
 			}
 			return events, true
+		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
+			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
+			// this condition ends the Think block and continues with the <tool_call> when the tag
+			// is found.
+			//
+			// This must be tested BEFORE the partial-tag check below. A complete
+			// opening tag already in the buffer is not ambiguous, and it outranks a
+			// suffix that merely could become one: the call's own body is full of
+			// `<`, so any chunk boundary landing on one -- `<parameter=`, `</parameter>`
+			// -- makes the partial-tag branch flush everything before it, opening tag
+			// included, into the thinking channel. The buffer then keeps only the `<`,
+			// this branch can never fire again, and the rest of the call drains into
+			// thinking as prose. The client sees no tool call and no content, and an
+			// agentic loop reads that as "the model is done". Measured on the live
+			// shape from omnimerge-v6: 12 of 214 two-way splits lost the call, every
+			// one of them a boundary immediately after a `<`.
+			thinking, tooling := p.splitAtTag(qwen35ToolCallOpenTag, true)
+			p.buffer.Reset()
+			p.buffer.WriteString(thinking + qwen35ThinkingCloseTag + qwen35ToolCallOpenTag + tooling)
+			return events, true
 		} else if overlapLen := max(overlap(acc, qwen35ThinkingCloseTag), overlap(acc, qwen35ToolCallOpenTag)); overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
@@ -225,14 +245,6 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				events = append(events, qwen35EventThinkingContent{content: unambiguous})
 			}
 			return events, false
-		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
-			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
-			// this condition ends the Think block and continues with the <tool_call> when the tag
-			// is found
-			thinking, tooling := p.splitAtTag(qwen35ToolCallOpenTag, true)
-			p.buffer.Reset()
-			p.buffer.WriteString(thinking + qwen35ThinkingCloseTag + qwen35ToolCallOpenTag + tooling)
-			return events, true
 		}
 
 		whitespaceLen := trailingWhitespaceLen(acc)
