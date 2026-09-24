@@ -955,9 +955,13 @@ public:
     }
     bindings.emplace(name, binding_ctx_t(fn, arg));
     auto js = "(function() { var name = '" + name + "';" + R""(
-      var RPC = window._rpc = (window._rpc || {nextSeq: 1});
+      // A late reply from a previous document must not resolve a new promise.
+      var RPC = window._rpc = (window._rpc || {
+        nextSeq: 1,
+        document: Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-')
+      });
       window[name] = function() {
-        var seq = RPC.nextSeq++;
+        var seq = RPC.document + ':' + RPC.nextSeq++;
         var promise = new Promise(function(resolve, reject) {
           RPC[seq] = {
             resolve: resolve,
@@ -987,20 +991,26 @@ public:
   }
 
   void resolve(const std::string &seq, int status, const std::string &result) {
-    // NOLINTNEXTLINE(modernize-avoid-bind): Lambda with move requires C++14
-    dispatch(std::bind(
-        [seq, status, this](std::string escaped_result) {
-          std::string js;
-          js += "(function(){var seq = \"";
-          js += seq;
-          js += "\";\n";
-          js += "var status = ";
-          js += std::to_string(status);
-          js += ";\n";
-          js += "var result = ";
-          js += escaped_result;
-          js += ";\
-var promise = window._rpc[seq];\
+    dispatch([this, seq, status, result] {
+      resolve_on_main_thread(seq, status, result);
+    });
+  }
+
+  void resolve_on_main_thread(const std::string &seq, int status,
+                              const std::string &result) {
+    auto escaped_result = result.empty() ? "undefined" : json_escape(result);
+    std::string js;
+    js += "(function(){var seq = \"";
+    js += seq;
+    js += "\";\n";
+    js += "var status = ";
+    js += std::to_string(status);
+    js += ";\n";
+    js += "var result = ";
+    js += escaped_result;
+    js += ";\
+var promise = window._rpc && window._rpc[seq];\
+if (!promise) return;\
 delete window._rpc[seq];\
 if (result !== undefined) {\
   try {\
@@ -1016,9 +1026,7 @@ if (status === 0) {\
   promise.reject(result);\
 }\
 })()";
-          eval(js);
-        },
-        result.empty() ? "undefined" : json_escape(result)));
+    eval(js);
   }
 
   void *window() { return window_impl(); }

@@ -13,14 +13,14 @@ func bindClaudeDesktop(wv webview.WebView) {
 	wv.Bind("getClaudeDesktopStatus", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionStatus()
 	})
-	wv.Bind("getClaudeDesktopConnectionSummary", func() claudeDesktopStatus {
+	wv.BindAsync("getClaudeDesktopConnectionSummary", func() claudeDesktopStatus {
 		return getClaudeDesktopConnectionSummary()
 	})
 	wv.Bind("getClaudeDesktopRequestCount", func() uint64 {
 		return claudeDesktopRequestCount()
 	})
 
-	wv.Bind("setClaudeDesktopConnected", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
+	wv.BindAsync("setClaudeDesktopConnected", func(enabled, restartConfirmed bool) claudeDesktopActionResult {
 		err := setClaudeDesktopConnection(enabled, restartConfirmed)
 		result := claudeDesktopActionResult{
 			Status: getClaudeDesktopConnectionSummary(),
@@ -31,7 +31,7 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return result
 	})
 
-	wv.Bind("prepareClaudeDesktopConnection", func() claudeDesktopActionResult {
+	wv.BindAsync("prepareClaudeDesktopConnection", func() claudeDesktopActionResult {
 		err := prepareClaudeDesktopConnection()
 		result := claudeDesktopActionResult{
 			Status: getClaudeDesktopConnectionSummary(),
@@ -42,7 +42,7 @@ func bindClaudeDesktop(wv webview.WebView) {
 		return result
 	})
 
-	wv.Bind("openClaudeDesktop", func() string {
+	wv.BindAsync("openClaudeDesktop", func() string {
 		if err := openClaudeDesktopApplication(); err != nil {
 			return err.Error()
 		}

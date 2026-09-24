@@ -17,19 +17,19 @@ func codexDesktopModelRefreshError(settings codexDesktopModelsSettings) string {
 }
 
 func bindCodexDesktop(wv webview.WebView) {
-	wv.Bind("markCodexDesktopIntegrationUsed", func() string {
+	wv.BindAsync("markCodexDesktopIntegrationUsed", func() string {
 		if err := markCodexDesktopIntegrationUsed(); err != nil {
 			return err.Error()
 		}
 		return ""
 	})
-	wv.Bind("getCodexDesktopStatus", func() codexDesktopStatus {
+	wv.BindAsync("getCodexDesktopStatus", func() codexDesktopStatus {
 		return getCodexDesktopStatus()
 	})
 	wv.Bind("getCodexDesktopRequestCount", func() uint64 {
 		return codexDesktop.OllamaRequestCount()
 	})
-	wv.Bind("setCodexDesktopConnected", func(enabled, restartConfirmed bool) codexDesktopActionResult {
+	wv.BindAsync("setCodexDesktopConnected", func(enabled, restartConfirmed bool) codexDesktopActionResult {
 		err := setCodexDesktopConnection(enabled, restartConfirmed)
 		result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
 		if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
