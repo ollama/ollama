@@ -201,6 +201,15 @@ func nemotronRendererParserNameFromTemplate(modelDir, chatTemplate string) (stri
 	return "nemotron-3-nano", nil
 }
 
+// Granite 4.2+ use the "granite-thinking" template. All older models use
+// alternate templates
+func graniteThinkingTemplateName(chatTemplate string) string {
+	if thinking.TemplateSupportsThinking(chatTemplate) {
+		return "granite-thinking"
+	}
+	return ""
+}
+
 func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 	ids := append([]string(nil), cfg.Architectures...)
 	return append(ids, cfg.ModelType, cfg.LLMConfig.ModelType)
@@ -237,6 +246,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case strings.Contains(s, "granite"):
+		return graniteThinkingTemplateName(chatTemplate), nil
 	default:
 		return "", nil
 	}
@@ -275,6 +286,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return "qwen3-coder", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case strings.Contains(s, "granite"):
+		return graniteThinkingTemplateName(chatTemplate), nil
 	default:
 		return "", nil
 	}
