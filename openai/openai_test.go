@@ -61,6 +61,38 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ReasoningContentAlias(t *testing.T) {
+	cases := []struct {
+		name             string
+		reasoning        string
+		reasoningContent string
+		want             string
+	}{
+		{name: "reasoning only", reasoning: "from reasoning", want: "from reasoning"},
+		{name: "reasoning_content only", reasoningContent: "from reasoning_content", want: "from reasoning_content"},
+		{name: "reasoning wins when both set", reasoning: "from reasoning", reasoningContent: "from reasoning_content", want: "from reasoning"},
+		{name: "neither set", want: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model: "test-model",
+				Messages: []Message{
+					{Role: "assistant", Content: "answer", Reasoning: tc.reasoning, ReasoningContent: tc.reasoningContent},
+				},
+			}
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := result.Messages[0].Thinking; got != tc.want {
+				t.Errorf("Thinking = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 
