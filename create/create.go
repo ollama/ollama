@@ -299,6 +299,48 @@ type sourceQuantization struct {
 			Type           string  `json:"type"`
 		} `json:"weights"`
 	} `json:"config_groups"`
+
+	// Per-tensor/module quantization overrides (e.g. from mlx-lm)
+	Overrides map[string]sourceQuantization `json:"-"`
+}
+
+var sourceQuantizationKnownKeys = map[string]bool{
+	"bits": true, "group_size": true, "mode": true, "format": true,
+	"quant_method": true, "weight_block_size": true, "config_groups": true,
+}
+
+func (q *sourceQuantization) UnmarshalJSON(data []byte) error {
+	type plain sourceQuantization
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*q = sourceQuantization(p)
+	q.Overrides = nil
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		// Not a JSON object (e.g. quantization config absent or null); no
+		// overrides to collect.
+		return nil
+	}
+	for key, v := range raw {
+		if sourceQuantizationKnownKeys[key] {
+			continue
+		}
+		var sub sourceQuantization
+		if err := json.Unmarshal(v, &sub); err != nil {
+			continue
+		}
+		if sub.Bits == 0 && sub.GroupSize == 0 && sub.Mode == "" {
+			continue
+		}
+		if q.Overrides == nil {
+			q.Overrides = make(map[string]sourceQuantization)
+		}
+		q.Overrides[key] = sub
+	}
+	return nil
 }
 
 type sourceModelConfig struct {
@@ -401,6 +443,18 @@ func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {
 		cfg.TextConfig.QuantizationConfig,
 		cfg.TextConfig.CompressionConfig,
 	}
+}
+
+// quantOverrideFor returns the per-tensor/module quantization override for
+// name (a tensor's base name, weight suffix already stripped), if the
+// source's quantization config specifies one. See sourceQuantization.Overrides.
+func (cfg sourceModelConfig) quantOverrideFor(name string) (sourceQuantization, bool) {
+	for _, q := range cfg.quantizationConfigs() {
+		if override, ok := q.Overrides[name]; ok {
+			return override, true
+		}
+	}
+	return sourceQuantization{}, false
 }
 
 func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) {
