@@ -201,10 +201,16 @@ func nemotronRendererParserNameFromTemplate(modelDir, chatTemplate string) (stri
 	return "nemotron-3-nano", nil
 }
 
-// Granite 4.2+ use the "granite-thinking" template. All older models use
-// alternate templates
+// graniteThinkingChatMLMarker is present in every "granite thinking" template
+// (Granite 4.2+)
+const graniteThinkingChatMLMarker = "<|im_start|>"
+
+// Granite 4.2+ use the "granite-thinking" template: ChatML-style <|im_start|>/
+// <|im_end|> role markers with <think>...</think> reasoning and XML-ish
+// <tool_call><function=...> tool calls. Older Granite models use unrelated
+// templates and must not be routed here.
 func graniteThinkingTemplateName(chatTemplate string) string {
-	if thinking.TemplateSupportsThinking(chatTemplate) {
+	if thinking.TemplateSupportsThinking(chatTemplate) && strings.Contains(chatTemplate, graniteThinkingChatMLMarker) {
 		return "granite-thinking"
 	}
 	return ""
