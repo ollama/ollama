@@ -162,7 +162,12 @@ func isStackedExpertWeight(name string) bool {
 	return strings.Contains(name, ".experts.") ||
 		strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.shared_experts.") ||
-		strings.Contains(name, ".mixer.shared_experts.")
+		strings.Contains(name, ".mixer.shared_experts.") ||
+		// GraniteMoE native fused checkpoint tensors
+		strings.Contains(name, ".block_sparse_moe.input_linear") ||
+		strings.Contains(name, ".block_sparse_moe.output_linear") ||
+		// GraniteMoE mlx_lm-converted separate expert tensors
+		strings.Contains(name, ".block_sparse_moe.switch_mlp.")
 }
 
 // isRoutingGate reports the small MoE routing/gate weights that select the
@@ -172,7 +177,9 @@ func isRoutingGate(name string) bool {
 	return strings.HasSuffix(name, ".mlp.gate.weight") ||
 		strings.HasSuffix(name, ".mixer.gate.weight") ||
 		strings.HasSuffix(name, ".shared_expert_gate.weight") ||
-		strings.HasSuffix(name, ".router.proj.weight")
+		strings.HasSuffix(name, ".router.proj.weight") ||
+		// GraniteMoE router
+		strings.HasSuffix(name, ".block_sparse_moe.router.layer.weight")
 }
 
 // GetTensorQuantization returns the appropriate quantization type for a tensor.
@@ -439,6 +446,8 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
+	"GraniteForCausalLM":                    newGraniteImportTransform,
+	"GraniteMoeForCausalLM":                 newGraniteImportTransform,
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
