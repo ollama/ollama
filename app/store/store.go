@@ -456,8 +456,12 @@ func (s *Store) DeleteChat(id string) error {
 		return fmt.Errorf("%w: chat %s", not.Found, id)
 	}
 
-	// Also delete associated images
-	chatImgDir := filepath.Join(s.ImgDir(), id)
+	// Also delete images cached by older versions of the app.
+	dbPath := s.DBPath
+	if dbPath == "" {
+		dbPath = defaultDBPath
+	}
+	chatImgDir := filepath.Join(filepath.Dir(dbPath), "cache", "images", id)
 	if err := os.RemoveAll(chatImgDir); err != nil {
 		// Log error but don't fail the deletion
 		slog.Warn("failed to delete chat images", "chat_id", id, "error", err)

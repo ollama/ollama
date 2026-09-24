@@ -259,7 +259,14 @@ export interface ExportProgress {
 }
 
 export async function exportChat(chatId: string): Promise<ExportResult | null> {
-  return requestExport(`/api/v1/chat/${encodeURIComponent(chatId)}/export`);
+  const response = await fetch(
+    `${API_BASE}/api/v1/chat/${encodeURIComponent(chatId)}/export`,
+    { method: "POST" },
+  );
+  const data = await response.json();
+  if (!response.ok)
+    throw new Error(data.error ?? "Could not export your chat.");
+  return data;
 }
 
 export async function exportAllChats(
@@ -297,14 +304,6 @@ export async function exportAllChats(
   } finally {
     reader.releaseLock();
   }
-}
-
-async function requestExport(path: string): Promise<ExportResult | null> {
-  const response = await fetch(`${API_BASE}${path}`, { method: "POST" });
-  const data = await response.json();
-  if (!response.ok)
-    throw new Error(data.error ?? "Could not export your chats.");
-  return data;
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
