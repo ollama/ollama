@@ -45,8 +45,15 @@ export function History({
     .reverse()
     .find((message) => message.role === "assistant" && message.model?.trim())
     ?.model?.trim();
+  const [isExporting, setIsExporting] = useState(false);
   const exporting = useMutation({
     mutationFn: exportChat,
+    // Paint the disabled button before the native save dialog opens.
+    onMutate: () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      }),
+    onSettled: () => setIsExporting(false),
     retry: false,
     networkMode: "always",
   });
@@ -56,7 +63,7 @@ export function History({
     exporting.variables === selectedID ? exporting.error : null;
   const result = exporting.variables === selectedID ? exporting.data : null;
   const error = list.error ?? selected.error ?? deletion.error ?? exportError;
-  const busy = exporting.isPending || deletion.isPending;
+  const busy = isExporting || deletion.isPending;
 
   useEffect(() => {
     if (chatId && chatId !== "new") setSelectedID(chatId);
@@ -171,12 +178,16 @@ export function History({
                 )}
               </p>
               <button
-                onClick={() => exporting.mutate(selectedID)}
+                onClick={() => {
+                  if (busy) return;
+                  setIsExporting(true);
+                  exporting.mutate(selectedID);
+                }}
                 disabled={!selectedChat || busy || messageLoading}
-                aria-busy={exporting.isPending || undefined}
+                aria-busy={isExporting || undefined}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-wait dark:bg-white dark:text-neutral-900"
               >
-                {exporting.isPending ? (
+                {isExporting ? (
                   <ArrowPathIcon
                     aria-hidden="true"
                     className="h-4 w-4 animate-spin motion-reduce:animate-none"
@@ -184,7 +195,7 @@ export function History({
                 ) : (
                   <ArrowDownTrayIcon aria-hidden="true" className="h-4 w-4" />
                 )}
-                {exporting.isPending ? "Exporting…" : "Export"}
+                {isExporting ? "Exporting…" : "Export"}
               </button>
             </div>
           </div>

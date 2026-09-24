@@ -67,6 +67,9 @@ beforeEach(() => {
   client = new QueryClient();
   notifyManager.setScheduler(queueMicrotask);
   vi.useFakeTimers();
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(0), 16),
+  );
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
     OLLAMA_PLATFORM: "darwin",
@@ -161,23 +164,35 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
       }),
   );
   await renderHistory();
+  notifyManager.setScheduler(defaultScheduler);
   await click("Export");
-  expect(exportChat).toHaveBeenCalledExactlyOnceWith("first");
   expect(page()).toContain("Exporting…");
+  expect(renderer.root.findByProps({ "aria-busy": true }).props.disabled).toBe(
+    true,
+  );
+  expect(exportChat).not.toHaveBeenCalled();
   expect(
     renderer.root.findByProps({ title: "Another conversation" }).props.disabled,
   ).toBe(true);
+  await click("Exporting…");
+  await act(async () => vi.advanceTimersByTimeAsync(20));
+  expect(exportChat).toHaveBeenCalledExactlyOnceWith("first");
+  notifyManager.setScheduler(queueMicrotask);
   await act(async () => resolve({ path: "/exports/Garden" }));
   expect(page()).toContain("/exports/Garden");
   vi.mocked(exportChat).mockRejectedValueOnce(new Error("Disk is full"));
   await click("Export");
+  await act(async () => vi.advanceTimersByTimeAsync(20));
   expect(page()).toContain("Disk is full");
+  expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
   await click("Another conversation");
   expect(page()).not.toContain("Disk is full");
   expect(page()).not.toContain("/exports/Garden");
   vi.mocked(exportChat).mockResolvedValueOnce(null);
   await click("Export");
+  await act(async () => vi.advanceTimersByTimeAsync(20));
   expect(exportChat).toHaveBeenLastCalledWith("second");
+  expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
   expect(page()).not.toContain("Saved to");
   expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
 });

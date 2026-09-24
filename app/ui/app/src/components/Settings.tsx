@@ -139,8 +139,15 @@ export async function applySettingsDefaults({
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const [isExporting, setIsExporting] = useState(false);
   const chatExport = useMutation({
     mutationFn: exportAllChats,
+    // Paint the disabled button before the native save dialog opens.
+    onMutate: () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      }),
+    onSettled: () => setIsExporting(false),
     retry: false,
     networkMode: "always",
   });
@@ -798,16 +805,20 @@ export default function Settings() {
                 <Button
                   type="button"
                   color="white"
-                  disabled={chatExport.isPending}
-                  aria-busy={chatExport.isPending || undefined}
-                  onClick={() => chatExport.mutate()}
+                  disabled={isExporting}
+                  aria-busy={isExporting || undefined}
+                  onClick={() => {
+                    if (isExporting) return;
+                    setIsExporting(true);
+                    chatExport.mutate();
+                  }}
                 >
-                  {chatExport.isPending ? (
+                  {isExporting ? (
                     <ArrowPathIcon data-slot="icon" className="animate-spin" />
                   ) : (
                     <ArrowDownTrayIcon data-slot="icon" />
                   )}
-                  {chatExport.isPending ? "Exporting…" : "Export all chats"}
+                  {isExporting ? "Exporting…" : "Export all chats"}
                 </Button>
               </div>
             </Field>

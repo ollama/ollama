@@ -303,4 +303,36 @@ describe("Settings reset interactions", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("disables export all before opening the dialog and unlocks on cancel", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      setTimeout(() => callback(0), 16),
+    );
+    const pendingExport = deferred<null>();
+    mocks.exportAllChats.mockReturnValueOnce(pendingExport.promise);
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+      });
+      const button = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Export all chats")!;
+      await act(async () => button.props.onClick());
+      expect(button.props.disabled).toBe(true);
+      expect(textContent(button)).toBe("Exporting…");
+      expect(mocks.exportAllChats).not.toHaveBeenCalled();
+      await act(async () => button.props.onClick());
+      await act(async () => vi.advanceTimersByTimeAsync(20));
+      expect(mocks.exportAllChats).toHaveBeenCalledOnce();
+      await act(async () => pendingExport.resolve(null));
+      expect(button.props.disabled).toBeFalsy();
+      expect(textContent(button)).toBe("Export all chats");
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });
