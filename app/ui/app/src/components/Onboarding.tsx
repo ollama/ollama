@@ -70,9 +70,7 @@ function setClaudeConnection(
 }
 
 function getClaudeConnectionSummary() {
-  const getStatus =
-    window.getClaudeDesktopConnectionSummary ?? window.getClaudeDesktopStatus;
-  return getStatus?.() ?? Promise.resolve(null);
+  return window.getClaudeDesktopConnectionSummary?.() ?? Promise.resolve(null);
 }
 
 interface ScreenProps {
@@ -515,10 +513,7 @@ export function ConnectAppsScreen({
 
   const refreshClaudeStatus = useCallback(async () => {
     if (isWindows) return null;
-    if (
-      !window.getClaudeDesktopConnectionSummary &&
-      !window.getClaudeDesktopStatus
-    ) {
+    if (!window.getClaudeDesktopConnectionSummary) {
       return null;
     }
     try {
@@ -746,8 +741,7 @@ export function ConnectAppsScreen({
     const checkForInstall = async () => {
       if (checking) return;
       if (
-        (!window.getClaudeDesktopConnectionSummary &&
-          !window.getClaudeDesktopStatus) ||
+        !window.getClaudeDesktopConnectionSummary ||
         !window.setClaudeDesktopConnected
       ) {
         return;
@@ -840,8 +834,7 @@ export function ConnectAppsScreen({
   const connectClaude = async () => {
     if (claudePhase !== "idle") return;
     if (
-      (!window.getClaudeDesktopConnectionSummary &&
-        !window.getClaudeDesktopStatus) ||
+      !window.getClaudeDesktopConnectionSummary ||
       !window.setClaudeDesktopConnected
     ) {
       setClaudeError("Claude connection is available in the Ollama macOS app.");
