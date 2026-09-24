@@ -423,6 +423,12 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   }, [refreshStatus]);
 
   const catalogModels = useMemo(() => {
+    const installedNames = new Set(localModels);
+    const resolved: ClaudeDesktopModelStatus[] = models.map((model) =>
+      model.availability === "unknown" && installedNames.has(model.name)
+        ? { ...model, availability: "available" }
+        : model,
+    );
     const current = new Set(models.map((model) => model.name));
     const installed: ClaudeDesktopModelStatus[] = localModels
       .filter((name) => !current.has(name) && !isInvalidModelName(name))
@@ -433,7 +439,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
         selected: false,
         availability: "available",
       }));
-    return [...models, ...installed];
+    return [...resolved, ...installed];
   }, [localModels, models]);
 
   const hasDraftChanges = !mappingsEqual(mappings, savedMappings);

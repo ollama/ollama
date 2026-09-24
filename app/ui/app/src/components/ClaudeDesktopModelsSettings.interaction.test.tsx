@@ -259,6 +259,141 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
     },
   );
 
+  it.each([false, true])(
+    "keeps saved installed models usable after editing one route when the catalog fails (running: %s)",
+    async (running) => {
+      const names = ["saved-one", "saved-two", "another-installed"];
+      const summary = {
+        ...testStatus(undefined, running),
+        mappings: [
+          { ...fableRoute, model: names[0] },
+          {
+            routeId: "claude-opus-5",
+            routeName: "Opus 5",
+            model: names[1],
+          },
+        ],
+        models: names.slice(0, 2).map((name) => ({
+          name,
+          displayName: name,
+          selected: true,
+          availability: "unknown" as const,
+        })),
+      };
+      vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+        full
+          ? Promise.reject(new Error("catalog unavailable"))
+          : Promise.resolve(summary),
+      );
+      vi.mocked(getClaudeDesktopAvailableModels).mockResolvedValue(
+        names.map((model) => new Model({ model })),
+      );
+      const apply = vi.fn().mockResolvedValue({
+        status: {
+          ...summary,
+          mappings: [
+            { ...summary.mappings[0], model: names[2] },
+            summary.mappings[1],
+          ],
+          models: names.map((name) => ({
+            name,
+            displayName: name,
+            selected: name !== names[0],
+            availability: "available" as const,
+          })),
+        },
+        mappingsApplied: true,
+      });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        applyClaudeDesktopMappings: apply,
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ClaudeDesktopModelsSettings initialStatus={summary} />,
+          );
+        });
+        await act(async () => pickerButton(renderer!).props.onClick());
+        const options = renderer!.root.findAllByProps({ role: "option" });
+        expect(options).toHaveLength(names.length);
+        for (const name of names) {
+          const option = options.find((option) => textContent(option) === name);
+          expect(option?.props.disabled).toBe(false);
+        }
+        await act(async () => {
+          options
+            .find((option) => textContent(option) === names[2])!
+            .props.onClick();
+        });
+        expect(actionButton(renderer!).props.disabled).not.toBe(true);
+        expect(textContent(actionButton(renderer!))).toBe(
+          running ? "Restart Claude" : "Start Claude",
+        );
+        await act(async () => actionButton(renderer!).props.onClick());
+        expect(apply).toHaveBeenCalledWith(
+          { "claude-fable-5": names[2], "claude-opus-5": names[1] },
+          false,
+        );
+      } finally {
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("keeps unavailable models and unconfirmed placeholders disabled after inventory succeeds", async () => {
+    const summary = {
+      ...testStatus(),
+      models: [
+        {
+          ...testStatus().models[0],
+          availability: "unavailable" as const,
+          reason: "upgrade_required" as const,
+        },
+        {
+          ...testStatus().models[1],
+          availability: "unknown" as const,
+        },
+      ],
+    };
+    vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+      full
+        ? Promise.reject(new Error("catalog unavailable"))
+        : Promise.resolve(summary),
+    );
+    vi.mocked(getClaudeDesktopAvailableModels).mockResolvedValue([
+      new Model({ model: summary.models[0].name }),
+      new Model({ model: "local-model" }),
+    ]);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings initialStatus={summary} />,
+        );
+      });
+      await act(async () => pickerButton(renderer!).props.onClick());
+      const options = renderer!.root.findAllByProps({ role: "option" });
+      expect(options).toHaveLength(3);
+      expect(options[0].props.disabled).toBe(true);
+      expect(textContent(options[0])).toContain("Upgrade required");
+      expect(options[1].props.disabled).toBe(true);
+      expect(options[2].props.disabled).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps the picker loading until the latest refresh finishes", async () => {
     let focusHandler: (() => void) | undefined;
     let finishFirst!: (status: ReturnType<typeof testStatus>) => void;
