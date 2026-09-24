@@ -164,11 +164,13 @@ function ModelOptions({
   selected,
   maxModels,
   onToggle,
+  onOpen,
 }: {
   models: CodexDesktopModelStatus[];
   selected: string[];
   maxModels: number;
   onToggle: (model: string) => void;
+  onOpen: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -185,6 +187,10 @@ function ModelOptions({
   useEffect(() => {
     searchRef.current?.focus({ preventScroll: true });
   }, []);
+
+  useEffect(() => {
+    onOpen();
+  }, [onOpen]);
 
   useEffect(() => {
     setHighlightedIndex(-1);
@@ -411,11 +417,11 @@ export const CodexDesktopModelsSettings = forwardRef<
     [accountKey, applyResult],
   );
 
-  const openCatalog = () => {
+  const openCatalog = useCallback(() => {
     catalogRequested.current = true;
     setCatalogLoading(true);
     void refresh(true);
-  };
+  }, [refresh]);
 
   useEffect(() => {
     if (!initialSettings || accountKeyRef.current !== accountKey)
@@ -656,7 +662,6 @@ export const CodexDesktopModelsSettings = forwardRef<
               >
                 <PopoverButton
                   aria-label="Add ChatGPT model"
-                  onClick={() => void openCatalog()}
                   disabled={loading || busy}
                   className="absolute inset-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed"
                 >
@@ -713,6 +718,7 @@ export const CodexDesktopModelsSettings = forwardRef<
                   selected={selected}
                   maxModels={maxModels}
                   onToggle={toggleModel}
+                  onOpen={openCatalog}
                 />
               </PopoverPanel>
             </Popover>

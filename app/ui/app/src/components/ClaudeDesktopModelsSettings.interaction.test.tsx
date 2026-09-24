@@ -1,4 +1,8 @@
-import { getClaudeDesktopModelsSettings } from "@/api";
+import {
+  getClaudeDesktopAvailableModels,
+  getClaudeDesktopModelsSettings,
+} from "@/api";
+import { Model } from "@/gotypes";
 import { queryClient } from "@/lib/queryClient";
 import {
   act,
@@ -26,6 +30,7 @@ vi.mock("@/api", () => ({
 }));
 
 beforeEach(() => {
+  vi.mocked(getClaudeDesktopAvailableModels).mockReset().mockResolvedValue([]);
   vi.mocked(getClaudeDesktopModelsSettings)
     .mockReset()
     .mockReturnValue(new Promise(() => {}));
@@ -185,6 +190,75 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
+  it.each(["catalog", "inventory"])(
+    "keeps the successful %s usable while the other request is pending or fails",
+    async (successful) => {
+      const catalog = testStatus();
+      const summary = {
+        ...catalog,
+        models: [{ ...catalog.models[0], availability: "unknown" as const }],
+      };
+      let resolveCatalog!: (status: typeof catalog) => void;
+      let rejectCatalog!: (error: Error) => void;
+      const pendingCatalog = new Promise<typeof catalog>((resolve, reject) => {
+        resolveCatalog = resolve;
+        rejectCatalog = reject;
+      });
+      let resolveInventory!: (models: Model[]) => void;
+      let rejectInventory!: (error: Error) => void;
+      const pendingInventory = new Promise<Model[]>((resolve, reject) => {
+        resolveInventory = resolve;
+        rejectInventory = reject;
+      });
+      vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+        full ? pendingCatalog : Promise.resolve(summary),
+      );
+      vi.mocked(getClaudeDesktopAvailableModels).mockReturnValue(
+        pendingInventory,
+      );
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ClaudeDesktopModelsSettings initialStatus={summary} />,
+          );
+        });
+        await act(async () => pickerButton(renderer!).props.onClick());
+        await act(async () => {
+          if (successful === "catalog") resolveCatalog(catalog);
+          else resolveInventory([new Model({ model: "local-model" })]);
+        });
+        const name = successful === "catalog" ? "kimi-k3:cloud" : "local-model";
+        const choice = () =>
+          renderer!.root
+            .findAllByProps({ role: "option" })
+            .find((option) => textContent(option).includes(name));
+        expect(choice()?.props.disabled).toBe(false);
+        expect(textContent(renderer!.root)).toContain("Loading models…");
+
+        await act(async () => {
+          if (successful === "catalog")
+            rejectInventory(new Error("inventory unavailable"));
+          else rejectCatalog(new Error("catalog unavailable"));
+        });
+        expect(choice()?.props.disabled).toBe(false);
+        expect(textContent(renderer!.root)).not.toContain("Loading models…");
+        await act(async () => choice()!.props.onClick());
+        expect(textContent(pickerButton(renderer!))).toContain(name);
+      } finally {
+        resolveCatalog(catalog);
+        resolveInventory([]);
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it("keeps the picker loading until the latest refresh finishes", async () => {
     let focusHandler: (() => void) | undefined;
     let finishFirst!: (status: ReturnType<typeof testStatus>) => void;
