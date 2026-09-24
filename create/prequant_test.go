@@ -1,6 +1,7 @@
 package create
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
 )
@@ -146,6 +147,77 @@ func TestPlanPrequantizedModelOptDropsActivationScale(t *testing.T) {
 				t.Errorf("activation scale %s emitted as its own blob", act)
 			}
 		}
+	}
+}
+
+// TestPlanPrequantizedMLXPerTensorOverride reproduces the granite-5.0 MoE
+// bug: mlx_lm quantizes most tensors at the model's global bits/group_size,
+// but keeps precision-sensitive modules (a MoE router) at a different,
+// per-tensor override. The override must win for that tensor's blob metadata
+// or it gets tagged with the wrong bit width and either fails a shape check
+// or dequantizes to garbage at runtime.
+func TestPlanPrequantizedMLXPerTensorOverride(t *testing.T) {
+	cfg := sourceModelConfig{Quantization: sourceQuantization{
+		Bits: 4, Mode: "affine", GroupSize: 64,
+		Overrides: map[string]sourceQuantization{
+			"router.layer": {Bits: 8, GroupSize: 64},
+		},
+	}}
+	inv := newInventory(cfg, map[string]string{
+		"router.layer.weight": "U32",
+		"router.layer.scales": "BF16",
+		"router.layer.biases": "BF16",
+		"other.weight":        "U32",
+		"other.scales":        "BF16",
+		"other.biases":        "BF16",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+
+	router, ok := specByName(specs, "router.layer.weight")
+	if !ok {
+		t.Fatal("missing router.layer.weight blob")
+	}
+	if router.Metadata["quant_type"] != "int8" || router.Metadata["group_size"] != "64" {
+		t.Errorf("router metadata = %v, want quant_type=int8 group_size=64 (the override), not the global int4", router.Metadata)
+	}
+
+	other, ok := specByName(specs, "other.weight")
+	if !ok {
+		t.Fatal("missing other.weight blob")
+	}
+	if other.Metadata["quant_type"] != "int4" || other.Metadata["group_size"] != "64" {
+		t.Errorf("other metadata = %v, want quant_type=int4 group_size=64 (the global default, unaffected by the router's override)", other.Metadata)
+	}
+}
+
+func TestSourceQuantizationUnmarshalOverrides(t *testing.T) {
+	var q sourceQuantization
+	raw := `{
+		"bits": 4,
+		"group_size": 64,
+		"mode": "affine",
+		"model.layers.0.block_sparse_moe.router.layer": {"group_size": 64, "bits": 8},
+		"model.layers.1.block_sparse_moe.router.layer": {"group_size": 64, "bits": 8}
+	}`
+	if err := json.Unmarshal([]byte(raw), &q); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if q.Bits != 4 || q.GroupSize != 64 || q.Mode != "affine" {
+		t.Fatalf("global fields = %+v, want bits=4 group_size=64 mode=affine", q)
+	}
+	if len(q.Overrides) != 2 {
+		t.Fatalf("got %d overrides, want 2: %+v", len(q.Overrides), q.Overrides)
+	}
+	override, ok := q.Overrides["model.layers.0.block_sparse_moe.router.layer"]
+	if !ok {
+		t.Fatal("missing override for layer 0 router")
+	}
+	if override.Bits != 8 || override.GroupSize != 64 {
+		t.Errorf("override = %+v, want bits=8 group_size=64", override)
 	}
 }
 
