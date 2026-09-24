@@ -1,8 +1,14 @@
 import { act, create, type ReactTestInstance } from "react-test-renderer";
-import { forwardRef, useImperativeHandle } from "react";
+import {
+  forwardRef,
+  useImperativeHandle,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Settings as SettingsType } from "@/gotypes";
 import { Badge } from "./ui/badge";
+import { Listbox } from "@headlessui/react";
 import Settings from "./Settings";
 
 const mocks = vi.hoisted(() => ({
@@ -22,6 +28,28 @@ const mocks = vi.hoisted(() => ({
   },
   settings: null as SettingsType | null,
 }));
+
+vi.mock("@headlessui/react", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@headlessui/react")>();
+  return Object.assign({}, original, {
+    Listbox: ({ children }: { children: ReactNode }) => <>{children}</>,
+    ListboxButton: (props: ComponentProps<"button">) => <button {...props} />,
+    ListboxOptions: ({ children }: { children: ReactNode }) => (
+      <div>{children}</div>
+    ),
+    ListboxOption: ({
+      children,
+    }: {
+      children: ReactNode | ((state: { selected: boolean }) => ReactNode);
+    }) => (
+      <div>
+        {typeof children === "function"
+          ? children({ selected: false })
+          : children}
+      </div>
+    ),
+  });
+});
 
 vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
   ClaudeDesktopModelsSettings: forwardRef(
@@ -263,6 +291,44 @@ describe("Settings reset interactions", () => {
 
       expect(mocks.resetClaudeMappings).not.toHaveBeenCalled();
       expect(mocks.resetChatGPTModels).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("saves the selected update channel", async () => {
+    mocks.settings = new SettingsType({
+      ContextLength: 65_536,
+      AutoUpdateEnabled: false,
+      UpdateChannel: "stable",
+    });
+
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+
+      const channelButton = renderer!.root.findByProps({
+        "aria-label": "Update channel",
+      });
+      const channel = renderer!.root.findByType(Listbox);
+      expect(channel.props.value).toBe("stable");
+      expect(channelButton.props.disabled).toBeFalsy();
+
+      await act(async () => {
+        channel.props.onChange("preview");
+        await vi.waitFor(() => expect(mocks.updateSettings).toHaveBeenCalled());
+      });
+
+      expect(mocks.updateSettings.mock.calls.at(-1)?.[0]).toMatchObject({
+        UpdateChannel: "preview",
+      });
     } finally {
       await act(async () => {
         renderer?.unmount();
