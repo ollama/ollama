@@ -857,54 +857,56 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	var input []string
-
-	switch i := req.Input.(type) {
-	case string:
-		if len(i) > 0 {
-			input = append(input, i)
-		}
-	case []any:
-		for _, v := range i {
-			if _, ok := v.(string); !ok {
-				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-				return
-			}
-			input = append(input, v.(string))
-		}
-	default:
-		if req.Input != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-			return
-		}
+	input, err := parseEmbedInput(req.Input)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
-	name, err := getExistingName(modelRef.Name)
+	preEmbedDuration := time.Since(checkpointStart)
+	resp, err := s.embedLocal(c.Request.Context(), req, modelRef.Name, input)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		var e *embedError
+		if errors.As(err, &e) {
+			c.AbortWithStatusJSON(e.status, gin.H{"error": e.Error()})
+		} else {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
+	}
+	// Both native durations historically start before parsing and model/input
+	// validation. Add that prefix to both helper timings to retain their shared
+	// starting point. Empty-input responses intentionally omit both durations.
+	if len(input) > 0 {
+		resp.TotalDuration += preEmbedDuration
+		resp.LoadDuration += preEmbedDuration
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// embedLocal shares computation, without serializing an HTTP response.
+func (s *Server) embedLocal(ctx context.Context, req api.EmbedRequest, name model.Name, input []string) (api.EmbedResponse, error) {
+	checkpointStart := time.Now()
+	name, err := getExistingName(name)
+	if err != nil {
+		return api.EmbedResponse{}, &embedError{http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model)}
 	}
 
 	m, err := GetModel(name.String())
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
-		return
+		return api.EmbedResponse{}, scheduleEmbedError(req.Model, err)
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
+	r, m, opts, err := s.scheduleRunner(ctx, m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
-		return
+		return api.EmbedResponse{}, scheduleEmbedError(req.Model, err)
 	}
 
 	checkpointLoaded := time.Now()
 
 	if len(input) == 0 {
-		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-		return
+		return api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}}, nil
 	}
-
-	ctx := c.Request.Context()
 
 	adjustTokenLimit := func(tokens []int, limit int) int {
 		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("add_bos_token", true) {
@@ -1035,26 +1037,54 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		var serr api.StatusError
 		if errors.As(err, &serr) {
-			c.AbortWithStatusJSON(serr.StatusCode, gin.H{
-				"error": strings.TrimSpace(serr.ErrorMessage),
-			})
-			return
+			return api.EmbedResponse{}, &embedError{serr.StatusCode, strings.TrimSpace(serr.ErrorMessage)}
 		}
 
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
-			"error": strings.TrimSpace(err.Error()),
-		})
-		return
+		return api.EmbedResponse{}, &embedError{http.StatusBadRequest, strings.TrimSpace(err.Error())}
 	}
 
-	resp := api.EmbedResponse{
+	return api.EmbedResponse{
 		Model:           req.Model,
 		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
 		PromptEvalCount: int(totalTokens),
+	}, nil
+}
+
+type embedError struct {
+	status  int
+	message string
+}
+
+func (e *embedError) Error() string { return e.message }
+
+func scheduleEmbedError(name string, err error) *embedError {
+	status, message := scheduleErrorResponse(name, err)
+	return &embedError{status, message}
+}
+
+func parseEmbedInput(input any) ([]string, error) {
+	var values []string
+	switch input := input.(type) {
+	case string:
+		if len(input) > 0 {
+			values = append(values, input)
+		}
+	case []any:
+		for _, value := range input {
+			text, ok := value.(string)
+			if !ok {
+				return nil, errors.New("invalid input type")
+			}
+			values = append(values, text)
+		}
+	default:
+		if input != nil {
+			return nil, errors.New("invalid input type")
+		}
 	}
-	c.JSON(http.StatusOK, resp)
+	return values, nil
 }
 
 func normalize(vec []float32) ([]float32, error) {
@@ -1968,7 +1998,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	// parents on v1 request families while preserving this explicit :cloud passthrough.
 	r.POST("/v1/chat/completions", s.withInferenceRequestLogging("/v1/chat/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatMiddleware(lookupThinking), s.ChatHandler)...)
 	r.POST("/v1/completions", s.withInferenceRequestLogging("/v1/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.CompletionsMiddleware(), s.GenerateHandler)...)
-	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.EmbeddingsMiddleware(), s.EmbedHandler)
+	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), s.OpenAIEmbeddingsHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", s.responsesCompactionMiddleware(), cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)...)
@@ -3122,17 +3152,22 @@ func countChatImages(msgs []api.Message) int {
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
+	status, message := scheduleErrorResponse(name, err)
+	c.JSON(status, gin.H{"error": message})
+}
+
+func scheduleErrorResponse(name string, err error) (int, string) {
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, errTypicalPUnsupported):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
-		c.JSON(499, gin.H{"error": "request canceled"})
+		return 499, "request canceled"
 	case errors.Is(err, ErrMaxQueue):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return http.StatusServiceUnavailable, err.Error()
 	case errors.Is(err, os.ErrNotExist):
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found, try pulling it first", name)})
+		return http.StatusNotFound, fmt.Sprintf("model %q not found, try pulling it first", name)
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return http.StatusInternalServerError, err.Error()
 	}
 }
 
