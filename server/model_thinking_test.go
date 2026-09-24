@@ -241,6 +241,73 @@ func TestThinkingResolvedBeforeRenderAndParse(t *testing.T) {
 	}
 }
 
+func TestGenerateExtractsThinkingWithNonThinkingBuiltinParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	mock := mockRunner{CompletionResponse: llm.CompletionResponse{
+		Content:    "reason</think>answer",
+		Done:       true,
+		DoneReason: llm.DoneReasonStop,
+	}}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:    "qwen3-parser",
+		From:     "thinking-base",
+		Template: `{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}{{ if .Think }}<think>{{ end }}`,
+		Parser:   "qwen3",
+		Info:     map[string]any{"capabilities": []any{"completion", "thinking"}},
+		Stream:   &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: %s", w.Body.String())
+	}
+
+	nonStreaming := false
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "qwen3-parser",
+		Prompt: "hello",
+		Think:  &api.ThinkValue{Value: true},
+		Stream: &nonStreaming,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("generate: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp api.GenerateResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Response != "answer" || resp.Thinking != "reason" {
+		t.Fatalf("response=%q thinking=%q, want response=%q thinking=%q", resp.Response, resp.Thinking, "answer", "reason")
+	}
+
+	streaming := true
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "qwen3-parser",
+		Prompt: "hello",
+		Think:  &api.ThinkValue{Value: true},
+		Stream: &streaming,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("streaming generate: %d %s", w.Code, w.Body.String())
+	}
+	var streamedResponse, streamedThinking string
+	for _, line := range strings.Split(strings.TrimSpace(w.Body.String()), "\n") {
+		var chunk api.GenerateResponse
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
+			t.Fatal(err)
+		}
+		streamedResponse += chunk.Response
+		streamedThinking += chunk.Thinking
+	}
+	if streamedResponse != "answer" || streamedThinking != "reason" {
+		t.Fatalf("streamed response=%q thinking=%q, want response=%q thinking=%q", streamedResponse, streamedThinking, "answer", "reason")
+	}
+}
+
 func TestThinkingNonthinkingFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
