@@ -435,6 +435,24 @@ func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, 
 	return &resp, nil
 }
 
+// Eval evaluates named questions against a state using a local model.
+func (c *Client) Eval(ctx context.Context, req *EvalRequest) (*EvalResponse, error) {
+	var resp EvalResponse
+	if err := c.do(ctx, http.MethodPost, "/api/eval", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Extract returns scored entity spans from a local extraction model.
+func (c *Client) Extract(ctx context.Context, req *ExtractRequest) (*ExtractResponse, error) {
+	var resp ExtractResponse
+	if err := c.do(ctx, http.MethodPost, "/api/extract", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Embeddings generates an embedding from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse

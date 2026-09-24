@@ -1,0 +1,59 @@
+---
+title: Evaluate questions
+description: Evaluate a state against named yes/no, choice, and score questions.
+---
+
+`POST /api/eval` accepts the request body documented by the
+[TypeSafe evaluation API](https://docs.typesafe.ai/api): `model`, `state`, and
+`questions`. Use the name of an installed local Ollama language model in `model`.
+
+```sh
+curl http://localhost:11434/api/eval -d '{
+  "model": "llama3.2",
+  "state": "Help! My payouts have been failing for 3 days.",
+  "questions": {
+    "urgent": {
+      "type": "noul",
+      "instructions": "Does this convey urgency?"
+    },
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this?",
+      "criteria": {
+        "billing": "Payments, invoicing, refunds",
+        "technical": "Bugs, outages, integrations",
+        "other": null
+      }
+    },
+    "frustration": {
+      "type": "score",
+      "instructions": "How frustrated is the customer?",
+      "criteria": ["Calm", "Frustrated", "Very angry"]
+    }
+  }
+}'
+```
+
+`state` and each question's `instructions` accept a string, object, or array.
+Question IDs identify answers and are not sent to the model. Each question is
+evaluated independently against the same state.
+
+| Type | Criteria | Answer fields |
+| --- | --- | --- |
+| `noul` | Optional object with `true` and/or `false` string descriptions | `type`, `noul` (probability of yes) |
+| `choice` | Required map of options to string or null descriptions | `type`, `choice`, `probabilities`, `confidence` |
+| `score` | Required ordered array of at least two string descriptions | `type`, `score`, `legend`, `probabilities`, `confidence` |
+
+Responses contain `model`, `answers` keyed by question ID, and `usage` with
+`input_tokens` and `output_tokens` summed across questions. Scores are weighted
+averages of the zero-based level indices. Validation failures return HTTP `422`.
+
+The local language model generates probability estimates through structured
+output. These are not token log probabilities and do not reproduce Jev's
+calibration. Small rounding errors are normalized; invalid distributions return
+an error. Confidence is one minus normalized Shannon entropy: zero for a uniform
+distribution and one when all probability falls on a single outcome.
+
+GLiNER-small is an entity extraction model and cannot answer these question
+types. Use `/api/extract` for GLiNER. `/api/eval` requires a local language model;
+cloud models are not supported.
