@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1798,6 +1799,61 @@ func TestResumeFromPartialFile(t *testing.T) {
 	finalHash := sha256.Sum256(finalData)
 	if fmt.Sprintf("sha256:%x", finalHash) != digest {
 		t.Error("Final file hash mismatch")
+	}
+}
+
+// A connection that always stalls must eventually fail the download. Stall
+// retries are budgeted rather than unlimited, so the loop cannot spin forever.
+func TestDownloadStallGivesUp(t *testing.T) {
+	const blobSize = 4096
+	blob, data := createTestBlob(t, t.TempDir(), blobSize)
+
+	release := make(chan struct{})
+
+	// Each attempt issues two GETs: resolve, then the body. Answer the resolve
+	// normally and stall only the body, so the stall lands in copy.
+	var gets atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(blobSize))
+		if r.Method == http.MethodHead {
+			return
+		}
+		if gets.Add(1)%2 == 1 {
+			w.Write(data)
+			return
+		}
+		// Headers only: the body never arrives, so the transfer stalls.
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	defer server.Close()
+	// Released before Close so the parked handlers cannot block shutdown.
+	defer close(release)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- Download(context.Background(), DownloadOptions{
+			Blobs:        []Blob{blob},
+			BaseURL:      server.URL,
+			DestDir:      t.TempDir(),
+			StallTimeout: 20 * time.Millisecond,
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Download() = nil, want an error after repeated stalls")
+		}
+		if !errors.Is(err, errMaxRetriesExceeded) {
+			t.Fatalf("Download() = %v, want %v", err, errMaxRetriesExceeded)
+		}
+	// maxTransientRetries + maxRetries attempts, each detected on the watchdog's
+	// one-second tick, plus backoff: ~13s here. The budget is loose because only
+	// the unbounded-retry case has to fail, and that case never finishes at all.
+	case <-time.After(90 * time.Second):
+		t.Fatal("Download retried forever after repeated stalls")
 	}
 }
 
