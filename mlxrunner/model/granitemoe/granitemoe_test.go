@@ -198,6 +198,15 @@ func TestFuseGateUpProjectionsGlobalScales(t *testing.T) {
 		if fusedWC.Dim(0) != experts || fusedWC.Dim(1) != rows*2 {
 			t.Errorf("fused weight dims = %v, want [%d, %d, %d]", fusedWC.Dims(), experts, rows*2, cols)
 		}
+		if fused.Mode != "nvfp4" {
+			t.Errorf("fused.Mode = %q, want %q (dropped Mode makes gather_qmm fail with \"invalid quantization mode ''\")", fused.Mode, "nvfp4")
+		}
+		if fused.GroupSize != 64 {
+			t.Errorf("fused.GroupSize = %d, want 64", fused.GroupSize)
+		}
+		if fused.Bits != 4 {
+			t.Errorf("fused.Bits = %d, want 4", fused.Bits)
+		}
 
 		// Mismatched global scales — fusion should be refused (nil).
 		wrongGlobalScales := mlx.FromValues([]float32{4.0, 3.0, 2.0, 1.0}, experts)

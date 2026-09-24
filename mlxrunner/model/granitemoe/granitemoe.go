@@ -314,6 +314,8 @@ func fuseGateUpProjections(gate, up *stackedExpertWeights) *stackedExpertWeights
 			Scales:       fuseExpertStacks(gate.Scales, up.Scales, 1),
 			GlobalScales: gate.GlobalScales,
 			Bits:         gate.Bits,
+			GroupSize:    gate.GroupSize,
+			Mode:         gate.Mode,
 		}
 		if gate.Biases != nil {
 			fused.Biases = fuseExpertStacks(gate.Biases, up.Biases, 1)
