@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
@@ -294,6 +296,57 @@ func TestJSONLFramingResponseWriter_FlushPendingWritesTrailingLine(t *testing.T)
 	}
 	if got := string(rec.chunks[0]); got != `{"a":1` {
 		t.Fatalf("trailing chunk mismatch: got %q", got)
+	}
+}
+
+func TestProxyCloudRequestWithPath_AbortsOnTruncatedUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	partial := "{\"message\":{\"role\":\"assistant\",\"content\":\"partial\"}}\n"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(partial)); err != nil {
+			return
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		time.Sleep(200 * time.Millisecond)
+		if hj, ok := w.(http.Hijacker); ok {
+			if conn, _, err := hj.Hijack(); err == nil {
+				conn.Close()
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	r := gin.New()
+	r.POST("/api/chat", func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.AbortWithStatus(http.StatusBadRequest)
+			return
+		}
+		proxyCloudRequest(c, body, "test")
+	})
+	local := httptest.NewServer(r)
+	defer local.Close()
+
+	reqBody := `{"model":"glm-5.3:cloud","messages":[{"role":"user","content":"hi"}],"stream":true}`
+	resp, err := local.Client().Post(local.URL+"/api/chat", "application/json", strings.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("client request failed before body copy: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err == nil {
+		t.Fatalf("expected client-visible stream error for truncated upstream, got clean status %d with %q", resp.StatusCode, string(body))
 	}
 }
 
