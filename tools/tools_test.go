@@ -787,6 +787,42 @@ func TestParser(t *testing.T) {
 	}
 }
 
+func TestUnparsedTextToolCallContent(t *testing.T) {
+	tools := []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name: "tag_document",
+		},
+	}}
+	parser := NewParserWithTag(tools, "<tool_call>")
+	input := `<tool_call>{"name": "Apply tags to a document", "arguments": {"document_id": "doc-17"}}</tool_call>`
+
+	calls, content := parser.Add(input)
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls for an unknown tool name, got %d", len(calls))
+	}
+	if content != "" {
+		t.Fatalf("expected text-tag output to remain buffered, got %q", content)
+	}
+
+	if got := parser.Content(); got != input {
+		t.Errorf("Content() = %q, want %q", got, input)
+	}
+
+	parser = NewParserWithTag(tools, "<tool_call>")
+	calls, content = parser.Add(`<tool_call>{"name": "tag_document", "arguments": {}}</tool_call>`)
+	if len(calls) != 1 {
+		t.Fatalf("expected one parsed tool call, got %d", len(calls))
+	}
+	if content != "" {
+		t.Fatalf("expected parsed tool-call scaffolding to stay hidden, got %q", content)
+	}
+	parser.Add("</tool_call>")
+	if got := parser.Content(); got != "" {
+		t.Errorf("Content() after a parsed call = %q, want empty content", got)
+	}
+}
+
 func TestDone(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -892,10 +928,10 @@ func TestContent(t *testing.T) {
 			n:       0,
 		},
 		{
-			name:    "tag",
+			name:    "unparsed text tag",
 			tag:     "<tool_call>",
 			content: []byte("<tool_call>{\"name\": \"get_temperature\""),
-			want:    "",
+			want:    "<tool_call>{\"name\": \"get_temperature\"",
 			n:       0,
 		},
 		{
