@@ -30,12 +30,23 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role       string     `json:"role"`
-	Content    any        `json:"content"`
-	Reasoning  string     `json:"reasoning,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role             string     `json:"role"`
+	Content          any        `json:"content"`
+	Reasoning        string     `json:"reasoning,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	Name             string     `json:"name,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+}
+
+// reasoningText returns the assistant reasoning text, accepting
+// reasoning_content (the DeepSeek-documented spelling) as an alias for
+// reasoning. reasoning takes precedence when both are set.
+func (m Message) reasoningText() string {
+	if m.Reasoning != "" {
+		return m.Reasoning
+	}
+	return m.ReasoningContent
 }
 
 // Delta is used in streaming chunk responses. All fields use omitempty so
@@ -587,7 +598,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.reasoningText(), ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -647,7 +658,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				messages[len(messages)-1].ToolCalls = toolCalls
 				messages[len(messages)-1].ToolName = toolName
 				messages[len(messages)-1].ToolCallID = msg.ToolCallID
-				messages[len(messages)-1].Thinking = msg.Reasoning
+				messages[len(messages)-1].Thinking = msg.reasoningText()
 			}
 		default:
 			// content is only optional if tool calls are present
@@ -659,7 +670,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.reasoningText(), ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
 		}
 	}
 
