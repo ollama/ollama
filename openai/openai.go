@@ -589,6 +589,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			start := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -637,6 +638,11 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					return nil, errors.New("invalid message format")
 				}
 			}
+			// every part of a tool result answers the same tool call
+			for i := start; i < len(messages); i++ {
+				messages[i].ToolName = toolName
+				messages[i].ToolCallID = msg.ToolCallID
+			}
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message
 			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
@@ -645,8 +651,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					return nil, err
 				}
 				messages[len(messages)-1].ToolCalls = toolCalls
-				messages[len(messages)-1].ToolName = toolName
-				messages[len(messages)-1].ToolCallID = msg.ToolCallID
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:

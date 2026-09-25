@@ -156,6 +156,48 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ToolResultContentParts(t *testing.T) {
+	// OpenAI allows a tool message's content to be an array of content parts.
+	body := `{
+		"model": "test-model",
+		"messages": [
+			{"role": "user", "content": "What's the weather in Paris?"},
+			{"role": "assistant", "content": null, "tool_calls": [
+				{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}}
+			]},
+			{"role": "tool", "tool_call_id": "call_1", "content": [
+				{"type": "text", "text": "20 degrees"},
+				{"type": "image_url", "image_url": {"url": "` + prefix + image + `"}}
+			]}
+		]
+	}`
+
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(body), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	toolMessages := result.Messages[2:]
+	if len(toolMessages) != 2 {
+		t.Fatalf("expected 2 tool messages, got %d", len(toolMessages))
+	}
+
+	for i, msg := range toolMessages {
+		if msg.Role != "tool" || msg.ToolCallID != "call_1" || msg.ToolName != "get_weather" {
+			t.Errorf("tool message %d: got role %q, tool_call_id %q, tool name %q; want tool, call_1, get_weather", i, msg.Role, msg.ToolCallID, msg.ToolName)
+		}
+	}
+
+	if toolMessages[0].Content != "20 degrees" || len(toolMessages[1].Images) != 1 {
+		t.Errorf("unexpected tool result content: %+v", toolMessages)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
