@@ -836,8 +836,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 // SystemOneHandler compiles typed questions, scores their allowed answers, and
 // returns probabilities. Callers must select weights trained for the prompt format.
 func (s *Server) SystemOneHandler(c *gin.Context) {
+	// TODO(parthsareen): Validate tokens before expanding state/schema into one
+	// prompt per question. This temporary byte cap bounds that amplification
+	// and can be relaxed once token validation happens before expansion.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var req systemone.Request
 	if err := c.ShouldBindJSON(&req); err != nil {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB"})
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -879,6 +888,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local Nimble or Tev model with a scoring-capable runner", req.Model)})
 		return
 	}
+	compiled.Request.MaxTokens = min(compiled.Request.MaxTokens, r.ContextLength())
 	result, err := scorer.Score(c.Request.Context(), compiled.Request)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)

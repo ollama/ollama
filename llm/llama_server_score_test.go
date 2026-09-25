@@ -113,7 +113,8 @@ func TestLlamaServerScore(t *testing.T) {
 	runner.options.Temperature = 0
 	runner.options.Stop = []string{"A"}
 	runner.options.RepeatPenalty = 2
-	result, err := runner.Score(t.Context(), ScoreRequest{MaxTokens: 7, Rows: []ScoreRow{
+	runner.options.NumCtx = 5 // The longest prompt leaves exactly two positions of headroom.
+	result, err := runner.Score(t.Context(), ScoreRequest{MaxTokens: 5, Rows: []ScoreRow{
 		{Prompt: "abc", Candidates: []string{"Z", "A"}},
 		{Prompt: "xy", Candidates: []string{"B"}},
 	}})
@@ -137,6 +138,7 @@ func TestLlamaServerScoreValidation(t *testing.T) {
 		{"empty prompt", ScoreRequest{MaxTokens: 7, Rows: []ScoreRow{{Candidates: []string{"A"}}}}},
 		{"oversize prompt", ScoreRequest{MaxTokens: 2, Rows: []ScoreRow{{Prompt: "abc", Candidates: []string{"A"}}}}},
 		{"no scoring token space", ScoreRequest{MaxTokens: 8, Rows: []ScoreRow{{Prompt: "abcdefgh", Candidates: []string{"A"}}}}},
+		{"no native scoring headroom", ScoreRequest{MaxTokens: 8, Rows: []ScoreRow{{Prompt: "abcdefg", Candidates: []string{"A"}}}}},
 		{"empty candidates", ScoreRequest{MaxTokens: 7, Rows: []ScoreRow{{Prompt: "abc"}}}},
 		{"too many candidates", ScoreRequest{MaxTokens: 7, Rows: []ScoreRow{{Prompt: "abc", Candidates: make([]string, 27)}}}},
 		{"multiple tokens", ScoreRequest{MaxTokens: 7, Rows: []ScoreRow{{Prompt: "abc", Candidates: []string{"AB"}}}}},

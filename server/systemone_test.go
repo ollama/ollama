@@ -65,6 +65,9 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 	}
 
+	const prefix = `{"model":"decision-test","state":"`
+	const suffix = `","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`
+	stateLimit := (64 << 10) - len(prefix) - len(suffix)
 	for _, tt := range []struct {
 		name   string
 		body   string
@@ -85,9 +88,12 @@ func TestSystemOneHandler(t *testing.T) {
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"wrong architecture", `{"model":"wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
+		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},
+		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			runner := &systemOneTestRunner{err: tt.err}
+			// The loaded context is smaller than the public prompt ceiling.
+			runner := &systemOneTestRunner{mockRunner: mockRunner{contextLength: 1024}, err: tt.err}
 			ref := &runnerRef{llama: runner, refCount: 1, sessionDuration: time.Hour}
 			s := newServerWithMockRunner(t, &runner.mockRunner)
 			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
@@ -103,6 +109,7 @@ func TestSystemOneHandler(t *testing.T) {
 			router.POST("/v1/systemone", s.SystemOneHandler)
 			w := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodPost, "/v1/systemone", strings.NewReader(tt.body))
+			req.ContentLength = -1
 			req.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(w, req)
 			if w.Code != tt.status || runner.calls != tt.calls {
@@ -133,8 +140,8 @@ func TestSystemOneHandler(t *testing.T) {
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != 0 {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
-				if runner.request.MaxTokens != systemone.MaxPromptTokens || !strings.HasSuffix(runner.request.Rows[0].Prompt, "<think>\n\n</think>\n\n") {
-					t.Fatal("scorer did not receive the trained prompt contract")
+				if runner.request.MaxTokens != 1024 || !strings.HasSuffix(runner.request.Rows[0].Prompt, "<think>\n\n</think>\n\n") {
+					t.Fatal("scorer did not receive the trained prompt and loaded context budget")
 				}
 			}
 		})

@@ -51,8 +51,10 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 		if len(tokens) == 0 || len(tokens) > input.MaxTokens {
 			return badRequest("prompt %d has %d tokens; expected 1–%d (input is never truncated)", i, len(tokens), input.MaxTokens)
 		}
-		if len(tokens) >= s.ContextLength() {
-			return badRequest("prompt %d requires %d context tokens including the scoring token; model has %d", i, len(tokens)+1, s.ContextLength())
+		// llama-server marks the result truncated when prompt+1 reaches the
+		// context limit, so scoring needs two positions of headroom.
+		if len(tokens)+2 > s.ContextLength() {
+			return badRequest("prompt %d requires %d context tokens for scoring; model has %d", i, len(tokens)+2, s.ContextLength())
 		}
 		rows[i].tokens = tokens
 		result.InputTokens += len(tokens)
