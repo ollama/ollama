@@ -19,6 +19,7 @@ import (
 // policy, parallelism, and accounting belong to the caller's ReaderAt.
 type ioReader struct {
 	reader SafetensorsReader
+	label  *C.char
 
 	offsetMu sync.Mutex // guards offset and serializes stateful seek/read calls
 	offset   int64
@@ -141,7 +142,17 @@ func goMLXReaderFree(desc unsafe.Pointer) {
 	handle := *(*cgo.Handle)(desc)
 	if reader, ok := handle.Value().(*ioReader); ok {
 		reader.close()
+		C.free(unsafe.Pointer(reader.label))
 	}
 	handle.Delete()
 	C.free(desc)
+}
+
+//export goMLXReaderLabel
+func goMLXReaderLabel(desc unsafe.Pointer) *C.char {
+	reader := ioReaderFromHandle(desc)
+	if reader == nil {
+		return nil
+	}
+	return reader.label
 }
