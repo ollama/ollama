@@ -118,6 +118,9 @@ async function renderHistory() {
       </QueryClientProvider>,
     );
   });
+  if (renderer.root.findAllByProps({ "aria-label": "Show sidebar" }).length) {
+    await click("Show sidebar");
+  }
 }
 function page() {
   return JSON.stringify(renderer.toJSON());

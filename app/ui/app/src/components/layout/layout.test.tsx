@@ -16,7 +16,7 @@ describe("SidebarLayout", () => {
       </SidebarLayout>,
     );
 
-    expect(html).toContain("pl-6");
+    expect(html).toContain("pl-36");
     expect(html).toContain("transition-[padding-left]");
     expect(html).toContain("duration-300");
   });

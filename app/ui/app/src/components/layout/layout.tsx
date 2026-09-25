@@ -1,6 +1,8 @@
 import { isWindowsPlatform } from "@/lib/platform";
 import { useState } from "react";
 
+let sessionSidebarOpen = false;
+
 export function SidebarLayout({
   sidebar,
   title,
@@ -9,11 +11,12 @@ export function SidebarLayout({
   sidebar: React.ReactNode;
   title?: string;
 }>) {
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(sessionSidebarOpen);
   const isWindows = isWindowsPlatform();
 
   const toggleSidebar = () => {
-    setSidebarOpen((open) => !open);
+    sessionSidebarOpen = !sidebarOpen;
+    setSidebarOpen(sessionSidebarOpen);
   };
 
   return (
