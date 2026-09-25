@@ -176,6 +176,7 @@
             "expanded": true,
             "pages": [
               "/integrations/claude-code",
+              "/integrations/atomcode",
               "/integrations/opencode",
               "/integrations/deepseek-harness",
               "/integrations/cline-cli",

@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "atomcode", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -182,6 +182,22 @@ var integrationSpecs = []*IntegrationSpec{
 			},
 			URL:     "https://github.com/deepseek-ai/deepseek-harness",
 			Command: []string{"npm", "install", "-g", deepSeekHarnessNpmPackage},
+		},
+	},
+	{
+		Name:        "atomcode",
+		Runner:      &AtomCode{},
+		Description: "AtomGit's open-source AI coding agent for the terminal",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&AtomCode{}).findPath()
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureAtomCodeInstalled()
+				return err
+			},
+			URL: "https://atomcode.atomgit.com",
 		},
 	},
 	{
