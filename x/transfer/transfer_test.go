@@ -15,9 +15,64 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+type dataErrorReader struct {
+	data []byte
+	err  error
+}
+
+func (r dataErrorReader) Read(p []byte) (int, error) {
+	return copy(p, r.data), r.err
+}
+
+func TestCopyReturnsWriteError(t *testing.T) {
+	diskFull := syscall.ENOSPC
+	networkTimeout := errors.New("Get blob: i/o timeout")
+	d := &downloader{speeds: &speedTracker{}}
+
+	_, err := d.copy(context.Background(), writerFunc(func([]byte) (int, error) {
+		return 0, diskFull
+	}), io.MultiReader(strings.NewReader("blob data"), errorReader{err: networkTimeout}), io.Discard)
+	t.Logf("observed error: %v", err)
+	if !errors.Is(err, diskFull) {
+		t.Fatalf("copy() error = %v, want destination write error %v", err, diskFull)
+	}
+}
+
+func TestCopyReturnsReadErrorAfterWritingBytes(t *testing.T) {
+	readErr := errors.New("source read failed")
+	d := &downloader{speeds: &speedTracker{}}
+	src := dataErrorReader{data: []byte("blob data"), err: readErr}
+
+	_, err := d.copy(context.Background(), io.Discard, src, io.Discard)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("copy() error = %v, want source read error %v", err, readErr)
+	}
+}
+
+func TestCopyReturnsShortWriteError(t *testing.T) {
+	d := &downloader{speeds: &speedTracker{}}
+	dst := writerFunc(func(p []byte) (int, error) {
+		return len(p) - 1, nil
+	})
+
+	_, err := d.copy(context.Background(), dst, strings.NewReader("blob data"), io.Discard)
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("copy() error = %v, want %v", err, io.ErrShortWrite)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
 // chunkedSession tracks accumulated PATCH body bytes for an upload session.
 // Tests that mock the registry use it to handle the GGUF-style POST → PATCH →

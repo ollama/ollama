@@ -382,7 +382,13 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 		nr, err := src.Read(buf)
 		if nr > 0 {
 			lastRead.Store(time.Now().UnixNano())
-			dst.Write(buf[:nr])
+			nw, err_w := dst.Write(buf[:nr])
+			if err_w != nil {
+				return n, err_w
+			}
+			if nr != nw {
+				return n, io.ErrShortWrite
+			}
 			h.Write(buf[:nr])
 			d.progress.add(int64(nr))
 			n += int64(nr)
