@@ -1,0 +1,25 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package
+      Name="Ollama MLX CUDA v13"
+      Manufacturer="Ollama, Inc."
+      Version="$(MSI_VERSION)"
+      Scope="perUser"
+      UpgradeCode="3E7A1B5C-9D2F-4A6E-B8C0-1F2D3E4A5B6C"
+      InstallerVersion="500">
+
+      <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+      <MediaTemplate EmbedCab="yes" MaximumUncompressedMediaSize="$(CABSIZEMB)" CompressionLevel="high" />
+      <Icon Id="productIcon" SourceFile="..\assets\app.ico" />
+      <Property Id="ARPPRODUCTICON" Value="productIcon" />
+
+      <ComponentGroup Id="mlx_cuda_v13_Components" Directory="lib_ollama_mlx_cuda_v13_Dir">
+        <Component><File Source="lib\ollama\mlx_cuda_v13\mlx.dll"/></Component>
+        <Component><File Source="lib\ollama\mlx_cuda_v13\mlxc.dll"/></Component>
+        <Component><File Source="lib\ollama\mlx_cuda_v13\ollama_xgrammar.dll"/></Component>
+      </ComponentGroup>
+
+      <Feature Id="MainFeature" Title="Ollama MLX CUDA v13" Level="1">
+        <ComponentGroupRef Id="mlx_cuda_v13_Components" />
+      </Feature>
+    </Package>
+</Wix>

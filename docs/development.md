@@ -81,8 +81,26 @@ Additional prerequisites:
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
+- (Optional) MSI packaging
+    - [WiX v6 CLI](https://wixtoolset.org/) (`dotnet tool install -g wix --version 6.*`)
 
 For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or another shell where the Visual Studio compiler is available.
+
+### Windows installer tests
+
+Unit tests run on the host. Integration tests install and uninstall Ollama for
+real, so run them in Windows Sandbox (a disposable VM; set up once per
+checkout, then reuse):
+
+```powershell
+.\scripts\tests\Setup-WindowsTestSandbox.ps1
+.\scripts\tests\Invoke-WindowsInstallTests.ps1 -Tag Unit
+.\scripts\tests\Invoke-WindowsInstallTests.ps1 -Tag Integration
+.\scripts\tests\Invoke-WindowsInstallTests.ps1 -Tag PackageManager
+```
+
+Results and logs land under `.cache\windows-test-sandbox\runs`. Pass
+`-Isolation Host` to run destructive tests directly on a clean machine instead.
 
 > Building for Vulkan requires VULKAN_SDK environment variable:
 > 
@@ -95,9 +113,72 @@ For Ninja builds, run CMake from a Developer PowerShell/Command Prompt or anothe
 > set VULKAN_SDK=C:\VulkanSDK\<version>
 > ```
 
+Use the repository-root CMake build shown in [Native build model](#native-build-model). Ninja is recommended when available.
+
+For release-style local packaging, the Windows wrapper script still sequences the same build, signing, MSI, legacy installer, and zip steps:
+
+```powershell
+.\scripts\build_windows.ps1
+```
+
+Individual compatibility-wrapper steps can be run separately while the Windows release flow is being migrated fully into CMake:
+
+```powershell
+.\scripts\build_windows.ps1 cuda13 ollama
+```
+
+Lastly, run Ollama:
+
+```powershell
+.\dist\windows-amd64\ollama.exe serve
+```
+
+#### Pester Tests
+
+```powershell
+# Unit tests (fast, no system changes)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Unit
+
+# Integration tests (requires clean environment)
+Invoke-Pester scripts\tests\install.Tests.ps1 -Tag Integration
+```
+
+## Install/Upgrade Testing (Windows)
+
+### MSI install script
+
+1. Build MSIs:
+```powershell
+cmake -B build\msi -S app\msi -DOLLAMA_VERSION=0.0.0 -DOLLAMA_DIST_DIR="$PWD\dist"
+cmake --build build\msi --target msi-all
+```
+
+2. Test the installer script against the production download endpoint:
+```powershell
+# Default install (auto-detects GPU hardware)
+irm https://ollama.com/install.ps1 | iex
+
+# Minimal install (CPU-only, no GPU backends)
+$env:OLLAMA_INSTALL_MINIMAL = "1"
+irm https://ollama.com/install.ps1 | iex
+
+# Full install (all GPU backends)
+$env:OLLAMA_INSTALL_ALL = "1"
+irm https://ollama.com/install.ps1 | iex
+
+# Custom install directory
+$env:OLLAMA_INSTALL_DIR = "$env:TEMP\OllamaTest"
+irm https://ollama.com/install.ps1 | iex
+```
+
 ## Windows (ARM)
 
 Windows ARM does not support additional acceleration libraries at this time.
+Install the LLVM-MinGW UCRT cross-compilation toolchain before building:
+
+```powershell
+winget install --id=MartinStorsjo.LLVM-MinGW.UCRT -e
+```
 
 ## Linux
 
