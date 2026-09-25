@@ -15,6 +15,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -207,6 +208,8 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		switch {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
+		case errors.Is(err, syscall.ENOSPC):
+			return err
 		case errors.Is(err, errStalled):
 			// Don't count stall retries against limit
 		case errors.Is(err, errSlow):
@@ -294,7 +297,9 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 	if d.mkdirAll != nil {
 		mkdirAll = d.mkdirAll
 	}
-	mkdirAll(filepath.Dir(dest), 0o755)
+	if err := mkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return 0, err
+	}
 
 	h := sha256.New()
 
@@ -336,13 +341,12 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 		}
 	}
 
-	defer f.Close()
-	n, err := d.copy(ctx, f, r, h)
-	if err != nil {
+	n, copyErr := d.copy(ctx, f, r, h)
+	closeErr := f.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
 		// Don't remove .tmp here — download() handles cleanup based on blob size
 		return existingSize + n, err
 	}
-	f.Close()
 
 	if got := fmt.Sprintf("sha256:%x", h.Sum(nil)); got != blob.Digest {
 		os.Remove(tmp)
