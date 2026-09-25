@@ -64,6 +64,34 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+// Regression for https://github.com/ollama/ollama/issues/16680: a parent
+// directory whose name ends in an image extension (e.g. "photos.png/cat.jpg")
+// must not fracture the path — the whole path should be returned as one match,
+// not cut short at the directory.
+func TestExtractFilenamesNestedExtension(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"parent dir ends in .png (absolute)", "open /photos.png/cat.jpg now", "/photos.png/cat.jpg"},
+		{"parent dir ends in extension (relative)", "./album.png/sunset.jpeg", "./album.png/sunset.jpeg"},
+		{"parent dir ends in extension (windows)", `c:\photos.png\cat.jpg`, `c:\photos.png\cat.jpg`},
+		{"multiple extension-named dirs", "/a.jpg/b.png/c.webp", "/a.jpg/b.png/c.webp"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := extractFileNames(tc.input)
+			if len(res) != 1 {
+				t.Fatalf("got %d matches %v, want 1", len(res), res)
+			}
+			if res[0] != tc.want {
+				t.Errorf("got %q, want %q", res[0], tc.want)
+			}
+		})
+	}
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
