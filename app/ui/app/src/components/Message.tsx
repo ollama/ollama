@@ -393,7 +393,7 @@ function cursorToPage(
 }
 
 // TODO(drifkin): pull out into another file
-function BrowserToolCallDisplay({
+function BrowserToolHistory({
   toolCall,
   browserToolResult,
 }: {
@@ -604,7 +604,7 @@ function ToolCallDisplay({
   }
 
   return (
-    <BrowserToolCallDisplay
+    <BrowserToolHistory
       toolCall={toolCall}
       browserToolResult={browserToolResult}
     />
