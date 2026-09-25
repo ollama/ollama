@@ -22,18 +22,19 @@ func HumanBytes(b int64) string {
 	var value float64
 	var unit string
 
+	// Use binary prefixes (1024) for file sizes as is standard in computing
 	switch {
-	case b >= TeraByte:
-		value = float64(b) / TeraByte
+	case b >= GibiByte*1024:
+		value = float64(b) / (GibiByte * 1024)
 		unit = "TB"
-	case b >= GigaByte:
-		value = float64(b) / GigaByte
+	case b >= GibiByte:
+		value = float64(b) / GibiByte
 		unit = "GB"
-	case b >= MegaByte:
-		value = float64(b) / MegaByte
+	case b >= MebiByte:
+		value = float64(b) / MebiByte
 		unit = "MB"
-	case b >= KiloByte:
-		value = float64(b) / KiloByte
+	case b >= KibiByte:
+		value = float64(b) / KibiByte
 		unit = "KB"
 	default:
 		return fmt.Sprintf("%d B", b)
