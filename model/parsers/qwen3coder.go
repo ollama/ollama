@@ -21,6 +21,15 @@ type qwenParserState int
 const (
 	toolOpenTag  = "<tool_call>"
 	toolCloseTag = "</tool_call>"
+	// functionOpenPrefix is an implicit tool-call opener. qwen3-coder's system
+	// prompt allows the model to write a short sentence of reasoning before a
+	// tool call, and it sometimes omits the toolOpenTag wrapper in that case
+	// (while still emitting toolCloseTag at the end) -- see
+	// https://github.com/ollama/ollama/issues/18530. Treating this prefix the
+	// same way we treat toolOpenTag lets us recover the tool call instead of
+	// silently passing the whole <function=...></function> block through as
+	// plain content.
+	functionOpenPrefix = "<function="
 )
 
 const (
@@ -165,10 +174,26 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
-			// we found a partial tool open tag, so we can emit the unambiguous part,
-			// which is the (trailing-whitespace trimmed) content before the partial
-			// tool open tag
+		} else if idx := strings.Index(p.acc.String(), functionOpenPrefix); idx >= 0 {
+			// found an implicit tool-call opener (see functionOpenPrefix comment):
+			// a <function=...> block with no preceding <tool_call> wrapper. Emit the
+			// content before it, then continue collecting as if we were inside a
+			// tool call, keeping the "<function=" prefix itself in the buffer since
+			// there's no wrapper tag here to strip.
+			before := p.acc.String()[:idx]
+			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			after := p.acc.String()[idx:]
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			p.state = qwenParserState_CollectingToolContent
+			return events, true
+		} else if overlap := max(overlap(p.acc.String(), toolOpenTag), overlap(p.acc.String(), functionOpenPrefix)); overlap > 0 {
+			// we found a partial tool open tag (or partial implicit opener), so we
+			// can emit the unambiguous part, which is the (trailing-whitespace
+			// trimmed) content before the partial tag
 			beforePartialTag := p.acc.String()[:len(p.acc.String())-overlap]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
