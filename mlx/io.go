@@ -11,6 +11,7 @@ package mlx
 // extern int goMLXReaderSeek(void*, int64_t, int);
 // extern size_t goMLXReaderRead(void*, char*, size_t);
 // extern size_t goMLXReaderReadAtOffset(void*, char*, size_t, size_t);
+// extern char* goMLXReaderLabel(void*);
 // extern void goMLXReaderFree(void*);
 //
 // static size_t go_mlx_reader_write(void* desc, const char* data, size_t n) {
@@ -21,8 +22,8 @@ package mlx
 // }
 //
 // static const char* go_mlx_reader_label(void* desc) {
-// 	(void)desc;
-// 	return "Go reader";
+// 	const char* label = goMLXReaderLabel(desc);
+// 	return label ? label : "Go reader";
 // }
 //
 // static mlx_io_vtable go_mlx_reader_vtable(void) {
@@ -112,10 +113,19 @@ func newIOReader(reader SafetensorsReader) (C.mlx_io_reader, error) {
 		_ = reader.Close()
 		return zero, errors.New("mlx: failed to allocate I/O reader handle")
 	}
-	handle := cgo.NewHandle(&ioReader{reader: reader})
+	r := &ioReader{reader: reader}
+	name := "Go reader"
+	if named, ok := reader.(interface{ Name() string }); ok {
+		if fileName := named.Name(); fileName != "" {
+			name = fileName
+		}
+	}
+	r.label = C.CString(name)
+	handle := cgo.NewHandle(r)
 	*payload = handle
 	cReader := C.go_mlx_reader_new(unsafe.Pointer(payload))
 	if err := mlxError(cReader); err != nil {
+		C.free(unsafe.Pointer(r.label))
 		handle.Delete()
 		C.free(unsafe.Pointer(payload))
 		_ = reader.Close()

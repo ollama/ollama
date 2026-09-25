@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -16,6 +17,7 @@ import (
 type testSafetensorsReader struct {
 	*bytes.Reader
 	size   int64
+	name   string
 	closed atomic.Bool
 }
 
@@ -25,6 +27,10 @@ func newTestSafetensorsReader(data []byte) *testSafetensorsReader {
 
 func (r *testSafetensorsReader) Size() int64 {
 	return r.size
+}
+
+func (r *testSafetensorsReader) Name() string {
+	return r.name
 }
 
 func (r *testSafetensorsReader) Close() error {
@@ -77,8 +83,9 @@ func TestLoadSafetensorsReaderRejectsShortRead(t *testing.T) {
 		data := safetensorsFixture(mt, path, []byte{3, 1, 4, 1})
 		reader = newTestSafetensorsReader(data[:4])
 		reader.size = int64(len(data))
-		if _, err := LoadSafetensors(reader); err == nil {
-			mt.Fatal("LoadSafetensors succeeded after a short read")
+		reader.name = path
+		if _, err := LoadSafetensors(reader); err == nil || !strings.Contains(err.Error(), path) {
+			mt.Fatalf("LoadSafetensors error = %v, want the source filename", err)
 		}
 	})
 	if !reader.closed.Load() {
