@@ -8,8 +8,6 @@ import {
 } from "react";
 import type { Message } from "@/gotypes";
 
-// warning: this file is all claude code, needs to be looked into more closely
-
 interface UseMessageAutoscrollOptions {
   messages: Message[];
   isStreaming: boolean;
@@ -22,326 +20,207 @@ interface MessageAutoscrollBehavior {
   spacerHeight: number;
 }
 
+const BOTTOM_THRESHOLD = 50;
+
 export const useMessageAutoscroll = ({
   messages,
   isStreaming,
   chatId,
 }: UseMessageAutoscrollOptions): MessageAutoscrollBehavior => {
   const containerRef = useRef<HTMLElement | null>(null);
-  const pendingScrollToUserMessage = useRef(false);
   const [spacerHeight, setSpacerHeight] = useState(0);
-  const lastScrollHeightRef = useRef(0);
-  const lastScrollTopRef = useRef(0);
-  const [isActiveInteraction, setIsActiveInteraction] = useState(false);
-  const [hasSubmittedMessage, setHasSubmittedMessage] = useState(false);
-  const prevChatIdRef = useRef<string>(chatId);
+  const spacerInDOM = useRef(0);
+  const submitted = useRef(false);
+  const needsScroll = useRef(false);
+  const nearBottom = useRef(true);
+  const cachedPaddingTop = useRef(0);
 
-  // Find the last user message index from React state
-  const getLastUserMessageIndex = useCallback(() => {
+  const getLastUserIndex = useCallback((): number => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "user") {
-        return i;
-      }
+      if (messages[i].role === "user") return i;
     }
     return -1;
-  }, [messages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- index only changes on add/remove
+  }, [messages.length]);
 
-  const scrollToMessage = useCallback((messageIndex: number) => {
-    if (!containerRef.current || messageIndex < 0) {
-      return;
+  const getAnchorElement = useCallback(
+    (container: HTMLElement): HTMLElement | null => {
+      const idx = getLastUserIndex();
+      if (idx < 0) return null;
+      return container.querySelector(
+        `[data-message-index="${idx}"]`,
+      ) as HTMLElement | null;
+    },
+    [getLastUserIndex],
+  );
+
+  const getPaddingTop = useCallback((container: HTMLElement): number => {
+    if (!cachedPaddingTop.current) {
+      cachedPaddingTop.current =
+        parseFloat(getComputedStyle(container).paddingTop) || 0;
     }
+    return cachedPaddingTop.current;
+  }, []);
 
+  // Spacer so maxScroll = anchor at top of viewport
+  const computeSpacer = useCallback((): number => {
     const container = containerRef.current;
-    // select the exact element by its data-message-index to avoid index mismatches
-    const targetElement = container.querySelector(
-      `[data-message-index="${messageIndex}"]`,
-    ) as HTMLElement | null;
+    if (!container || !submitted.current) return 0;
 
-    if (!targetElement) return;
+    const anchor = getAnchorElement(container);
+    if (!anchor) return 0;
 
-    const containerHeight = container.clientHeight;
-    const containerStyle = window.getComputedStyle(container);
-    const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
-    const scrollHeight = container.scrollHeight;
-    const messageHeight = targetElement.offsetHeight;
+    const paddingTop = getPaddingTop(container);
+    const contentHeight = container.scrollHeight - spacerInDOM.current;
 
-    // Check if the message is large, which is 70% of the container height
-    const isLarge = messageHeight > containerHeight * 0.7;
-
-    let targetPosition: number = targetElement.offsetTop - paddingTop; // default to scrolling the message to the top of the window
-
-    if (isLarge) {
-      // when the message is large scroll to the bottom of it
-      targetPosition = scrollHeight - containerHeight;
-    }
-
-    // Ensure we don't scroll past content boundaries
-    const maxScroll = scrollHeight - containerHeight;
-    const finalPosition = Math.min(Math.max(0, targetPosition), maxScroll);
-
-    container.scrollTo({
-      top: finalPosition,
-      behavior: "smooth",
-    });
-  }, []);
-
-  // Calculate and set the spacer height based on container dimensions
-  const updateSpacerHeight = useCallback(() => {
-    if (!containerRef.current) {
-      return;
-    }
-
-    const containerHeight = containerRef.current.clientHeight;
-
-    // Find the last user message to calculate spacer for
-    const lastUserIndex = getLastUserMessageIndex();
-
-    if (lastUserIndex < 0) {
-      setSpacerHeight(0);
-      return;
-    }
-
-    const messageElements = containerRef.current.querySelectorAll(
-      "[data-message-index]",
-    ) as NodeListOf<HTMLElement>;
-
-    if (!messageElements || messageElements.length === 0) {
-      setSpacerHeight(0);
-      return;
-    }
-
-    const targetElement = containerRef.current.querySelector(
-      `[data-message-index="${lastUserIndex}"]`,
-    ) as HTMLElement | null;
-
-    if (!targetElement) {
-      setSpacerHeight(0);
-      return;
-    }
-
-    const elementsAfter = Array.from(messageElements).filter((el) => {
-      const idx = Number(el.dataset.messageIndex);
-      return Number.isFinite(idx) && idx > lastUserIndex;
-    });
-
-    const contentHeightAfterTarget = elementsAfter.reduce(
-      (sum, el) => sum + el.offsetHeight,
+    return Math.max(
       0,
+      anchor.offsetTop - paddingTop + container.clientHeight - contentHeight,
     );
+  }, [getAnchorElement, getPaddingTop]);
 
-    // Calculate the spacer height needed to position the user message at the top
-    // Add extra space for assistant response area
-    const targetMessageHeight = targetElement.offsetHeight;
-
-    // Calculate spacer to position the last user message at the top
-    // For new messages, we want them to appear at the top regardless of content after
-    // For large messages, we want to preserve the scroll-to-bottom behavior
-    // which shows part of the message and space for streaming response
-    let baseHeight: number;
-
-    if (contentHeightAfterTarget === 0) {
-      // No content after the user message (new message case)
-      // Position it at the top with some padding
-      baseHeight = Math.max(0, containerHeight - targetMessageHeight);
-    } else {
-      // Content exists after the user message
-      // Calculate spacer to position user message at top
-      baseHeight = Math.max(
-        0,
-        containerHeight - contentHeightAfterTarget - targetMessageHeight,
-      );
+  const applySpacer = useCallback(() => {
+    const h = computeSpacer();
+    if (h !== spacerInDOM.current) {
+      spacerInDOM.current = h;
+      setSpacerHeight(h);
     }
+  }, [computeSpacer]);
 
-    // Only apply spacer height when actively interacting (streaming or pending new message)
-    // When just viewing a chat, don't add extra space
-    if (!isActiveInteraction) {
-      setSpacerHeight(0);
-      return;
-    }
-
-    // Add extra space for assistant response only when streaming
-    const extraSpaceForAssistant = isStreaming ? containerHeight * 0.4 : 0;
-    const calculatedHeight = baseHeight + extraSpaceForAssistant;
-
-    setSpacerHeight(calculatedHeight);
-  }, [getLastUserMessageIndex, isStreaming, isActiveInteraction]);
-
-  // Handle new user message submission
   const handleNewUserMessage = useCallback(() => {
-    // Mark that we're expecting a new message and should scroll to it
-    pendingScrollToUserMessage.current = true;
-    setIsActiveInteraction(true);
-    setHasSubmittedMessage(true);
+    submitted.current = true;
+    needsScroll.current = true;
+    nearBottom.current = true;
   }, []);
 
-  // Use layoutEffect to scroll immediately after DOM updates
+  // Recalculate spacer + scroll to anchor if pending
   useLayoutEffect(() => {
-    if (pendingScrollToUserMessage.current) {
-      // Find the last user message from current state
-      const targetUserIndex = getLastUserMessageIndex();
+    applySpacer();
 
-      if (targetUserIndex >= 0) {
+    if (needsScroll.current) {
+      needsScroll.current = false;
+      const container = containerRef.current;
+      const anchor = container ? getAnchorElement(container) : null;
+      if (container && anchor) {
+        const paddingTop = getPaddingTop(container);
+        const isLarge = anchor.offsetHeight > container.clientHeight * 0.7;
+
         requestAnimationFrame(() => {
-          updateSpacerHeight();
-          requestAnimationFrame(() => {
-            scrollToMessage(targetUserIndex);
-            pendingScrollToUserMessage.current = false;
+          container.scrollTo({
+            top: isLarge
+              ? container.scrollHeight - container.clientHeight
+              : anchor.offsetTop - paddingTop,
+            behavior: "instant",
           });
         });
-      } else {
-        pendingScrollToUserMessage.current = false;
-        // Reset active interaction if no target found
-        setIsActiveInteraction(isStreaming);
       }
     }
-  }, [
-    messages,
-    getLastUserMessageIndex,
-    scrollToMessage,
-    updateSpacerHeight,
-    isStreaming,
-  ]);
+  }, [messages, applySpacer, getAnchorElement, getPaddingTop]);
 
-  // Update active interaction state based on streaming and message submission
+  // Auto-scroll during streaming when user hasn't scrolled away
   useEffect(() => {
-    if (
-      isStreaming ||
-      pendingScrollToUserMessage.current ||
-      hasSubmittedMessage
-    ) {
-      setIsActiveInteraction(true);
-    } else {
-      setIsActiveInteraction(false);
-    }
-  }, [isStreaming, hasSubmittedMessage]);
+    const container = containerRef.current;
+    if (!isStreaming || !nearBottom.current || !container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [messages, isStreaming]);
 
+  // Track nearBottom via wheel/touch only (scroll events fire on programmatic scrolls too)
   useEffect(() => {
-    if (prevChatIdRef.current !== chatId) {
-      setIsActiveInteraction(false);
-      setHasSubmittedMessage(false);
-      prevChatIdRef.current = chatId;
-    }
+    const container = containerRef.current;
+    if (!container) return;
+
+    const isNearBottom = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      return scrollTop + clientHeight >= scrollHeight - BOTTOM_THRESHOLD;
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        nearBottom.current = false;
+      } else if (e.deltaY > 0) {
+        nearBottom.current = isNearBottom();
+      }
+    };
+
+    let lastTouchY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchY = e.touches[0].clientY;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0].clientY;
+      if (y > lastTouchY) {
+        // finger moves down = content scrolls up
+        nearBottom.current = false;
+      } else if (y < lastTouchY) {
+        nearBottom.current = isNearBottom();
+      }
+      lastTouchY = y;
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: true });
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+    };
   }, [chatId]);
 
-  // Recalculate spacer height when messages change
+  // Observe layout changes (images loading, expand/collapse)
   useEffect(() => {
-    updateSpacerHeight();
-  }, [messages, updateSpacerHeight]);
+    const container = containerRef.current;
+    if (!container) return;
 
-  // Use ResizeObserver to handle dynamic content changes
-  useEffect(() => {
-    if (!containerRef.current) return;
+    let timeout: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      if (submitted.current) {
+        applySpacer();
+      } else {
+        clearTimeout(timeout);
+        timeout = setTimeout(applySpacer, 80);
+      }
+    };
 
-    let resizeTimeout: ReturnType<typeof setTimeout>;
-    let immediateUpdate = false;
+    const ro = new ResizeObserver(onResize);
+    ro.observe(container);
+    container
+      .querySelectorAll("[data-message-index]")
+      .forEach((el) => ro.observe(el));
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      // Check if this is a significant height change (like collapsing content)
-      let hasSignificantChange = false;
-      for (const entry of entries) {
-        const element = entry.target as HTMLElement;
-        if (
-          element.dataset.messageIndex &&
-          entry.contentRect.height !== element.offsetHeight
-        ) {
-          const heightDiff = Math.abs(
-            entry.contentRect.height - element.offsetHeight,
-          );
-          if (heightDiff > 50) {
-            hasSignificantChange = true;
-            break;
+    // Auto-observe new message elements
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node instanceof HTMLElement) {
+            const el = node.dataset?.messageIndex
+              ? node
+              : node.querySelector?.("[data-message-index]");
+            if (el) ro.observe(el);
           }
         }
       }
-
-      // For significant changes, update immediately
-      if (hasSignificantChange || immediateUpdate) {
-        updateSpacerHeight();
-        immediateUpdate = false;
-      } else {
-        // For small changes (like streaming text), debounce
-        clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(() => {
-          updateSpacerHeight();
-        }, 100);
-      }
     });
-
-    // Also use MutationObserver for immediate attribute changes
-    const mutationObserver = new MutationObserver((mutations) => {
-      // Check if any mutations are related to expanding/collapsing
-      const hasToggle = mutations.some(
-        (mutation) =>
-          mutation.type === "attributes" &&
-          (mutation.attributeName === "class" ||
-            mutation.attributeName === "style" ||
-            mutation.attributeName === "open" ||
-            mutation.attributeName === "data-expanded"),
-      );
-
-      if (hasToggle) {
-        immediateUpdate = true;
-        updateSpacerHeight();
-      }
-    });
-
-    // Observe the container and all messages
-    resizeObserver.observe(containerRef.current);
-    mutationObserver.observe(containerRef.current, {
-      attributes: true,
-      subtree: true,
-      attributeFilter: ["class", "style", "open", "data-expanded"],
-    });
-
-    // Observe all message elements for size changes
-    const messageElements = containerRef.current.querySelectorAll(
-      "[data-message-index]",
-    );
-    messageElements.forEach((element) => {
-      resizeObserver.observe(element);
-    });
+    mo.observe(container, { childList: true, subtree: true });
 
     return () => {
-      clearTimeout(resizeTimeout);
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
+      clearTimeout(timeout);
+      ro.disconnect();
+      mo.disconnect();
     };
-  }, [messages, updateSpacerHeight]);
+  }, [applySpacer, chatId]);
 
-  // Track scroll position
+  // Reset on chat change
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    const container = containerRef.current;
-    const handleScroll = () => {
-      lastScrollTopRef.current = container.scrollTop;
-      lastScrollHeightRef.current = container.scrollHeight;
-    };
-
-    container.addEventListener("scroll", handleScroll);
-
-    // Initialize scroll tracking
-    lastScrollTopRef.current = container.scrollTop;
-    lastScrollHeightRef.current = container.scrollHeight;
-
-    return () => {
-      container.removeEventListener("scroll", handleScroll);
-    };
-  }, []);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      pendingScrollToUserMessage.current = false;
-    };
-  }, []);
+    submitted.current = false;
+    nearBottom.current = true;
+    cachedPaddingTop.current = 0;
+    spacerInDOM.current = 0;
+    setSpacerHeight(0);
+  }, [chatId]);
 
   return useMemo(
-    () => ({
-      handleNewUserMessage,
-      containerRef,
-      spacerHeight,
-    }),
-    [handleNewUserMessage, containerRef, spacerHeight],
+    () => ({ handleNewUserMessage, containerRef, spacerHeight }),
+    [handleNewUserMessage, spacerHeight],
   );
 };
