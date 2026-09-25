@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
@@ -384,7 +385,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("cmpl-%s", uuid.NewString()),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -477,7 +478,7 @@ func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			id:            fmt.Sprintf("chatcmpl-%s", uuid.NewString()),
 			streamOptions: req.StreamOptions,
 		}
 
