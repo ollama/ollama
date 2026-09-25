@@ -126,7 +126,7 @@ export function History({
         />
       }
     >
-      <main className="flex h-screen w-full flex-col relative allow-context-menu select-none">
+      <main className="flex min-h-0 flex-1 w-full flex-col relative allow-context-menu select-none">
         <section
           key={selectedID}
           className={`flex-1 overflow-y-auto overscroll-contain relative min-h-0 select-none ${isWindowsPlatform() ? "xl:pt-4" : "xl:pt-8"}`}
@@ -146,7 +146,7 @@ export function History({
             </p>
           )}
         </section>
-        <div className="flex-shrink-0 sticky bottom-0 z-20">
+        <div className="flex-shrink-0">
           <div className="mx-auto max-w-[768px] px-6 pb-4">
             {error && (
               <p
