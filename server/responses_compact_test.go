@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -653,4 +654,41 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 	if !strings.Contains(forwarded, "The build is ready.") || !strings.Contains(forwarded, "new turn") || !strings.Contains(forwarded, "ollama_compaction_summary") {
 		t.Fatalf("expanded state is incomplete: %s", forwarded)
 	}
+}
+
+func TestWriteResponsesCompactionStreamStopsOnWriteError(t *testing.T) {
+	writeErr := errors.New("client disconnected")
+	w := &compactionStreamErrorWriter{
+		recorder: httptest.NewRecorder(),
+		err:      writeErr,
+	}
+	c := &gin.Context{
+		Writer:  w,
+		Request: httptest.NewRequest(http.MethodGet, "/v1/responses", nil),
+	}
+	events := []openai.ResponsesStreamEvent{
+		{Event: "response.created", Data: map[string]string{"id": "resp_1"}},
+		{Event: "response.completed", Data: map[string]string{"id": "resp_1"}},
+	}
+
+	writeResponsesCompactionStream(c, events)
+	if w.writes != 1 {
+		t.Fatalf("attempted %d stream writes, want to stop after the first failure", w.writes)
+	}
+}
+
+type compactionStreamErrorWriter struct {
+	gin.ResponseWriter
+	recorder *httptest.ResponseRecorder
+	err      error
+	writes   int
+}
+
+func (w *compactionStreamErrorWriter) Header() http.Header { return w.recorder.Header() }
+
+func (w *compactionStreamErrorWriter) WriteHeader(status int) { w.recorder.WriteHeader(status) }
+
+func (w *compactionStreamErrorWriter) Write([]byte) (int, error) {
+	w.writes++
+	return 0, w.err
 }
