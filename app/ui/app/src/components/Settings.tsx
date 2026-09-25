@@ -22,6 +22,7 @@ import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   Squares2X2Icon,
+  ChatBubbleLeftRightIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
@@ -812,11 +813,14 @@ export default function Settings() {
           >
             <Field>
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <Label>Chat history</Label>
-                  <Description>
-                    Save all chats and attachments in a ZIP file.
-                  </Description>
+                <div className="flex items-start space-x-3">
+                  <ChatBubbleLeftRightIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                  <div>
+                    <Label>Chat history</Label>
+                    <Description>
+                      Save all chats and attachments in a ZIP file.
+                    </Description>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {isExporting && (
