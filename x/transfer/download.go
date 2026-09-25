@@ -45,6 +45,11 @@ type downloader struct {
 	// only when tests build downloader directly (in which case holdBody is
 	// a no-op).
 	bodySem *semaphore.Weighted
+
+	// createFile is injectable so download failures can be tested without
+	// depending on a filesystem becoming full.
+	createFile func(string) (io.WriteCloser, error)
+	mkdirAll   func(string, os.FileMode) error
 }
 
 // authToken returns the current bearer token. Safe to call concurrently with
@@ -285,23 +290,29 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
-	os.MkdirAll(filepath.Dir(dest), 0o755)
+	mkdirAll := os.MkdirAll
+	if d.mkdirAll != nil {
+		mkdirAll = d.mkdirAll
+	}
+	mkdirAll(filepath.Dir(dest), 0o755)
 
 	h := sha256.New()
 
-	var f *os.File
+	var f io.WriteCloser
 	var err error
 
 	if existingSize > 0 {
 		// Resume — re-hash existing partial data, then append
-		f, err = os.OpenFile(tmp, os.O_RDWR, 0o644)
-		if err != nil {
+		partial, openErr := os.OpenFile(tmp, os.O_RDWR, 0o644)
+		if openErr != nil {
 			// Can't open partial file, start fresh
 			existingSize = 0
 		} else {
+			f = partial
 			// Hash the existing data
-			if _, hashErr := io.CopyN(h, f, existingSize); hashErr != nil {
-				f.Close()
+			if _, hashErr := io.CopyN(h, partial, existingSize); hashErr != nil {
+				partial.Close()
+				f = nil
 				os.Remove(tmp)
 				existingSize = 0
 			} else {
@@ -312,14 +323,20 @@ func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingS
 	}
 
 	if existingSize == 0 {
-		f, err = os.Create(tmp)
+		if d.createFile != nil {
+			f, err = d.createFile(tmp)
+		} else {
+			f, err = os.Create(tmp)
+		}
 		if err != nil {
 			return 0, err
 		}
-		setSparse(f)
+		if file, ok := f.(*os.File); ok {
+			setSparse(file)
+		}
 	}
-	defer f.Close()
 
+	defer f.Close()
 	n, err := d.copy(ctx, f, r, h)
 	if err != nil {
 		// Don't remove .tmp here — download() handles cleanup based on blob size
