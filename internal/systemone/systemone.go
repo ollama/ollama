@@ -231,7 +231,7 @@ type scoreAnswer struct {
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
-	response := Response{Model: model, Answers: orderedmap.New[string, any](), Usage: Usage{InputTokens: result.InputTokens}}
+	response := Response{Model: model, Answers: orderedmap.New[string, any](), Usage: Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}}
 	if len(result.Logits) != len(c.fields) {
 		return response, fmt.Errorf("scorer returned %d rows for %d questions", len(result.Logits), len(c.fields))
 	}

@@ -852,7 +852,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local Nimble model"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local Nimble or Tev model"})
 		return
 	}
 	name, err := getExistingName(ref.Name)
@@ -865,8 +865,8 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if m.Config.Renderer != "qwen3.5" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local Nimble model", req.Model)})
+	if m.Config.Renderer != "qwen3.5" && !(m.isGGUF() && m.Config.Renderer == "" && m.Config.ModelFamily == "qwen35") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local Nimble or Tev model", req.Model)})
 		return
 	}
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion}, nil, req.KeepAlive, nil)
@@ -876,7 +876,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; import Nimble from safetensors", req.Model)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local Nimble or Tev model with a scoring-capable runner", req.Model)})
 		return
 	}
 	result, err := scorer.Score(c.Request.Context(), compiled.Request)

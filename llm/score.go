@@ -19,6 +19,9 @@ type ScoreRow struct {
 }
 
 type ScoreResponse struct {
-	Logits      [][]float32 `json:"logits"`
-	InputTokens int         `json:"input_tokens"` // Sum of complete prompt lengths, including shared tokens.
+	// Logits may be log probabilities: a shared offset within a row does not
+	// affect the softmax over its candidates.
+	Logits       [][]float32 `json:"logits"`
+	InputTokens  int         `json:"input_tokens"`            // Sum of complete prompt lengths, including shared tokens.
+	OutputTokens int         `json:"output_tokens,omitempty"` // Tokens generated internally to obtain candidate scores.
 }

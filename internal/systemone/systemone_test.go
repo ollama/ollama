@@ -129,6 +129,31 @@ func TestAnswers(t *testing.T) {
 	}
 }
 
+func TestAnswerLogprobs(t *testing.T) {
+	c, err := Compile(testRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logits := [][]float32{{0, 2}, {0, -2}, {0, 2, 4}}
+	logprobs := [][]float32{{-10, -8}, {-10, -12}, {-10, -8, -6}}
+	want, err := c.Answer("nimble", llm.ScoreResponse{Logits: logits, InputTokens: 123})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Answer("nimble", llm.ScoreResponse{Logits: logprobs, InputTokens: 123, OutputTokens: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAnswers, _ := json.Marshal(want.Answers)
+	gotAnswers, _ := json.Marshal(got.Answers)
+	if string(wantAnswers) != string(gotAnswers) {
+		t.Fatalf("row offsets changed candidate probabilities: %s != %s", gotAnswers, wantAnswers)
+	}
+	if got.Usage.InputTokens != 123 || got.Usage.OutputTokens != 7 || want.Usage.OutputTokens != 0 {
+		t.Fatalf("incorrect backend usage: llama=%+v direct=%+v", got.Usage, want.Usage)
+	}
+}
+
 func TestInvalidRequests(t *testing.T) {
 	for _, data := range []string{
 		`{}`, `{"model":"nimble","state":"x","questions":{}}`,

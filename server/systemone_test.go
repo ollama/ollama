@@ -13,7 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/systemone"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 )
@@ -38,6 +40,30 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "decision-test", config, nil)
 	config.Renderer = "gemma4"
 	createSafetensorsTestModel(t, "wrong-renderer", config, nil)
+	for _, modelConfig := range []struct {
+		name, architecture, renderer string
+	}{
+		{"gguf-decision", "qwen35", ""},
+		{"gguf-wrong-architecture", "llama", ""},
+		{"gguf-wrong-renderer", "qwen35", "gemma4"},
+	} {
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":    modelConfig.architecture,
+			"tokenizer.chat_template": "{{ messages }}",
+		}, nil)
+		configLayer, err := createConfigLayer(model.ConfigV2{
+			ModelFormat: "gguf", ModelFamily: modelConfig.architecture,
+			Renderer: modelConfig.renderer, Capabilities: []string{"completion"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifest(model.ParseName(modelConfig.name), *configLayer, []manifest.Layer{{
+			MediaType: "application/vnd.ollama.image.model", Digest: digest,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	for _, tt := range []struct {
 		name   string
@@ -48,6 +74,9 @@ func TestSystemOneHandler(t *testing.T) {
 		expire bool
 	}{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"GGUF incompatible architecture", `{"model":"gguf-wrong-architecture","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"GGUF conflicting renderer", `{"model":"gguf-wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
 		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("MLX: failed to allocate memory"), 500, 1, true},
