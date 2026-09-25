@@ -1170,7 +1170,12 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	var data [][]string
 
+	localOnly, _ := cmd.Flags().GetBool("local")
+
 	for _, m := range models.Models {
+		if localOnly && m.RemoteModel != "" {
+			continue
+		}
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
 			var size string
 			if m.RemoteModel != "" {
@@ -2543,6 +2548,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+	listCmd.Flags().Bool("local", false, "Show only locally installed models")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
