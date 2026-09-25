@@ -524,7 +524,7 @@ func revealHistoryExport(result *history.Result, path string) {
 	}
 	if err != nil {
 		slog.Warn("failed to reveal chat export", "path", path, "error", err)
-		result.Warnings = append(result.Warnings, "Export saved, but the folder could not be opened. You can find it at the saved path.")
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Export saved, but the folder could not be opened. You can find it at: %s", result.Path))
 	}
 }
 
