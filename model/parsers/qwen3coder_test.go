@@ -49,6 +49,25 @@ func TestQwenParserStreaming(t *testing.T) {
 			},
 		},
 		{
+			desc: "implicit tool opener after reasoning",
+			steps: []step{
+				{
+					input: "I will find the files.\n\n<function=glob>\n<parameter=pattern>\n**/*.md\n</parameter>\n</function>\n</tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "I will find the files."},
+						qwenEventRawToolCall{raw: "<function=glob>\n<parameter=pattern>\n**/*.md\n</parameter>\n</function>\n"},
+					},
+				},
+			},
+		},
+		{
+			desc: "implicit tool opener split across chunks",
+			steps: []step{
+				{input: "before\n<fun", wantEvents: []qwenEvent{qwenEventContent{content: "before"}}},
+				{input: "ction=glob>body</tool_call>", wantEvents: []qwenEvent{qwenEventRawToolCall{raw: "<function=glob>body"}}},
+			},
+		},
+		{
 			desc: "multiple tool calls in one message",
 			steps: []step{
 				{

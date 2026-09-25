@@ -19,8 +19,9 @@ import (
 type qwenParserState int
 
 const (
-	toolOpenTag  = "<tool_call>"
-	toolCloseTag = "</tool_call>"
+	toolOpenTag     = "<tool_call>"
+	toolCloseTag    = "</tool_call>"
+	functionOpenTag = "<function="
 )
 
 const (
@@ -151,25 +152,35 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 
 	switch p.state {
 	case qwenParserState_LookingForToolStart:
-		if strings.Contains(p.acc.String(), toolOpenTag) {
-			// we found a full tool open tag, so we can emit the content before the
-			// tag, being sure to trim any trailing whitespace
-			split := strings.SplitN(p.acc.String(), toolOpenTag, 2)
-			before := split[0]
-			before = strings.TrimRightFunc(before, unicode.IsSpace)
+		acc := p.acc.String()
+		openTag := toolOpenTag
+		openIndex := strings.Index(acc, toolOpenTag)
+		if functionIndex := strings.Index(acc, functionOpenTag); functionIndex >= 0 &&
+			(openIndex < 0 || functionIndex < openIndex) {
+			openTag = functionOpenTag
+			openIndex = functionIndex
+		}
+
+		if openIndex >= 0 {
+			// Emit the content before the opener, trimming trailing whitespace. A
+			// function opener is accepted directly because some Qwen3-Coder outputs
+			// omit the surrounding tool-call opener.
+			before := strings.TrimRightFunc(acc[:openIndex], unicode.IsSpace)
 			if len(before) > 0 {
 				events = append(events, qwenEventContent{content: before})
 			}
-			after := split[1]
+			after := acc[openIndex+len(openTag):]
+			if openTag == functionOpenTag {
+				after = functionOpenTag + after
+			}
 			p.acc.Reset()
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
-			// we found a partial tool open tag, so we can emit the unambiguous part,
-			// which is the (trailing-whitespace trimmed) content before the partial
-			// tool open tag
-			beforePartialTag := p.acc.String()[:len(p.acc.String())-overlap]
+		} else if overlap := max(overlap(acc, toolOpenTag), overlap(acc, functionOpenTag)); overlap > 0 {
+			// we found a partial opener, so emit the unambiguous part while retaining
+			// trailing whitespace and the partial tag for the next chunk
+			beforePartialTag := acc[:len(acc)-overlap]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
 			unambiguous := p.acc.String()[:ambiguousStart]
