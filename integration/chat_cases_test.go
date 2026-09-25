@@ -4,20 +4,13 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/format"
 )
-
-var sweepVRAMWarning sync.Once
 
 func registerChatCases(models []string) {
 	registerModelIntegrationCases("chat", models, runChatModel)
@@ -69,10 +62,6 @@ func chatModelRequest(model string) (api.ChatRequest, []string) {
 			},
 		},
 		KeepAlive: &api.Duration{Duration: 10 * time.Second},
-		Options: map[string]any{
-			"temperature": 0.1,
-			"seed":        123,
-		},
 	}
 	anyResp := blueSkyExpected
 
@@ -105,40 +94,6 @@ func skipIfTargetArchitecture(ctx context.Context, t *testing.T, client *api.Cli
 	}
 	arch := resp.ModelInfo["general.architecture"].(string)
 	if arch != targetArch {
-		t.Skip(fmt.Sprintf("Skipping %s architecture %s != %s", model, arch, targetArch))
+		t.Skipf("Skipping %s architecture %s != %s", model, arch, targetArch)
 	}
-}
-
-func skipIfModelTooLargeForSweepVRAM(ctx context.Context, t *testing.T, client *api.Client, model string) {
-	t.Helper()
-
-	s := os.Getenv("OLLAMA_MAX_VRAM")
-	if s == "" {
-		sweepVRAMWarning.Do(func() {
-			slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
-		})
-		return
-	}
-
-	maxVram, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		t.Fatalf("invalid  OLLAMA_MAX_VRAM %v", err)
-	}
-
-	resp, err := client.List(ctx)
-	if err != nil {
-		t.Fatalf("list models failed %v", err)
-	}
-	for _, m := range resp.Models {
-		if modelNameMatches(model, m.Name) && float32(m.Size)*1.2 > float32(maxVram) {
-			t.Skipf("model %s is too large for available VRAM: %s > %s", model, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
-		}
-	}
-}
-
-func modelNameMatches(model, name string) bool {
-	if name == model {
-		return true
-	}
-	return !strings.Contains(model, ":") && strings.HasPrefix(name, model+":")
 }
