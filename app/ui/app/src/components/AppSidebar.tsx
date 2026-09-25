@@ -1,6 +1,9 @@
 import { Link } from "@/components/ui/link";
-import { ChatIcon } from "@/components/ChatIcon";
-import { Cog6ToothIcon, RectangleGroupIcon } from "@heroicons/react/24/outline";
+import {
+  ChatBubbleOvalLeftIcon,
+  Cog6ToothIcon,
+  RectangleGroupIcon,
+} from "@heroicons/react/24/outline";
 
 type AppSection = "apps" | "chat" | "settings";
 
@@ -23,7 +26,7 @@ export function AppNavigation({ current }: { current: AppSection }) {
         className={itemClass("chat")}
         draggable={false}
       >
-        <ChatIcon />
+        <ChatBubbleOvalLeftIcon className="h-5 w-5 stroke-current" />
         <span className="truncate">Chat</span>
       </Link>
       <Link to="/settings" className={itemClass("settings")} draggable={false}>
