@@ -155,7 +155,7 @@ func GetAllManifestsInfo(req api.ShowRequest) (*api.ShowManifestsResponse, error
 		}
 	}
 	req.Runner = runner
-	if req.Runner != "" {
+	if !manifest.IsDefaultRunner(req.Runner) {
 		return nil, api.StatusError{
 			StatusCode:   http.StatusBadRequest,
 			ErrorMessage: "runner cannot be used with all_manifests",

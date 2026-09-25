@@ -1154,7 +1154,7 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 			return err
 		}
 		selectedChildDigest = childDigest
-	} else if runner != "" {
+	} else if !manifest.IsDefaultRunner(runner) {
 		// The registry served a plain manifest, so there is no variant to
 		// select. Honor an explicit runner request by rejecting a declared
 		// mismatch instead of silently pulling whatever is stored. Manifests
