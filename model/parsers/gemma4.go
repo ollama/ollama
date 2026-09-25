@@ -480,7 +480,7 @@ func quoteGemma4BareKeys(s string) string {
 		sb.WriteString(s[spaceStart:i])
 
 		keyEnd := gemma4BareKeyEnd(s, i)
-		if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
+		if keyEnd > i && keyEnd < len(s) && (s[keyEnd] == ':' || s[keyEnd] == '=') {
 			sb.WriteByte('"')
 			sb.WriteString(s[i:keyEnd])
 			sb.WriteByte('"')
@@ -625,7 +625,7 @@ func repairGemma4SingleQuotedValues(s string) string {
 			}
 		}
 
-		if s[i] != ':' {
+		if s[i] != ':' && s[i] != '=' {
 			sb.WriteByte(s[i])
 			i++
 			continue
