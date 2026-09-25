@@ -22,8 +22,8 @@ import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
   Squares2X2Icon,
-  ChatBubbleOvalLeftIcon,
 } from "@heroicons/react/20/solid";
+import { ChatBubbleOvalLeftIcon } from "@heroicons/react/24/outline";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
 import { settingsMutationScope } from "@/lib/settingsMutationScope";
