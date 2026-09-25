@@ -181,7 +181,8 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   expect(exportChat).toHaveBeenCalledExactlyOnceWith("first");
   notifyManager.setScheduler(queueMicrotask);
   await act(async () => resolve({ path: "/exports/Garden" }));
-  expect(page()).toContain("/exports/Garden");
+  expect(page()).not.toContain("/exports/Garden");
+  expect(page()).not.toContain("Saved to");
   vi.mocked(exportChat).mockRejectedValueOnce(new Error("Disk is full"));
   await click("Export");
   await act(async () => vi.advanceTimersByTimeAsync(40));

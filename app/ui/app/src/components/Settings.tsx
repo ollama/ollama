@@ -894,19 +894,18 @@ export default function Settings() {
                 {chatExport.error.message}
               </p>
             )}
-            {chatExport.data && (
+            {chatExport.data?.warnings?.length ? (
               <p
                 role="status"
                 className="break-words select-text text-sm text-neutral-500 dark:text-neutral-400"
               >
-                Saved to {chatExport.data.path}
-                {chatExport.data.warnings?.map((warning) => (
+                {chatExport.data.warnings.map((warning) => (
                   <span key={warning} className="block">
                     {warning}
                   </span>
                 ))}
               </p>
-            )}
+            ) : null}
           </section>
 
           {!isWindows && (
