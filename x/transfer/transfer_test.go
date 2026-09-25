@@ -71,7 +71,7 @@ func TestCopyReturnsShortWriteError(t *testing.T) {
 	}
 }
 
-func TestDownloadKeepsDiskFullErrorWhenRetryWouldTimeout(t *testing.T) {
+func TestDownloadStopsRetryingAfterDiskFull(t *testing.T) {
 	const blobData = "blob data"
 	const registryURL = "https://registry.example"
 	const cdnURL = "https://dd20bb891979d25aebc8bec07b2b3bbc.r2.cloudflarestorage.com/ollama/docker/registry/v2/blobs/sha256/84/84f31a89192c4d2f47b046ef589c0dd95a833ce2d291b336323cb1b5b3f6579e/data?X-Amz-Signature=mock"
@@ -127,7 +127,6 @@ func TestDownloadKeepsDiskFullErrorWhenRetryWouldTimeout(t *testing.T) {
 	blob := Blob{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(blobData))), Size: int64(len(blobData))}
 
 	err := d.download(context.Background(), blob)
-	t.Logf("observed error: %v", err)
 	if !errors.Is(err, syscall.ENOSPC) {
 		t.Fatalf("download() error = %v, want original disk-full error", err)
 	}
