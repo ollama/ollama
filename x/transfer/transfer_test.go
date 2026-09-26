@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,9 +16,203 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
+
+type errorReader struct{ err error }
+
+func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+type dataErrorReader struct {
+	data []byte
+	err  error
+}
+
+func (r dataErrorReader) Read(p []byte) (int, error) {
+	return copy(p, r.data), r.err
+}
+
+func TestCopyReturnsWriteError(t *testing.T) {
+	diskFull := syscall.ENOSPC
+	networkTimeout := errors.New("Get blob: i/o timeout")
+	d := &downloader{speeds: &speedTracker{}}
+
+	_, err := d.copy(context.Background(), writerFunc(func([]byte) (int, error) {
+		return 0, diskFull
+	}), io.MultiReader(strings.NewReader("blob data"), errorReader{err: networkTimeout}), io.Discard)
+	t.Logf("observed error: %v", err)
+	if !errors.Is(err, diskFull) {
+		t.Fatalf("copy() error = %v, want destination write error %v", err, diskFull)
+	}
+}
+
+func TestCopyReturnsReadErrorAfterWritingBytes(t *testing.T) {
+	readErr := errors.New("source read failed")
+	d := &downloader{speeds: &speedTracker{}}
+	src := dataErrorReader{data: []byte("blob data"), err: readErr}
+
+	_, err := d.copy(context.Background(), io.Discard, src, io.Discard)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("copy() error = %v, want source read error %v", err, readErr)
+	}
+}
+
+func TestCopyReturnsShortWriteError(t *testing.T) {
+	d := &downloader{speeds: &speedTracker{}}
+	dst := writerFunc(func(p []byte) (int, error) {
+		return len(p) - 1, nil
+	})
+
+	_, err := d.copy(context.Background(), dst, strings.NewReader("blob data"), io.Discard)
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("copy() error = %v, want %v", err, io.ErrShortWrite)
+	}
+}
+
+func TestDownloadStopsRetryingAfterDiskFull(t *testing.T) {
+	const blobData = "blob data"
+	const registryURL = "https://registry.example"
+	const cdnURL = "https://dd20bb891979d25aebc8bec07b2b3bbc.r2.cloudflarestorage.com/ollama/docker/registry/v2/blobs/sha256/84/84f31a89192c4d2f47b046ef589c0dd95a833ce2d291b336323cb1b5b3f6579e/data?X-Amz-Signature=mock"
+
+	var cdnRequests atomic.Int32
+	client := &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "registry.example" {
+				header := make(http.Header)
+				header.Set("Location", cdnURL)
+				return &http.Response{
+					StatusCode: http.StatusTemporaryRedirect,
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Request:    req,
+				}, nil
+			}
+			if req.URL.String() != cdnURL {
+				return nil, fmt.Errorf("unexpected request URL %q", req.URL)
+			}
+			if cdnRequests.Add(1) == 1 {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(blobData)),
+					Request:    req,
+				}, nil
+			}
+			return nil, &net.OpError{
+				Op:  "dial",
+				Net: "tcp",
+				Addr: &net.TCPAddr{
+					IP:   net.ParseIP("172.64.66.1"),
+					Port: 443,
+				},
+				Err: os.ErrDeadlineExceeded,
+			}
+		}),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	d := &downloader{
+		client:       client,
+		baseURL:      registryURL,
+		destDir:      t.TempDir(),
+		repository:   "library/model",
+		allowPrivate: true,
+		speeds:       &speedTracker{},
+		createFile: func(string) (io.WriteCloser, error) {
+			return writeErrorCloser{err: syscall.ENOSPC}, nil
+		},
+	}
+	blob := Blob{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(blobData))), Size: int64(len(blobData))}
+
+	err := d.download(context.Background(), blob)
+	if !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("download() error = %v, want original disk-full error", err)
+	}
+	if got := cdnRequests.Load(); got != 1 {
+		t.Fatalf("download made %d CDN requests, want 1 (no retry after disk full)", got)
+	}
+}
+
+func TestSaveReturnsDirectoryCreationError(t *testing.T) {
+	diskFull := syscall.ENOSPC
+	createFileCalled := false
+	d := &downloader{
+		destDir: t.TempDir(),
+		speeds:  &speedTracker{},
+		mkdirAll: func(string, os.FileMode) error {
+			return diskFull
+		},
+		createFile: func(string) (io.WriteCloser, error) {
+			createFileCalled = true
+			return &testFile{Writer: io.Discard}, nil
+		},
+	}
+	data := "blob data"
+	blob := Blob{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(data))), Size: int64(len(data))}
+
+	_, err := d.save(context.Background(), blob, strings.NewReader(data), 0)
+	if !errors.Is(err, diskFull) {
+		t.Fatalf("save() error = %v, want directory creation error %v", err, diskFull)
+	}
+	if createFileCalled {
+		t.Fatal("save() created the blob after directory creation failed")
+	}
+}
+
+func TestSaveReturnsCloseError(t *testing.T) {
+	diskFull := syscall.ENOSPC
+	destDir := t.TempDir()
+	d := &downloader{
+		destDir: destDir,
+		speeds:  &speedTracker{},
+		createFile: func(name string) (io.WriteCloser, error) {
+			f, err := os.Create(name)
+			if err != nil {
+				return nil, err
+			}
+			return &closeErrorFile{File: f, err: diskFull}, nil
+		},
+	}
+	data := "blob data"
+	blob := Blob{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(data))), Size: int64(len(data))}
+
+	_, err := d.save(context.Background(), blob, strings.NewReader(data), 0)
+	if !errors.Is(err, diskFull) {
+		t.Fatalf("save() error = %v, want file close error %v", err, diskFull)
+	}
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+type writeErrorCloser struct{ err error }
+
+func (w writeErrorCloser) Write([]byte) (int, error) { return 0, w.err }
+
+func (writeErrorCloser) Close() error { return nil }
+
+type testFile struct{ io.Writer }
+
+func (testFile) Close() error { return nil }
+
+type closeErrorFile struct {
+	*os.File
+	err error
+}
+
+func (f *closeErrorFile) Close() error {
+	fileErr := f.File.Close()
+	return errors.Join(fileErr, f.err)
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 // chunkedSession tracks accumulated PATCH body bytes for an upload session.
 // Tests that mock the registry use it to handle the GGUF-style POST → PATCH →

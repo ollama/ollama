@@ -234,7 +234,10 @@ func writeResponsesCompactionStream(c *gin.Context, events []openai.ResponsesStr
 		if err != nil {
 			return
 		}
-		_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event.Event, data)
+		if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event.Event, data); err != nil {
+			slog.DebugContext(c.Request.Context(), "failed writing responses compaction stream", "error", err)
+			return
+		}
 	}
 	if flusher, ok := c.Writer.(http.Flusher); ok {
 		flusher.Flush()
