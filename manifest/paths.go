@@ -29,7 +29,7 @@ func ValidateDigest(digest string) error {
 func Path() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
+		return "", fmt.Errorf("%w: Ensure path elements are traversable", err)
 	}
 
 	return path, nil
@@ -65,7 +65,7 @@ func BlobsPath(digest string) (string, error) {
 	}
 
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
+		return "", fmt.Errorf("%w: Path elements must be traversable", err)
 	}
 
 	return path, nil
