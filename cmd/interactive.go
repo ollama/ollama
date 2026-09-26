@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -264,7 +265,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 
-			req := NewCreateRequest(args[1], opts)
+			req, err := newSaveCreateRequest(cmd.Context(), client, args[1], opts)
+			if err != nil {
+				return err
+			}
+
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
@@ -543,6 +548,27 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 		}
 	}
+}
+
+func newSaveCreateRequest(ctx context.Context, client *api.Client, name string, opts runOptions) (*api.CreateRequest, error) {
+	req := NewCreateRequest(name, opts)
+	if req.From != opts.ParentModel || req.From == "" || req.From == opts.Model || modelref.HasExplicitCloudSource(req.From) {
+		return req, nil
+	}
+
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: req.From}); err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			opts = opts.Copy()
+			opts.ParentModel = ""
+			opts.LoadedMessages = nil
+			return NewCreateRequest(name, opts), nil
+		}
+
+		return nil, err
+	}
+
+	return req, nil
 }
 
 func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
