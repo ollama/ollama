@@ -7,7 +7,7 @@
 include(ExternalProject)
 
 set(OLLAMA_LLAMA_BACKENDS "" CACHE STRING
-    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v7_1;rocm_v7_2;vulkan;cuda_jetpack5;cuda_jetpack6")
+    "Semicolon-separated llama-server GPU backends to build: cuda_v12;cuda_v13;rocm_v10_0;vulkan;cuda_jetpack5;cuda_jetpack6")
 set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v13;metal_v3;metal_v4")
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
@@ -383,31 +383,39 @@ function(ollama_mlx_cuda_preset output)
 endfunction()
 
 function(ollama_rocm_preset backend output)
-    ollama_cache_arg_is_set(AMDGPU_TARGETS _has_amdgpu_targets)
-    ollama_cache_arg_is_set(CMAKE_HIP_ARCHITECTURES _has_hip_arch)
-    if(_has_amdgpu_targets OR _has_hip_arch)
-        if(backend STREQUAL "rocm_v7_1" AND NOT WIN32)
-            message(FATAL_ERROR "OLLAMA_LLAMA_BACKENDS=rocm_v7_1 is only supported for Windows ROCm builds")
-        elseif(backend STREQUAL "rocm_v7_2" AND WIN32)
-            message(FATAL_ERROR "OLLAMA_LLAMA_BACKENDS=rocm_v7_2 is only supported for Linux ROCm builds")
-        endif()
-    elseif(backend STREQUAL "rocm_v7_1")
-        if(NOT WIN32)
-            message(FATAL_ERROR "OLLAMA_LLAMA_BACKENDS=rocm_v7_1 is only supported for Windows ROCm builds")
-        endif()
-        set(_preset "${backend}_windows")
-    elseif(backend STREQUAL "rocm_v7_2")
-        if(WIN32)
-            message(FATAL_ERROR "OLLAMA_LLAMA_BACKENDS=rocm_v7_2 is only supported for Linux ROCm builds")
-        endif()
-        set(_preset "${backend}_linux")
-    else()
+    if(NOT backend STREQUAL "rocm_v10_0")
         message(FATAL_ERROR "Unknown ROCm backend '${backend}'")
     endif()
-    if(_has_amdgpu_targets OR _has_hip_arch)
+    ollama_cache_arg_is_set(GPU_TARGETS _has_gpu_targets)
+    ollama_cache_arg_is_set(AMDGPU_TARGETS _has_amdgpu_targets)
+    ollama_cache_arg_is_set(CMAKE_HIP_ARCHITECTURES _has_hip_arch)
+    if(_has_gpu_targets OR _has_amdgpu_targets OR _has_hip_arch)
         set(_preset "${backend}_user_arch")
+    elseif(WIN32)
+        set(_preset "${backend}_windows")
+    else()
+        set(_preset "${backend}_linux")
     endif()
     set(${output} "${_preset}" PARENT_SCOPE)
+endfunction()
+
+function(ollama_append_windows_rocm_compiler_args output)
+    if(NOT WIN32 OR NOT DEFINED ENV{HIP_PATH})
+        return()
+    endif()
+
+    find_program(_rocm_clang clang.exe
+        PATHS "$ENV{HIP_PATH}/bin" "$ENV{HIP_PATH}/lib/llvm/bin" "$ENV{HIP_PATH}/llvm/bin"
+        NO_DEFAULT_PATH NO_CACHE)
+    find_program(_rocm_clangxx clang++.exe
+        PATHS "$ENV{HIP_PATH}/bin" "$ENV{HIP_PATH}/lib/llvm/bin" "$ENV{HIP_PATH}/llvm/bin"
+        NO_DEFAULT_PATH NO_CACHE)
+    if(_rocm_clang AND _rocm_clangxx)
+        set(${output} ${${output}}
+            "-DCMAKE_C_COMPILER=${_rocm_clang}"
+            "-DCMAKE_CXX_COMPILER=${_rocm_clangxx}"
+            PARENT_SCOPE)
+    endif()
 endfunction()
 
 function(ollama_add_llama_server_build name)
@@ -451,7 +459,10 @@ function(ollama_add_llama_server_build name)
     # Visual Studio requires -T toolset override to select the correct CUDA toolkit.
     # MSBuild's CUDA integration ignores -DCUDAToolkit_ROOT for nvcc selection.
     # Prefer user-specified CUDAToolkit_ROOT before falling back to auto-discovery.
-    set(_generator_args)
+    set(_generator_args -G "${CMAKE_GENERATOR}")
+    if(CMAKE_GENERATOR_PLATFORM)
+        list(APPEND _generator_args -A "${CMAKE_GENERATOR_PLATFORM}")
+    endif()
     if(WIN32 AND CMAKE_GENERATOR MATCHES "Visual Studio")
         set(_cuda_root "${CUDAToolkit_ROOT}")
         if("${_cuda_root}" STREQUAL "")
@@ -734,10 +745,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 TARGETS ggml-cuda
                 CMAKE_ARGS ${_cuda_args})
             list(APPEND _backend_targets ollama-llama-server-${_backend})
-        elseif(_backend STREQUAL "rocm_v7_1" OR _backend STREQUAL "rocm_v7_2")
-            # ROCm 7.1 and 7.2 currently share build settings. Keep the backend
-            # names versioned so future packaging can install side-by-side ROCm
-            # payloads without changing the superbuild interface.
+        elseif(_backend STREQUAL "rocm_v10_0")
             ollama_rocm_preset(${_backend} _rocm_preset)
             set(_rocm_args
                 -DBUILD_SHARED_LIBS=ON
@@ -745,11 +753,13 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
                 -DGGML_HIP=ON
                 -DCMAKE_HIP_PLATFORM=amd
                 -DOLLAMA_GPU_BACKEND=hip)
+            ollama_append_cache_arg_if_set(_rocm_args GPU_TARGETS)
             ollama_append_cache_arg_if_set(_rocm_args AMDGPU_TARGETS)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_HIP_ARCHITECTURES)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_HIP_FLAGS)
             ollama_append_cache_arg_if_set(_rocm_args GGML_CUDA_NO_PEER_COPY)
             ollama_append_cache_arg_if_set(_rocm_args CMAKE_PREFIX_PATH)
+            ollama_append_windows_rocm_compiler_args(_rocm_args)
             ollama_add_llama_server_build(${_backend}
                 PRESET ${_rocm_preset}
                 RUNNER_DIR ${_backend}

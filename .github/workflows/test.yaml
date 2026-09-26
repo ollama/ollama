@@ -97,12 +97,11 @@ jobs:
             superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=cuda_v13 -DCMAKE_CUDA_ARCHITECTURES=87'
             expected_payload: lib/ollama/cuda_v13/libggml-cuda.so
           - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:7.2.1
-            extra-packages: rocm-libs
-            superbuild_target: ollama-llama-server-rocm_v7_2
-            superbuild_dir: build/local-superbuild-rocm_v7_2
-            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v7_2 -DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
-            expected_payload: lib/ollama/rocm_v7_2/libggml-hip.so
+            container: rocm/dev-ubuntu-22.04:10.0.0-full
+            superbuild_target: ollama-llama-server-rocm_v10_0
+            superbuild_dir: build/local-superbuild-rocm_v10_0
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v10_0 -DGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+            expected_payload: lib/ollama/rocm_v10_0/libggml-hip.so lib/ollama/rocm_v10_0/rocblas/library
           - preset: Vulkan
             container: ubuntu:22.04
             extra-packages: >
@@ -201,12 +200,12 @@ jobs:
               - '"nvptxcompiler"'
             cuda-version: '13.0'
           - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
-            rocm-version: '7.1'
-            superbuild_target: ollama-llama-server-rocm_v7_1
-            superbuild_dir: build\local-superbuild-rocm_v7_1
-            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v7_1 -DAMDGPU_TARGETS=gfx1010'
-            expected_payload: lib\ollama\rocm_v7_1\ggml-hip.dll
+            install: rocm-wheel-10.0.0-gfx1010
+            rocm-version: '10.0.0'
+            superbuild_target: ollama-llama-server-rocm_v10_0
+            superbuild_dir: build\local-superbuild-rocm_v10_0
+            superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=rocm_v10_0 -DGPU_TARGETS=gfx1010'
+            expected_payload: lib\ollama\rocm_v10_0\ggml-hip.dll lib\ollama\.kpack\blas_lib_gfx1010.kpack
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
             superbuild_target: ollama-llama-server-vulkan
@@ -253,6 +252,7 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\rocm-wheel-10.0.0
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
@@ -272,16 +272,21 @@ jobs:
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $venv = "C:\rocm-wheel-10.0.0"
+          $python = Join-Path $venv "Scripts\python.exe"
+          $rocmSDK = Join-Path $venv "Scripts\rocm-sdk.exe"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+            python -m venv $venv
+            & $python -m pip install --upgrade pip
+            & $python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel,device-gfx1010]==${{ matrix.rocm-version }}"
+            & $rocmSDK init
+            (& $rocmSDK path --root).Trim() | Set-Content -LiteralPath (Join-Path $venv "root.txt") -Encoding ascii
           }
 
-          $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+          $hipPath = (Get-Content -LiteralPath (Join-Path $venv "root.txt") -Raw).Trim()
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$hipPath\lib\llvm\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "HIP_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: matrix.preset == 'Vulkan'
@@ -323,6 +328,7 @@ jobs:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
+            C:\rocm-wheel-10.0.0
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}

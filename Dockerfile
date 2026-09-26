@@ -2,7 +2,7 @@
 
 ARG FLAVOR=${TARGETARCH}
 
-ARG ROCMVERSION=7.2.1
+ARG ROCMVERSION=10.0.0
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
@@ -14,8 +14,9 @@ ARG VULKANVERSION=1.4.321.1
 FROM scratch AS local-mlx
 FROM scratch AS local-mlx-c
 
-FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
-RUN dnf install -y yum-utils ccache gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils \
+FROM --platform=linux/amd64 almalinux:8 AS base-amd64
+RUN yum install -y yum-utils epel-release \
+    && dnf install -y ccache git wget gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ gcc-toolset-13-binutils \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-13/root/usr/bin:$PATH
 
@@ -55,12 +56,22 @@ ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 
-FROM base AS rocm-7-deps
-ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$PATH
+FROM base AS rocm-10-deps
+ARG ROCMVERSION
+RUN dnf install -y python3.11 python3.11-pip
+COPY scripts/fetch_rocm_linux.sh /usr/local/bin/fetch_rocm_linux.sh
+ENV PYTHON=python3.11 ROCM_CACHE_DIR=/opt/rocm-cache
+RUN --mount=type=cache,target=/root/.cache/pip fetch_rocm_linux.sh \
+    && ln -s "$(cat /opt/rocm-cache/linux-${ROCMVERSION}/root.txt)" /opt/rocm
+ENV ROCM_PATH=/opt/rocm \
+    HIP_PLATFORM=amd \
+    CMAKE_PREFIX_PATH=/opt/rocm \
+    PATH=/opt/rocm/bin:/opt/rocm/lib/llvm/bin:/opt/rocm/llvm/bin:$PATH
 
 FROM base AS vulkan-deps
 ARG VULKANVERSION
-RUN ln -s /usr/bin/python3 /usr/bin/python \
+RUN dnf install -y python3 \
+    && ln -s /usr/bin/python3 /usr/bin/python \
     && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
     && tar xvf /tmp/vulkansdk.tar.xz -C /tmp \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
@@ -126,20 +137,19 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM scratch AS publish-llama-server-cuda_v13
 COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 
-FROM rocm-7-deps AS llama-server-rocm_v7_2
+FROM rocm-10-deps AS llama-server-rocm_v10_0
 ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/usr
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake -S llama/server --preset rocm_v7_2_linux \
-        && cmake --build build/llama-server-rocm_v7_2 -- -l $(nproc) \
-        && cmake --install build/llama-server-rocm_v7_2 --component llama-server --strip
-RUN rm -f dist/lib/ollama/rocm_v7_2/rocblas/library/*gfx90[06]*
+    cmake -S llama/server --preset rocm_v10_0_linux \
+        && cmake --build build/llama-server-rocm_v10_0 -- -l $(nproc) \
+        && cmake --install build/llama-server-rocm_v10_0 --component llama-server --strip
 
-FROM scratch AS publish-llama-server-rocm_v7_2
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+FROM scratch AS publish-llama-server-rocm_v10_0
+COPY --from=llama-server-rocm_v10_0 dist/lib/ollama /lib/ollama/
 
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
@@ -209,7 +219,8 @@ ARG CUDA13VERSION=13.0
 ARG OLLAMA_MLX_BUILD_JOBS=
 ARG OLLAMA_MLX_NVCC_THREADS=2
 ARG MLX_CUDA_RAM_MB=
-RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+RUN dnf config-manager --set-enabled powertools \
+    && dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
     && dnf install -y openblas-devel lapack-devel \
     && dnf install -y libcudnn9-cuda-13 libcudnn9-devel-cuda-13 \
     && dnf install -y libnccl libnccl-devel
@@ -291,11 +302,11 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=llama-server-cpu  dist/lib/ollama /lib/ollama
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama
+COPY --from=llama-server-rocm_v10_0 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/amd64 scratch AS amd64-archive
 COPY --from=amd64 /lib/ollama /lib/ollama/
-COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
+COPY --from=llama-server-rocm_v10_0 dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64-archive
 COPY --from=arm64 /lib/ollama /lib/ollama/
