@@ -319,6 +319,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [AI Job Search](https://github.com/mrWD/ai-job-search) - Local-first job search that scores postings against your CV
 
 ### Observability & Monitoring
 
