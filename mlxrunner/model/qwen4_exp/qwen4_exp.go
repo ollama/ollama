@@ -40,6 +40,7 @@ type Model struct {
 	quantMode   string
 	tensorQuant map[string]*model.TensorQuantInfo
 	configData  []byte
+	hostPLE     map[string]*hostPLETable
 }
 
 // NewModel validates the publisher config before constructing runtime state.
@@ -72,6 +73,10 @@ func NewModel(root *model.Root) (model.Model, error) {
 	if root.GroupSize() > 0 {
 		group = root.GroupSize()
 	}
+	hostPLE, err := openHostPLETables(root.Manifest, &cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open host-backed PLE: %w", err)
+	}
 	return &Model{
 		Config:      &cfg,
 		Layers:      make([]*Layer, cfg.NumHiddenLayers),
@@ -81,6 +86,7 @@ func NewModel(root *model.Root) (model.Model, error) {
 		quantMode:   mode,
 		tensorQuant: root.AllTensorQuant(),
 		configData:  configData,
+		hostPLE:     hostPLE,
 	}, nil
 }
 
