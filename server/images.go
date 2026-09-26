@@ -625,13 +625,13 @@ func (m *Model) String() string {
 			for _, s := range v {
 				modelfile.Commands = append(modelfile.Commands, parser.Command{
 					Name: k,
-					Args: fmt.Sprintf("%v", s),
+					Args: modelfileParameterValue(s),
 				})
 			}
 		default:
 			modelfile.Commands = append(modelfile.Commands, parser.Command{
 				Name: k,
-				Args: fmt.Sprintf("%v", v),
+				Args: modelfileParameterValue(v),
 			})
 		}
 	}
@@ -651,6 +651,16 @@ func (m *Model) String() string {
 	}
 
 	return modelfile.String()
+}
+
+// modelfileParameterValue formats a parameter so a Modelfile can parse it
+// again. Options decoded from JSON hold numbers as float64, which %v prints
+// in exponent form from 1e+06 up; integer parameters reject that form.
+func modelfileParameterValue(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 func GetModel(name string) (*Model, error) {
