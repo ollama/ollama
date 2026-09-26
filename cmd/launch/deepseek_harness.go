@@ -392,8 +392,12 @@ func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
 		if item.ContextLength > 0 {
 			entry["contextWindow"] = item.ContextLength
 		}
-		if item.MaxOutputTokens > 0 {
-			entry["maxTokens"] = item.MaxOutputTokens
+		maxOutputTokens := item.MaxOutputTokens
+		if maxOutputTokens <= 0 {
+			maxOutputTokens = item.ContextLength
+		}
+		if maxOutputTokens > 0 {
+			entry["maxTokens"] = maxOutputTokens
 		}
 		configs = append(configs, entry)
 	}
