@@ -213,6 +213,9 @@ components:
         content:
           type: string
           description: Message text content
+        thinking:
+          type: string
+          description: Optional thinking text from a previous assistant response
         images:
           type: array
           items:
