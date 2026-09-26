@@ -335,6 +335,7 @@ console.log(response.message.content);
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
+- [LibreDB Studio](https://github.com/libredb/libredb-studio) - Self-hosted browser database IDE with a read-only AI agent and natural language to SQL, powered by your local Ollama models
 
 ### Infrastructure & Deployment
 
