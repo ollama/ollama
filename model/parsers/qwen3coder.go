@@ -84,8 +84,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
+				// A tool call the model malformed (a known qwen3-coder drift on long
+				// outputs) must not become the response: surface the raw block as
+				// content instead of returning the parse error to the client, matching
+				// the cogito/deepseek3/gemma4 parsers.
 				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				sb.WriteString(toolOpenTag + event.raw + toolCloseTag)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++

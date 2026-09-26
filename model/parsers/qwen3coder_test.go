@@ -1062,6 +1062,28 @@ func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserMalformedToolCallReturnedAsContent(t *testing.T) {
+	// A parameter left unclosed before </function> is qwen3-coder drift on long
+	// outputs. Strict xml.Unmarshal rejects it; the parser must surface the raw
+	// block as content, never return the parse error as the response.
+	raw := "<function=write>\n<parameter=content>\nprint(1)\n</function>"
+	input := toolOpenTag + raw + toolCloseTag
+
+	parser := Qwen3CoderParser{}
+	parser.Init([]api.Tool{{Function: api.ToolFunction{Name: "write"}}}, nil, nil)
+
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add returned error, want nil: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("calls = %v, want none", calls)
+	}
+	if want := input; content != want {
+		t.Fatalf("content = %q, want %q", content, want)
+	}
+}
+
 func TestQwen3CoderParserDoneFlushesBufferedContent(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
