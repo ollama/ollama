@@ -16,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxthread"
@@ -62,45 +63,70 @@ func Execute(args []string) error {
 		mlxThread: worker,
 	}
 
-	if err := worker.Do(context.Background(), func() error {
-		return runner.Load(modelName)
-	}); err != nil {
-		return err
-	}
-	defer runner.Close()
+	state := newLoadState()
 
 	readMemory := func() (uint64, error) {
 		return uint64(mlx.ActiveMemory() + mlx.CacheMemory()), nil
 	}
-	initialMemory, err := mlxthread.Call(context.Background(), worker, readMemory)
-	if err != nil {
-		return err
+	var memoryCache *statusMemoryCache
+	load := func(ctx context.Context) error {
+		var loadedMemory uint64
+		if err := worker.Do(ctx, func() error {
+			if err := runner.Load(modelName, state.SetProgress); err != nil {
+				return err
+			}
+			var err error
+			loadedMemory, err = readMemory()
+			return err
+		}); err != nil {
+			return err
+		}
+
+		memoryCache = newStatusMemoryCache(
+			runnerCtx,
+			loadedMemory,
+			time.Now(),
+			statusMemoryRefreshWait,
+			func() (uint64, error) {
+				return mlxthread.Call(runnerCtx, worker, readMemory)
+			},
+		)
+		state.MarkReady(runner.contextLength)
+		return nil
 	}
-	memoryCache := newStatusMemoryCache(
-		runnerCtx,
-		initialMemory,
-		time.Now(),
-		statusMemoryRefreshWait,
-		func() (uint64, error) {
-			return mlxthread.Call(runnerCtx, worker, readMemory)
-		},
-	)
+	defer runner.Close()
+
+	rejectWhileLoading := func(w http.ResponseWriter) bool {
+		if state.Status() == llm.ServerStatusReady {
+			return false
+		}
+		http.Error(w, "model is still loading", http.StatusServiceUnavailable)
+		return true
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		status := state.Status()
+		var memory uint64
+		if status == llm.ServerStatusReady {
+			// The Ready load publishes the cache pointer and its post-load value.
+			memory = memoryCache.Memory()
+		}
 		if err := json.NewEncoder(w).Encode(statusResponse{
-			Status:        0,
-			Progress:      100,
-			ContextLength: runner.contextLength,
-			Memory:        memoryCache.Memory(),
+			Status:        status,
+			Progress:      state.Progress(),
+			ContextLength: state.ContextLength(),
+			Memory:        memory,
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
 	})
 
 	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if rejectWhileLoading(w) {
+			return
+		}
 		switch r.Method {
 		case "POST":
 			fallthrough
@@ -118,6 +144,11 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
+		// Acquires MarkReady: everything below reads what the load wrote.
+		if rejectWhileLoading(w) {
+			return
+		}
+
 		request := Request{Responses: make(chan CompletionResponse)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
@@ -189,6 +220,10 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/tokenize", func(w http.ResponseWriter, r *http.Request) {
+		if rejectWhileLoading(w) {
+			return
+		}
+
 		var b bytes.Buffer
 		if _, err := io.Copy(&b, r.Body); err != nil {
 			slog.Error("Failed to read request body", "error", err)
@@ -227,10 +262,14 @@ func Execute(args []string) error {
 			level = slog.LevelWarn
 		case recorder.code >= 300:
 			return
+		case r.URL.Path == "/v1/status":
+			// Polled several times a second for the duration of a model
+			// load. Failures are already covered by the cases above.
+			level = logutil.LevelTrace
 		}
 
 		slog.Log(r.Context(), level, "ServeHTTP", "method", r.Method, "path", r.URL.Path, "took", time.Since(t), "status", recorder.Status())
-	}))
+	}), load)
 }
 
 type statusRecorder struct {
