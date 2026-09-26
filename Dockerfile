@@ -316,7 +316,9 @@ RUN sed -i \
         -e "s|http://ports.ubuntu.com/ubuntu-ports|$APT_PORTS_MIRROR|g" \
         /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
-    && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
+    && apt-get install -y ca-certificates libvulkan1 libopenblas0 libquadmath0 libegl1 libxext6 vulkan-tools \
+    && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libGLX_nvidia.so.0","api_version":"1.0.0"}}' | install -D /dev/stdin /etc/vulkan/icd.d/nvidia_icd.json \
+    && echo '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' | install -D /dev/stdin /usr/share/glvnd/egl_vendor.d/10_nvidia.json \
     && sed -i \
         -e "s|$APT_MIRROR|http://archive.ubuntu.com/ubuntu|g" \
         -e "s|$APT_PORTS_MIRROR|http://ports.ubuntu.com/ubuntu-ports|g" \
@@ -326,8 +328,8 @@ RUN sed -i \
 COPY --from=image-archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=image-archive /lib/ollama /usr/lib/ollama
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV LD_LIBRARY_PATH=/usr/lib/ollama/mlx_cuda_v13:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=graphics,compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
