@@ -1,0 +1,182 @@
+{
+  "last_node_id": 6,
+  "last_link_id": 4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadText",
+      "pos": [50, 100],
+      "size": [400, 150],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [1],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadText"
+      },
+      "widgets_values": [
+        "You are a helpful assistant that provides concise and accurate answers."
+      ],
+      "title": "System Prompt"
+    },
+    {
+      "id": 2,
+      "type": "LoadText",
+      "pos": [50, 300],
+      "size": [400, 150],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [2],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadText"
+      },
+      "widgets_values": [
+        "Explain quantum computing in simple terms."
+      ],
+      "title": "User Message"
+    },
+    {
+      "id": 3,
+      "type": "OllamaChatAPI",
+      "pos": [500, 150],
+      "size": [400, 350],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "system_prompt",
+          "type": "STRING",
+          "link": 1
+        },
+        {
+          "name": "user_message",
+          "type": "STRING",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "RESPONSE",
+          "type": "STRING",
+          "links": [3],
+          "slot_index": 0
+        },
+        {
+          "name": "MODEL",
+          "type": "STRING",
+          "links": [4],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "OllamaChatAPI"
+      },
+      "widgets_values": [
+        "http://localhost:11434",
+        "llama3.2",
+        1.0,
+        0.7,
+        2048,
+        false,
+        ""
+      ],
+      "title": "Ollama Chat"
+    },
+    {
+      "id": 4,
+      "type": "ShowText",
+      "pos": [950, 150],
+      "size": [450, 250],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 3
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ShowText"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "title": "Chat Response"
+    },
+    {
+      "id": 5,
+      "type": "ShowText",
+      "pos": [950, 450],
+      "size": [450, 100],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ShowText"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "title": "Model Used"
+    },
+    {
+      "id": 6,
+      "type": "Note",
+      "pos": [50, 500],
+      "size": [850, 180],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "properties": {
+        "text": ""
+      },
+      "widgets_values": [
+        "# Ollama Chat Workflow\n\nThis workflow demonstrates chat functionality with conversation context using Ollama.\n\n1. Configure the system prompt to set the assistant's behavior\n2. Enter your message in the 'User Message' node\n3. Configure the Ollama server URL and model in the 'Ollama Chat' node\n4. Run the workflow to see the chat response\n\nThe chat API maintains context within a single request. For multi-turn conversations,\nyou would need to maintain message history and pass it with each request.\n\nDefault model: llama3.2\nDefault server: http://localhost:11434"
+      ],
+      "bgcolor": "#355",
+      "title": "Instructions"
+    }
+  ],
+  "links": [
+    [1, 1, 0, 3, 0, "STRING"],
+    [2, 2, 0, 3, 1, "STRING"],
+    [3, 3, 0, 4, 0, "STRING"],
+    [4, 3, 1, 5, 0, "STRING"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [0, 0]
+    }
+  },
+  "version": 0.4,
+  "widget_idx_map": {},
+  "seed_widgets": {}
+}
