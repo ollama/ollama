@@ -177,6 +177,10 @@ type Settings struct {
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
 
+	// AlwaysOnTop indicates if the app window should be kept above other
+	// windows, so it can be used as a narrow side panel next to an editor.
+	AlwaysOnTop bool
+
 	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
 	ClaudeDesktopUsed bool
 

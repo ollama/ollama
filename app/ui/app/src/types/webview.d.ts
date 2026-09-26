@@ -130,6 +130,7 @@ declare global {
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;
+    setAlwaysOnTop?: (enabled: boolean) => void;
     getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
     getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
