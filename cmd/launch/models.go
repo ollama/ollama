@@ -253,46 +253,78 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 	}
 }
 
-// showOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
-func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy, isCloudModel bool) error {
+// DefaultCloudSuggestPull, when set (the cmd package wires it up), pulls a
+// model and, if its default tag doesn't exist but a ":cloud" tag does,
+// offers the cloud model instead. It returns the name that was actually
+// pulled. retryCommand renders the command suggested in non-interactive
+// error hints for a given cloud model name.
+var DefaultCloudSuggestPull func(ctx context.Context, client *api.Client, model string, retryCommand func(cloudName string) string) (string, error)
+
+// launchRetryCommand builds the retry command hinted at when a cloud
+// suggestion is raised outside an interactive terminal.
+func launchRetryCommand(commandName string) func(string) string {
+	return func(cloudName string) string {
+		if commandName != "" {
+			return fmt.Sprintf("ollama launch %s --model %s", commandName, cloudName)
+		}
+		return fmt.Sprintf("ollama launch --model %s", cloudName)
+	}
+}
+
+// showOrPullWithPolicy checks if a model exists and applies the provided
+// missing-model policy. It returns the model name to continue with, which
+// differs from the requested one when a missing default tag was resolved to
+// its ":cloud" variant (see DefaultCloudSuggestPull).
+func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy, isCloudModel bool, retryCommand func(string) string) (string, error) {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
-		return nil
+		return model, nil
 	} else {
 		if isCloudModel {
 			if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
-				return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
+				return "", errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 			}
 			var statusErr api.StatusError
 			if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("model %q not found", model)
+				return "", fmt.Errorf("model %q not found", model)
 			}
-			return nil
+			return model, nil
 		}
 
 		var statusErr api.StatusError
 		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusNotFound {
-			return err
+			return "", err
 		}
 	}
 
 	switch policy {
 	case missingModelAutoPull:
-		return pullMissingModel(ctx, client, model)
+		return pullOrSuggestCloud(ctx, client, model, retryCommand)
 	case missingModelFail:
-		return fmt.Errorf("model %q not found; run 'ollama pull %s' first, or use --yes to auto-pull", model, model)
+		return "", fmt.Errorf("model %q not found; run 'ollama pull %s' first, or use --yes to auto-pull", model, model)
 	default:
-		return confirmAndPull(ctx, client, model)
+		return confirmAndPull(ctx, client, model, retryCommand)
 	}
 }
 
-func confirmAndPull(ctx context.Context, client *api.Client, model string) error {
+func confirmAndPull(ctx context.Context, client *api.Client, model string, retryCommand func(string) string) (string, error) {
 	if ok, err := ConfirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
-		return err
+		return "", err
 	} else if !ok {
-		return errCancelled
+		return "", errCancelled
 	}
 	fmt.Fprintf(os.Stderr, "\n")
-	return pullMissingModel(ctx, client, model)
+	return pullOrSuggestCloud(ctx, client, model, retryCommand)
+}
+
+func pullOrSuggestCloud(ctx context.Context, client *api.Client, model string, retryCommand func(string) string) (string, error) {
+	if DefaultCloudSuggestPull == nil {
+		return model, pullMissingModel(ctx, client, model)
+	}
+	resolved, err := DefaultCloudSuggestPull(ctx, client, model, retryCommand)
+	if err != nil {
+		return "", fmt.Errorf("failed to pull %s: %w", model, err)
+	}
+	return resolved, nil
 }
 
 func pullMissingModel(ctx context.Context, client *api.Client, model string) error {

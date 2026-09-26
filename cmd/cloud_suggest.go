@@ -75,12 +75,21 @@ func cloudSuggestionName(name string, insecure bool) (string, bool) {
 	return ref.Base + ":cloud", true
 }
 
+// cloudSuggestionRetryCommand renders the command hinted at in
+// non-interactive errors for the plain CLI verbs ("run" and "pull").
+func cloudSuggestionRetryCommand(verb string) func(string) string {
+	return func(cloudName string) string {
+		return "ollama " + verb + " " + cloudName
+	}
+}
+
 // pullWithCloudSuggestion pulls `name`, and if the model's default tag
 // doesn't exist but a ":cloud" tag does, offers it: either interactively via
 // a confirmation prompt, or by augmenting the returned error when not at a
-// terminal. It returns the name that was actually pulled. `verb` is the
-// user-facing command ("run" or "pull") used in the hint text.
-func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, verb string) (string, error) {
+// terminal. It returns the name that was actually pulled. `retryCommand`
+// renders the command suggested in the non-interactive hint for a given
+// cloud model name.
+func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name string, insecure bool, retryCommand func(cloudName string) string) (string, error) {
 	// If a suggestion prompt may follow a failed pull, erase the failed
 	// attempt's progress display instead of leaving its "pulling manifest"
 	// line to stack up against the accepted pull's identical one.
@@ -105,7 +114,10 @@ func pullWithCloudSuggestion(ctx context.Context, client *api.Client, name strin
 	}
 
 	if !isInteractiveTerminal() {
-		return "", fmt.Errorf("%w\n\n%q is available as a cloud model. Try:\n  ollama %s %s", pullErr, cloudName, verb, cloudName)
+		if retryCommand == nil {
+			return "", fmt.Errorf("%w\n\n%q is available as a cloud model", pullErr, cloudName)
+		}
+		return "", fmt.Errorf("%w\n\n%q is available as a cloud model. Try:\n  %s", pullErr, cloudName, retryCommand(cloudName))
 	}
 
 	accepted, err := confirmCloudSuggestion(fmt.Sprintf("Did you mean %q?", cloudName))
