@@ -2840,6 +2840,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer cancel()
 
 		var parserErr error
+		var unclosedThinking strings.Builder
 
 		err := r.Completion(ctx, llm.CompletionRequest{
 			Prompt:          prompt,
@@ -2892,6 +2893,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					toolCalls[i].ID = toolCallId()
 				}
 				res.Message.ToolCalls = toolCalls
+
+				if reporter, ok := builtinParser.(parsers.ThinkingStateReporter); ok {
+					if reporter.UnclosedThinking() {
+						unclosedThinking.WriteString(thinking)
+						// Recover an answer only when the model stopped on its own.
+						// Length-capped or disconnected generations remain thinking.
+						if r.Done && r.DoneReason == llm.DoneReasonStop &&
+							res.Message.Content == "" && len(res.Message.ToolCalls) == 0 && unclosedThinking.Len() > 0 {
+							slog.Log(context.TODO(), logutil.LevelTrace, "promoting unclosed thinking to content", "parser", m.Config.Parser, "len", unclosedThinking.Len())
+							res.Message.Content = unclosedThinking.String()
+						}
+					} else {
+						unclosedThinking.Reset()
+					}
+				}
 
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
