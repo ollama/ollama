@@ -247,6 +247,14 @@ func fileDigestMap(path string) (map[string]string, error) {
 
 	fi, err := os.Stat(path)
 	if err != nil {
+		if strings.ContainsAny(path, "*?[") {
+			// Unmatched glob pattern from expandPaths: there is nothing
+			// to digest. Normalize to os.ErrNotExist — on Windows,
+			// os.Stat fails on wildcard paths with EINVAL instead of
+			// ENOENT, which previously broke the not-exist handling for
+			// "model" in CreateRequest.
+			return nil, os.ErrNotExist
+		}
 		return nil, err
 	}
 
