@@ -204,8 +204,11 @@ func maybeMoveAndRestart() appMove {
 		// Typically developer mode with 'go run ./cmd/app'
 		return CannotMove
 	}
-	// Respect users intent if they chose "keep" vs. "replace" when dragging to Applications
-	if strings.HasPrefix(updater.BundlePath, strings.TrimSuffix(updater.SystemWidePath, filepath.Ext(updater.SystemWidePath))) {
+	// Respect users intent if they chose "keep" vs. "replace" when dragging to Applications.
+	// Consider the app already placed in the system Applications directory when it
+	// resides anywhere inside it, not only directly at SystemWidePath, so installs
+	// like /Applications/AI/Ollama.app are not repeatedly asked to move.
+	if pathWithinDir(updater.BundlePath, filepath.Dir(updater.SystemWidePath)) {
 		return AlreadyMoved
 	}
 
