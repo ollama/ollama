@@ -107,11 +107,11 @@ func TestGLM47ParserToolCloseTagInsideArgumentValue(t *testing.T) {
 		}),
 	}, nil, &api.ThinkValue{Value: false})
 
-	wantValue := "Wrap each call in <tool_call> and </tool_call>; this text is part of the argument."
+	wantValue := "Wrap each call in <tool_call> and </tool_call>; keys go in <arg_key>."
 	chunks := []string{
 		"<tool_call>write_file<arg_key>path</arg_key><arg_value>docs/format.md</arg_value><arg_key>content</arg_key><arg_value>" +
 			"Wrap each call in <tool_call> and </tool_",
-		"call>; this text is part of the argument.</arg_value></tool_",
+		"call>; keys go in <arg_key>.</arg_value></tool_",
 		"call>",
 	}
 
@@ -136,6 +136,47 @@ func TestGLM47ParserToolCloseTagInsideArgumentValue(t *testing.T) {
 	gotValue, ok := calls[0].Function.Arguments.Get("content")
 	if !ok || gotValue != wantValue {
 		t.Fatalf("content argument=%#v, %v; want %q", gotValue, ok, wantValue)
+	}
+}
+
+func TestGLM47ParserPreservesStringArgumentNewlines(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+	}{
+		{
+			name:  "trailing newline",
+			value: "  two  spaces\n",
+		},
+		{
+			name:  "leading and trailing newlines",
+			value: "\nline1\nline2\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := GLM47Parser{}
+			parser.Init([]api.Tool{
+				tool("write_file", map[string]api.ToolProperty{
+					"content": {Type: api.PropertyType{"string"}},
+				}),
+			}, nil, &api.ThinkValue{Value: false})
+
+			input := "<tool_call>write_file<arg_key>content</arg_key><arg_value>" + tc.value + "</arg_value></tool_call>"
+			_, _, calls, err := parser.Add(input, true)
+			if err != nil {
+				t.Fatalf("parse failed: %v", err)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(calls))
+			}
+
+			got, ok := calls[0].Function.Arguments.Get("content")
+			if !ok || got != tc.value {
+				t.Fatalf("content argument=%#v, %v; want %q", got, ok, tc.value)
+			}
+		})
 	}
 }
 
