@@ -56,24 +56,35 @@ func TestParseConfigNestedWrapper(t *testing.T) {
 }
 
 func TestParseConfigLayersBlockType(t *testing.T) {
-	cfg, err := parseConfig([]byte(`{
-		"model_type": "nemotron_h",
-		"hidden_size": 8,
-		"num_attention_heads": 2,
-		"layers_block_type": ["linear_attention", "moe", "full_attention"]
-	}`))
-	if err != nil {
-		t.Fatalf("parseConfig returned error: %v", err)
-	}
+	for _, tt := range []struct {
+		name       string
+		layerTypes string
+		want       string
+	}{
+		{"publisher names", `["mamba", "moe", "attention", "mlp"]`, "ME*-"},
+		{"legacy aliases", `["linear_attention", "moe", "full_attention"]`, "ME*"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseConfig([]byte(fmt.Sprintf(`{
+				"model_type": "nemotron_h",
+				"hidden_size": 8,
+				"num_attention_heads": 2,
+				"layers_block_type": %s
+			}`, tt.layerTypes)))
+			if err != nil {
+				t.Fatalf("parseConfig returned error: %v", err)
+			}
 
-	if got, want := cfg.NumHiddenLayers, int32(3); got != want {
-		t.Fatalf("NumHiddenLayers = %d, want %d", got, want)
-	}
-	if got, want := cfg.HybridOverridePattern, "ME*"; got != want {
-		t.Fatalf("HybridOverridePattern = %q, want %q", got, want)
-	}
-	if got, want := string(cfg.LayerTypes), "ME*"; got != want {
-		t.Fatalf("LayerTypes = %q, want %q", got, want)
+			if got, want := cfg.NumHiddenLayers, int32(len(tt.want)); got != want {
+				t.Fatalf("NumHiddenLayers = %d, want %d", got, want)
+			}
+			if got, want := cfg.HybridOverridePattern, tt.want; got != want {
+				t.Fatalf("HybridOverridePattern = %q, want %q", got, want)
+			}
+			if got, want := string(cfg.LayerTypes), tt.want; got != want {
+				t.Fatalf("LayerTypes = %q, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -426,7 +437,7 @@ func assertAllClose(t *mlxtest.T, name string, got, want []float32, tol float64)
 		t.Fatalf("%s length = %d, want %d", name, len(got), len(want))
 	}
 	for i := range got {
-		if math.Abs(float64(got[i]-want[i])) > tol {
+		if math.IsNaN(float64(got[i])) || math.IsInf(float64(got[i]), 0) || math.Abs(float64(got[i]-want[i])) > tol {
 			t.Fatalf("%s[%d] = %v, want %v", name, i, got[i], want[i])
 		}
 	}

@@ -7,21 +7,52 @@ import (
 )
 
 func TestNemotronHImportTransformRegistration(t *testing.T) {
-	inv := Inventory{
-		Config:    sourceModelConfig{Architectures: []string{"NemotronH_Nano_Omni_Reasoning_V3"}},
-		RawConfig: json.RawMessage(`{"architectures":["NemotronH_Nano_Omni_Reasoning_V3"],"llm_config":{"num_hidden_layers":52}}`),
-	}
+	for _, tt := range []struct {
+		name      string
+		rawConfig string
+		want      int
+	}{
+		{"nested layer count", `{"architectures":["NemotronH_Nano_Omni_Reasoning_V3"],"llm_config":{"num_hidden_layers":52}}`, 52},
+		{"layer block types", `{"architectures":["NemotronHForCausalLM"],"layers_block_type":["linear_attention","moe","linear_attention"]}`, 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inv := Inventory{
+				RawConfig: json.RawMessage(tt.rawConfig),
+			}
+			if err := json.Unmarshal(inv.RawConfig, &inv.Config); err != nil {
+				t.Fatal(err)
+			}
 
-	policy, err := newTensorImportTransform(inv)
-	if err != nil {
-		t.Fatalf("newTensorImportTransform() error = %v", err)
+			policy, err := newTensorImportTransform(inv)
+			if err != nil {
+				t.Fatalf("newTensorImportTransform() error = %v", err)
+			}
+			transform, ok := policy.(nemotronHImportTransform)
+			if !ok {
+				t.Fatalf("newTensorImportTransform() = %T, want nemotronHImportTransform", policy)
+			}
+			if transform.numLayers != tt.want {
+				t.Fatalf("numLayers = %d, want %d", transform.numLayers, tt.want)
+			}
+		})
 	}
-	transform, ok := policy.(nemotronHImportTransform)
-	if !ok {
-		t.Fatalf("newTensorImportTransform() = %T, want nemotronHImportTransform", policy)
-	}
-	if transform.numLayers != 52 {
-		t.Fatalf("numLayers = %d, want 52", transform.numLayers)
+}
+
+func TestNemotronHImportTransformDoesNotApplyTargetLayerScheduleToMTP(t *testing.T) {
+	policy := nemotronHImportTransform{numLayers: 52}
+	shape := []int32{128, 128}
+
+	for _, tt := range []struct {
+		name string
+		want string
+	}{
+		{"language_model.backbone.layers.0.mixer.experts.down_proj.weight", "mxfp8"},
+		{"mtp.layers.0.mixer.experts.down_proj.weight", "nvfp4"},
+		{"mtp.layers.0.mixer.q_proj.weight", "mxfp8"},
+	} {
+		if got := policy.quantizationType(tt.name, shape, "nvfp4"); got != tt.want {
+			t.Errorf("quantizationType(%q) = %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }
 
