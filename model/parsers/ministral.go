@@ -96,6 +96,7 @@ func (p *MinistralParser) Init(tools []api.Tool, lastMessage *api.Message, think
 }
 
 func toolByName(tools []api.Tool, n string) (*api.Tool, error) {
+	n = strings.TrimSpace(n)
 	for i := range tools {
 		if tools[i].Function.Name == n {
 			return &tools[i], nil
@@ -222,7 +223,7 @@ func (p *MinistralParser) eat() ([]ministralEvent, bool) {
 
 		if strings.Contains(bufStr, ministralArgsTag) {
 			split := strings.SplitN(bufStr, ministralArgsTag, 2)
-			toolName := split[0]
+			toolName := strings.TrimSpace(split[0])
 			after := split[1]
 			p.pendingToolName = toolName
 			p.buffer.Reset()
