@@ -149,6 +149,23 @@ const (
 	templateCapabilityChat
 )
 
+type progressReader struct {
+	ctx    context.Context
+	r      io.Reader
+	onRead func(n int)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	if err := pr.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := pr.r.Read(p)
+	if n > 0 {
+		pr.onRead(n)
+	}
+	return n, err
+}
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected)
@@ -821,25 +838,412 @@ func CopyModel(src, dst model.Name) error {
 	}
 
 	dstpath := filepath.Join(manifests, dst.Filepath())
+	srcpath := filepath.Join(manifests, src.Filepath())
+
 	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
 		return err
 	}
 
-	srcpath := filepath.Join(manifests, src.Filepath())
-	srcfile, err := os.Open(srcpath)
+	return copyFile(context.Background(), srcpath, dstpath, nil)
+}
+
+func ExportModel(ctx context.Context, req api.CopyRequest, name model.Name, fn func(api.ProgressResponse)) error {
+	if !name.IsFullyQualified() {
+		return model.Unqualified(name)
+	}
+
+	// Resolve the original manifest to access all layers.
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return err
 	}
-	defer srcfile.Close()
 
-	dstfile, err := os.Create(dstpath)
+	m, err := GetModel(name.String())
 	if err != nil {
 		return err
 	}
-	defer dstfile.Close()
 
-	_, err = io.Copy(dstfile, srcfile)
-	return err
+	// Process config blob first, then all layers.
+	layers := append(
+		[]manifest.Layer{mf.Config},
+		mf.Layers...,
+	)
+
+	if err := os.MkdirAll(req.Destination, 0o755); err != nil {
+		return err
+	}
+
+	mediaTypes := ExportMediaTypeMap(name, m.Config)
+	nameCounters := make(map[string]int)
+
+	for _, layer := range layers {
+		blobPath, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			return err
+		}
+
+		info, ok := mediaTypes[layer.MediaType]
+		if !ok {
+			if fn != nil {
+				fn(api.ProgressResponse{
+					Status: fmt.Sprintf("unsupported media type %s", layer.MediaType),
+				})
+			}
+			continue
+		}
+
+		baseName := info.ShortName
+		count := nameCounters[baseName]
+
+		filename := baseName
+
+		if count > 0 {
+			filename = fmt.Sprintf("%s-%d", baseName, count)
+		}
+
+		filename += info.Extension
+		nameCounters[baseName]++
+
+		var completed int64
+
+		onBytes := func(n int) {
+			completed += int64(n)
+			if fn != nil {
+				fn(api.ProgressResponse{
+					Status:    fmt.Sprintf("exporting %s", filename),
+					Digest:    layer.Digest,
+					Total:     layer.Size,
+					Completed: completed,
+				})
+			}
+		}
+
+		dstPath := filepath.Join(req.Destination, filename)
+		if err := copyFile(ctx, blobPath, dstPath, onBytes); err != nil {
+			return err
+		}
+
+		if fn != nil {
+			fn(api.ProgressResponse{
+				Status: fmt.Sprintf("exported %s", filename),
+			})
+		}
+	}
+	if fn != nil {
+		fn(api.ProgressResponse{
+			Status: "success",
+		})
+	}
+	return nil
+}
+
+func ImportModel(
+	ctx context.Context,
+	req api.CopyRequest,
+	name model.Name,
+	fn func(api.ProgressResponse),
+) error {
+	createReq, err := importModelFiles(ctx, req.Source, req.Destination, fn)
+	if err != nil {
+		return err
+	}
+
+	if err := validateCreateFiles(createReq.Files); err != nil {
+		return err
+	}
+
+	fileType, err := detectModelTypeFromFiles(createReq.Files)
+	if err != nil {
+		return err
+	}
+
+	if err := validateCreateOptions(createReq, fileType); err != nil {
+		return err
+	}
+
+	oldManifest, err := manifest.ParseNamedManifest(name)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	layers, err := convertModelFromFiles(ctx, createReq.Files, fn)
+
+	if err != nil {
+		return err
+	}
+
+	if err := createModel(
+		ctx,
+		createReq,
+		name,
+		layers,
+		new(model.ConfigV2),
+		fn,
+	); err != nil {
+		return err
+	}
+
+	if oldManifest != nil {
+		return pruneOldManifestLayers(oldManifest)
+	}
+
+	return nil
+}
+
+func copyFile(ctx context.Context, src, dst string, onBytes func(n int)) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	buf := make([]byte, 32*1024)
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, readErr := in.Read(buf)
+		if n > 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
+			if _, err := out.Write(buf[:n]); err != nil {
+				return err
+			}
+
+			if onBytes != nil {
+				onBytes(n)
+			}
+		}
+
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func importModelFiles(
+	ctx context.Context,
+	dir string,
+	modelName string,
+	fn func(api.ProgressResponse),
+) (api.CreateRequest, error) {
+	req := api.CreateRequest{
+		Model: modelName,
+		Files: make(map[string]string),
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return req, err
+	}
+
+	if err := validateModelFiles(ctx, entries); err != nil {
+		return req, err
+	}
+
+	if err := importLayers(ctx, dir, entries, &req, fn); err != nil {
+		return req, err
+	}
+
+	if len(req.Files) == 0 {
+		return req, errNoFilesProvided
+	}
+
+	if err := importMetadata(ctx, dir, entries, &req, fn); err != nil {
+		return req, err
+	}
+
+	return req, nil
+}
+
+func validateModelFiles(ctx context.Context, entries []os.DirEntry) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := isModelFile(entry.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func importLayers(
+	ctx context.Context,
+	dir string,
+	entries []os.DirEntry,
+	req *api.CreateRequest,
+	fn func(api.ProgressResponse)) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		filename := entry.Name()
+		isModel, err := isModelFile(filename)
+		if err != nil {
+			return err
+		}
+		if !isModel {
+			continue
+		}
+
+		digest, err := importLayer(ctx, filepath.Join(dir, filename), filename, fn)
+		if err != nil {
+			return err
+		}
+		req.Files[filename] = digest
+
+		if fn != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("imported %s", filename)})
+		}
+	}
+	return nil
+}
+
+func importLayer(
+	ctx context.Context,
+	path,
+	filename string,
+	fn func(api.ProgressResponse)) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+
+	var completed int64
+	pseudoDigest := "import:" + filename
+
+	layer, err := manifest.NewLayer(&progressReader{
+		ctx: ctx,
+		r:   file,
+		onRead: func(n int) {
+			completed += int64(n)
+			if fn != nil {
+				fn(api.ProgressResponse{
+					Status:    fmt.Sprintf("importing %s", filename),
+					Total:     info.Size(),
+					Digest:    pseudoDigest,
+					Completed: completed,
+				})
+			}
+		},
+	}, "")
+	if err != nil {
+		return "", err
+	}
+
+	return layer.Digest, nil
+}
+
+func importMetadata(
+	ctx context.Context,
+	dir string,
+	entries []os.DirEntry,
+	req *api.CreateRequest,
+	fn func(api.ProgressResponse)) error {
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		filename := entry.Name()
+
+		isModel, err := isModelFile(filename)
+		if err != nil {
+			return err
+		}
+		if isModel {
+			continue
+		}
+
+		mediaType, ok := ImportMediaTypeMap[strings.ToLower(filepath.ToSlash(filename))]
+		if !ok {
+			if fn != nil {
+				fn(api.ProgressResponse{Status: fmt.Sprintf("skipping unrecognized file %q", filename)})
+			}
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(dir, filename))
+		if err != nil {
+			return err
+		}
+
+		if err := applyMetadata(req, mediaType, data); err != nil {
+			return err
+		}
+
+		if fn != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("imported file %s", filename)})
+		}
+	}
+	return nil
+}
+
+func applyMetadata(req *api.CreateRequest, mediaType string, data []byte) error {
+	switch mediaType {
+	case "application/vnd.ollama.image.license":
+		req.License = string(data)
+
+	case "application/vnd.ollama.image.params":
+		if err := json.Unmarshal(data, &req.Parameters); err != nil {
+			return err
+		}
+
+	case "application/vnd.ollama.image.system":
+		req.System = string(data)
+
+	case "application/vnd.ollama.image.template":
+		req.Template = string(data)
+
+	case "application/vnd.ollama.image.prompt":
+		req.Messages = []api.Message{{Role: "user", Content: string(data)}}
+
+	case "application/vnd.ollama.image.json":
+		if err := json.Unmarshal(data, &req.Info); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isModelFile(name string) (bool, error) {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".gguf":
+		return true, nil
+	case ".safetensors":
+		return false, errOnlyGGUFSupported
+	default:
+		return false, nil
+	}
 }
 
 func deleteUnusedLayers(deleteMap map[string]struct{}) error {

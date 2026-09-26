@@ -1751,6 +1751,100 @@ func (s *Server) CopyHandler(c *gin.Context) {
 	}
 }
 
+func (s *Server) ExportHandler(c *gin.Context) {
+	var e api.CopyRequest
+	if err := c.ShouldBindJSON(&e); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	src := model.ParseName(e.Source)
+	if !src.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", e.Source)})
+		return
+	}
+	src, err := getExistingName(src)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ch := make(chan any)
+
+	go func() {
+		defer close(ch)
+
+		fn := func(r api.ProgressResponse) {
+			ch <- r
+		}
+
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+
+		if err := ExportModel(ctx, e, src, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+
+	streamResponse(c, ch)
+}
+
+func (s *Server) ImportHandler(c *gin.Context) {
+	var r api.CopyRequest
+	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	dst := model.ParseName(r.Destination)
+	if !dst.IsValid() {
+		c.AbortWithStatusJSON(
+			http.StatusBadRequest,
+			gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Destination)},
+		)
+		return
+	}
+
+	dst, err := getExistingName(dst)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ch := make(chan any)
+	reqCtx := c.Request.Context()
+
+	go func() {
+		defer close(ch)
+
+		send := func(resp any) bool {
+			select {
+			case ch <- resp:
+				return true
+			case <-reqCtx.Done():
+				return false
+			}
+		}
+
+		defer recoverCreatePanic(send)
+
+		fn := func(resp api.ProgressResponse) {
+			send(resp)
+		}
+
+		if err := ImportModel(reqCtx, r, dst, fn); err != nil {
+			ch <- gin.H{"error": err.Error()}
+		}
+	}()
+	streamResponse(c, ch)
+}
+
 func (s *Server) HeadBlobHandler(c *gin.Context) {
 	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
@@ -1957,6 +2051,8 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	r.POST("/api/export", s.ExportHandler)
+	r.POST("/api/import", s.ImportHandler)
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)
