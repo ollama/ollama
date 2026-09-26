@@ -606,7 +606,12 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	//
+	// The optional leading group consumes intermediate path segments that
+	// themselves end in an image extension followed by a path separator (e.g. a
+	// parent directory named "image.png/"). Without it, the lazy match would
+	// stop at the first extension and fracture a single path into pieces.
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)(?:[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)[/\\])*[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
