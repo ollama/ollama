@@ -403,6 +403,13 @@ static NSImage *integrationAppIcon(NSString *appName,
 @implementation AppDelegate
 
 bool showOnboarding,startHidden; // Set in run before initialization
+static bool showMenuBarIcon = true;
+
+static void updateActivationPolicyForMenuBarVisibility(void) {
+    [NSApp setActivationPolicy:showMenuBarIcon
+        ? NSApplicationActivationPolicyAccessory
+        : NSApplicationActivationPolicyRegular];
+}
 
 static NSBundle *OllamaResourceBundle(void) {
     NSBundle *bundle = [NSBundle mainBundle];
@@ -542,6 +549,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
     self.statusItem = [[NSStatusBar systemStatusBar]
         statusItemWithLength:NSVariableStatusItemLength];
+    self.statusItem.visible = showMenuBarIcon;
     [self.statusItem addObserver:self
                       forKeyPath:@"button.effectiveAppearance"
                          options:NSKeyValueObservingOptionNew |
@@ -1463,7 +1471,7 @@ didCompleteWithError:(NSError *)error {
     }
     // Otherwise just hide the app (for Cmd+Q, close button, etc.)
     [NSApp hide:nil];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    updateActivationPolicyForMenuBarVisibility();
     return NSTerminateCancel;
 }
 
@@ -1480,7 +1488,7 @@ didCompleteWithError:(NSError *)error {
 
 - (IBAction)terminate:(id)sender {
     [NSApp hide:nil];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    updateActivationPolicyForMenuBarVisibility();
 }
 
 - (BOOL)windowShouldClose:(id)sender {
@@ -1524,7 +1532,7 @@ didCompleteWithError:(NSError *)error {
 
 - (void)hide {
     [NSApp hide:nil];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    updateActivationPolicyForMenuBarVisibility();
 }
 
 - (void)requestQuit {
@@ -1868,11 +1876,12 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 @end
 
 AppDelegate *appDelegate;
-void run(bool so, bool sh) {
+void run(bool so, bool sh, bool smbi) {
     // Retain update notifications that arrive while AppKit initializes.
     appDelegate = [[AppDelegate alloc] init];
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    showMenuBarIcon = smbi;
+    updateActivationPolicyForMenuBarVisibility();
     [NSApp setDelegate:appDelegate];
     showOnboarding = so;
     startHidden = sh;
@@ -2317,6 +2326,14 @@ void SetShowAppsInMenu(bool visible) {
     });
 }
 
+void SetMenuBarIconVisible(bool visible) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        showMenuBarIcon = visible;
+        updateActivationPolicyForMenuBarVisibility();
+        appDelegate.statusItem.visible = visible;
+    });
+}
+
 enum ClaudeInstallResult installClaudeDesktop(void) {
     __block enum ClaudeInstallResult result = ClaudeInstallFailed;
     void (^install)(void) = ^{
@@ -2398,7 +2415,7 @@ void setWindowDelegate(void* window) {
 
 void hideWindow(uintptr_t wndPtr) {
     NSWindow *w = (__bridge NSWindow *)wndPtr;
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    updateActivationPolicyForMenuBarVisibility();
     [w orderOut:nil];
 }
 
