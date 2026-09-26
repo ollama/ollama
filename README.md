@@ -266,6 +266,7 @@ console.log(response.message.content);
 - [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
 - [any-agent](https://github.com/mozilla-ai/any-agent) - Unified agent framework interface by Mozilla
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
+- [gollem](https://github.com/fugue-labs/gollem) - Production-grade Go agent framework with type-safe tools, structured output, streaming, and multi-provider support including Ollama
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
 
