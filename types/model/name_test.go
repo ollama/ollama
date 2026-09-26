@@ -9,6 +9,9 @@ import (
 
 const (
 	part80  = "88888888888888888888888888888888888888888888888888888888888888888888888888888888"
+	part96  = part80 + "8888888888888888"
+	part97  = part96 + "8"
+	issue18274Model = "Qwen3.8-27B-TURBO-Fable-Cold-Fusion-735-882-Heretic-Uncensored-NEO-CODER-MAX-MTP-GGUF"
 	part350 = "33333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333"
 )
 
@@ -155,6 +158,9 @@ var testCases = map[string]bool{ // name -> valid
 
 	// long (but valid)
 	part80 + "/" + part80 + "/" + part80 + ":" + part80:  true,
+	"hf.co/DavidAU/" + issue18274Model + ":Qwen3.8-27B-TurboFCFusion-735-882-Here-Uncen-NEO-CODER-MAX-MTP-IQ3_M.gguf": true,
+	part80 + "/" + part80 + "/" + part96 + ":" + part80: true,
+	part80 + "/" + part80 + "/" + part97 + ":" + part80: false,
 	part350 + "/" + part80 + "/" + part80 + ":" + part80: true,
 
 	"h/nn/mm:t": true, // bare minimum part sizes
@@ -239,6 +245,10 @@ func TestNameIsValidPart(t *testing.T) {
 		{kind: kindNamespace, s: "bb", want: true},
 		{kind: kindNamespace, s: "a.", want: false},
 		{kind: kindModel, s: "-h", want: false},
+		{kind: kindModel, s: issue18274Model, want: true},
+		{kind: kindModel, s: part96, want: true},
+		{kind: kindModel, s: part97, want: false},
+		{kind: kindNamespace, s: part96, want: false},
 		{kind: kindDigest, s: "sha256-1000000000000000000000000000000000000000000000000000000000000000", want: true},
 	}
 	for _, tt := range cases {
