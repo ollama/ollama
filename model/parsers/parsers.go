@@ -105,6 +105,8 @@ func ParserForName(name string) Parser {
 		return &CohereParser{}
 	case "glimmer":
 		return &GlimmerParser{}
+	case "granite-thinking":
+		return &GraniteThinkingParser{hasThinkingSupport: true}
 	default:
 		return nil
 	}

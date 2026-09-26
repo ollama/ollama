@@ -1,6 +1,9 @@
 package create
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // prequantPattern describes how one producer packs an already-quantized weight
 // and its scale companions into safetensors files, and how to fuse them into
@@ -162,15 +165,21 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 			}
 		}
 
-		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p)}, consumed, true
+		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p, base)}, consumed, true
 	}
 	return BlobSpec{}, nil, false
 }
 
 // prequantMetadata builds the fused blob's metadata: the source config's quant
 // metadata, with the pattern's quant_type override and group_size default
-// applied. Returns nil when there is nothing to record.
-func prequantMetadata(inv Inventory, p prequantPattern) map[string]string {
+// applied. base is this tensor's module name (weight suffix stripped), used
+// to look up a per-tensor quantization override — e.g. mlx_lm keeps a MoE
+// router at a higher bit width than the rest of an otherwise uniformly
+// quantized model, and that override must win over the model's global
+// quant_type/group_size or the router blob is tagged with the wrong bit
+// width and dequantizes to garbage (or fails a shape check outright).
+// Returns nil when there is nothing to record.
+func prequantMetadata(inv Inventory, p prequantPattern, base string) map[string]string {
 	md := make(map[string]string)
 	for k, v := range inv.Config.QuantMetadata() {
 		md[k] = v
@@ -181,6 +190,21 @@ func prequantMetadata(inv Inventory, p prequantPattern) map[string]string {
 	if p.defaultGroupSize != "" {
 		if _, ok := md["group_size"]; !ok {
 			md["group_size"] = p.defaultGroupSize
+		}
+	}
+	if override, ok := inv.Config.quantOverrideFor(base); ok {
+		mode := override.Mode
+		if mode == "" {
+			// Per-tensor overrides in the wild (mlx_lm) name a bit width
+			// without repeating a mode, meaning "plain affine at this bit
+			// width" even inside an nvfp4 model.
+			mode = "affine"
+		}
+		if qt := sourceQuantType(mode, override.Bits); qt != "" {
+			md["quant_type"] = qt
+		}
+		if override.GroupSize > 0 {
+			md["group_size"] = strconv.Itoa(override.GroupSize)
 		}
 	}
 	if len(md) == 0 {

@@ -201,6 +201,21 @@ func nemotronRendererParserNameFromTemplate(modelDir, chatTemplate string) (stri
 	return "nemotron-3-nano", nil
 }
 
+// graniteThinkingChatMLMarker is present in every "granite thinking" template
+// (Granite 4.2+)
+const graniteThinkingChatMLMarker = "<|im_start|>"
+
+// Granite 4.2+ use the "granite-thinking" template: ChatML-style <|im_start|>/
+// <|im_end|> role markers with <think>...</think> reasoning and XML-ish
+// <tool_call><function=...> tool calls. Older Granite models use unrelated
+// templates and must not be routed here.
+func graniteThinkingTemplateName(chatTemplate string) string {
+	if thinking.TemplateSupportsThinking(chatTemplate) && strings.Contains(chatTemplate, graniteThinkingChatMLMarker) {
+		return "granite-thinking"
+	}
+	return ""
+}
+
 func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 	ids := append([]string(nil), cfg.Architectures...)
 	return append(ids, cfg.ModelType, cfg.LLMConfig.ModelType)
@@ -237,6 +252,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case strings.Contains(s, "granite"):
+		return graniteThinkingTemplateName(chatTemplate), nil
 	default:
 		return "", nil
 	}
@@ -275,6 +292,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return "qwen3-coder", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
 		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case strings.Contains(s, "granite"):
+		return graniteThinkingTemplateName(chatTemplate), nil
 	default:
 		return "", nil
 	}
