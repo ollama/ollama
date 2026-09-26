@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -1119,5 +1120,83 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
 			}
 		})
+	}
+}
+
+func TestFromChatRequest_KeepAlive(t *testing.T) {
+	// keep_alive is how an OpenAI-API client releases a model; 0 unloads
+	// immediately and a negative value pins it. Both arrive as JSON numbers.
+	for _, tt := range []struct {
+		name string
+		body string
+		want *api.Duration
+	}{
+		{"absent", `{"model":"m","messages":[]}`, nil},
+		{"unload", `{"model":"m","messages":[],"keep_alive":0}`, &api.Duration{Duration: 0}},
+		{"forever", `{"model":"m","messages":[],"keep_alive":-1}`, &api.Duration{Duration: time.Duration(math.MaxInt64)}},
+		{"seconds", `{"model":"m","messages":[],"keep_alive":30}`, &api.Duration{Duration: 30 * time.Second}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.body), &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch {
+			case tt.want == nil && got.KeepAlive != nil:
+				t.Fatalf("expected no KeepAlive, got %v", got.KeepAlive)
+			case tt.want != nil && got.KeepAlive == nil:
+				t.Fatal("expected KeepAlive to be carried through, got nil")
+			case tt.want != nil && got.KeepAlive.Duration != tt.want.Duration:
+				t.Errorf("KeepAlive = %v, want %v", got.KeepAlive.Duration, tt.want.Duration)
+			}
+		})
+	}
+}
+
+func TestToTimings(t *testing.T) {
+	if got := ToTimings(api.Metrics{}); got != nil {
+		t.Fatalf("ToTimings(empty) = %+v, want nil", got)
+	}
+
+	got := ToTimings(api.Metrics{
+		PromptEvalCount:    20,
+		PromptEvalDuration: 2 * time.Second,
+		EvalCount:          10,
+		EvalDuration:       time.Second,
+	})
+	if got == nil {
+		t.Fatal("ToTimings(populated) = nil")
+	}
+	if got.PromptN != 20 || got.PromptMS != 2000 || got.PromptPerSecond != 10 {
+		t.Errorf("unexpected prompt timings: %+v", got)
+	}
+	if got.PredictedN != 10 || got.PredictedMS != 1000 || got.PredictedPerSecond != 10 {
+		t.Errorf("unexpected generation timings: %+v", got)
+	}
+}
+
+func TestNonStreamingResponsesOmitTimings(t *testing.T) {
+	chat, err := json.Marshal(ToChatCompletion("id", api.ChatResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(chat), `"timings"`) {
+		t.Errorf("chat completion unexpectedly contains timings: %s", chat)
+	}
+
+	completion, err := json.Marshal(ToCompletion("id", api.GenerateResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(completion), `"timings"`) {
+		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }
