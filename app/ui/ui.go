@@ -1548,6 +1548,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		store.Settings
 		OnboardingVersion *int
 		ClaudeDesktopUsed *bool
+		ShowMenuBarIcon    *bool
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
@@ -1563,6 +1564,11 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		settings.ClaudeDesktopUsed = old.ClaudeDesktopUsed
 	} else {
 		settings.ClaudeDesktopUsed = *request.ClaudeDesktopUsed
+	}
+	if request.ShowMenuBarIcon == nil {
+		settings.ShowMenuBarIcon = old.ShowMenuBarIcon
+	} else {
+		settings.ShowMenuBarIcon = *request.ShowMenuBarIcon
 	}
 
 	if err := s.Store.SetSettings(settings); err != nil {
