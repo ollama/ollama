@@ -177,6 +177,18 @@ type Settings struct {
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
 
+	// SpeechVoice stores the browser speech synthesis voice URI, or empty for the system default.
+	SpeechVoice string
+
+	// SpeechRate controls read aloud playback speed.
+	SpeechRate float64
+
+	// SpeechVolume controls read aloud playback volume.
+	SpeechVolume float64
+
+	// SpeechAutoRead controls whether completed assistant responses are read aloud automatically.
+	SpeechAutoRead bool
+
 	// ClaudeDesktopUsed records whether Claude Desktop has ever been connected through Ollama.
 	ClaudeDesktopUsed bool
 

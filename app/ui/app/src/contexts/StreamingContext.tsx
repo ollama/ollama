@@ -12,6 +12,8 @@ import { DownloadEvent } from "@/gotypes";
 interface StreamingContextType {
   streamingChatIds: Set<string>;
   setStreamingChatIds: Dispatch<SetStateAction<Set<string>>>;
+  completedChatId: string | null;
+  setCompletedChatId: Dispatch<SetStateAction<string | null>>;
   loadingChats: Set<string>;
   setLoadingChats: Dispatch<SetStateAction<Set<string>>>;
   abortControllers: Map<string, AbortController>;
@@ -28,6 +30,7 @@ export function StreamingProvider({ children }: { children: ReactNode }) {
   const [streamingChatIds, setStreamingChatIds] = useState<Set<string>>(
     new Set(),
   );
+  const [completedChatId, setCompletedChatId] = useState<string | null>(null);
   const [loadingChats, setLoadingChats] = useState<Set<string>>(new Set());
   const [abortControllers, setAbortControllers] = useState<
     Map<string, AbortController>
@@ -40,6 +43,8 @@ export function StreamingProvider({ children }: { children: ReactNode }) {
     () => ({
       streamingChatIds,
       setStreamingChatIds,
+      completedChatId,
+      setCompletedChatId,
       loadingChats,
       setLoadingChats,
       abortControllers,
@@ -47,7 +52,13 @@ export function StreamingProvider({ children }: { children: ReactNode }) {
       downloadProgress,
       setDownloadProgress,
     }),
-    [streamingChatIds, loadingChats, abortControllers, downloadProgress],
+    [
+      streamingChatIds,
+      completedChatId,
+      loadingChats,
+      abortControllers,
+      downloadProgress,
+    ],
   );
 
   return (
