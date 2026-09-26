@@ -2,16 +2,19 @@ import { useCallback, useRef } from "react";
 import { useQueryClient, QueryClient } from "@tanstack/react-query";
 
 interface BatcherConfig {
-  batchInterval?: number; // milliseconds, default 8ms (~120fps)
+  batchInterval?: number; // milliseconds, default 16ms (~60fps)
   immediateFirst?: boolean; // if true, first update is immediate
 }
+
+const DEFAULT_BATCH_INTERVAL = 16;
 
 export const useQueryBatcher = <T>(
   queryKey: readonly unknown[],
   config: BatcherConfig = {},
 ) => {
   const queryClient = useQueryClient();
-  const { batchInterval = 8, immediateFirst = false } = config;
+  const { batchInterval = DEFAULT_BATCH_INTERVAL, immediateFirst = false } =
+    config;
 
   const batchRef = useRef<{
     updateBatch: T | undefined;
@@ -29,7 +32,7 @@ export const useQueryBatcher = <T>(
       queryClient.setQueryData(queryKey, updateBatch);
       batchRef.current.updateBatch = undefined;
     }
-    if (batchTimeout) {
+    if (batchTimeout !== null) {
       clearTimeout(batchTimeout);
       batchRef.current.batchTimeout = null;
     }
@@ -49,16 +52,17 @@ export const useQueryBatcher = <T>(
         return;
       }
 
-      if (batchRef.current.batchTimeout) {
-        clearTimeout(batchRef.current.batchTimeout);
+      // Keep the first scheduled flush in place so subsequent updates join
+      // the same frame-sized batch instead of restarting a debounce timer.
+      if (batchRef.current.batchTimeout === null) {
+        batchRef.current.batchTimeout = setTimeout(flushBatch, batchInterval);
       }
-      batchRef.current.batchTimeout = setTimeout(flushBatch, batchInterval);
     },
     [queryClient, queryKey, flushBatch, batchInterval, immediateFirst],
   );
 
   const cleanup = useCallback(() => {
-    if (batchRef.current.batchTimeout) {
+    if (batchRef.current.batchTimeout !== null) {
       clearTimeout(batchRef.current.batchTimeout);
       batchRef.current.batchTimeout = null;
     }
@@ -78,7 +82,8 @@ export const createQueryBatcher = <T>(
   queryKey: readonly unknown[],
   config: BatcherConfig = {},
 ) => {
-  const { batchInterval = 8, immediateFirst = false } = config;
+  const { batchInterval = DEFAULT_BATCH_INTERVAL, immediateFirst = false } =
+    config;
 
   let updateBatch: T | undefined = undefined;
   let batchTimeout: number | null = null;
@@ -89,7 +94,7 @@ export const createQueryBatcher = <T>(
       queryClient.setQueryData(queryKey, updateBatch);
       updateBatch = undefined;
     }
-    if (batchTimeout) {
+    if (batchTimeout !== null) {
       clearTimeout(batchTimeout);
       batchTimeout = null;
     }
@@ -107,14 +112,15 @@ export const createQueryBatcher = <T>(
       return;
     }
 
-    if (batchTimeout) {
-      clearTimeout(batchTimeout);
+    // Keep the first scheduled flush in place so subsequent updates join
+    // the same frame-sized batch instead of restarting a debounce timer.
+    if (batchTimeout === null) {
+      batchTimeout = setTimeout(flushBatch, batchInterval);
     }
-    batchTimeout = setTimeout(flushBatch, batchInterval);
   };
 
   const cleanup = () => {
-    if (batchTimeout) {
+    if (batchTimeout !== null) {
       clearTimeout(batchTimeout);
       batchTimeout = null;
     }

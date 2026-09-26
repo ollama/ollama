@@ -9,6 +9,8 @@ import { useStreamingContext } from "@/contexts/StreamingContext";
 import { getModelCapabilities } from "@/api";
 import { useCloudStatus } from "./useCloudStatus";
 
+const CHAT_STREAM_BATCH_INTERVAL = 16;
+
 export const useChats = () => {
   return useQuery({
     queryKey: ["chats"],
@@ -335,12 +337,15 @@ export const useSendMessage = (chatId: string) => {
         isCancelled = true;
       });
 
-      // Create batcher for streaming updates with smoother intervals, prevents state update depth being exceeded
-      // and allows for smoother updates at high frame rates
+      // Keep streaming updates within a browser frame budget while preserving
+      // the first update immediately and flushing the final state.
       let batcher = createQueryBatcher<{ chat: Chat }>(
         queryClient,
         ["chat", currentChatId],
-        { batchInterval: 4, immediateFirst: true }, // ~250fps for smoother updates
+        {
+          batchInterval: CHAT_STREAM_BATCH_INTERVAL,
+          immediateFirst: true,
+        },
       );
 
       for await (const event of events) {
@@ -692,7 +697,10 @@ export const useSendMessage = (chatId: string) => {
             batcher = createQueryBatcher<{ chat: Chat }>(
               queryClient,
               ["chat", currentChatId],
-              { batchInterval: 4, immediateFirst: true },
+              {
+                batchInterval: CHAT_STREAM_BATCH_INTERVAL,
+                immediateFirst: true,
+              },
             );
 
             // Create initial chat data for the new chat
