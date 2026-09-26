@@ -233,6 +233,30 @@ func (p *GLM46Parser) eatLeadingWhitespaceAndTransitionTo(nextState glm46ParserS
 	return nil, true // Successfully transitioned
 }
 
+// glm46ToolCloseTagIndex returns the tool-call terminator outside an argument value.
+// GLM values may contain the literal tool-call terminator as ordinary text.
+func glm46ToolCloseTagIndex(s string) int {
+	inArgValue := false
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], glm46ArgValueOpenTag):
+			inArgValue = true
+			i += len(glm46ArgValueOpenTag)
+		case strings.HasPrefix(s[i:], glm46ArgValueCloseTag):
+			inArgValue = false
+			i += len(glm46ArgValueCloseTag)
+		case strings.HasPrefix(s[i:], glm46ToolCloseTag):
+			if !inArgValue {
+				return i
+			}
+			i += len(glm46ToolCloseTag)
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
 // glm46SplitAtTag splits the buffer at the given tag, returns the content before (trimmed of trailing whitespace),
 // the content after (optionally trimmed of leading whitespace), and updates the buffer
 func glm46SplitAtTag(p *GLM46Parser, tag string, trimAfter bool) (string, string) {
@@ -371,8 +395,11 @@ func (p *GLM46Parser) eat() ([]glm46Event, bool) {
 
 	case glm46ParserState_CollectingToolContent:
 		acc := p.buffer.String()
-		if strings.Contains(acc, glm46ToolCloseTag) {
-			toolContent, _ := glm46SplitAtTag(p, glm46ToolCloseTag, true)
+		if closeTagIndex := glm46ToolCloseTagIndex(acc); closeTagIndex >= 0 {
+			toolContent := strings.TrimRightFunc(acc[:closeTagIndex], unicode.IsSpace)
+			remaining := strings.TrimLeftFunc(acc[closeTagIndex+len(glm46ToolCloseTag):], unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(remaining)
 			if len(toolContent) == 0 {
 				slog.Warn("glm46 tool call closing tag found but no content before it")
 			}

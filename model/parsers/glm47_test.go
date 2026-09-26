@@ -98,6 +98,47 @@ func TestGLM47ParserToolCallEscaping(t *testing.T) {
 	}
 }
 
+func TestGLM47ParserToolCloseTagInsideArgumentValue(t *testing.T) {
+	parser := GLM47Parser{}
+	parser.Init([]api.Tool{
+		tool("write_file", map[string]api.ToolProperty{
+			"path":    {Type: api.PropertyType{"string"}},
+			"content": {Type: api.PropertyType{"string"}},
+		}),
+	}, nil, &api.ThinkValue{Value: false})
+
+	wantValue := "Wrap each call in <tool_call> and </tool_call>; this text is part of the argument."
+	chunks := []string{
+		"<tool_call>write_file<arg_key>path</arg_key><arg_value>docs/format.md</arg_value><arg_key>content</arg_key><arg_value>" +
+			"Wrap each call in <tool_call> and </tool_",
+		"call>; this text is part of the argument.</arg_value></tool_",
+		"call>",
+	}
+
+	var calls []api.ToolCall
+	for i, chunk := range chunks {
+		content, thinking, got, err := parser.Add(chunk, i == len(chunks)-1)
+		if err != nil {
+			t.Fatalf("chunk %d parse failed: %v", i+1, err)
+		}
+		if content != "" || thinking != "" {
+			t.Errorf("chunk %d emitted content=%q thinking=%q, want neither", i+1, content, thinking)
+		}
+		calls = append(calls, got...)
+	}
+
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "write_file" {
+		t.Fatalf("tool name=%q, want write_file", calls[0].Function.Name)
+	}
+	gotValue, ok := calls[0].Function.Arguments.Get("content")
+	if !ok || gotValue != wantValue {
+		t.Fatalf("content argument=%#v, %v; want %q", gotValue, ok, wantValue)
+	}
+}
+
 func TestGLM47ParserToolCallIndexing(t *testing.T) {
 	parser := GLM47Parser{}
 	parser.Init(nil, nil, nil)
