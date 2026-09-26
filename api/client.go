@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -38,6 +39,16 @@ import (
 type Client struct {
 	base *url.URL
 	http *http.Client
+}
+
+// isLocalhost returns true if the URL is a loopback or unspecified address.
+func isLocalhost(u *url.URL) bool {
+	host := u.Hostname()
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -120,7 +131,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 		now := strconv.FormatInt(time.Now().Unix(), 10)
 		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
 		token, err = getAuthorizationToken(ctx, chal)
-		if err != nil {
+		if err != nil && !isLocalhost(c.base) {
 			return err
 		}
 
@@ -186,7 +197,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		now := strconv.FormatInt(time.Now().Unix(), 10)
 		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
 		token, err = getAuthorizationToken(ctx, chal)
-		if err != nil {
+		if err != nil && !isLocalhost(c.base) {
 			return err
 		}
 
