@@ -151,6 +151,12 @@ const (
 	TensorTypeMXFP4
 	TensorTypeNVFP4
 	TensorTypeQ1_0
+
+	// unexported // unsupported by ollama; explicitly numbered ggml type ids
+	// outside the contiguous range above, recognized only so unsupported-model
+	// errors can name them
+	tensorTypePQ2_0  TensorType = 142
+	tensorTypePTQ1_0 TensorType = 143
 )
 
 func (tt TensorType) NumBytes() float64 {
@@ -343,6 +349,10 @@ func (tt TensorType) String() string {
 		return "nvfp4"
 	case TensorTypeQ1_0:
 		return "q1_0"
+	case tensorTypePQ2_0:
+		return "pq2_0"
+	case tensorTypePTQ1_0:
+		return "ptq1_0"
 	default:
 		return "unknown"
 	}
