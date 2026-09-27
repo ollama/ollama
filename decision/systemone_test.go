@@ -2,11 +2,13 @@ package decision
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -33,12 +35,20 @@ func TestCompile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := compiled.Render(func(messages []api.Message) (string, error) {
+		if len(messages) != 1 || messages[0].Role != "user" {
+			t.Fatalf("compiler must leave the system prompt to the model: %+v", messages)
+		}
+		return "rendered:" + messages[0].Content, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	names := []string{"department", "refund", "urgency"}
 	if len(compiled.Request.Rows) != len(names) {
 		t.Fatal("wrong prompt count")
 	}
 	for i, row := range compiled.Request.Rows {
-		_, user, ok := strings.Cut(row.Prompt, "<|im_start|>user\n")
+		_, user, ok := strings.Cut(row.Prompt, "rendered:")
 		if !ok {
 			t.Fatal("missing user message")
 		}
@@ -87,10 +97,26 @@ func TestStructuredStateFrames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := compiled.Render(func(messages []api.Message) (string, error) {
+		return messages[0].Content, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, row := range compiled.Request.Rows {
 		if !strings.Contains(row.Prompt, `"context":"{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
+	}
+}
+
+func TestRenderError(t *testing.T) {
+	compiled, err := Compile(testRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := errors.New("invalid model template")
+	if err := compiled.Render(func([]api.Message) (string, error) { return "", want }); !errors.Is(err, want) {
+		t.Fatalf("Render error = %v, want %v", err, want)
 	}
 }
 

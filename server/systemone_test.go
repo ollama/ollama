@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,17 +40,21 @@ func TestSystemOneHandler(t *testing.T) {
 	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion"}}
 	createSafetensorsTestModel(t, "safetensors-decision", config, nil)
 	for _, modelConfig := range []struct {
-		name, architecture, renderer string
+		name, architecture, renderer, system, template string
+		contextLength                                  int
 	}{
-		{"decision-test", "qwen35", "qwen3.5"},
-		{"gguf-decision", "qwen35", ""},
-		{"gguf-wrong-architecture", "llama", ""},
-		{"gguf-wrong-renderer", "qwen35", "gemma4"},
+		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024},
+		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096},
+		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024},
+		{"no-system", "qwen35", "qwen3.5", "", "", 1024},
+		{"gguf-wrong-architecture", "llama", "", "", "", 1024},
+		{"gguf-wrong-renderer", "qwen35", "gemma4", "", "", 1024},
 	} {
-		_, digest := createBinFile(t, gguftest.KV{
-			"general.architecture":    modelConfig.architecture,
-			"tokenizer.chat_template": "{{ messages }}",
-		}, nil)
+		kv := gguftest.KV{"general.architecture": modelConfig.architecture}
+		if modelConfig.template == "" {
+			kv["tokenizer.chat_template"] = "{{ messages }}"
+		}
+		_, digest := createBinFile(t, kv, nil)
 		configLayer, err := createConfigLayer(model.ConfigV2{
 			ModelFormat: "gguf", ModelFamily: modelConfig.architecture,
 			Renderer: modelConfig.renderer, Capabilities: []string{"completion"},
@@ -57,9 +62,25 @@ func TestSystemOneHandler(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := manifest.WriteManifest(model.ParseName(modelConfig.name), *configLayer, []manifest.Layer{{
-			MediaType: "application/vnd.ollama.image.model", Digest: digest,
-		}}); err != nil {
+		layers := []manifest.Layer{{MediaType: "application/vnd.ollama.image.model", Digest: digest}}
+		for _, layer := range []struct{ content, mediaType string }{
+			{modelConfig.system, "application/vnd.ollama.image.system"},
+			{fmt.Sprintf(`{"num_ctx":%d}`, modelConfig.contextLength), "application/vnd.ollama.image.params"},
+		} {
+			l, err := manifest.NewLayer(strings.NewReader(layer.content), layer.mediaType)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers = append(layers, l)
+		}
+		if modelConfig.template != "" {
+			l, err := manifest.NewLayer(strings.NewReader(modelConfig.template), "application/vnd.ollama.image.template")
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers = append(layers, l)
+		}
+		if err := manifest.WriteManifest(model.ParseName(modelConfig.name), *configLayer, layers); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -77,6 +98,9 @@ func TestSystemOneHandler(t *testing.T) {
 	}{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"template failure", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, errors.New("invalid model template"), 500, 0, false},
 		{"GGUF incompatible architecture", `{"model":"gguf-wrong-architecture","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"GGUF conflicting renderer", `{"model":"gguf-wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
@@ -91,11 +115,20 @@ func TestSystemOneHandler(t *testing.T) {
 		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			// The loaded context is smaller than the public prompt ceiling.
-			runner := &systemOneTestRunner{mockRunner: mockRunner{contextLength: 1024}, err: tt.err}
+			runner := &systemOneTestRunner{err: tt.err}
+			runner.TemplateFn = func(_ context.Context, req llm.ChatRequest) (string, error) {
+				if len(req.Messages) != 2 || req.Messages[0].Role != "system" || req.Messages[0].Content != "Native model scoring instructions." || req.Messages[1].Role != "user" {
+					t.Fatalf("model system prompt was not passed to the native template: %+v", req.Messages)
+				}
+				if req.Think == nil || req.Think.Bool() {
+					t.Fatal("scoring must disable thinking")
+				}
+				return "native:" + req.Messages[1].Content, tt.err
+			}
 			ref := &runnerRef{llama: runner, refCount: 1, sessionDuration: time.Hour}
 			s := newServerWithMockRunner(t, &runner.mockRunner)
 			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				runner.contextLength = req.opts.NumCtx
 				ref.model = req.model
 				ref.modelKey = schedulerModelKey(req.model)
 				s.sched.loadedMu.Lock()
@@ -114,7 +147,7 @@ func TestSystemOneHandler(t *testing.T) {
 			if w.Code != tt.status || runner.calls != tt.calls {
 				t.Fatalf("status=%d calls=%d body=%s", w.Code, runner.calls, w.Body)
 			}
-			if tt.calls == 0 && ref.model != nil {
+			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
 			}
 			if tt.calls > 0 {
@@ -142,8 +175,28 @@ func TestSystemOneHandler(t *testing.T) {
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != 2 {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
-				if runner.request.MaxTokens != 1024 || !strings.HasSuffix(runner.request.Rows[0].Prompt, "<think>\n\n</think>\n\n") {
-					t.Fatal("scorer did not receive the trained prompt and loaded context budget")
+				prompt := runner.request.Rows[0].Prompt
+				wantContext := 1024
+				if ref.model.HasGoTemplate {
+					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
+						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
+					}
+				} else if ref.model.Config.Renderer == "" {
+					wantContext = 4096
+					if !strings.HasPrefix(prompt, `native:{"context":`) {
+						t.Fatalf("scorer did not receive the native template output: %q", prompt)
+					}
+				} else {
+					wantPrefix := "<|im_start|>user\n"
+					if ref.model.System != "" {
+						wantPrefix = "<|im_start|>system\nModel-specific scoring instructions.<|im_end|>\n<|im_start|>user\n"
+					}
+					if !strings.HasPrefix(prompt, wantPrefix) || !strings.HasSuffix(prompt, "<think>\n\n</think>\n\n") {
+						t.Fatalf("scorer did not receive the model's rendered prompt: %q", prompt)
+					}
+				}
+				if runner.request.MaxTokens != wantContext {
+					t.Fatalf("scoring context = %d, want model num_ctx %d", runner.request.MaxTokens, wantContext)
 				}
 			}
 		})
