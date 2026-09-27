@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [since-cutoff](https://github.com/MohammadHijjawi97/since-cutoff) - Find which APIs of your pinned Python dependencies a local model writes stale (type-checked), and fix them with AGENTS.md notes
 
 ### Productivity & Apps
 
