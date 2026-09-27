@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/i18n"
 )
 
 func waitForServer(ctx context.Context, client *api.Client) error {
@@ -17,7 +18,7 @@ func waitForServer(ctx context.Context, client *api.Client) error {
 	for {
 		select {
 		case <-timeout:
-			return errors.New("timed out waiting for server to start")
+			return errors.New(i18n.T("timed out waiting for server to start"))
 		case <-tick:
 			if err := client.Heartbeat(ctx); err == nil {
 				return nil // server has started

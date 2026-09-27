@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/onboarding"
 )
 
@@ -125,7 +126,7 @@ func migrateConfig() (bool, error) {
 		return false, err
 	}
 	if err := os.WriteFile(newPath, oldData, 0o644); err != nil {
-		return false, fmt.Errorf("write new config: %w", err)
+		return false, fmt.Errorf(i18n.T("write new config: %w"), err)
 	}
 
 	_ = os.Remove(oldPath)
@@ -155,7 +156,7 @@ func load() (*config, error) {
 
 	var cfg config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w, at: %s", err, path)
+		return nil, fmt.Errorf(i18n.T("failed to parse config: %w, at: %s"), err, path)
 	}
 	if cfg.Integrations == nil {
 		cfg.Integrations = make(map[string]*integration)
@@ -183,7 +184,7 @@ func save(cfg *config) error {
 
 func SaveIntegration(appName string, models []string) error {
 	if appName == "" {
-		return errors.New("app name cannot be empty")
+		return errors.New(i18n.T("app name cannot be empty"))
 	}
 
 	cfg, err := load()
@@ -216,7 +217,7 @@ func SaveIntegration(appName string, models []string) error {
 // preserving its models, aliases, and onboarding state.
 func SaveIntegrationAutoMode(appName string, enabled bool) error {
 	if appName == "" {
-		return errors.New("app name cannot be empty")
+		return errors.New(i18n.T("app name cannot be empty"))
 	}
 
 	cfg, err := load()
@@ -325,7 +326,7 @@ func LoadIntegration(appName string) (*integration, error) {
 // SaveAliases replaces the saved aliases for one integration.
 func SaveAliases(appName string, aliases map[string]string) error {
 	if appName == "" {
-		return errors.New("app name cannot be empty")
+		return errors.New(i18n.T("app name cannot be empty"))
 	}
 
 	cfg, err := load()

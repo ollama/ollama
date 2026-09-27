@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ollama/ollama/i18n"
 )
 
 type WelcomeAccount struct {
@@ -64,7 +66,7 @@ func (m welcomeModel) checkAccount() (tea.Model, tea.Cmd) {
 	m.checking = true
 	return m, func() tea.Msg {
 		if m.options.CheckAccount == nil {
-			return welcomeAccountMsg{Err: fmt.Errorf("account check unavailable")}
+			return welcomeAccountMsg{Err: errors.New(i18n.T("account check unavailable"))}
 		}
 		return welcomeAccountMsg(m.options.CheckAccount())
 	}
@@ -141,7 +143,7 @@ func (m welcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			signInURL := m.account.SigninURL
 			u, err := url.Parse(signInURL)
 			if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || m.options.OpenBrowser == nil {
-				m.account.Err = fmt.Errorf("sign-in link unavailable")
+				m.account.Err = errors.New(i18n.T("sign-in link unavailable"))
 				m.cursor = 0
 				return m, nil
 			}
@@ -178,47 +180,47 @@ func (m welcomeModel) View() string {
 
 func (m welcomeModel) introView() string {
 	var s strings.Builder
-	s.WriteString(selectorTitleStyle.Render("Welcome to Ollama!"))
-	s.WriteString("\n\nRun open models with your coding agents so you can spend less\nwhile keeping your data private.\n\n")
-	s.WriteString(selectorTitleStyle.Render("Connect your apps"))
-	s.WriteString("\nPower your existing coding apps with open models\n\n")
-	s.WriteString(selectorTitleStyle.Render("Easily switch models"))
-	s.WriteString("\nSwap between frontier models in one click.\n\n")
-	s.WriteString(selectorTitleStyle.Render("Your data stays yours"))
-	s.WriteString("\nYour prompt data is never logged or trained on.\n\n")
+	s.WriteString(selectorTitleStyle.Render(i18n.T("Welcome to Ollama!")))
+	s.WriteString(i18n.T("\n\nRun open models with your coding agents so you can spend less\nwhile keeping your data private.\n\n"))
+	s.WriteString(selectorTitleStyle.Render(i18n.T("Connect your apps")))
+	s.WriteString(i18n.T("\nPower your existing coding apps with open models\n\n"))
+	s.WriteString(selectorTitleStyle.Render(i18n.T("Easily switch models")))
+	s.WriteString(i18n.T("\nSwap between frontier models in one click.\n\n"))
+	s.WriteString(selectorTitleStyle.Render(i18n.T("Your data stays yours")))
+	s.WriteString(i18n.T("\nYour prompt data is never logged or trained on.\n\n"))
 	if m.checking {
-		s.WriteString(selectorDescStyle.Render("Checking your account…"))
+		s.WriteString(selectorDescStyle.Render(i18n.T("Checking your account…")))
 	} else {
-		s.WriteString(selectorTitleStyle.Render("Press Enter to continue"))
+		s.WriteString(selectorTitleStyle.Render(i18n.T("Press Enter to continue")))
 	}
 	return s.String()
 }
 
 func (m welcomeModel) accountChoices() []string {
 	if m.account.Err != nil || m.account.SigninURL == "" {
-		return []string{"Try again", "No thanks, I'll use Ollama locally"}
+		return []string{i18n.T("Try again"), i18n.T("No thanks, I'll use Ollama locally")}
 	}
-	return []string{"Sign up / sign in", "No thanks, I'll use Ollama locally"}
+	return []string{i18n.T("Sign up / sign in"), i18n.T("No thanks, I'll use Ollama locally")}
 }
 
 func (m welcomeModel) accountView() string {
 	var s strings.Builder
-	s.WriteString(selectorTitleStyle.Render("Create an account"))
-	s.WriteString("\n\nCreate your account for access to faster, larger open models.\n")
-	s.WriteString("Your data is never logged or trained on.\n\n")
+	s.WriteString(selectorTitleStyle.Render(i18n.T("Create an account")))
+	s.WriteString(i18n.T("\n\nCreate your account for access to faster, larger open models.\n"))
+	s.WriteString(i18n.T("Your data is never logged or trained on.\n\n"))
 	if m.step == welcomeSignIn {
-		s.WriteString(selectorDescStyle.Render("Finish in your browser…"))
+		s.WriteString(selectorDescStyle.Render(i18n.T("Finish in your browser…")))
 		s.WriteString("\n\n" + m.signIn.signInURL)
-		s.WriteString("\n\n" + selectorHelpStyle.Render("esc back"))
+		s.WriteString("\n\n" + selectorHelpStyle.Render(i18n.T("esc back")))
 		return s.String()
 	}
 	if m.checking {
-		s.WriteString("Checking your account…\n\n")
-		s.WriteString(selectorHelpStyle.Render("esc quit"))
+		s.WriteString(i18n.T("Checking your account…\n\n"))
+		s.WriteString(selectorHelpStyle.Render(i18n.T("esc quit")))
 		return s.String()
 	}
 	if m.account.Err != nil || m.account.SigninURL == "" {
-		s.WriteString("Unable to check your account. Please try again.\n\n")
+		s.WriteString(i18n.T("Unable to check your account. Please try again.\n\n"))
 	}
 	for i, choice := range m.accountChoices() {
 		if i == m.cursor {
@@ -228,7 +230,7 @@ func (m welcomeModel) accountView() string {
 		}
 		s.WriteString("\n")
 	}
-	s.WriteString("\n\n" + selectorHelpStyle.Render("↑/↓ navigate • enter select • esc quit"))
+	s.WriteString("\n\n" + selectorHelpStyle.Render(i18n.T("↑/↓ navigate • enter select • esc quit")))
 	return s.String()
 }
 
@@ -237,7 +239,7 @@ func (m welcomeModel) accountView() string {
 func RunWelcome(options WelcomeOptions) error {
 	finalModel, err := tea.NewProgram(welcomeModel{options: options}).Run()
 	if err != nil {
-		return fmt.Errorf("show welcome: %w", err)
+		return fmt.Errorf(i18n.T("show welcome: %w"), err)
 	}
 	if !finalModel.(welcomeModel).continued {
 		return ErrCancelled

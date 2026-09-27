@@ -3,6 +3,7 @@ package readline
 import (
 	"bufio"
 	"fmt"
+	"github.com/mattn/go-runewidth"
 	"io"
 	"os"
 	"strings"
@@ -136,7 +137,9 @@ func (i *Instance) Readline() (string, error) {
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
 			ph := i.Prompt.placeholder()
-			fmt.Print(ColorGrey + ph + CursorLeftN(len(ph)) + ColorDefault)
+			// CursorLeftN takes display cells; len() counts bytes and would
+			// misplace the cursor for CJK placeholders.
+			fmt.Print(ColorGrey + ph + CursorLeftN(runewidth.StringWidth(ph)) + ColorDefault)
 		}
 
 		r, err := i.Terminal.Read()

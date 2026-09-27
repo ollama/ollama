@@ -1,13 +1,14 @@
 package launch
 
 import (
-	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Copilot implements Runner for GitHub Copilot CLI integration.
@@ -46,7 +47,7 @@ func (c *Copilot) findPath() (string, error) {
 func (c *Copilot) Run(model string, _ []LaunchModel, args []string) error {
 	copilotPath, err := c.findPath()
 	if err != nil {
-		return fmt.Errorf("copilot is not installed, install from https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli")
+		return errors.New(i18n.T("copilot is not installed, install from https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"))
 	}
 
 	cmd := exec.Command(copilotPath, c.args(model, args)...)

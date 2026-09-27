@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 const (
@@ -34,8 +36,11 @@ const (
 	hermesLegacyKey         = "ollama"
 	hermesPlaceholderKey    = "ollama"
 	hermesGatewaySetupHint  = "hermes gateway setup"
-	hermesGatewaySetupTitle = "Connect a messaging app now?"
 )
+
+// hermesGatewaySetupTitle is translated at init because it is a display-only
+// prompt title registered before the launcher runs.
+var hermesGatewaySetupTitle = i18n.T("Connect a messaging app now?")
 
 var (
 	hermesGOOS      = runtime.GOOS
@@ -114,9 +119,9 @@ func (h *HermesDesktop) ensureHermesDesktopMinVersion(bin string) error {
 	if semver.Compare(version, hermesDesktopMinVersion) >= 0 {
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "%sHermes %s is older than the minimum version (%s) for `hermes desktop`; updating...%s\n", ansiGray, version, hermesDesktopMinVersion, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sHermes %s is older than the minimum version (%s) for `hermes desktop`; updating...%s\n"), ansiGray, version, hermesDesktopMinVersion, ansiReset)
 	if err := hermesAttachedCommand(bin, "update").Run(); err != nil {
-		return fmt.Errorf("failed to update hermes to %s or newer: %w", hermesDesktopMinVersion, err)
+		return fmt.Errorf(i18n.T("failed to update hermes to %s or newer: %w"), hermesDesktopMinVersion, err)
 	}
 	return nil
 }
@@ -274,7 +279,7 @@ func (h *Hermes) Configure(model string) error {
 	cfg := map[string]any{}
 	if data, err := os.ReadFile(configPath); err == nil {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return fmt.Errorf("parse hermes config: %w", err)
+			return fmt.Errorf(i18n.T("parse hermes config: %w"), err)
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -339,15 +344,15 @@ func (h *Hermes) RequiresInteractiveOnboarding() bool {
 func (h *Hermes) RefreshRuntimeAfterConfigure() error {
 	running, err := h.gatewayRunning()
 	if err != nil {
-		return fmt.Errorf("check Hermes gateway status: %w", err)
+		return fmt.Errorf(i18n.T("check Hermes gateway status: %w"), err)
 	}
 	if !running {
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "%sRefreshing Hermes messaging gateway...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sRefreshing Hermes messaging gateway...%s\n"), ansiGray, ansiReset)
 	if err := h.restartGateway(); err != nil {
-		return fmt.Errorf("restart Hermes gateway: %w", err)
+		return fmt.Errorf(i18n.T("restart Hermes gateway: %w"), err)
 	}
 	fmt.Fprintln(os.Stderr)
 	return nil
@@ -376,27 +381,27 @@ func (h *Hermes) ensureInstalledFor(command string) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("Hermes is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch %s", strings.Join(missing, "\n  "), command)
+		return fmt.Errorf(i18n.T("Hermes is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch %s"), strings.Join(missing, "\n  "), command)
 	}
 
-	ok, err := ConfirmPrompt("Hermes is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("Hermes is not installed. Install now?"))
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("hermes installation cancelled")
+		return errors.New(i18n.T("hermes installation cancelled"))
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Hermes...\n")
+	fmt.Print(i18n.T("\nInstalling Hermes...\n"))
 	if err := h.runInstallScript(); err != nil {
-		return fmt.Errorf("failed to install hermes: %w", err)
+		return fmt.Errorf(i18n.T("failed to install hermes: %w"), err)
 	}
 
 	if !h.installed() {
-		return fmt.Errorf("hermes was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return errors.New(i18n.T("hermes was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sHermes installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sHermes installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return nil
 }
 
@@ -449,7 +454,7 @@ func (h *Hermes) binary() (string, error) {
 				return fallback, nil
 			}
 		}
-		return "", fmt.Errorf("hermes is not installed")
+		return "", errors.New(i18n.T("hermes is not installed"))
 	}
 
 	home, err := hermesUserHome()
@@ -461,7 +466,7 @@ func (h *Hermes) binary() (string, error) {
 		return fallback, nil
 	}
 
-	return "", fmt.Errorf("hermes is not installed")
+	return "", errors.New(i18n.T("hermes is not installed"))
 }
 
 func hermesWindowsBinaryFallbacks() []string {
@@ -543,10 +548,10 @@ func (h *Hermes) runGatewaySetupPreflight(args []string, runSetup func() error) 
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "\nHermes can message you on Telegram, Discord, Slack, and more.\n\n")
+	fmt.Print(i18n.T("\nHermes can message you on Telegram, Discord, Slack, and more.\n\n"))
 	ok, err := ConfirmPromptWithOptions(hermesGatewaySetupTitle, ConfirmOptions{
-		YesLabel: "Yes",
-		NoLabel:  "Set up later",
+		YesLabel: i18n.T("Yes"),
+		NoLabel:  i18n.T("Set up later"),
 	})
 	if err != nil {
 		return err
@@ -555,7 +560,7 @@ func (h *Hermes) runGatewaySetupPreflight(args []string, runSetup func() error) 
 		return nil
 	}
 	if err := runSetup(); err != nil {
-		return fmt.Errorf("hermes messaging setup failed: %w\n\nTry running: %s", err, hermesGatewaySetupHint)
+		return fmt.Errorf(i18n.T("hermes messaging setup failed: %w\n\nTry running: %s"), err, hermesGatewaySetupHint)
 	}
 	return nil
 }

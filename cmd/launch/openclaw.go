@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 const defaultGatewayPort = 18789
@@ -36,12 +38,12 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 	firstLaunch := !c.onboarded()
 
 	if firstLaunch {
-		fmt.Fprintf(os.Stderr, "\n%sSecurity%s\n\n", ansiBold, ansiReset)
-		fmt.Fprintf(os.Stderr, "  OpenClaw can read files and run actions when tools are enabled.\n")
-		fmt.Fprintf(os.Stderr, "  A bad prompt can trick it into doing unsafe things.\n\n")
-		fmt.Fprintf(os.Stderr, "%s  Learn more: https://docs.openclaw.ai/gateway/security%s\n\n", ansiGray, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("\n%sSecurity%s\n\n"), ansiBold, ansiReset)
+		fmt.Fprint(os.Stderr, i18n.T("  OpenClaw can read files and run actions when tools are enabled.\n"))
+		fmt.Fprint(os.Stderr, i18n.T("  A bad prompt can trick it into doing unsafe things.\n\n"))
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Learn more: https://docs.openclaw.ai/gateway/security%s\n\n"), ansiGray, ansiReset)
 
-		ok, err := ConfirmPrompt("I understand the risks. Continue?")
+		ok, err := ConfirmPrompt(i18n.T("I understand the risks. Continue?"))
 		if err != nil {
 			return err
 		}
@@ -59,8 +61,8 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 			_ = update.Run() // best-effort; continue even if update fails
 		}
 
-		fmt.Fprintf(os.Stderr, "\n%sSetting up OpenClaw with Ollama...%s\n", ansiGreen, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s  Model: %s%s\n\n", ansiGray, model, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("\n%sSetting up OpenClaw with Ollama...%s\n"), ansiGreen, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Model: %s%s\n\n"), ansiGray, model, ansiReset)
 
 		onboardArgs := []string{
 			"onboard",
@@ -85,7 +87,7 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return windowsHint(fmt.Errorf("openclaw onboarding failed: %w\n\nTry running: openclaw onboard", err))
+			return windowsHint(fmt.Errorf(i18n.T("openclaw onboarding failed: %w\n\nTry running: openclaw onboard"), err))
 		}
 
 		patchDeviceScopes()
@@ -126,7 +128,7 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 	// (restart/start) regardless of channel preflight branch behavior.
 	patchDeviceScopes()
 
-	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("\n%sStarting your assistant — this may take a moment...%s\n\n"), ansiGray, ansiReset)
 
 	cleanup, token, port, err := c.ensureGatewayReady(bin)
 	if err != nil {
@@ -138,7 +140,7 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 
 	tuiArgs := []string{"tui"}
 	if firstLaunch {
-		tuiArgs = append(tuiArgs, "--message", "Wake up, my friend!")
+		tuiArgs = append(tuiArgs, "--message", i18n.T("Wake up, my friend!"))
 	}
 	tui := exec.Command(bin, tuiArgs...)
 	tui.Env = openclawEnv()
@@ -166,10 +168,10 @@ func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 		restart := exec.Command(bin, "daemon", "restart")
 		restart.Env = openclawEnv()
 		if err := restart.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: daemon restart failed: %v%s\n", ansiYellow, err, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: daemon restart failed: %v%s\n"), ansiYellow, err, ansiReset)
 		}
 		if !waitForPort(addr, 10*time.Second) {
-			fmt.Fprintf(os.Stderr, "%s  Warning: gateway did not come back after restart%s\n", ansiYellow, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: gateway did not come back after restart%s\n"), ansiYellow, ansiReset)
 		}
 	}
 
@@ -179,9 +181,9 @@ func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 		start := exec.Command(bin, "daemon", "start")
 		start.Env = openclawEnv()
 		if err := start.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: daemon start failed: %v%s\n", ansiYellow, err, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: daemon start failed: %v%s\n"), ansiYellow, err, ansiReset)
 		} else if waitForPort(addr, 10*time.Second) {
-			fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%sStarting gateway...%s\n"), ansiGray, ansiReset)
 			return func() {}, token, port, nil
 		}
 	}
@@ -193,7 +195,7 @@ func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 		gw := exec.Command(bin, "gateway", "run", "--force")
 		gw.Env = openclawEnv()
 		if err := gw.Start(); err != nil {
-			return nil, "", 0, fmt.Errorf("failed to start gateway: %w", err)
+			return nil, "", 0, fmt.Errorf(i18n.T("failed to start gateway: %w"), err)
 		}
 		cleanup = func() {
 			if gw.Process != nil {
@@ -203,10 +205,10 @@ func (c *Openclaw) ensureGatewayReady(bin string) (func(), string, int, error) {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "%sStarting gateway...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sStarting gateway...%s\n"), ansiGray, ansiReset)
 	if !waitForPort(addr, 30*time.Second) {
 		cleanup()
-		return nil, "", 0, fmt.Errorf("gateway did not start on %s", addr)
+		return nil, "", 0, fmt.Errorf(i18n.T("gateway did not start on %s"), addr)
 	}
 
 	return cleanup, token, port, nil
@@ -230,10 +232,10 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 			return nil
 		}
 
-		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
-		ok, err := ConfirmPromptWithOptions("Connect a channel (messaging app) now?", ConfirmOptions{
-			YesLabel: "Yes",
-			NoLabel:  "Set up later",
+		fmt.Fprint(os.Stderr, i18n.T("\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n"))
+		ok, err := ConfirmPromptWithOptions(i18n.T("Connect a channel (messaging app) now?"), ConfirmOptions{
+			YesLabel: i18n.T("Yes"),
+			NoLabel:  i18n.T("Set up later"),
 		})
 		if err != nil {
 			return err
@@ -248,7 +250,7 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return windowsHint(fmt.Errorf("openclaw channel setup failed: %w\n\nTry running: %s channels add", err, bin))
+			return windowsHint(fmt.Errorf(i18n.T("openclaw channel setup failed: %w\n\nTry running: %s channels add"), err, bin))
 		}
 	}
 }
@@ -339,16 +341,16 @@ func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
 		u += "/#token=" + url.QueryEscape(token)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%s✓ OpenClaw is running%s\n\n", ansiGreen, ansiReset)
-	fmt.Fprintf(os.Stderr, "  Open the Web UI:\n")
+	fmt.Fprintf(os.Stderr, i18n.T("\n%s✓ OpenClaw is running%s\n\n"), ansiGreen, ansiReset)
+	fmt.Fprint(os.Stderr, i18n.T("  Open the Web UI:\n"))
 	fmt.Fprintf(os.Stderr, "    %s\n\n", hyperlink(u, u))
 
 	if firstLaunch {
-		fmt.Fprintf(os.Stderr, "%s  Quick start:%s\n", ansiBold, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s    /help             see all commands%s\n", ansiGray, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s    %s skills                         browse and install skills%s\n\n", ansiGray, bin, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s  The OpenClaw gateway is running in the background.%s\n", ansiYellow, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s  Stop it with: %s gateway stop%s\n\n", ansiYellow, bin, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Quick start:%s\n"), ansiBold, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s    /help             see all commands%s\n"), ansiGray, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s    %s skills                         browse and install skills%s\n\n"), ansiGray, bin, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  The OpenClaw gateway is running in the background.%s\n"), ansiYellow, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Stop it with: %s gateway stop%s\n\n"), ansiYellow, bin, ansiReset)
 	}
 }
 
@@ -423,10 +425,7 @@ func windowsHint(err error) error {
 	if runtime.GOOS != "windows" {
 		return err
 	}
-	return fmt.Errorf("%w\n\n"+
-		"OpenClaw runs best on WSL2.\n"+
-		"Quick setup: wsl --install\n"+
-		"Guide: https://docs.openclaw.ai/windows", err)
+	return fmt.Errorf(i18n.T("%w\n\nOpenClaw runs best on WSL2.\nQuick setup: wsl --install\nGuide: https://docs.openclaw.ai/windows"), err)
 }
 
 // onboarded checks if OpenClaw onboarding wizard was completed
@@ -606,32 +605,32 @@ func ensureOpenclawInstalled() (string, error) {
 		if gitErr != nil {
 			missing = append(missing, "git: https://git-scm.com/")
 		}
-		return "", fmt.Errorf("OpenClaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch openclaw", strings.Join(missing, "\n  "))
+		return "", fmt.Errorf(i18n.T("OpenClaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch openclaw"), strings.Join(missing, "\n  "))
 	}
 
-	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
+	ok, err := ConfirmPrompt(i18n.T("OpenClaw is not installed. Install with npm?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("openclaw installation cancelled")
+		return "", errors.New(i18n.T("openclaw installation cancelled"))
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling OpenClaw...\n")
+	fmt.Fprint(os.Stderr, i18n.T("\nInstalling OpenClaw...\n"))
 	cmd := exec.Command("npm", "install", "-g", "openclaw@latest")
 	cmd.Env = openclawInstallEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install openclaw: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install openclaw: %w"), err)
 	}
 
 	if _, err := exec.LookPath("openclaw"); err != nil {
-		return "", fmt.Errorf("openclaw was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("openclaw was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sOpenClaw installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sOpenClaw installed successfully%s\n\n"), ansiGreen, ansiReset)
 	openclawFreshInstall = true
 	return "openclaw", nil
 }

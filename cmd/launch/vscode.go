@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // VSCode implements Runner and Editor for Visual Studio Code integration.
@@ -99,7 +100,7 @@ func (v *VSCode) Quit() {
 	// TODO(hoyyeva): update spinner to use bubble tea
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0
-	fmt.Fprintf(os.Stderr, "\033[90mRestarting VS Code... %s\033[0m", spinnerFrames[0])
+	fmt.Fprintf(os.Stderr, "\033[90m"+i18n.T("Restarting VS Code... %s")+"\033[0m", spinnerFrames[0])
 
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -107,7 +108,7 @@ func (v *VSCode) Quit() {
 	for range 150 { // 150 ticks × 200ms = 30s timeout
 		<-ticker.C
 		frame++
-		fmt.Fprintf(os.Stderr, "\r\033[90mRestarting VS Code... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+		fmt.Fprintf(os.Stderr, "\r\033[90m"+i18n.T("Restarting VS Code... %s")+"\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 
 		if frame%5 == 0 { // check every ~1s
 			if !v.IsRunning() {
@@ -154,7 +155,7 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 				}
 			}
 			if !hasTools {
-				fmt.Fprintf(os.Stderr, "Note: %s does not support tool calling and may not appear in the Copilot Chat model picker.\n", models[0])
+				fmt.Fprintf(os.Stderr, i18n.T("Note: %s does not support tool calling and may not appear in the Copilot Chat model picker.\n"), models[0])
 			}
 		}
 	}
@@ -162,22 +163,22 @@ func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.printModelAccessTip()
 
 	if v.IsRunning() {
-		restart, err := ConfirmPrompt("Restart VS Code?")
+		restart, err := ConfirmPrompt(i18n.T("Restart VS Code?"))
 		if err != nil {
 			restart = false
 		}
 		if restart {
 			v.Quit()
 			if err := v.ShowInModelPicker(models); err != nil {
-				fmt.Fprintf(os.Stderr, "%s  Warning: could not update VS Code model picker: %v%s\n", ansiYellow, err, ansiReset)
+				fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not update VS Code model picker: %v%s\n"), ansiYellow, err, ansiReset)
 			}
 			v.FocusVSCode()
 		} else {
-			fmt.Fprintf(os.Stderr, "\nTo get the latest model configuration, restart VS Code when you're ready.\n")
+			fmt.Print(i18n.T("\nTo get the latest model configuration, restart VS Code when you're ready.\n"))
 		}
 	} else {
 		if err := v.ShowInModelPicker(models); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: could not update VS Code model picker: %v%s\n", ansiYellow, err, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not update VS Code model picker: %v%s\n"), ansiYellow, err, ansiReset)
 		}
 		v.FocusVSCode()
 	}
@@ -207,7 +208,7 @@ func (v *VSCode) ensureModelsRegistered(ctx context.Context, client *api.Client,
 			continue
 		}
 		if err := pullModel(ctx, client, model, false); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: could not register model %s: %v%s\n", ansiYellow, model, err, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not register model %s: %v%s\n"), ansiYellow, model, err, ansiReset)
 		}
 	}
 }
@@ -227,8 +228,8 @@ func (v *VSCode) FocusVSCode() {
 
 // printModelAccessTip shows instructions for finding Ollama models in VS Code.
 func (v *VSCode) printModelAccessTip() {
-	fmt.Fprintf(os.Stderr, "\nTip: To use Ollama models, open Copilot Chat and click the model picker.\n")
-	fmt.Fprintf(os.Stderr, "     If you don't see your models, click \"Other models\" to find them.\n\n")
+	fmt.Print(i18n.T("\nTip: To use Ollama models, open Copilot Chat and click the model picker.\n"))
+	fmt.Print(i18n.T("     If you don't see your models, click \"Other models\" to find them.\n\n"))
 }
 
 func (v *VSCode) Paths() []string {
@@ -370,20 +371,20 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 	needsCreate := !fileExists(dbPath)
 	if needsCreate {
 		if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-			return fmt.Errorf("creating state directory: %w", err)
+			return fmt.Errorf(i18n.T("creating state directory: %w"), err)
 		}
 	}
 
 	db, err := sql.Open("sqlite3", dbPath+"?_busy_timeout=5000")
 	if err != nil {
-		return fmt.Errorf("opening state database: %w", err)
+		return fmt.Errorf(i18n.T("opening state database: %w"), err)
 	}
 	defer db.Close()
 
 	// Create the table if this is a fresh DB. Schema must match what VS Code creates.
 	if needsCreate {
 		if _, err := db.Exec("CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)"); err != nil {
-			return fmt.Errorf("initializing state database: %w", err)
+			return fmt.Errorf(i18n.T("initializing state database: %w"), err)
 		}
 	}
 
@@ -491,8 +492,8 @@ func (v *VSCode) checkVSCodeVersion() {
 	version := strings.TrimSpace(lines[0])
 
 	if compareVersions(version, minVSCodeVersion) < 0 {
-		fmt.Fprintf(os.Stderr, "\n%sWarning: VS Code version (%s) is older than the recommended version (%s)%s\n", ansiYellow, version, minVSCodeVersion, ansiReset)
-		fmt.Fprintf(os.Stderr, "Please update VS Code to the latest version.\n\n")
+		fmt.Fprintf(os.Stderr, i18n.T("\n%sWarning: VS Code version (%s) is older than the recommended version (%s)%s\n"), ansiYellow, version, minVSCodeVersion, ansiReset)
+		fmt.Print(i18n.T("Please update VS Code to the latest version.\n\n"))
 	}
 }
 
@@ -511,13 +512,13 @@ func (v *VSCode) checkCopilotChatVersion() {
 
 	installed, version := parseCopilotChatVersion(string(out))
 	if !installed {
-		fmt.Fprintf(os.Stderr, "\n%sWarning: GitHub Copilot Chat extension is not installed%s\n", ansiYellow, ansiReset)
-		fmt.Fprintf(os.Stderr, "Install it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Install\n\n")
+		fmt.Fprintf(os.Stderr, i18n.T("\n%sWarning: GitHub Copilot Chat extension is not installed%s\n"), ansiYellow, ansiReset)
+		fmt.Print(i18n.T("Install it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Install\n\n"))
 		return
 	}
 	if compareVersions(version, minCopilotChatVersion) < 0 {
-		fmt.Fprintf(os.Stderr, "\n%sWarning: GitHub Copilot Chat extension version (%s) is older than the recommended version (%s)%s\n", ansiYellow, version, minCopilotChatVersion, ansiReset)
-		fmt.Fprintf(os.Stderr, "Please update it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Update\n\n")
+		fmt.Fprintf(os.Stderr, i18n.T("\n%sWarning: GitHub Copilot Chat extension version (%s) is older than the recommended version (%s)%s\n"), ansiYellow, version, minCopilotChatVersion, ansiReset)
+		fmt.Print(i18n.T("Please update it in VS Code: Extensions → search \"GitHub Copilot Chat\" → Update\n\n"))
 	}
 }
 

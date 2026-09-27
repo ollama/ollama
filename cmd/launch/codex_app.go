@@ -22,6 +22,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/proxy"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
@@ -101,7 +102,7 @@ func (c *CodexApp) Configure(model string) error {
 func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) error {
 	primary = strings.TrimSpace(primary)
 	if primary == "" {
-		return fmt.Errorf("chatgpt requires a model")
+		return errors.New(i18n.T("chatgpt requires a model"))
 	}
 	models = codexAppCatalogModels(primary, models)
 	autoReview, err := codexAppConfiguredAutoReviewModel(primary, models)
@@ -118,7 +119,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	}
 	nativeCatalog, err := codexAppNativeCatalog(configPath)
 	if err != nil {
-		return fmt.Errorf("read native Codex model catalog: %w", err)
+		return fmt.Errorf(i18n.T("read native Codex model catalog: %w"), err)
 	}
 	catalogPath, err := codexAppModelCatalogPath()
 	if err != nil {
@@ -138,7 +139,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if err := writeCodexAppConfig(configPath, primary, catalogPath, models); err != nil {
 		if createdAuth {
 			if removeErr := removeCodexAppManagedAuth(configPath); removeErr != nil {
-				return errors.Join(err, fmt.Errorf("remove ChatGPT local auth after failed configuration: %w", removeErr))
+				return errors.Join(err, fmt.Errorf(i18n.T("remove ChatGPT local auth after failed configuration: %w"), removeErr))
 			}
 		}
 		return err
@@ -296,7 +297,7 @@ func codexAppRoutingModels() ([]string, error) {
 		}
 	}
 	if len(models) == 0 {
-		return nil, errors.New("ChatGPT Ollama routing catalog is empty")
+		return nil, errors.New(i18n.T("ChatGPT Ollama routing catalog is empty"))
 	}
 	return models, nil
 }
@@ -355,20 +356,20 @@ func writeCodexAppConfig(configPath, model, modelCatalogPath string, models []La
 
 func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPath, baseURL string) error {
 	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
-		return fmt.Errorf("generated ChatGPT config still contains legacy profile = %q", got)
+		return fmt.Errorf(i18n.T("generated ChatGPT config still contains legacy profile = %q"), got)
 	}
 	if config.Exists("profiles", codexAppProfileName) {
-		return fmt.Errorf("generated ChatGPT config still contains legacy profiles.%s table", codexAppProfileName)
+		return fmt.Errorf(i18n.T("generated ChatGPT config still contains legacy profiles.%s table"), codexAppProfileName)
 	}
 	if config.Exists("model_providers", codexAppProfileName) {
-		return fmt.Errorf("generated ChatGPT config still contains legacy model_providers.%s table", codexAppProfileName)
+		return fmt.Errorf(i18n.T("generated ChatGPT config still contains legacy model_providers.%s table"), codexAppProfileName)
 	}
 	if got, ok := config.RootStringOK(codexRootModelProviderKey); ok {
-		return fmt.Errorf("generated ChatGPT config still contains explicit model_provider = %q", got)
+		return fmt.Errorf(i18n.T("generated ChatGPT config still contains explicit model_provider = %q"), got)
 	}
 	efforts, ok := codexAppConfigReasoningEfforts(config)
 	if !ok || !slices.Contains(efforts, "none") || !slices.Contains(efforts, "max") {
-		return fmt.Errorf("generated ChatGPT config does not enable none and max thinking controls")
+		return errors.New(i18n.T("generated ChatGPT config does not enable none and max thinking controls"))
 	}
 	for _, check := range []struct {
 		path []string
@@ -379,7 +380,7 @@ func codexValidateAppConfigText(config codexParsedConfig, model, modelCatalogPat
 		{[]string{codexRootOpenAIBaseURLKey}, baseURL},
 	} {
 		if got, ok := config.String(check.path...); !ok || got != check.want {
-			return fmt.Errorf("generated ChatGPT config missing %s = %q", strings.Join(check.path, "."), check.want)
+			return fmt.Errorf(i18n.T("generated ChatGPT config missing %s = %q"), strings.Join(check.path, "."), check.want)
 		}
 	}
 	return nil
@@ -639,15 +640,15 @@ func (c *CodexApp) RequiresInteractiveOnboarding() bool {
 }
 
 func (c *CodexApp) RestoreHint() string {
-	return codexAppRestoreHint
+	return i18n.T(codexAppRestoreHint)
 }
 
 func (c *CodexApp) ConfigurationSuccessMessage() string {
-	return codexAppConfigurationSuccess + "\n" + codexAppRestoreHint
+	return i18n.T(codexAppConfigurationSuccess) + "\n" + i18n.T(codexAppRestoreHint)
 }
 
 func (c *CodexApp) RestoreSuccessMessage() string {
-	return codexAppRestoreSuccess
+	return i18n.T(codexAppRestoreSuccess)
 }
 
 func (c *CodexApp) Run(_ string, _ []LaunchModel, args []string) error {
@@ -655,9 +656,9 @@ func (c *CodexApp) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 	if len(args) > 0 {
-		return fmt.Errorf("chatgpt does not accept extra arguments")
+		return errors.New(i18n.T("chatgpt does not accept extra arguments"))
 	}
-	return codexAppLaunchOrRestart("Restart ChatGPT to add Ollama models?", nil)
+	return codexAppLaunchOrRestart(i18n.T("Restart ChatGPT to add Ollama models?"), nil)
 }
 
 // Installed reports whether ChatGPT can be opened on this host.
@@ -702,7 +703,7 @@ func (c *CodexApp) updateOllamaModelsFromDesktop(primary string, models []Launch
 		return err
 	}
 	if !codexAppInstalled() {
-		return fmt.Errorf("ChatGPT is not installed")
+		return errors.New(i18n.T("ChatGPT is not installed"))
 	}
 	if err := codexAppRouterHealth(); err != nil {
 		return err
@@ -729,29 +730,29 @@ func defaultCodexAppRouterHealth() error {
 	endpoint := strings.TrimRight(envconfig.ConnectableHost().String(), "/") + proxy.CodexDesktopPathPrefix + "/_health"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("create ChatGPT router health check: %w", err)
+		return fmt.Errorf(i18n.T("create ChatGPT router health check: %w"), err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("ChatGPT routing is unavailable at %s; restart Ollama and try again: %w", endpoint, err)
+		return fmt.Errorf(i18n.T("ChatGPT routing is unavailable at %s; restart Ollama and try again: %w"), endpoint, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("the running Ollama server does not include ChatGPT routing; restart Ollama using this build and try again")
+		return errors.New(i18n.T("the running Ollama server does not include ChatGPT routing; restart Ollama using this build and try again"))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ChatGPT router health check returned %s", resp.Status)
+		return fmt.Errorf(i18n.T("ChatGPT router health check returned %s"), resp.Status)
 	}
 
 	var status struct {
 		OK bool `json:"ok"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return fmt.Errorf("read ChatGPT router health check: %w", err)
+		return fmt.Errorf(i18n.T("read ChatGPT router health check: %w"), err)
 	}
 	if !status.OK {
-		return errors.New("ChatGPT router is not ready; restart Ollama and try again")
+		return errors.New(i18n.T("ChatGPT router is not ready; restart Ollama and try again"))
 	}
 	return nil
 }
@@ -777,10 +778,10 @@ func (c *CodexApp) RestartFromDesktop(restartConfirmed bool) error {
 		return err
 	}
 	if !codexAppInstalled() {
-		return errors.New("ChatGPT is not installed")
+		return errors.New(i18n.T("ChatGPT is not installed"))
 	}
 	if !c.OllamaConfigured() {
-		return errors.New("ChatGPT is not configured to use Ollama")
+		return errors.New(i18n.T("ChatGPT is not configured to use Ollama"))
 	}
 	return codexAppApplyProfileFromDesktop(repairCodexAppCatalogAuthVisibility, true, restartConfirmed)
 }
@@ -794,7 +795,7 @@ func stopLegacyCodexAppOllamaProfile() error {
 		return nil
 	}
 	if err := codexAppStopProfile(); err != nil {
-		return fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
+		return fmt.Errorf(i18n.T("close the previous ChatGPT · Ollama profile: %w"), err)
 	}
 	return nil
 }
@@ -806,7 +807,7 @@ func (c *CodexApp) Restore() error {
 	if err := restoreCodexAppProfile(); err != nil {
 		return err
 	}
-	return codexAppLaunchOrRestart("Restart ChatGPT to use your usual profile?", nil)
+	return codexAppLaunchOrRestart(i18n.T("Restart ChatGPT to use your usual profile?"), nil)
 }
 
 func restoreCodexAppProfile() error {
@@ -873,7 +874,7 @@ func restoreCodexAppProfile() error {
 }
 
 func codexAppRestoreFailure(configPath string, err error) error {
-	return fmt.Errorf("restore ChatGPT config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
+	return fmt.Errorf(i18n.T("restore ChatGPT config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s"),
 		err,
 		configPath,
 		codexAppRestoreStatePath(),
@@ -887,7 +888,7 @@ func codexAppSupported() error {
 	case "darwin", "windows":
 		return nil
 	default:
-		return fmt.Errorf("ChatGPT launch is only supported on macOS and Windows")
+		return errors.New(i18n.T("ChatGPT launch is only supported on macOS and Windows"))
 	}
 }
 
@@ -965,12 +966,12 @@ type codexAppRawModelCatalog struct {
 // The separate routing catalog, not this combined picker, determines upstreams.
 func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, nativeCatalogData []byte) error {
 	if len(models) == 0 {
-		return fmt.Errorf("chatgpt model catalog cannot be empty")
+		return errors.New(i18n.T("chatgpt model catalog cannot be empty"))
 	}
 
 	nativeCatalog, err := parseCodexAppModelCatalog(nativeCatalogData)
 	if err != nil {
-		return fmt.Errorf("parse native Codex model catalog: %w", err)
+		return fmt.Errorf(i18n.T("parse native Codex model catalog: %w"), err)
 	}
 	baseInstructions := codexAppBaseInstructionsFromCatalog(nativeCatalog)
 	ollamaPriorityStart := codexAppOllamaPriorityStart(nativeCatalog, len(models))
@@ -987,14 +988,14 @@ func writeCodexAppCombinedModelCatalog(path string, models []LaunchModel, native
 	for _, entry := range nativeCatalog.Models {
 		slug, err := codexAppRawCatalogSlug(entry)
 		if err != nil {
-			return fmt.Errorf("parse native Codex model: %w", err)
+			return fmt.Errorf(i18n.T("parse native Codex model: %w"), err)
 		}
 		if seen[codexAppCatalogModelKey(slug)] {
 			continue
 		}
 		entry, err = codexAppCatalogEntryWithAPISupport(entry, false)
 		if err != nil {
-			return fmt.Errorf("mark native Codex model %q as ChatGPT-only: %w", slug, err)
+			return fmt.Errorf(i18n.T("mark native Codex model %q as ChatGPT-only: %w"), slug, err)
 		}
 		seen[codexAppCatalogModelKey(slug)] = true
 		entries = append(entries, entry)
@@ -1027,11 +1028,11 @@ func codexAppCatalogEntryWithAPISupport(entry json.RawMessage, supported bool) (
 func repairCodexAppCatalogAuthVisibility() error {
 	configPath, err := codexConfigPath()
 	if err != nil {
-		return fmt.Errorf("find ChatGPT configuration: %w", err)
+		return fmt.Errorf(i18n.T("find ChatGPT configuration: %w"), err)
 	}
 	routingModels, err := codexAppRoutingModels()
 	if err != nil {
-		return fmt.Errorf("read ChatGPT Ollama routing catalog: %w", err)
+		return fmt.Errorf(i18n.T("read ChatGPT Ollama routing catalog: %w"), err)
 	}
 	routed := make(map[string]bool, len(routingModels))
 	for _, model := range routingModels {
@@ -1041,31 +1042,31 @@ func repairCodexAppCatalogAuthVisibility() error {
 	catalogPath := codexAppModelCatalogPathForConfig(configPath)
 	data, err := os.ReadFile(catalogPath)
 	if err != nil {
-		return fmt.Errorf("read ChatGPT model catalog: %w", err)
+		return fmt.Errorf(i18n.T("read ChatGPT model catalog: %w"), err)
 	}
 	catalog, err := parseCodexAppModelCatalog(data)
 	if err != nil {
-		return fmt.Errorf("parse ChatGPT model catalog: %w", err)
+		return fmt.Errorf(i18n.T("parse ChatGPT model catalog: %w"), err)
 	}
 	changed := false
 	for i, entry := range catalog.Models {
 		slug, err := codexAppRawCatalogSlug(entry)
 		if err != nil {
-			return fmt.Errorf("parse ChatGPT model: %w", err)
+			return fmt.Errorf(i18n.T("parse ChatGPT model: %w"), err)
 		}
 		want := routed[codexAppCatalogModelKey(slug)]
 		var metadata struct {
 			SupportedInAPI *bool `json:"supported_in_api"`
 		}
 		if err := json.Unmarshal(entry, &metadata); err != nil {
-			return fmt.Errorf("parse ChatGPT model %q: %w", slug, err)
+			return fmt.Errorf(i18n.T("parse ChatGPT model %q: %w"), slug, err)
 		}
 		if metadata.SupportedInAPI != nil && *metadata.SupportedInAPI == want {
 			continue
 		}
 		catalog.Models[i], err = codexAppCatalogEntryWithAPISupport(entry, want)
 		if err != nil {
-			return fmt.Errorf("update ChatGPT model %q: %w", slug, err)
+			return fmt.Errorf(i18n.T("update ChatGPT model %q: %w"), slug, err)
 		}
 		changed = true
 	}
@@ -1074,10 +1075,10 @@ func repairCodexAppCatalogAuthVisibility() error {
 	}
 	data, err = json.MarshalIndent(catalog, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode ChatGPT model catalog: %w", err)
+		return fmt.Errorf(i18n.T("encode ChatGPT model catalog: %w"), err)
 	}
 	if err := fileutil.WriteWithBackup(catalogPath, append(data, '\n'), codexAppIntegrationName); err != nil {
-		return fmt.Errorf("update ChatGPT model catalog: %w", err)
+		return fmt.Errorf(i18n.T("update ChatGPT model catalog: %w"), err)
 	}
 	return nil
 }
@@ -1110,7 +1111,7 @@ type codexAppAutoReviewRoute struct {
 
 func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReview codexAppAutoReviewRoute) error {
 	if len(models) == 0 {
-		return fmt.Errorf("chatgpt routing catalog cannot be empty")
+		return errors.New(i18n.T("chatgpt routing catalog cannot be empty"))
 	}
 	type thinkingMetadata struct {
 		Supported bool               `json:"supported"`
@@ -1171,7 +1172,7 @@ func codexAppConfiguredAutoReviewModel(primary string, models []LaunchModel) (co
 			return codexAppAutoReviewRoute{Model: model.Name}, nil
 		}
 	}
-	return codexAppAutoReviewRoute{}, fmt.Errorf("%s=%q is not one of the configured Ollama models", codexAppAutoReviewModelEnv, configured)
+	return codexAppAutoReviewRoute{}, fmt.Errorf(i18n.T("%s=%q is not one of the configured Ollama models"), codexAppAutoReviewModelEnv, configured)
 }
 
 func parseCodexAppModelCatalog(data []byte) (codexAppRawModelCatalog, error) {
@@ -1180,7 +1181,7 @@ func parseCodexAppModelCatalog(data []byte) (codexAppRawModelCatalog, error) {
 		return catalog, err
 	}
 	if len(catalog.Models) == 0 {
-		return catalog, fmt.Errorf("model catalog is empty")
+		return catalog, errors.New(i18n.T("model catalog is empty"))
 	}
 	for _, entry := range catalog.Models {
 		if _, err := codexAppRawCatalogSlug(entry); err != nil {
@@ -1199,7 +1200,7 @@ func codexAppRawCatalogSlug(entry json.RawMessage) (string, error) {
 	}
 	model.Slug = strings.TrimSpace(model.Slug)
 	if model.Slug == "" {
-		return "", fmt.Errorf("model catalog entry has no slug")
+		return "", errors.New(i18n.T("model catalog entry has no slug"))
 	}
 	return model.Slug, nil
 }
@@ -1484,12 +1485,12 @@ func defaultCodexAppNativeModelCatalog(configPath string) ([]byte, error) {
 	if executableErr == nil {
 		scratchHome, err := os.MkdirTemp("", "ollama-codex-models-")
 		if err != nil {
-			attempts = append(attempts, fmt.Errorf("create scratch CODEX_HOME: %w", err))
+			attempts = append(attempts, fmt.Errorf(i18n.T("create scratch CODEX_HOME: %w"), err))
 		} else {
 			defer os.RemoveAll(scratchHome)
 			for _, name := range []string{"auth.json", "models_cache.json"} {
 				if err := copyCodexAppScratchFile(filepath.Join(filepath.Dir(configPath), name), filepath.Join(scratchHome, name)); err != nil && !os.IsNotExist(err) {
-					attempts = append(attempts, fmt.Errorf("copy %s to scratch CODEX_HOME: %w", name, err))
+					attempts = append(attempts, fmt.Errorf(i18n.T("copy %s to scratch CODEX_HOME: %w"), name, err))
 				}
 			}
 
@@ -1498,10 +1499,10 @@ func defaultCodexAppNativeModelCatalog(configPath string) ([]byte, error) {
 				if normalized, normalizeErr := normalizeCodexAppModelCatalog(data); normalizeErr == nil {
 					return normalized, nil
 				} else {
-					attempts = append(attempts, fmt.Errorf("validate codex debug models output: %w", normalizeErr))
+					attempts = append(attempts, fmt.Errorf(i18n.T("validate codex debug models output: %w"), normalizeErr))
 				}
 			} else {
-				attempts = append(attempts, fmt.Errorf("run codex debug models: %w", err))
+				attempts = append(attempts, fmt.Errorf(i18n.T("run codex debug models: %w"), err))
 			}
 		}
 	} else {
@@ -1513,10 +1514,10 @@ func defaultCodexAppNativeModelCatalog(configPath string) ([]byte, error) {
 		if normalized, normalizeErr := normalizeCodexAppModelCatalog(data); normalizeErr == nil {
 			return normalized, nil
 		} else {
-			attempts = append(attempts, fmt.Errorf("validate cached Codex models: %w", normalizeErr))
+			attempts = append(attempts, fmt.Errorf(i18n.T("validate cached Codex models: %w"), normalizeErr))
 		}
 	} else {
-		attempts = append(attempts, fmt.Errorf("read cached Codex models: %w", err))
+		attempts = append(attempts, fmt.Errorf(i18n.T("read cached Codex models: %w"), err))
 	}
 
 	if executableErr == nil {
@@ -1525,10 +1526,10 @@ func defaultCodexAppNativeModelCatalog(configPath string) ([]byte, error) {
 			if normalized, normalizeErr := normalizeCodexAppModelCatalog(data); normalizeErr == nil {
 				return normalized, nil
 			} else {
-				attempts = append(attempts, fmt.Errorf("validate codex debug models --bundled output: %w", normalizeErr))
+				attempts = append(attempts, fmt.Errorf(i18n.T("validate codex debug models --bundled output: %w"), normalizeErr))
 			}
 		} else {
-			attempts = append(attempts, fmt.Errorf("run codex debug models --bundled: %w", err))
+			attempts = append(attempts, fmt.Errorf(i18n.T("run codex debug models --bundled: %w"), err))
 		}
 	}
 
@@ -1577,7 +1578,7 @@ func defaultCodexAppCodexExecutable() (string, error) {
 	if path, err := exec.LookPath("codex"); err == nil {
 		return path, nil
 	}
-	return "", fmt.Errorf("could not find the Codex executable used by the desktop app")
+	return "", errors.New(i18n.T("could not find the Codex executable used by the desktop app"))
 }
 
 func defaultCodexAppRunDebugModels(executable, codexHome string, bundled bool) ([]byte, error) {
@@ -1752,7 +1753,7 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 		return err
 	}
 	if !restart {
-		fmt.Fprintln(os.Stderr, "\nQuit and reopen ChatGPT when you're ready for the profile change to take effect.")
+		fmt.Fprintln(os.Stderr, i18n.T("\nQuit and reopen ChatGPT when you're ready for the profile change to take effect."))
 		return nil
 	}
 
@@ -1761,7 +1762,7 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	// than just the currently-active wait. The bubbletea
 	// spinner closes Cancelled() from its raw-mode Ctrl+C handler; the ANSI
 	// fallback relies on SIGINT terminating the process directly.
-	sp := StartSpinner(codexAppRestartMessage)
+	sp := StartSpinner(i18n.T(codexAppRestartMessage))
 	defer sp.Stop()
 	cancelled := sp.Cancelled()
 	isCancelled := func() bool {
@@ -1777,7 +1778,7 @@ func codexAppLaunchOrRestart(prompt string, launchArgs []string) error {
 	}
 
 	if err := codexAppQuitApp(); err != nil {
-		return fmt.Errorf("quit ChatGPT: %w", err)
+		return fmt.Errorf(i18n.T("quit ChatGPT: %w"), err)
 	}
 	if isCancelled() {
 		return ErrCancelled
@@ -1813,9 +1814,9 @@ func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, resta
 		return err
 	}
 	if err := change(); err != nil {
-		changeErr := fmt.Errorf("change ChatGPT profile: %w", err)
+		changeErr := fmt.Errorf(i18n.T("change ChatGPT profile: %w"), err)
 		if openErr := codexAppOpenAfterRestart(restartAppID, restartAppPath, nil); openErr != nil {
-			return errors.Join(changeErr, fmt.Errorf("reopen ChatGPT after profile failure: %w", openErr))
+			return errors.Join(changeErr, fmt.Errorf(i18n.T("reopen ChatGPT after profile failure: %w"), openErr))
 		}
 		return changeErr
 	}
@@ -1834,7 +1835,7 @@ func codexAppRestartTarget() (appID, appPath string) {
 
 func codexAppStopForRestart(cancel <-chan struct{}) error {
 	if err := codexAppQuitApp(); err != nil {
-		return fmt.Errorf("quit ChatGPT: %w", err)
+		return fmt.Errorf(i18n.T("quit ChatGPT: %w"), err)
 	}
 	return waitForCodexAppGracefulExit(codexAppExitTimeout, cancel)
 }
@@ -1883,13 +1884,13 @@ func waitForCodexAppCondition(timeout time.Duration, cancel <-chan struct{}, don
 	if done() {
 		return nil
 	}
-	return fmt.Errorf("ChatGPT did not quit. Close it manually, then try again")
+	return errors.New(i18n.T("ChatGPT did not quit. Close it manually, then try again"))
 }
 
 func defaultCodexAppOllamaProfileApplication() (string, error) {
 	appPath := codexAppAppPath()
 	if appPath == "" {
-		return "", fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download")
+		return "", errors.New(i18n.T("ChatGPT was not found; install it from https://chatgpt.com/download"))
 	}
 	return appPath, nil
 }
@@ -1901,7 +1902,7 @@ func defaultCodexAppOllamaProfileExecutable() (string, error) {
 	}
 	executable := filepath.Join(appPath, "Contents", "MacOS", "ChatGPT")
 	if info, err := codexAppStat(executable); err != nil || info.IsDir() {
-		return "", fmt.Errorf("could not find the ChatGPT desktop executable at %s", executable)
+		return "", fmt.Errorf(i18n.T("could not find the ChatGPT desktop executable at %s"), executable)
 	}
 	return executable, nil
 }
@@ -1919,7 +1920,7 @@ func prepareCodexAppOllamaProfileUserData(userDataDir string) (bool, error) {
 		codexAppSingletonCookieName,
 	} {
 		if err := os.Remove(filepath.Join(userDataDir, name)); err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("clear stale ChatGPT · Ollama %s: %w", name, err)
+			return false, fmt.Errorf(i18n.T("clear stale ChatGPT · Ollama %s: %w"), name, err)
 		}
 	}
 	return false, nil
@@ -1975,7 +1976,7 @@ func reconcileCodexAppOllamaProfileSingleton() bool {
 
 func writeCodexAppOllamaProfilePID(pid int) error {
 	if pid <= 1 || pid == os.Getpid() {
-		return fmt.Errorf("invalid ChatGPT · Ollama process ID %d", pid)
+		return fmt.Errorf(i18n.T("invalid ChatGPT · Ollama process ID %d"), pid)
 	}
 	pidPath, err := codexAppOllamaProfilePIDPath()
 	if err != nil {
@@ -2057,14 +2058,14 @@ func defaultCodexAppStopOllamaProfile() error {
 	}
 	if !matches {
 		_ = removeCodexAppOllamaProfilePID()
-		return fmt.Errorf("ChatGPT · Ollama process identity could not be verified")
+		return errors.New(i18n.T("ChatGPT · Ollama process identity could not be verified"))
 	}
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return err
 	}
 	if err := process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("stop ChatGPT · Ollama: %w", err)
+		return fmt.Errorf(i18n.T("stop ChatGPT · Ollama: %w"), err)
 	}
 	deadline := time.Now().Add(codexAppExitTimeout)
 	for time.Now().Before(deadline) {
@@ -2073,7 +2074,7 @@ func defaultCodexAppStopOllamaProfile() error {
 		}
 		codexAppSleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("ChatGPT · Ollama did not close; quit that window and try again")
+	return errors.New(i18n.T("ChatGPT · Ollama did not close; quit that window and try again"))
 }
 
 func defaultCodexAppOpenApp(args []string) error {
@@ -2096,7 +2097,7 @@ func defaultCodexAppOpenApp(args []string) error {
 		if appID := codexAppStartID(); appID != "" {
 			return codexAppOpenStart(appID)
 		}
-		return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
+		return errors.New(i18n.T("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'"))
 	case "darwin":
 		cmd := exec.Command("open", codexAppDarwinOpenArgs(codexAppAppPath())...)
 		cmd.Stdout = os.Stdout

@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/i18n"
 	"golang.org/x/sys/windows"
 )
 
@@ -23,7 +24,7 @@ const (
 
 func startApp(ctx context.Context, client *api.Client) error {
 	if len(isProcRunning(Installer)) > 0 {
-		return fmt.Errorf("upgrade in progress...")
+		return errors.New(i18n.T("upgrade in progress..."))
 	}
 	AppName := "ollama app.exe"
 	exe, err := os.Executable()
@@ -41,7 +42,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 			// Finally look in the path
 			appExe, err = exec.LookPath(AppName)
 			if err != nil {
-				return errors.New("could not locate ollama app")
+				return errors.New(i18n.T("could not locate ollama app"))
 			}
 		}
 	}
@@ -55,7 +56,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
+		return fmt.Errorf(i18n.T("unable to start ollama app %w"), err)
 	}
 
 	if cmd.Process != nil {

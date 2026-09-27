@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/version"
 )
 
@@ -46,8 +47,8 @@ type menuItem struct {
 }
 
 var othersMenuItem = menuItem{
-	title:       "More...",
-	description: "Show additional integrations",
+	title:       i18n.T("More..."),
+	description: i18n.T("Show additional integrations"),
 	isOthers:    true,
 }
 
@@ -105,10 +106,10 @@ func buildMenuItems(state *launch.LauncherState, showOthers bool) []menuItem {
 func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
 	description := state.Description
 	if description == "" {
-		description = "Open " + state.DisplayName + " integration"
+		description = fmt.Sprintf(i18n.T("Open %s integration"), state.DisplayName)
 	}
 	return menuItem{
-		title:       "Launch " + state.DisplayName,
+		title:       fmt.Sprintf(i18n.T("Launch %s"), state.DisplayName),
 		description: description,
 		integration: state.Name,
 	}
@@ -255,10 +256,10 @@ func (m model) View() string {
 		s += m.renderMenuItem(i, item)
 	}
 	if len(m.items) == 0 {
-		s += "No apps available.\n"
+		s += i18n.T("No apps available.\n")
 	}
 
-	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → configure • esc quit")
+	s += "\n" + selectorHelpStyle.Render(i18n.T("↑/↓ navigate • enter launch • → configure • esc quit"))
 
 	if m.width > 0 {
 		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
@@ -297,17 +298,17 @@ func (m model) renderMenuItem(index int, item menuItem) string {
 
 		if !integrationState.Installed {
 			if integrationState.AutoInstallable {
-				title += " " + notInstalledStyle.Render("(install)")
+				title += " " + notInstalledStyle.Render(i18n.T("(install)"))
 			} else {
-				title += " " + notInstalledStyle.Render("(not installed)")
+				title += " " + notInstalledStyle.Render(i18n.T("(not installed)"))
 			}
 			if m.cursor == index {
 				if integrationState.AutoInstallable {
-					description = "Press enter to install"
+					description = i18n.T("Press enter to install")
 				} else if integrationState.InstallHint != "" {
 					description = integrationState.InstallHint
 				} else {
-					description = "not installed"
+					description = i18n.T("not installed")
 				}
 			}
 		}
@@ -367,7 +368,7 @@ func RunMenu(state *launch.LauncherState) (TUIAction, error) {
 
 	finalModel, err := program.Run()
 	if err != nil {
-		return TUIAction{Kind: TUIActionNone}, fmt.Errorf("error running TUI: %w", err)
+		return TUIAction{Kind: TUIActionNone}, fmt.Errorf(i18n.T("error running TUI: %w"), err)
 	}
 
 	finalMenu := finalModel.(model)

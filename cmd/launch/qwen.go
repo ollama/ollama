@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 const qwenOllamaEnvKey = "OLLAMA_API_KEY"
@@ -68,7 +70,7 @@ func (q *Qwen) findPath() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("qwen binary not found (checked PATH and common npm install locations)")
+	return "", errors.New(i18n.T("qwen binary not found (checked PATH and common npm install locations)"))
 }
 
 func qwenNVMCandidatePaths(home string) []string {
@@ -102,12 +104,12 @@ func ensureQwenInstalled() (string, error) {
 		return "", err
 	}
 
-	ok, err := ConfirmPrompt("Qwen Code is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("Qwen Code is not installed. Install now?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("qwen installation cancelled")
+		return "", errors.New(i18n.T("qwen installation cancelled"))
 	}
 
 	bin, args, err := qwenInstallerCommand(qwenGOOS)
@@ -115,7 +117,7 @@ func ensureQwenInstalled() (string, error) {
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Qwen Code...\n")
+	fmt.Print(i18n.T("\nInstalling Qwen Code...\n"))
 	shimDir, cleanup, err := qwenInstallShimDir()
 	if err != nil {
 		return "", err
@@ -128,15 +130,15 @@ func ensureQwenInstalled() (string, error) {
 	cmd.Stderr = os.Stderr
 	cmd.Env = qwenInstallerEnv(os.Environ(), shimDir)
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install qwen: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install qwen: %w"), err)
 	}
 
 	path, err := (&Qwen{}).findPath()
 	if err != nil {
-		return "", fmt.Errorf("qwen was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("qwen was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sQwen Code installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sQwen Code installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return path, nil
 }
 
@@ -185,7 +187,7 @@ func checkQwenInstallerDependencies() error {
 	switch qwenGOOS {
 	case "windows":
 		if _, err := exec.LookPath("powershell"); err != nil {
-			return fmt.Errorf("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch qwen")
+			return errors.New(i18n.T("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch qwen"))
 		}
 	default:
 		var missing []string
@@ -196,7 +198,7 @@ func checkQwenInstallerDependencies() error {
 			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch qwen", strings.Join(missing, "\n  "))
+			return fmt.Errorf(i18n.T("qwen is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch qwen"), strings.Join(missing, "\n  "))
 		}
 	}
 	return nil
@@ -218,14 +220,14 @@ func qwenInstallerCommand(goos string) (string, []string, error) {
 			"set -o pipefail; curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen.sh | sed '/log_info \"Starting Qwen Code...\"/,/exec qwen/d' | bash",
 		}, nil
 	default:
-		return "", nil, fmt.Errorf("unsupported platform for qwen install: %s", goos)
+		return "", nil, fmt.Errorf(i18n.T("unsupported platform for qwen install: %s"), goos)
 	}
 }
 
 func (q *Qwen) Run(model string, _ []LaunchModel, args []string) error {
 	qwenPath, err := q.findPath()
 	if err != nil {
-		return fmt.Errorf("qwen is not installed: %w", err)
+		return fmt.Errorf(i18n.T("qwen is not installed: %w"), err)
 	}
 
 	cmd := exec.Command(qwenPath, qwenLaunchArgs(model, args)...)
@@ -376,7 +378,7 @@ func (q *Qwen) RequiresInteractiveOnboarding() bool { return false }
 func (q *Qwen) configPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("could not determine config path")
+		return "", errors.New(i18n.T("could not determine config path"))
 	}
 	return filepath.Join(home, ".qwen", "settings.json"), nil
 }
@@ -397,7 +399,7 @@ func (q *Qwen) readConfig() (map[string]any, error) {
 
 	cfg := map[string]any{}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parse qwen config: %w", err)
+		return nil, fmt.Errorf(i18n.T("parse qwen config: %w"), err)
 	}
 
 	return cfg, nil

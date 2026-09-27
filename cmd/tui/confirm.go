@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/i18n"
 )
 
 var (
@@ -69,11 +70,11 @@ func (m confirmModel) View() string {
 	var yesBtn, noBtn string
 	yesLabel := m.yesLabel
 	if yesLabel == "" {
-		yesLabel = "Yes"
+		yesLabel = i18n.T("Yes")
 	}
 	noLabel := m.noLabel
 	if noLabel == "" {
-		noLabel = "No"
+		noLabel = i18n.T("No")
 	}
 	if m.yes {
 		yesBtn = confirmActiveStyle.Render(" " + yesLabel + " ")
@@ -85,7 +86,7 @@ func (m confirmModel) View() string {
 
 	s := selectorTitleStyle.Render(m.prompt) + "\n\n"
 	s += "  " + yesBtn + "  " + noBtn + "\n\n"
-	s += selectorHelpStyle.Render("←/→ navigate • enter confirm • esc cancel")
+	s += selectorHelpStyle.Render(i18n.T("←/→ navigate • enter confirm • esc cancel"))
 
 	if m.width > 0 {
 		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
@@ -104,11 +105,11 @@ func RunConfirm(prompt string) (bool, error) {
 func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) {
 	yesLabel := options.YesLabel
 	if yesLabel == "" {
-		yesLabel = "Yes"
+		yesLabel = i18n.T("Yes")
 	}
 	noLabel := options.NoLabel
 	if noLabel == "" {
-		noLabel = "No"
+		noLabel = i18n.T("No")
 	}
 
 	m := confirmModel{
@@ -121,7 +122,7 @@ func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return false, fmt.Errorf("error running confirm: %w", err)
+		return false, fmt.Errorf(i18n.T("error running confirm: %w"), err)
 	}
 
 	fm := finalModel.(confirmModel)

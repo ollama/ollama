@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/types/model"
 	"gopkg.in/yaml.v3"
 )
@@ -67,7 +69,7 @@ func deepSeekHarnessLaunchArgs(patchPath string, args []string) []string {
 func validateDeepSeekHarnessArgs(args []string) error {
 	for _, arg := range args {
 		if arg == "--patch" || strings.HasPrefix(arg, "--patch=") {
-			return fmt.Errorf("conflicting extra argument %q: ollama launch dsh manages --patch", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch dsh manages --patch"), arg)
 		}
 	}
 	return nil
@@ -95,18 +97,18 @@ func ensureDeepSeekHarnessInstalled() (string, error) {
 	}
 	npm, err := deepSeekHarnessLookPath("npm")
 	if err != nil {
-		return "", fmt.Errorf("dsh is not installed and npm (Node.js) is required\n\nInstall Node.js first:\n  https://nodejs.org/\n\nThen re-run:\n  ollama launch dsh")
+		return "", errors.New(i18n.T("dsh is not installed and npm (Node.js) is required\n\nInstall Node.js first:\n  https://nodejs.org/\n\nThen re-run:\n  ollama launch dsh"))
 	}
 
-	ok, err := ConfirmPrompt("DeepSeek Harness is not installed. Install with npm?")
+	ok, err := ConfirmPrompt(i18n.T("DeepSeek Harness is not installed. Install with npm?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("deepseek harness installation cancelled")
+		return "", errors.New(i18n.T("deepseek harness installation cancelled"))
 	}
 
-	fmt.Fprintln(os.Stderr, "\nInstalling DeepSeek Harness...")
+	fmt.Fprintln(os.Stderr, i18n.T("\nInstalling DeepSeek Harness..."))
 	cmd, err := deepSeekHarnessNpmCommand(npm, []string{"install", "-g", deepSeekHarnessNpmPackage})
 	if err != nil {
 		return "", err
@@ -116,16 +118,16 @@ func ensureDeepSeekHarnessInstalled() (string, error) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if _, npxErr := deepSeekHarnessLookPath("npx"); npxErr != nil {
-			return "", fmt.Errorf("failed to install deepseek harness: %w", err)
+			return "", fmt.Errorf(i18n.T("failed to install deepseek harness: %w"), err)
 		}
 		return "", nil
 	}
 
 	path, err := deepSeekHarnessLookPath("dsh")
 	if err != nil {
-		return "", fmt.Errorf("deepseek harness was installed but dsh was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("deepseek harness was installed but dsh was not found on PATH\n\nYou may need to restart your shell"))
 	}
-	fmt.Fprintf(os.Stderr, "%sDeepSeek Harness installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sDeepSeek Harness installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return path, nil
 }
 
@@ -145,7 +147,7 @@ func deepSeekHarnessLaunchCommand(args []string) (*exec.Cmd, error) {
 
 	npx, err := deepSeekHarnessLookPath("npx")
 	if err != nil {
-		return nil, fmt.Errorf("dsh is not installed: %w", dshErr)
+		return nil, fmt.Errorf(i18n.T("dsh is not installed: %w"), dshErr)
 	}
 	return deepSeekHarnessNodeShimCommand(npx,
 		[]string{"node_modules", "npm", "bin", "npx-cli.js"},
@@ -162,11 +164,11 @@ func deepSeekHarnessNodeShimCommand(shim string, entrypointParts, args []string)
 
 	node, err := deepSeekHarnessLookPath("node")
 	if err != nil {
-		return nil, fmt.Errorf("node is required to run %s on Windows: %w", filepath.Base(shim), err)
+		return nil, fmt.Errorf(i18n.T("node is required to run %s on Windows: %w"), filepath.Base(shim), err)
 	}
 	entrypoint := filepath.Join(append([]string{filepath.Dir(shim)}, entrypointParts...)...)
 	if _, err := os.Stat(entrypoint); err != nil {
-		return nil, fmt.Errorf("resolve Windows entrypoint for %s: %w", filepath.Base(shim), err)
+		return nil, fmt.Errorf(i18n.T("resolve Windows entrypoint for %s: %w"), filepath.Base(shim), err)
 	}
 	return deepSeekHarnessCommand(node, append([]string{entrypoint}, args...)...), nil
 }
@@ -206,7 +208,7 @@ func (d *DeepSeekHarness) ConfigureWithModels(primary string, models []LaunchMod
 	}
 	settings, err := readDeepSeekHarnessYAMLDocument(settingsPath)
 	if err != nil {
-		return fmt.Errorf("parse deepseek harness launch settings: %w", err)
+		return fmt.Errorf(i18n.T("parse deepseek harness launch settings: %w"), err)
 	}
 	if err := applyDeepSeekHarnessSettings(settings, primary, models, shouldManageOllamaWebSearch()); err != nil {
 		return err
@@ -273,7 +275,7 @@ func readDeepSeekHarnessYAMLDocument(path string) (*yaml.Node, error) {
 		document.Content = []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}
 	}
 	if document.Content[0].Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("settings root must be a mapping")
+		return nil, errors.New(i18n.T("settings root must be a mapping"))
 	}
 	return document, nil
 }

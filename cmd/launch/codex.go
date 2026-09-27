@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
@@ -57,17 +59,17 @@ func (c *Codex) Run(model string, models []LaunchModel, args []string) error {
 	}
 
 	if err := ensureCodexConfig(model, models); err != nil {
-		return fmt.Errorf("failed to configure codex: %w", err)
+		return fmt.Errorf(i18n.T("failed to configure codex: %w"), err)
 	}
 
 	catalogPath, err := codexModelCatalogPath()
 	if err != nil {
-		return fmt.Errorf("failed to configure codex: %w", err)
+		return fmt.Errorf(i18n.T("failed to configure codex: %w"), err)
 	}
 
 	codexArgs, err := c.args(model, catalogPath, args)
 	if err != nil {
-		return fmt.Errorf("failed to configure codex: %w", err)
+		return fmt.Errorf(i18n.T("failed to configure codex: %w"), err)
 	}
 
 	cmd := exec.Command("codex", codexArgs...)
@@ -96,7 +98,7 @@ func (c *Codex) Restore() error {
 }
 
 func (c *Codex) RestoreSuccessMessage() string {
-	return codexRestoreSuccess
+	return i18n.T(codexRestoreSuccess)
 }
 
 func (c *Codex) SkipRestoreInstallCheck() bool {
@@ -104,7 +106,7 @@ func (c *Codex) SkipRestoreInstallCheck() bool {
 }
 
 func codexRestoreFailure(configPath string, err error) error {
-	return fmt.Errorf("restore Codex config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  CLI profile: %s\n  CLI model catalog: %s\n  Backups: %s",
+	return fmt.Errorf(i18n.T("restore Codex config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  CLI profile: %s\n  CLI model catalog: %s\n  Backups: %s"),
 		err,
 		configPath,
 		codexProfileConfigPathForConfig(configPath),
@@ -150,24 +152,24 @@ func codexValidateExtraArgs(args []string) error {
 	for i, arg := range args {
 		switch {
 		case arg == "-p", strings.HasPrefix(arg, "-p"):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch codex manages --profile"), arg)
 		case arg == "--profile", strings.HasPrefix(arg, "--profile="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --profile", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch codex manages --profile"), arg)
 		case arg == "-m", strings.HasPrefix(arg, "-m"):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch codex manages --model"), arg)
 		case arg == "--model", strings.HasPrefix(arg, "--model="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch codex manages --model", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch codex manages --model"), arg)
 		case arg == "-c", arg == "--config":
 			if i+1 < len(args) && codexConfigOverrideConflicts(args[i+1]) {
-				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", args[i+1])
+				return fmt.Errorf(i18n.T("conflicting extra config %q: ollama launch codex manages provider and model catalog config"), args[i+1])
 			}
 		case strings.HasPrefix(arg, "-c") && len(arg) > len("-c"):
 			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "-c")) {
-				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+				return fmt.Errorf(i18n.T("conflicting extra config %q: ollama launch codex manages provider and model catalog config"), arg)
 			}
 		case strings.HasPrefix(arg, "--config="):
 			if codexConfigOverrideConflicts(strings.TrimPrefix(arg, "--config=")) {
-				return fmt.Errorf("conflicting extra config %q: ollama launch codex manages provider and model catalog config", arg)
+				return fmt.Errorf(i18n.T("conflicting extra config %q: ollama launch codex manages provider and model catalog config"), arg)
 			}
 		}
 	}
@@ -359,7 +361,7 @@ func codexProviderHeaderFor(profileName string) string {
 
 func codexValidateProfileConfigText(config codexParsedConfig, profileName, model, modelCatalogPath, baseURL string) error {
 	if config.Exists("profiles", profileName) {
-		return fmt.Errorf("generated Codex config still contains legacy profiles.%s table", profileName)
+		return fmt.Errorf(i18n.T("generated Codex config still contains legacy profiles.%s table"), profileName)
 	}
 	for _, check := range []struct {
 		path []string
@@ -370,23 +372,23 @@ func codexValidateProfileConfigText(config codexParsedConfig, profileName, model
 		{[]string{"model_providers", profileName, "wire_api"}, "responses"},
 	} {
 		if got, ok := config.String(check.path...); !ok || got != check.want {
-			return fmt.Errorf("generated Codex config missing %s = %q", strings.Join(check.path, "."), check.want)
+			return fmt.Errorf(i18n.T("generated Codex config missing %s = %q"), strings.Join(check.path, "."), check.want)
 		}
 	}
 	if got, ok := config.RootStringOK(codexRootProfileKey); ok {
-		return fmt.Errorf("generated Codex config still contains legacy profile = %q", got)
+		return fmt.Errorf(i18n.T("generated Codex config still contains legacy profile = %q"), got)
 	}
 	if got := config.RootString(codexRootModelProviderKey); got != profileName {
-		return fmt.Errorf("generated Codex config missing model_provider = %q", profileName)
+		return fmt.Errorf(i18n.T("generated Codex config missing model_provider = %q"), profileName)
 	}
 	if model != "" {
 		if got := config.RootString(codexRootModelKey); got != model {
-			return fmt.Errorf("generated Codex config missing model = %q", model)
+			return fmt.Errorf(i18n.T("generated Codex config missing model = %q"), model)
 		}
 	}
 	if modelCatalogPath != "" {
 		if got := config.RootString(codexRootModelCatalogJSONKey); got != modelCatalogPath {
-			return fmt.Errorf("generated Codex config missing model_catalog_json = %q", modelCatalogPath)
+			return fmt.Errorf(i18n.T("generated Codex config missing model_catalog_json = %q"), modelCatalogPath)
 		}
 	}
 	return nil
@@ -514,7 +516,7 @@ func codexParseConfigText(text string) (map[string]any, error) {
 		return cfg, nil
 	}
 	if err := toml.Unmarshal([]byte(text), &cfg); err != nil {
-		return nil, fmt.Errorf("invalid Codex config TOML: %w", err)
+		return nil, fmt.Errorf(i18n.T("invalid Codex config TOML: %w"), err)
 	}
 	return cfg, nil
 }
@@ -763,25 +765,25 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 
 func checkCodexVersion() error {
 	if _, err := exec.LookPath("codex"); err != nil {
-		return fmt.Errorf("codex is not installed, install with: npm install -g @openai/codex")
+		return errors.New(i18n.T("codex is not installed, install with: npm install -g @openai/codex"))
 	}
 
 	out, err := exec.Command("codex", "--version").Output()
 	if err != nil {
-		return fmt.Errorf("failed to get codex version: %w", err)
+		return fmt.Errorf(i18n.T("failed to get codex version: %w"), err)
 	}
 
 	// Parse output like "codex-cli 0.87.0"
 	fields := strings.Fields(strings.TrimSpace(string(out)))
 	if len(fields) < 2 {
-		return fmt.Errorf("unexpected codex version output: %s", string(out))
+		return fmt.Errorf(i18n.T("unexpected codex version output: %s"), string(out))
 	}
 
 	version := "v" + fields[len(fields)-1]
 	minVersion := "v0.134.0"
 
 	if semver.Compare(version, minVersion) < 0 {
-		return fmt.Errorf("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex", fields[len(fields)-1], "0.134.0")
+		return fmt.Errorf(i18n.T("codex version %s is too old, minimum required is %s, update with: npm update -g @openai/codex"), fields[len(fields)-1], "0.134.0")
 	}
 
 	return nil

@@ -1,0 +1,81 @@
+package i18n
+
+// zh_tui holds Simplified Chinese translations for the tui area.
+// Keys are the exact English source strings from the code.
+var zhTui = map[string]string{
+	// tui.go — launcher menu
+	`More...`:                      `更多……`,
+	`Show additional integrations`: `显示其他集成`,
+	`Launch %s`:                    `启动 %s`,
+	`Open %s integration`:          `打开 %s 集成`,
+	"No apps available.\n":         "暂无可用应用。\n",
+	`↑/↓ navigate • enter launch • → configure • esc quit`: `↑/↓ 移动 • Enter 启动 • → 配置 • Esc 退出`,
+	`(install)`:              `（安装）`,
+	`(not installed)`:        `（未安装）`,
+	`Press enter to install`: `按 Enter 安装`,
+	`not installed`:          `未安装`,
+	`error running TUI: %w`:  `运行 TUI 时出错：%w`,
+
+	// welcome.go — welcome & account screens
+	`account check unavailable`: `无法检查账户`,
+	`sign-in link unavailable`:  `登录链接不可用`,
+	`Welcome to Ollama!`:        `欢迎使用 Ollama！`,
+	"\n\nRun open models with your coding agents so you can spend less\nwhile keeping your data private.\n\n": "\n\n让你的编码智能体运行开源模型，花费更少，\n数据依然私密。\n\n",
+	`Connect your apps`: `连接你的应用`,
+	"\nPower your existing coding apps with open models\n\n": "\n让你现有的编码应用用上开源模型\n\n",
+	`Easily switch models`:                                  `轻松切换模型`,
+	"\nSwap between frontier models in one click.\n\n":      "\n一键在前沿模型之间切换。\n\n",
+	`Your data stays yours`:                                 `数据始终属于你`,
+	"\nYour prompt data is never logged or trained on.\n\n": "\n你的提示词数据绝不会被记录或用于训练。\n\n",
+	`Checking your account…`:                                `正在检查你的账户…`,
+	`Press Enter to continue`:                               `按 Enter 继续`,
+	`Try again`:                                             `重试`,
+	`No thanks, I'll use Ollama locally`:                    `不用了，我在本地使用 Ollama`,
+	`Sign up / sign in`:                                     `注册 / 登录`,
+	`Create an account`:                                     `创建账户`,
+	"\n\nCreate your account for access to faster, larger open models.\n": "\n\n创建账户，使用更快、更大的开源模型。\n",
+	"Your data is never logged or trained on.\n\n":                        "你的数据绝不会被记录或用于训练。\n\n",
+	`Finish in your browser…`:                                             `在浏览器中完成…`,
+	`esc back`:                                                            `Esc 返回`,
+	"Checking your account…\n\n":                                          "正在检查你的账户…\n\n",
+	`esc quit`:                                                            `Esc 退出`,
+	"Unable to check your account. Please try again.\n\n":                 "无法检查你的账户。请重试。\n\n",
+	`↑/↓ navigate • enter select • esc quit`:                              `↑/↓ 移动 • Enter 选择 • Esc 退出`,
+	`show welcome: %w`:                                                    `显示欢迎界面时出错：%w`,
+
+	// selector.go — model/item selectors
+	`Type to filter...`: `输入以筛选……`,
+	`(no matches)`:      `（无匹配）`,
+	`Top Results`:       `最佳匹配`,
+	`... and %d more`:   `……还有 %d 项`,
+	`... %d more above`: `……上方还有 %d 项`,
+	`Recommended`:       `推荐`,
+	`More`:              `更多`,
+	`↑/↓ navigate • enter select • ← back`:                    `↑/↓ 移动 • Enter 选择 • ← 返回`,
+	`↑/↓ navigate • enter select • esc cancel`:                `↑/↓ 移动 • Enter 选择 • Esc 取消`,
+	`no items to select from`:                                 `没有可选择的项目`,
+	`error running selector: %w`:                              `运行选择器时出错：%w`,
+	`(default)`:                                               `（默认）`,
+	`Select at least one model.`:                              `请至少选择一个模型。`,
+	`%d models selected - press tab to edit`:                  `已选择 %d 个模型，按 Tab 编辑`,
+	`%d models selected - press enter to continue`:            `已选择 %d 个模型，按 Enter 继续`,
+	`↑/↓ navigate • enter select • tab add multiple • ← back`: `↑/↓ 移动 • Enter 选择 • Tab 多选 • ← 返回`,
+	`↑/↓ navigate • space toggle • tab select single • enter confirm • ← back`: `↑/↓ 移动 • Space 切换 • Tab 单选 • Enter 确认 • ← 返回`,
+
+	// confirm.go — yes/no prompts
+	`Yes`: `是`,
+	`No`:  `否`,
+	`←/→ navigate • enter confirm • esc cancel`: `←/→ 移动 • Enter 确认 • Esc 取消`,
+	`error running confirm: %w`:                 `运行确认提示时出错：%w`,
+
+	// signin.go — sign-in & upgrade screens
+	"To use %s, please sign in.\n\n":           "要使用 %s，请先登录。\n\n",
+	"Navigate to:\n":                           "前往：\n",
+	`Waiting for sign in to complete...`:       `等待登录完成……`,
+	`esc cancel`:                               `Esc 取消`,
+	"To use %s, upgrade your Ollama plan.\n\n": "要使用 %s，请升级你的 Ollama 套餐。\n\n",
+	"Open now?\n":                              "立即打开？\n",
+	`Waiting for upgrade to complete...`:       `等待升级完成……`,
+	`error running sign-in: %w`:                `运行登录界面时出错：%w`,
+	`error running upgrade: %w`:                `运行升级界面时出错：%w`,
+}

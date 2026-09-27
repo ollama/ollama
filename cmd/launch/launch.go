@@ -13,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/i18n"
 	modelpkg "github.com/ollama/ollama/types/model"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -281,8 +282,8 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
-		Short: "Launch the Ollama menu or an integration",
-		Long: `Launch the Ollama interactive menu, or directly launch a specific integration.
+		Short: i18n.T("Launch the Ollama menu or an integration"),
+		Long: i18n.T(`Launch the Ollama interactive menu, or directly launch a specific integration.
 
 Without arguments, this is equivalent to running 'ollama' directly.
 Flags and extra arguments require an integration name.
@@ -319,14 +320,14 @@ Examples:
   ollama launch dsh
   ollama launch droid --config (does not auto-launch)
   ollama launch codex --restore
-  ollama launch codex -- --sandbox workspace-write`,
+  ollama launch codex -- --sandbox workspace-write`),
 		Args: cobra.ArbitraryArgs,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if restoreFlag {
 				return nil
 			}
 			if len(args) > 0 && launchCommandIsClaudeDesktop(args[0]) {
-				return fmt.Errorf("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore")
+				return errors.New(i18n.T("Claude Desktop can only be restored from the command line: ollama launch claude-desktop --restore"))
 			}
 			return checkServerHeartbeat(cmd, args)
 		},
@@ -342,14 +343,14 @@ Examples:
 
 			if dashIdx == -1 {
 				if len(args) > 1 {
-					return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration", args[1:])
+					return fmt.Errorf(i18n.T("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration"), args[1:])
 				}
 				if len(args) == 1 {
 					name = args[0]
 				}
 			} else {
 				if dashIdx > 1 {
-					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+					return fmt.Errorf(i18n.T("expected at most 1 integration name before '--', got %d"), dashIdx)
 				}
 				if dashIdx == 1 {
 					name = args[0]
@@ -359,7 +360,7 @@ Examples:
 
 			if name == "" {
 				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || cmd.Flags().Changed("restore") || len(passArgs) > 0 {
-					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
+					return errors.New(i18n.T("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'"))
 				}
 				runTUI(cmd)
 				return nil
@@ -368,7 +369,7 @@ Examples:
 			if modelFlag != "" && isCloudModelName(modelFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
-						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
+						fmt.Fprintf(os.Stderr, i18n.T("Warning: ignoring --model %s because cloud is disabled\n"), modelFlag)
 						modelFlag = ""
 					}
 				}
@@ -399,10 +400,10 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
-	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
-	cmd.Flags().BoolVar(&restoreFlag, "restore", false, "Restore an integration to its default profile")
-	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
+	cmd.Flags().StringVar(&modelFlag, "model", "", i18n.T("Model to use"))
+	cmd.Flags().BoolVar(&configFlag, "config", false, i18n.T("Configure without launching"))
+	cmd.Flags().BoolVar(&restoreFlag, "restore", false, i18n.T("Restore an integration to its default profile"))
+	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, i18n.T("Automatically answer yes to confirmation prompts"))
 	return cmd
 }
 
@@ -484,7 +485,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
 		if _, ok := runner.(ManagedAutodiscoveryIntegration); !ok {
-			return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
+			return fmt.Errorf(i18n.T("headless --yes launch for %s requires --model <model>"), name)
 		}
 	}
 
@@ -524,11 +525,11 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 
 func restoreIntegration(name string, runner Runner, req IntegrationLaunchRequest) error {
 	if req.ModelOverride != "" || req.ConfigureOnly || len(req.ExtraArgs) > 0 {
-		return fmt.Errorf("--restore cannot be combined with --model, --config, or extra args")
+		return errors.New(i18n.T("--restore cannot be combined with --model, --config, or extra args"))
 	}
 	restorable, ok := runner.(RestorableIntegration)
 	if !ok {
-		return fmt.Errorf("%s does not support --restore", name)
+		return fmt.Errorf(i18n.T("%s does not support --restore"), name)
 	}
 	if skipper, ok := runner.(RestoreInstallCheckSkipper); !ok || !skipper.SkipRestoreInstallCheck() {
 		if err := EnsureIntegrationInstalled(name, runner); err != nil {
@@ -690,7 +691,7 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
+		fmt.Fprintf(os.Stderr, i18n.T("Headless mode: auto-selected last used model %q\n"), current)
 		return current, nil
 	}
 
@@ -710,7 +711,7 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		}
 	}
 
-	model, err := c.selectSingleModelWithSelector(ctx, "Select model to run:", current, DefaultSingleSelector)
+	model, err := c.selectSingleModelWithSelector(ctx, i18n.T("Select model to run:"), current, DefaultSingleSelector)
 	if err != nil {
 		return "", err
 	}
@@ -734,7 +735,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 	current := primaryModelFromConfig(saved)
 	if target != current {
 		if err := config.SaveIntegration(name, []string{target}); err != nil {
-			return fmt.Errorf("failed to save: %w", err)
+			return fmt.Errorf(i18n.T("failed to save: %w"), err)
 		}
 	}
 
@@ -826,7 +827,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 
 	if !managedIntegrationOnboarded(saved, managed) {
 		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(managed) {
-			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
+			return fmt.Errorf(i18n.T("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding"), runner, name)
 		}
 		if err := managed.Onboard(); err != nil {
 			return err
@@ -851,7 +852,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 
 func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	if req.ModelOverride != "" {
-		return fmt.Errorf("%s discovers models automatically; omit --model", runner)
+		return fmt.Errorf(i18n.T("%s discovers models automatically; omit --model"), runner)
 	}
 
 	target := autodiscovery.AutodiscoveredModel()
@@ -873,7 +874,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 
 	if !managedIntegrationOnboarded(saved, autodiscovery) {
 		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(autodiscovery) {
-			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
+			return fmt.Errorf(i18n.T("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding"), runner, name)
 		}
 		if err := autodiscovery.Onboard(); err != nil {
 			return err
@@ -951,7 +952,7 @@ func (c *launcherClient) managedSingleConfigureModels(ctx context.Context, manag
 		return models, nil
 	}
 
-	items, _, err := c.loadSelectableModels(ctx, []string{target}, target, "no models available")
+	items, _, err := c.loadSelectableModels(ctx, []string{target}, target, i18n.T("no models available"))
 	if err != nil {
 		// Managed integrations that can use a model catalog should still be
 		// configurable with an explicit target even if the broader inventory
@@ -990,7 +991,7 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 	}
 
 	if needsConfigure && req.ModelOverride == "" {
-		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, !skipReadiness, runner.String(), name)
+		selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf(i18n.T("Select model for %s:"), runner), target, DefaultSingleSelector, !skipReadiness, runner.String(), name)
 		if err != nil {
 			return "", false, err
 		}
@@ -1002,7 +1003,7 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 			}
 			// "Pick another model" is an interactive recovery path, including
 			// when --model supplied the initial target.
-			selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector, true, runner.String(), name)
+			selected, err := c.selectSingleModelWithSelectorReady(ctx, fmt.Sprintf(i18n.T("Select model for %s:"), runner), target, DefaultSingleSelector, true, runner.String(), name)
 			if err != nil {
 				return "", false, err
 			}
@@ -1057,10 +1058,10 @@ func (c *launcherClient) latestAccountState() *AccountState {
 
 func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context, title, current string, selector SingleSelector, ensureReady bool, label, commandName string) (string, error) {
 	if selector == nil && DefaultSingleSelectorWithUpdates == nil {
-		return "", fmt.Errorf("no selector configured")
+		return "", errors.New(i18n.T("no selector configured"))
 	}
 
-	items, _, err := c.loadSelectableModels(ctx, nil, current, "no models available, run 'ollama pull <model>' first")
+	items, _, err := c.loadSelectableModels(ctx, nil, current, i18n.T("no models available, run 'ollama pull <model>' first"))
 	if err != nil {
 		return "", err
 	}
@@ -1098,11 +1099,11 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 
 func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, name string, runner Runner, preChecked []string) ([]string, error) {
 	if DefaultMultiSelector == nil && DefaultMultiSelectorWithUpdates == nil {
-		return nil, fmt.Errorf("no selector configured")
+		return nil, errors.New(i18n.T("no selector configured"))
 	}
 
 	current := firstModel(preChecked)
-	items, orderedChecked, err := c.loadSelectableModels(ctx, preChecked, current, "no models available")
+	items, orderedChecked, err := c.loadSelectableModels(ctx, preChecked, current, i18n.T("no models available"))
 	if err != nil {
 		return nil, err
 	}
@@ -1114,7 +1115,7 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, na
 		if DefaultMultiSelectorWithUpdates != nil {
 			updates = c.selectionItemUpdates(ctx, items, accountState)
 		}
-		selected, err := runMultiSelector(fmt.Sprintf("Select models for %s:", runner), selectionItems, orderedChecked, updates)
+		selected, err := runMultiSelector(fmt.Sprintf(i18n.T("Select models for %s:"), runner), selectionItems, orderedChecked, updates)
 		if err != nil {
 			return nil, err
 		}
@@ -1131,7 +1132,7 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, na
 			return nil, err
 		}
 		for _, skip := range skipped {
-			fmt.Fprintf(os.Stderr, "Skipped %s: %s\n", skip.model, skip.reason)
+			fmt.Fprintf(os.Stderr, i18n.T("Skipped %s: %s\n"), skip.model, skip.reason)
 		}
 		return accepted, nil
 	}
@@ -1142,7 +1143,7 @@ func runSingleSelector(title string, items []SelectionItem, current string, upda
 		return DefaultSingleSelectorWithUpdates(title, items, current, updates)
 	}
 	if fallback == nil {
-		return "", fmt.Errorf("no selector configured")
+		return "", errors.New(i18n.T("no selector configured"))
 	}
 	return fallback(title, items, current)
 }
@@ -1152,7 +1153,7 @@ func runMultiSelector(title string, items []SelectionItem, preChecked []string, 
 		return DefaultMultiSelectorWithUpdates(title, items, preChecked, updates)
 	}
 	if DefaultMultiSelector == nil {
-		return nil, fmt.Errorf("no selector configured")
+		return nil, errors.New(i18n.T("no selector configured"))
 	}
 	return DefaultMultiSelector(title, items, preChecked)
 }
@@ -1224,7 +1225,7 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 
 		description := strings.TrimSpace(rec.Description)
 		if description == "" {
-			description = "Recommended model"
+			description = i18n.T("Recommended model")
 		}
 
 		items = append(items, ModelItem{
@@ -1259,8 +1260,8 @@ func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []stri
 	for _, model := range models {
 		if prompt := deprecatedLaunchModelPrompt(model, label, commandName, cloudRec, localRec); prompt != "" {
 			ok, err := ConfirmPromptWithOptions(prompt, ConfirmOptions{
-				YesLabel: "Launch anyway",
-				NoLabel:  "Pick another model",
+				YesLabel: i18n.T("Launch anyway"),
+				NoLabel:  i18n.T("Pick another model"),
 				Default:  ConfirmDefaultNo,
 			})
 			if err != nil {
@@ -1353,13 +1354,13 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected 
 
 func skippedModelReason(model string, err error) string {
 	if errors.Is(err, errUpgradeCancelled) {
-		return "upgrade was cancelled"
+		return i18n.T("upgrade was cancelled")
 	}
 	if errors.Is(err, ErrCancelled) {
 		if isCloudModelName(model) {
-			return "sign in was cancelled"
+			return i18n.T("sign in was cancelled")
 		}
-		return "download was cancelled"
+		return i18n.T("download was cancelled")
 	}
 	return err.Error()
 }
@@ -1495,7 +1496,7 @@ func runIntegration(runner Runner, modelName string, models []LaunchModel, args 
 
 func launchAfterConfiguration(name string, runner Runner, model string, models []LaunchModel, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
-		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
+		launch, err := ConfirmPrompt(fmt.Sprintf(i18n.T("Launch %s now?"), runner))
 		if err != nil {
 			return err
 		}

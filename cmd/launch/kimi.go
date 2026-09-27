@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Kimi implements Runner for Kimi Code CLI integration.
@@ -38,7 +40,7 @@ func (k *Kimi) args(config string, extra []string) []string {
 
 func (k *Kimi) Run(model string, _ []LaunchModel, args []string) error {
 	if strings.TrimSpace(model) == "" {
-		return fmt.Errorf("model is required")
+		return errors.New(i18n.T("model is required"))
 	}
 	if err := validateKimiPassthroughArgs(args); err != nil {
 		return err
@@ -46,7 +48,7 @@ func (k *Kimi) Run(model string, _ []LaunchModel, args []string) error {
 
 	config, err := buildKimiInlineConfig(model, resolveKimiMaxContextSize(model))
 	if err != nil {
-		return fmt.Errorf("failed to build kimi config: %w", err)
+		return fmt.Errorf(i18n.T("failed to build kimi config: %w"), err)
 	}
 
 	bin, err := ensureKimiInstalled()
@@ -113,7 +115,7 @@ func findKimiBinary() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("kimi binary not found")
+	return "", errors.New(i18n.T("kimi binary not found"))
 }
 
 func appendWindowsKimiCandidates(candidates []string, dir string) []string {
@@ -148,13 +150,13 @@ func validateKimiPassthroughArgs(args []string) error {
 	for _, arg := range args {
 		switch {
 		case arg == "--config", strings.HasPrefix(arg, "--config="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch kimi manages --config", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch kimi manages --config"), arg)
 		case arg == "--config-file", strings.HasPrefix(arg, "--config-file="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch kimi manages --config-file", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch kimi manages --config-file"), arg)
 		case arg == "--model", strings.HasPrefix(arg, "--model="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch kimi manages --model", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch kimi manages --model"), arg)
 		case arg == "-m", strings.HasPrefix(arg, "-m="):
-			return fmt.Errorf("conflicting extra argument %q: ollama launch kimi manages -m/--model", arg)
+			return fmt.Errorf(i18n.T("conflicting extra argument %q: ollama launch kimi manages -m/--model"), arg)
 		}
 	}
 	return nil
@@ -242,12 +244,12 @@ func ensureKimiInstalled() (string, error) {
 		return "", err
 	}
 
-	ok, err := ConfirmPrompt("Kimi is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("Kimi is not installed. Install now?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("kimi installation cancelled")
+		return "", errors.New(i18n.T("kimi installation cancelled"))
 	}
 
 	bin, args, err := kimiInstallerCommand(kimiGOOS)
@@ -255,21 +257,21 @@ func ensureKimiInstalled() (string, error) {
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Kimi...\n")
+	fmt.Print(i18n.T("\nInstalling Kimi...\n"))
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install kimi: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install kimi: %w"), err)
 	}
 
 	path, err := findKimiBinary()
 	if err != nil {
-		return "", fmt.Errorf("kimi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("kimi was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sKimi installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sKimi installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return path, nil
 }
 
@@ -277,7 +279,7 @@ func checkKimiInstallerDependencies() error {
 	switch kimiGOOS {
 	case "windows":
 		if _, err := exec.LookPath("powershell"); err != nil {
-			return fmt.Errorf("kimi is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch kimi")
+			return errors.New(i18n.T("kimi is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch kimi"))
 		}
 	default:
 		var missing []string
@@ -288,7 +290,7 @@ func checkKimiInstallerDependencies() error {
 			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("kimi is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch kimi", strings.Join(missing, "\n  "))
+			return fmt.Errorf(i18n.T("kimi is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch kimi"), strings.Join(missing, "\n  "))
 		}
 	}
 	return nil
@@ -310,6 +312,6 @@ func kimiInstallerCommand(goos string) (string, []string, error) {
 			"curl -LsSf https://code.kimi.com/install.sh | bash",
 		}, nil
 	default:
-		return "", nil, fmt.Errorf("unsupported platform for kimi install: %s", goos)
+		return "", nil, fmt.Errorf(i18n.T("unsupported platform for kimi install: %s"), goos)
 	}
 }

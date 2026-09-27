@@ -46,6 +46,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -100,7 +101,7 @@ func init() {
 
 func runTUISingleSelector(title string, items []launch.SelectionItem, current string, updates <-chan []launch.SelectionItem) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		return "", errors.New(i18n.T("model selection requires an interactive terminal; use --model to run in headless mode"))
 	}
 	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 	result, err := tui.SelectSingleWithUpdates(title, tuiItems, current, convertSelectionItemUpdates(updates))
@@ -112,7 +113,7 @@ func runTUISingleSelector(title string, items []launch.SelectionItem, current st
 
 func runTUIMultiSelector(title string, items []launch.SelectionItem, preChecked []string, updates <-chan []launch.SelectionItem) ([]string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		return nil, errors.New(i18n.T("model selection requires an interactive terminal; use --model to run in headless mode"))
 	}
 	tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 	result, err := tui.SelectMultipleWithUpdates(title, tuiItems, preChecked, convertSelectionItemUpdates(updates))
@@ -136,7 +137,7 @@ func convertSelectionItemUpdates(updates <-chan []launch.SelectionItem) <-chan [
 	return out
 }
 
-const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
+var ConnectInstructions = i18n.T("If your browser did not open, navigate to:\n    %s\n\n")
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -150,7 +151,7 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
+	fmt.Fprintf(os.Stderr, i18n.T("warning: model %q does not support thinking output\n"), name)
 }
 
 func getModelfileName(cmd *cobra.Command) (string, error) {
@@ -205,7 +206,7 @@ func resolveCreateDraftDir(ref, filename string) (string, error) {
 		if create.IsSafetensorsModelDir(ref) {
 			return ref, nil
 		}
-		return "", fmt.Errorf("draft %s is not a supported safetensors model directory", ref)
+		return "", fmt.Errorf(i18n.T("draft %s is not a supported safetensors model directory"), ref)
 	}
 	if filename != "" {
 		candidate := filepath.Join(filepath.Dir(filename), ref)
@@ -214,7 +215,7 @@ func resolveCreateDraftDir(ref, filename string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("DRAFT model references must be local safetensors directories for safetensors create: %s", ref)
+	return "", fmt.Errorf(i18n.T("DRAFT model references must be local safetensors directories for safetensors create: %s"), ref)
 }
 
 func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) {
@@ -276,10 +277,10 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 		}
 	}
 	if modelCount != 1 {
-		return createOptions{}, false, errors.New("safetensors imports require exactly one FROM source")
+		return createOptions{}, false, errors.New(i18n.T("safetensors imports require exactly one FROM source"))
 	}
 	if draftCount > 1 {
-		return createOptions{}, false, errors.New("safetensors imports support at most one DRAFT source")
+		return createOptions{}, false, errors.New(i18n.T("safetensors imports support at most one DRAFT source"))
 	}
 
 	return createOptions{
@@ -290,9 +291,9 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 }
 
 var (
-	errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
-	errForceLocalOnly      = errors.New("--force is only supported for local MLX safetensors imports")
-	errTypicalPDeprecated  = errors.New("typical_p is deprecated and cannot be set as a model parameter; pass it as a request option instead")
+	errAdaptersUnsupported = errors.New(i18n.T("LoRA adapters are no longer supported"))
+	errForceLocalOnly      = errors.New(i18n.T("--force is only supported for local MLX safetensors imports"))
+	errTypicalPDeprecated  = errors.New(i18n.T("typical_p is deprecated and cannot be set as a model parameter; pass it as a request option instead"))
 )
 
 // createSafetensorsModel imports in-process when the server is local and
@@ -322,7 +323,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	modelName := args[0]
 	name := model.ParseName(modelName)
 	if !name.IsValid() {
-		return fmt.Errorf("invalid model name: %s", modelName)
+		return fmt.Errorf(i18n.T("invalid model name: %s"), modelName)
 	}
 
 	draftQuantize, _ := cmd.Flags().GetString("draft-quantize")
@@ -350,7 +351,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return createSafetensorsModel(cmd, args, opts, p)
 	}
 	if quantize != "" {
-		return errors.New("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing")
+		return errors.New(i18n.T("create-time quantization is only supported for safetensors imports; quantize GGUF models before importing"))
 	}
 	if force {
 		return errForceLocalOnly
@@ -358,7 +359,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	// Standard Modelfile + API path
 	status := "gathering model components"
-	spinner := progress.NewSpinner(status)
+	spinner := progress.NewSpinner(i18n.Status(status))
 	p.Add(status, spinner)
 
 	req, err := modelfile.CreateRequest(filepath.Dir(filename))
@@ -370,9 +371,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	req.Model = modelName
 	if draftQuantize != "" {
 		if len(req.DraftFiles) == 0 {
-			return errors.New("--draft-quantize requires a DRAFT model")
+			return errors.New(i18n.T("--draft-quantize requires a DRAFT model"))
 		}
-		return errors.New("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models before importing")
+		return errors.New(i18n.T("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models before importing"))
 	}
 	if err := checkServerHeartbeat(cmd, args); err != nil {
 		return err
@@ -429,7 +430,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				if msg == "" {
 					msg = fmt.Sprintf("pulling %s...", resp.Digest[7:19])
 				}
-				bar = progress.NewBar(msg, resp.Total, resp.Completed)
+				bar = progress.NewBar(i18n.Status(msg), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -439,7 +440,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			spinner.Stop()
 
 			status = resp.Status
-			spinner = progress.NewSpinner(status)
+			spinner = progress.NewSpinner(i18n.Status(status))
 			p.Add(status, spinner)
 		}
 
@@ -448,7 +449,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
 		if strings.Contains(err.Error(), "path or Modelfile are required") {
-			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+			return errors.New(i18n.T("the ollama server must be updated to use `ollama create` with this client"))
 		}
 		return err
 	}
@@ -570,8 +571,8 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 	fileSize := fileInfo.Size()
 
 	var pw progressWriter
-	status := fmt.Sprintf("copying file %s 0%%", digest)
-	spinner := progress.NewSpinner(status)
+	status := fmt.Sprintf(i18n.T("copying file %s 0%%"), digest)
+	spinner := progress.NewSpinner(i18n.Status(status))
 	p.Add(status, spinner)
 	defer spinner.Stop()
 
@@ -584,9 +585,9 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		for {
 			select {
 			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
+				spinner.SetMessage(fmt.Sprintf(i18n.T("copying file %s %d%%"), digest, int(100*pw.n.Load()/fileSize)))
 			case <-done:
-				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
+				spinner.SetMessage(fmt.Sprintf(i18n.T("copying file %s 100%%"), digest))
 				return
 			}
 		}
@@ -599,7 +600,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 			return "", err
 		}
 		if layer.Digest != digest {
-			return "", fmt.Errorf("%s changed during create: expected digest %s, got %s", path, digest, layer.Digest)
+			return "", fmt.Errorf(i18n.T("%s changed during create: expected digest %s, got %s"), path, digest, layer.Digest)
 		}
 		return digest, nil
 	}
@@ -653,9 +654,9 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 				remoteModel = opts.Model
 			}
 			if isCloud {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", remoteModel)
+				fmt.Fprintf(os.Stderr, i18n.T("Connecting to '%s' on 'ollama.com' ⚡\n"), remoteModel)
 			} else {
-				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", remoteModel, info.RemoteHost)
+				fmt.Fprintf(os.Stderr, i18n.T("Connecting to '%s' on '%s'\n"), remoteModel, info.RemoteHost)
 			}
 		}
 
@@ -682,7 +683,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 	}
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
 		if strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+			return fmt.Errorf(i18n.T("couldn't find model \"%s\" to stop"), args[0])
 		}
 		return err
 	}
@@ -715,7 +716,7 @@ func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *a
 	}
 
 	if len(resp.Embeddings) == 0 {
-		return errors.New("no embeddings returned")
+		return errors.New(i18n.T("no embeddings returned"))
 	}
 
 	output, err := json.Marshal(resp.Embeddings[0])
@@ -731,7 +732,7 @@ func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *a
 func handleCloudAuthorizationError(err error) bool {
 	var authErr api.AuthorizationError
 	if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
-		fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+		fmt.Print(i18n.T("You need to be signed in to Ollama to run Cloud models.\n\n"))
 		if authErr.SigninURL != "" {
 			fmt.Printf(ConnectInstructions, authErr.SigninURL)
 		}
@@ -951,7 +952,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	// If it's an embedding model, handle embedding generation
 	if isEmbeddingModel {
 		if opts.Prompt == "" {
-			return errors.New("embedding models require input text. Usage: ollama run " + name + " \"your text here\"")
+			return fmt.Errorf(i18n.T("embedding models require input text. Usage: ollama run %s \"your text here\""), name)
 		}
 
 		// Get embedding-specific flags
@@ -969,14 +970,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
-		return errors.New("image generation models are not currently supported")
+		return errors.New(i18n.T("image generation models are not currently supported"))
 	}
 
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
 			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
-				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+				fmt.Print(i18n.T("You need to be signed in to Ollama to run Cloud models.\n\n"))
 
 				if sErr.SigninURL != "" {
 					fmt.Printf(ConnectInstructions, sErr.SigninURL)
@@ -1019,7 +1020,7 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		var aErr api.AuthorizationError
 		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
-			fmt.Println("You need to be signed in to Ollama to run Cloud models.")
+			fmt.Println(i18n.T("You need to be signed in to Ollama to run Cloud models."))
 			fmt.Println()
 
 			if aErr.SigninURL != "" {
@@ -1032,7 +1033,7 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if user != nil && user.Name != "" {
-		fmt.Printf("You are already signed in as user '%s'\n", user.Name)
+		fmt.Printf(i18n.T("You are already signed in as user '%s'\n"), user.Name)
 		fmt.Println()
 		return nil
 	}
@@ -1050,7 +1051,7 @@ func SignoutHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		var aErr api.AuthorizationError
 		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
-			fmt.Println("You are not signed in to ollama.com")
+			fmt.Println(i18n.T("You are not signed in to ollama.com"))
 			fmt.Println()
 			return nil
 		} else {
@@ -1058,7 +1059,7 @@ func SignoutHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Println("You have signed out of ollama.com")
+	fmt.Println(i18n.T("You have signed out of ollama.com"))
 	fmt.Println()
 	return nil
 }
@@ -1080,7 +1081,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			var aErr api.AuthorizationError
 			if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
-				fmt.Println("You need to be signed in to push models to ollama.com.")
+				fmt.Println(i18n.T("You need to be signed in to push models to ollama.com."))
 				fmt.Println()
 
 				if aErr.SigninURL != "" {
@@ -1112,7 +1113,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 				if msg == "" {
 					msg = fmt.Sprintf("pushing %s...", resp.Digest[7:19])
 				}
-				bar = progress.NewBar(msg, resp.Total, resp.Completed)
+				bar = progress.NewBar(i18n.Status(msg), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -1124,7 +1125,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			status = resp.Status
-			spinner = progress.NewSpinner(status)
+			spinner = progress.NewSpinner(i18n.Status(status))
 			p.Add(status, spinner)
 		}
 
@@ -1139,7 +1140,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		}
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "access denied") || strings.Contains(errStr, "unauthorized") {
-			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
+			return errors.New(i18n.T("you are not authorized to push to this namespace, create the model under a namespace you own"))
 		}
 		return err
 	}
@@ -1151,7 +1152,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
 		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
 	}
-	fmt.Printf("\nYou can find your model at:\n\n")
+	fmt.Print(i18n.T("\nYou can find your model at:\n\n"))
 	fmt.Printf("\t%s\n", destination)
 
 	return nil
@@ -1179,12 +1180,12 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 				size = format.HumanBytes(m.Size)
 			}
 
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
+			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, i18n.T("Never"))})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeader([]string{i18n.T("NAME"), i18n.T("ID"), i18n.T("SIZE"), i18n.T("MODIFIED")})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -1219,7 +1220,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			case m.SizeVRAM == m.Size:
 				procStr = "100% GPU"
 			case m.SizeVRAM > m.Size || m.Size == 0:
-				procStr = "Unknown"
+				procStr = i18n.T("Unknown")
 			default:
 				sizeCPU := m.Size - m.SizeVRAM
 				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
@@ -1229,9 +1230,9 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			var until string
 			delta := time.Since(m.ExpiresAt)
 			if delta > 0 {
-				until = "Stopping..."
+				until = i18n.T("Stopping...")
 			} else {
-				until = format.HumanTime(m.ExpiresAt, "Never")
+				until = format.HumanTime(m.ExpiresAt, i18n.T("Never"))
 			}
 			ctxStr := strconv.Itoa(m.ContextLength)
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, until})
@@ -1239,7 +1240,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "CONTEXT", "UNTIL"})
+	table.SetHeader([]string{i18n.T("NAME"), i18n.T("ID"), i18n.T("SIZE"), i18n.T("PROCESSOR"), i18n.T("CONTEXT"), i18n.T("UNTIL")})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -1265,14 +1266,14 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 			KeepAlive: &api.Duration{Duration: 0},
 		}); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
-				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", arg)
+				fmt.Fprintf(os.Stderr, i18n.T("Warning: unable to stop model '%s'\n"), arg)
 			}
 		}
 
 		if err := client.Delete(cmd.Context(), &api.DeleteRequest{Name: arg}); err != nil {
 			return err
 		}
-		fmt.Printf("deleted '%s'\n", arg)
+		fmt.Printf(i18n.T("deleted '%s'\n"), arg)
 	}
 	return nil
 }
@@ -1292,7 +1293,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate, errVerbose} {
 		if boolErr != nil {
-			return errors.New("error retrieving flags")
+			return errors.New(i18n.T("error retrieving flags"))
 		}
 	}
 
@@ -1325,7 +1326,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if flagsSet > 1 {
-		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
+		return errors.New(i18n.T("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified"))
 	}
 
 	req := api.ShowRequest{Name: args[0], Verbose: verbose}
@@ -1335,7 +1336,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if slices.Contains(resp.Capabilities, model.CapabilityImage) {
-		return errors.New("image generation models are not currently supported")
+		return errors.New(i18n.T("image generation models are not currently supported"))
 	}
 
 	if flagsSet == 1 {
@@ -1360,7 +1361,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 
 func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	tableRender := func(header string, rows func() [][]string) {
-		fmt.Fprintln(w, " ", header)
+		fmt.Fprintln(w, " ", i18n.T(header))
 		table := tablewriter.NewWriter(w)
 		table.SetAlignment(tablewriter.ALIGN_LEFT)
 		table.SetBorder(false)
@@ -1379,14 +1380,14 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 
 	tableRender("Model", func() (rows [][]string) {
 		if resp.RemoteHost != "" {
-			rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
-			rows = append(rows, []string{"", "Remote URL", resp.RemoteHost})
+			rows = append(rows, []string{"", i18n.T("Remote model"), resp.RemoteModel})
+			rows = append(rows, []string{"", i18n.T("Remote URL"), resp.RemoteHost})
 		}
 
 		if resp.ModelInfo != nil {
 			arch, _ := resp.ModelInfo["general.architecture"].(string)
 			if arch != "" {
-				rows = append(rows, []string{"", "architecture", arch})
+				rows = append(rows, []string{"", i18n.T("architecture"), arch})
 			}
 
 			var paramStr string
@@ -1398,25 +1399,25 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				}
 			}
 			if paramStr != "" {
-				rows = append(rows, []string{"", "parameters", paramStr})
+				rows = append(rows, []string{"", i18n.T("parameters"), paramStr})
 			}
 
 			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
 				if f, ok := v.(float64); ok {
-					rows = append(rows, []string{"", "context length", strconv.FormatFloat(f, 'f', -1, 64)})
+					rows = append(rows, []string{"", i18n.T("context length"), strconv.FormatFloat(f, 'f', -1, 64)})
 				}
 			}
 
 			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
 				if f, ok := v.(float64); ok {
-					rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
+					rows = append(rows, []string{"", i18n.T("embedding length"), strconv.FormatFloat(f, 'f', -1, 64)})
 				}
 			}
 		} else {
 			rows = append(rows, []string{"", "architecture", resp.Details.Family})
-			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
+			rows = append(rows, []string{"", i18n.T("parameters"), resp.Details.ParameterSize})
 		}
-		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
+		rows = append(rows, []string{"", i18n.T("quantization"), resp.Details.QuantizationLevel})
 		if resp.Requires != "" {
 			rows = append(rows, []string{"", "requires", resp.Requires})
 		}
@@ -1433,8 +1434,8 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 						values[i] = fmt.Sprint(value)
 					}
 					rows = append(rows,
-						[]string{"", "    levels", strings.Join(values, ", ")},
-						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
+						[]string{"", i18n.T("    levels"), strings.Join(values, ", ")},
+						[]string{"", i18n.T("    default"), fmt.Sprint(resp.Thinking.Default)},
 					)
 				}
 			}
@@ -1446,7 +1447,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		tableRender("Projector", func() (rows [][]string) {
 			arch, _ := resp.ProjectorInfo["general.architecture"].(string)
 			if arch != "" {
-				rows = append(rows, []string{"", "architecture", arch})
+				rows = append(rows, []string{"", i18n.T("architecture"), arch})
 			}
 			if v, ok := resp.ProjectorInfo["general.parameter_count"].(float64); ok {
 				rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(v))})
@@ -1461,10 +1462,10 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				return 0, false
 			}
 			if v, ok := projectorValue("embedding_length"); ok {
-				rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(v, 'f', -1, 64)})
+				rows = append(rows, []string{"", i18n.T("embedding length"), strconv.FormatFloat(v, 'f', -1, 64)})
 			}
 			if v, ok := projectorValue("projection_dim"); ok {
-				rows = append(rows, []string{"", "dimensions", strconv.FormatFloat(v, 'f', -1, 64)})
+				rows = append(rows, []string{"", i18n.T("dimensions"), strconv.FormatFloat(v, 'f', -1, 64)})
 			}
 			return
 		})
@@ -1594,7 +1595,7 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	if err := client.Copy(cmd.Context(), &req); err != nil {
 		return err
 	}
-	fmt.Printf("copied '%s' to '%s'\n", args[0], args[1])
+	fmt.Printf(i18n.T("copied '%s' to '%s'\n"), args[0], args[1])
 	return nil
 }
 
@@ -1659,7 +1660,7 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 				if isDigest {
 					name = name[:min(12, len(name))]
 				}
-				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
+				bar = progress.NewBar(fmt.Sprintf(i18n.T("pulling %s:"), name), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -1671,7 +1672,7 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name string,
 			}
 
 			status = resp.Status
-			spinner = progress.NewSpinner(status)
+			spinner = progress.NewSpinner(i18n.Status(status))
 			p.Add(status, spinner)
 		}
 
@@ -1822,7 +1823,7 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 }
 
 func thinkingOutputOpeningText(plainText bool) string {
-	text := "Thinking...\n"
+	text := i18n.T("Thinking...\n")
 
 	if plainText {
 		return text
@@ -1832,7 +1833,7 @@ func thinkingOutputOpeningText(plainText bool) string {
 }
 
 func thinkingOutputClosingText(plainText bool) string {
-	text := "...done thinking.\n\n"
+	text := i18n.T("...done thinking.\n\n")
 
 	if plainText {
 		return text
@@ -1943,7 +1944,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		// this error should ideally be wrapped properly by the client
 		if strings.Contains(err.Error(), "upstream error") {
 			p.StopAndClear()
-			fmt.Println("An error occurred while processing your message. Please try again.")
+			fmt.Println(i18n.T("An error occurred while processing your message. Please try again."))
 			fmt.Println()
 			return nil, nil
 		}
@@ -2127,7 +2128,7 @@ func initializeKeypair() error {
 
 	_, err = os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
-		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
+		fmt.Printf(i18n.T("Couldn't find '%s'. Generating new private key.\n"), privKeyPath)
 		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return err
@@ -2139,7 +2140,7 @@ func initializeKeypair() error {
 		}
 
 		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
-			return fmt.Errorf("could not create directory %w", err)
+			return fmt.Errorf(i18n.T("could not create directory %w"), err)
 		}
 
 		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {
@@ -2157,7 +2158,7 @@ func initializeKeypair() error {
 			return err
 		}
 
-		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
+		fmt.Printf(i18n.T("Your new public key is: \n\n%s\n"), publicKeyBytes)
 	}
 	return nil
 }
@@ -2186,7 +2187,7 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 
 	serverVersion, err := client.Version(cmd.Context())
 	if err != nil {
-		fmt.Println("Warning: could not connect to a running Ollama instance")
+		fmt.Println(i18n.T("Warning: could not connect to a running Ollama instance"))
 	}
 
 	if serverVersion != "" {
@@ -2194,7 +2195,7 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 
 	if serverVersion != version.Version {
-		fmt.Printf("Warning: client version is %s\n", version.Version)
+		fmt.Printf(i18n.T("Warning: client version is %s\n"), version.Version)
 	}
 }
 
@@ -2203,14 +2204,12 @@ func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 		return
 	}
 
-	envUsage := `
-Environment Variables:
-`
+	envUsage := "\n" + i18n.T("Environment Variables:") + "\n"
 	for _, e := range envs {
-		envUsage += fmt.Sprintf("      %-27s   %s\n", e.Name, e.Description)
+		envUsage += fmt.Sprintf("      %-27s   %s\n", e.Name, i18n.T(e.Description))
 	}
 
-	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
+	cmd.SetUsageTemplate(i18n.LocalizeUsageTemplate(cmd.UsageTemplate()) + envUsage)
 }
 
 func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
@@ -2256,10 +2255,10 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	applyShowResponseToRunOptions(&opts, info)
 
 	if err := loadOrUnloadModel(cmd, &opts); err != nil {
-		return fmt.Errorf("error loading model: %w", err)
+		return fmt.Errorf(i18n.T("error loading model: %w"), err)
 	}
 	if err := generateInteractive(cmd, opts); err != nil {
-		return fmt.Errorf("error running model: %w", err)
+		return fmt.Errorf(i18n.T("error running model: %w"), err)
 	}
 	return nil
 }
@@ -2268,7 +2267,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 func runInteractiveTUI(cmd *cobra.Command) {
 	// Ensure the server is running via the shared checkServerHeartbeat path.
 	if err := checkServerHeartbeat(cmd, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		fmt.Fprintf(os.Stderr, i18n.T("Error: %v\n"), i18n.Err(err))
 		return
 	}
 
@@ -2286,7 +2285,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	for {
 		continueLoop, err := runInteractiveTUIStep(cmd, deps)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, i18n.T("Error: %v\n"), i18n.Err(err))
 		}
 		if !continueLoop {
 			return
@@ -2307,7 +2306,7 @@ type launcherDeps struct {
 func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) {
 	state, err := deps.buildState(cmd.Context())
 	if err != nil {
-		return false, fmt.Errorf("build launcher state: %w", err)
+		return false, fmt.Errorf(i18n.T("build launcher state: %w"), err)
 	}
 	if state != nil && deps.accountState != nil {
 		state.AccountState = deps.accountState()
@@ -2315,7 +2314,7 @@ func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) 
 
 	action, err := deps.runMenu(state)
 	if err != nil {
-		return false, fmt.Errorf("run launcher menu: %w", err)
+		return false, fmt.Errorf(i18n.T("run launcher menu: %w"), err)
 	}
 
 	return runLauncherAction(cmd, action, deps)
@@ -2343,7 +2342,7 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 			return true, nil
 		}
 		if err != nil {
-			return true, fmt.Errorf("selecting model: %w", err)
+			return true, fmt.Errorf(i18n.T("selecting model: %w"), err)
 		}
 		if err := deps.runModel(cmd, modelName); err != nil {
 			return true, err
@@ -2362,14 +2361,14 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 			return true, nil
 		}
 		if err != nil {
-			return true, fmt.Errorf("launching %s: %w", action.Integration, err)
+			return true, fmt.Errorf(i18n.T("launching %s: %w"), action.Integration, err)
 		}
 		if launcherActionExitsLoop(action.Integration) {
 			return false, nil
 		}
 		return true, nil
 	default:
-		return false, fmt.Errorf("unknown launcher action: %d", action.Kind)
+		return false, fmt.Errorf(i18n.T("unknown launcher action: %d"), action.Kind)
 	}
 }
 
@@ -2392,7 +2391,7 @@ func NewCLI() *cobra.Command {
 
 	rootCmd := &cobra.Command{
 		Use:           "ollama",
-		Short:         "Large language model runner",
+		Short:         i18n.T("Large language model runner"),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -2406,7 +2405,7 @@ func NewCLI() *cobra.Command {
 
 			if err := runWelcome(cmd.Context()); err != nil {
 				if !errors.Is(err, launch.ErrCancelled) {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					fmt.Fprintf(os.Stderr, i18n.T("Error: %v\n"), i18n.Err(err))
 				}
 				return
 			}
@@ -2414,61 +2413,65 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
-	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
-	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
-	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
+	// Localize cobra's built-in usage section labels (Usage:/Flags:/...).
+	// English replacements are identities, so the template is unchanged.
+	rootCmd.SetUsageTemplate(i18n.LocalizeUsageTemplate(rootCmd.UsageTemplate()))
+
+	rootCmd.Flags().BoolP("version", "v", false, i18n.T("Show version information"))
+	rootCmd.Flags().Bool("verbose", false, i18n.T("Show timings for response"))
+	rootCmd.Flags().Bool("nowordwrap", false, i18n.T("Don't wrap words to the next line automatically"))
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
-		Short: "Create a model",
+		Short: i18n.T("Create a model"),
 		Args:  cobra.ExactArgs(1),
 		RunE:  CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize safetensors model to this level (e.g. nvfp4)")
-	createCmd.Flags().String("draft-quantize", "", "Quantize safetensors draft model to this level")
-	createCmd.Flags().Bool("force", false, "Continue local creation when MLX validation fails")
-	createCmd.Flags().Bool("experimental", false, "Deprecated no-op")
+	createCmd.Flags().StringP("file", "f", "", i18n.T("Name of the Modelfile (default \"Modelfile\")"))
+	createCmd.Flags().StringP("quantize", "q", "", i18n.T("Quantize safetensors model to this level (e.g. nvfp4)"))
+	createCmd.Flags().String("draft-quantize", "", i18n.T("Quantize safetensors draft model to this level"))
+	createCmd.Flags().Bool("force", false, i18n.T("Continue local creation when MLX validation fails"))
+	createCmd.Flags().Bool("experimental", false, i18n.T("Deprecated no-op"))
 	createCmd.Flags().MarkHidden("experimental")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
-		Short:   "Show information for a model",
+		Short:   i18n.T("Show information for a model"),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
 	}
 
-	showCmd.Flags().Bool("license", false, "Show license of a model")
-	showCmd.Flags().Bool("modelfile", false, "Show Modelfile of a model")
-	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
-	showCmd.Flags().Bool("template", false, "Show template of a model")
-	showCmd.Flags().Bool("system", false, "Show system message of a model")
-	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
+	showCmd.Flags().Bool("license", false, i18n.T("Show license of a model"))
+	showCmd.Flags().Bool("modelfile", false, i18n.T("Show Modelfile of a model"))
+	showCmd.Flags().Bool("parameters", false, i18n.T("Show parameters of a model"))
+	showCmd.Flags().Bool("template", false, i18n.T("Show template of a model"))
+	showCmd.Flags().Bool("system", false, i18n.T("Show system message of a model"))
+	showCmd.Flags().BoolP("verbose", "v", false, i18n.T("Show detailed model information"))
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
-		Short:   "Run a model",
+		Short:   i18n.T("Run a model"),
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    RunHandler,
 	}
 
-	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
-	runCmd.Flags().Bool("verbose", false, "Show timings for response")
-	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
-	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
-	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
+	runCmd.Flags().String("keepalive", "", i18n.T("Duration to keep a model loaded (e.g. 5m)"))
+	runCmd.Flags().Bool("verbose", false, i18n.T("Show timings for response"))
+	runCmd.Flags().Bool("insecure", false, i18n.T("Use an insecure registry"))
+	runCmd.Flags().Bool("nowordwrap", false, i18n.T("Don't wrap words to the next line automatically"))
+	runCmd.Flags().String("format", "", i18n.T("Response format (e.g. json)"))
+	runCmd.Flags().String("think", "", i18n.T("Enable thinking mode: true/false or high/medium/low for supported models"))
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
-	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
-	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
-	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().Bool("hidethinking", false, i18n.T("Hide thinking output (if provided)"))
+	runCmd.Flags().Bool("truncate", false, i18n.T("For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead"))
+	runCmd.Flags().Int("dimensions", 0, i18n.T("Truncate output embeddings to specified dimension (embedding models only)"))
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
-		Short:   "Stop a running model",
+		Short:   i18n.T("Stop a running model"),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    StopHandler,
@@ -2477,34 +2480,34 @@ func NewCLI() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
-		Short:   "Start Ollama",
+		Short:   i18n.T("Start Ollama"),
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
+		Short:   i18n.T("Pull a model from a registry"),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
 
-	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("insecure", false, i18n.T("Use an insecure registry"))
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
-		Short:   "Push a model to a registry",
+		Short:   i18n.T("Push a model to a registry"),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PushHandler,
 	}
 
-	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().Bool("insecure", false, i18n.T("Use an insecure registry"))
 
 	signinCmd := &cobra.Command{
 		Use:     "signin",
-		Short:   "Sign in to ollama.com",
+		Short:   i18n.T("Sign in to ollama.com"),
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SigninHandler,
@@ -2512,7 +2515,7 @@ func NewCLI() *cobra.Command {
 
 	loginCmd := &cobra.Command{
 		Use:     "login",
-		Short:   "Sign in to ollama.com",
+		Short:   i18n.T("Sign in to ollama.com"),
 		Hidden:  true,
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
@@ -2521,7 +2524,7 @@ func NewCLI() *cobra.Command {
 
 	signoutCmd := &cobra.Command{
 		Use:     "signout",
-		Short:   "Sign out from ollama.com",
+		Short:   i18n.T("Sign out from ollama.com"),
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SignoutHandler,
@@ -2529,7 +2532,7 @@ func NewCLI() *cobra.Command {
 
 	logoutCmd := &cobra.Command{
 		Use:     "logout",
-		Short:   "Sign out from ollama.com",
+		Short:   i18n.T("Sign out from ollama.com"),
 		Hidden:  true,
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
@@ -2539,20 +2542,20 @@ func NewCLI() *cobra.Command {
 	listCmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List models",
+		Short:   i18n.T("List models"),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
-		Short:   "List running models",
+		Short:   i18n.T("List running models"),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
-		Short:   "Copy a model",
+		Short:   i18n.T("Copy a model"),
 		Args:    cobra.ExactArgs(2),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CopyHandler,
@@ -2560,7 +2563,7 @@ func NewCLI() *cobra.Command {
 
 	deleteCmd := &cobra.Command{
 		Use:     "rm MODEL [MODEL...]",
-		Short:   "Remove a model",
+		Short:   i18n.T("Remove a model"),
 		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
@@ -2586,7 +2589,7 @@ func NewCLI() *cobra.Command {
 			return discover.RunNativeProbeCommand(cmd.Context(), gpuDiscoverLibDirs, os.Stdout)
 		},
 	}
-	gpuDiscoverCmd.Flags().StringArrayVar(&gpuDiscoverLibDirs, "lib-dir", nil, "Ollama runtime library directory")
+	gpuDiscoverCmd.Flags().StringArrayVar(&gpuDiscoverLibDirs, "lib-dir", nil, i18n.T("Ollama runtime library directory"))
 
 	envVars := envconfig.AsMap()
 
@@ -2658,6 +2661,43 @@ func NewCLI() *cobra.Command {
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
+	// Localize cobra's auto-generated help command. Calling
+	// InitDefaultHelpCmd explicitly keeps cobra's later call idempotent, so
+	// the mutations below survive Execute.
+	rootCmd.InitDefaultHelpCmd()
+	for _, c := range rootCmd.Commands() {
+		if c.Name() != "help" {
+			continue
+		}
+		c.Short = i18n.T("Help about any command")
+		c.Long = i18n.T(`Help provides help for any command in the application.
+Simply type ollama help [path to command] for full details.`)
+		c.Run = func(hc *cobra.Command, args []string) {
+			cmd, _, e := hc.Root().Find(args)
+			if cmd == nil || e != nil {
+				hc.Printf(i18n.T("Unknown help topic %#q\n"), args)
+				// Upstream never initialises the root --help flag on this
+				// branch; we pre-created it to localize its usage text, so hide
+				// it here to keep the rendered usage byte-identical.
+				_ = hc.Root().Flags().MarkHidden("help")
+				cobra.CheckErr(hc.Root().Usage())
+			} else {
+				cmd.InitDefaultHelpFlag()
+				cmd.InitDefaultVersionFlag()
+				cobra.CheckErr(cmd.Help())
+			}
+		}
+	}
+
+	// Pre-create every --help flag with a localized usage line; cobra's own
+	// InitDefaultHelpFlag is a no-op once the flag exists.
+	for _, c := range append([]*cobra.Command{rootCmd}, rootCmd.Commands()...) {
+		c.InitDefaultHelpFlag()
+		if f := c.Flags().Lookup("help"); f != nil {
+			f.Usage = i18n.HelpForUsage(c.Name())
+		}
+	}
+
 	return rootCmd
 }
 
@@ -2720,7 +2760,7 @@ func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {
 			out += "\n"
 		}
 		// all tool calls are unexpected since we don't currently support registering any in the CLI
-		out += fmt.Sprintf("  Model called a non-existent function '%s()' with arguments: %s", formatValues+toolCall.Function.Name+formatExplanation, formatValues+string(argsAsJSON)+formatExplanation)
+		out += fmt.Sprintf(i18n.T("  Model called a non-existent function '%s()' with arguments: %s"), formatValues+toolCall.Function.Name+formatExplanation, formatValues+string(argsAsJSON)+formatExplanation)
 	}
 	if !plainText {
 		out += readline.ColorDefault

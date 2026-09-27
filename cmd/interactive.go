@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
@@ -33,93 +34,93 @@ const (
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show           Show model information")
-		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
-		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
-		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
-		fmt.Fprintln(os.Stderr, "  /bye            Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
-		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
+		fmt.Fprintln(os.Stderr, i18n.T("Available Commands:"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set            Set session variables"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show           Show model information"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /load <model>   Load a session or model"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /save <model>   Save your current session"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /clear          Clear session context"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /bye            Exit"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /?, /help       Help for a command"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /? shortcuts    Help for keyboard shortcuts"))
 
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
+		fmt.Fprintln(os.Stderr, i18n.T("Use \"\"\" to begin a multi-line message."))
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, .webp images, or .wav audio files.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, i18n.T("Use %s to include .jpg, .png, .webp images, or .wav audio files.\n"), filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
 	}
 
 	usageSet := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
-		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
-		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
-		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
-		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set nowordwrap        Disable wordwrap")
-		fmt.Fprintln(os.Stderr, "  /set format json       Enable JSON mode")
-		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
-		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
-		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
-		fmt.Fprintln(os.Stderr, "  /set think             Enable thinking")
-		fmt.Fprintln(os.Stderr, "  /set nothink           Disable thinking")
+		fmt.Fprintln(os.Stderr, i18n.T("Available Commands:"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter ...     Set a parameter"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set system <string>   Set system message"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set history           Enable history"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set nohistory         Disable history"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set wordwrap          Enable wordwrap"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set nowordwrap        Disable wordwrap"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set format json       Enable JSON mode"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set noformat          Disable formatting"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set verbose           Show LLM stats"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set quiet             Disable LLM stats"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set think             Enable thinking"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set nothink           Disable thinking"))
 		fmt.Fprintln(os.Stderr, "")
 	}
 
 	usageShortcuts := func() {
-		fmt.Fprintln(os.Stderr, "Available keyboard shortcuts:")
-		fmt.Fprintln(os.Stderr, "  Ctrl + a            Move to the beginning of the line (Home)")
-		fmt.Fprintln(os.Stderr, "  Ctrl + e            Move to the end of the line (End)")
-		fmt.Fprintln(os.Stderr, "   Alt + b            Move back (left) one word")
-		fmt.Fprintln(os.Stderr, "   Alt + f            Move forward (right) one word")
-		fmt.Fprintln(os.Stderr, "  Ctrl + k            Delete the sentence after the cursor")
-		fmt.Fprintln(os.Stderr, "  Ctrl + u            Delete the sentence before the cursor")
-		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
+		fmt.Fprintln(os.Stderr, i18n.T("Available keyboard shortcuts:"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + a            Move to the beginning of the line (Home)"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + e            Move to the end of the line (End)"))
+		fmt.Fprintln(os.Stderr, i18n.T("   Alt + b            Move back (left) one word"))
+		fmt.Fprintln(os.Stderr, i18n.T("   Alt + f            Move forward (right) one word"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + k            Delete the sentence after the cursor"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + u            Delete the sentence before the cursor"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + w            Delete the word before the cursor"))
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
-		fmt.Fprintln(os.Stderr, "  Ctrl + g            Open default editor to compose a prompt")
-		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
-		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + l            Clear the screen"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + g            Open default editor to compose a prompt"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + c            Stop the model from responding"))
+		fmt.Fprintln(os.Stderr, i18n.T("  Ctrl + d            Exit ollama (/bye)"))
 		fmt.Fprintln(os.Stderr, "")
 	}
 
 	usageShow := func() {
-		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /show info         Show details for this model")
-		fmt.Fprintln(os.Stderr, "  /show license      Show model license")
-		fmt.Fprintln(os.Stderr, "  /show modelfile    Show Modelfile for this model")
-		fmt.Fprintln(os.Stderr, "  /show parameters   Show parameters for this model")
-		fmt.Fprintln(os.Stderr, "  /show system       Show system message")
-		fmt.Fprintln(os.Stderr, "  /show template     Show prompt template")
+		fmt.Fprintln(os.Stderr, i18n.T("Available Commands:"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show info         Show details for this model"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show license      Show model license"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show modelfile    Show Modelfile for this model"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show parameters   Show parameters for this model"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show system       Show system message"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /show template     Show prompt template"))
 		fmt.Fprintln(os.Stderr, "")
 	}
 
 	// only list out the most common parameters
 	usageParameters := func() {
-		fmt.Fprintln(os.Stderr, "Available Parameters:")
-		fmt.Fprintln(os.Stderr, "  /set parameter seed <int>             Random number seed")
-		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <int>      Max number of tokens to predict")
-		fmt.Fprintln(os.Stderr, "  /set parameter top_k <int>            Pick from top k num of tokens")
-		fmt.Fprintln(os.Stderr, "  /set parameter top_p <float>          Pick token based on sum of probabilities")
-		fmt.Fprintln(os.Stderr, "  /set parameter min_p <float>          Pick token based on top token probability * min_p")
-		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <int>          Set the context size")
-		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
-		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
-		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
-		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
-		fmt.Fprintln(os.Stderr, "  /set parameter stop <string> <string> ...   Set the stop parameters")
+		fmt.Fprintln(os.Stderr, i18n.T("Available Parameters:"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter seed <int>             Random number seed"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter num_predict <int>      Max number of tokens to predict"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter top_k <int>            Pick from top k num of tokens"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter top_p <float>          Pick token based on sum of probabilities"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter min_p <float>          Pick token based on top token probability * min_p"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter num_ctx <int>          Set the context size"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter temperature <float>    Set creativity level"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter repeat_penalty <float> How strongly to penalize repetitions"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter repeat_last_n <int>    Set how far back to look for repetitions"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter num_gpu <int>          The number of layers to send to the GPU"))
+		fmt.Fprintln(os.Stderr, i18n.T("  /set parameter stop <string> <string> ...   Set the stop parameters"))
 		fmt.Fprintln(os.Stderr, "")
 	}
 
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
-		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: "Press Enter to send",
+		Placeholder:    i18n.T("Send a message (/? for help)"),
+		AltPlaceholder: i18n.T("Press Enter to send"),
 	})
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				fmt.Println("\nUse Ctrl + d or /bye to exit.")
+				fmt.Println(i18n.T("\nUse Ctrl + d or /bye to exit."))
 			}
 
 			scanner.Prompt.UseAlt = false
@@ -155,7 +156,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 			content, err := editInExternalEditor(line)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				fmt.Fprintf(os.Stderr, i18n.T("error: %v\n"), err)
 				continue
 			}
 			if strings.TrimSpace(content) == "" {
@@ -182,7 +183,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			case MultilineSystem:
 				opts.System = sb.String()
 				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
-				fmt.Println("Set system message.")
+				fmt.Println(i18n.T("Set system message."))
 				sb.Reset()
 			}
 
@@ -209,25 +210,25 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		case strings.HasPrefix(line, "/load"):
 			args := strings.Fields(line)
 			if len(args) != 2 {
-				fmt.Println("Usage:\n  /load <modelname>")
+				fmt.Println(i18n.T("Usage:\n  /load <modelname>"))
 				continue
 			}
 			origOpts := opts.Copy()
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {
-				fmt.Println("error: couldn't connect to ollama server")
+				fmt.Println(i18n.T("error: couldn't connect to ollama server"))
 				return err
 			}
 
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			opts.LoadedMessages = nil
-			fmt.Printf("Loading model '%s'\n", opts.Model)
+			fmt.Printf(i18n.T("Loading model '%s'\n"), opts.Model)
 			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
-					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
+					fmt.Printf(i18n.T("Couldn't find model '%s'\n"), opts.Model)
 					opts = origOpts.Copy()
 					continue
 				}
@@ -240,12 +241,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				if strings.Contains(err.Error(), "not found") {
-					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
+					fmt.Printf(i18n.T("Couldn't find model '%s'\n"), opts.Model)
 					opts = origOpts.Copy()
 					continue
 				}
 				if strings.Contains(err.Error(), "does not support thinking") {
-					fmt.Printf("error: %v\n", err)
+					fmt.Printf(i18n.T("error: %v\n"), err)
 					continue
 				}
 				return err
@@ -254,13 +255,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		case strings.HasPrefix(line, "/save"):
 			args := strings.Fields(line)
 			if len(args) != 2 {
-				fmt.Println("Usage:\n  /save <modelname>")
+				fmt.Println(i18n.T("Usage:\n  /save <modelname>"))
 				continue
 			}
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {
-				fmt.Println("error: couldn't connect to ollama server")
+				fmt.Println(i18n.T("error: couldn't connect to ollama server"))
 				return err
 			}
 
@@ -269,12 +270,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
 				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
-					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					fmt.Printf(i18n.T("error: The model name '%s' is invalid\n"), args[1])
 					continue
 				}
 				return err
 			}
-			fmt.Printf("Created new model '%s'\n", args[1])
+			fmt.Printf(i18n.T("Created new model '%s'\n"), args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
@@ -282,7 +283,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				newMessage := api.Message{Role: "system", Content: opts.System}
 				opts.Messages = append(opts.Messages, newMessage)
 			}
-			fmt.Println("Cleared session context")
+			fmt.Println(i18n.T("Cleared session context"))
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
@@ -294,20 +295,20 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					scanner.HistoryDisable()
 				case "wordwrap":
 					opts.WordWrap = true
-					fmt.Println("Set 'wordwrap' mode.")
+					fmt.Println(i18n.T("Set 'wordwrap' mode."))
 				case "nowordwrap":
 					opts.WordWrap = false
-					fmt.Println("Set 'nowordwrap' mode.")
+					fmt.Println(i18n.T("Set 'nowordwrap' mode."))
 				case "verbose":
 					if err := cmd.Flags().Set("verbose", "true"); err != nil {
 						return err
 					}
-					fmt.Println("Set 'verbose' mode.")
+					fmt.Println(i18n.T("Set 'verbose' mode."))
 				case "quiet":
 					if err := cmd.Flags().Set("verbose", "false"); err != nil {
 						return err
 					}
-					fmt.Println("Set 'quiet' mode.")
+					fmt.Println(i18n.T("Set 'quiet' mode."))
 				case "think":
 					thinkValue := api.ThinkValue{Value: true}
 					var maybeLevel string
@@ -326,9 +327,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
 					}
 					if maybeLevel != "" {
-						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
+						fmt.Printf(i18n.T("Set 'think' mode to '%s'.\n"), maybeLevel)
 					} else {
-						fmt.Println("Set 'think' mode.")
+						fmt.Println(i18n.T("Set 'think' mode."))
 					}
 				case "nothink":
 					opts.Think = &api.ThinkValue{Value: false}
@@ -336,17 +337,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
 					}
-					fmt.Println("Set 'nothink' mode.")
+					fmt.Println(i18n.T("Set 'nothink' mode."))
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
-						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
+						fmt.Println(i18n.T("Invalid or missing format. For 'json' mode use '/set format json'"))
 					} else {
 						opts.Format = args[2]
-						fmt.Printf("Set format to '%s' mode.\n", args[2])
+						fmt.Printf(i18n.T("Set format to '%s' mode.\n"), args[2])
 					}
 				case "noformat":
 					opts.Format = ""
-					fmt.Println("Disabled format.")
+					fmt.Println(i18n.T("Disabled format."))
 				case "parameter":
 					if len(args) < 4 {
 						usageParameters()
@@ -355,10 +356,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					params := args[3:]
 					fp, err := api.FormatParams(map[string][]string{args[2]: params})
 					if err != nil {
-						fmt.Printf("Couldn't set parameter: %q\n", err)
+						fmt.Printf(i18n.T("Couldn't set parameter: %q\n"), err)
 						continue
 					}
-					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
+					fmt.Printf(i18n.T("Set parameter '%s' to '%s'\n"), args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
 				case "system":
 					if len(args) < 3 {
@@ -395,11 +396,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					} else {
 						opts.Messages = append(opts.Messages, newMessage)
 					}
-					fmt.Println("Set system message.")
+					fmt.Println(i18n.T("Set system message."))
 					sb.Reset()
 					continue
 				default:
-					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
+					fmt.Printf(i18n.T("Unknown command '/set %s'. Type /? for help\n"), args[1])
 				}
 			} else {
 				usageSet()
@@ -409,7 +410,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if len(args) > 1 {
 				client, err := api.ClientFromEnvironment()
 				if err != nil {
-					fmt.Println("error: couldn't connect to ollama server")
+					fmt.Println(i18n.T("error: couldn't connect to ollama server"))
 					return err
 				}
 				req := &api.ShowRequest{
@@ -419,7 +420,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
-					fmt.Println("error: couldn't get model")
+					fmt.Println(i18n.T("error: couldn't get model"))
 					return err
 				}
 
@@ -428,16 +429,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					_ = showInfo(resp, false, os.Stderr)
 				case "license":
 					if resp.License == "" {
-						fmt.Println("No license was specified for this model.")
+						fmt.Println(i18n.T("No license was specified for this model."))
 					} else {
 						fmt.Println(resp.License)
 					}
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
 				case "parameters":
-					fmt.Println("Model defined parameters:")
+					fmt.Println(i18n.T("Model defined parameters:"))
 					if resp.Parameters == "" {
-						fmt.Println("  No additional parameters were specified for this model.")
+						fmt.Println(i18n.T("  No additional parameters were specified for this model."))
 					} else {
 						for _, l := range strings.Split(resp.Parameters, "\n") {
 							fmt.Printf("  %s\n", l)
@@ -445,7 +446,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Println()
 					if len(opts.Options) > 0 {
-						fmt.Println("User defined parameters:")
+						fmt.Println(i18n.T("User defined parameters:"))
 						for k, v := range opts.Options {
 							fmt.Printf("  %-*s %v\n", 30, k, v)
 						}
@@ -458,16 +459,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					case resp.System != "":
 						fmt.Println(resp.System + "\n")
 					default:
-						fmt.Println("No system message was specified for this model.")
+						fmt.Println(i18n.T("No system message was specified for this model."))
 					}
 				case "template":
 					if resp.Template != "" {
 						fmt.Println(resp.Template)
 					} else {
-						fmt.Println("No prompt template was specified for this model.")
+						fmt.Println(i18n.T("No prompt template was specified for this model."))
 					}
 				default:
-					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
+					fmt.Printf(i18n.T("Unknown command '/show %s'. Type /? for help\n"), args[1])
 				}
 			} else {
 				usageShow()
@@ -502,7 +503,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 
 			if !isFile {
-				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
+				fmt.Printf(i18n.T("Unknown command '%s'. Type /? for help\n"), args[0])
 				continue
 			}
 
@@ -530,7 +531,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if err != nil {
 				if strings.Contains(err.Error(), "does not support thinking") ||
 					strings.Contains(err.Error(), "invalid think value") {
-					fmt.Printf("error: %v\n", err)
+					fmt.Printf(i18n.T("error: %v\n"), err)
 					sb.Reset()
 					continue
 				}
@@ -622,15 +623,15 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
+			fmt.Fprintf(os.Stderr, i18n.T("Couldn't process file: %q\n"), err)
 			return "", imgs, err
 		}
 		ext := strings.ToLower(filepath.Ext(nfp))
 		switch ext {
 		case ".wav":
-			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+			fmt.Fprintf(os.Stderr, i18n.T("Added audio '%s'\n"), nfp)
 		default:
-			fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+			fmt.Fprintf(os.Stderr, i18n.T("Added image '%s'\n"), nfp)
 		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
@@ -655,22 +656,22 @@ func editInExternalEditor(content string) (string, error) {
 	// Check that the editor binary exists
 	args := strings.Fields(editor)
 	if len(args) == 0 {
-		return "", fmt.Errorf("no editor configured, set OLLAMA_EDITOR to the path of your preferred editor")
+		return "", errors.New(i18n.T("no editor configured, set OLLAMA_EDITOR to the path of your preferred editor"))
 	}
 	if _, err := exec.LookPath(args[0]); err != nil {
-		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", args[0])
+		return "", fmt.Errorf(i18n.T("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor"), args[0])
 	}
 
 	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
 	if err != nil {
-		return "", fmt.Errorf("creating temp file: %w", err)
+		return "", fmt.Errorf(i18n.T("creating temp file: %w"), err)
 	}
 	defer os.Remove(tmpFile.Name())
 
 	if content != "" {
 		if _, err := tmpFile.WriteString(content); err != nil {
 			tmpFile.Close()
-			return "", fmt.Errorf("writing to temp file: %w", err)
+			return "", fmt.Errorf(i18n.T("writing to temp file: %w"), err)
 		}
 	}
 	tmpFile.Close()
@@ -682,12 +683,12 @@ func editInExternalEditor(content string) (string, error) {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("editor exited with error: %w", err)
+		return "", fmt.Errorf(i18n.T("editor exited with error: %w"), err)
 	}
 
 	data, err := os.ReadFile(tmpFile.Name())
 	if err != nil {
-		return "", fmt.Errorf("reading temp file: %w", err)
+		return "", fmt.Errorf(i18n.T("reading temp file: %w"), err)
 	}
 
 	return strings.TrimRight(string(data), "\n"), nil
@@ -709,7 +710,7 @@ func getImageData(filePath string) ([]byte, error) {
 	contentType := http.DetectContentType(buf)
 	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp", "audio/wave"}
 	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid file type: %s", contentType)
+		return nil, fmt.Errorf(i18n.T("invalid file type: %s"), contentType)
 	}
 
 	info, err := file.Stat()
@@ -719,7 +720,7 @@ func getImageData(filePath string) ([]byte, error) {
 
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB
 	if info.Size() > maxSize {
-		return nil, errors.New("file size exceeds maximum limit (100MB)")
+		return nil, errors.New(i18n.T("file size exceeds maximum limit (100MB)"))
 	}
 
 	buf = make([]byte, info.Size())

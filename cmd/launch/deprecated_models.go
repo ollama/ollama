@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/modelref"
 )
 
@@ -55,23 +56,23 @@ func deprecatedLaunchModelPrompt(name, label, commandName, cloudRec, localRec st
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s does not work well with %s. ", name, label)
+	fmt.Fprintf(&b, i18n.T("%s does not work well with %s. "), name, label)
 	switch {
 	case cloudRec != "" && localRec != "":
-		fmt.Fprintf(&b, "Try an agent-capable model like %s or %s instead", cloudRec, localRec)
+		fmt.Fprintf(&b, i18n.T("Try an agent-capable model like %s or %s instead"), cloudRec, localRec)
 	case cloudRec != "":
-		fmt.Fprintf(&b, "Try an agent-capable model like %s instead", cloudRec)
+		fmt.Fprintf(&b, i18n.T("Try an agent-capable model like %s instead"), cloudRec)
 	case localRec != "":
-		fmt.Fprintf(&b, "Try an agent-capable model like %s instead", localRec)
+		fmt.Fprintf(&b, i18n.T("Try an agent-capable model like %s instead"), localRec)
 	default:
-		b.WriteString("Try a newer recommended agent-capable model instead")
+		b.WriteString(i18n.T("Try a newer recommended agent-capable model instead"))
 	}
 	if command := launchReplacementCommand(commandName, firstNonEmpty(cloudRec, localRec)); command != "" {
-		fmt.Fprintf(&b, ":\n  %s", command)
+		fmt.Fprintf(&b, i18n.T(":\n  %s"), command)
 	} else {
-		b.WriteString(".")
+		b.WriteString(i18n.T("."))
 	}
-	fmt.Fprintf(&b, "\n\nLaunch with %s anyway?", name)
+	fmt.Fprintf(&b, i18n.T("\n\nLaunch with %s anyway?"), name)
 	return b.String()
 }
 
