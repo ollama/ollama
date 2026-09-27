@@ -72,6 +72,11 @@ func Status(s string) string {
 	if v, ok := messages()[s]; ok {
 		return v
 	}
+	// Dynamic statuses (interpolated on the wire but built from English
+	// format strings) go through the same template machinery as errors.
+	if t := translateMessage(s); t != s {
+		return t
+	}
 	for _, p := range statusPrefixes {
 		if rest, found := strings.CutPrefix(s, p[0]); found {
 			return p[1] + rest
@@ -231,5 +236,4 @@ var statusPrefixes = [][2]string{
 	{"pulling ", "拉取 "},
 	{"pushing ", "推送 "},
 	{"using autodetected template ", "使用自动检测的模板 "},
-	{"couldn't remove unused layers: ", "移除未使用的层失败："},
 }

@@ -30,6 +30,15 @@ var errTemplates = []string{
 	`insecure path: %s`,
 	`invalid content type: expected %s for %s`,
 	`malformed public key`,
+	`ollama cloud is disabled: remote inference is unavailable`,
+	`importing draft (%d tensors%s)`,
+	`importing %s (%d tensors%s)`,
+	`importing config %s`,
+	`successfully imported %s with %d layers`,
+	`writing manifest for %s`,
+	`using existing layer %s`,
+	`creating new layer %s`,
+	`couldn't remove unused layers: %v`,
 	`unexpected EOF: %s`,
 	`failed to get current user: %w`,
 	`failed to find user '%s': %w`,
@@ -44,6 +53,9 @@ var errTemplates = []string{
 // unknown-command error.
 var errPhrases = []string{
 	`Did you mean this?`,
+	`, converting fp8 to mxfp8`,
+	`, preserving source quantization`,
+	`, quantizing to `,
 }
 
 // parserLinePrefix matches the "(line N): " prefix the Modelfile parser adds
@@ -76,6 +88,9 @@ func translateMessage(msg string) string {
 		zh, ok := messages()[tpl]
 		if !ok {
 			continue
+		}
+		for i, c := range captures {
+			captures[i] = translateTail(c)
 		}
 		return prefix + fillTemplate(zh, captures) + translateTail(rest)
 	}

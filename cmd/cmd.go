@@ -1414,7 +1414,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				}
 			}
 		} else {
-			rows = append(rows, []string{"", "architecture", resp.Details.Family})
+			rows = append(rows, []string{"", i18n.T("architecture"), resp.Details.Family})
 			rows = append(rows, []string{"", i18n.T("parameters"), resp.Details.ParameterSize})
 		}
 		rows = append(rows, []string{"", i18n.T("quantization"), resp.Details.QuantizationLevel})
@@ -1450,7 +1450,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				rows = append(rows, []string{"", i18n.T("architecture"), arch})
 			}
 			if v, ok := resp.ProjectorInfo["general.parameter_count"].(float64); ok {
-				rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(v))})
+				rows = append(rows, []string{"", i18n.T("parameters"), format.HumanNumber(uint64(v))})
 			}
 
 			projectorValue := func(suffix string) (float64, bool) {
@@ -1565,7 +1565,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 			}
 		}
 		if n >= 0 && count > n {
-			rows = append(rows, []string{"", "..."})
+			rows = append(rows, []string{"", i18n.T("...")})
 		}
 		return
 	}

@@ -33,7 +33,7 @@ var zhTui = map[string]string{
 	`No thanks, I'll use Ollama locally`:                    `不用了，我在本地使用 Ollama`,
 	`Sign up / sign in`:                                     `注册 / 登录`,
 	`Create an account`:                                     `创建账户`,
-	"\n\nCreate your account for access to faster, larger open models.\n": "\n\n创建账户，使用更快、更大的开源模型。\n",
+	"\n\nCreate your account for access to faster, larger open models.\n": "\n\n创建账户即可使用更快、更大的开源模型。\n",
 	"Your data is never logged or trained on.\n\n":                        "你的数据绝不会被记录或用于训练。\n\n",
 	`Finish in your browser…`:                                             `在浏览器中完成…`,
 	`esc back`:                                                            `Esc 返回`,

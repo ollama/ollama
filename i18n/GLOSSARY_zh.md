@@ -98,6 +98,34 @@
 | Send a message | 发送消息 |
 | placeholder 提示语 | 见 §3（空间优先，可缩短） |
 
+## 2.1 术语补充登记(评审后裁定,与 §2 同等权威)
+
+| 英文/情形 | 统一译法 | 说明 |
+|---|---|---|
+| server(指本机 ollama 进程) | 服务器 | 不再用「服务端」 |
+| insecure | 非安全 | 如「非安全注册表」「非安全路径」 |
+| cloud model | 云模型 | cloud features→云功能、Cloud is disabled→云服务已禁用 属不同英文 |
+| headless mode | 无界面模式 | |
+| web search | 网络搜索 | |
+| profile(显示语境) | 配置 | 裁定:中文化;写入配置文件的 TOML 键/内容保持英文 |
+| try again | 重试 | Try→试试 另有 |
+| verify / validate、verifying | 验证 / 校验 | 语义分工,勿混用 |
+| license(字段名、指令名) | license 保留原文 | 概念词仍用「许可证」 |
+| command | CLI 语境「命令」;Modelfile 语境「指令」 | |
+| keepalive / keep loaded | 保留时长 | flag 帮助写「模型保留时长」 |
+| flash attention | flash attention | 照抄源文大小写 |
+| instance/人称 | 你 | 全仓统一用「你」,不用「您」 |
+| Node.js 等纯 Latin 词组加注 | 仍用全角括号 | 如（Node.js） |
+
+## 2.2 句式与结构规则
+
+1. 句首 `failed to X` → 「无法 X」;句中 → 「……失败」;**无 failed 字样的裸动词 `X: %w` 不加「失败」**(如 `解析 X：%w`)
+2. `install with:`/`Install the following first:` → 「安装命令：」/「请先安装：」标签式
+3. 中文词与全角引号之间**不留空格**(标点紧贴前文):加载模型“%s”
+4. 同一句英文(含填充后等价)在任何路径只能有一种中文——直包与 translateMessage 模板必须给出相同译文
+5. 引号内的 /set 斜杠命令关键字与模式名(`'think'`、`'wordwrap'`、`'verbose'`、`'json'`…)是**用户输入的字面量**,保留英文(不适用 §2 的 think→思考、wordwrap→自动换行;描述其余部分照常翻译,如「已设置“think”模式。」)
+6. **全角标点两侧不加半角空格**:中文与 “”（）之间不留空格(运行“ollama serve”启动);中文与拉丁词/数字之间的半角空格照 §3.4 保留
+
 ## 3. 风格规则
 
 1. **准确、专业、简洁、自然**：译文是给中文母语用户看的终端输出，不要翻译腔；能用2个字不用4个字。

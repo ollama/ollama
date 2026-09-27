@@ -69,6 +69,19 @@ func TestStatusTranslation(t *testing.T) {
 	if got := Status("pulling 4a5b6c7d8e9f"); !strings.HasPrefix(got, "拉取 ") {
 		t.Errorf("Status prefix rule = %q, want prefix 拉取 ", got)
 	}
+	// Interpolated statuses match display-side templates (shared create/manifest
+	// packages stay English at the source).
+	for in, want := range map[string]string{
+		"importing model.safetensors (123 tensors, converting fp8 to mxfp8)": "导入 model.safetensors（123 个张量，将 fp8 转换为 mxfp8）",
+		"importing config xform.json":                                        "导入配置 xform.json",
+		"creating new layer sha256:abc":                                      "创建新层 sha256:abc",
+		"successfully imported m.safetensors with 12 layers":                 "成功导入 m.safetensors，共 12 层",
+		"couldn't remove unused layers: open /x: permission denied":          "无法移除未使用层：open /x: permission denied",
+	} {
+		if got := Status(in); got != want {
+			t.Errorf("Status(%q) = %q, want %q", in, got, want)
+		}
+	}
 	t.Setenv("OLLAMA_LANG", "en")
 	if got := Status("pulling manifest"); got != "pulling manifest" {
 		t.Errorf("English Status() = %q, want identity", got)
