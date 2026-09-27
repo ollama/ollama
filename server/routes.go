@@ -874,7 +874,12 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion}, nil, req.KeepAlive, nil)
+	// Decision models can't generate text, so they only need to decide.
+	caps := []model.Capability{model.CapabilityCompletion}
+	if slices.Contains(m.Capabilities(), model.CapabilityDecision) {
+		caps = []model.Capability{model.CapabilityDecision}
+	}
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return

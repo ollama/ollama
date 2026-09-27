@@ -500,7 +500,9 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
 func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
 	numParallel := max(int(envconfig.NumParallel()), 1)
-	completion := req.model.CheckCapabilities(model.CapabilityCompletion) == nil
+	// Decision models score answers with completions, so they load like
+	// completion models.
+	completion := req.model.CheckCapabilities(model.CapabilityCompletion) == nil || req.model.CheckCapabilities(model.CapabilityDecision) == nil
 
 	// Embedding models should always be loaded with parallel=1
 	if !completion {

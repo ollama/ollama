@@ -48,6 +48,7 @@ var (
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
 	errCapabilityImage      = errors.New("image generation")
+	errCapabilityDecision   = errors.New("decision")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -460,6 +461,15 @@ func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, m
 		})
 	}
 
+	// Decision models answer questions through /v1/systemone; they don't
+	// generate text, even though their weights and templates look like it.
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		generation := []model.Capability{model.CapabilityCompletion, model.CapabilityInsert, model.CapabilityTools, model.CapabilityThinking}
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return slices.Contains(generation, c)
+		})
+	}
+
 	return capabilities
 }
 
@@ -533,6 +543,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
+		model.CapabilityDecision:   errCapabilityDecision,
 	}
 
 	for _, cap := range want {

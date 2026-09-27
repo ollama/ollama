@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,8 +37,10 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion"}}
+	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"decision"}}
 	createSafetensorsTestModel(t, "decision-test", config, nil)
+	config.Capabilities = []string{"completion"}
+	createSafetensorsTestModel(t, "chat-model", config, nil)
 	config.Renderer = "gemma4"
 	createSafetensorsTestModel(t, "gemma-model", config, nil)
 	for _, modelConfig := range []struct {
@@ -53,7 +56,7 @@ func TestSystemOneHandler(t *testing.T) {
 		}, nil)
 		configLayer, err := createConfigLayer(model.ConfigV2{
 			ModelFormat: "gguf", ModelFamily: modelConfig.architecture,
-			Renderer: modelConfig.renderer, Capabilities: []string{"completion"},
+			Renderer: modelConfig.renderer, Capabilities: []string{"decision"},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -85,6 +88,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"GGUF other architecture", `{"model":"gguf-llama","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, native},
 		{"GGUF with renderer", `{"model":"gguf-renderer","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, gemma},
 		{"other renderer", `{"model":"gemma-model","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, gemma},
+		{"chat model", `{"model":"chat-model","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, qwen},
 		{"template failure", `{"model":"gguf-llama","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 500, 0, false, ""},
 		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false, ""},
 		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false, ""},
@@ -158,5 +162,39 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Decision models answer through /v1/systemone only: create doesn't give them
+// generate, even when their template supports tools and thinking, and they
+// can still be unloaded.
+func TestDecisionModelDoesNotGenerate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	s := newServerWithMockRunner(t, &mockRunner{})
+	createMinimalGGUFModel(t, s, "decider", gguftest.KV{
+		"tokenizer.chat_template": `{% if tools %}<tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
+	}, "", map[string]any{"capabilities": []any{"decision"}})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Model: "decider"})
+	var show api.ShowResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &show); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(show.Capabilities, []model.Capability{model.CapabilityDecision}) {
+		t.Fatalf("capabilities = %v, want only decision", show.Capabilities)
+	}
+
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "decider", Prompt: "hi"})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "does not support generate") {
+		t.Errorf("generate = %d %s", w.Code, w.Body)
+	}
+	w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "decider", Messages: []api.Message{{Role: "user", Content: "hi"}}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "does not support chat") {
+		t.Errorf("chat = %d %s", w.Code, w.Body)
+	}
+	w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "decider", KeepAlive: &api.Duration{Duration: 0}})
+	if w.Code != http.StatusOK {
+		t.Errorf("unload = %d %s", w.Code, w.Body)
 	}
 }

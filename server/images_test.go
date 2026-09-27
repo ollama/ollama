@@ -493,6 +493,30 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
 		},
 		{
+			name: "decision model does not generate",
+			model: Model{
+				ModelPath: ggufToolTemplateModelPath,
+				Config:    model.ConfigV2{Capabilities: []string{"decision"}},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "decision model created with completion does not generate",
+			model: Model{
+				ModelPath: ggufToolTemplateModelPath,
+				Config:    model.ConfigV2{Capabilities: []string{"completion", "decision"}},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "decision model keeps input capabilities",
+			model: Model{
+				ModelPath: visionModelPath,
+				Config:    model.ConfigV2{Capabilities: []string{"decision"}},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision, model.CapabilityVision},
+		},
+		{
 			name: "model with Go TEMPLATE ignores GGUF chat_template capabilities",
 			model: Model{
 				ModelPath:       ggufToolTemplateModelPath,
@@ -754,6 +778,32 @@ func TestModelCheckCapabilities(t *testing.T) {
 				Template:  chatTemplate,
 			},
 			checkCaps: []model.Capability{model.CapabilityEmbedding},
+		},
+		{
+			name: "decision model",
+			model: Model{
+				ModelPath: completionModelPath,
+				Config:    model.ConfigV2{Capabilities: []string{"decision"}},
+			},
+			checkCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "decision model does not generate",
+			model: Model{
+				ModelPath: completionModelPath,
+				Config:    model.ConfigV2{Capabilities: []string{"decision"}},
+			},
+			checkCaps:      []model.Capability{model.CapabilityCompletion},
+			expectedErrMsg: "does not support completion",
+		},
+		{
+			name: "completion model is not a decision model",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+			},
+			checkCaps:      []model.Capability{model.CapabilityDecision},
+			expectedErrMsg: "does not support decision",
 		},
 		{
 			name: "unknown capability",

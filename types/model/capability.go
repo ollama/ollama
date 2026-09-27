@@ -11,6 +11,7 @@ const (
 	CapabilityThinking   = Capability("thinking")
 	CapabilityImage      = Capability("image")
 	CapabilityAudio      = Capability("audio")
+	CapabilityDecision   = Capability("decision")
 )
 
 func (c Capability) String() string {
