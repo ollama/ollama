@@ -739,7 +739,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
+	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, budgetThink(requestedThink, req.Think), opts)
 
 	ch := make(chan any)
 	go func() {
@@ -2790,6 +2790,19 @@ func preservedTokensForCompletion(builtinParser parsers.Parser) []string {
 	return nil
 }
 
+// budgetThink picks the think value a budget is read from. The value a request
+// renders with is resolved against the model's stated thinking controls, which
+// replaces anything the model does not state with its default: a budget is
+// never one of those controls, and a default level is not something the caller
+// asked to spend. So the budget comes from what the caller sent, and the
+// resolved value only decides whether the model thinks at all.
+func budgetThink(requested, resolved *api.ThinkValue) *api.ThinkValue {
+	if resolved != nil && !resolved.Bool() {
+		return resolved
+	}
+	return requested
+}
+
 // thinkBudgetForCompletion resolves how many tokens a request may spend
 // thinking, together with the delimiters a runner needs to enforce that bound.
 // Models with a built-in parser report their own delimiters; the rest fall back
@@ -3385,7 +3398,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
-	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, req.Think, opts)
+	thinkBudget, thinkBudgetApplied, thinkStartTag, thinkEndTag := thinkBudgetForCompletion(builtinParser, openingTag, closingTag, budgetThink(requestedThink, req.Think), opts)
 
 	ch := make(chan any)
 	go func() {
