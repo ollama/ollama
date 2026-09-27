@@ -371,7 +371,7 @@ func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 		{"max", &api.ThinkValue{Value: "max"}, "high", false},
 		{"true", &api.ThinkValue{Value: true}, "medium", false},
 		{"false", &api.ThinkValue{Value: false}, "", false},
-		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "", true},
+		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "high", false}, // another name for "max"
 		{"future", &api.ThinkValue{Value: "future"}, "", true},
 	} {
 		for _, endpoint := range []string{"chat", "generate"} {
