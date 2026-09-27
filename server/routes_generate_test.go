@@ -2858,7 +2858,6 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected no think budget value, got %#v", resp.ThinkBudget)
 		}
 	})
-
 }
 
 // TestChatFormatWithThinkFalse verifies that when a model uses a builtin

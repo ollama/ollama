@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -46,13 +47,13 @@ func TestThinkBudgetSurvivesThinkingResolution(t *testing.T) {
 				if tt.think != nil {
 					think = &api.ThinkValue{Value: tt.think}
 				}
-				var w interface{ Result() *http.Response }
+				var w *httptest.ResponseRecorder
 				if endpoint == "chat" {
 					w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "thinking-qwen", Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: think, Stream: &stream})
 				} else {
 					w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "thinking-qwen", Prompt: "hello", Think: think, Stream: &stream})
 				}
-				if code := w.Result().StatusCode; code != http.StatusOK {
+				if code := w.Code; code != http.StatusOK {
 					t.Fatalf("status %d", code)
 				}
 				if got := mock.CompletionRequest.ThinkBudget; got != tt.budget {
