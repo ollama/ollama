@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -138,4 +140,58 @@ func TestDeleteCloudSourceNormalizesToLegacyName(t *testing.T) {
 	}
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+}
+
+// TestDeletePrunesOrphanedBlobs reproduces
+// https://github.com/ollama/ollama/issues/18595: blobs referenced by no
+// manifest must be garbage-collected when a model is deleted, not only by
+// the housekeeping pass at server startup.
+func TestDeletePrunesOrphanedBlobs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	var s Server
+
+	_, digest := createBinFile(t, nil, nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "test",
+		Files: map[string]string{"test.gguf": digest},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	// Plant two orphan blobs referenced by no manifest: one older than the
+	// prune grace period and one freshly written. Distinct KV metadata keeps
+	// the digests distinct.
+	_, oldDigest := createBinFile(t, map[string]any{"general.architecture": "orphan-old"}, nil)
+	_, freshDigest := createBinFile(t, map[string]any{"general.architecture": "orphan-fresh"}, nil)
+
+	oldBlob, err := manifest.BlobsPath(oldDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshBlob, err := manifest.BlobsPath(freshDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aged := time.Now().Add(-2 * layerPruneGracePeriod)
+	if err := os.Chtimes(oldBlob, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+
+	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+
+	// The model's own blobs and the aged orphan are reclaimed at delete
+	// time. The fresh orphan is spared by the grace period: it may belong
+	// to an in-flight pull.
+	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{freshBlob})
 }
