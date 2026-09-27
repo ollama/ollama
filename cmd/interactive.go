@@ -115,10 +115,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "")
 	}
 
+	placeholder := "Send a message (/? for help)"
+	// A decision model answers questions about a text: the first message is
+	// the text and every later message is a question about it.
+	var decisionText string
+	if opts.Decision {
+		placeholder = "Paste text to ask about (/? for help)"
+	}
+
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
-		Placeholder:    "Send a message (/? for help)",
+		Placeholder:    placeholder,
 		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
@@ -277,6 +285,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
+			decisionText = ""
+			scanner.Prompt.Placeholder = placeholder
 			opts.Messages = []api.Message{}
 			if opts.System != "" {
 				newMessage := api.Message{Role: "system", Content: opts.System}
@@ -513,6 +523,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(line)
 		default:
 			sb.WriteString(line)
+		}
+
+		if sb.Len() > 0 && multiline == MultilineNone && opts.Decision {
+			if decisionText == "" {
+				decisionText = sb.String()
+				scanner.Prompt.Placeholder = "Ask a question about the text (/? for help)"
+			} else if err := decide(cmd.Context(), opts, decisionText, sb.String()); err != nil {
+				fmt.Printf("error: %v\n", err)
+			}
+			sb.Reset()
+			continue
 		}
 
 		if sb.Len() > 0 && multiline == MultilineNone {

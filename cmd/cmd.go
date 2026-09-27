@@ -945,6 +945,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	applyShowResponseToRunOptions(&opts, info)
 
+	// Decision models answer questions about text: the first prompt (or
+	// stdin) is the text and the rest are yes-or-no questions about it.
+	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
+		opts.Decision = true
+		if !interactive {
+			if len(prompts) < 2 {
+				return fmt.Errorf("%s answers questions about text, e.g. ollama run %s \"My order never arrived\" \"Is this urgent?\"", name, name)
+			}
+			return decide(cmd.Context(), opts, prompts[0], prompts[1:]...)
+		}
+		// Decision models can't generate, so there's nothing to preload:
+		// the first question loads the model.
+		return generateInteractive(cmd, opts)
+	}
+
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
 
@@ -1705,6 +1720,9 @@ type runOptions struct {
 	Think          *api.ThinkValue
 	HideThinking   bool
 	ShowConnect    bool
+	// Decision is set for decision models, which answer questions about
+	// text instead of chatting.
+	Decision bool
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1756,6 +1774,7 @@ func (r runOptions) Copy() runOptions {
 		Think:          think,
 		HideThinking:   r.HideThinking,
 		ShowConnect:    r.ShowConnect,
+		Decision:       r.Decision,
 	}
 }
 
