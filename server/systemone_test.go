@@ -39,13 +39,13 @@ func TestSystemOneHandler(t *testing.T) {
 	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion"}}
 	createSafetensorsTestModel(t, "decision-test", config, nil)
 	config.Renderer = "gemma4"
-	createSafetensorsTestModel(t, "wrong-renderer", config, nil)
+	createSafetensorsTestModel(t, "gemma-model", config, nil)
 	for _, modelConfig := range []struct {
 		name, architecture, renderer string
 	}{
 		{"gguf-decision", "qwen35", ""},
-		{"gguf-wrong-architecture", "llama", ""},
-		{"gguf-wrong-renderer", "qwen35", "gemma4"},
+		{"gguf-llama", "llama", ""},
+		{"gguf-renderer", "qwen35", "gemma4"},
 	} {
 		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    modelConfig.architecture,
@@ -68,6 +68,9 @@ func TestSystemOneHandler(t *testing.T) {
 	const prefix = `{"model":"decision-test","state":"`
 	const suffix = `","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`
 	stateLimit := (64 << 10) - len(prefix) - len(suffix)
+	// Each model's own template renders its prompts: Qwen 3.5 and Gemma 4
+	// through Ollama's renderers, GGUF chat templates through the runner.
+	const qwen, gemma, native = "<|im_start|>assistant\n<think>\n\n</think>\n\n", "<|turn>model\n", "native template"
 	for _, tt := range []struct {
 		name   string
 		body   string
@@ -75,25 +78,32 @@ func TestSystemOneHandler(t *testing.T) {
 		status int
 		calls  int
 		expire bool
+		prompt string
 	}{
-		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
-		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
-		{"GGUF incompatible architecture", `{"model":"gguf-wrong-architecture","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"GGUF conflicting renderer", `{"model":"gguf-wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
-		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
-		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("MLX: failed to allocate memory"), 500, 1, true},
-		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
-		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
-		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"wrong architecture", `{"model":"wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"bad JSON", `{`, nil, 400, 0, false},
-		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},
-		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, qwen},
+		{"GGUF chat template", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, native},
+		{"GGUF other architecture", `{"model":"gguf-llama","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, native},
+		{"GGUF with renderer", `{"model":"gguf-renderer","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, gemma},
+		{"other renderer", `{"model":"gemma-model","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false, gemma},
+		{"template failure", `{"model":"gguf-llama","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 500, 0, false, ""},
+		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false, ""},
+		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false, ""},
+		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("MLX: failed to allocate memory"), 500, 1, true, ""},
+		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false, ""},
+		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false, ""},
+		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false, ""},
+		{"bad JSON", `{`, nil, 400, 0, false, ""},
+		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false, qwen},
+		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			// The loaded context is smaller than the public prompt ceiling.
-			runner := &systemOneTestRunner{mockRunner: mockRunner{contextLength: 1024}, err: tt.err}
+			runner := &systemOneTestRunner{mockRunner: mockRunner{contextLength: 1024, Template: native}, err: tt.err}
+			if tt.name == "template failure" {
+				runner.TemplateFn = func(context.Context, llm.ChatRequest) (string, error) {
+					return "", errors.New("template failed")
+				}
+			}
 			ref := &runnerRef{llama: runner, refCount: 1, sessionDuration: time.Hour}
 			s := newServerWithMockRunner(t, &runner.mockRunner)
 			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
@@ -140,8 +150,11 @@ func TestSystemOneHandler(t *testing.T) {
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != 0 {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
-				if runner.request.MaxTokens != 1024 || !strings.HasSuffix(runner.request.Rows[0].Prompt, "<think>\n\n</think>\n\n") {
-					t.Fatal("scorer did not receive the trained prompt and loaded context budget")
+				if runner.request.MaxTokens != 1024 || !strings.HasSuffix(runner.request.Rows[0].Prompt, tt.prompt) {
+					t.Fatalf("scorer received prompt %q with budget %d", runner.request.Rows[0].Prompt, runner.request.MaxTokens)
+				}
+				if tt.prompt == native && (runner.ChatRequest.Think == nil || runner.ChatRequest.Think.Bool()) {
+					t.Fatal("native templates must render with thinking off")
 				}
 			}
 		})

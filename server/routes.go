@@ -861,7 +861,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local Nimble or Tev model"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local model"})
 		return
 	}
 	name, err := getExistingName(ref.Name)
@@ -874,10 +874,6 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if m.Config.Renderer != "qwen3.5" && !(m.isGGUF() && m.Config.Renderer == "" && m.Config.ModelFamily == "qwen35") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local Nimble or Tev model", req.Model)})
-		return
-	}
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion}, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -885,7 +881,25 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local Nimble or Tev model with a scoring-capable runner", req.Model)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring", req.Model)})
+		return
+	}
+	// Any model can answer: prompts use its own chat template, with thinking
+	// off so the answer code comes first.
+	think := &api.ThinkValue{Value: false}
+	err = compiled.Render(func(msgs []api.Message) (string, error) {
+		if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+			return r.ApplyChatTemplate(c.Request.Context(), llm.ChatRequest{Messages: msgs, Think: think})
+		}
+		return renderPrompt(m, msgs, nil, think)
+	})
+	if err != nil {
+		status := http.StatusInternalServerError
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) {
+			status = statusErr.StatusCode
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	compiled.Request.MaxTokens = min(compiled.Request.MaxTokens, r.ContextLength())

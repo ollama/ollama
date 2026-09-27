@@ -2,12 +2,15 @@ package systemone
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 func testRequest(t *testing.T) Request {
@@ -27,12 +30,23 @@ func testRequest(t *testing.T) Request {
 	return req
 }
 
-func TestCompile(t *testing.T) {
-	req := testRequest(t)
-	compiled, err := Compile(req)
+// compile compiles req and renders it the way Nimble was trained.
+func compile(t *testing.T, req Request) *Compiled {
+	t.Helper()
+	c, err := Compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := c.Render(func(msgs []api.Message) (string, error) {
+		return renderers.RenderWithRenderer("qwen3.5", msgs, nil, &api.ThinkValue{Value: false})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestCompile(t *testing.T) {
+	compiled := compile(t, testRequest(t))
 	names := []string{"department", "refund", "urgency"}
 	if len(compiled.Request.Rows) != len(names) {
 		t.Fatal("wrong prompt count")
@@ -83,14 +97,37 @@ func TestCompile(t *testing.T) {
 func TestStructuredStateFrames(t *testing.T) {
 	req := testRequest(t)
 	req.State = json.RawMessage(`{"frames":["first","second"],"position":7}`)
-	compiled, err := Compile(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range compiled.Request.Rows {
+	for _, row := range compile(t, req).Request.Rows {
 		if !strings.Contains(row.Prompt, `"context":"{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
+	}
+}
+
+func TestRender(t *testing.T) {
+	c, err := Compile(testRequest(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var prompts []string
+	err = c.Render(func(msgs []api.Message) (string, error) {
+		if len(msgs) != 2 || msgs[0].Role != "system" || msgs[1].Role != "user" {
+			t.Fatalf("unexpected messages: %+v", msgs)
+		}
+		prompts = append(prompts, msgs[1].Content)
+		return msgs[1].Content, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, name := range []string{"department", "refund", "urgency"} {
+		if c.Request.Rows[i].Prompt != prompts[i] || !strings.HasSuffix(prompts[i], `Requested field: "`+name+`"`) {
+			t.Fatalf("row %d prompt = %q", i, c.Request.Rows[i].Prompt)
+		}
+	}
+	want := errors.New("template failed")
+	if err := c.Render(func([]api.Message) (string, error) { return "", want }); !errors.Is(err, want) {
+		t.Fatalf("Render error = %v, want %v", err, want)
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/renderers"
 )
 
 // MaxPromptTokens matches max_length in Nimble's schema_config.json.
@@ -54,8 +53,9 @@ type field struct {
 }
 
 type Compiled struct {
-	Request llm.ScoreRequest
-	fields  []field
+	Request  llm.ScoreRequest
+	fields   []field
+	messages [][]api.Message
 }
 
 func Compile(req Request) (*Compiled, error) {
@@ -92,20 +92,29 @@ func Compile(req Request) (*Compiled, error) {
 		if err != nil {
 			return nil, err
 		}
-		prompt, err := renderers.RenderWithRenderer("qwen3.5", []api.Message{
+		c.messages = append(c.messages, []api.Message{
 			{Role: "system", Content: textSystemPrompt},
 			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
-		}, nil, &api.ThinkValue{Value: false})
-		if err != nil {
-			return nil, err
-		}
-		row := llm.ScoreRow{Prompt: prompt}
+		})
+		var row llm.ScoreRow
 		for _, choice := range f.Choices {
 			row.Candidates = append(row.Candidates, choice.Code)
 		}
 		c.Request.Rows = append(c.Request.Rows, row)
 	}
 	return c, nil
+}
+
+// Render sets each question's prompt using the model's chat template.
+func (c *Compiled) Render(render func([]api.Message) (string, error)) error {
+	for i, messages := range c.messages {
+		prompt, err := render(messages)
+		if err != nil {
+			return err
+		}
+		c.Request.Rows[i].Prompt = prompt
+	}
+	return nil
 }
 
 func content(raw json.RawMessage) (string, error) {

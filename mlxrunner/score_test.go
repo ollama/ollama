@@ -16,6 +16,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 // This small stateful model uses real KV and recurrent caches. Its outputs
@@ -202,6 +203,11 @@ func TestNimbleModel(t *testing.T) {
 	}
 	c, err := systemone.Compile(req)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Render(func(msgs []api.Message) (string, error) {
+		return renderers.RenderWithRenderer("qwen3.5", msgs, nil, &api.ThinkValue{Value: false})
+	}); err != nil {
 		t.Fatal(err)
 	}
 
