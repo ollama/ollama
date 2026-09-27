@@ -1,3 +1,5 @@
+//go:build cgo
+
 package mlx
 
 type Linear struct {
