@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/internal/systemone"
+	"github.com/ollama/ollama/decision"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
@@ -134,7 +134,7 @@ func TestSystemOneHandler(t *testing.T) {
 					Answers map[string]struct {
 						Noul float64 `json:"noul"`
 					} `json:"answers"`
-					Usage systemone.Usage `json:"usage"`
+					Usage decision.Usage `json:"usage"`
 				}
 				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 					t.Fatal(err)

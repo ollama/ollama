@@ -1,4 +1,4 @@
-package systemone
+package decision
 
 import (
 	"encoding/json"
@@ -48,7 +48,7 @@ func TestCompile(t *testing.T) {
 		}
 		var payload struct {
 			Context string
-			Schema  []field
+			Schema  []Field
 		}
 		if err := json.Unmarshal([]byte(data), &payload); err != nil {
 			t.Fatal(err)
@@ -107,16 +107,16 @@ func TestAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	choice, _ := result.Answers.Get(c.fields[0].Name)
-	got := choice.(choiceAnswer)
+	got := choice.(ChoiceAnswer)
 	if got.Choice != "billing" || got.Confidence != 0 {
 		t.Fatalf("tie must choose the first candidate with zero concentration: %+v", got)
 	}
 	noul, _ := result.Answers.Get("refund")
-	if noul.(noulAnswer).Noul != 1 {
+	if noul.(NoulAnswer).Noul != 1 {
 		t.Fatal("noul must report P(true), using stable softmax")
 	}
 	score, _ := result.Answers.Get("urgency")
-	if math.Abs(score.(scoreAnswer).Score-1) > 1e-12 || score.(scoreAnswer).Legend.Len() != 3 {
+	if math.Abs(score.(ScoreAnswer).Score-1) > 1e-12 || score.(ScoreAnswer).Legend.Len() != 3 {
 		t.Fatalf("bad expected rubric index or legend: %+v", score)
 	}
 	if result.Usage.InputTokens != 900 || result.Usage.OutputTokens != 0 {

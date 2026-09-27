@@ -33,13 +33,13 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/proxy"
-	"github.com/ollama/ollama/internal/systemone"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -840,7 +840,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	// prompt per question. This temporary byte cap bounds that amplification
 	// and can be relaxed once token validation happens before expansion.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-	var req systemone.Request
+	var req decision.Request
 	if err := c.ShouldBindJSON(&req); err != nil {
 		var sizeErr *http.MaxBytesError
 		if errors.As(err, &sizeErr) {
@@ -850,7 +850,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	compiled, err := systemone.Compile(req)
+	compiled, err := decision.Compile(req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
