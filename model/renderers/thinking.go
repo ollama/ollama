@@ -39,6 +39,28 @@ func ResolveThinking(requestedThink *api.ThinkValue, thinking *model.Thinking) *
 			if thinking.Supports(value) {
 				return requestedThink
 			}
+		case int:
+			// A thinking-token budget asks for thinking and names no level;
+			// the sampler enforces the budget, not the renderer.
+			return thinkingOn(thinking)
+		}
+	}
+	return &api.ThinkValue{Value: thinking.Default}
+}
+
+// thinkingOn is the control that turns thinking on without choosing a level:
+// true when the model states it, else the default when that thinks, else the
+// first stated value that thinks. A model that cannot think keeps its default.
+func thinkingOn(thinking *model.Thinking) *api.ThinkValue {
+	if thinking.Supports(true) {
+		return &api.ThinkValue{Value: true}
+	}
+	if thinking.Default != false {
+		return &api.ThinkValue{Value: thinking.Default}
+	}
+	for _, value := range thinking.Values {
+		if value != false {
+			return &api.ThinkValue{Value: value}
 		}
 	}
 	return &api.ThinkValue{Value: thinking.Default}
