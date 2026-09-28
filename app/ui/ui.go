@@ -823,6 +823,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// Keep the stream alive while the model is checked, pulled, loaded, or
+	// processing a long prompt, so the webview doesn't time out the request
+	// before the first bytes arrive.
+	defer kw.start(ctx)()
+
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
@@ -898,10 +903,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	loading = true
 	defer cancelLoading()
-
-	// Keep the stream alive while the model loads or processes a long prompt,
-	// so the webview doesn't time out the request before the first token.
-	defer kw.start(ctx)()
 
 	// Check the model capabilities
 	details, err := c.Show(ctx, &api.ShowRequest{Model: req.Model})
