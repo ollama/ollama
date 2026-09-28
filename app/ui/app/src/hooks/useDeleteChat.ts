@@ -9,7 +9,8 @@ export function useDeleteChat() {
     mutationFn: (chatId: string) => deleteChat(chatId),
     retry: false,
     networkMode: "always",
-    onSuccess: (_, chatId) => {
+    onSuccess: async (_, chatId) => {
+      await queryClient.cancelQueries({ queryKey: ["history-chats"] });
       queryClient.setQueryData<ChatInfo[]>(["history-chats"], (chats) =>
         chats?.filter((chat) => chat.id !== chatId),
       );

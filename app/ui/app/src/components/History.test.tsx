@@ -219,6 +219,19 @@ it("keeps deletion, selecting the next saved chat or opening Apps after the last
   vi.mocked(window.confirm).mockReturnValueOnce(false);
   await remove();
   expect(deleteChat).not.toHaveBeenCalled();
+
+  // A background refresh can return the old list after deletion completes.
+  const staleChats = client.getQueryData<ChatInfo[]>(["history-chats"])!;
+  let finishRefresh!: (chats: ChatInfo[]) => void;
+  vi.mocked(getChats).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishRefresh = resolve;
+      }),
+  );
+  await act(async () => {
+    void client.refetchQueries({ queryKey: ["history-chats"] });
+  });
   await remove();
   expect(window.menu).toHaveBeenCalledWith([
     { label: "Delete", enabled: true },
@@ -226,6 +239,8 @@ it("keeps deletion, selecting the next saved chat or opening Apps after the last
   expect(deleteChat).toHaveBeenCalledExactlyOnceWith("first");
   expect(page()).not.toContain("Garden");
   expect(page()).toContain("Second chat");
+  await act(async () => finishRefresh(staleChats));
+  expect(page()).not.toContain("Garden");
   await remove("Another conversation");
   expect(deleteChat).toHaveBeenLastCalledWith("second");
   expect(renderer.root.findByType(Navigate).props).toMatchObject({
