@@ -259,7 +259,7 @@ func TestValidateRedirectTarget(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u, _ := url.Parse(tc.raw)
-			err := validateRedirectTarget(ctx, u, tc.base, tc.allowPrivate)
+			err := ValidateRedirectTarget(ctx, u, tc.base, tc.allowPrivate)
 			if tc.wantErr && err == nil {
 				t.Error("expected error, got nil")
 			}
@@ -270,7 +270,7 @@ func TestValidateRedirectTarget(t *testing.T) {
 	}
 
 	// The public-IP literal case must pass too (no DNS involved).
-	if err := validateRedirectTarget(ctx, okPublic, httpsBase, false); err != nil {
+	if err := ValidateRedirectTarget(ctx, okPublic, httpsBase, false); err != nil {
 		t.Errorf("public https target rejected: %v", err)
 	}
 }
@@ -358,7 +358,7 @@ func TestValidateRedirectScheme(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			u, _ := url.Parse(tc.raw)
-			err := validateRedirectScheme(u, tc.base)
+			err := ValidateRedirectScheme(u, tc.base)
 			if tc.wantErr && err == nil {
 				t.Error("expected error, got nil")
 			}
