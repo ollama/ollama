@@ -178,6 +178,8 @@ func TestDownloadWithRedirect(t *testing.T) {
 		Blobs:   []Blob{blob},
 		BaseURL: registry.URL,
 		DestDir: clientDir,
+		// httptest servers are loopback; opt in as a trusted local registry.
+		AllowPrivateHosts: true,
 	})
 	if err != nil {
 		t.Fatalf("Download with redirect failed: %v", err)
@@ -545,6 +547,8 @@ func TestUploadWithRedirect(t *testing.T) {
 		Blobs:   []Blob{blob},
 		BaseURL: server.URL,
 		SrcDir:  clientDir,
+		// httptest servers are loopback; opt in as a trusted local registry.
+		AllowPrivateHosts: true,
 	})
 	if err != nil {
 		t.Fatalf("Upload with redirect failed: %v", err)
@@ -1680,6 +1684,10 @@ func BenchmarkUploadThroughput(b *testing.B) {
 		case http.MethodPost:
 			w.Header().Set("Location", fmt.Sprintf("%s/v2/library/_/blobs/uploads/1", serverURL))
 			w.WriteHeader(http.StatusAccepted)
+		case http.MethodPatch:
+			io.Copy(io.Discard, r.Body)
+			w.Header().Set("Location", r.URL.Path)
+			w.WriteHeader(http.StatusAccepted)
 		case http.MethodPut:
 			io.Copy(io.Discard, r.Body)
 			w.WriteHeader(http.StatusCreated)
@@ -2372,6 +2380,8 @@ func TestChunkedUploadCDNRedirect(t *testing.T) {
 		Blobs:   []Blob{blob},
 		BaseURL: server.URL,
 		SrcDir:  clientDir,
+		// CDN redirect target is a loopback httptest server; opt in.
+		AllowPrivateHosts: true,
 	})
 	if err != nil {
 		t.Fatalf("Upload with CDN redirect failed: %v", err)
@@ -2784,6 +2794,8 @@ func TestV2DirectUpload(t *testing.T) {
 		Blobs:   []Blob{blob},
 		BaseURL: server.URL,
 		SrcDir:  clientDir,
+		// Direct-upload URL is a loopback httptest server; opt in.
+		AllowPrivateHosts: true,
 	})
 	if err != nil {
 		t.Fatalf("Upload failed: %v", err)

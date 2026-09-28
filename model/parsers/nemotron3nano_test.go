@@ -212,6 +212,27 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			expectedThinking: "Think first",
 			expectedContent:  "Done.",
 		},
+		{
+			name:             "partial tool call tag fakeout while thinking preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "<tool_call", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with <tool_call fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "partial think close tag fakeout preserves whitespace",
+			chunks:           []string{"reasoning ending with ", "</think", " fakeout", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "reasoning ending with </think fakeout",
+			expectedContent:  "Done.",
+		},
+		{
+			name:             "leading partial think tag fakeout is thinking",
+			chunks:           []string{"<th", "oughts are literal", "</think>", "Done."},
+			thinkValue:       &api.ThinkValue{Value: true},
+			expectedThinking: "<thoughts are literal",
+			expectedContent:  "Done.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -252,6 +273,99 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 				t.Errorf("calls mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestNemotron3NanoParser_DoneFlushesBufferedText(t *testing.T) {
+	tests := []struct {
+		name             string
+		thinkingEnabled  bool
+		chunks           []string
+		expectedContent  string
+		expectedThinking string
+	}{
+		{
+			name:             "partial think close",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "</thi"},
+			expectedThinking: "reasoning </thi",
+		},
+		{
+			name:             "partial tool opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning ", "<tool_"},
+			expectedThinking: "reasoning <tool_",
+		},
+		{
+			name:             "partial leading think opener",
+			thinkingEnabled:  true,
+			chunks:           []string{"<th"},
+			expectedThinking: "<th",
+		},
+		{
+			name:             "thinking trailing whitespace",
+			thinkingEnabled:  true,
+			chunks:           []string{"reasoning "},
+			expectedThinking: "reasoning ",
+		},
+		{
+			name:            "content trailing whitespace",
+			thinkingEnabled: false,
+			chunks:          []string{"answer "},
+			expectedContent: "answer ",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Nemotron3NanoParser{}
+			p.Init(nil, nil, &api.ThinkValue{Value: tt.thinkingEnabled})
+
+			var content, thinking string
+			for _, chunk := range tt.chunks {
+				gotContent, gotThinking, _, err := p.Add(chunk, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				content += gotContent
+				thinking += gotThinking
+			}
+			gotContent, gotThinking, _, err := p.Add("", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content += gotContent
+			thinking += gotThinking
+
+			if diff := cmp.Diff(content, tt.expectedContent); diff != "" {
+				t.Errorf("content mismatch (-got +want):\n%s", diff)
+			}
+			if diff := cmp.Diff(thinking, tt.expectedThinking); diff != "" {
+				t.Errorf("thinking mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestNemotron3NanoParser_DoneFlushesUnterminatedToolCall(t *testing.T) {
+	p := &Nemotron3NanoParser{}
+	p.Init(nil, nil, &api.ThinkValue{Value: true})
+	content, thinking, calls, err := p.Add("reasoning<tool_call><function=test>", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalContent, finalThinking, finalCalls, err := p.Add("", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := content+finalContent, "<tool_call><function=test>"; got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	if got, want := thinking+finalThinking, "reasoning"; got != want {
+		t.Fatalf("thinking = %q, want %q", got, want)
+	}
+	if got := append(calls, finalCalls...); len(got) != 0 {
+		t.Fatalf("calls = %v, want none", got)
 	}
 }
 

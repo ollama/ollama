@@ -308,7 +308,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 
 			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
-				io.Copy(os.Stderr, &serverLog)
+				io.Copy(os.Stderr, bytes.NewReader(serverLog.Bytes()))
 				slog.Warn("END OF SERVER")
 			}
 			slog.Info("cleanup complete", "failed", t.Failed())
@@ -609,7 +609,7 @@ func preloadGenerateModel(ctx context.Context, t *testing.T, client *api.Client,
 // through and fail the test — we never want to mask a real Mac regression.
 //
 // The fingerprints are the exact wrapper strings produced by the MLX code
-// paths (see x/mlxrunner/server.go, x/mlxrunner/mlx/dynamic.go). Model-level errors
+// paths (see mlxrunner/server.go, mlx/dynamic.go). Model-level errors
 // (unsupported architecture, tensor mismatches, runtime failures) do not
 // contain these strings, so this helper will not mask them.
 func skipIfMLXUnsupported(t *testing.T, err error) {

@@ -43,6 +43,7 @@ func init() {
 	registerEmbeddingCases(testModels(fastEmbedModels))
 	registerVisionTextCases(testModels(fastVisionTextModels))
 	registerToolCases(testModels(fastToolsModels))
+	registerToolRouteCases(testModels(fastToolsModels))
 	registerToolStressCases(testModels(fastToolsStressModels))
 	registerAudioTranscriptionCases(testModels(fastAudioModels))
 }
