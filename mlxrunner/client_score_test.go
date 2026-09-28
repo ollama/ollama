@@ -75,3 +75,26 @@ func TestClientScoreTransportError(t *testing.T) {
 		})
 	}
 }
+
+func TestClientScoreCancellation(t *testing.T) {
+	started := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	client := &Client{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client()}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.Score(ctx, llm.ScoreRequest{})
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("got %v, want context cancellation", err)
+	}
+}

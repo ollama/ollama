@@ -42,7 +42,13 @@ func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion", "decision"}}
-	createSafetensorsTestModel(t, "safetensors-decision", config, nil)
+	params, err := manifest.NewLayer(strings.NewReader(`{"num_ctx":8192}`), "application/vnd.ollama.image.params")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "safetensors-decision", config, []manifest.Layer{params})
+	config.Capabilities = []string{"completion"}
+	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
 	for _, modelConfig := range []struct {
 		name, architecture, renderer, system, template string
 		contextLength                                  int
@@ -135,7 +141,8 @@ func TestSystemOneHandler(t *testing.T) {
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"safetensors unsupported", `{"model":"safetensors-decision","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},
 		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
@@ -216,6 +223,9 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				prompt := runner.request.Rows[0].Prompt
 				wantContext := 1024
+				if !ref.model.isGGUF() {
+					wantContext = 8192
+				}
 				if ref.model.HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)

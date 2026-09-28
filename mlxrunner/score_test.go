@@ -79,10 +79,12 @@ func TestScoreSharedPrefix(t *testing.T) {
 	}{
 		{"branch lengths and repeated restore", [][]int32{{1, 2, 3, 4}, {1, 2, 5}, {1, 2, 3, 6, 7}, {1, 2, 3, 4}}},
 		{"identical prompts", [][]int32{{1, 2, 3}, {1, 2, 3}}},
+		{"prompt is prefix", [][]int32{{1, 2}, {1, 2, 3, 4}}},
 		{"empty prefix", [][]int32{{1, 2}, {2, 1, 3}}},
 		{"one prompt", [][]int32{{1, 2, 3, 4}}},
 		{"one token", [][]int32{{1}, {1}, {2}}},
 		{"chunked prefix", [][]int32{append(slices.Repeat([]int32{1}, prefillChunkSize()+3), 2), append(slices.Repeat([]int32{1}, prefillChunkSize()+3), 3)}},
+		{"chunked suffix", [][]int32{append([]int32{1, 2}, slices.Repeat([]int32{3}, prefillChunkSize()+3)...), append([]int32{1, 2}, slices.Repeat([]int32{4}, prefillChunkSize()+3)...)}},
 	} {
 		mlxtest.RunSubtest(t, tt.name, func(t *mlxtest.T) {
 			m := &scoringTestModel{}
@@ -159,6 +161,10 @@ func TestScoreCancellation(t *testing.T) {
 					t.Fatal("cancelled request retained cache state")
 				}
 			}
+			m.cancel = nil
+			if _, err := r.scoreRows(context.Background(), rows, 2); err != nil {
+				t.Fatalf("request after cancellation: %v", err)
+			}
 		})
 	}
 }
@@ -167,10 +173,15 @@ func TestScoreValidation(t *testing.T) {
 	tok := newTestTokenizer(t, []int32{7})
 	r := &Runner{Tokenizer: tok, contextLength: 10}
 	for _, input := range []llm.ScoreRequest{
-		{}, {MaxTokens: 10}, {MaxTokens: 11, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2"}}}},
+		{},
+		{MaxTokens: 10},
+		{MaxTokens: 10, Rows: make([]llm.ScoreRow, 65)},
+		{Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2"}}}},
+		{MaxTokens: 11, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2"}}}},
 		{MaxTokens: 1, Rows: []llm.ScoreRow{{Prompt: "12", Candidates: []string{"3"}}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "", Candidates: []string{"1"}}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "1"}}},
+		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: slices.Repeat([]string{"2"}, 27)}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"23"}}}},
 		{MaxTokens: 10, Rows: []llm.ScoreRow{{Prompt: "1", Candidates: []string{"2", "2"}}}},
 	} {
@@ -183,10 +194,10 @@ func TestScoreValidation(t *testing.T) {
 }
 
 // Optional full-model check against independently prefilling each question.
-func TestNimbleModel(t *testing.T) {
-	name := os.Getenv("OLLAMA_NIMBLE_MODEL")
+func TestScoreModel(t *testing.T) {
+	name := os.Getenv("OLLAMA_TEST_MODEL")
 	if name == "" {
-		t.Skip("set OLLAMA_NIMBLE_MODEL to an imported Qwen3.5/Nimble model")
+		t.Skip("set OLLAMA_TEST_MODEL to an imported Nimble or Tev model")
 	}
 	var req decision.Request
 	if err := json.Unmarshal([]byte(`{
@@ -209,6 +220,11 @@ func TestNimbleModel(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	allCandidates := llm.ScoreRow{Prompt: c.Request.Rows[0].Prompt}
+	for code := 'A'; code <= 'Z'; code++ {
+		allCandidates.Candidates = append(allCandidates.Candidates, string(code))
+	}
+	c.Request.Rows = append(c.Request.Rows, allCandidates)
 
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		r := &Runner{}
@@ -221,7 +237,22 @@ func TestNimbleModel(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if shared.OutputTokens != 0 {
+			t.Fatalf("scoring generated %d tokens", shared.OutputTokens)
+		}
+		var inputTokens int
+		for _, row := range c.Request.Rows {
+			inputTokens += len(r.Tokenizer.Encode(row.Prompt, false))
+		}
+		if shared.InputTokens != inputTokens {
+			t.Fatalf("input tokens = %d, want %d", shared.InputTokens, inputTokens)
+		}
 		probabilities := func(logits []float32) []float64 {
+			for i, x := range logits {
+				if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+					t.Fatalf("candidate %d has non-finite logit %v", i, x)
+				}
+			}
 			p := make([]float64, len(logits))
 			peak := slices.Max(logits)
 			var sum float64

@@ -936,10 +936,6 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if !m.isGGUF() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
-		return
-	}
 	compiled, err := decision.CompileWithEncoder(req, m.metadata.String("decision.type"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
