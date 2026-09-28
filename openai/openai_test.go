@@ -432,6 +432,61 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestFromCompleteRequest_PenaltiesNotForcedWhenOmitted(t *testing.T) {
+	req := CompletionRequest{
+		Model:  "test-model",
+		Prompt: "Hello",
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := result.Options["frequency_penalty"]; ok {
+		t.Error("expected no frequency_penalty option when omitted")
+	}
+
+	if _, ok := result.Options["presence_penalty"]; ok {
+		t.Error("expected no presence_penalty option when omitted")
+	}
+
+	if _, ok := result.Options["top_p"]; ok {
+		t.Error("expected no top_p option when omitted")
+	}
+}
+
+func TestFromCompleteRequest_PenaltiesHonoredWhenSet(t *testing.T) {
+	frequencyPenalty := float32(0.5)
+	presencePenalty := float32(0.25)
+	topP := float32(0.9)
+
+	req := CompletionRequest{
+		Model:            "test-model",
+		Prompt:           "Hello",
+		FrequencyPenalty: &frequencyPenalty,
+		PresencePenalty:  &presencePenalty,
+		TopP:             &topP,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if v, ok := result.Options["frequency_penalty"].(float32); !ok || v != 0.5 {
+		t.Errorf("expected frequency_penalty 0.5, got %v", result.Options["frequency_penalty"])
+	}
+
+	if v, ok := result.Options["presence_penalty"].(float32); !ok || v != 0.25 {
+		t.Errorf("expected presence_penalty 0.25, got %v", result.Options["presence_penalty"])
+	}
+
+	if v, ok := result.Options["top_p"].(float32); !ok || v != 0.9 {
+		t.Errorf("expected top_p 0.9, got %v", result.Options["top_p"])
+	}
+}
+
 func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	modified := time.Unix(1234567890, 0).UTC()
 
