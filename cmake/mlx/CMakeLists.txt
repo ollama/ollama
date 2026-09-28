@@ -62,7 +62,7 @@ endforeach()
 add_subdirectory(${OLLAMA_SOURCE_DIR}/mlx ${CMAKE_BINARY_DIR}/mlx)
 
 include(FetchContent)
-set(XGRAMMAR_VERSION v0.2.5)
+set(XGRAMMAR_VERSION v0.2.7)
 FetchContent_Declare(xgrammar
     GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
     GIT_TAG ${XGRAMMAR_VERSION}

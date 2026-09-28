@@ -264,10 +264,11 @@ func main() {
 				done <- osrv.Run(octx)
 			}()
 		},
-		Store:   st,
-		Dev:     devMode,
-		Logger:  slog.Default(),
-		Updater: upd,
+		Store:             st,
+		IntegrationModels: desktopModelSettingsHandler(),
+		Dev:               devMode,
+		Logger:            slog.Default(),
+		Updater:           upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
 		},

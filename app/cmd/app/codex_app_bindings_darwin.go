@@ -43,15 +43,6 @@ func bindCodexDesktop(wv webview.WebView) {
 	wv.Bind("installCodexDesktop", func() codexDesktopInstallResult {
 		return requestCodexDesktopInstall()
 	})
-	wv.Bind("getCodexDesktopModelsSettings", func() codexDesktopModelsSettingsResult {
-		settings, err := getCodexDesktopModelsSettings()
-		result := codexDesktopModelsSettingsResult{Settings: settings}
-		if err != nil {
-			result.Warning = codexDesktopModelRefreshError(settings)
-			slog.Warn("failed to refresh available ChatGPT models", "error", err)
-		}
-		return result
-	})
 	wv.Bind("applyCodexDesktopModels", func(models []string, restartConfirmed bool) codexDesktopModelsSettingsResult {
 		err := applyCodexDesktopModels(models, restartConfirmed)
 		settings, statusErr := getCodexDesktopModelsSettings()

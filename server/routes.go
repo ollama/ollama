@@ -117,10 +117,7 @@ func init() {
 	renderers.RenderImgTags = true
 }
 
-var (
-	errRequired            = errors.New("is required")
-	errTypicalPUnsupported = errors.New("typical_p is no longer supported")
-)
+var errRequired = errors.New("is required")
 
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
@@ -146,6 +143,7 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 		}
 	}
 
+	warnDeprecatedOptions(requestOpts)
 	if err := opts.FromMap(requestOpts); err != nil {
 		return api.Options{}, err
 	}
@@ -174,6 +172,18 @@ func shouldApplyEmbeddingBatchDefault(m *Model, requestOpts map[string]any) bool
 func hasOption(opts map[string]any, name string) bool {
 	_, ok := opts[name]
 	return ok
+}
+
+// deprecatedOptions may still be set per request, and reach the runner, but
+// cannot be saved as model parameters.
+var deprecatedOptions = []string{"typical_p"}
+
+func warnDeprecatedOptions(opts map[string]any) {
+	for _, name := range deprecatedOptions {
+		if opts[name] != nil {
+			slog.Warn("deprecated option provided", "option", name)
+		}
+	}
 }
 
 func usesAutomaticNumCtx(model *Model, requestOpts map[string]any) bool {
@@ -209,11 +219,6 @@ func (s *Server) scheduleRunner(ctx context.Context, model *Model, caps []model.
 
 	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
-	}
-
-	// null is unset, as in Options.FromMap
-	if requestOpts["typical_p"] != nil {
-		return nil, nil, nil, errTypicalPUnsupported
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
@@ -3123,7 +3128,7 @@ func countChatImages(msgs []api.Message) int {
 
 func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, errTypicalPUnsupported):
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
 		c.JSON(499, gin.H{"error": "request canceled"})
