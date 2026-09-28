@@ -126,6 +126,20 @@ type ChatCompletionRequest struct {
 	Logprobs         *bool           `json:"logprobs"`
 	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	// Ollama extension: without it an OpenAI-API client cannot release a model.
+	KeepAlive *api.Duration `json:"keep_alive,omitempty"`
+}
+
+// Timings reports server-side inference performance metrics.
+type Timings struct {
+	PromptN             int     `json:"prompt_n"`
+	PromptMS            float64 `json:"prompt_ms"`
+	PromptPerTokenMS    float64 `json:"prompt_per_token_ms"`
+	PromptPerSecond     float64 `json:"prompt_per_second"`
+	PredictedN          int     `json:"predicted_n"`
+	PredictedMS         float64 `json:"predicted_ms"`
+	PredictedPerTokenMS float64 `json:"predicted_per_token_ms"`
+	PredictedPerSecond  float64 `json:"predicted_per_second"`
 }
 
 type ChatCompletion struct {
@@ -136,6 +150,7 @@ type ChatCompletion struct {
 	SystemFingerprint string         `json:"system_fingerprint"`
 	Choices           []Choice       `json:"choices"`
 	Usage             Usage          `json:"usage,omitempty"`
+	Timings           *Timings       `json:"timings,omitempty"`
 	DebugInfo         *api.DebugInfo `json:"_debug_info,omitempty"`
 }
 
@@ -147,6 +162,7 @@ type ChatCompletionChunk struct {
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
 	Usage             *Usage        `json:"usage,omitempty"`
+	Timings           *Timings      `json:"timings,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
@@ -175,6 +191,7 @@ type Completion struct {
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Usage             Usage                 `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type CompletionChunk struct {
@@ -185,6 +202,7 @@ type CompletionChunk struct {
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
 	Usage             *Usage                `json:"usage,omitempty"`
+	Timings           *Timings              `json:"timings,omitempty"`
 }
 
 type ToolCall struct {
@@ -252,6 +270,33 @@ func ToUsage(r api.ChatResponse) Usage {
 		usage.PromptTokensDetails = &PromptTokensDetails{CachedTokens: *r.Metrics.PromptEvalCachedCount}
 	}
 	return usage
+}
+
+// ToTimings converts api.Metrics to Timings
+func ToTimings(m api.Metrics) *Timings {
+	if m.PromptEvalCount == 0 && m.PromptEvalDuration == 0 && m.EvalCount == 0 && m.EvalDuration == 0 {
+		return nil
+	}
+
+	promptMS := float64(m.PromptEvalDuration.Milliseconds())
+	predictedMS := float64(m.EvalDuration.Milliseconds())
+	return &Timings{
+		PromptN:             m.PromptEvalCount,
+		PromptMS:            promptMS,
+		PromptPerTokenMS:    safeDiv(promptMS, float64(m.PromptEvalCount)),
+		PromptPerSecond:     safeDiv(float64(m.PromptEvalCount)*1000, promptMS),
+		PredictedN:          m.EvalCount,
+		PredictedMS:         predictedMS,
+		PredictedPerTokenMS: safeDiv(predictedMS, float64(m.EvalCount)),
+		PredictedPerSecond:  safeDiv(float64(m.EvalCount)*1000, predictedMS),
+	}
+}
+
+func safeDiv(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
@@ -743,6 +788,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
 		TopLogprobs:     r.TopLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
+		KeepAlive:       r.KeepAlive,
 	}, nil
 }
 
