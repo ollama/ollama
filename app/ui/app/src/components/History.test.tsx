@@ -1,6 +1,7 @@
 import type { PropsWithChildren } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { Navigate } from "@tanstack/react-router";
 import {
   QueryClient,
   QueryClientProvider,
@@ -31,6 +32,9 @@ vi.mock("@/components/ui/link", () => ({
   Link: ({ to, children }: PropsWithChildren<{ to: string }>) => (
     <a href={to}>{children}</a>
   ),
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Navigate: () => null,
 }));
 
 const date = "2026-09-01T10:00:00Z";
@@ -203,12 +207,12 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
 });
 
-it("keeps deletion, including cancelling and selecting the next saved chat", async () => {
+it("keeps deletion, selecting the next saved chat or opening Apps after the last one", async () => {
   await renderHistory();
-  const remove = async () => {
+  const remove = async (title = "Garden") => {
     await act(async () => {
       await renderer.root
-        .findByProps({ title: "Garden" })
+        .findByProps({ title })
         .parent!.props.onContextMenu({ preventDefault: vi.fn() });
     });
   };
@@ -222,4 +226,10 @@ it("keeps deletion, including cancelling and selecting the next saved chat", asy
   expect(deleteChat).toHaveBeenCalledExactlyOnceWith("first");
   expect(page()).not.toContain("Garden");
   expect(page()).toContain("Second chat");
+  await remove("Another conversation");
+  expect(deleteChat).toHaveBeenLastCalledWith("second");
+  expect(renderer.root.findByType(Navigate).props).toMatchObject({
+    to: "/connect",
+    replace: true,
+  });
 });

@@ -506,13 +506,6 @@ static NSImage *ollamaApplicationIcon(void) {
     [menu addItem:self.claudeMenuSeparatorItem];
     [self applyShowAppsInMenu:shouldShowAppsInMenu()];
 
-    NSMenuItem *appsMenuItem =
-        [[NSMenuItem alloc] initWithTitle:@"Open Ollama"
-                                   action:@selector(appsUI)
-                            keyEquivalent:@""];
-    [appsMenuItem setTarget:self];
-    [menu addItem:appsMenuItem];
-
     [menu addItemWithTitle:@"Settings"
                     action:@selector(settingsUI)
              keyEquivalent:@","];

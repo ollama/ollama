@@ -1,7 +1,7 @@
 import { act, create, type ReactTestInstance } from "react-test-renderer";
 import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Settings as SettingsType } from "@/gotypes";
+import { ChatInfo, Settings as SettingsType } from "@/gotypes";
 import { Badge } from "./ui/badge";
 import Settings from "./Settings";
 
@@ -83,6 +83,9 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => mocks.queryClient,
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
+    if (queryKey[0] === "history-chats") {
+      return { data: [new ChatInfo({ id: "saved-chat" })] };
+    }
     if (queryKey[0] === "settings") {
       return {
         data: { settings: mocks.settings },
@@ -138,6 +141,7 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("@/api", () => ({
+  getChats: vi.fn(),
   getSettings: vi.fn(),
   getInferenceCompute: vi.fn(),
   updateSettings: mocks.updateSettings,

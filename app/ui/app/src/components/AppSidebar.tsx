@@ -1,4 +1,6 @@
+import { getChats } from "@/api";
 import { Link } from "@/components/ui/link";
+import { useQuery } from "@tanstack/react-query";
 import {
   ChatBubbleOvalLeftIcon,
   Cog6ToothIcon,
@@ -8,6 +10,12 @@ import {
 type AppSection = "apps" | "chat" | "settings";
 
 export function AppNavigation({ current }: { current: AppSection }) {
+  const { data: chats } = useQuery({
+    queryKey: ["history-chats"],
+    queryFn: getChats,
+    retry: false,
+    networkMode: "always",
+  });
   const itemClass = (section: AppSection) =>
     `flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:text-neutral-100 dark:hover:bg-neutral-800 ${
       current === section ? "bg-neutral-100 dark:bg-neutral-800" : ""
@@ -19,16 +27,18 @@ export function AppNavigation({ current }: { current: AppSection }) {
         <RectangleGroupIcon className="h-5 w-5 stroke-current" />
         <span className="truncate">Apps</span>
       </Link>
-      <Link
-        to="/c/$chatId"
-        params={{ chatId: "new" }}
-        mask={{ to: "/" }}
-        className={itemClass("chat")}
-        draggable={false}
-      >
-        <ChatBubbleOvalLeftIcon className="h-5 w-5 stroke-current" />
-        <span className="truncate">Chat</span>
-      </Link>
+      {!!chats?.length && (
+        <Link
+          to="/c/$chatId"
+          params={{ chatId: "new" }}
+          mask={{ to: "/" }}
+          className={itemClass("chat")}
+          draggable={false}
+        >
+          <ChatBubbleOvalLeftIcon className="h-5 w-5 stroke-current" />
+          <span className="truncate">Chat</span>
+        </Link>
+      )}
       <Link to="/settings" className={itemClass("settings")} draggable={false}>
         <Cog6ToothIcon className="h-5 w-5 stroke-current" />
         <span className="truncate">Settings</span>

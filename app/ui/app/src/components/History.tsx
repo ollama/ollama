@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { ArrowDownTrayIcon, ArrowPathIcon } from "@heroicons/react/24/outline";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Navigate } from "@tanstack/react-router";
 import { exportChat, getChat, getChats } from "@/api";
 import { SidebarLayout } from "./layout/layout";
 import { ChatSidebarList } from "./ChatSidebarList";
@@ -75,6 +76,10 @@ export function History({
     deletion.reset();
     exporting.reset();
   }, [selectedID, deletion.reset, exporting.reset]);
+
+  if (list.isSuccess && chats.length === 0) {
+    return <Navigate to="/connect" replace />;
+  }
 
   return (
     <SidebarLayout

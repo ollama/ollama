@@ -33,6 +33,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import {
   getSettings,
+  getChats,
   type CloudStatusSource,
   type CloudStatusResponse,
   updateCloudSetting,
@@ -141,6 +142,12 @@ export async function applySettingsDefaults({
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const { data: chats } = useQuery({
+    queryKey: ["history-chats"],
+    queryFn: getChats,
+    retry: false,
+    networkMode: "always",
+  });
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
     null,
@@ -808,6 +815,7 @@ export default function Settings() {
           </div>
 
           <section
+            hidden={!chats?.length}
             aria-label="Chat history"
             className="space-y-3 rounded-xl bg-white p-4 dark:bg-neutral-800"
           >
