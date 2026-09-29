@@ -703,6 +703,9 @@ type CreateRequest struct {
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
 
+	// Capabilities adds to the model's inherited or inferred capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 
