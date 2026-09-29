@@ -373,7 +373,8 @@ func writeQuote(w *bytes.Buffer, content string) {
 	})
 	escaped.Write(source[offset:])
 	for _, line := range strings.Split(escaped.String(), "\n") {
-		fmt.Fprintf(w, "> %s\n", line)
+		// A four-column prefix preserves the content's original tab stops.
+		fmt.Fprintf(w, "  > %s\n", line)
 	}
 	w.WriteByte('\n')
 }

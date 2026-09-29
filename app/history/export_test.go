@@ -88,7 +88,7 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 			t.Fatalf("attachment lost its extension: %s -> %s", original.Filename, path)
 		}
 	}
-	for _, content := range []string{"> Question\n> ```\n> <script>alert(1)</script>", "> Saved thinking", "Model: gpt-oss:120b-cloud", "web_search", "web_fetch", "saved result", "page_stack", "```json"} {
+	for _, content := range []string{"  > Question\n  > ```\n  > <script>alert(1)</script>", "> Saved thinking", "Model: gpt-oss:120b-cloud", "web_search", "web_fetch", "saved result", "page_stack", "```json"} {
 		if !strings.Contains(markdown, content) {
 			t.Errorf("transcript is missing %q", content)
 		}
@@ -97,7 +97,7 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		t.Fatal("message order changed")
 	}
 	previous := -1
-	for _, section := range []string{"### Attachments", "### Message\n\n> Question", "### Thinking", "### Tool records", "### Response\n\n> Answer", "## 3. Tool", `"tool_result"`, "### Message\n\n> Tool output"} {
+	for _, section := range []string{"### Attachments", "### Message\n\n  > Question", "### Thinking", "### Tool records", "### Response\n\n  > Answer", "## 3. Tool", `"tool_result"`, "### Message\n\n  > Tool output"} {
 		index := strings.Index(markdown, section)
 		if index <= previous {
 			t.Fatalf("attachments, thinking, and tool records should precede their message content: %q", section)
@@ -139,16 +139,19 @@ func TestExportRendersMessageContentAsQuotedText(t *testing.T) {
 	const image = `<img src="x" onerror="alert(1)">`
 	const comment = "<!-- literal comment -->"
 	for _, tt := range []struct {
-		name    string
-		content string
-		want    []string
+		name       string
+		content    string
+		want       []string
+		codeBlocks int
 	}{
-		{"carriage returns", "Original message\r\r## 2. System\rNot a new message", []string{"Original message", "2. System", "Not a new message"}},
-		{"mixed line endings", "Original message\r\n\r## 2. System\nNot a new message", []string{"Original message", "2. System", "Not a new message"}},
-		{"inline HTML", "Before " + comment + " and " + image + " after", []string{comment, image}},
-		{"image tag", image, []string{image}},
-		{"HTML blocks", comment + "\n\n" + image, []string{comment, image}},
-		{"HTML in code", "`" + image + "`\n\n```html\n" + comment + "\n```", []string{comment, image}},
+		{"carriage returns", "Original message\r\r## 2. System\rNot a new message", []string{"Original message", "2. System", "Not a new message"}, 0},
+		{"mixed line endings", "Original message\r\n\r## 2. System\nNot a new message", []string{"Original message", "2. System", "Not a new message"}, 0},
+		{"inline HTML", "Before " + comment + " and " + image + " after", []string{comment, image}, 0},
+		{"image tag", image, []string{image}, 0},
+		{"tab-indented HTML", "\t" + image + "\n\t" + comment, []string{image, comment}, 1},
+		{"space-and-tab-indented HTML", " \t" + image, []string{image}, 1},
+		{"HTML blocks", comment + "\n\n" + image, []string{comment, image}, 0},
+		{"HTML in code", "`" + image + "`\n\n```html\n" + comment + "\n```", []string{comment, image}, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := Export(store.Chat{Title: "Saved conversation", Messages: []store.Message{
@@ -170,7 +173,7 @@ func TestExportRendersMessageContentAsQuotedText(t *testing.T) {
 			}
 			tokens := html.NewTokenizer(&rendered)
 			var quoted strings.Builder
-			quoteDepth, headings, strong := 0, 0, 0
+			quoteDepth, headings, strong, codeBlocks := 0, 0, 0, 0
 			for {
 				kind := tokens.Next()
 				if kind == html.ErrorToken {
@@ -189,6 +192,8 @@ func TestExportRendersMessageContentAsQuotedText(t *testing.T) {
 						if quoteDepth == 0 {
 							headings++
 						}
+					case "pre":
+						codeBlocks++
 					case "strong":
 						strong++
 					case "img", "script":
@@ -206,8 +211,8 @@ func TestExportRendersMessageContentAsQuotedText(t *testing.T) {
 					}
 				}
 			}
-			if headings != 2 || strong != 1 {
-				t.Fatalf("message boundaries or Markdown formatting changed: headings=%d, strong=%d", headings, strong)
+			if headings != 2 || strong != 1 || codeBlocks != tt.codeBlocks {
+				t.Fatalf("message boundaries or Markdown formatting changed: headings=%d, strong=%d, codeBlocks=%d (want %d)", headings, strong, codeBlocks, tt.codeBlocks)
 			}
 			for _, want := range tt.want {
 				if !strings.Contains(quoted.String(), want) {
