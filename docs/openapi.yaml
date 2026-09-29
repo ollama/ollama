@@ -550,6 +550,11 @@ components:
         requires:
           type: string
           description: Minimum Ollama version required by the model
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Capabilities to add without removing inherited or inferred capabilities (e.g. `decision` for compatible decision models)
         stream:
           type: boolean
           default: true

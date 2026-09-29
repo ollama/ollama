@@ -37,27 +37,32 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion"}}
+	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion", "decision"}}
 	createSafetensorsTestModel(t, "safetensors-decision", config, nil)
 	for _, modelConfig := range []struct {
 		name, architecture, renderer, system, template string
 		contextLength                                  int
+		undeclared                                     bool
 	}{
-		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024},
-		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096},
-		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024},
-		{"no-system", "qwen35", "qwen3.5", "", "", 1024},
-		{"gguf-wrong-architecture", "llama", "", "", "", 1024},
-		{"gguf-wrong-renderer", "qwen35", "gemma4", "", "", 1024},
+		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
+		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
+		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
+		{"no-system", "qwen35", "qwen3.5", "", "", 1024, false},
+		{"gguf-undeclared", "qwen35", "qwen3.5", "", "", 1024, true},
+		{"gguf-other-architecture", "llama", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
 	} {
 		kv := gguftest.KV{"general.architecture": modelConfig.architecture}
 		if modelConfig.template == "" {
 			kv["tokenizer.chat_template"] = "{{ messages }}"
 		}
 		_, digest := createBinFile(t, kv, nil)
+		caps := []string{"completion", "decision"}
+		if modelConfig.undeclared {
+			caps = []string{"completion"}
+		}
 		configLayer, err := createConfigLayer(model.ConfigV2{
 			ModelFormat: "gguf", ModelFamily: modelConfig.architecture,
-			Renderer: modelConfig.renderer, Capabilities: []string{"completion"},
+			Renderer: modelConfig.renderer, Capabilities: caps,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -101,8 +106,8 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"template failure", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, errors.New("invalid model template"), 500, 0, false},
-		{"GGUF incompatible architecture", `{"model":"gguf-wrong-architecture","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"GGUF conflicting renderer", `{"model":"gguf-wrong-renderer","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"GGUF capability without Qwen architecture", `{"model":"gguf-other-architecture","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"GGUF missing capability", `{"model":"gguf-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
 		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},

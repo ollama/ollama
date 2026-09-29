@@ -287,6 +287,7 @@ func newRemoteCreateRequest(opts createOptions, files []remoteSourceFile) *api.C
 		req.System = opts.Modelfile.System
 		req.Parameters = opts.Modelfile.Parameters
 		req.Messages = opts.Modelfile.Messages
+		req.Capabilities = opts.Modelfile.Capabilities
 		if len(opts.Modelfile.Licenses) > 0 {
 			req.License = opts.Modelfile.Licenses
 		}
