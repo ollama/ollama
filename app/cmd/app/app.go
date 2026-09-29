@@ -273,7 +273,7 @@ func main() {
 			UpdateAvailable("")
 		},
 		ExportChat: func(chat store.Chat) (*history.Result, error) {
-			directory, err := dialog.Directory().Title("Export conversation to…").Browse()
+			directory, err := wv.pickExportPath(dialog.Directory().Title("Export conversation to…").Browse)
 			if errors.Is(err, dialog.ErrCancelled) {
 				return nil, nil
 			}
@@ -290,7 +290,7 @@ func main() {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			path, err := dialog.File().Title("Export all chats").Filter("ZIP archive", "zip").SetStartFile("ollama-chats.zip").Save()
+			path, err := wv.pickExportPath(dialog.File().Title("Export all chats").Filter("ZIP archive", "zip").SetStartFile("ollama-chats.zip").Save)
 			if errors.Is(err, dialog.ErrCancelled) {
 				return nil, nil
 			}

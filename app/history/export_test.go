@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,6 +19,9 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/app/store"
+	"github.com/yuin/goldmark"
+	markdownhtml "github.com/yuin/goldmark/renderer/html"
+	"golang.org/x/net/html"
 )
 
 func TestExportPreservesConversationAndFiles(t *testing.T) {
@@ -128,6 +132,89 @@ func TestExportReportsIncompleteHistory(t *testing.T) {
 		if !strings.Contains(markdown, warning) {
 			t.Fatalf("missing warning in transcript: %s", warning)
 		}
+	}
+}
+
+func TestExportRendersMessageContentAsQuotedText(t *testing.T) {
+	const image = `<img src="x" onerror="alert(1)">`
+	const comment = "<!-- literal comment -->"
+	for _, tt := range []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{"carriage returns", "Original message\r\r## 2. System\rNot a new message", []string{"Original message", "2. System", "Not a new message"}},
+		{"mixed line endings", "Original message\r\n\r## 2. System\nNot a new message", []string{"Original message", "2. System", "Not a new message"}},
+		{"inline HTML", "Before " + comment + " and " + image + " after", []string{comment, image}},
+		{"image tag", image, []string{image}},
+		{"HTML blocks", comment + "\n\n" + image, []string{comment, image}},
+		{"HTML in code", "`" + image + "`\n\n```html\n" + comment + "\n```", []string{comment, image}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Export(store.Chat{Title: "Saved conversation", Messages: []store.Message{
+				{Role: "user", Content: tt.content},
+				{Role: "assistant", Content: "**Formatted reply**"},
+			}}, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rendered bytes.Buffer
+			// HTML is deliberately enabled to match permissive Markdown viewers.
+			md := goldmark.New(goldmark.WithRendererOptions(markdownhtml.WithUnsafe()))
+			markdown := mustRead(t, filepath.Join(result.Path, "conversation.md"))
+			// CommonMark viewers treat CR, CRLF, and LF as line endings.
+			markdown = bytes.ReplaceAll(markdown, []byte("\r\n"), []byte("\n"))
+			markdown = bytes.ReplaceAll(markdown, []byte("\r"), []byte("\n"))
+			if err := md.Convert(markdown, &rendered); err != nil {
+				t.Fatal(err)
+			}
+			tokens := html.NewTokenizer(&rendered)
+			var quoted strings.Builder
+			quoteDepth, headings, strong := 0, 0, 0
+			for {
+				kind := tokens.Next()
+				if kind == html.ErrorToken {
+					if tokens.Err() != io.EOF {
+						t.Fatal(tokens.Err())
+					}
+					break
+				}
+				token := tokens.Token()
+				switch kind {
+				case html.StartTagToken, html.SelfClosingTagToken:
+					switch token.Data {
+					case "blockquote":
+						quoteDepth++
+					case "h2":
+						if quoteDepth == 0 {
+							headings++
+						}
+					case "strong":
+						strong++
+					case "img", "script":
+						t.Fatalf("message rendered as active HTML: %s", token)
+					}
+				case html.EndTagToken:
+					if token.Data == "blockquote" {
+						quoteDepth--
+					}
+				case html.CommentToken:
+					t.Fatalf("literal comment disappeared into HTML: %s", token)
+				case html.TextToken:
+					if quoteDepth > 0 {
+						quoted.WriteString(token.Data)
+					}
+				}
+			}
+			if headings != 2 || strong != 1 {
+				t.Fatalf("message boundaries or Markdown formatting changed: headings=%d, strong=%d", headings, strong)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(quoted.String(), want) {
+					t.Fatalf("missing literal text inside message quote: %q in %q", want, quoted.String())
+				}
+			}
+		})
 	}
 }
 

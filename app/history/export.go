@@ -9,11 +9,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ollama/ollama/app/store"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 type Result struct {
@@ -338,7 +342,37 @@ func markdownText(value string) string {
 }
 
 func writeQuote(w *bytes.Buffer, content string) {
-	for _, line := range strings.Split(content, "\n") {
+	content = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(content)
+	source := []byte(content)
+	var escaped bytes.Buffer
+	offset := 0
+	escape := func(segment text.Segment) {
+		escaped.Write(source[offset:segment.Start])
+		escaped.WriteString(html.EscapeString(string(source[segment.Start:segment.Stop])))
+		offset = segment.Stop
+	}
+	// Escape actual HTML, leaving Markdown formatting and code examples intact.
+	document := goldmark.DefaultParser().Parse(text.NewReader(source))
+	ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			switch node := node.(type) {
+			case *ast.RawHTML:
+				for i := 0; i < node.Segments.Len(); i++ {
+					escape(node.Segments.At(i))
+				}
+			case *ast.HTMLBlock:
+				for i := 0; i < node.Lines().Len(); i++ {
+					escape(node.Lines().At(i))
+				}
+				if node.HasClosure() {
+					escape(node.ClosureLine)
+				}
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	escaped.Write(source[offset:])
+	for _, line := range strings.Split(escaped.String(), "\n") {
 		fmt.Fprintf(w, "> %s\n", line)
 	}
 	w.WriteByte('\n')

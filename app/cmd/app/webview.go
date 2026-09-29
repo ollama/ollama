@@ -356,6 +356,26 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 	return w.webview.Window()
 }
 
+// pickExportPath opens native pickers on the initialized UI thread. In
+// particular, the Windows folder picker requires that thread's COM apartment.
+func (w *Webview) pickExportPath(pick func() (string, error)) (string, error) {
+	w.mutex.Lock()
+	if w.webview == nil {
+		w.mutex.Unlock()
+		return "", fmt.Errorf("export is unavailable in this window")
+	}
+	var path string
+	var err error
+	done := make(chan struct{})
+	w.webview.Dispatch(func() {
+		path, err = pick()
+		close(done)
+	})
+	w.mutex.Unlock()
+	<-done
+	return path, err
+}
+
 func (w *Webview) Terminate() {
 	w.onboarding.Store(false)
 	w.mutex.Lock()
