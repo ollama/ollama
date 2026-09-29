@@ -1017,7 +1017,7 @@ paths:
     post:
       summary: Answer typed questions
       description: |
-        Answer choice, yes/no, and scoring questions with a local System One model. Requires Ollama v0.35.0 or later. See the [decision guide](/capabilities/decision) for examples.
+        Answer choice, yes/no, and scoring questions with a local System One model. Requires Ollama v0.35.1 or later. See the [decision guide](/capabilities/decision) for examples.
       operationId: systemone
       x-mint:
         href: /api/systemone
