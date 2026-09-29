@@ -1262,6 +1262,13 @@ func TestCreateManifestListRejectsInvalidRequests(t *testing.T) {
 			},
 			wantError: "cannot be combined",
 		},
+		{
+			name: "capabilities",
+			req: api.CreateRequest{
+				List: []string{"test-gguf", "test-safetensors"}, Capabilities: []string{"decision"},
+			},
+			wantError: "cannot be combined",
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateCreateManifestListRequest(tt.req)
@@ -2482,7 +2489,8 @@ func TestCreateSafetensorsRejectsMissingBlob(t *testing.T) {
 func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	r := api.CreateRequest{
-		Model: "uploaded-safetensors",
+		Model:        "uploaded-safetensors",
+		Capabilities: []string{"decision", "completion", "decision"},
 		Info: map[string]any{
 			"capabilities": []string{"completion", "thinking"},
 		},
@@ -2519,8 +2527,8 @@ func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 	if cfg.Requires != "0.20.0" {
 		t.Fatalf("Requires = %q, want 0.20.0", cfg.Requires)
 	}
-	if !slices.Contains(cfg.Capabilities, "completion") || !slices.Contains(cfg.Capabilities, "thinking") {
-		t.Fatalf("Capabilities = %v, want completion and thinking", cfg.Capabilities)
+	if want := []string{"completion", "thinking", "decision"}; !slices.Equal(cfg.Capabilities, want) {
+		t.Fatalf("Capabilities = %v, want %v", cfg.Capabilities, want)
 	}
 
 	mf, err := manifest.ParseNamedManifest(model.ParseName("uploaded-safetensors"))

@@ -89,6 +89,12 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 	config.Requires = r.Requires
+	for _, capability := range r.Capabilities {
+		if !model.Capability(capability).IsValid() {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown capability: %q", capability)})
+			return
+		}
+	}
 
 	if err := validateCreateFiles(r.Files); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -298,6 +304,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 			return
 		}
+		config.AddCapabilities(r.Capabilities...)
 
 		if err := createModel(reqCtx, r, name, baseLayers, config, fn); err != nil {
 			if errors.Is(err, create.ErrBadTemplate) || errors.Is(err, create.ErrInvalidRequires) || errors.Is(err, create.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {
@@ -414,6 +421,7 @@ func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp
 		License:             r.License,
 		Parameters:          r.Parameters,
 		Messages:            r.Messages,
+		Capabilities:        r.Capabilities,
 		BeforeWriteManifest: func() { fn(api.ProgressResponse{Status: "writing manifest"}) },
 	})
 	return func(ctx context.Context, modelName string, info create.ManifestInfo) error {
@@ -1064,7 +1072,7 @@ func validateCreateManifestListRequest(r api.CreateRequest) error {
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
 	case r.Template != "", r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
-	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0:
+	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0, len(r.Capabilities) > 0:
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
 	case r.Quantize != "", r.Quantization != "", r.DraftQuantize != "":
 		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")

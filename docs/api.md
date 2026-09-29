@@ -1197,6 +1197,7 @@ If you are creating a model from a safetensors directory or from GGUF files, you
 - `system`: (optional) a string containing the system prompt for the model
 - `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
+- `capabilities`: (optional) capabilities to add without removing inherited or inferred capabilities, such as `["decision"]` for compatible decision models
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `quantize`: (optional) quantize safetensors model weights for MLX during import
 

@@ -929,11 +929,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if !m.isGGUF() || m.Config.Renderer != "qwen3.5" && !(m.Config.Renderer == "" && m.Config.ModelFamily == "qwen35") {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local Nimble or Tev GGUF model", req.Model)})
+	if !m.isGGUF() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
 		return
 	}
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), "", []model.Capability{model.CapabilityCompletion}, nil, req.KeepAlive, nil)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), "", []model.Capability{model.CapabilityCompletion, model.CapabilityDecision}, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
