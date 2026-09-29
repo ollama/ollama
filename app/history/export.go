@@ -357,11 +357,11 @@ func writeQuote(w *bytes.Buffer, content string) {
 		if entering {
 			switch node := node.(type) {
 			case *ast.RawHTML:
-				for i := 0; i < node.Segments.Len(); i++ {
+				for i := range node.Segments.Len() {
 					escape(node.Segments.At(i))
 				}
 			case *ast.HTMLBlock:
-				for i := 0; i < node.Lines().Len(); i++ {
+				for i := range node.Lines().Len() {
 					escape(node.Lines().At(i))
 				}
 				if node.HasClosure() {
