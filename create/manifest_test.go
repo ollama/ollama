@@ -210,6 +210,27 @@ func TestNewSafetensorsManifestWriterDefaultsMinimumVersion(t *testing.T) {
 	}
 }
 
+func TestNewSafetensorsManifestWriterExplicitCapabilities(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	base := model.ConfigV2{Capabilities: []string{"completion", "vision", "tools", "thinking"}}
+	writeManifest := NewSafetensorsManifestWriter(SafetensorsManifestOptions{
+		Capabilities: []string{"decision", "decision"},
+	})
+	if err := writeManifest(t.Context(), "decision-only", ManifestInfo{ModelConfig: base}); err != nil {
+		t.Fatal(err)
+	}
+	got := readSafetensorsManifestConfig(t, "decision-only")
+	if diff := cmp.Diff([]string{"decision"}, got.Capabilities); diff != "" {
+		t.Fatalf("capabilities (-want +got):\n%s", diff)
+	}
+	if !got.CapabilitiesExplicit {
+		t.Fatal("capabilities were not marked explicit")
+	}
+	if diff := cmp.Diff([]string{"completion", "vision", "tools", "thinking"}, base.Capabilities); diff != "" {
+		t.Fatalf("source capabilities changed (-want +got):\n%s", diff)
+	}
+}
+
 func TestNewSafetensorsManifestWriterPreservesExplicitVersion(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 

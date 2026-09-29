@@ -2244,8 +2244,11 @@ func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 	if cfg.Requires != "0.20.0" {
 		t.Fatalf("Requires = %q, want 0.20.0", cfg.Requires)
 	}
-	if want := []string{"completion", "thinking", "decision"}; !slices.Equal(cfg.Capabilities, want) {
+	if want := []string{"decision", "completion"}; !slices.Equal(cfg.Capabilities, want) {
 		t.Fatalf("Capabilities = %v, want %v", cfg.Capabilities, want)
+	}
+	if !cfg.CapabilitiesExplicit {
+		t.Fatal("request capabilities were not marked explicit")
 	}
 
 	mf, err := manifest.ParseNamedManifest(model.ParseName("uploaded-safetensors"))

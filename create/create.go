@@ -24,7 +24,7 @@ import (
 const SafetensorsMinOllamaVersion = "0.19.0"
 
 // IsSafetensorsLLMModel checks if a model is a safetensors LLM model
-// (has completion capability, not image generation).
+// (supports completion or decision scoring, not image generation).
 func IsSafetensorsLLMModel(modelName string) bool {
 	name := model.ParseName(modelName)
 	if !name.IsValid() {
@@ -44,7 +44,10 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	if err := json.NewDecoder(f).Decode(&config); err != nil {
 		return false
 	}
-	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
+	if config.ModelFormat != "safetensors" {
+		return false
+	}
+	return slices.Contains(config.Capabilities, "completion") || slices.Contains(config.Capabilities, "decision")
 }
 
 // IsSafetensorsModelDir checks if the directory contains a standard safetensors model

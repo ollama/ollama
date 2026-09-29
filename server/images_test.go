@@ -443,6 +443,26 @@ func TestModelCapabilities(t *testing.T) {
 		expectedCaps []model.Capability
 	}{
 		{
+			name: "explicit GGUF capabilities suppress all inference",
+			model: Model{
+				ModelPath: ggufToolTemplateModelPath, ProjectorPaths: []string{audioProjectorPath},
+				Template: toolsInsertTemplate,
+				Config: model.ConfigV2{
+					ModelFamily: "gptoss", Parser: "qwen3.5",
+					Capabilities: []string{"decision"}, CapabilitiesExplicit: true,
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "explicit safetensors capabilities suppress parser inference",
+			model: Model{Config: model.ConfigV2{
+				ModelFormat: "safetensors", Parser: "qwen3.5",
+				Capabilities: []string{"decision"}, CapabilitiesExplicit: true,
+			}},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
 			name: "model with image generation capability via config",
 			model: Model{
 				Config: model.ConfigV2{

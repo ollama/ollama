@@ -35,7 +35,7 @@ func TestCreateCapabilities(t *testing.T) {
 				}
 			}
 
-			modelfile := "FROM base\nCAPABILITY decision\nCAPABILITY completion\nCAPABILITY decision\n"
+			modelfile := "FROM base\nCAPABILITY decision\nCAPABILITY decision\n"
 			for _, name := range []string{"declared", "roundtrip", "inherited"} {
 				mf, err := parser.ParseFile(strings.NewReader(modelfile))
 				if err != nil {
@@ -57,22 +57,63 @@ func TestCreateCapabilities(t *testing.T) {
 					t.Fatalf("create %s: %d %s", name, w.Code, w.Body)
 				}
 				cfg := readCreatedModelConfig(t, name)
-				if want := []string{"completion", "vision", "decision"}; !slices.Equal(cfg.Capabilities, want) {
+				if want := []string{"decision"}; !slices.Equal(cfg.Capabilities, want) {
 					t.Fatalf("%s capabilities = %v, want %v", name, cfg.Capabilities, want)
+				}
+				if !cfg.CapabilitiesExplicit {
+					t.Fatalf("%s lost its explicit capability declaration", name)
 				}
 				shown, err := GetModelInfo(api.ShowRequest{Model: name})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !slices.Contains(shown.Capabilities, model.CapabilityDecision) || !strings.Contains(shown.Modelfile, "CAPABILITY decision\n") {
+				if !slices.Equal(shown.Capabilities, []model.Capability{model.CapabilityDecision}) || !strings.Contains(shown.Modelfile, "CAPABILITY decision\n") {
 					t.Fatalf("show %s lost capability: %+v", name, shown)
+				}
+				w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: name, Prompt: "hello"})
+				if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "does not support generate") {
+					t.Fatalf("generate %s: %d %s", name, w.Code, w.Body)
+				}
+				w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: name, Messages: []api.Message{{Role: "user", Content: "hello"}}})
+				if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "does not support chat") {
+					t.Fatalf("chat %s: %d %s", name, w.Code, w.Body)
 				}
 				modelfile = shown.Modelfile
 				if name == "roundtrip" {
 					modelfile = "FROM roundtrip\n"
 				}
 			}
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model: "replaced", From: "inherited", Capabilities: []string{"completion"}, Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("replace capabilities: %d %s", w.Code, w.Body)
+			}
+			shown, err := GetModelInfo(api.ShowRequest{Model: "replaced"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(shown.Capabilities, []model.Capability{model.CapabilityCompletion}) {
+				t.Fatalf("replacement capabilities = %v, want [completion]", shown.Capabilities)
+			}
 		})
+	}
+}
+
+func TestLegacyModelfileCapabilities(t *testing.T) {
+	m := Model{ModelPath: "base", Config: model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion"}, Parser: "qwen3.5",
+	}}
+	mf, err := parser.ParseFile(strings.NewReader(m.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := mf.CreateRequest(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"completion", "tools", "thinking"}; !slices.Equal(req.Capabilities, want) {
+		t.Fatalf("exported capabilities = %v, want %v", req.Capabilities, want)
 	}
 }
 
