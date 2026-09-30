@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -22,12 +23,13 @@ func TestCreateCapabilities(t *testing.T) {
 			baseCaps := []string{"completion", "vision"}
 			if format == "safetensors" {
 				createSafetensorsTestModel(t, "base", model.ConfigV2{
-					ModelFormat: format, Renderer: "qwen3.5", Capabilities: baseCaps,
+					ModelFormat: format, Renderer: "qwen3.5", Parser: "qwen3.5", Capabilities: baseCaps,
 				}, nil)
 			} else {
 				_, digest := createBinFile(t, map[string]any{"general.architecture": "qwen35"}, nil)
 				w := createRequest(t, s.CreateHandler, api.CreateRequest{
 					Model: "base", Files: map[string]string{"model.gguf": digest},
+					Renderer: "qwen3.5", Parser: "qwen3.5",
 					Capabilities: baseCaps, Stream: &stream,
 				})
 				if w.Code != http.StatusOK {
@@ -89,12 +91,49 @@ func TestCreateCapabilities(t *testing.T) {
 			if w.Code != http.StatusOK {
 				t.Fatalf("replace capabilities: %d %s", w.Code, w.Body)
 			}
-			shown, err := GetModelInfo(api.ShowRequest{Model: "replaced"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(shown.Capabilities, []model.Capability{model.CapabilityCompletion}) {
-				t.Fatalf("replacement capabilities = %v, want [completion]", shown.Capabilities)
+			for _, tc := range []struct {
+				name string
+				want model.Capability
+			}{
+				{"declared", model.CapabilityDecision},
+				{"replaced", model.CapabilityCompletion},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var s Server
+					for _, path := range []string{"uncached", "cache miss", "cache hit"} {
+						t.Run(path, func(t *testing.T) {
+							if path == "cache miss" {
+								s.modelCaches = &modelCaches{show: newModelShowCache()}
+							}
+							w := createRequest(t, s.ShowHandler, api.ShowRequest{Model: tc.name})
+							if w.Code != http.StatusOK {
+								t.Fatalf("show: %d %s", w.Code, w.Body)
+							}
+							var shown api.ShowResponse
+							if err := json.Unmarshal(w.Body.Bytes(), &shown); err != nil {
+								t.Fatal(err)
+							}
+							if !slices.Equal(shown.Capabilities, []model.Capability{tc.want}) {
+								t.Errorf("show capabilities = %v, want [%s]", shown.Capabilities, tc.want)
+							}
+						})
+					}
+					w := createRequest(t, s.ListHandler, nil)
+					if w.Code != http.StatusOK {
+						t.Fatalf("list: %d %s", w.Code, w.Body)
+					}
+					var listed api.ListResponse
+					if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+						t.Fatal(err)
+					}
+					i := slices.IndexFunc(listed.Models, func(m api.ListModelResponse) bool { return m.Name == tc.name+":latest" })
+					if i < 0 {
+						t.Fatalf("%s not listed", tc.name)
+					}
+					if got := listed.Models[i].Capabilities; !slices.Equal(got, []model.Capability{tc.want}) {
+						t.Errorf("list capabilities = %v, want [%s]", got, tc.want)
+					}
+				})
 			}
 		})
 	}
