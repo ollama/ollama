@@ -2423,12 +2423,13 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 	case `"json"`:
 		return map[string]any{"type": "json_object"}, nil
 	default:
-		if format[0] != '{' {
+		trimmed := bytes.TrimSpace(format)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
 			return nil, fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", format)
 		}
 
 		var schema map[string]any
-		if err := json.Unmarshal(format, &schema); err != nil {
+		if err := json.Unmarshal(trimmed, &schema); err != nil {
 			return nil, fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", format)
 		}
 
@@ -2436,7 +2437,7 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 			"type": "json_schema",
 			"json_schema": map[string]any{
 				"name":   "schema",
-				"schema": schema,
+				"schema": json.RawMessage(bytes.Clone(trimmed)),
 			},
 		}, nil
 	}
