@@ -9,10 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/llm"
 )
 
 // llamaServerBackend drives a llama-server directly over its native /completion
@@ -22,6 +23,11 @@ type llamaServerBackend struct {
 	mode   string
 	client *http.Client
 	debug  bool
+
+	// loadDuration is the spawn→ready model load time, reported as the "load"
+	// metric on every epoch for spawned servers. Zero for an operator-managed
+	// server (-runner).
+	loadDuration time.Duration
 
 	cmd *exec.Cmd // non-nil when bench spawned the llama-server
 }
@@ -68,6 +74,7 @@ func newLlamaServerBackend(fOpt flagOptions) *llamaServerBackend {
 // newLlamaServerSpawn launches a llama-server on a free port serving ggufPath,
 // captures its stderr, and waits for it to become ready.
 func newLlamaServerSpawn(fOpt flagOptions, ggufPath string) (*llamaServerBackend, error) {
+	start := time.Now()
 	bin, err := resolveLlamaServer()
 	if err != nil {
 		return nil, err
@@ -103,28 +110,16 @@ func newLlamaServerSpawn(fOpt flagOptions, ggufPath string) (*llamaServerBackend
 		b.Cleanup(*fOpt.timeout)
 		return nil, fmt.Errorf("llama-server not ready: %w", err)
 	}
+	b.loadDuration = time.Since(start)
 	return b, nil
 }
 
-// resolveLlamaServer locates the llama-server binary: the -ollama flag's sibling
-// payload dir, a dev build/ tree, or PATH.
+// resolveLlamaServer locates the llama-server binary using the same resolver the
+// ollama server uses (llm.FindLlamaCppBinary), so bench launches the same helper
+// the server would. Falls back to PATH, which the shared resolver does not check.
 func resolveLlamaServer() (string, error) {
-	var candidates []string
-	if cwd, err := os.Getwd(); err == nil {
-		for dir := cwd; ; {
-			candidates = append(candidates, filepath.Join(dir, "build", "lib", "ollama", "llama-server"))
-			candidates = append(candidates, filepath.Join(dir, "dist", "lib", "ollama", "llama-server"))
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
+	if p, err := llm.FindLlamaCppBinary("llama-server"); err == nil {
+		return p, nil
 	}
 	if p, err := exec.LookPath("llama-server"); err == nil {
 		return p, nil
@@ -189,6 +184,7 @@ func (b *llamaServerBackend) Complete(ctx context.Context, p completionParams) (
 	}
 
 	var res completionResult
+	res.loadDuration = b.loadDuration
 	ttftSet := false
 	gotTimings := false
 	scanner := bufio.NewScanner(resp.Body)
@@ -241,7 +237,7 @@ func (b *llamaServerBackend) Complete(ctx context.Context, p completionParams) (
 
 // Cleanup terminates the llama-server only if bench spawned it; an
 // operator-managed server (reached via -runner) is left running.
-func (b *llamaServerBackend) Cleanup(int) {
+func (b *llamaServerBackend) Cleanup(timeout int) {
 	if b.cmd == nil || b.cmd.Process == nil {
 		return
 	}
@@ -254,7 +250,7 @@ func (b *llamaServerBackend) Cleanup(int) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Duration(timeout) * time.Second):
 		_ = b.cmd.Process.Kill()
 	}
 	b.cmd = nil

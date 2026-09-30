@@ -105,6 +105,12 @@ type runnerBackend struct {
 	client *http.Client
 	debug  bool
 
+	// loadDuration is the spawn→ready model load time, reported as the "load"
+	// metric on every epoch for spawned runners. It is zero for an
+	// operator-managed runner (-runner), where the model was already loaded
+	// before bench connected.
+	loadDuration time.Duration
+
 	cmd *exec.Cmd // non-nil when bench spawned the runner
 }
 
@@ -131,9 +137,11 @@ func newRunnerBackend(fOpt flagOptions) (*runnerBackend, error) {
 		debug:  *fOpt.debug,
 	}
 
+	var spawnStart time.Time
 	if *fOpt.runner != "" {
 		b.addr = *fOpt.runner
 	} else {
+		spawnStart = time.Now()
 		if err := b.spawn(fOpt); err != nil {
 			return nil, err
 		}
@@ -142,6 +150,9 @@ func newRunnerBackend(fOpt flagOptions) (*runnerBackend, error) {
 	if err := b.waitReady(time.Duration(*fOpt.timeout) * time.Second); err != nil {
 		b.Cleanup(*fOpt.timeout)
 		return nil, fmt.Errorf("mlx runner not ready: %w", err)
+	}
+	if !spawnStart.IsZero() {
+		b.loadDuration = time.Since(spawnStart)
 	}
 	return b, nil
 }
@@ -262,6 +273,7 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 	}
 
 	var res completionResult
+	res.loadDuration = b.loadDuration
 	ttftSet := false
 	gotDone := false
 	scanner := bufio.NewScanner(resp.Body)
@@ -318,12 +330,15 @@ func (b *runnerBackend) Cleanup(timeout int) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Duration(timeout) * time.Second):
 		_ = b.cmd.Process.Kill()
 	}
 	b.cmd = nil
 }
 
+// freePort grabs an ephemeral port. There is a small TOCTOU window between the
+// listener closing and the spawned runner binding it, but this is acceptable
+// for local single-user profiling; a collision just makes the runner fail fast.
 func freePort() (int, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

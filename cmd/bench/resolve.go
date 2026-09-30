@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -61,12 +63,26 @@ func ggufBlobForModel(name string) (string, bool) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return "", false
 	}
+
+	// Detect projector/draft layers. bench's llama-server spawn only passes the
+	// model GGUF (--mmproj / draft model are not wired), so warn when a model
+	// carries them: vision/speculative profiling is not supported in spawn mode.
+	hasExtra := false
+	for _, l := range m.Layers {
+		if l.MediaType == "application/vnd.ollama.image.projector" || l.MediaType == manifest.MediaTypeImageDraft {
+			hasExtra = true
+		}
+	}
+
 	for _, l := range m.Layers {
 		if l.MediaType != "application/vnd.ollama.image.model" {
 			continue
 		}
 		blob := filepath.Join(models, "blobs", strings.ReplaceAll(l.Digest, ":", "-"))
 		if isGGUFFile(blob) {
+			if hasExtra {
+				fmt.Fprintf(os.Stderr, "WARNING: %s has projector/draft layers that bench does not pass to llama-server; vision/speculative profiling is unsupported in -spawn mode\n", name)
+			}
 			return blob, true
 		}
 	}
