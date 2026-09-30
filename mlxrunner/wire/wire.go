@@ -29,6 +29,30 @@ type CompletionRequest struct {
 	// exact, attributable number of decode passes. The ollama server never
 	// sets it, so production behavior is unchanged.
 	IgnoreEOS bool
+
+	// Stats asks for Stats on the final response. Used by benchmark drivers;
+	// the ollama server never sets it.
+	Stats bool
+}
+
+// Stats describes how the runner served one request. Sequence fields are
+// attributable to this request alone. Runner fields are whole-runner readings
+// taken when the final response is sent, before the request's prefix-cache
+// bookkeeping runs, so they reflect other sequences as well once requests
+// run concurrently.
+type Stats struct {
+	// Sequence.
+	MatchedTokens int // prompt tokens the prefix cache matched, before holding one back to seed decode
+	DraftTokens   int // speculative tokens proposed
+	AcceptedDraft int // speculative tokens accepted
+
+	// Runner.
+	ActiveBytes int64 // MLX active memory
+	PeakBytes   int64 // MLX peak memory since the runner last reset it
+	CacheBytes  int64 // MLX buffer cache
+	ColdBytes   int64 // prefix-cache snapshot storage
+	ColdLimit   int64 // bound the prefix cache evicts snapshot storage to
+	ColdEvicted int64 // snapshot bytes evicted since the runner started
 }
 
 // CompletionResponse is one JSONL record streamed from /v1/completions.
@@ -44,6 +68,8 @@ type CompletionResponse struct {
 	EvalDuration          time.Duration
 
 	Logprobs []llm.Logprob
+
+	Stats *Stats `json:",omitempty"`
 
 	Error *api.StatusError
 }

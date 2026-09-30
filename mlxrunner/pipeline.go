@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
+	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
 func prefillChunkSize() int {
@@ -131,6 +132,9 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 			PromptEvalCount:       len(request.Tokens),
 			PromptEvalCachedCount: &cached,
 			PromptEvalDuration:    promptEval,
+		}
+		if request.Stats {
+			final.Stats = r.requestStats(session, nil)
 		}
 		select {
 		case <-ctx.Done():
@@ -373,12 +377,31 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 	final.EvalCount = generated
 	final.EvalDuration = time.Since(now)
+	if request.Stats {
+		final.Stats = r.requestStats(session, d)
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case request.Responses <- final:
 		return nil
 	}
+}
+
+func (r *Runner) requestStats(session *cacheSession, d decoder) *wire.Stats {
+	s := &wire.Stats{
+		MatchedTokens: session.matched,
+		ActiveBytes:   int64(mlx.ActiveMemory()),
+		PeakBytes:     int64(mlx.PeakMemory()),
+		CacheBytes:    int64(mlx.CacheMemory()),
+		ColdBytes:     r.cache.pagedOutBytes,
+		ColdLimit:     maxPagedOutBytes,
+		ColdEvicted:   r.cache.evictedBytes,
+	}
+	if sd, ok := d.(interface{ draftCounts() (int, int) }); ok {
+		s.DraftTokens, s.AcceptedDraft = sd.draftCounts()
+	}
+	return s
 }
 
 // pipelinedDecoder decodes one token per row per call, one call ahead of

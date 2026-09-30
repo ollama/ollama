@@ -548,3 +548,7 @@ func draftResults(ids []int32) []sampler.Result {
 	}
 	return results
 }
+
+func (st *speculativeDecoder) draftCounts() (drafted, accepted int) {
+	return st.s.stats.drafted, st.s.stats.accepted
+}
