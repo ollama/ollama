@@ -634,6 +634,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			start := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -681,6 +682,16 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				default:
 					return nil, errors.New("invalid message format")
 				}
+			}
+			// a tool message is a single result, so keep its parts together and
+			// preserve the tool call it answers
+			if strings.ToLower(msg.Role) == "tool" && len(messages) > start {
+				tool := api.Message{Role: msg.Role, ToolName: toolName, ToolCallID: msg.ToolCallID}
+				for _, part := range messages[start:] {
+					tool.Content += part.Content
+					tool.Images = append(tool.Images, part.Images...)
+				}
+				messages = append(messages[:start], tool)
 			}
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message

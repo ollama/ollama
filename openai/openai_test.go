@@ -157,6 +157,60 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(image)
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "What's in the screenshot?"},
+			{
+				Role: "assistant",
+				ToolCalls: []ToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "screenshot", Arguments: "{}"},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content: []any{
+					map[string]any{"type": "text", "text": "Captured "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
+					},
+					map[string]any{"type": "text", "text": "screen.png"},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+
+	tool := result.Messages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "screenshot" {
+		t.Errorf("expected tool message for call_1/screenshot, got role=%q id=%q name=%q", tool.Role, tool.ToolCallID, tool.ToolName)
+	}
+	if tool.Content != "Captured screen.png" {
+		t.Errorf("expected content 'Captured screen.png', got %q", tool.Content)
+	}
+	if len(tool.Images) != 1 || string(tool.Images[0]) != string(imgData) {
+		t.Errorf("expected the tool image to be kept, got %d images", len(tool.Images))
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
