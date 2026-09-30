@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -156,8 +157,8 @@ func runAPISystemOne(t *testing.T, modelName string) {
 	unchanged := func(t *testing.T) {
 		t.Helper()
 		got := score(t, input)
-		// Cache/prefill shapes can change BF16 accumulation. Match the runner
-		// parity test's 0.01 absolute tolerance while requiring identical choices.
+		// Allow 0.01 absolute probability drift from different BF16 cache/prefill
+		// shapes while requiring identical choices.
 		if diff := cmp.Diff(baseline.Answers, got.Answers, cmpopts.EquateApprox(0, 0.01),
 			cmpopts.AcyclicTransformer("probabilities", (*decision.Probabilities).ToMap),
 			cmpopts.AcyclicTransformer("legend", (*decision.Legend).ToMap),
@@ -184,7 +185,12 @@ func runAPISystemOne(t *testing.T, modelName string) {
 			Think:   &api.ThinkValue{Value: false},
 			Options: map[string]any{"temperature": 0, "num_predict": 8},
 		}, func(api.GenerateResponse) error { return nil })
-		if err != nil {
+		if !slices.Contains(info.Capabilities, model.CapabilityCompletion) {
+			var status api.StatusError
+			if !errors.As(err, &status) || status.StatusCode != http.StatusBadRequest {
+				t.Fatalf("decision-only generation: got %v, want HTTP 400", err)
+			}
+		} else if err != nil {
 			t.Fatal(err)
 		}
 		unchanged(t)

@@ -1676,8 +1676,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Runner:            m.Runner,
 	}
 
-	// For safetensors LLM models, populate details from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// For safetensors completion and decision models, populate details from config.json.
+	isSafetensorsLLM := m.IsMLX() && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "decision"))
+	if isSafetensorsLLM {
 		if info, err := getSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
@@ -1796,8 +1797,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	// For safetensors LLM models, populate ModelInfo from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// For safetensors completion and decision models, populate ModelInfo from config.json.
+	if isSafetensorsLLM {
 		if info, err := getSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			resp.ModelInfo = info
 		}

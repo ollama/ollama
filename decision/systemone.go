@@ -18,7 +18,8 @@ import (
 
 type compiledField struct {
 	Field
-	typ string
+	typ     string
+	options []string
 }
 
 type Compiled struct {
@@ -65,7 +66,7 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(context) == "" {
 		return nil, fmt.Errorf("state must not be empty")
 	}
-	c := &Compiled{}
+	c := &Compiled{Request: llm.ScoreRequest{State: context}}
 	for name, q := range req.Questions.All() {
 		f, err := compileField(name, q)
 		if err != nil {
@@ -88,7 +89,7 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 		c.messages = append(c.messages, []api.Message{
 			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
 		})
-		var row llm.ScoreRow
+		row := llm.ScoreRow{Question: &llm.ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
 		for _, choice := range f.Choices {
 			row.Candidates = append(row.Candidates, choice.Code)
 		}
@@ -166,6 +167,14 @@ func compileField(name string, q Question) (compiledField, error) {
 		}
 		add(false, no)
 		add(true, yes)
+		// Keep the decoder's established labels while retaining the richer
+		// descriptions used by encoder decision models.
+		f.options = []string{"false: no, the statement does not hold", "true: yes, the statement holds"}
+		for i, key := range []string{"false", "true"} {
+			if value, ok := criteria.Get(key); ok && *value != "" {
+				f.options[i] = key + ": " + *value
+			}
+		}
 	case "choice":
 		criteria := orderedmap.New[string, *string]()
 		if err := json.Unmarshal(q.Criteria, criteria); err != nil {
@@ -180,6 +189,11 @@ func compileField(name string, q Question) (compiledField, error) {
 				description = *value
 			}
 			add(key, description)
+			option := key
+			if value != nil && *value != "" {
+				option += ": " + *value
+			}
+			f.options = append(f.options, option)
 		}
 	case "score":
 		var criteria []*string
@@ -191,6 +205,7 @@ func compileField(name string, q Question) (compiledField, error) {
 				return f, fmt.Errorf("score descriptions must be strings")
 			}
 			add(strconv.Itoa(i), *description)
+			f.options = append(f.options, fmt.Sprintf("level %d: %s", i, *description))
 		}
 	default:
 		return f, fmt.Errorf("type must be choice, noul, or score")

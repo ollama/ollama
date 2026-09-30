@@ -1,6 +1,7 @@
 package create
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -51,6 +52,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err := checkContext(ctx); err != nil {
 		return err
 	}
+	if inv.Config.Architecture() == "LayaForDecision" && opts.Quantize != "" {
+		return fmt.Errorf("Laya currently requires unquantized weights")
+	}
 	class, err := Classify(inv, opts.Quantize)
 	if err != nil {
 		return err
@@ -86,7 +90,11 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	layers = append(layers, configLayers...)
 	layers = append(layers, draftLayers...)
 	if configLayer.Digest == "" {
-		return fmt.Errorf("config.json not found in %s", modelDir)
+		configLayer, err = store.WriteBlob(bytes.NewReader(inv.RawConfig), mediaTypeImageJSON, "config.json")
+		if err != nil {
+			return err
+		}
+		layers = append(layers, configLayer)
 	}
 	if err := checkContext(ctx); err != nil {
 		return err
@@ -115,20 +123,19 @@ const mediaTypeImageJSON = "application/vnd.ollama.image.json"
 // target import passes "" for namePrefix; a draft import passes "draft/" so its
 // config sits beside the target's.
 func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, store BlobStore, fn func(status string)) ([]LayerInfo, LayerInfo, error) {
-	entries, err := os.ReadDir(modelDir)
+	names, err := SafetensorsConfigFiles(modelDir)
 	if err != nil {
 		return nil, LayerInfo{}, err
 	}
 	var layers []LayerInfo
 	var configLayer LayerInfo
-	for _, entry := range entries {
+	for _, name := range names {
 		if err := checkContext(ctx); err != nil {
 			return nil, LayerInfo{}, err
 		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || entry.Name() == "model.safetensors.index.json" {
+		if !strings.HasSuffix(name, ".json") || name == "model.safetensors.index.json" {
 			continue
 		}
-		name := entry.Name()
 		fn(fmt.Sprintf("importing config %s", name))
 		f, err := os.Open(filepath.Join(modelDir, name))
 		if err != nil {

@@ -97,6 +97,9 @@ func readChatTemplateStrict(modelDir string) (string, error) {
 }
 
 func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
+	if cfg.Architecture() == "LayaForDecision" {
+		return []string{"decision"}
+	}
 	capabilities := []string{"completion"}
 
 	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)

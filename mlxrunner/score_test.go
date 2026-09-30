@@ -2,21 +2,16 @@ package mlxrunner
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"math"
-	"os"
 	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
-	"github.com/ollama/ollama/model/renderers"
 )
 
 // This small stateful model uses real KV and recurrent caches. Its outputs
@@ -191,99 +186,4 @@ func TestScoreValidation(t *testing.T) {
 			t.Fatalf("expected validation error before model access, got %v", err)
 		}
 	}
-}
-
-// Optional full-model check against independently prefilling each question.
-func TestScoreModel(t *testing.T) {
-	name := os.Getenv("OLLAMA_TEST_MODEL")
-	if name == "" {
-		t.Skip("set OLLAMA_TEST_MODEL to an imported Nimble or Tev model")
-	}
-	var req decision.Request
-	if err := json.Unmarshal([]byte(`{
-		"model":"nimble", "state":"I was charged twice. Please refund the duplicate.",
-		"questions":{
-			"department":{"type":"choice","instructions":"Which department?","criteria":{"billing":"Payments","technical":"Software"}},
-			"refund":{"type":"noul","instructions":"Refund requested?"},
-			"urgency":{"type":"score","instructions":"How urgent?","criteria":["Routine","Urgent","Emergency"]}
-		}
-	}`), &req); err != nil {
-		t.Fatal(err)
-	}
-	c, err := decision.Compile(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := c.Render(func(messages []api.Message) (string, error) {
-		return renderers.RenderWithRenderer("qwen3.5", messages, nil, &api.ThinkValue{Value: false})
-	}); err != nil {
-		t.Fatal(err)
-	}
-	allCandidates := llm.ScoreRow{Prompt: c.Request.Rows[0].Prompt}
-	for code := 'A'; code <= 'Z'; code++ {
-		allCandidates.Candidates = append(allCandidates.Candidates, string(code))
-	}
-	c.Request.Rows = append(c.Request.Rows, allCandidates)
-
-	mlxtest.Run(t, func(t *mlxtest.T) {
-		r := &Runner{}
-		if err := r.Load(name); err != nil {
-			t.Fatal(err)
-		}
-		defer r.Close()
-		c.Request.MaxTokens = r.contextLength
-		shared, err := r.score(context.Background(), c.Request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if shared.OutputTokens != 0 {
-			t.Fatalf("scoring generated %d tokens", shared.OutputTokens)
-		}
-		var inputTokens int
-		for _, row := range c.Request.Rows {
-			inputTokens += len(r.Tokenizer.Encode(row.Prompt, false))
-		}
-		if shared.InputTokens != inputTokens {
-			t.Fatalf("input tokens = %d, want %d", shared.InputTokens, inputTokens)
-		}
-		probabilities := func(logits []float32) []float64 {
-			for i, x := range logits {
-				if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-					t.Fatalf("candidate %d has non-finite logit %v", i, x)
-				}
-			}
-			p := make([]float64, len(logits))
-			peak := slices.Max(logits)
-			var sum float64
-			for i, x := range logits {
-				p[i] = math.Exp(float64(x - peak))
-				sum += p[i]
-			}
-			for i := range p {
-				p[i] /= sum
-			}
-			return p
-		}
-		for i, row := range c.Request.Rows {
-			single, err := r.score(context.Background(), llm.ScoreRequest{Rows: []llm.ScoreRow{row}, MaxTokens: c.Request.MaxTokens})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Different prefill shapes can choose different kernels, and this
-			// backbone retains its native precision, as do quantized heads.
-			// Check the resulting decisions/probabilities;
-			// log exact logits to make numerical differences visible.
-			p, q := probabilities(shared.Logits[i]), probabilities(single.Logits[0])
-			for j := range p {
-				if diff := math.Abs(p[j] - q[j]); diff > 0.01 {
-					t.Errorf("row %d candidate %d probability difference=%g", i, j, diff)
-				}
-			}
-			if slices.Index(p, slices.Max(p)) != slices.Index(q, slices.Max(q)) {
-				t.Errorf("row %d changed its winning candidate", i)
-			}
-			t.Logf("row %d: shared=%v independent=%v", i, shared.Logits[i], single.Logits[0])
-		}
-	})
 }

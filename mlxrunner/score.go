@@ -49,6 +49,9 @@ func (r *Runner) scoreHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Runner) score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+	if scorer, ok := r.Model.(llm.Scorer); ok {
+		return scorer.Score(ctx, input)
+	}
 	var result llm.ScoreResponse
 	badRequest := func(format string, args ...any) (llm.ScoreResponse, error) {
 		return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf(format, args...)}

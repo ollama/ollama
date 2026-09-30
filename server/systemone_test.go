@@ -38,6 +38,32 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
+func TestDecisionModelRejectsCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	createSafetensorsTestModel(t, "decision-only", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"decision"},
+	}, nil)
+	// No scheduler: capability rejection must happen before a runner is loaded.
+	s := &Server{}
+	for _, tc := range []struct {
+		name    string
+		handler gin.HandlerFunc
+		body    any
+	}{
+		{"generate", s.GenerateHandler, api.GenerateRequest{Model: "decision-only", Prompt: "hello"}},
+		{"chat", s.ChatHandler, api.ChatRequest{Model: "decision-only", Messages: []api.Message{{Role: "user", Content: "hello"}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := createRequest(t, tc.handler, tc.body)
+			want := fmt.Sprintf("does not support %s", tc.name)
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+				t.Fatalf("status=%d body=%s, want 400 containing %q", w.Code, w.Body, want)
+			}
+		})
+	}
+}
+
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -47,6 +73,8 @@ func TestSystemOneHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	createSafetensorsTestModel(t, "safetensors-decision", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
 	config.Capabilities = []string{"completion"}
 	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
 	for _, modelConfig := range []struct {
@@ -142,6 +170,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},

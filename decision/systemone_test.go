@@ -237,3 +237,23 @@ func TestContent(t *testing.T) {
 		}
 	}
 }
+
+func TestEncoderOptions(t *testing.T) {
+	for _, tc := range []struct {
+		typ, criteria string
+		want          []string
+	}{
+		{"choice", `{"z":null,"a":"","b":"described"}`, []string{"z", "a", "b: described"}},
+		{"score", `["low","high"]`, []string{"level 0: low", "level 1: high"}},
+		{"noul", `{}`, []string{"false: no, the statement does not hold", "true: yes, the statement holds"}},
+		{"noul", `{"true":"present","false":"absent"}`, []string{"false: absent", "true: present"}},
+	} {
+		f, err := compileField("answer", Question{Type: tc.typ, Instructions: json.RawMessage(`"Question?"`), Criteria: json.RawMessage(tc.criteria)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(tc.want, f.options) {
+			t.Errorf("%s options = %v, want %v", tc.typ, f.options, tc.want)
+		}
+	}
+}

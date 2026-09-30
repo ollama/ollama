@@ -120,6 +120,40 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	return files, err
 }
 
+// SafetensorsConfigFiles lists the metadata transferred by remote create and
+// retained by the local importer. Auxiliary checkpoint subfolders are excluded.
+func SafetensorsConfigFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	var hasLaya bool
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		hasLaya = hasLaya || name == "rl_agent_config.json"
+		if filepath.Ext(name) == ".json" || name == "chat_template.jinja" {
+			names = append(names, name)
+		}
+	}
+	if hasLaya {
+		for _, name := range []string{"encoder/config.json", "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"} {
+			info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name)))
+			if err != nil {
+				return nil, err
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("Laya metadata %s is not a regular file", name)
+			}
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
 func safetensorsWeightFiles(dir string) (map[string]string, []string, error) {
 	index, err := readSourceTensorFiles(dir)
 	if err != nil {
