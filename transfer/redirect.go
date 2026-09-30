@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -91,6 +92,12 @@ func ValidateRedirectTarget(ctx context.Context, loc *url.URL, baseURL string, a
 
 	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
+		// Behind a proxy, local DNS often cannot resolve public hosts and
+		// the proxy resolves them instead. A name that does resolve locally
+		// is still checked below.
+		if u, _ := proxyFromEnvironment(&http.Request{URL: loc}); u != nil {
+			return nil
+		}
 		return fmt.Errorf("%w: resolving %s: %w", errRedirectNotAllowed, host, err)
 	}
 	if len(ips) == 0 {
@@ -160,15 +167,49 @@ func NewRedirectClient(baseURL string, allowPrivate bool) *http.Client {
 	return client
 }
 
+// proxyFromEnvironment is http.ProxyFromEnvironment, which reads the
+// environment only once per process; tests replace it.
+var proxyFromEnvironment = http.ProxyFromEnvironment
+
+// proxyAddr returns the host:port that http.Transport dials for proxy u.
+func proxyAddr(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		switch u.Scheme {
+		case "https":
+			port = "443"
+		case "socks5", "socks5h":
+			port = "1080"
+		default:
+			port = "80"
+		}
+	}
+	return strings.ToLower(net.JoinHostPort(u.Hostname(), port))
+}
+
 // checkedClient returns an HTTP client using checkedDialer; the registry
 // base host is exempt since the caller explicitly directed traffic at it.
+//
+// HTTP_PROXY, HTTPS_PROXY and NO_PROXY are honored. The proxy chosen for a
+// request is operator configuration rather than registry-supplied, so it is
+// exempt from the dial check too, and is commonly a private address. Behind
+// a proxy the target is resolved by the proxy, so DNS pinning cannot apply;
+// redirect targets are still checked by ValidateRedirectTarget.
 func checkedClient(baseURL string, allowPrivate bool) *http.Client {
 	var baseHostname string
 	if b, err := url.Parse(baseURL); err == nil {
 		baseHostname = b.Hostname()
 	}
+	var proxyAddrs sync.Map
 	return &http.Client{
 		Transport: &http.Transport{
+			Proxy: func(req *http.Request) (*url.URL, error) {
+				u, err := proxyFromEnvironment(req)
+				if u != nil {
+					proxyAddrs.Store(proxyAddr(u), struct{}{})
+				}
+				return u, err
+			},
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 100,
 			IdleConnTimeout:     90 * time.Second,
@@ -178,6 +219,9 @@ func checkedClient(baseURL string, allowPrivate bool) *http.Client {
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err == nil && baseHostname != "" && strings.EqualFold(host, baseHostname) {
+					return new(net.Dialer).DialContext(ctx, network, addr)
+				}
+				if _, ok := proxyAddrs.Load(strings.ToLower(addr)); ok {
 					return new(net.Dialer).DialContext(ctx, network, addr)
 				}
 				return checkedDialer(&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 3 * time.Minute}, allowPrivate)(ctx, network, addr)
