@@ -256,6 +256,13 @@ func TestIsSafetensorsLLMModel(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "decision-only",
+			config: model.ConfigV2{
+				ModelFormat: "safetensors", Capabilities: []string{"decision"}, CapabilitiesExplicit: true,
+			},
+			want: true,
+		},
+		{
 			name: "image-only",
 			config: model.ConfigV2{
 				ModelFormat:  "safetensors",

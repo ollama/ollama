@@ -469,8 +469,11 @@ func TestNewManifestWriter_PopulatesFileTypeFromEffectiveQuantize(t *testing.T) 
 	if cfg.FileType != "mxfp8" {
 		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
 	}
-	if want := []string{"completion", "decision"}; !slices.Equal(cfg.Capabilities, want) {
+	if want := []string{"decision", "completion"}; !slices.Equal(cfg.Capabilities, want) {
 		t.Fatalf("Capabilities = %v, want %v", cfg.Capabilities, want)
+	}
+	if !cfg.CapabilitiesExplicit {
+		t.Fatal("missing explicit capabilities marker")
 	}
 }
 

@@ -164,6 +164,9 @@ func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model
 	var modelArch string
 
 	capabilities = m.configCapabilities(capabilities)
+	if m.Config.CapabilitiesExplicit {
+		return capabilities
+	}
 	capabilities, modelArch = m.ggufCapabilities(capabilities, source)
 	capabilities = m.projectorCapabilities(capabilities)
 	capabilities = m.templateCapabilities(capabilities, source)
@@ -619,11 +622,15 @@ func (m *Model) String() string {
 			Args: m.Config.Parser,
 		})
 	}
-	for _, capability := range m.Config.Capabilities {
-		modelfile.Commands = append(modelfile.Commands, parser.Command{
-			Name: "capability",
-			Args: capability,
-		})
+	if len(m.Config.Capabilities) > 0 {
+		// Legacy hints become explicit on re-create, so include the inferred
+		// capabilities too to preserve the model's effective behavior.
+		for _, capability := range m.Capabilities() {
+			modelfile.Commands = append(modelfile.Commands, parser.Command{
+				Name: "capability",
+				Args: string(capability),
+			})
+		}
 	}
 
 	for k, v := range m.Options {

@@ -56,13 +56,13 @@ func TestSystemOneHandler(t *testing.T) {
 			kv["tokenizer.chat_template"] = "{{ messages }}"
 		}
 		_, digest := createBinFile(t, kv, nil)
-		caps := []string{"completion", "decision"}
+		caps := []string{"decision"}
 		if modelConfig.undeclared {
 			caps = []string{"completion"}
 		}
 		configLayer, err := createConfigLayer(model.ConfigV2{
 			ModelFormat: "gguf", ModelFamily: modelConfig.architecture,
-			Renderer: modelConfig.renderer, Capabilities: caps,
+			Renderer: modelConfig.renderer, Capabilities: caps, CapabilitiesExplicit: true,
 		})
 		if err != nil {
 			t.Fatal(err)

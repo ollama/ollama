@@ -554,7 +554,7 @@ components:
           type: array
           items:
             type: string
-          description: Capabilities to add without removing inherited or inferred capabilities (e.g. `decision` for compatible decision models)
+          description: The complete set of capabilities to expose (e.g. `["decision"]` for a decision-only model). A nonempty list replaces inherited and inferred capabilities. If omitted or empty, existing inheritance and inference apply.
         stream:
           type: boolean
           default: true

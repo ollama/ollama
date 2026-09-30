@@ -20,14 +20,23 @@ type ConfigV2 struct {
 	RemoteModel string `json:"remote_model,omitempty"`
 
 	Capabilities []string `json:"capabilities,omitempty"`
-	ContextLen   int      `json:"context_length,omitempty"`
-	EmbedLen     int      `json:"embedding_length,omitempty"`
-	BaseName     string   `json:"base_name,omitempty"`
-	Draft        *Draft   `json:"draft,omitempty"`
+	// CapabilitiesExplicit distinguishes a declared list from legacy inference hints.
+	CapabilitiesExplicit bool `json:"capabilities_explicit,omitempty"`
+
+	ContextLen int    `json:"context_length,omitempty"`
+	EmbedLen   int    `json:"embedding_length,omitempty"`
+	BaseName   string `json:"base_name,omitempty"`
+	Draft      *Draft `json:"draft,omitempty"`
 }
 
-// AddCapabilities preserves inherited and inferred capabilities.
-func (c *ConfigV2) AddCapabilities(capabilities ...string) {
+// SetCapabilities replaces inherited or inferred capabilities when a nonempty
+// list is declared. An omitted list preserves the base model's behavior.
+func (c *ConfigV2) SetCapabilities(capabilities ...string) {
+	if len(capabilities) == 0 {
+		return
+	}
+	c.Capabilities = nil
+	c.CapabilitiesExplicit = true
 	for _, capability := range capabilities {
 		if !slices.Contains(c.Capabilities, capability) {
 			c.Capabilities = append(c.Capabilities, capability)

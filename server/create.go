@@ -262,7 +262,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 			return
 		}
-		config.AddCapabilities(r.Capabilities...)
+		config.SetCapabilities(r.Capabilities...)
 
 		if err := createModel(reqCtx, r, name, baseLayers, config, fn); err != nil {
 			if errors.Is(err, create.ErrBadTemplate) || errors.Is(err, create.ErrInvalidRequires) || errors.Is(err, create.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {

@@ -102,6 +102,8 @@ func TestModelThinking(t *testing.T) {
 		{"local gemma default on", Model{Config: model.ConfigV2{Renderer: "gemma4", Parser: "gemma4"}}, &model.Thinking{Values: []any{false, true}, Default: true}},
 		{"local qwen38 default medium", Model{Config: model.ConfigV2{Renderer: "qwen3.8", Parser: "qwen3.5"}}, &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
 		{"renderer without thinking capability", Model{Config: model.ConfigV2{Renderer: "gemma4"}}, &model.Thinking{Values: []any{false}, Default: false}},
+		{"explicit capabilities override parser", Model{Config: model.ConfigV2{Renderer: "qwen3.5", Parser: "qwen3.5", Capabilities: []string{"decision"}, CapabilitiesExplicit: true}}, &model.Thinking{Values: []any{false}, Default: false}},
+		{"explicit capabilities override known template", Model{HasGoTemplate: true, templateDigest: known, Config: model.ConfigV2{Capabilities: []string{"completion"}, CapabilitiesExplicit: true}}, &model.Thinking{Values: []any{false}, Default: false}},
 		{"unknown renderer", Model{Config: model.ConfigV2{Renderer: "unknown"}}, nil},
 		{"nonthinking", Model{Config: model.ConfigV2{Renderer: "qwen3-coder"}}, &model.Thinking{Values: []any{false}, Default: false}},
 		{"known template", Model{HasGoTemplate: true, templateDigest: known}, &model.Thinking{Values: []any{false, true}, Default: true}},
@@ -136,6 +138,10 @@ func TestModelThinking(t *testing.T) {
 		}
 		if harmony.genericThinking() != nil {
 			t.Fatal("Harmony must retain legacy inference behavior")
+		}
+		harmony.Config.SetCapabilities("completion")
+		if got := harmony.Thinking(); !reflect.DeepEqual(got, &model.Thinking{Values: []any{false}, Default: false}) {
+			t.Fatalf("explicit capabilities must override Harmony thinking, got %#v", got)
 		}
 	}
 }
