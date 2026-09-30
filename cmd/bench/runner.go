@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -186,6 +187,27 @@ func (b *runnerBackend) spawn(fOpt flagOptions) error {
 
 func (b *runnerBackend) Name() string { return "mlx-runner" }
 
+// Tokenize returns the runner's token count for text, BOS included.
+func (b *runnerBackend) Tokenize(ctx context.Context, text string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", "http://"+b.addr+"/v1/tokenize", strings.NewReader(text))
+	if err != nil {
+		return 0, err
+	}
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("tokenize: status %d", resp.StatusCode)
+	}
+	var tokens []int32
+	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
+		return 0, err
+	}
+	return len(tokens), nil
+}
+
 func (b *runnerBackend) status(ctx context.Context) (runnerStatus, error) {
 	var st runnerStatus
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+b.addr+"/v1/status", nil)
@@ -248,6 +270,10 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 	creq := wire.CompletionRequest{
 		Prompt:    p.prompt,
 		IgnoreEOS: p.ignoreEOS,
+		Stats:     p.stats,
+		Media:     p.media,
+		Logprobs:  p.logprobs,
+		Format:    p.format,
 		Options:   opts,
 	}
 
@@ -269,7 +295,8 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return completionResult{}, fmt.Errorf("runner returned status %d", resp.StatusCode)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return completionResult{}, fmt.Errorf("runner returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 
 	var res completionResult
@@ -290,6 +317,7 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 			res.ttft = time.Since(requestStart)
 			ttftSet = true
 		}
+		res.content += cr.Content
 		if b.debug && cr.Content != "" {
 			fmt.Fprint(os.Stderr, cr.Content)
 		}
@@ -300,6 +328,7 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 			res.promptEvalDuration = cr.PromptEvalDuration
 			res.evalCount = cr.EvalCount
 			res.evalDuration = cr.EvalDuration
+			res.stats = cr.Stats
 		}
 	}
 	if b.debug {

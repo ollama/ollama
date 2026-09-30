@@ -75,6 +75,59 @@ Limits:
  * a request whose prompt size differs from N warns, since a size that moves
    after sizing leaves the prefill numbers incomparable
 
+### Driving a Runner Directly
+
+`-runner host:port` benchmarks an MLX runner or llama-server directly,
+bypassing `ollama serve`; the type is auto-detected. `-spawn` launches the
+runner instead. Prompts are sent raw, without a chat template. See
+`mlxrunner/PROFILING.md` for profiler workflows.
+
+```
+./ollama-bench -model gemma4:e2b-nvfp4 -spawn -mode decode -prompt-tokens 2048 -max-tokens 128 -ignore-eos
+```
+
+`-mode prefill` generates nothing and uses a new prompt per request. `-mode
+decode` reuses one prompt, so every timed request is a prefix-cache hit and
+measures decode alone.
+
+### Prefix-Cache Scenarios
+
+`-scenario` drives an MLX runner through request sequences with known cache
+behavior. Each step checks the cached-token count the runner reports. An
+epoch that fails a check prints a `# VOID` line, emits no metrics, and makes
+the run exit nonzero.
+
+```
+./ollama-bench -model gemma4:e2b-nvfp4 -spawn -scenario all -prompt-tokens 4096 -max-tokens 32 -epochs 6 > after.bench
+benchstat -col /step before.bench after.bench
+```
+
+| Scenario | Steps |
+|----------|-------|
+| repeat | cold prompt, then the same prompt: restore cost and decode on a full hit |
+| extend | cold prompt, then the prompt plus a new turn |
+| continue | cold prompt, then the prompt plus the model's reply plus a new turn: reuse must run through the reply |
+| branch | prompt, prompt plus turn one, prompt plus turn two, then back to turn one |
+| midbranch | 16k-token prompt, then a divergence two thirds in, then a second divergence there: periodic and branch-point snapshots |
+| longgen | 1024 generated tokens from a hit: cache growth across many blocks |
+| sweep | hits at 2k, 8k, 16k and 32k tokens, capped by the context length |
+| evict | distinct 16k-token prompts until they outweigh the snapshot limit: storage stays bounded, the oldest misses, the newest hits |
+| churn | two conversations repeated six times: active memory stays flat |
+| cancel | a long prefill cancelled partway, then retried: the retry resumes from the cancelled progress |
+| interleave | two conversations alternating turns: every request switches path |
+| concurrent | two sequences submitted together, then again: each hits its own prefix |
+| short | prompts of one to eight tokens |
+| media | image prompts: hit and extend past an image, a different image in the same place, and an image at the very end; skipped for models without image input |
+
+`-prompt-tokens` sets the base prompt size, 4096 by default. Past about 17k
+tokens the HumanEval set runs out and seeded generated code fills the rest.
+`-max-tokens 32` keeps runs short. `evict` fills the whole snapshot limit, so
+it dominates run time.
+
+Each step reports time to first token as `ns/op`, prefill and decode rates,
+prompt and cached tokens, and the runner's per-request stats: matched tokens,
+MLX peak, active, and prefix-cache snapshot bytes.
+
 ### Advanced Example
 
 ```
@@ -101,6 +154,12 @@ Limits:
 | -num-ctx	| Context size (0 = server default)		| 0		|
 | -openai	| OpenAI-compatible API base URL		| ""		|
 | -api-key	| API key for OpenAI endpoint (or OPENAI_API_KEY)	| ""		|
+| -runner	| Drive a runner directly at host:port	| ""		|
+| -spawn	| Spawn the runner for -model	| false		|
+| -ollama	| ollama binary used by -spawn	| PATH		|
+| -mode		| Direct runner mode: prefill, decode, both	| both		|
+| -ignore-eos	| Generate exactly -max-tokens (direct runners)	| false		|
+| -scenario	| Prefix-cache scenarios: all or a comma list	| ""		|
 | -v		| Verbose mode					| false			|
 | -debug	| Show debug information			| false			|
 

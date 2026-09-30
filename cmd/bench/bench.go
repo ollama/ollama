@@ -51,6 +51,7 @@ type flagOptions struct {
 	ollamaBin *string
 	mode      *string // prefill | decode | both (direct targets only)
 	ignoreEOS *bool   // generate exactly -max-tokens (direct targets only)
+	scenario  *string // cache scenarios to run (direct targets only)
 }
 
 func (f flagOptions) direct() bool {
@@ -613,6 +614,13 @@ func BenchmarkModel(fOpt flagOptions) error {
 
 	if useOpenAI {
 		return benchmarkOpenAI(fOpt, models, out)
+	}
+
+	if fOpt.scenario != nil && *fOpt.scenario != "" {
+		if !fOpt.direct() {
+			return errors.New("-scenario requires -runner or -spawn")
+		}
+		return benchmarkScenarios(fOpt, out)
 	}
 
 	if fOpt.direct() {
@@ -1277,6 +1285,7 @@ func main() {
 		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: PATH or next to this executable)"),
 		mode:      flag.String("mode", modeBoth, "Direct runner mode [prefill|decode|both]"),
 		ignoreEOS: flag.Bool("ignore-eos", false, "Disable stop tokens so generation runs exactly -max-tokens (direct runners only)"),
+		scenario:  flag.String("scenario", "", "Run prefix-cache scenarios instead of epochs: all or a comma list of "+strings.Join(scenarioNames(), ",")+" (direct runners only)"),
 	}
 
 	flag.Usage = func() {
@@ -1310,5 +1319,8 @@ func main() {
 		return
 	}
 
-	BenchmarkModel(fOpt)
+	if err := BenchmarkModel(fOpt); err != nil && *fOpt.scenario != "" {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
+	}
 }

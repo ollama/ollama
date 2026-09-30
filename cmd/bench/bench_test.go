@@ -44,6 +44,7 @@ func createTestFlagOptions() flagOptions {
 	ollamaBin := ""
 	mode := modeBoth
 	ignoreEOS := false
+	scenario := ""
 
 	return flagOptions{
 		models:       &models,
@@ -68,6 +69,7 @@ func createTestFlagOptions() flagOptions {
 		ollamaBin:    &ollamaBin,
 		mode:         &mode,
 		ignoreEOS:    &ignoreEOS,
+		scenario:     &scenario,
 	}
 }
 

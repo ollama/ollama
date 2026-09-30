@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
+
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
 // Direct runner modes. prefill and decode produce single-phase workloads for
@@ -24,6 +28,10 @@ type completionParams struct {
 	temperature float64
 	seed        int // -1 = random
 	ignoreEOS   bool
+	stats       bool // ask the runner for per-request stats
+	media       []llm.MediaData
+	logprobs    bool
+	format      json.RawMessage
 	debug       bool
 }
 
@@ -38,6 +46,8 @@ type completionResult struct {
 	ttft               time.Duration
 	loadDuration       time.Duration
 	totalDuration      time.Duration
+	stats              *wire.Stats // nil unless requested and supported
+	content            string
 }
 
 // errNoMetrics signals that a completion finished without delivering a final

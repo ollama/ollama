@@ -1,9 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -17,13 +23,64 @@ type mockRunner struct {
 	mu       sync.Mutex
 	requests []wire.CompletionRequest
 	cached   int
+
+	// prefix fakes a prefix cache over bytes, one byte per token: a prompt
+	// reuses its longest common prefix with any stored prompt, less one
+	// held-back token. Images fold into the key by content. Prefill runs in
+	// timed chunks and a cancelled request stores what it processed. Stored
+	// prompts other than the latest count as cold bytes, evicted oldest first
+	// past coldLimit.
+	prefix    bool
+	coldLimit int64
+	evicted   int64
+	seen      []string
+}
+
+var mockImgTag = regexp.MustCompile(`\[img-(\d+)\]`)
+
+func mockKey(req wire.CompletionRequest) string {
+	return mockImgTag.ReplaceAllStringFunc(req.Prompt, func(tag string) string {
+		id, _ := strconv.Atoi(mockImgTag.FindStringSubmatch(tag)[1])
+		for _, m := range req.Media {
+			if m.ID == id {
+				return fmt.Sprintf("<img:%x>", sha256.Sum256(m.Data))
+			}
+		}
+		return tag
+	})
+}
+
+// store records key as the latest prompt and evicts cold prompts past the
+// limit, returning the cold bytes that remain.
+func (m *mockRunner) store(key string) int64 {
+	m.seen = slices.DeleteFunc(m.seen, func(s string) bool { return s == key })
+	m.seen = append(m.seen, key)
+	cold := func() (n int64) {
+		for _, s := range m.seen[:len(m.seen)-1] {
+			n += int64(len(s))
+		}
+		return n
+	}
+	for m.coldLimit > 0 && cold() > m.coldLimit && len(m.seen) > 1 {
+		m.evicted += int64(len(m.seen[0]))
+		m.seen = m.seen[1:]
+	}
+	return cold()
+}
+
+func commonPrefix(a, b string) int {
+	n := 0
+	for n < len(a) && n < len(b) && a[n] == b[n] {
+		n++
+	}
+	return n
 }
 
 func (m *mockRunner) start(t *testing.T) string {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{"Status": 0, "Progress": 100, "ContextLength": 4096, "Memory": 1 << 30})
+		json.NewEncoder(w).Encode(map[string]any{"Status": 0, "Progress": 100, "ContextLength": 65536, "Memory": 1 << 30})
 	})
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
 		var req wire.CompletionRequest
@@ -31,10 +88,36 @@ func (m *mockRunner) start(t *testing.T) string {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if len(req.Format) > 0 && string(req.Format) != "null" && !strings.Contains(string(req.Format), `"structural_tag"`) {
+			http.Error(w, "invalid format: expected a structural tag", http.StatusBadRequest)
+			return
+		}
 		m.mu.Lock()
+		defer m.mu.Unlock()
+		start := time.Now()
 		m.requests = append(m.requests, req)
 		cached := m.cached
-		m.mu.Unlock()
+		promptEval := 100
+		var coldBytes int64
+		if m.prefix {
+			key := mockKey(req)
+			promptEval = len(key) + 1
+			cached = 0
+			for _, prev := range m.seen {
+				cached = max(cached, commonPrefix(prev, key))
+			}
+			cached = min(cached, promptEval-1)
+			const chunk = 2048
+			for done := cached; done < len(key); done += chunk {
+				select {
+				case <-r.Context().Done():
+					m.store(key[:done])
+					return
+				case <-time.After(12 * time.Millisecond):
+				}
+			}
+			coldBytes = m.store(key)
+		}
 
 		enc := json.NewEncoder(w)
 		evalCount := max(req.Options.NumPredict, 0)
@@ -43,12 +126,17 @@ func (m *mockRunner) start(t *testing.T) string {
 		}
 		enc.Encode(wire.CompletionResponse{
 			Done:                  true,
-			PromptEvalCount:       100,
+			PromptEvalCount:       promptEval,
 			PromptEvalCachedCount: &cached,
-			PromptEvalDuration:    10 * time.Millisecond,
+			PromptEvalDuration:    max(time.Since(start), time.Millisecond),
 			EvalCount:             evalCount,
 			EvalDuration:          20 * time.Millisecond,
+			Stats:                 &wire.Stats{MatchedTokens: cached, ColdBytes: coldBytes, ColdLimit: m.coldLimit, ColdEvicted: m.evicted},
 		})
+	})
+	mux.HandleFunc("POST /v1/tokenize", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.NewEncoder(w).Encode(make([]int32, len(body)+1))
 	})
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
