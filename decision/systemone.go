@@ -55,6 +55,12 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 			return nil, err
 		}
 		return c, nil
+	case "pplx":
+		c := &Compiled{}
+		if err := encodePPLX(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -245,6 +251,23 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			legend.Set(key, choice.Description)
 		}
 		confidence := max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		if c.Request.Readout {
+			best := slices.Index(p, slices.Max(p))
+			confidence = 1
+			if len(p) > 1 && f.typ == "choice" {
+				baseline := 1 / float64(len(p))
+				confidence = (p[best] - baseline) / (1 - baseline)
+			} else if f.typ == "score" {
+				var distance, baseline float64
+				midpoint := float64(len(p)-1) / 2
+				for j, probability := range p {
+					distance += probability * math.Abs(float64(j-best))
+					baseline += math.Abs(float64(j)-midpoint) / float64(len(p))
+				}
+				confidence = 1 - distance/baseline
+			}
+			confidence = max(0, min(1, confidence))
+		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
 			response.Answers.Set(f.Name, ChoiceAnswer{f.typ, f.Choices[winner].Value.(string), probabilities, confidence})

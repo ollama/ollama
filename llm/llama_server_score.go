@@ -56,6 +56,9 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 	if len(input.Segments) > 0 || len(input.Fields) > 0 {
 		return s.scoreFields(ctx, input)
 	}
+	if input.Readout {
+		return s.scoreReadout(ctx, input)
+	}
 
 	rows := make([]scoreRowTokens, len(input.Rows))
 	parseSpecial, ordinary := true, false

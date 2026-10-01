@@ -170,7 +170,7 @@ func TestClefValidation(t *testing.T) {
 }
 
 func TestDecisionRejectsVideo(t *testing.T) {
-	for _, encoding := range []string{"", "clef"} {
+	for _, encoding := range []string{"", "clef", "pplx"} {
 		req := testRequest(t)
 		req.Videos = []json.RawMessage{json.RawMessage(`"video.mp4"`)}
 		if _, err := CompileWithEncoder(req, encoding); err == nil || !strings.Contains(err.Error(), "video") {
