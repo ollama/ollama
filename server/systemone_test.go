@@ -66,7 +66,7 @@ func TestSystemOneHandler(t *testing.T) {
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
 		if modelConfig.name == "renamed-clef" {
-			caps = append(caps, "vision")
+			caps = []string{"decision", "vision"}
 		}
 		if modelConfig.undeclared {
 			caps = []string{"completion"}

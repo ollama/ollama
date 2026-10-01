@@ -894,7 +894,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	caps := []model.Capability{model.CapabilityCompletion, model.CapabilityDecision}
+	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {
 		caps = append(caps, model.CapabilityVision)
 	}

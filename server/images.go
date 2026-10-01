@@ -194,14 +194,14 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 	case templateCapabilityChat:
 		capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 	}
-	if m.metadata.Valid("pooling_type") {
-		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
-		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
-	}
-	if m.metadata.String("decision.type") != "" {
+	switch {
+	case m.metadata.String("decision.type") != "":
 		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	case m.metadata.Valid("pooling_type"):
+		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
+	default:
+		// Otherwise, assume the model supports completion.
+		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
 	if m.metadata.Valid("vision.block_count") {
 		capabilities = appendCapability(capabilities, model.CapabilityVision)
@@ -457,6 +457,12 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 	if suppressAudioCapability(m, modelArch) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
