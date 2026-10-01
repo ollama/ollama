@@ -175,7 +175,19 @@ export function History({
             ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-700 dark:bg-neutral-900">
               <p className="min-w-0 flex-1 text-sm text-neutral-500 dark:text-neutral-400">
-                This chat is read-only.
+                Chat is no longer available in the Ollama app.
+                <span className="block">
+                  Export this chat to continue in{" "}
+                  <a
+                    href="https://docs.ollama.com/integrations"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline"
+                  >
+                    another app
+                  </a>
+                  .
+                </span>
                 {lastModel && (
                   <span className="block break-all text-xs">
                     Last used: {lastModel}

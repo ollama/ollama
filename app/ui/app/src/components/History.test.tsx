@@ -147,7 +147,6 @@ it("shows saved messages and the last model without live chat controls", async (
   expect(page()).toContain("Latest reply");
   expect(page()).toContain("Last used:");
   expect(page()).toContain("gpt-oss:120b-cloud");
-  expect(page()).toContain("This chat is read-only.");
   expect(renderer.root.findAllByType("textarea")).toHaveLength(0);
   const buttons = renderer.root
     .findAllByType("button")
@@ -155,7 +154,11 @@ it("shows saved messages and the last model without live chat controls", async (
     .join(" ");
   expect(buttons).not.toMatch(/Send|Edit|Retry|New Chat|Continue|ChatGPT/);
   expect(renderer.root.findAllByType("a").map((a) => a.props.href)).toEqual(
-    expect.arrayContaining(["/connect", "/settings"]),
+    expect.arrayContaining([
+      "/connect",
+      "/settings",
+      "https://docs.ollama.com/integrations",
+    ]),
   );
   await click("Another conversation");
   expect(page()).toContain("Second chat");
