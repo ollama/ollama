@@ -90,6 +90,12 @@ func TestCompile(t *testing.T) {
 	}
 }
 
+func TestCompileUnsupportedEncoding(t *testing.T) {
+	if _, err := CompileWithEncoder(testRequest(t), "unknown"); err == nil {
+		t.Fatal("accepted unsupported decision encoding")
+	}
+}
+
 func TestStructuredStateFrames(t *testing.T) {
 	req := testRequest(t)
 	req.State = json.RawMessage(`{"frames":["first","second"],"position":7}`)
@@ -207,8 +213,10 @@ func TestInvalidRequests(t *testing.T) {
 	q, _ := req.Questions.Get("urgency")
 	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
 	req.Questions.Set("urgency", q)
-	if _, err := Compile(req); err == nil {
-		t.Fatal("accepted 27 candidates")
+	for _, encoding := range []string{"", "clef"} {
+		if _, err := CompileWithEncoder(req, encoding); err == nil {
+			t.Fatalf("encoding %q accepted 27 candidates", encoding)
+		}
 	}
 }
 

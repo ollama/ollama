@@ -843,29 +843,36 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
+	body, err := io.ReadAll(c.Request.Body)
 	var req decision.Request
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err == nil {
+		err = json.Unmarshal(body, &req)
+	}
+	if err != nil {
 		var sizeErr *http.MaxBytesError
 		if errors.As(err, &sizeErr) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB"})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 32 MiB"})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	compiled, err := decision.Compile(req)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if len(req.Images) == 0 && len(body) > 64<<10 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB without images"})
 		return
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
+		if errors.Is(err, errModelRequired) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		writeModelRefParseError(c, err, http.StatusNotFound, fmt.Sprintf("model '%s' not found", req.Model))
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local Nimble or Tev model"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
 	name, err := getExistingName(ref.Name)
@@ -882,14 +889,23 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
 		return
 	}
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion, model.CapabilityDecision}, nil, req.KeepAlive, nil)
+	compiled, err := decision.CompileWithEncoder(req, m.metadata.String("decision.type"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	caps := []model.Capability{model.CapabilityDecision}
+	if len(req.Images) > 0 {
+		caps = append(caps, model.CapabilityVision)
+	}
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local Nimble or Tev model with a scoring-capable runner", req.Model)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
 		return
 	}
 	if err := compiled.Render(func(messages []api.Message) (string, error) {

@@ -2958,3 +2958,28 @@ func TestCreateFromSafetensorsModel_PreservesLayerNames(t *testing.T) {
 		t.Error("tokenizer.json layer name not preserved in derived model")
 	}
 }
+
+func TestCreateClefDecisionHead(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture": "qwen35",
+		"qwen35.decision.type": "clef",
+	}, nil)
+	s := &Server{}
+	for _, req := range []api.CreateRequest{
+		{Model: "custom-decision", Files: map[string]string{"model.gguf": digest}, Stream: &stream},
+		{Model: "copied-decision", From: "custom-decision", Stream: &stream},
+	} {
+		w := createRequest(t, s.CreateHandler, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("create: %d %s", w.Code, w.Body)
+		}
+		m, err := GetModel(req.Model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.metadata.String("decision.type") != "clef" || !slices.Contains(m.Capabilities(), model.CapabilityDecision) {
+			t.Fatalf("encoding/capability not preserved: %+v", m.Config)
+		}
+	}
+}

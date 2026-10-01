@@ -419,3 +419,127 @@ func TestLlamaServerScoreCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestLlamaServerScoreFields(t *testing.T) {
+	for _, failure := range []string{"", "truncated", "missing head", "malformed JSON", "upstream error", "too long", "invalid span", "max exceeds context", "empty fields", "canceled", "image", "image over context", "invalid image", "invalid image position"} {
+		t.Run(failure, func(t *testing.T) {
+			calls := 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+			mux.HandleFunc("/tokenize", func(w http.ResponseWriter, r *http.Request) {
+				var input struct {
+					Content      string `json:"content"`
+					AddSpecial   bool   `json:"add_special"`
+					ParseSpecial bool   `json:"parse_special"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Fatal(err)
+				}
+				if input.AddSpecial || !input.ParseSpecial {
+					t.Error("incorrect tokenizer settings")
+				}
+				ids := map[string][]int{"prefix": {1, 2}, "question": {3}, "one": {4, 5}, "two": {6}, "suffix": {7}}[input.Content]
+				if ids == nil {
+					t.Error("segments must be tokenized separately")
+				}
+				json.NewEncoder(w).Encode(map[string]any{"tokens": ids})
+			})
+			mux.HandleFunc("/embedding", func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var input struct {
+					Input         []int           `json:"input"`
+					Fields        []ScoreField    `json:"score_fields"`
+					Images        []api.ImageData `json:"images"`
+					ImagePosition int             `json:"image_position"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(input.Input, []int{1, 2, 3, 4, 5, 6, 7}) || !reflect.DeepEqual(input.Fields, []ScoreField{{Type: 0, Question: [2]int{2, 3}, Options: [][2]int{{3, 5}, {5, 6}}}}) {
+					t.Errorf("wrong token spans: %+v", input)
+				}
+				switch failure {
+				case "image":
+					if len(input.Images) != 1 || input.ImagePosition != 2 {
+						t.Errorf("missing image or wrong image position: %+v", input)
+					}
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":11}]`)
+				case "image over context":
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":17}]`)
+				case "upstream error":
+					w.WriteHeader(http.StatusInternalServerError)
+					fmt.Fprint(w, `{"error":{"message":"out of memory"}}`)
+				case "malformed JSON":
+					fmt.Fprint(w, `{`)
+				case "truncated":
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":6}]`)
+				case "missing head":
+					fmt.Fprint(w, `[{"embedding":[[2,0]]}]`)
+				default:
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":7}]`)
+				}
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), options: api.Options{Runner: api.Runner{NumCtx: 8}}, sem: semaphore.NewWeighted(1)}
+			input := ScoreRequest{MaxTokens: 8, Segments: []string{"prefix", "question", "one", "two", "suffix"}, Fields: []ScoreField{{Type: 0, Question: [2]int{1, 2}, Options: [][2]int{{2, 3}, {3, 4}}}}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			invalid := true
+			switch failure {
+			case "image", "image over context", "invalid image", "invalid image position":
+				input.Images = []api.ImageData{{137, 80, 78, 71, 13, 10, 26, 10}}
+				input.ImagePosition = 1
+				if failure == "invalid image" {
+					input.Images[0] = []byte("not an image")
+				}
+				if failure == "invalid image position" {
+					input.ImagePosition = 99
+				}
+				if failure == "image" || failure == "image over context" {
+					invalid = false
+					input.MaxTokens = 16
+					runner.options.NumCtx = 16
+				}
+			case "too long":
+				input.MaxTokens = 6
+			case "invalid span":
+				input.Fields[0].Question = [2]int{-1, 2}
+			case "max exceeds context":
+				input.MaxTokens = 9
+			case "empty fields":
+				input.Fields = nil
+			case "canceled":
+				cancel()
+			default:
+				invalid = false
+			}
+			result, err := runner.Score(ctx, input)
+			if failure == "" || failure == "image" {
+				wantTokens := 7
+				if failure == "image" {
+					wantTokens = 11
+				}
+				if err != nil || result.InputTokens != wantTokens || result.OutputTokens != 0 {
+					t.Fatalf("result=%+v err=%v", result, err)
+				}
+			} else if err == nil {
+				t.Fatal("expected error")
+			}
+			var status api.StatusError
+			if failure == "upstream error" && (!errors.As(err, &status) || status.StatusCode != 500 || !IsOutOfMemory(err)) {
+				t.Fatalf("lost upstream status/OOM diagnostic: %v", err)
+			}
+			if failure == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+			if invalid && calls != 0 {
+				t.Fatal("invalid request reached the model")
+			}
+			if !runner.sem.TryAcquire(1) {
+				t.Fatal("scoring did not release the runner")
+			}
+			runner.sem.Release(1)
+		})
+	}
+}
