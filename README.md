@@ -291,6 +291,7 @@ console.log(response.message.content);
 
 ### Terminal & CLI
 
+- [OpenNodes for Ollama](https://github.com/opennodes-io/opennodes/tree/main/impl/packages/ollama-router) - One Ollama-compatible endpoint across local, LAN (auto-discovered), and verified public models, with task-based routing and an `auto-private` model that never leaves the LAN
 - [aichat](https://github.com/sigoden/aichat) - All-in-one LLM CLI with Shell Assistant, RAG, and AI tools
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
