@@ -1493,7 +1493,6 @@ func TestPiEdit(t *testing.T) {
 			}
 		}
 	})
-
 }
 
 func TestPiEdit_CreatesDistinctBackupsForEachManagedFile(t *testing.T) {
