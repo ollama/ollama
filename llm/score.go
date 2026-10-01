@@ -14,7 +14,7 @@ type Scorer interface {
 
 // ScoreRequest uses either prompt Rows or Segments and Fields for a decision head.
 type ScoreRequest struct {
-	State string `json:"state,omitempty"`
+	State         string          `json:"state,omitempty"`
 	Rows          []ScoreRow      `json:"rows,omitempty"`
 	Segments      []string        `json:"segments,omitempty"`
 	Fields        []ScoreField    `json:"fields,omitempty"`
@@ -29,8 +29,7 @@ type ScoreRow struct {
 	Question   *ScoreQuestion `json:"question,omitempty"`
 }
 
-// ScoreQuestion preserves structured inputs for encoder decision models, which
-// score option markers instead of predicting a candidate continuation token.
+// ScoreQuestion preserves a field's schema for model-native decision heads.
 type ScoreQuestion struct {
 	Type         string   `json:"type"`
 	Instructions string   `json:"instructions"`

@@ -909,8 +909,17 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if len(req.Images) == 0 && len(body) > 64<<10 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB without images"})
+	textOnly := req
+	textOnly.Images = nil
+	var text bytes.Buffer
+	enc := json.NewEncoder(&text)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(textOnly); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(bytes.TrimSpace(text.Bytes())) > 64<<10 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "text and schema must not exceed 64 KiB"})
 		return
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
@@ -937,7 +946,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	encoding := m.metadata.String("decision.type")
-	if encoding == "" {
+	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef") {
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)

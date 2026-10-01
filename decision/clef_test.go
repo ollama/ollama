@@ -3,6 +3,7 @@ package decision
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -179,6 +180,131 @@ func TestDecisionRejectsVideo(t *testing.T) {
 		req.Videos = nil
 		if _, err := Compile(req, encoding); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestClefInvalidCriteria(t *testing.T) {
+	for _, question := range []string{
+		`{"type":"choice"}`,
+		`{"type":"choice","criteria":{"":"empty","valid":"valid"}}`,
+		`{"type":"noul","criteria":{"yes":"invalid"}}`,
+		`{"type":"noul","criteria":[]}`,
+		`{"type":"score","criteria":{"a":"invalid"}}`,
+		`{"type":"score","criteria":["one"]}`,
+		`{"type":"score","criteria":["x"` + strings.Repeat(`,"x"`, 26) + `]}`,
+		`{"type":"unknown"}`,
+	} {
+		var req Request
+		if err := json.Unmarshal([]byte(`{"model":"clef","state":"x","questions":{"q":`+question+`}}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Compile(req, "clef"); err == nil {
+			t.Errorf("accepted invalid question %s", question)
+		}
+	}
+}
+
+func TestDecisionMedia(t *testing.T) {
+	for _, tc := range []struct {
+		name, renderer, media, wantError string
+	}{
+		{"images", "clef", `"images":["Zmlyc3Q=","c2Vjb25k"]`, ""},
+		{"empty image", "clef", `"images":[""]`, "must not be empty"},
+		{"null image", "clef", `"images":[null]`, "must not be empty"},
+		{"other model", "tev1", `"images":["Zmlyc3Q="]`, "not supported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var req Request
+			if err := json.Unmarshal([]byte(`{"model":"clef-flash","state":"x","questions":{"q":{"type":"noul","instructions":"q"}},`+tc.media+`}`), &req); err != nil {
+				t.Fatal(err)
+			}
+			compiled, err := Compile(req, tc.renderer)
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("Compile() error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "images" {
+				data, err := json.Marshal(compiled.Request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var wire llm.ScoreRequest
+				if err := json.Unmarshal(data, &wire); err != nil {
+					t.Fatal(err)
+				}
+				if want := []api.ImageData{[]byte("first"), []byte("second")}; !reflect.DeepEqual(wire.Images, want) {
+					t.Fatalf("runner images = %q, want %q", wire.Images, want)
+				}
+				if wire.ImagePosition != 1 {
+					t.Fatalf("images must follow prefix segment, got boundary %d", wire.ImagePosition)
+				}
+			}
+		})
+	}
+}
+
+func TestCompileClefRejectsEmptyQuestion(t *testing.T) {
+	for _, name := range []string{"", "  "} {
+		for _, instructions := range []json.RawMessage{nil, json.RawMessage(`null`), json.RawMessage(`""`)} {
+			req := Request{Model: "clef-flash", State: json.RawMessage(`"state"`), Questions: &Questions{}}
+			req.Questions.Set(name, Question{Type: "noul", Instructions: instructions})
+			if _, err := Compile(req, "clef"); err == nil {
+				t.Errorf("accepted empty question %q with instructions %s", name, instructions)
+			}
+		}
+	}
+}
+
+func TestCompileClefImageOnlyState(t *testing.T) {
+	var req Request
+	if err := json.Unmarshal([]byte(`{"model":"clef-flash","state":"","images":["aW1hZ2U="],"questions":{"q":{"type":"noul"}}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := Compile(req, "clef")
+	if err != nil || compiled.Request.Segments[1] != "" || len(compiled.Request.Images) != 1 {
+		t.Fatalf("image-only request = %+v, error = %v", compiled, err)
+	}
+	req.Images = nil
+	if _, err := Compile(req, "clef"); err == nil {
+		t.Fatal("accepted empty state without an image")
+	}
+}
+
+func TestClefAnswerOrder(t *testing.T) {
+	var req Request
+	if err := json.Unmarshal([]byte(`{"model":"clef","state":"x","questions":{"choice":{"type":"choice","criteria":{"z":"Last","a":"First"}},"noul":{"type":"noul"}}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Compile(req, "clef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, logits := range [][]float32{{0, 2}, {0, 0}} {
+		answer, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{logits, {2, 0}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, _ := answer.Answers.Get("choice")
+		choice := value.(ChoiceAnswer)
+		if choice.Choice != "z" {
+			t.Fatalf("winner must use original option IDs and request order for ties: %+v", choice)
+		}
+		var keys []string
+		for key := range choice.Probabilities.All() {
+			keys = append(keys, key)
+		}
+		if !reflect.DeepEqual(keys, []string{"z", "a"}) {
+			t.Fatalf("response reordered probabilities: %v", keys)
+		}
+		value, _ = answer.Answers.Get("noul")
+		if value.(NoulAnswer).Noul < 0.88 {
+			t.Fatalf("true-first model logit was assigned to false: %+v", value)
 		}
 	}
 }

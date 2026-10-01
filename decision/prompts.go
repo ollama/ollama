@@ -23,10 +23,11 @@ func decisionPrompts(context string, fields []compiledField, renderer string) ([
 			}
 			var options []option
 			for _, c := range f.Choices {
-				if strings.TrimSpace(c.Description) == "" {
+				description, ok := c.Description.(string)
+				if !ok || strings.TrimSpace(description) == "" {
 					return nil, fmt.Errorf("question %q: Tev1 requires nonempty candidate descriptions", f.Name)
 				}
-				options = append(options, option{c.Code, fmt.Sprint(c.Value), c.Description})
+				options = append(options, option{c.Code, fmt.Sprint(c.Value), description})
 			}
 			prompt, err := promptJSON(struct {
 				State    string   `json:"state"`

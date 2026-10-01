@@ -112,12 +112,14 @@ func ReadInventory(dir string) (Inventory, error) {
 	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
 }
 
-// SafetensorsWeightFiles returns the weight shards selected by the same index
-// rules used by ReadInventory. Callers that transfer a source model should use
-// this list rather than guessing shard names.
+// SafetensorsWeightFiles returns the source shards and supported sidecars for
+// transfer. Importing a sidecar still requires its model-specific importer.
 func SafetensorsWeightFiles(dir string) ([]string, error) {
 	_, files, err := safetensorsWeightFiles(dir)
-	return files, err
+	if err != nil {
+		return nil, err
+	}
+	return clefWeightFiles(dir, files)
 }
 
 // SafetensorsConfigFiles lists the metadata transferred by remote create and

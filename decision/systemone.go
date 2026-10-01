@@ -20,6 +20,7 @@ type compiledField struct {
 	Field
 	typ     string
 	options []string
+	order   []int // Model option index to original API option index, when different.
 }
 
 type Compiled struct {
@@ -28,7 +29,12 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-func Compile(req Request, renderer string) (*Compiled, error) {
+func Compile(req Request, encoding string) (*Compiled, error) {
+	switch encoding {
+	case "", "tev1", "clef":
+	default:
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
+	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -38,26 +44,34 @@ func Compile(req Request, renderer string) (*Compiled, error) {
 	if len(req.Videos) > 0 {
 		return nil, fmt.Errorf("video inputs are not supported")
 	}
-	switch renderer {
-	default:
-		if len(req.Images) > 0 {
-			return nil, fmt.Errorf("this decision model does not support images")
+	if len(req.Images) != 0 && encoding != "clef" {
+		return nil, fmt.Errorf("image inputs are not supported by this decision model")
+	}
+	for i, image := range req.Images {
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d must not be empty", i)
 		}
-	case "clef":
-		c := &Compiled{}
+	}
+	var context string
+	var err error
+	if encoding == "clef" {
+		context, err = clefContent(req.State)
+	} else {
+		context, err = content(req.State)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: %w", err)
+	}
+	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
+		return nil, fmt.Errorf("state must not be empty")
+	}
+	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	if encoding == "clef" {
 		if err := encodeClef(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil
 	}
-	context, err := content(req.State)
-	if err != nil {
-		return nil, fmt.Errorf("state: %w", err)
-	}
-	if strings.TrimSpace(context) == "" {
-		return nil, fmt.Errorf("state must not be empty")
-	}
-	c := &Compiled{Request: llm.ScoreRequest{State: context}}
 	for name, q := range req.Questions.All() {
 		f, err := compileField(name, q)
 		if err != nil {
@@ -65,7 +79,7 @@ func Compile(req Request, renderer string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	prompts, err := decisionPrompts(context, c.fields, renderer)
+	prompts, err := decisionPrompts(context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +223,13 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		logits := result.Logits[i]
 		if len(logits) != len(f.Choices) {
 			return response, fmt.Errorf("scorer returned the wrong number of candidates for %q", f.Name)
+		}
+		if len(f.order) > 0 {
+			ordered := make([]float32, len(logits))
+			for j, index := range f.order {
+				ordered[index] = logits[j]
+			}
+			logits = ordered
 		}
 		peak := slices.Max(logits)
 		p := make([]float64, len(logits))

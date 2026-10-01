@@ -17,7 +17,7 @@ func TestPublisherPrompts(t *testing.T) {
 	// parallel_schema.prepare_prompts(), with false/true mapped to No/Yes.
 	for _, tc := range []struct{ renderer, want string }{
 		{"tev1", `{"state": "Paid €20 & <tag>. Literal \\u2028, quote \" and colon: comma,", "question": "Refund requested?", "options": [{"label": "A", "key": "false", "description": "No"}, {"label": "B", "key": "true", "description": "Yes"}]}`},
-		{"qwen3.5", `{"context": "Paid €20 & \u003ctag\u003e. Literal \\u2028, quote \" and colon: comma,", "schema": [{"name": "refund", "description": "Refund requested?", "choices": [{"code": "A", "value": false, "description": "No"}, {"code": "B", "value": true, "description": "Yes"}]}]}` + "\n\nRequested field: \"refund\""},
+		{"", `{"context": "Paid €20 & \u003ctag\u003e. Literal \\u2028, quote \" and colon: comma,", "schema": [{"name": "refund", "description": "Refund requested?", "choices": [{"code": "A", "value": false, "description": "No"}, {"code": "B", "value": true, "description": "Yes"}]}]}` + "\n\nRequested field: \"refund\""},
 	} {
 		t.Run(tc.renderer, func(t *testing.T) {
 			compiled, err := Compile(req, tc.renderer)

@@ -3,7 +3,9 @@ package create
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +37,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	inv, err := ReadInventory(modelDir)
 	if err != nil {
 		return fmt.Errorf("read model: %w", err)
+	}
+	if opts.Renderer == "clef" {
+		inv, err = prepareClefInventory(inv)
+		if err != nil {
+			return err
+		}
 	}
 	modelConfig, err := inferSafetensorsConfig(modelDir, inv.Config, opts.Parser, opts.Renderer)
 	if err != nil {
@@ -83,7 +91,7 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	}
 
 	// Import config files (config.json, tokenizer, etc.) as JSON blobs.
-	configLayers, configLayer, err := importConfigBlobs(ctx, modelDir, "", store, fn)
+	configLayers, configLayer, err := importConfigBlobs(ctx, modelDir, "", inv.RawConfig, store, fn)
 	if err != nil {
 		return err
 	}
@@ -121,8 +129,9 @@ const mediaTypeImageJSON = "application/vnd.ollama.image.json"
 // image.json blob, prefixing each blob name with namePrefix, and returns the
 // resulting layers along with the config.json layer (zero value if absent). The
 // target import passes "" for namePrefix; a draft import passes "draft/" so its
-// config sits beside the target's.
-func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, store BlobStore, fn func(status string)) ([]LayerInfo, LayerInfo, error) {
+// config sits beside the target's. configOverride replaces only config.json
+// when an importer has normalized its contents.
+func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, configOverride json.RawMessage, store BlobStore, fn func(status string)) ([]LayerInfo, LayerInfo, error) {
 	names, err := SafetensorsConfigFiles(modelDir)
 	if err != nil {
 		return nil, LayerInfo{}, err
@@ -137,9 +146,14 @@ func importConfigBlobs(ctx context.Context, modelDir, namePrefix string, store B
 			continue
 		}
 		fn(fmt.Sprintf("importing config %s", name))
-		f, err := os.Open(filepath.Join(modelDir, name))
-		if err != nil {
-			return nil, LayerInfo{}, fmt.Errorf("open %s: %w", name, err)
+		var f io.ReadCloser
+		if name == "config.json" && configOverride != nil {
+			f = io.NopCloser(bytes.NewReader(configOverride))
+		} else {
+			f, err = os.Open(filepath.Join(modelDir, name))
+			if err != nil {
+				return nil, LayerInfo{}, fmt.Errorf("open %s: %w", name, err)
+			}
 		}
 		layer, err := store.WriteBlob(ReaderWithContext(ctx, f), mediaTypeImageJSON, namePrefix+name)
 		closeErr := f.Close()

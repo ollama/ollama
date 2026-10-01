@@ -97,6 +97,13 @@ func readChatTemplateStrict(modelDir string) (string, error) {
 }
 
 func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
+	if cfg.Architecture() == "ClefForDecision" {
+		capabilities := []string{"decision"}
+		if cfg.VisionConfig != nil {
+			capabilities = append(capabilities, "vision")
+		}
+		return capabilities
+	}
 	if cfg.Architecture() == "LayaForDecision" {
 		return []string{"decision"}
 	}
@@ -210,6 +217,9 @@ func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 }
 
 func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate string) (string, error) {
+	if cfg.Architecture() == "ClefForDecision" {
+		return "", nil
+	}
 	for _, id := range sourceConfigIdentifiers(cfg) {
 		name, err := parserNameForIdentifier(modelDir, id, chatTemplate)
 		if err != nil || name != "" {
@@ -258,6 +268,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "cleffordecision":
+		return "clef", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
