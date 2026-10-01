@@ -111,3 +111,12 @@ curl http://localhost:11434/v1/systemone \
 This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
 
 See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.
+
+
+## Pointer-head models
+
+Nimble and Tev are scored by reading the next-token logits of the letters `A` through `Z`. That is not the only way to implement this API.
+
+A pointer-head model, such as a model whose family is `pointer-head`, scores hidden states at a decision marker and at each option marker. Converting only its backbone to GGUF and sending it through the letter-token path loads a file, then returns probabilities for the wrong tokens. Ollama refuses that fallback.
+
+To serve such a model through this endpoint today, run its pointer-head server on a loopback address and set `OLLAMA_POINTER_RUNNER` to that URL. Ollama forwards the original request and returns the runner's response. It does not letter-score the model. Native loading of pointer-head checkpoints is not part of this release.
