@@ -829,61 +829,71 @@ components:
             $ref: "#/components/schemas/TokenLogprob"
           description: Most likely tokens and their log probabilities at this position
     SystemOneContent:
-      description: Text or a JSON value serialized as text. Nimble and Tev require a nonempty string, object, or array; Clef accepts any JSON value, including null. Not interpreted as chat messages or image input; supply images separately.
+      description: A nonempty string, or an object or array serialized as JSON text. Not interpreted as chat messages or multimodal input.
+      oneOf:
+        - type: string
+          pattern: '\S'
+        - type: object
+          additionalProperties: true
+        - type: array
+          items: {}
     SystemOneChoiceQuestion:
       title: Choice
       type: object
-      required: [type, criteria]
+      required: [type, instructions, criteria]
       properties:
         type:
           type: string
           enum: [choice]
         instructions:
           $ref: "#/components/schemas/SystemOneContent"
-          description: Required for Nimble and Tev. Clef uses the question name when omitted, null, or an empty string.
         criteria:
           type: object
-          description: Option keys mapped to descriptions. Nimble and Tev accept strings or null; Clef accepts any JSON value. Null uses the key without a description. Keys must not be blank. Ties select the first option in request order for Nimble and Tev, or alphabetical key order for Clef.
+          description: Option keys mapped to descriptions. A null description uses the key itself. Keys must not be blank; ties follow the model's option order.
           minProperties: 2
           maxProperties: 26
           propertyNames:
             pattern: '\S'
-          additionalProperties: true
+          additionalProperties:
+            type: [string, "null"]
     SystemOneNoulQuestion:
       title: Noul
       type: object
-      required: [type]
+      required: [type, instructions]
       properties:
         type:
           type: string
           enum: [noul]
         instructions:
           $ref: "#/components/schemas/SystemOneContent"
-          description: Required for Nimble and Tev. Clef uses the question name when omitted, null, or an empty string.
         criteria:
-          type: [object, "null"]
-          description: Optional descriptions for the two outcomes. Nimble and Tev accept strings, defaulting to No and Yes. Clef accepts any JSON value and defaults to descriptions of whether the proposition is false or true.
+          type: object
+          description: Optional descriptions for the two outcomes. Omitted entries use No and Yes.
           properties:
-            "false": {}
-            "true": {}
+            "false":
+              type: string
+              default: "No"
+            "true":
+              type: string
+              default: "Yes"
           additionalProperties: false
     SystemOneScoreQuestion:
       title: Score
       type: object
-      required: [type, criteria]
+      required: [type, instructions, criteria]
       properties:
         type:
           type: string
           enum: [score]
         instructions:
           $ref: "#/components/schemas/SystemOneContent"
-          description: Required for Nimble and Tev. Clef uses the question name when omitted, null, or an empty string.
         criteria:
           type: array
-          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1. Nimble and Tev require strings; Clef accepts any JSON value.
+          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1.
           minItems: 2
           maxItems: 26
-          items: {}
+          items:
+            type: string
     SystemOneRequest:
       type: object
       required: [model, state, questions]
@@ -891,18 +901,18 @@ components:
         model:
           type: string
           pattern: '\S'
-          description: Local model trained for System One, such as nimble, clef, or clef-flash. Requires compatible GGUF weights and a scoring-capable runner; cloud and MLX/Safetensors models are not supported.
+          description: Local model trained for System One, such as nimble. Requires compatible GGUF weights and a scoring-capable runner; cloud and MLX/Safetensors models are not supported.
         state:
           $ref: "#/components/schemas/SystemOneContent"
         images:
           type: array
-          description: Base64-encoded image files in request order, shared by all questions. Supported by Clef and Clef Flash with vision weights installed. Use raw base64, not URLs or data URLs. Requests containing images may be up to 32 MiB, including base64 and JSON; requests without images are limited to 64 KiB.
+          description: Base64-encoded images shared by all questions, in request order. Requires Clef or Clef Flash with vision weights. URLs and data URLs are not supported.
           items:
             type: string
             format: byte
         questions:
           type: object
-          description: Named questions about the shared state. Nimble and Tev score each separately against the full state and schema; Clef scores all fields jointly. Answers are not passed to later questions.
+          description: Named questions about the shared state. Answers are not passed to later questions.
           minProperties: 1
           maxProperties: 64
           propertyNames:
@@ -939,7 +949,7 @@ components:
           enum: [choice]
         choice:
           type: string
-          description: Option key with the highest probability. Ties select the first option in request order for Nimble and Tev, or alphabetical key order for Clef.
+          description: Option key with the highest probability. Ties follow the model's option order.
         probabilities:
           $ref: "#/components/schemas/SystemOneProbabilities"
         confidence:
@@ -973,7 +983,8 @@ components:
         legend:
           type: object
           description: Zero-based indices as string keys mapped to the criterion descriptions.
-          additionalProperties: true
+          additionalProperties:
+            type: string
         probabilities:
           $ref: "#/components/schemas/SystemOneProbabilities"
           description: Probabilities keyed by zero-based criterion indices as strings.
@@ -1001,11 +1012,11 @@ components:
             input_tokens:
               type: integer
               minimum: 0
-              description: For Nimble and Tev, the sum of full rendered prompt lengths across all questions, including repeated shared context even when cached. For Clef, the single joint input length, including image positions.
+              description: Total evaluated input tokens, including image positions. Shared context is counted again when the model scores questions separately.
             output_tokens:
               type: integer
               minimum: 0
-              description: Tokens generated internally for scoring, including prefix preparation and retries. May exceed the question count; not the length of the JSON response. Zero for Clef.
+              description: Tokens generated internally for scoring, including prefix preparation and retries. May exceed the question count; not the length of the JSON response.
     ErrorResponse:
       type: object
       properties:
@@ -1030,8 +1041,7 @@ paths:
           </Note>
 
           - Returns one JSON response; streaming, video, tools, and generation controls are not supported.
-          - Clef and Clef Flash support images through the optional `images` array. Nimble and Tev accept text only.
-          - Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input, including images, must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+          - Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
       x-codeSamples:
         - lang: bash
           label: Choose a label

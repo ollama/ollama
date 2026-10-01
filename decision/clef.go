@@ -158,6 +158,8 @@ func clefContent(raw json.RawMessage) (string, error) {
 
 // clefJSON matches Python's json.dumps(ensure_ascii=False, sort_keys=True,
 // separators=(",", ":")), including its integer/float distinction.
+// encoding/json sorts map keys, but its number and Unicode escaping rules
+// differ from the reference and would change the model's input tokens.
 func clefJSON(value any) (string, error) {
 	switch v := value.(type) {
 	case nil:
