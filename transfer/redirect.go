@@ -172,6 +172,7 @@ func checkedClient(baseURL string, allowPrivate bool) *http.Client {
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 100,
 			IdleConnTimeout:     90 * time.Second,
+		    Proxy:               http.ProxyFromEnvironment, // Enable proxy from environment
 			// Custom DialContext disables HTTP/2 auto-configuration;
 			// ForceAttemptHTTP2 opts back in.
 			ForceAttemptHTTP2: true,
