@@ -176,8 +176,8 @@ export function History({
             )}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-700 dark:bg-neutral-900">
               <p className="min-w-0 flex-1 text-sm text-neutral-500 dark:text-neutral-400">
-                Chat is no longer available in the Ollama app, so export this
-                chat to continue with an{" "}
+                The Ollama app no longer supports chat—export this conversation
+                to continue with an{" "}
                 <a
                   href="https://docs.ollama.com/integrations"
                   target="_blank"
