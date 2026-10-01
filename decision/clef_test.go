@@ -10,20 +10,14 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-func TestEncodeClef(t *testing.T) {
+func TestCompileClef(t *testing.T) {
 	var req Request
 	if err := json.Unmarshal([]byte(`{"model":"renamed-model","state":{"z":2,"a":"café & <x>"},"questions":{"team":{"type":"choice","instructions":"Route it","criteria":{"z":null,"a":"First"}},"yes":{"type":"noul","instructions":{"z":2,"a":1}},"rating":{"type":"score","instructions":"Rate it","criteria":["Low","High"]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Compile(req)
+	c, err := Compile(req, "clef")
 	if err != nil {
 		t.Fatal(err)
-	}
-	// Re-encoding must retain the same answer order, including true/false.
-	for range 2 {
-		if err := c.Encode(req, "clef"); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if err := c.Render(func([]api.Message) (string, error) { t.Fatal("Clef must not use a chat template"); return "", nil }); err != nil {
 		t.Fatal(err)
