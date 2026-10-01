@@ -171,6 +171,7 @@ func ExportAll(ctx context.Context, source *store.Store, path string, progress f
 func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) error) ([]string, error) {
 	var warnings []string
 	var messages bytes.Buffer
+	attachmentNumber := 0
 	for i, message := range chat.Messages {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -244,7 +245,8 @@ func writeChat(ctx context.Context, chat store.Chat, write func(string, []byte) 
 				if ext != "" && ext != "." {
 					name += "." + safeFilename(ext)
 				}
-				path := fmt.Sprintf("attachments/%04d-%04d-%s", i+1, j+1, name)
+				attachmentNumber++
+				path := fmt.Sprintf("attachments/%04d-%s", attachmentNumber, name)
 				if err := write(path, file.Data); err != nil {
 					return nil, err
 				}

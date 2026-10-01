@@ -34,12 +34,13 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		Messages: []store.Message{
 			{Role: "user", Content: "Question\n```\n<script>alert(1)</script>", CreatedAt: now, UpdatedAt: now, Attachments: []store.File{
 				{Filename: "../../photo.png", Data: []byte{0x89, 'P', 'N', 'G', 0, 255}},
-				{Filename: `C:\notes\photo.png`, Data: []byte("different file")},
 				{Filename: "empty.txt", Data: []byte{}},
 				{Filename: strings.Repeat("quarterly-report-", 6) + "2026.pdf", Data: []byte("original PDF bytes")},
 			}},
 			{Role: "assistant", Content: "Answer", Thinking: "Saved thinking", Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: end, ThinkingTimeStart: &now, ThinkingTimeEnd: &end, ToolCall: &store.ToolCall{Type: "function", Function: store.ToolFunction{Name: "web_fetch", Arguments: `{"url":"https://example.com"}`}}, ToolCalls: []store.ToolCall{
 				{Type: "function", Function: store.ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: toolResult}},
+			}, Attachments: []store.File{
+				{Filename: `C:\notes\photo.png`, Data: []byte("different file")},
 			}},
 			{Role: "tool", Content: "Tool output", ToolName: "web_search", ToolResult: &toolResult, CreatedAt: now, UpdatedAt: now},
 		},
@@ -75,12 +76,19 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 	if err != nil || len(files) != 4 {
 		t.Fatalf("missing attachments: %v, %v", files, err)
 	}
+	if files[0].Name() != "0001-photo.png" || files[3].Name() != "0004-photo.png" {
+		t.Fatal("same-named attachments across messages should have one counter per conversation")
+	}
+	var originals []store.File
+	for _, message := range chat.Messages {
+		originals = append(originals, message.Attachments...)
+	}
 	for i, file := range files {
 		path := "attachments/" + file.Name()
 		if !filepath.IsLocal(path) || strings.Contains(path, "..") || !strings.Contains(markdown, "]("+path+")") {
 			t.Fatalf("unsafe or missing attachment link: %s", path)
 		}
-		original := chat.Messages[0].Attachments[i]
+		original := originals[i]
 		if !bytes.Equal(read(path), original.Data) {
 			t.Fatalf("attachment %d changed", i)
 		}
