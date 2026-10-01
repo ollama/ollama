@@ -1,0 +1,74 @@
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -152,6 +152,7 @@
+     // used by SERVER_TASK_TYPE_INFERENCE
+     task_params   params;
+     server_tokens tokens;
++    common_json score_fields; // optional decision question and option spans
+ 
+     // only used by CLI, this allow tokenizing CLI inputs on server side
+     // we need this because mtmd_context and vocab are not accessible outside of server_context
+@@ -452,6 +453,7 @@
+ };
+ 
+ struct server_task_result_embd : server_task_result {
++    common_json score_logits;
+     std::vector<std::vector<float>> embedding;
+ 
+     int32_t n_tokens;
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -1464,6 +1464,9 @@
+ // server_task_result_embd
+ //
+ json server_task_result_embd::to_json() {
++    if (!score_logits.is_null()) {
++        return json {{"logits", score_logits}, {"tokens_evaluated", n_tokens}};
++    }
+     return res_type == TASK_RESPONSE_TYPE_OAI_EMBD
+         ? to_json_oaicompat()
+         : to_json_non_oaicompat();
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1,4 +1,5 @@
+ #include "server-context.h"
++#include "clef.h"
+ #include "server-chat.h"
+ #include "server-common.h"
+ #include "server-http.h"
+@@ -849,6 +850,7 @@
+     //  - when not in sleeping state
+     //  - and, with thread-safe APIs (e.g., tokenizer calls)
+     llama_model * model_tgt = nullptr;
++    std::unique_ptr<clef_head> clef;
+ 
+     mtmd_context * mctx = nullptr;
+     // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
+@@ -2200,6 +2202,16 @@
+             res->embedding.emplace_back(embd, embd + n_embd_out);
+         }
+ 
++        if (!slot.task->score_fields.is_null()) {
++            try {
++                if (!clef) clef.reset(new clef_head(params_base.model.path));
++                res->score_logits = clef->score(res->embedding, slot.task->tokens.get_tokens(), slot.task->score_fields);
++                res->embedding.clear();
++            } catch (const std::exception & e) {
++                send_error(slot, e.what(), ERROR_TYPE_SERVER);
++                return;
++            }
++        }
+         SLT_DBG(slot, "%s", "sending embeddings\n");
+ 
+         queue_results.send(std::move(res));
+@@ -5466,6 +5478,10 @@
+             // OAI-compat
+             task.params.res_type = res_type;
+             task.params.embd_normalize = embd_normalize;
++            if (body.contains("score_fields")) {
++                task.score_fields = body.at("score_fields");
++                task.params.cache_prompt = false; // the head needs every hidden state
++            }
+ 
+             tasks.push_back(std::move(task));
+         }

@@ -200,6 +200,9 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 		// If no embedding is specified, we assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
+	if m.metadata.String("general.decision_head") != "" {
+		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	}
 	if m.metadata.Valid("vision.block_count") {
 		capabilities = appendCapability(capabilities, model.CapabilityVision)
 	}

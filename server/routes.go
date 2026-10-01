@@ -865,7 +865,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local Nimble or Tev model"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
 	name, err := getExistingName(ref.Name)
@@ -882,6 +882,14 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
 		return
 	}
+	if head := m.metadata.String("general.decision_head"); head != "" {
+		if err := compiled.RenderDecision(func(fields []*decision.Field) (llm.ScoreRequest, error) {
+			return renderers.RenderDecisionWithRenderer(head, req, fields)
+		}); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion, model.CapabilityDecision}, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -889,7 +897,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local Nimble or Tev model with a scoring-capable runner", req.Model)})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
 		return
 	}
 	if err := compiled.Render(func(messages []api.Message) (string, error) {

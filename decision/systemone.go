@@ -27,6 +27,22 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
+// RenderDecision passes validated fields to a model renderer. The renderer may
+// reorder their choices to match the order of the returned logits.
+func (c *Compiled) RenderDecision(render func([]*Field) (llm.ScoreRequest, error)) error {
+	fields := make([]*Field, len(c.fields))
+	for i := range c.fields {
+		fields[i] = &c.fields[i].Field
+	}
+	input, err := render(fields)
+	if err != nil {
+		return err
+	}
+	c.Request = input
+	c.messages = nil
+	return nil
+}
+
 func Compile(req Request) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
@@ -206,7 +222,11 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			}
 		}
 		if f.typ == "noul" {
-			response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[1]})
+			for j, choice := range f.Choices {
+				if choice.Value == true {
+					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[j]})
+				}
+			}
 			continue
 		}
 		probabilities := &Probabilities{}

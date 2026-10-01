@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/decision"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -45,6 +47,17 @@ func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think
 	return renderer.Render(msgs, tools, think)
 }
 
+// RenderDecisionWithRenderer renders text segments and spans for a decision head.
+func RenderDecisionWithRenderer(name string, req decision.Request, fields []*decision.Field) (llm.ScoreRequest, error) {
+	renderer, ok := rendererForName(name).(interface {
+		RenderDecision(decision.Request, []*decision.Field) (llm.ScoreRequest, error)
+	})
+	if !ok {
+		return llm.ScoreRequest{}, fmt.Errorf("renderer %q does not support decision inputs", name)
+	}
+	return renderer.RenderDecision(req, fields)
+}
+
 func LeadingBOSForRenderer(name string) string {
 	renderer := rendererForName(name)
 	if renderer == nil {
@@ -59,6 +72,8 @@ func rendererForName(name string) Renderer {
 		return constructor()
 	}
 	switch name {
+	case "clef":
+		return &ClefRenderer{}
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{}
 		return renderer

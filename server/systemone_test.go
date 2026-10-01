@@ -31,6 +31,9 @@ type systemOneTestRunner struct {
 func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
 	r.calls++
 	r.request = input
+	if len(input.Fields) > 0 {
+		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
+	}
 	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
@@ -44,6 +47,7 @@ func TestSystemOneHandler(t *testing.T) {
 		contextLength                                  int
 		undeclared                                     bool
 	}{
+		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
 		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
@@ -54,6 +58,9 @@ func TestSystemOneHandler(t *testing.T) {
 		kv := gguftest.KV{"general.architecture": modelConfig.architecture}
 		if modelConfig.template == "" {
 			kv["tokenizer.chat_template"] = "{{ messages }}"
+		}
+		if modelConfig.name == "renamed-clef" {
+			kv["general.decision_head"] = "clef"
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
@@ -102,6 +109,7 @@ func TestSystemOneHandler(t *testing.T) {
 		expire bool
 	}{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -177,8 +185,18 @@ func TestSystemOneHandler(t *testing.T) {
 				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 					t.Fatal(err)
 				}
-				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != 2 {
+				outputTokens := 2
+				if len(runner.request.Fields) > 0 {
+					outputTokens = 0
+				}
+				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
+				}
+				if len(runner.request.Fields) > 0 {
+					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 1024 {
+						t.Fatal("invalid joint scoring request")
+					}
+					return
 				}
 				prompt := runner.request.Rows[0].Prompt
 				wantContext := 1024
