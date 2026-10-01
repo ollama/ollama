@@ -27,12 +27,36 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
+// Compile validates the request and prepares candidate scoring for Nimble and Tev.
 func Compile(req Request) (*Compiled, error) {
+	return CompileWithEncoder(req, "")
+}
+
+// CompileWithEncoder validates the request and encodes it using the named input format.
+// An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
+func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
 	if req.Questions.Len() < 1 || req.Questions.Len() > 64 {
 		return nil, fmt.Errorf("questions must contain 1–64 fields")
+	}
+	if len(req.Videos) > 0 {
+		return nil, fmt.Errorf("video inputs are not supported")
+	}
+	switch encoding {
+	case "":
+		if len(req.Images) > 0 {
+			return nil, fmt.Errorf("this decision model does not support images")
+		}
+	case "clef":
+		c := &Compiled{}
+		if err := encodeClef(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	default:
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	context, err := content(req.State)
 	if err != nil {
@@ -206,7 +230,11 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			}
 		}
 		if f.typ == "noul" {
-			response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[1]})
+			for j, choice := range f.Choices {
+				if choice.Value == true {
+					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[j]})
+				}
+			}
 			continue
 		}
 		probabilities := &Probabilities{}

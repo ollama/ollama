@@ -186,6 +186,8 @@ FetchContent_Declare(
     ${_ollama_compat_patch_cmd}
 )
 FetchContent_MakeAvailable(llama_cpp)
+target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef/clef.cpp)
+target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef)
 
 if(NOT COMMAND license_add_file)
     message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")

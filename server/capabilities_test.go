@@ -67,9 +67,32 @@ func TestCreateCapabilities(t *testing.T) {
 				if !slices.Contains(shown.Capabilities, model.CapabilityDecision) || !strings.Contains(shown.Modelfile, "CAPABILITY decision\n") {
 					t.Fatalf("show %s lost capability: %+v", name, shown)
 				}
+				if want := []model.Capability{model.CapabilityDecision}; !slices.Equal(shown.Capabilities, want) || shown.Thinking != nil {
+					t.Fatalf("show %s capabilities = %v thinking = %v, want only %v", name, shown.Capabilities, shown.Thinking, want)
+				}
+				m, err := GetModel(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := m.CheckCapabilities(model.CapabilityCompletion, model.CapabilityDecision); err != nil {
+					t.Fatalf("%s serving capabilities: %v", name, err)
+				}
 				modelfile = shown.Modelfile
 				if name == "roundtrip" {
 					modelfile = "FROM roundtrip\n"
+				}
+			}
+			listed, err := listModels(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, m := range listed {
+				want := []model.Capability{model.CapabilityDecision}
+				if m.Name == "base:latest" {
+					want = []model.Capability{model.CapabilityCompletion, model.CapabilityVision}
+				}
+				if !slices.Equal(m.Capabilities, want) {
+					t.Fatalf("list %s capabilities = %v, want %v", m.Name, m.Capabilities, want)
 				}
 			}
 		})
