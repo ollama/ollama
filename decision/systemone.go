@@ -27,9 +27,14 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-// Compile validates the request and encodes it using the requested input format.
+// Compile validates the request and prepares candidate scoring for Nimble and Tev.
+func Compile(req Request) (*Compiled, error) {
+	return CompileWithEncoder(req, "")
+}
+
+// CompileWithEncoder validates the request and encodes it using the named input format.
 // An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
-func Compile(req Request, encoding string) (*Compiled, error) {
+func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}

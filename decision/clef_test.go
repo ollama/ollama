@@ -15,7 +15,7 @@ func TestCompileClef(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"model":"renamed-model","state":{"z":2,"a":"café & <x>"},"questions":{"team":{"type":"choice","instructions":"Route it","criteria":{"z":null,"a":"First"}},"yes":{"type":"noul","instructions":{"z":2,"a":1}},"rating":{"type":"score","instructions":"Rate it","criteria":["Low","High"]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Compile(req, "clef")
+	c, err := CompileWithEncoder(req, "clef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +61,14 @@ func TestCompileClef(t *testing.T) {
 func TestCompileClefImages(t *testing.T) {
 	req := testRequest(t)
 	req.Images = []api.ImageData{[]byte("first image"), []byte("second image")}
-	c, err := Compile(req, "clef")
+	c, err := CompileWithEncoder(req, "clef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Request.ImagePosition != 1 || len(c.Request.Images) != 2 || string(c.Request.Images[1]) != "second image" {
 		t.Fatalf("images were not preserved before state: %+v", c.Request)
 	}
-	if _, err := Compile(req, ""); err == nil {
+	if _, err := Compile(req); err == nil {
 		t.Fatal("candidate scoring silently ignored images")
 	}
 }
