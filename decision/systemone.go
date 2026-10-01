@@ -27,9 +27,7 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-// Compile validates the request and prepares the input for its decision head.
-// An empty head uses the candidate-scoring format shared by Nimble and Tev.
-func Compile(req Request, head string) (*Compiled, error) {
+func Compile(req Request) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -50,16 +48,6 @@ func Compile(req Request, head string) (*Compiled, error) {
 			return nil, fmt.Errorf("question %q: %w", name, err)
 		}
 		c.fields = append(c.fields, f)
-	}
-	switch head {
-	case "":
-	case "clef":
-		if err := c.encodeClef(req); err != nil {
-			return nil, err
-		}
-		return c, nil
-	default:
-		return nil, fmt.Errorf("unsupported decision head %q", head)
 	}
 	data, err := json.Marshal(struct {
 		Context string          `json:"context"`
@@ -83,6 +71,19 @@ func Compile(req Request, head string) (*Compiled, error) {
 		c.Request.Rows = append(c.Request.Rows, row)
 	}
 	return c, nil
+}
+
+// Encode applies a decision head's input format. Models without a head use the
+// candidate-scoring prompts prepared by Compile.
+func (c *Compiled) Encode(req Request, head string) error {
+	switch head {
+	case "":
+		return nil
+	case "clef":
+		return c.encodeClef(req)
+	default:
+		return fmt.Errorf("unsupported decision head %q", head)
+	}
 }
 
 // Render prepares scoring prompts using the model's system prompt and chat template.

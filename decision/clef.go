@@ -79,6 +79,7 @@ func (c *Compiled) encodeClef(req Request) error {
 	}
 	add("\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nJOINT SCHEMA DECISIONS:")
 	c.Request = input
+	c.messages = nil
 	return nil
 }
 
