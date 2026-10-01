@@ -163,8 +163,8 @@ func (s *llamaServerRunner) primeSharedPrefix(ctx context.Context, rows []scoreR
 		return 0, nil
 	}
 	tokens := first[:shared+scoreCheckpointOffset]
-	output, err := s.scoreCompletion(ctx, scoreCompletionRequest{Prompt: tokens, CachePrompt: true, NPredict: 0})
-	if err != nil {
+	var output scoreCompletionResponse
+	if err := s.scoreRequest(ctx, "/completion", scoreCompletionRequest{Prompt: tokens, CachePrompt: true, NPredict: 0}, &output); err != nil {
 		return 0, err
 	}
 	if output.Truncated || output.TokensEvaluated != len(tokens) {
@@ -216,8 +216,8 @@ func (s *llamaServerRunner) scoreRow(ctx context.Context, row scoreRowTokens) ([
 		for _, id := range row.candidates {
 			req.LogitBias = append(req.LogitBias, [2]float64{float64(id), bias})
 		}
-		output, err := s.scoreCompletion(ctx, req)
-		if err != nil {
+		var output scoreCompletionResponse
+		if err := s.scoreRequest(ctx, "/completion", req, &output); err != nil {
 			return nil, 0, err
 		}
 		if output.Truncated || output.TokensEvaluated != len(row.tokens) || output.TokensPredicted != 1 || len(output.Probabilities) != 1 || len(output.Probabilities[0].TopProbs) == 0 {
@@ -247,12 +247,6 @@ func (s *llamaServerRunner) scoreRow(ctx context.Context, row scoreRowTokens) ([
 		}
 	}
 	return nil, 0, fmt.Errorf("scoring candidates were outranked by other tokens")
-}
-
-func (s *llamaServerRunner) scoreCompletion(ctx context.Context, input scoreCompletionRequest) (scoreCompletionResponse, error) {
-	var output scoreCompletionResponse
-	err := s.scoreRequest(ctx, "/completion", input, &output)
-	return output, err
 }
 
 func (s *llamaServerRunner) scoreRequest(ctx context.Context, path string, input, output any) error {
