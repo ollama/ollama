@@ -170,7 +170,7 @@ export function History({
               </p>
             )}
             {lastModel && (
-              <p className="mb-2 break-all text-right text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="mb-2 pt-3 break-all text-right text-xs text-neutral-500 dark:text-neutral-400">
                 Last used: {lastModel}
               </p>
             )}
