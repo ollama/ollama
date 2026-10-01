@@ -15,7 +15,7 @@ func TestCompileClef(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"model":"renamed-model","state":{"z":2,"a":"café & <x>"},"questions":{"team":{"type":"choice","instructions":"Route it","criteria":{"z":null,"a":"First"}},"yes":{"type":"noul","instructions":{"z":2,"a":1}},"rating":{"type":"score","instructions":"Rate it","criteria":["Low","High"]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	c, err := CompileWithEncoder(req, "clef")
+	c, err := Compile(req, "clef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,14 +61,14 @@ func TestCompileClef(t *testing.T) {
 func TestCompileClefImages(t *testing.T) {
 	req := testRequest(t)
 	req.Images = []api.ImageData{[]byte("first image"), []byte("second image")}
-	c, err := CompileWithEncoder(req, "clef")
+	c, err := Compile(req, "clef")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.Request.ImagePosition != 1 || len(c.Request.Images) != 2 || string(c.Request.Images[1]) != "second image" {
 		t.Fatalf("images were not preserved before state: %+v", c.Request)
 	}
-	if _, err := Compile(req); err == nil {
+	if _, err := Compile(req, ""); err == nil {
 		t.Fatal("candidate scoring silently ignored images")
 	}
 }
@@ -107,7 +107,7 @@ func TestClefSchema(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"model":"clef","state":null,"questions":{"team":{"type":"choice","criteria":{"z":null,"a":{"text":"First","weight":1e6}}},"yes":{"type":"noul","instructions":null,"criteria":{"true":null}},"rating":{"type":"score","instructions":"","criteria":[null,{"text":"High"}]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	c, err := CompileWithEncoder(req, "clef")
+	c, err := Compile(req, "clef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestClefSchema(t *testing.T) {
 	if err != nil || string(legend) != `{"0":null,"1":{"text":"High"}}` {
 		t.Fatalf("legend = %s, %v", legend, err)
 	}
-	if _, err := Compile(req); err == nil {
+	if _, err := Compile(req, ""); err == nil {
 		t.Fatal("broadened the candidate-scoring schema")
 	}
 }
@@ -163,7 +163,7 @@ func TestClefValidation(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &req); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := CompileWithEncoder(req, "clef"); err == nil {
+		if _, err := Compile(req, "clef"); err == nil {
 			t.Fatalf("accepted invalid request %s", raw)
 		}
 	}
@@ -173,11 +173,11 @@ func TestDecisionRejectsVideo(t *testing.T) {
 	for _, encoding := range []string{"", "clef"} {
 		req := testRequest(t)
 		req.Videos = []json.RawMessage{json.RawMessage(`"video.mp4"`)}
-		if _, err := CompileWithEncoder(req, encoding); err == nil || !strings.Contains(err.Error(), "video") {
+		if _, err := Compile(req, encoding); err == nil || !strings.Contains(err.Error(), "video") {
 			t.Fatalf("encoding %q silently accepted video: %v", encoding, err)
 		}
 		req.Videos = nil
-		if _, err := CompileWithEncoder(req, encoding); err != nil {
+		if _, err := Compile(req, encoding); err != nil {
 			t.Fatal(err)
 		}
 	}

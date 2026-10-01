@@ -28,14 +28,7 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-// Compile validates the request and prepares candidate scoring for Nimble and Tev.
-func Compile(req Request) (*Compiled, error) {
-	return CompileWithEncoder(req, "")
-}
-
-// CompileWithEncoder validates the request and encodes it using the named input format.
-// An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
-func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
+func Compile(req Request, renderer string) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -45,8 +38,8 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if len(req.Videos) > 0 {
 		return nil, fmt.Errorf("video inputs are not supported")
 	}
-	switch encoding {
-	case "":
+	switch renderer {
+	default:
 		if len(req.Images) > 0 {
 			return nil, fmt.Errorf("this decision model does not support images")
 		}
@@ -56,8 +49,6 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 			return nil, err
 		}
 		return c, nil
-	default:
-		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	context, err := content(req.State)
 	if err != nil {
@@ -74,20 +65,13 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	data, err := json.Marshal(struct {
-		Context string          `json:"context"`
-		Schema  []compiledField `json:"schema"`
-	}{context, c.fields})
+	prompts, err := decisionPrompts(context, c.fields, renderer)
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range c.fields {
-		name, err := json.Marshal(f.Name)
-		if err != nil {
-			return nil, err
-		}
+	for i, f := range c.fields {
 		c.messages = append(c.messages, []api.Message{
-			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
+			{Role: "user", Content: prompts[i]},
 		})
 		row := llm.ScoreRow{Question: &llm.ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
 		for _, choice := range f.Choices {

@@ -31,7 +31,7 @@ func testRequest(t *testing.T) Request {
 
 func TestCompile(t *testing.T) {
 	req := testRequest(t)
-	compiled, err := Compile(req)
+	compiled, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestCompile(t *testing.T) {
 }
 
 func TestCompileUnsupportedEncoding(t *testing.T) {
-	if _, err := CompileWithEncoder(testRequest(t), "unknown"); err == nil {
+	if _, err := Compile(testRequest(t), "unknown"); err == nil {
 		t.Fatal("accepted unsupported decision encoding")
 	}
 }
@@ -99,7 +99,7 @@ func TestCompileUnsupportedEncoding(t *testing.T) {
 func TestStructuredStateFrames(t *testing.T) {
 	req := testRequest(t)
 	req.State = json.RawMessage(`{"frames":["first","second"],"position":7}`)
-	compiled, err := Compile(req)
+	compiled, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,14 +109,14 @@ func TestStructuredStateFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range compiled.Request.Rows {
-		if !strings.Contains(row.Prompt, `"context":"{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
+		if !strings.Contains(row.Prompt, `"context": "{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
 	}
 }
 
 func TestRenderError(t *testing.T) {
-	compiled, err := Compile(testRequest(t))
+	compiled, err := Compile(testRequest(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestRenderError(t *testing.T) {
 
 func TestAnswers(t *testing.T) {
 	req := testRequest(t)
-	c, err := Compile(req)
+	c, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestAnswers(t *testing.T) {
 }
 
 func TestAnswerLogprobs(t *testing.T) {
-	c, err := Compile(testRequest(t))
+	c, err := Compile(testRequest(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestInvalidRequests(t *testing.T) {
 			if err := json.Unmarshal([]byte(data), &req); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Compile(req); err == nil {
+			if _, err := Compile(req, ""); err == nil {
 				t.Fatal("accepted invalid request")
 			}
 		})
@@ -214,7 +214,7 @@ func TestInvalidRequests(t *testing.T) {
 	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
 	req.Questions.Set("urgency", q)
 	for _, encoding := range []string{"", "clef"} {
-		if _, err := CompileWithEncoder(req, encoding); err == nil {
+		if _, err := Compile(req, encoding); err == nil {
 			t.Fatalf("encoding %q accepted 27 candidates", encoding)
 		}
 	}

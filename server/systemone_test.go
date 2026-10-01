@@ -75,6 +75,9 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-decision", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision"}
 	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
+	config.Renderer = "tev1"
+	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
+	config.Renderer = "qwen3.5"
 	config.Capabilities = []string{"completion"}
 	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
 	for _, modelConfig := range []struct {
@@ -84,6 +87,7 @@ func TestSystemOneHandler(t *testing.T) {
 	}{
 		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
+		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
 		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
 		{"no-system", "qwen35", "qwen3.5", "", "", 1024, false},
@@ -171,6 +175,10 @@ func TestSystemOneHandler(t *testing.T) {
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 safetensors", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 too many candidates", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
+		{"Tev1 empty description", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
 		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},
@@ -251,6 +259,9 @@ func TestSystemOneHandler(t *testing.T) {
 					return
 				}
 				prompt := runner.request.Rows[0].Prompt
+				if ref.model.Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
+					t.Fatalf("Tev1 did not receive its per-question prompt: %q", prompt)
+				}
 				wantContext := 1024
 				if !ref.model.isGGUF() {
 					wantContext = 8192

@@ -936,7 +936,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	compiled, err := decision.CompileWithEncoder(req, m.metadata.String("decision.type"))
+	encoding := m.metadata.String("decision.type")
+	if encoding == "" {
+		encoding = m.Config.Renderer
+	}
+	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
