@@ -651,7 +651,7 @@ func TestSavedHistoryKeepsMetadataAndRejectsCorruptRecords(t *testing.T) {
 	result := json.RawMessage(`{"answer":"saved result"}`)
 	seedChat(t, db, Chat{ID: "saved", Title: "Saved title", CreatedAt: now, BrowserState: json.RawMessage(`{"page_stack":["https://example.com"]}`), Messages: []Message{
 		{Role: "user", Content: "Question", CreatedAt: now, UpdatedAt: now, Attachments: []File{{Filename: "notes.txt", Data: []byte("original bytes")}}},
-		{Role: "assistant", Content: "Answer", Thinking: "Original thinking", Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: now, ThinkingTimeStart: &now, ThinkingTimeEnd: &now, ToolResult: &result, ToolCalls: []ToolCall{{Type: "function", Function: ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: result}}}},
+		{Role: "assistant", Content: "Answer", Thinking: "Original thinking", Stream: true, Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: now, ThinkingTimeStart: &now, ThinkingTimeEnd: &now, ToolResult: &result, ToolCalls: []ToolCall{{Type: "function", Function: ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: result}}}},
 	}})
 	// One connection also verifies that child records use the same transaction.
 	db.conn.SetMaxOpenConns(1)
@@ -661,6 +661,9 @@ func TestSavedHistoryKeepsMetadataAndRejectsCorruptRecords(t *testing.T) {
 	}
 	if chat.Title != "Saved title" || len(chat.Messages) != 2 || string(chat.Messages[0].Attachments[0].Data) != "original bytes" || chat.Messages[1].Model != "gpt-oss:120b-cloud" || chat.Messages[1].Thinking != "Original thinking" || !chat.Messages[1].ThinkingTimeEnd.Equal(now) || string(*chat.Messages[1].ToolResult) != string(result) || chat.Messages[1].ToolCalls[0].Function.Name != "web_search" || len(chat.BrowserState) == 0 {
 		t.Fatalf("lost saved conversation fields: %+v", chat)
+	}
+	if chat.Messages[1].Stream || chat.Messages[1].Content != "Answer" {
+		t.Fatal("saved reply should retain its text with the streaming flag cleared")
 	}
 	if _, err := db.conn.Exec(`UPDATE messages SET tool_result = '{broken' WHERE role = 'assistant'`); err != nil {
 		t.Fatal(err)

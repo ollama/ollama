@@ -124,17 +124,17 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 	}
 }
 
-func TestExportReportsIncompleteHistory(t *testing.T) {
+func TestExportReportsMissingAttachments(t *testing.T) {
 	result, err := Export(store.Chat{Messages: []store.Message{{Stream: true, Attachments: []store.File{{Filename: "missing.txt"}}}}}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Warnings) != 2 {
-		t.Fatalf("missing warnings: %+v", result)
+	if len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "file data is missing") {
+		t.Fatalf("expected only the missing-file warning: %+v", result)
 	}
 	markdown := string(mustRead(t, filepath.Join(result.Path, "conversation.md")))
 	if !strings.Contains(markdown, "## Export notes") {
-		t.Fatal("missing incomplete-history notes")
+		t.Fatal("missing attachment notes")
 	}
 	for _, warning := range result.Warnings {
 		if !strings.Contains(markdown, warning) {
@@ -292,8 +292,8 @@ func TestExportAllPreservesChatsAndPreviousArchiveOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Path != path || len(result.Warnings) != 1 {
-		t.Fatalf("missing saved path or unfinished-message warning: %+v", result)
+	if result.Path != path || len(result.Warnings) != 0 {
+		t.Fatalf("missing saved path or unexpected export warnings: %+v", result)
 	}
 	if len(updates) != 3 {
 		t.Fatalf("missing export progress: %v", updates)

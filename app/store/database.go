@@ -795,8 +795,10 @@ func (db *database) deleteChat(id string) error {
 }
 
 func (db chatReader) getMessages(chatID string) ([]Message, error) {
+	// Saved history is never streaming, even if a reply was interrupted.
+	// Leave Stream false instead of restoring the old runtime flag.
 	query := `
-		SELECT id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
+		SELECT id, role, content, thinking, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
 		FROM messages
 		WHERE chat_id = ?
 		ORDER BY id ASC
@@ -821,7 +823,6 @@ func (db chatReader) getMessages(chatID string) ([]Message, error) {
 			&msg.Role,
 			&msg.Content,
 			&msg.Thinking,
-			&msg.Stream,
 			&modelName,
 			&msg.CreatedAt,
 			&msg.UpdatedAt,
