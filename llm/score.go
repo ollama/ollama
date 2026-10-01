@@ -14,6 +14,7 @@ type Scorer interface {
 
 // ScoreRequest uses either prompt Rows or Segments and Fields for a decision head.
 type ScoreRequest struct {
+	Readout       bool            `json:"readout,omitempty"` // Score rows with a trained decision readout.
 	Rows          []ScoreRow      `json:"rows,omitempty"`
 	Segments      []string        `json:"segments,omitempty"`
 	Fields        []ScoreField    `json:"fields,omitempty"`
@@ -23,8 +24,9 @@ type ScoreRequest struct {
 }
 
 type ScoreRow struct {
-	Prompt     string   `json:"prompt"`
-	Candidates []string `json:"candidates"`
+	ImagePrefix string   `json:"image_prefix,omitempty"` // Text before images, when present.
+	Prompt      string   `json:"prompt"`
+	Candidates  []string `json:"candidates"`
 }
 
 type ScoreResponse struct {

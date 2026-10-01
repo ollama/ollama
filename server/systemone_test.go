@@ -32,6 +32,9 @@ type systemOneTestRunner struct {
 func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
 	r.calls++
 	r.request = input
+	if input.Readout {
+		return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123}, r.err
+	}
 	if len(input.Fields) > 0 {
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
@@ -48,6 +51,7 @@ func TestSystemOneHandler(t *testing.T) {
 		contextLength                                  int
 		undeclared                                     bool
 	}{
+		{"renamed-pplx", "qwen35", "", "Ignored for the readout", "", 1024, false},
 		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
@@ -63,9 +67,12 @@ func TestSystemOneHandler(t *testing.T) {
 		if modelConfig.name == "renamed-clef" {
 			kv[modelConfig.architecture+".decision.type"] = "clef"
 		}
+		if modelConfig.name == "renamed-pplx" {
+			kv[modelConfig.architecture+".decision.type"] = "pplx"
+		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
-		if modelConfig.name == "renamed-clef" {
+		if modelConfig.name == "renamed-clef" || modelConfig.name == "renamed-pplx" {
 			caps = []string{"decision", "vision"}
 		}
 		if modelConfig.undeclared {
@@ -119,6 +126,10 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Clef videos unsupported", `{"model":"renamed-clef","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
 		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef null state and default instructions", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
+		{"PPLX readout", `{"model":"renamed-pplx","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"PPLX image", `{"model":"renamed-pplx","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"PPLX videos unsupported", `{"model":"renamed-pplx","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
+		{"PPLX default instructions", `{"model":"renamed-pplx","state":"x","questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
 		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -202,7 +213,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 {
+				if len(runner.request.Fields) > 0 || runner.request.Readout {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
@@ -211,6 +222,15 @@ func TestSystemOneHandler(t *testing.T) {
 				if len(runner.request.Fields) > 0 {
 					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 2048 {
 						t.Fatal("invalid joint scoring request")
+					}
+					return
+				}
+				if runner.request.Readout {
+					if len(runner.request.Rows) != 1 || !strings.Contains(runner.request.Rows[0].Prompt, "A: No / false\nB: Yes / true") {
+						t.Fatal("invalid readout request")
+					}
+					if tt.name == "PPLX image" && len(runner.request.Images) != 1 {
+						t.Fatal("image not forwarded")
 					}
 					return
 				}

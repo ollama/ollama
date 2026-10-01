@@ -188,6 +188,15 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(llama_cpp)
 target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef/clef.cpp)
 target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef)
+target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../pplx/pplx.cpp)
+target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../pplx)
+
+option(OLLAMA_PPLX_TESTS "Build the Perplexity readout parity test" OFF)
+if(OLLAMA_PPLX_TESTS)
+    add_executable(ollama-pplx-head-test ../pplx/test-head.cpp ../pplx/pplx.cpp)
+    target_link_libraries(ollama-pplx-head-test PRIVATE ggml-base llama-common)
+    target_include_directories(ollama-pplx-head-test PRIVATE ${llama_cpp_SOURCE_DIR}/common ${llama_cpp_SOURCE_DIR}/vendor)
+endif()
 
 if(NOT COMMAND license_add_file)
     message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")
