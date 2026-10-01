@@ -21,7 +21,7 @@ func TestEncodeClef(t *testing.T) {
 	}
 	// Re-encoding must retain the same answer order, including true/false.
 	for range 2 {
-		if err := c.EncodeClef(req); err != nil {
+		if err := c.Encode(req, "clef"); err != nil {
 			t.Fatal(err)
 		}
 	}

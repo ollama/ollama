@@ -10,10 +10,10 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-// EncodeClef prepares the request validated by Compile for Clef's decision head.
+// encodeClef prepares the request validated by Compile for Clef's decision head.
 // It preserves the reference encoder's segment boundaries and retains its choice
 // order for the shared answer decoder.
-func (c *Compiled) EncodeClef(req Request) error {
+func (c *Compiled) encodeClef(req Request) error {
 	state, err := clefContent(req.State)
 	if err != nil {
 		return err

@@ -882,15 +882,8 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
 		return
 	}
-	switch head := m.metadata.String("general.decision_head"); head {
-	case "":
-	case "clef":
-		if err := compiled.EncodeClef(req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported decision head %q", head)})
+	if err := compiled.Encode(req, m.metadata.String("general.decision_head")); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), m, []model.Capability{model.CapabilityCompletion, model.CapabilityDecision}, nil, req.KeepAlive, nil)

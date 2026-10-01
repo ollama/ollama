@@ -35,6 +35,9 @@ func TestCompile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := compiled.Encode(req, ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := compiled.Render(func(messages []api.Message) (string, error) {
 		if len(messages) != 1 || messages[0].Role != "user" {
 			t.Fatalf("compiler must leave the system prompt to the model: %+v", messages)
@@ -87,6 +90,17 @@ func TestCompile(t *testing.T) {
 		if !slices.Equal(row.Candidates, want) {
 			t.Fatalf("row %d candidates = %v, want %v", i, row.Candidates, want)
 		}
+	}
+}
+
+func TestEncodeUnsupportedHead(t *testing.T) {
+	req := testRequest(t)
+	c, err := Compile(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Encode(req, "unknown"); err == nil {
+		t.Fatal("accepted unsupported decision head")
 	}
 }
 

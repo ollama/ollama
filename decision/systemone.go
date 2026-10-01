@@ -73,6 +73,19 @@ func Compile(req Request) (*Compiled, error) {
 	return c, nil
 }
 
+// Encode applies a decision head's input format. Models without a head use the
+// candidate-scoring prompts prepared by Compile.
+func (c *Compiled) Encode(req Request, head string) error {
+	switch head {
+	case "":
+		return nil
+	case "clef":
+		return c.encodeClef(req)
+	default:
+		return fmt.Errorf("unsupported decision head %q", head)
+	}
+}
+
 // Render prepares scoring prompts using the model's system prompt and chat template.
 // The caller must set Request.MaxTokens to the loaded context size before scoring.
 func (c *Compiled) Render(render func([]api.Message) (string, error)) error {
