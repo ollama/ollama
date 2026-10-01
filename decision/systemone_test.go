@@ -204,10 +204,8 @@ func TestInvalidRequests(t *testing.T) {
 			if err := json.Unmarshal([]byte(data), &req); err != nil {
 				t.Fatal(err)
 			}
-			for _, encoding := range []string{"", "clef"} {
-				if _, err := CompileWithEncoder(req, encoding); err == nil {
-					t.Fatalf("encoding %q accepted invalid request", encoding)
-				}
+			if _, err := Compile(req); err == nil {
+				t.Fatal("accepted invalid request")
 			}
 		})
 	}

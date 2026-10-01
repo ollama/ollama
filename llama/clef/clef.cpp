@@ -96,7 +96,7 @@ void append(matrix &a, const matrix &b) {
     a.rows += b.rows;
     a.data.insert(a.data.end(), b.data.begin(), b.data.end());
 }
-float cosine(const matrix &a, int ar, const matrix &b, int br) {
+float cosine(const matrix &a, int ar, const matrix &b, int br, double eps = 1e-8) {
     require(a.cols == b.cols, "Clef: cosine shape mismatch");
     double dot = 0, aa = 0, bb = 0;
     for (int c = 0; c < a.cols; ++c) {
@@ -104,7 +104,7 @@ float cosine(const matrix &a, int ar, const matrix &b, int br) {
         aa += double(a.at(ar, c)) * a.at(ar, c);
         bb += double(b.at(br, c)) * b.at(br, c);
     }
-    return dot / (std::max(std::sqrt(aa), 1e-8) * std::max(std::sqrt(bb), 1e-8));
+    return dot / (std::max(std::sqrt(aa), eps) * std::max(std::sqrt(bb), eps));
 }
 } // namespace
 
@@ -355,7 +355,7 @@ struct clef_head::impl {
             auto anchor = add(slice(questions, f, f + 1), global);
             std::vector<float> logits;
             for (int j = 0; j < counts[f]; ++j) {
-                float v = prior_scale * cosine(lexical_options, offset + j, anchor, 0) +
+                float v = prior_scale * cosine(lexical_options, offset + j, anchor, 0, 1e-12) +
                           gate * (joint_scale * cosine(fs, f, options, offset + j) + residual.at(j, 0));
                 require(std::isfinite(v), "Clef: non-finite logit");
                 logits.push_back(v);

@@ -41,6 +41,23 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if req.Questions.Len() < 1 || req.Questions.Len() > 64 {
 		return nil, fmt.Errorf("questions must contain 1–64 fields")
 	}
+	if len(req.Videos) > 0 {
+		return nil, fmt.Errorf("video inputs are not supported")
+	}
+	switch encoding {
+	case "":
+		if len(req.Images) > 0 {
+			return nil, fmt.Errorf("this decision model does not support images")
+		}
+	case "clef":
+		c := &Compiled{}
+		if err := encodeClef(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	default:
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
+	}
 	context, err := content(req.State)
 	if err != nil {
 		return nil, fmt.Errorf("state: %w", err)
@@ -55,19 +72,6 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 			return nil, fmt.Errorf("question %q: %w", name, err)
 		}
 		c.fields = append(c.fields, f)
-	}
-	switch encoding {
-	case "":
-		if len(req.Images) > 0 {
-			return nil, fmt.Errorf("this decision model does not support images")
-		}
-	case "clef":
-		if err := encodeClef(req, c); err != nil {
-			return nil, err
-		}
-		return c, nil
-	default:
-		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	data, err := json.Marshal(struct {
 		Context string          `json:"context"`

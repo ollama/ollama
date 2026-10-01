@@ -19,13 +19,14 @@
  common_init_result::common_init_result(common_params & params, bool model_only) :
      pimpl(new impl{}) {
      auto mparams = common_model_params_to_llama(params);
-@@ -1291,6 +1303,17 @@
+@@ -1291,6 +1303,18 @@
      }
 
      const llama_vocab * vocab = llama_model_get_vocab(model);
 +
 +    if (common_get_decision_type(model) == COMMON_DECISION_TYPE_CLEF) {
 +        params.embedding = cparams.embeddings = true;
++        cparams.ctx_type = LLAMA_CONTEXT_TYPE_DECISION;
 +        params.pooling_type = cparams.pooling_type = LLAMA_POOLING_TYPE_NONE;
 +        // The joint head consumes every hidden state; retain the whole input.
 +        const auto n_ctx = cparams.n_ctx ? cparams.n_ctx : llama_model_n_ctx_train(model);
@@ -192,7 +193,18 @@
              // optionally send prompt processing progress
              if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_DONE_PROMPT) {
                  if (slot.task->params.stream && slot.task->params.return_progress) {
-@@ -5466,6 +5494,43 @@
+@@ -4274,6 +4302,10 @@
+     GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
+
+     auto res = create_response();
++    if (common_get_decision_type(ctx_server.model_tgt) == COMMON_DECISION_TYPE_CLEF) {
++        res->error(format_error_response("This model requires a decision request", ERROR_TYPE_INVALID_REQUEST));
++        return res;
++    }
+     auto completion_id = gen_chatcmplid();
+     auto & rd = res->rd;
+     auto & params = this->params;
+@@ -5466,6 +5498,43 @@
              // OAI-compat
              task.params.res_type = res_type;
              task.params.embd_normalize = embd_normalize;
@@ -236,3 +248,52 @@
 
              tasks.push_back(std::move(task));
          }
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -224,6 +224,7 @@
+     enum llama_context_type {
+         LLAMA_CONTEXT_TYPE_DEFAULT = 0,
+         LLAMA_CONTEXT_TYPE_MTP     = 1,
++        LLAMA_CONTEXT_TYPE_DECISION = 2, // hidden states without vocabulary logits
+     };
+
+     // TODO: simplify (https://github.com/ggml-org/llama.cpp/pull/9294#pullrequestreview-2286561979)
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -27,6 +27,7 @@
+
+ static llm_graph_type ctx_type_to_graph_type(llama_context_type ctx_type) {
+     switch (ctx_type) {
++        case LLAMA_CONTEXT_TYPE_DECISION:
+         case LLAMA_CONTEXT_TYPE_DEFAULT: return LLM_GRAPH_TYPE_DEFAULT;
+         case LLAMA_CONTEXT_TYPE_MTP    : return LLM_GRAPH_TYPE_DECODER_MTP;
+     }
+@@ -2112,7 +2113,7 @@
+     const auto n_embd     = hparams.n_embd;
+     const auto n_embd_out = hparams.n_embd_out();
+
+-    bool has_logits     = true;
++    bool has_logits     = cparams.ctx_type != LLAMA_CONTEXT_TYPE_DECISION;
+     bool has_embd       = cparams.embeddings;
+     bool has_embd_nextn = cparams.embeddings_nextn;
+
+--- a/src/models/qwen35.cpp
++++ b/src/models/qwen35.cpp
+@@ -215,11 +215,12 @@
+     cb(cur, "result_norm", -1);
+     res->t_embd = cur;
+
+-    // LM head
+-    cur = build_lora_mm(model.output, cur, model.output_s);
+-
+-    cb(cur, "result_output", -1);
+-    res->t_logits = cur;
++    // Decision heads consume the hidden states, not vocabulary logits.
++    if (cparams.ctx_type != LLAMA_CONTEXT_TYPE_DECISION) {
++        cur = build_lora_mm(model.output, cur, model.output_s);
++        cb(cur, "result_output", -1);
++        res->t_logits = cur;
++    }
+
+     ggml_build_forward_expand(gf, cur);
+ }
