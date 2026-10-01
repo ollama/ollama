@@ -899,18 +899,14 @@ export default function Settings() {
                 {chatExport.error.message}
               </p>
             )}
-            {chatExport.data?.warnings?.length ? (
+            {chatExport.data && !isExporting && (
               <p
                 role="status"
-                className="break-words select-text text-sm text-neutral-500 dark:text-neutral-400"
+                className="text-sm text-neutral-500 dark:text-neutral-400"
               >
-                {chatExport.data.warnings.map((warning) => (
-                  <span key={warning} className="block">
-                    {warning}
-                  </span>
-                ))}
+                Export complete.
               </p>
-            ) : null}
+            )}
           </section>
 
           {!isWindows && (

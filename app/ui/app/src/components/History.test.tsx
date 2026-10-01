@@ -190,11 +190,19 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   await act(async () => vi.advanceTimersByTimeAsync(20));
   expect(exportChat).toHaveBeenCalledExactlyOnceWith("first");
   notifyManager.setScheduler(queueMicrotask);
-  await act(async () => resolve({ path: "/exports/Garden" }));
+  await act(async () =>
+    resolve({
+      path: "/exports/Garden",
+      warnings: ["Message 2 was unfinished when it was saved."],
+    }),
+  );
+  expect(page()).toContain("Export complete.");
+  expect(page()).not.toContain("unfinished");
   expect(page()).not.toContain("/exports/Garden");
   expect(page()).not.toContain("Saved to");
   vi.mocked(exportChat).mockRejectedValueOnce(new Error("Disk is full"));
   await click("Export");
+  expect(page()).not.toContain("Export complete.");
   await act(async () => vi.advanceTimersByTimeAsync(40));
   expect(page()).toContain("Disk is full");
   expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
@@ -207,6 +215,7 @@ it("exports the selected chat and keeps progress and errors scoped to it", async
   expect(exportChat).toHaveBeenLastCalledWith("second");
   expect(renderer.root.findAllByProps({ "aria-busy": true })).toHaveLength(0);
   expect(page()).not.toContain("Saved to");
+  expect(page()).not.toContain("Export complete.");
   expect(renderer.root.findAllByProps({ role: "alert" })).toHaveLength(0);
 });
 

@@ -161,18 +161,14 @@ export function History({
                 {error.message}
               </p>
             )}
-            {result?.warnings?.length ? (
+            {result && !isExporting && (
               <p
                 role="status"
-                className="mb-3 break-words select-text text-sm text-neutral-500 dark:text-neutral-400"
+                className="mb-3 text-sm text-neutral-500 dark:text-neutral-400"
               >
-                {result.warnings.map((warning) => (
-                  <span key={warning} className="block">
-                    {warning}
-                  </span>
-                ))}
+                Export complete.
               </p>
-            ) : null}
+            )}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-700 dark:bg-neutral-900">
               <p className="min-w-0 flex-1 text-sm text-neutral-500 dark:text-neutral-400">
                 Chat is no longer available in the Ollama app, so export this
