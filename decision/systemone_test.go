@@ -90,9 +90,9 @@ func TestCompile(t *testing.T) {
 	}
 }
 
-func TestCompileUnsupportedHead(t *testing.T) {
+func TestCompileUnsupportedEncoding(t *testing.T) {
 	if _, err := Compile(testRequest(t), "unknown"); err == nil {
-		t.Fatal("accepted unsupported decision head")
+		t.Fatal("accepted unsupported decision encoding")
 	}
 }
 
@@ -204,9 +204,9 @@ func TestInvalidRequests(t *testing.T) {
 			if err := json.Unmarshal([]byte(data), &req); err != nil {
 				t.Fatal(err)
 			}
-			for _, head := range []string{"", "clef"} {
-				if _, err := Compile(req, head); err == nil {
-					t.Fatalf("head %q accepted invalid request", head)
+			for _, encoding := range []string{"", "clef"} {
+				if _, err := Compile(req, encoding); err == nil {
+					t.Fatalf("encoding %q accepted invalid request", encoding)
 				}
 			}
 		})
@@ -215,9 +215,9 @@ func TestInvalidRequests(t *testing.T) {
 	q, _ := req.Questions.Get("urgency")
 	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
 	req.Questions.Set("urgency", q)
-	for _, head := range []string{"", "clef"} {
-		if _, err := Compile(req, head); err == nil {
-			t.Fatalf("head %q accepted 27 candidates", head)
+	for _, encoding := range []string{"", "clef"} {
+		if _, err := Compile(req, encoding); err == nil {
+			t.Fatalf("encoding %q accepted 27 candidates", encoding)
 		}
 	}
 }

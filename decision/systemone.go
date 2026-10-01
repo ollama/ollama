@@ -27,9 +27,9 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-// Compile validates the request and prepares the input for its decision head.
-// An empty head uses the candidate-scoring format shared by Nimble and Tev.
-func Compile(req Request, head string) (*Compiled, error) {
+// Compile validates the request and encodes it using the requested input format.
+// An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
+func Compile(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -51,7 +51,7 @@ func Compile(req Request, head string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	switch head {
+	switch encoding {
 	case "":
 	case "clef":
 		if err := c.encodeClef(req); err != nil {
@@ -59,7 +59,7 @@ func Compile(req Request, head string) (*Compiled, error) {
 		}
 		return c, nil
 	default:
-		return nil, fmt.Errorf("unsupported decision head %q", head)
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	data, err := json.Marshal(struct {
 		Context string          `json:"context"`
