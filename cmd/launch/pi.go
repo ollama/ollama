@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"golang.org/x/mod/semver"
 )
 
 // Pi implements Runner and Editor for Pi (Pi Coding Agent) integration
@@ -377,6 +378,9 @@ func ensurePiWebSearchPackage(bin string) {
 		fmt.Fprintf(os.Stderr, "%s  ✓ Installed %s%s\n", ansiGreen, piWebSearchPkg, ansiReset)
 		return
 	}
+	if pkg.pinned {
+		return
+	}
 
 	updateAvailable, err := piWebSearchUpdateAvailable(pkg.installedPath)
 	if err != nil || !updateAvailable {
@@ -411,6 +415,7 @@ func shouldManageOllamaWebSearch() bool {
 type piPackageListEntry struct {
 	installed     bool
 	installedPath string
+	pinned        bool
 }
 
 func piPackageInfo(bin, source string) (piPackageListEntry, error) {
@@ -427,9 +432,22 @@ func piPackageInfo(bin, source string) (piPackageListEntry, error) {
 	lines := strings.Split(string(out), "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, source) {
-			return piPackageListEntry{installed: true, installedPath: piPackageListInstalledPath(lines[i+1:])}, nil
+		packageSource, _, _ := strings.Cut(trimmed, " ")
+		if packageSource != source && !strings.HasPrefix(packageSource, source+"@") {
+			continue
 		}
+		pinned := false
+		if version, ok := strings.CutPrefix(packageSource, source+"@"); ok {
+			// Pi pins full versions, while ranges and tags remain updateable.
+			version = "v" + strings.TrimPrefix(version, "v")
+			canonical := semver.Canonical(version)
+			pinned = canonical != "" && canonical == strings.SplitN(version, "+", 2)[0]
+		}
+		return piPackageListEntry{
+			installed:     true,
+			installedPath: piPackageListInstalledPath(lines[i+1:]),
+			pinned:        pinned,
+		}, nil
 	}
 
 	return piPackageListEntry{}, nil
@@ -512,18 +530,37 @@ func npmLatestPackageVersion(pkg string) (string, error) {
 	return payload.Version, nil
 }
 
-func (p *Pi) Paths() []string {
+func piAgentDir() (string, error) {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir != "" && dir != "~" && !strings.HasPrefix(dir, "~/") && !(runtime.GOOS == "windows" && strings.HasPrefix(dir, `~\`)) {
+		return dir, nil
+	}
+
 	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if dir == "~" {
+		return home, nil
+	}
+	if dir != "" {
+		return filepath.Join(home, dir[2:]), nil
+	}
+	return filepath.Join(home, ".pi", "agent"), nil
+}
+
+func (p *Pi) Paths() []string {
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
 	var paths []string
-	modelsPath := filepath.Join(home, ".pi", "agent", "models.json")
+	modelsPath := filepath.Join(dir, "models.json")
 	if _, err := os.Stat(modelsPath); err == nil {
 		paths = append(paths, modelsPath)
 	}
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
+	settingsPath := filepath.Join(dir, "settings.json")
 	if _, err := os.Stat(settingsPath); err == nil {
 		paths = append(paths, settingsPath)
 	}
@@ -534,24 +571,42 @@ func piBaseURL() string {
 	return strings.TrimRight(envconfig.Host().String(), "/") + "/v1"
 }
 
+func readPiConfig(path string) (map[string]any, error) {
+	config, err := fileutil.ReadJSON(path)
+	if os.IsNotExist(err) {
+		return make(map[string]any), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read Pi config %s: %w", path, err)
+	}
+	if config == nil {
+		return nil, fmt.Errorf("Pi config %s must contain a JSON object", path)
+	}
+	return config, nil
+}
+
 func (p *Pi) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
 
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return err
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+	configPath := filepath.Join(dir, "models.json")
+	config, err := readPiConfig(configPath)
+	if err != nil {
 		return err
 	}
-
-	config := make(map[string]any)
-	if data, err := os.ReadFile(configPath); err == nil {
-		_ = json.Unmarshal(data, &config)
+	settingsPath := filepath.Join(dir, "settings.json")
+	settings, err := readPiConfig(settingsPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
 
 	providers, ok := config["providers"].(map[string]any)
@@ -596,6 +651,7 @@ func (p *Pi) Edit(models []LaunchModel) error {
 				// User-managed model (no _launch marker) - always preserve
 				if !isPiOllamaModel(modelObj) {
 					newModels = append(newModels, m)
+					selectedSet[id] = false
 				} else if selectedSet[id] {
 					// Rebuild stale managed cloud entries so createConfig refreshes
 					// the whole entry instead of patching it in place.
@@ -631,12 +687,6 @@ func (p *Pi) Edit(models []LaunchModel) error {
 	}
 
 	// Update settings.json with default provider and model
-	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
-	settings := make(map[string]any)
-	if data, err := os.ReadFile(settingsPath); err == nil {
-		_ = json.Unmarshal(data, &settings)
-	}
-
 	settings["defaultProvider"] = "ollama"
 	settings["defaultModel"] = models[0].Name
 
@@ -648,12 +698,12 @@ func (p *Pi) Edit(models []LaunchModel) error {
 }
 
 func (p *Pi) Models() []string {
-	home, err := os.UserHomeDir()
+	dir, err := piAgentDir()
 	if err != nil {
 		return nil
 	}
 
-	configPath := filepath.Join(home, ".pi", "agent", "models.json")
+	configPath := filepath.Join(dir, "models.json")
 	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
 		return nil
