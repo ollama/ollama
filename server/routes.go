@@ -840,23 +840,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 // SystemOneHandler compiles typed questions, scores their allowed answers, and
 // returns probabilities. Callers must select weights trained for the prompt format.
+// Pointer-head models are not letter-scored; see handlePointerSystemOne.
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
-	var req decision.Request
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// Pointer-head requests may carry a longer state, so the transport cap is
+	// 1 MiB. Letter-token models keep the existing 64 KiB application limit.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		var sizeErr *http.MaxBytesError
 		if errors.As(err, &sizeErr) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB"})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 1 MiB"})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	compiled, err := decision.Compile(req)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	var req decision.Request
+	if err := json.Unmarshal(body, &req); err != nil || len(bytes.TrimSpace(body)) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
@@ -876,6 +879,19 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	m, err := GetModel(name.String())
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+	if decision.IsPointerFamily(m.Config.ModelFamily, m.Config.ModelFamilies) {
+		s.handlePointerSystemOne(c, req)
+		return
+	}
+	if len(body) > 64<<10 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB"})
+		return
+	}
+	compiled, err := decision.Compile(req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if !m.isGGUF() {
