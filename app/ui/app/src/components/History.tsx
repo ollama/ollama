@@ -161,18 +161,19 @@ export function History({
                 {error.message}
               </p>
             )}
-            {result && !isExporting && (
-              <p
-                role="status"
-                className="mb-3 text-sm text-neutral-500 dark:text-neutral-400"
-              >
-                Export complete.
-              </p>
-            )}
-            {lastModel && (
-              <p className="mb-2 pt-3 break-all text-right text-xs text-neutral-500 dark:text-neutral-400">
-                Last used: {lastModel}
-              </p>
+            {(lastModel || (result && !isExporting)) && (
+              <div className="mb-2 flex items-baseline justify-between gap-3 pt-3 text-xs text-neutral-500 dark:text-neutral-400">
+                {result && !isExporting && (
+                  <p role="status" className="shrink-0">
+                    Export complete.
+                  </p>
+                )}
+                {lastModel && (
+                  <p className="ml-auto min-w-0 break-all text-right">
+                    Last used: {lastModel}
+                  </p>
+                )}
+              </div>
             )}
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-neutral-200 bg-white px-4 py-3 dark:border-neutral-700 dark:bg-neutral-900">
               <p className="min-w-0 flex-1 text-sm text-neutral-500 dark:text-neutral-400">
