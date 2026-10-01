@@ -685,7 +685,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			// a tool message is a single result, so keep its parts together and
 			// preserve the tool call it answers
-			if strings.ToLower(msg.Role) == "tool" && len(messages) > start {
+			if strings.ToLower(msg.Role) == "tool" && (len(messages) > start || toolName != "" || msg.ToolCallID != "") {
 				tool := api.Message{Role: msg.Role, ToolName: toolName, ToolCallID: msg.ToolCallID}
 				for _, part := range messages[start:] {
 					tool.Content += part.Content

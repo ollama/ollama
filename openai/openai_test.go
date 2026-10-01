@@ -211,6 +211,31 @@ func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"screenshot","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":[]},
+		{"role":"tool","content":[]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// the empty result without a call id or name is skipped
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "screenshot" || tool.Content != "" {
+		t.Errorf("expected empty tool message for call_1/screenshot, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
