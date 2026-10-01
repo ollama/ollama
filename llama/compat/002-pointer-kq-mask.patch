@@ -1,0 +1,61 @@
+diff --git a/include/llama.h b/include/llama.h
+index e808fa9..bb21c40 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -1110,6 +1110,15 @@ extern "C" {
+     // Returns whether the context is currently using causal attention
+     LLAMA_API bool llama_get_causal_attn(const struct llama_context * ctx);
+ 
++    // Install a pointer-head segment mask for this context. n == 0 clears it.
++    // The next llama_decode of exactly these n tokens, one sequence, on an
++    // empty cache, writes the mask into the attention graph's KQ input.
++    // Segment 0 is bidirectional state. A positive segment is one isolated
++    // causal question branch. This does not load a pointer head and does not
++    // letter-score. Other models are unchanged when no segments are set.
++    LLAMA_API void llama_set_pointer_segments(struct llama_context * ctx, const int32_t * seg, int32_t n, bool state_bidir);
++    LLAMA_API int32_t llama_pointer_mask_status(void);
++
+     // Set whether the model is in warmup mode or not
+     // If true, all model tensors are activated during llama_decode() to load and cache their weights.
+     //
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index 88851c6..6cdc91a 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -4356,10 +4356,15 @@ int32_t llama_encode(
+     return ret;
+ }
+ 
++void llama_pointer_bind(struct llama_context * ctx);
++void llama_pointer_unbind(void);
++
+ int32_t llama_decode(
+         llama_context * ctx,
+           llama_batch   batch) {
++    llama_pointer_bind(ctx);
+     const int ret = ctx->decode(batch);
++    llama_pointer_unbind();
+     if (ret != 0 && ret != 1) {
+         LLAMA_LOG_ERROR("%s: failed to decode, ret = %d\n", __func__, ret);
+     }
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 1c93f90..1c61a8c 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -4,6 +4,7 @@
+ #include "llama-io.h"
+ #include "llama-model.h"
+ #include "llama-context.h"
++#include "pointer_mask.h"
+ 
+ #include <algorithm>
+ #include <cassert>
+@@ -1781,6 +1782,8 @@ void llama_kv_cache::set_input_kq_mask(ggml_tensor * dst, const llama_ubatch * u
+     } else {
+         set_input_kq_mask_impl<float>(args, (float *) dst->data, causal_attn);
+     }
++    // Pointer-head models replace the causal fill. No-op unless segments were set.
++    llama_pointer_apply_kq_mask(dst, ubatch);
+ 
+     //const int64_t t_end = ggml_time_us();
+ 

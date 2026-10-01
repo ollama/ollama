@@ -117,6 +117,8 @@ See the [API reference](/api/systemone) for request fields, limits, errors, and 
 
 Nimble and Tev are scored by reading the next-token logits of the letters `A` through `Z`. That is not the only way to implement this API.
 
-A pointer-head model, such as a model whose family is `pointer-head`, scores hidden states at a decision marker and at each option marker. Converting only its backbone to GGUF and sending it through the letter-token path loads a file, then returns probabilities for the wrong tokens. Ollama refuses that fallback.
+A pointer-head model, such as a model whose family is `pointer-head`, scores hidden states at a decision marker and at each option marker. Its attention graph is not causal: state tokens attend to every state token, and each question branch attends only to the state and to itself. Converting only its backbone to GGUF and sending it through the letter-token path loads a file, then returns probabilities for the wrong tokens. Ollama refuses that fallback.
+
+llama.cpp writes that mask into the KQ input of the existing Qwen3 attention graph when `llama_set_pointer_segments` is set for the decode. That call does not load safetensors or `head.pt`. Until a runner invokes it, this endpoint still does not score the model itself.
 
 To serve such a model through this endpoint today, run its pointer-head server on a loopback address and set `OLLAMA_POINTER_RUNNER` to that URL. Ollama forwards the original request and returns the runner's response. It does not letter-score the model. Native loading of pointer-head checkpoints is not part of this release.
