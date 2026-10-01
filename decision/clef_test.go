@@ -1,4 +1,4 @@
-package renderers
+package decision
 
 import (
 	"encoding/json"
@@ -7,24 +7,21 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/llm"
 )
 
-func TestClefRenderer(t *testing.T) {
-	var req decision.Request
+func TestEncodeClef(t *testing.T) {
+	var req Request
 	if err := json.Unmarshal([]byte(`{"model":"renamed-model","state":{"z":2,"a":"café & <x>"},"questions":{"team":{"type":"choice","instructions":"Route it","criteria":{"z":null,"a":"First"}},"yes":{"type":"noul","instructions":{"z":2,"a":1}},"rating":{"type":"score","instructions":"Rate it","criteria":["Low","High"]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	c, err := decision.Compile(req)
+	c, err := Compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Re-rendering must retain the same answer order, including true/false.
+	// Re-encoding must retain the same answer order, including true/false.
 	for range 2 {
-		if err := c.RenderDecision(func(fields []*decision.Field) (llm.ScoreRequest, error) {
-			return RenderDecisionWithRenderer("clef", req, fields)
-		}); err != nil {
+		if err := c.EncodeClef(req); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,25 +56,10 @@ func TestClefRenderer(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := response.Answers.Get("team")
-	choice := a.(decision.ChoiceAnswer)
+	choice := a.(ChoiceAnswer)
 	n, _ := response.Answers.Get("yes")
-	yes := n.(decision.NoulAnswer)
+	yes := n.(NoulAnswer)
 	if choice.Choice != "a" || math.Abs(choice.Confidence-0.4729346589968384) > 1e-8 || yes.Noul < 0.88 || response.Usage.OutputTokens != 0 {
 		t.Fatalf("incorrect joint answer: %+v %+v", choice, yes)
-	}
-}
-
-func TestClefRendererLookup(t *testing.T) {
-	Register("test-decision", func() Renderer { return &ClefRenderer{} })
-	t.Cleanup(func() { delete(registry.renderers, "test-decision") })
-	for _, name := range []string{"clef", "test-decision"} {
-		if _, ok := rendererForName(name).(*ClefRenderer); !ok {
-			t.Fatalf("renderer %q did not resolve to ClefRenderer", name)
-		}
-	}
-	for _, name := range []string{"unknown", "qwen3.5"} {
-		if _, err := RenderDecisionWithRenderer(name, decision.Request{}, nil); err == nil {
-			t.Fatalf("accepted renderer %q without decision support", name)
-		}
 	}
 }

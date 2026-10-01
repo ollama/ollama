@@ -1,4 +1,4 @@
-package renderers
+package decision
 
 import (
 	"bytes"
@@ -7,26 +7,16 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/types/model"
 )
 
-// ClefRenderer implements Cloudflare's encode_record format. Each
-// segment is tokenized separately to preserve question and option boundaries.
-type ClefRenderer struct{}
-
-func (*ClefRenderer) Thinking() *model.Thinking { return nil }
-func (*ClefRenderer) LeadingBOS() string        { return "" }
-func (*ClefRenderer) Render([]api.Message, []api.Tool, *api.ThinkValue) (string, error) {
-	return "", fmt.Errorf("decision renderer requires state and questions")
-}
-
-func (*ClefRenderer) RenderDecision(req decision.Request, fields []*decision.Field) (llm.ScoreRequest, error) {
+// EncodeClef prepares the request validated by Compile for Clef's decision head.
+// It preserves the reference encoder's segment boundaries and retains its choice
+// order for the shared answer decoder.
+func (c *Compiled) EncodeClef(req Request) error {
 	state, err := clefContent(req.State)
 	if err != nil {
-		return llm.ScoreRequest{}, err
+		return err
 	}
 	input := llm.ScoreRequest{}
 	add := func(text string) [2]int {
@@ -37,11 +27,12 @@ func (*ClefRenderer) RenderDecision(req decision.Request, fields []*decision.Fie
 	add("<|im_start|>system\nRead the complete state and schema. Decide every field jointly. Each answer must be exactly one of that field's allowed options.<|im_end|>\n<|im_start|>user\nSTATE:\n")
 	add(state)
 	add("\n\nSCHEMA FIELDS:\n")
-	for i, f := range fields {
+	for i := range c.fields {
+		f := &c.fields[i]
 		q, _ := req.Questions.Get(f.Name)
 		description, err := clefContent(q.Instructions)
 		if err != nil {
-			return llm.ScoreRequest{}, err
+			return err
 		}
 		add(fmt.Sprintf("\nFIELD %d\nID: %s\nTYPE: %s\nINSTRUCTION: ", i+1, f.Name, q.Type))
 		field := llm.ScoreField{Question: add(description)}
@@ -60,7 +51,7 @@ func (*ClefRenderer) RenderDecision(req decision.Request, fields []*decision.Fie
 			f.Choices[1].Description = descriptions["false"]
 		case "choice":
 			field.Type = 1
-			slices.SortFunc(f.Choices, func(a, b decision.Choice) int { return strings.Compare(a.Value.(string), b.Value.(string)) })
+			slices.SortFunc(f.Choices, func(a, b Choice) int { return strings.Compare(a.Value.(string), b.Value.(string)) })
 		case "score":
 			field.Type = 2
 		}
@@ -78,7 +69,7 @@ func (*ClefRenderer) RenderDecision(req decision.Request, fields []*decision.Fie
 			}
 			raw, err := clefJSON(semantics)
 			if err != nil {
-				return llm.ScoreRequest{}, err
+				return err
 			}
 			field.Options = append(field.Options, add(raw))
 			add("\n")
@@ -87,7 +78,9 @@ func (*ClefRenderer) RenderDecision(req decision.Request, fields []*decision.Fie
 		input.Fields = append(input.Fields, field)
 	}
 	add("\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nJOINT SCHEMA DECISIONS:")
-	return input, nil
+	c.Request = input
+	c.messages = nil
+	return nil
 }
 
 func clefJSON(value any) (string, error) {
