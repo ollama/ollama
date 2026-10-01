@@ -58,4 +58,6 @@ set(OLLAMA_LLAMA_CPP_COMPAT_SOURCES
     "${_compat_dir}/llama-ollama-compat.cpp"
     "${_compat_dir}/llama-ollama-compat-util.h"
     "${_compat_dir}/llama-ollama-compat-util.cpp"
+    "${_compat_dir}/pointer_mask.cpp"
+    "${_compat_dir}/pointer_mask.h"
     CACHE INTERNAL "Source files linked into llama.cpp targets")
