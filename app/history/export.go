@@ -55,9 +55,21 @@ func Export(chat store.Chat, parent string) (*Result, error) {
 	if parent == "" {
 		return nil, fmt.Errorf("choose a folder for the export")
 	}
-	directory, err := os.MkdirTemp(parent, "ollama-"+chatFilename(chat)+"-")
-	if err != nil {
-		return nil, err
+	name := chatFilename(chat)
+	if !filepath.IsLocal(name) {
+		// Windows reserves names such as CON and NUL.
+		name = "_" + name
+	}
+	directory := filepath.Join(parent, name)
+	for n := 2; ; n++ {
+		err := os.Mkdir(directory, 0o700)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		directory = filepath.Join(parent, fmt.Sprintf("%s (%d)", name, n))
 	}
 	warnings, err := writeChat(context.Background(), chat, func(name string, data []byte) error {
 		path := filepath.Join(directory, filepath.FromSlash(name))

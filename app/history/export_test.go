@@ -116,8 +116,8 @@ func TestExportPreservesConversationAndFiles(t *testing.T) {
 		t.Fatal("continuation instructions should be in the README")
 	}
 	second, err := Export(chat, parent)
-	if err != nil || second.Path == result.Path {
-		t.Fatalf("second export overwrote the first: %+v, %v", second, err)
+	if err != nil || second.Path != result.Path+" (2)" {
+		t.Fatalf("second export should use a numbered copy: %+v, %v", second, err)
 	}
 	if !bytes.Equal(read("conversation.md"), mustRead(t, filepath.Join(second.Path, "conversation.md"))) {
 		t.Fatal("repeated export changed the original")
@@ -240,6 +240,9 @@ func TestExportKeepsRepeatedMessagesAndEmptyRepliesReadable(t *testing.T) {
 	}}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Base(result.Path) != "tell_me_about_ollama" {
+		t.Fatalf("export folder should use the chat name: %s", result.Path)
 	}
 	markdown := string(mustRead(t, filepath.Join(result.Path, "conversation.md")))
 	if !strings.HasPrefix(markdown, "# tell me about ollama\n") || strings.Count(markdown, "> tell me about ollama\n") != 2 || !strings.Contains(markdown, "## 3. Assistant\n\nModel: gemma4:26b\n\n_No content was saved for this message._") {
