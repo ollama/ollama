@@ -1622,13 +1622,15 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Template:     m.Template.String(),
 		Details:      modelDetails,
 		Messages:     msgs,
-		Capabilities: m.Capabilities(),
-		Thinking:     m.Thinking(),
+		Capabilities: publicCapabilities(m.Capabilities()),
 		ModifiedAt:   mf.FileInfo().ModTime(),
 		Requires:     m.Config.Requires,
 		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
 		// default we return an empty map.
 		ModelInfo: make(map[string]any),
+	}
+	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
+		resp.Thinking = m.Thinking()
 	}
 
 	if m.Config.RemoteHost != "" {
