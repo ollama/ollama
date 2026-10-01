@@ -51,36 +51,12 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	switch encoding {
-	case "":
-	case "clef":
-		if err := c.encodeClef(req); err != nil {
-			return nil, err
-		}
-		return c, nil
-	default:
+	encode := encoderFor(encoding)
+	if encode == nil {
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
-	data, err := json.Marshal(struct {
-		Context string          `json:"context"`
-		Schema  []compiledField `json:"schema"`
-	}{context, c.fields})
-	if err != nil {
+	if err := encode(req, c); err != nil {
 		return nil, err
-	}
-	for _, f := range c.fields {
-		name, err := json.Marshal(f.Name)
-		if err != nil {
-			return nil, err
-		}
-		c.messages = append(c.messages, []api.Message{
-			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
-		})
-		var row llm.ScoreRow
-		for _, choice := range f.Choices {
-			row.Candidates = append(row.Candidates, choice.Code)
-		}
-		c.Request.Rows = append(c.Request.Rows, row)
 	}
 	return c, nil
 }

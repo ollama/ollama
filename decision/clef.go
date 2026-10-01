@@ -13,7 +13,7 @@ import (
 // encodeClef prepares the request validated by Compile using Clef's input format.
 // It preserves the reference encoder's segment boundaries and retains its choice
 // order for the shared answer decoder.
-func (c *Compiled) encodeClef(req Request) error {
+func encodeClef(req Request, c *Compiled) error {
 	state, err := clefContent(req.State)
 	if err != nil {
 		return err
