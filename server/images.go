@@ -159,6 +159,15 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
+// publicCapabilities hides a decision model's other capabilities from show and
+// list so clients don't offer it for general chat. Serving still uses Capabilities.
+func publicCapabilities(capabilities []model.Capability) []model.Capability {
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		return []model.Capability{model.CapabilityDecision}
+	}
+	return capabilities
+}
+
 func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
