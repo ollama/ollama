@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -64,6 +65,9 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
+		if modelConfig.name == "renamed-clef" {
+			caps = append(caps, "vision")
+		}
 		if modelConfig.undeclared {
 			caps = []string{"completion"}
 		}
@@ -109,6 +113,9 @@ func TestSystemOneHandler(t *testing.T) {
 		expire bool
 	}{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
+		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -178,6 +185,9 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatalf("runner keep-alive=%v, want %v", duration, want)
 				}
 			}
+			if tt.name == "Clef image above text body limit" && (len(runner.request.Images) != 1 || len(runner.request.Images[0]) != 70<<10) {
+				t.Fatal("images were not passed to scoring")
+			}
 			if tt.status == 200 {
 				var response struct {
 					Answers map[string]struct {
@@ -196,7 +206,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
 				if len(runner.request.Fields) > 0 {
-					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 1024 {
+					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 2048 {
 						t.Fatal("invalid joint scoring request")
 					}
 					return

@@ -57,3 +57,18 @@ func TestCompileClef(t *testing.T) {
 		t.Fatalf("incorrect joint answer: %+v %+v", choice, yes)
 	}
 }
+
+func TestCompileClefImages(t *testing.T) {
+	req := testRequest(t)
+	req.Images = []api.ImageData{[]byte("first image"), []byte("second image")}
+	c, err := Compile(req, "clef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Request.ImagePosition != 1 || len(c.Request.Images) != 2 || string(c.Request.Images[1]) != "second image" {
+		t.Fatalf("images were not preserved before state: %+v", c.Request)
+	}
+	if _, err := Compile(req, ""); err == nil {
+		t.Fatal("candidate scoring silently ignored images")
+	}
+}

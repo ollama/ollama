@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -331,10 +332,30 @@ func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest)
 		}
 		fields[i] = ScoreField{Type: f.Type, Question: spans[0], Options: spans[1:]}
 	}
+	var images []api.ImageData
+	for _, image := range input.Images {
+		data, err := llamaServerMediaBytes(image)
+		if err != nil {
+			return bad(err.Error())
+		}
+		if !strings.HasPrefix(http.DetectContentType(data), "image/") {
+			return bad("invalid decision image")
+		}
+		images = append(images, data)
+	}
+	imagePosition := 0
+	if len(images) > 0 {
+		if input.ImagePosition < 0 || input.ImagePosition >= len(offsets) {
+			return bad("invalid image position")
+		}
+		imagePosition = offsets[input.ImagePosition]
+	}
 	request := struct {
-		Input  []int        `json:"input"`
-		Fields []ScoreField `json:"score_fields"`
-	}{tokens, fields}
+		Images        []api.ImageData `json:"images,omitempty"`
+		ImagePosition int             `json:"image_position"`
+		Input         []int           `json:"input"`
+		Fields        []ScoreField    `json:"score_fields"`
+	}{images, imagePosition, tokens, fields}
 	var result []struct {
 		Logits [][]float32 `json:"logits"`
 		Tokens int         `json:"tokens_evaluated"`
@@ -342,7 +363,7 @@ func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest)
 	if err := s.scoreRequest(ctx, "/embedding", request, &result); err != nil {
 		return ScoreResponse{}, err
 	}
-	if len(result) != 1 || result[0].Tokens != len(tokens) || len(result[0].Logits) != len(fields) {
+	if len(result) != 1 || result[0].Tokens > input.MaxTokens || (len(images) == 0 && result[0].Tokens != len(tokens)) || (len(images) > 0 && result[0].Tokens <= len(tokens)) || len(result[0].Logits) != len(fields) {
 		return ScoreResponse{}, fmt.Errorf("decision runner did not score the complete request")
 	}
 	return ScoreResponse{Logits: result[0].Logits, InputTokens: result[0].Tokens}, nil

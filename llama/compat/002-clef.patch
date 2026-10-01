@@ -92,7 +92,70 @@
  #include "server-chat.h"
  #include "server-common.h"
  #include "server-http.h"
-@@ -849,6 +850,7 @@
+@@ -247,6 +248,7 @@
+     // multimodal
+     mtmd_context * mctx = nullptr;
+     mtmd::batch_ptr mbatch = nullptr;
++    std::vector<std::vector<float>> score_embeddings;
+
+     // speculative decoding
+     common_speculative * spec;
+@@ -370,6 +372,7 @@
+         SLT_DBG(*this, "%s", "\n");
+
+         spec_is_replay = false;
++        score_embeddings.clear();
+
+         last_nl_pos    = 0;
+         generated_text = "";
+@@ -428,6 +431,18 @@
+
+         SLT_TRC(*this, "init sampler, took %0.2f ms, tokens: text = %d, total = %d\n",
+                 (ggml_time_us() - t_start) / 1000.0, n_text, (int) prompt.tokens.size());
++    }
++
++    void collect_score_embeddings(const llama_batch & batch) {
++        if (!task || task->score_fields.is_null()) return;
++        // Embedding mode returns every token, including image tokens with logits disabled.
++        const int width = llama_model_n_embd_out(llama_get_model(ctx_tgt));
++        for (int i = 0; i < batch.n_tokens; ++i) {
++            if (batch.seq_id[i][0] != id) continue;
++            const float * row = llama_get_embeddings_ith(ctx_tgt, i);
++            if (!row) throw std::runtime_error("decision model did not return hidden states");
++            score_embeddings.emplace_back(row, row + width);
++        }
+     }
+
+     bool need_embd() const {
+@@ -748,9 +763,7 @@
+ // returns 0 on success
+ // caller need to update prompt.tokens after a successful call to keep track of the processing progress
+ // note: this is not a member of server_slot because we want to run it inside yield_to_queue
+-//       slot is passed as const to avoid accidental modification of the slot state
+-//       some pointers are allowed to be used, they are not used by to_json()
+-static int process_mtmd_chunk(const server_slot & slot, mtmd::batch_ptr & mbatch, size_t idx, size_t & n_tokens_out) {
++static int process_mtmd_chunk(server_slot & slot, mtmd::batch_ptr & mbatch, size_t idx, size_t & n_tokens_out) {
+     GGML_ASSERT(slot.mctx);
+     const auto & mctx = slot.mctx;
+     const auto & input_tokens = slot.task->tokens;
+@@ -761,12 +774,11 @@
+         if (mbatch) {
+             float * embd = mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
+             if (embd) {
+-                void * cb_data = slot.spec;
++                void * cb_data = &slot;
+                 static auto cb = [](llama_batch batch, void * user_data) {
+-                    common_speculative * spec = static_cast<common_speculative *>(user_data);
+-                    if (!common_speculative_process(spec, batch)) {
+-                        return 1;
+-                    }
++                    auto & slot = *static_cast<server_slot *>(user_data);
++                    if (!common_speculative_process(slot.spec, batch)) return 1;
++                    slot.collect_score_embeddings(batch);
+                     return 0;
+                 };
+
+@@ -849,6 +861,7 @@
      //  - when not in sleeping state
      //  - and, with thread-safe APIs (e.g., tokenizer calls)
      llama_model * model_tgt = nullptr;
@@ -100,30 +163,75 @@
 
      mtmd_context * mctx = nullptr;
      // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
-@@ -2200,6 +2202,16 @@
-             res->embedding.emplace_back(embd, embd + n_embd_out);
-         }
-
+@@ -2166,6 +2179,20 @@
+         res->index     = slot.task->index;
+         res->n_tokens  = slot.task->n_tokens();
+         res->res_type  = slot.task->params.res_type;
++
 +        if (!slot.task->score_fields.is_null()) {
 +            try {
 +                if (!clef) clef.reset(new clef_head(params_base.model.path));
-+                res->score_logits = clef->score(res->embedding, slot.task->tokens.get_tokens(), slot.task->score_fields);
-+                res->embedding.clear();
++                llama_tokens tokens;
++                for (size_t i = 0; i < slot.task->tokens.size(); ++i) tokens.push_back(slot.task->tokens[i]);
++                res->score_logits = clef->score(slot.score_embeddings, tokens, slot.task->score_fields);
 +            } catch (const std::exception & e) {
 +                send_error(slot, e.what(), ERROR_TYPE_SERVER);
 +                return;
 +            }
++            queue_results.send(std::move(res));
++            return;
 +        }
-         SLT_DBG(slot, "%s", "sending embeddings\n");
 
-         queue_results.send(std::move(res));
-@@ -5466,6 +5478,10 @@
+         const int n_embd_out = llama_model_n_embd_out(model_tgt);
+
+@@ -3814,6 +3841,7 @@
+         };
+
+         iterate(slots, [&](server_slot & slot) {
++            slot.collect_score_embeddings(batch_view);
+             // optionally send prompt processing progress
+             if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_DONE_PROMPT) {
+                 if (slot.task->params.stream && slot.task->params.return_progress) {
+@@ -5466,6 +5494,43 @@
              // OAI-compat
              task.params.res_type = res_type;
              task.params.embd_normalize = embd_normalize;
 +            if (body.contains("score_fields")) {
 +                task.score_fields = body.at("score_fields");
 +                task.params.cache_prompt = false; // the head needs every hidden state
++                if (body.contains("images") && !body.at("images").empty()) {
++                    if (!ctx_server.mctx) throw std::invalid_argument("model does not support images");
++                    const auto & text = task.tokens.get_tokens();
++                    const int position = body.at("image_position").get<int>();
++                    if (position < 0 || size_t(position) > text.size()) throw std::invalid_argument("invalid image position");
++                    std::string markers;
++                    for (size_t j = 0; j < body.at("images").size(); ++j) markers += mtmd_get_marker(ctx_server.mctx);
++                    auto media_inputs = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx,
++                        json{{"prompt_string", markers + "\n"}, {"multimodal_data", body.at("images")}}, true, true, ctx_server.init_opt);
++                    auto & media = media_inputs[0];
++                    if (text.size() + media.size() > size_t(meta->slot_n_ctx)) throw std::invalid_argument("decision prompt exceeds the model context (input is never truncated)");
++                    server_tokens input(llama_tokens(text.begin(), text.begin() + position), true);
++                    for (size_t j = 0; j < media.size();) {
++                        if (media[j] == LLAMA_TOKEN_NULL) {
++                            const auto & chunk = media.find_chunk(j);
++                            input.push_back(chunk.get());
++                            j += mtmd_input_chunk_get_n_tokens(chunk.get());
++                        } else {
++                            input.push_back(media[j++]);
++                        }
++                    }
++                    input.insert(llama_tokens(text.begin() + position, text.end()));
++                    for (auto & field : task.score_fields) {
++                        auto shift = [&](json & span) {
++                            const int start = span.at(0).get<int>(), end = span.at(1).get<int>();
++                            if (start < position && end > position) throw std::invalid_argument("image splits a scoring span");
++                            if (start >= position) span = json::array({start + media.size(), end + media.size()});
++                        };
++                        shift(field.at("question"));
++                        for (auto & option : field.at("options")) shift(option);
++                    }
++                    task.tokens = std::move(input);
++                }
 +            }
 
              tasks.push_back(std::move(task));

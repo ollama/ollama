@@ -1,6 +1,10 @@
 package llm
 
-import "context"
+import (
+	"context"
+
+	"github.com/ollama/ollama/api"
+)
 
 // Scorer is an optional runner capability for bounded decision scoring.
 // Inputs are already encoded; no chat template or generation options apply.
@@ -10,10 +14,12 @@ type Scorer interface {
 
 // ScoreRequest uses either prompt Rows or Segments and Fields for a decision head.
 type ScoreRequest struct {
-	Rows      []ScoreRow   `json:"rows,omitempty"`
-	Segments  []string     `json:"segments,omitempty"`
-	Fields    []ScoreField `json:"fields,omitempty"`
-	MaxTokens int          `json:"max_tokens"`
+	Rows          []ScoreRow      `json:"rows,omitempty"`
+	Segments      []string        `json:"segments,omitempty"`
+	Fields        []ScoreField    `json:"fields,omitempty"`
+	MaxTokens     int             `json:"max_tokens"`
+	Images        []api.ImageData `json:"images,omitempty"`
+	ImagePosition int             `json:"image_position,omitempty"` // Segment boundary at which images are inserted.
 }
 
 type ScoreRow struct {

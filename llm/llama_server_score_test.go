@@ -421,7 +421,7 @@ func TestLlamaServerScoreCancellation(t *testing.T) {
 }
 
 func TestLlamaServerScoreFields(t *testing.T) {
-	for _, failure := range []string{"", "truncated", "missing head", "malformed JSON", "upstream error", "too long", "invalid span", "max exceeds context", "empty fields", "canceled"} {
+	for _, failure := range []string{"", "truncated", "missing head", "malformed JSON", "upstream error", "too long", "invalid span", "max exceeds context", "empty fields", "canceled", "image", "image over context", "invalid image", "invalid image position"} {
 		t.Run(failure, func(t *testing.T) {
 			calls := 0
 			mux := http.NewServeMux()
@@ -447,8 +447,10 @@ func TestLlamaServerScoreFields(t *testing.T) {
 			mux.HandleFunc("/embedding", func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				var input struct {
-					Input  []int        `json:"input"`
-					Fields []ScoreField `json:"score_fields"`
+					Input         []int           `json:"input"`
+					Fields        []ScoreField    `json:"score_fields"`
+					Images        []api.ImageData `json:"images"`
+					ImagePosition int             `json:"image_position"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 					t.Fatal(err)
@@ -457,6 +459,13 @@ func TestLlamaServerScoreFields(t *testing.T) {
 					t.Errorf("wrong token spans: %+v", input)
 				}
 				switch failure {
+				case "image":
+					if len(input.Images) != 1 || input.ImagePosition != 2 {
+						t.Errorf("missing image or wrong image position: %+v", input)
+					}
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":11}]`)
+				case "image over context":
+					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":17}]`)
 				case "upstream error":
 					w.WriteHeader(http.StatusInternalServerError)
 					fmt.Fprint(w, `{"error":{"message":"out of memory"}}`)
@@ -478,6 +487,20 @@ func TestLlamaServerScoreFields(t *testing.T) {
 			defer cancel()
 			invalid := true
 			switch failure {
+			case "image", "image over context", "invalid image", "invalid image position":
+				input.Images = []api.ImageData{{137, 80, 78, 71, 13, 10, 26, 10}}
+				input.ImagePosition = 1
+				if failure == "invalid image" {
+					input.Images[0] = []byte("not an image")
+				}
+				if failure == "invalid image position" {
+					input.ImagePosition = 99
+				}
+				if failure == "image" || failure == "image over context" {
+					invalid = false
+					input.MaxTokens = 16
+					runner.options.NumCtx = 16
+				}
 			case "too long":
 				input.MaxTokens = 6
 			case "invalid span":
@@ -492,8 +515,12 @@ func TestLlamaServerScoreFields(t *testing.T) {
 				invalid = false
 			}
 			result, err := runner.Score(ctx, input)
-			if failure == "" {
-				if err != nil || result.InputTokens != 7 || result.OutputTokens != 0 {
+			if failure == "" || failure == "image" {
+				wantTokens := 7
+				if failure == "image" {
+					wantTokens = 11
+				}
+				if err != nil || result.InputTokens != wantTokens || result.OutputTokens != 0 {
 					t.Fatalf("result=%+v err=%v", result, err)
 				}
 			} else if err == nil {

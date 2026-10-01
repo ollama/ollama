@@ -14,6 +14,7 @@ type Questions = orderedmap.Map[string, Question]
 type Request struct {
 	Model     string          `json:"model"`
 	State     json.RawMessage `json:"state"`
+	Images    []api.ImageData `json:"images,omitempty"`
 	Questions *Questions      `json:"questions"`
 	KeepAlive *api.Duration   `json:"keep_alive,omitempty"`
 }

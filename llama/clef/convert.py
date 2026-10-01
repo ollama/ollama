@@ -2,6 +2,7 @@
 """Convert Cloudflare Clef with its trained joint head, using pinned llama.cpp.
 
 Usage: python convert.py --llama-cpp build/llama-src MODEL --outtype q8_0 --outfile MODEL.gguf
+For the vision projector, add --mmproj --outtype f16 and use a separate output file.
 All remaining arguments are passed to convert_hf_to_gguf.py.
 """
 import argparse

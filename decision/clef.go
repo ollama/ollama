@@ -18,7 +18,7 @@ func encodeClef(req Request, c *Compiled) error {
 	if err != nil {
 		return err
 	}
-	input := llm.ScoreRequest{}
+	input := llm.ScoreRequest{Images: req.Images, ImagePosition: 1}
 	add := func(text string) [2]int {
 		n := len(input.Segments)
 		input.Segments = append(input.Segments, text)

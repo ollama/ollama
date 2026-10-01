@@ -53,6 +53,9 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	}
 	switch encoding {
 	case "":
+		if len(req.Images) > 0 {
+			return nil, fmt.Errorf("this decision model does not support images")
+		}
 	case "clef":
 		if err := encodeClef(req, c); err != nil {
 			return nil, err
