@@ -2963,7 +2963,8 @@ func TestCreateClefDecisionHead(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture": "qwen35",
-	}, []*gguftest.Tensor{{Name: "clef.hidden_norm.weight", Shape: []uint64{4}}})
+		"qwen35.decision.type": "clef",
+	}, nil)
 	s := &Server{}
 	for _, req := range []api.CreateRequest{
 		{Model: "custom-decision", Files: map[string]string{"model.gguf": digest}, Stream: &stream},
@@ -2977,7 +2978,7 @@ func TestCreateClefDecisionHead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m.decisionEncoding() != "clef" || !slices.Contains(m.Capabilities(), model.CapabilityDecision) {
+		if m.metadata.String("decision.type") != "clef" || !slices.Contains(m.Capabilities(), model.CapabilityDecision) {
 			t.Fatalf("encoding/capability not preserved: %+v", m.Config)
 		}
 	}

@@ -34,9 +34,6 @@ type ggufMetadata struct {
 	// on load means the file is not ours, and an all-omitted file is still
 	// usable.
 	KV map[string]any `json:"kv"`
-	// Tensor names allow model features to be detected without reopening the blob.
-	// Nil means an older cache entry that needs to be extracted again.
-	TensorNames []string `json:"tensors"`
 	// Keys present in the file whose values were too large to copy.
 	Omitted []string `json:"omitted,omitempty"`
 }
@@ -148,9 +145,6 @@ func loadGGUFMetadata(path string) (ggufMetadata, bool) {
 	md, err := decodeGGUFMetadata(data)
 	if err != nil {
 		slog.Debug("ignoring unusable gguf metadata file", "path", path, "error", err)
-		return ggufMetadata{}, false
-	}
-	if md.TensorNames == nil {
 		return ggufMetadata{}, false
 	}
 	return md, true
@@ -283,10 +277,6 @@ func scanGGUFMetadata(path string) (ggufMetadata, error) {
 	}
 
 	md := ggufMetadata{KV: make(map[string]any)}
-	md.TensorNames = make([]string, 0, metadata.NumTensors())
-	for _, tensor := range metadata.TensorInfos() {
-		md.TensorNames = append(md.TensorNames, tensor.Name)
-	}
 	omitted := metadata.OmittedKeys()
 	for key, value := range metadata.Values() {
 		if slices.Contains(omitted, key) {

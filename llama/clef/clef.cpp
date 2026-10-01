@@ -121,17 +121,21 @@ struct clef_head::impl {
         try {
             meta = gguf_init_from_file(path.c_str(), {true, &tensors});
             require(meta && tensors && file.good(), "Clef: cannot open model");
-            auto integer = [&](const char *key) {
-                int i = gguf_find_key(meta, key);
+            const int arch_key = gguf_find_key(meta, "general.architecture");
+            require(arch_key >= 0 && gguf_get_kv_type(meta, arch_key) == GGUF_TYPE_STRING,
+                    "Clef: missing architecture");
+            const std::string prefix = std::string(gguf_get_val_str(meta, arch_key)) + ".decision.";
+            auto integer = [&](const std::string &key) {
+                int i = gguf_find_key(meta, (prefix + key).c_str());
                 require(i >= 0 && gguf_get_kv_type(meta, i) == GGUF_TYPE_UINT32,
                         "Clef: missing head configuration");
                 return int(gguf_get_val_u32(meta, i));
             };
-            hidden = integer("clef.hidden_size");
-            width = integer("clef.width");
-            heads = integer("clef.heads");
-            routing_layers = integer("clef.routing_layers");
-            layers = integer("clef.layers");
+            hidden = integer("hidden_size");
+            width = integer("width");
+            heads = integer("heads");
+            routing_layers = integer("routing_layers");
+            layers = integer("layers");
             require(hidden > 0 && hidden <= 16384 && width > 0 && width <= 4096 && heads > 0 &&
                         width % heads == 0 && routing_layers >= 0 && routing_layers <= 32 && layers >= 0 &&
                         layers <= 32,

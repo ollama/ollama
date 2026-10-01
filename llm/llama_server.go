@@ -863,11 +863,6 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
-	if len(f.Tensors().Items("clef.")) > 0 {
-		isEmbedding = true
-		// llama-server requires unpooled embeddings to fit in one batch.
-		opts.NumBatch = opts.NumCtx
-	}
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When

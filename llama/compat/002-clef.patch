@@ -1,3 +1,59 @@
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -1240,6 +1240,18 @@
+     std::vector<llama_sampler_seq_config> samplers_seq_config;
+ };
+
++common_decision_type common_get_decision_type(const llama_model * model) {
++    char value[128];
++    if (llama_model_meta_val_str(model, "general.architecture", value, sizeof(value)) < 0) {
++        return COMMON_DECISION_TYPE_NONE;
++    }
++    const std::string key = std::string(value) + ".decision.type";
++    if (llama_model_meta_val_str(model, key.c_str(), value, sizeof(value)) < 0) {
++        return COMMON_DECISION_TYPE_NONE;
++    }
++    return std::strcmp(value, "clef") == 0 ? COMMON_DECISION_TYPE_CLEF : COMMON_DECISION_TYPE_UNKNOWN;
++}
++
+ common_init_result::common_init_result(common_params & params, bool model_only) :
+     pimpl(new impl{}) {
+     auto mparams = common_model_params_to_llama(params);
+@@ -1291,6 +1303,17 @@
+     }
+
+     const llama_vocab * vocab = llama_model_get_vocab(model);
++
++    if (common_get_decision_type(model) == COMMON_DECISION_TYPE_CLEF) {
++        params.embedding = cparams.embeddings = true;
++        params.pooling_type = cparams.pooling_type = LLAMA_POOLING_TYPE_NONE;
++        // The joint head consumes every hidden state; retain the whole input.
++        const auto n_ctx = cparams.n_ctx ? cparams.n_ctx : llama_model_n_ctx_train(model);
++        params.n_batch = cparams.n_batch = n_ctx;
++        params.n_ubatch = cparams.n_ubatch = n_ctx;
++        params.n_outputs_max = cparams.n_outputs_max = n_ctx;
++        params.n_outputs_max_per_seq = cparams.n_outputs_max_per_seq = 1;
++    }
+
+     // load and optionally apply lora adapters
+     for (auto & la : params.lora_adapters) {
+--- a/common/common.h
++++ b/common/common.h
+@@ -940,6 +940,14 @@
+
+ struct common_sampler;
+
++enum common_decision_type {
++    COMMON_DECISION_TYPE_NONE,
++    COMMON_DECISION_TYPE_CLEF,
++    COMMON_DECISION_TYPE_UNKNOWN,
++};
++
++common_decision_type common_get_decision_type(const struct llama_model * model);
++
+ // note: defines the model, context, samplers, ets. lifetimes
+ struct common_init_result {
+     common_init_result(common_params & params, bool model_only = false);
 --- a/tools/server/server-task.h
 +++ b/tools/server/server-task.h
 @@ -152,6 +152,7 @@
@@ -5,16 +61,16 @@
      task_params   params;
      server_tokens tokens;
 +    common_json score_fields; // optional decision question and option spans
- 
+
      // only used by CLI, this allow tokenizing CLI inputs on server side
      // we need this because mtmd_context and vocab are not accessible outside of server_context
 @@ -452,6 +453,7 @@
  };
- 
+
  struct server_task_result_embd : server_task_result {
 +    common_json score_logits;
      std::vector<std::vector<float>> embedding;
- 
+
      int32_t n_tokens;
 --- a/tools/server/server-task.cpp
 +++ b/tools/server/server-task.cpp
@@ -41,13 +97,13 @@
      //  - and, with thread-safe APIs (e.g., tokenizer calls)
      llama_model * model_tgt = nullptr;
 +    std::unique_ptr<clef_head> clef;
- 
+
      mtmd_context * mctx = nullptr;
      // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
 @@ -2200,6 +2202,16 @@
              res->embedding.emplace_back(embd, embd + n_embd_out);
          }
- 
+
 +        if (!slot.task->score_fields.is_null()) {
 +            try {
 +                if (!clef) clef.reset(new clef_head(params_base.model.path));
@@ -59,7 +115,7 @@
 +            }
 +        }
          SLT_DBG(slot, "%s", "sending embeddings\n");
- 
+
          queue_results.send(std::move(res));
 @@ -5466,6 +5478,10 @@
              // OAI-compat
@@ -69,6 +125,6 @@
 +                task.score_fields = body.at("score_fields");
 +                task.params.cache_prompt = false; // the head needs every hidden state
 +            }
- 
+
              tasks.push_back(std::move(task));
          }
