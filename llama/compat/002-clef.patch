@@ -1,6 +1,6 @@
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1240,6 +1240,19 @@
+@@ -1240,6 +1240,18 @@
      std::vector<llama_sampler_seq_config> samplers_seq_config;
  };
  
@@ -13,25 +13,17 @@
 +    if (llama_model_meta_val_str(model, key.c_str(), value, sizeof(value)) < 0) {
 +        return COMMON_DECISION_TYPE_NONE;
 +    }
-+    if (std::strcmp(value, "pplx") == 0) return COMMON_DECISION_TYPE_PPLX;
 +    return std::strcmp(value, "clef") == 0 ? COMMON_DECISION_TYPE_CLEF : COMMON_DECISION_TYPE_UNKNOWN;
 +}
 +
  common_init_result::common_init_result(common_params & params, bool model_only) :
      pimpl(new impl{}) {
      auto mparams = common_model_params_to_llama(params);
-@@ -1291,6 +1304,25 @@
+@@ -1291,6 +1303,18 @@
      }
  
      const llama_vocab * vocab = llama_model_get_vocab(model);
 +
-+    if (common_get_decision_type(model) == COMMON_DECISION_TYPE_PPLX) {
-+        params.embedding = cparams.embeddings = true;
-+        cparams.ctx_type = LLAMA_CONTEXT_TYPE_DECISION;
-+        params.pooling_type = cparams.pooling_type = LLAMA_POOLING_TYPE_LAST;
-+        // Embedding contexts mark every token as an output before pooling.
-+        params.n_outputs_max = cparams.n_outputs_max = cparams.n_batch;
-+    }
 +    if (common_get_decision_type(model) == COMMON_DECISION_TYPE_CLEF) {
 +        params.embedding = cparams.embeddings = true;
 +        cparams.ctx_type = LLAMA_CONTEXT_TYPE_DECISION;
@@ -48,14 +40,13 @@
      for (auto & la : params.lora_adapters) {
 --- a/common/common.h
 +++ b/common/common.h
-@@ -940,6 +940,15 @@
+@@ -940,6 +940,14 @@
  
  struct common_sampler;
  
 +enum common_decision_type {
 +    COMMON_DECISION_TYPE_NONE,
 +    COMMON_DECISION_TYPE_CLEF,
-+    COMMON_DECISION_TYPE_PPLX,
 +    COMMON_DECISION_TYPE_UNKNOWN,
 +};
 +
@@ -66,16 +57,15 @@
      common_init_result(common_params & params, bool model_only = false);
 --- a/tools/server/server-task.h
 +++ b/tools/server/server-task.h
-@@ -152,6 +152,8 @@
+@@ -152,6 +152,7 @@
      // used by SERVER_TASK_TYPE_INFERENCE
      task_params   params;
      server_tokens tokens;
-+    int score_options = 0; // option count for the linear decision readout
 +    common_json score_fields; // optional decision question and option spans
  
      // only used by CLI, this allow tokenizing CLI inputs on server side
      // we need this because mtmd_context and vocab are not accessible outside of server_context
-@@ -452,6 +454,7 @@
+@@ -452,6 +453,7 @@
  };
  
  struct server_task_result_embd : server_task_result {
@@ -97,14 +87,13 @@
          : to_json_non_oaicompat();
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,5 @@
  #include "server-context.h"
 +#include "clef.h"
-+#include "pplx.h"
  #include "server-chat.h"
  #include "server-common.h"
  #include "server-http.h"
-@@ -247,6 +249,7 @@
+@@ -247,6 +248,7 @@
      // multimodal
      mtmd_context * mctx = nullptr;
      mtmd::batch_ptr mbatch = nullptr;
@@ -112,7 +101,7 @@
  
      // speculative decoding
      common_speculative * spec;
-@@ -370,6 +373,7 @@
+@@ -370,6 +372,7 @@
          SLT_DBG(*this, "%s", "\n");
  
          spec_is_replay = false;
@@ -120,7 +109,7 @@
  
          last_nl_pos    = 0;
          generated_text = "";
-@@ -428,6 +432,18 @@
+@@ -428,6 +431,18 @@
  
          SLT_TRC(*this, "init sampler, took %0.2f ms, tokens: text = %d, total = %d\n",
                  (ggml_time_us() - t_start) / 1000.0, n_text, (int) prompt.tokens.size());
@@ -139,7 +128,7 @@
      }
  
      bool need_embd() const {
-@@ -748,9 +764,7 @@
+@@ -748,9 +763,7 @@
  // returns 0 on success
  // caller need to update prompt.tokens after a successful call to keep track of the processing progress
  // note: this is not a member of server_slot because we want to run it inside yield_to_queue
@@ -150,7 +139,7 @@
      GGML_ASSERT(slot.mctx);
      const auto & mctx = slot.mctx;
      const auto & input_tokens = slot.task->tokens;
-@@ -761,12 +775,11 @@
+@@ -761,12 +774,11 @@
          if (mbatch) {
              float * embd = mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
              if (embd) {
@@ -167,46 +156,18 @@
                      return 0;
                  };
  
-@@ -849,6 +862,8 @@
+@@ -849,6 +861,7 @@
      //  - when not in sleeping state
      //  - and, with thread-safe APIs (e.g., tokenizer calls)
      llama_model * model_tgt = nullptr;
 +    std::unique_ptr<clef_head> clef;
-+    std::unique_ptr<pplx_head> pplx;
  
      mtmd_context * mctx = nullptr;
      // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
-@@ -1170,6 +1185,11 @@
-                 mtmd_helper_log_set(common_log_default_callback, nullptr);
-             }
- 
-+            if (common_get_decision_type(model_tgt) == COMMON_DECISION_TYPE_PPLX) {
-+                // Match the reference processor's 65536-262144 pixel bounds.
-+                mparams.image_min_tokens = 64;
-+                mparams.image_max_tokens = 256;
-+            }
-             mctx = mtmd_init_from_file(mmproj_path.c_str(), model_tgt, mparams);
-             if (mctx == nullptr) {
-                 SRV_ERR("failed to load multimodal model, '%s'\n", mmproj_path.c_str());
-@@ -2166,6 +2186,35 @@
+@@ -2166,6 +2179,20 @@
          res->index     = slot.task->index;
          res->n_tokens  = slot.task->n_tokens();
          res->res_type  = slot.task->params.res_type;
-+
-+        if (slot.task->score_options) {
-+            try {
-+                const float * hidden = llama_get_embeddings_seq(slot.ctx_tgt, slot.id);
-+                if (!hidden) throw std::runtime_error("PPLX: missing final hidden state");
-+                const int width = llama_model_n_embd_out(model_tgt);
-+                if (!pplx) pplx.reset(new pplx_head(params_base.model.path));
-+                res->score_logits = json::array({pplx->score(std::vector<float>(hidden, hidden + width), slot.task->score_options)});
-+            } catch (const std::exception & e) {
-+                send_error(slot, e.what(), ERROR_TYPE_SERVER);
-+                return;
-+            }
-+            queue_results.send(std::move(res));
-+            return;
-+        }
 +
 +        if (!slot.task->score_fields.is_null()) {
 +            try {
@@ -224,7 +185,7 @@
  
          const int n_embd_out = llama_model_n_embd_out(model_tgt);
  
-@@ -3814,6 +3863,7 @@
+@@ -3814,6 +3841,7 @@
          };
  
          iterate(slots, [&](server_slot & slot) {
@@ -232,30 +193,23 @@
              // optionally send prompt processing progress
              if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_DONE_PROMPT) {
                  if (slot.task->params.stream && slot.task->params.return_progress) {
-@@ -4274,6 +4324,11 @@
+@@ -4274,6 +4302,10 @@
      GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
  
      auto res = create_response();
-+    const auto decision_type = common_get_decision_type(ctx_server.model_tgt);
-+    if (decision_type == COMMON_DECISION_TYPE_CLEF || decision_type == COMMON_DECISION_TYPE_PPLX) {
++    if (common_get_decision_type(ctx_server.model_tgt) == COMMON_DECISION_TYPE_CLEF) {
 +        res->error(format_error_response("This model requires a decision request", ERROR_TYPE_INVALID_REQUEST));
 +        return res;
 +    }
      auto completion_id = gen_chatcmplid();
      auto & rd = res->rd;
      auto & params = this->params;
-@@ -5466,6 +5521,49 @@
+@@ -5466,6 +5498,43 @@
              // OAI-compat
              task.params.res_type = res_type;
              task.params.embd_normalize = embd_normalize;
-+            if (body.contains("score_fields") || body.contains("score_options")) {
-+                task.score_fields = body.value("score_fields", json());
-+                if (body.contains("score_options")) {
-+                    task.score_options = body.at("score_options").get<int>();
-+                    if (common_get_decision_type(ctx_server.model_tgt) != COMMON_DECISION_TYPE_PPLX || task.score_options < 1 || task.score_options > 255) {
-+                        throw std::invalid_argument("invalid decision readout request");
-+                    }
-+                }
++            if (body.contains("score_fields")) {
++                task.score_fields = body.at("score_fields");
 +                task.params.cache_prompt = false; // the head needs every hidden state
 +                if (body.contains("images") && !body.at("images").empty()) {
 +                    if (!ctx_server.mctx) throw std::invalid_argument("model does not support images");
@@ -265,7 +219,7 @@
 +                    std::string markers;
 +                    for (size_t j = 0; j < body.at("images").size(); ++j) markers += mtmd_get_marker(ctx_server.mctx);
 +                    auto media_inputs = tokenize_input_prompts(ctx_server.vocab, ctx_server.mctx,
-+                        json{{"prompt_string", markers + (task.score_options ? "" : "\n")}, {"multimodal_data", body.at("images")}}, true, true, ctx_server.init_opt);
++                        json{{"prompt_string", markers + "\n"}, {"multimodal_data", body.at("images")}}, true, true, ctx_server.init_opt);
 +                    auto & media = media_inputs[0];
 +                    if (text.size() + media.size() > size_t(meta->slot_n_ctx)) throw std::invalid_argument("decision prompt exceeds the model context (input is never truncated)");
 +                    server_tokens input(llama_tokens(text.begin(), text.begin() + position), true);

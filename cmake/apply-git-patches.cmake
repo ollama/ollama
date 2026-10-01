@@ -32,6 +32,49 @@ foreach(PATCH_FILE IN LISTS _patches)
 endforeach()
 
 list(SORT _patch_entries)
+
+# Later patches can change lines introduced by earlier patches. Check the
+# complete stack in reverse order on temporary copies before testing patches
+# individually, so reconfiguration does not reject an already-applied stack.
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef _patch_check_id)
+set(_patch_check_parent "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles")
+set(_patch_check_dir "${_patch_check_parent}/patch-check-${_patch_check_id}")
+file(MAKE_DIRECTORY "${_patch_check_dir}")
+foreach(_patch_entry IN LISTS _patch_entries)
+    string(REGEX REPLACE "^[^|]*\\|" "" PATCH_FILE "${_patch_entry}")
+    file(STRINGS "${PATCH_FILE}" _patch_paths REGEX "^(--- a/|[+][+][+] b/)")
+    foreach(_patch_path IN LISTS _patch_paths)
+        string(SUBSTRING "${_patch_path}" 6 -1 _patch_path)
+        if(EXISTS "${_patch_workdir}/${_patch_path}")
+            get_filename_component(_patch_parent "${_patch_check_dir}/${_patch_path}" DIRECTORY)
+            file(MAKE_DIRECTORY "${_patch_parent}")
+            file(COPY_FILE "${_patch_workdir}/${_patch_path}" "${_patch_check_dir}/${_patch_path}")
+        endif()
+    endforeach()
+endforeach()
+set(_reverse_entries ${_patch_entries})
+list(REVERSE _reverse_entries)
+set(_stack_applied TRUE)
+foreach(_patch_entry IN LISTS _reverse_entries)
+    string(REGEX REPLACE "^[^|]*\\|" "" PATCH_FILE "${_patch_entry}")
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E env "GIT_CEILING_DIRECTORIES=${_patch_check_parent}"
+            ${GIT_EXECUTABLE} apply --reverse "${PATCH_FILE}"
+        WORKING_DIRECTORY "${_patch_check_dir}"
+        RESULT_VARIABLE _reverse_result
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT _reverse_result EQUAL 0)
+        set(_stack_applied FALSE)
+        break()
+    endif()
+endforeach()
+file(REMOVE_RECURSE "${_patch_check_dir}")
+if(_stack_applied)
+    message(STATUS "${PATCH_LABEL}: patch stack already applied, skipping")
+    return()
+endif()
+
 foreach(_patch_entry IN LISTS _patch_entries)
     string(REGEX REPLACE "^[^|]*\\|" "" PATCH_FILE "${_patch_entry}")
     file(RELATIVE_PATH _patch_rel "${PATCH_DIR}" "${PATCH_FILE}")
