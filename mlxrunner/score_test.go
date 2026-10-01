@@ -2,14 +2,19 @@ package mlxrunner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlx/mlxthread"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 )
@@ -184,6 +189,73 @@ func TestScoreValidation(t *testing.T) {
 		var status api.StatusError
 		if !errors.As(err, &status) || status.StatusCode != 400 {
 			t.Fatalf("expected validation error before model access, got %v", err)
+		}
+	}
+}
+
+func TestScoreHandlerReleasesMemory(t *testing.T) {
+	worker, err := mlxthread.Start("score-test", func() error {
+		if err := mlx.CheckInit(); err != nil {
+			return err
+		}
+		if !mlx.GPUIsAvailable() {
+			return errors.New("GPU unavailable")
+		}
+		mlx.SetDefaultDeviceGPU()
+		mlx.ClearCache()
+		return nil
+	})
+	if err != nil {
+		t.Skipf("MLX GPU not available: %v", err)
+	}
+	defer worker.Stop(context.Background(), mlx.ClearCache)
+	r := &Runner{Tokenizer: newTestTokenizer(t, []int32{7}), contextLength: 512, mlxThread: worker}
+	for _, n := range []int{16, 128, 512, 16} {
+		for _, cancelled := range []bool{false, true} {
+			// Model prior requests leaving differently sized scratch buffers.
+			// These CPU-filled arrays are freed synchronously into MLX's cache.
+			const scratchBytes = 4 << 20
+			if err := worker.Do(context.Background(), func() error {
+				mlx.Scoped(func() { mlx.FromValues(make([]int32, scratchBytes/4), scratchBytes/4) })
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			m := &scoringTestModel{}
+			if cancelled {
+				m.cancel, m.cancelAfter = cancel, 1
+			}
+			r.Model = m
+			input, err := json.Marshal(llm.ScoreRequest{
+				MaxTokens: 512,
+				Rows:      []llm.ScoreRow{{Prompt: strings.Repeat("1", n), Candidates: []string{"2"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/score", strings.NewReader(string(input)))
+			response := httptest.NewRecorder()
+			r.scoreHandler(response, req)
+			cancel()
+			wantStatus := http.StatusOK
+			if cancelled {
+				wantStatus = http.StatusInternalServerError
+			}
+			if response.Code != wantStatus {
+				t.Fatalf("tokens=%d cancelled=%t: status %d: %s", n, cancelled, response.Code, response.Body)
+			}
+			memory, err := mlxthread.Call(context.Background(), worker, func() ([2]int, error) {
+				return [2]int{mlx.ActiveMemory(), mlx.CacheMemory()}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Metal may still be retiring this tiny request's buffers. Older
+			// requests' scratch storage must not remain resident, though.
+			if memory[0]+memory[1] >= scratchBytes {
+				t.Fatalf("tokens=%d cancelled=%t: retained %d active and %d cached bytes", n, cancelled, memory[0], memory[1])
+			}
 		}
 	}
 }

@@ -33,6 +33,7 @@ func (r *Runner) scoreHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	result, err := mlxthread.Call(req.Context(), r.mlxThread, func() (llm.ScoreResponse, error) {
+		defer mlx.ClearCache()
 		return r.score(req.Context(), input)
 	})
 	if err != nil {
