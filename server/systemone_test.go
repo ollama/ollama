@@ -59,10 +59,11 @@ func TestSystemOneHandler(t *testing.T) {
 		if modelConfig.template == "" {
 			kv["tokenizer.chat_template"] = "{{ messages }}"
 		}
+		var tensors []*gguftest.Tensor
 		if modelConfig.name == "renamed-clef" {
-			kv["general.decision_head"] = "clef"
+			tensors = []*gguftest.Tensor{{Name: "clef.hidden_norm.weight", Shape: []uint64{4}}}
 		}
-		_, digest := createBinFile(t, kv, nil)
+		_, digest := createBinFile(t, kv, tensors)
 		caps := []string{"completion", "decision"}
 		if modelConfig.undeclared {
 			caps = []string{"completion"}

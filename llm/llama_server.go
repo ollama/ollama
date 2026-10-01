@@ -863,9 +863,9 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
-	if f.KV().String("general.decision_head") != "" {
+	if len(f.Tensors().Items("clef.")) > 0 {
 		isEmbedding = true
-		// Decision heads need every hidden state in one unpooled batch.
+		// llama-server requires unpooled embeddings to fit in one batch.
 		opts.NumBatch = opts.NumCtx
 	}
 

@@ -98,7 +98,7 @@ func TestGGUFMetadataFileRoundTrip(t *testing.T) {
 	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
 		"llama.block_count":    uint32(32),
-	}, nil)
+	}, []*gguftest.Tensor{{Name: "token_embd.weight", Shape: []uint64{4}}})
 
 	first, err := readGGUFMetadata(digest)
 	if err != nil {
@@ -118,6 +118,9 @@ func TestGGUFMetadataFileRoundTrip(t *testing.T) {
 	}
 	if got := second.Int("block_count"); got != 32 {
 		t.Fatalf("block_count from metadata file = %d, want 32", got)
+	}
+	if !slices.Equal(second.TensorNames, []string{"token_embd.weight"}) {
+		t.Fatalf("tensor names from metadata file = %v", second.TensorNames)
 	}
 
 	// And it goes away with the blob.
@@ -154,6 +157,7 @@ func TestGGUFMetadataUnusableFile(t *testing.T) {
 		{"wrong shape", []byte(`[1,2,3]`)},
 		{"no kv", []byte(`{"ollama_version":"1.2.3"}`)},
 		{"kv not an object", []byte(`{"kv":[]}`)},
+		{"missing tensor names", []byte(`{"kv":{"general.architecture":"llama"}}`)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if err := os.WriteFile(path, tt.content, 0o644); err != nil {

@@ -881,7 +881,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
 		return
 	}
-	compiled, err := decision.Compile(req, m.metadata.String("general.decision_head"))
+	compiled, err := decision.Compile(req, m.decisionEncoding())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

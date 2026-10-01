@@ -98,6 +98,15 @@ func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
 }
 
+func (m *Model) decisionEncoding() string {
+	for _, name := range m.metadata.TensorNames {
+		if strings.HasPrefix(name, "clef.") {
+			return "clef"
+		}
+	}
+	return ""
+}
+
 func (m *Model) modelPaths() []string {
 	if m == nil || m.ModelPath == "" {
 		return nil
@@ -200,7 +209,7 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 		// If no embedding is specified, we assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
-	if m.metadata.String("general.decision_head") != "" {
+	if m.decisionEncoding() != "" {
 		capabilities = appendCapability(capabilities, model.CapabilityDecision)
 	}
 	if m.metadata.Valid("vision.block_count") {
