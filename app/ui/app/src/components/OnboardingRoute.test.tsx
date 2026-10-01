@@ -6,7 +6,7 @@ import * as api from "@/api";
 import { Settings } from "@/gotypes";
 import { CURRENT_ONBOARDING_VERSION } from "@/lib/onboarding";
 import { Route } from "@/routes/onboarding";
-import { WelcomeScreen } from "./Onboarding";
+import { RunOllamaScreen, WelcomeScreen } from "./Onboarding";
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn(), authenticated: true }));
 vi.mock("@tanstack/react-router", async (importOriginal) =>
@@ -34,8 +34,8 @@ afterEach(() => {
 });
 
 // Use the real settings mutation: query notifications replace callbacks and
-// must not automatically retry a failed handoff after authentication.
-async function renderOnboarding(authenticated: boolean) {
+// must not automatically retry a failed completion after authentication.
+async function renderOnboarding(authenticated: boolean, onboardingVersion = 0) {
   mocks.authenticated = authenticated;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -44,7 +44,9 @@ async function renderOnboarding(authenticated: boolean) {
     location: { search: "" },
     setOnboardingWindow: vi.fn(),
   });
-  let settingsResponse = { settings: new Settings({ OnboardingVersion: 0 }) };
+  let settingsResponse = {
+    settings: new Settings({ OnboardingVersion: onboardingVersion }),
+  };
   vi.spyOn(api, "getSettings").mockImplementation(async () => settingsResponse);
   const client = new QueryClient({
     defaultOptions: {
@@ -114,13 +116,32 @@ async function flushQueryNotifications() {
 }
 
 describe("Onboarding completion", () => {
-  it("leaves onboarding when CLI completion arrives", async () => {
+  it.each([true, false])(
+    "renders completed setup on Run Ollama without saving again (signed in: %s)",
+    async (authenticated) => {
+      const save = vi.spyOn(api, "updateSettings");
+      const onboarding = await renderOnboarding(
+        authenticated,
+        CURRENT_ONBOARDING_VERSION,
+      );
+      try {
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        expect(save).not.toHaveBeenCalled();
+        expect(mocks.navigate).not.toHaveBeenCalled();
+      } finally {
+        await onboarding.unmount();
+      }
+    },
+  );
+
+  it("shows Run Ollama without saving again when CLI completion arrives", async () => {
     const save = vi.spyOn(api, "updateSettings");
     const onboarding = await renderOnboarding(true);
     try {
       expect(mocks.navigate).not.toHaveBeenCalled();
       await onboarding.receiveCompletion();
-      expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/" });
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
       expect(save).not.toHaveBeenCalled();
     } finally {
       await onboarding.unmount();
@@ -145,13 +166,14 @@ describe("Onboarding completion", () => {
       );
       await onboarding.receiveCompletion();
       expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
     } finally {
       await onboarding.unmount();
     }
   });
 
   it.each([true, false])(
-    "saves once before opening Apps directly (already signed in: %s)",
+    "saves once before showing Run Ollama (already signed in: %s)",
     async (authenticated) => {
       let resolveSave!: (value: { settings: Settings }) => void;
       const save = vi.spyOn(api, "updateSettings").mockImplementation(
@@ -179,12 +201,13 @@ describe("Onboarding completion", () => {
         );
         expect(mocks.navigate).not.toHaveBeenCalled();
         expect(onboarding.primaryAction.props.disabled).toBe(true);
+        expect(onboarding.root.findAllByType(RunOllamaScreen)).toHaveLength(0);
         await act(async () => {
           resolveSave({ settings: save.mock.calls[0][0] });
         });
-        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
-          to: "/connect",
-        });
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        await onboarding.receiveCompletion();
+        expect(mocks.navigate).not.toHaveBeenCalled();
       } finally {
         await onboarding.unmount();
       }
@@ -219,9 +242,8 @@ describe("Onboarding completion", () => {
         });
         expect(save).toHaveBeenCalledTimes(2);
         expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
-        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
-          to: "/connect",
-        });
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        expect(mocks.navigate).not.toHaveBeenCalled();
       } finally {
         await onboarding.unmount();
       }

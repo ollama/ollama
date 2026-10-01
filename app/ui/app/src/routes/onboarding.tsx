@@ -10,7 +10,7 @@ import {
   onboardingConnectUrl,
   type OnboardingAuthMode,
 } from "@/lib/onboarding";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export const Route = createFileRoute("/onboarding")({
@@ -42,29 +42,15 @@ export const Route = createFileRoute("/onboarding")({
 });
 
 function OnboardingRoute() {
-  const navigate = useNavigate();
   const { settingsData, setSettings } = useSettings({ refetchInterval: 2000 });
   const { fetchConnectUrl, refetchUser, isAuthenticated } = useUser();
   const [isAwaitingAuth, setIsAwaitingAuth] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [completionError, setCompletionError] = useState<string | null>(null);
   const authAttemptRef = useRef(0);
-  const completedHereRef = useRef(false);
-
-  // The CLI can complete welcome while this window is open. Leave onboarding
-  // when its shared state changes, while preserving this window's own finish flow.
-  useEffect(() => {
-    const isPreview =
-      import.meta.env.DEV &&
-      new URLSearchParams(window.location.search).get("preview") === "1";
-    if (
-      !isPreview &&
-      !completedHereRef.current &&
-      (settingsData?.OnboardingVersion ?? 0) >= CURRENT_ONBOARDING_VERSION
-    ) {
-      void navigate({ to: "/" });
-    }
-  }, [navigate, settingsData?.OnboardingVersion]);
+  const isPreview =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("preview") === "1";
 
   const completeOnboarding = useCallback(async (): Promise<boolean> => {
     setCompletionError(null);
@@ -74,13 +60,11 @@ function OnboardingRoute() {
         throw new Error("Settings are not loaded");
       }
 
-      completedHereRef.current = true;
       await setSettings({
         OnboardingVersion: CURRENT_ONBOARDING_VERSION,
       });
       return true;
     } catch (error) {
-      completedHereRef.current = false;
       console.error("Failed to save onboarding state:", error);
       setCompletionError("Unable to save setup. Please try again.");
       return false;
@@ -90,12 +74,6 @@ function OnboardingRoute() {
   const finishSetup = useCallback(() => {
     void completeOnboarding();
   }, [completeOnboarding]);
-
-  const openApps = useCallback(async (): Promise<boolean> => {
-    if (!(await completeOnboarding())) return false;
-    await navigate({ to: "/connect" });
-    return true;
-  }, [completeOnboarding, navigate]);
 
   const retryCompletion = useCallback(() => {
     void completeOnboarding();
@@ -204,10 +182,14 @@ function OnboardingRoute() {
   return (
     <Onboarding
       completionError={completionError}
+      isComplete={
+        !isPreview &&
+        (settingsData?.OnboardingVersion ?? 0) >= CURRENT_ONBOARDING_VERSION
+      }
       isAuthenticated={isAuthenticated}
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
-      onOpenApps={openApps}
+      onComplete={completeOnboarding}
       onSignIn={signIn}
       onSignUp={signUp}
       onRetryCompletion={retryCompletion}

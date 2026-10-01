@@ -30,6 +30,7 @@ import type {
 import { copyTextToClipboard } from "@/utils/clipboard";
 import {
   ArrowsRightLeftIcon,
+  CodeBracketIcon,
   CommandLineIcon,
   ShieldCheckIcon,
 } from "@heroicons/react/24/outline";
@@ -81,7 +82,7 @@ interface ScreenProps {
 
 interface WelcomeScreenProps extends ScreenProps {
   isAuthenticated: boolean;
-  isLeaving?: boolean;
+  isCompleting?: boolean;
   completionError?: string | null;
   onRetryCompletion?: () => void;
   onLocal: () => void;
@@ -148,18 +149,18 @@ function OnboardingCard({ children }: { children: ReactNode }) {
 
 const OLLAMA_FEATURES = [
   {
-    title: "Connect your apps",
-    description: "Power your existing coding apps with open models",
-    icon: CommandLineIcon,
+    title: "Build with the Ollama API",
+    description: "Add open models to your own applications.",
+    icon: CodeBracketIcon,
   },
   {
     title: "Easily switch models",
-    description: "Swap between frontier models in one click.",
+    description: "Choose the right model for each task.",
     icon: ArrowsRightLeftIcon,
   },
   {
     title: "Your data stays yours",
-    description: "Your prompt data is never logged or trained on.",
+    description: "Your data is never trained on.",
     icon: ShieldCheckIcon,
   },
 ];
@@ -168,10 +169,10 @@ export function IntroScreen({
   completionError = null,
   onContinue,
   onRetryCompletion,
-  isLeaving = false,
+  isCompleting = false,
 }: {
   completionError?: string | null;
-  isLeaving?: boolean;
+  isCompleting?: boolean;
   onContinue: () => void;
   onRetryCompletion?: () => void;
 }) {
@@ -193,8 +194,7 @@ export function IntroScreen({
             </h1>
           </div>
           <p className="mt-4 max-w-[380px] text-sm leading-6 text-neutral-500">
-            Run open models with your coding agents so you can spend less while
-            keeping your data private.
+            Run open models on your computer or in the cloud.
           </p>
           <div className="mx-auto mt-8 flex w-fit max-w-full flex-col gap-6 text-left">
             {OLLAMA_FEATURES.map((feature) => {
@@ -220,8 +220,8 @@ export function IntroScreen({
             type="button"
             className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onContinue}
-            disabled={isLeaving}
-            aria-busy={isLeaving || undefined}
+            disabled={isCompleting}
+            aria-busy={isCompleting || undefined}
           >
             Continue
           </button>
@@ -260,7 +260,7 @@ function InlineError({
 export function WelcomeScreen({
   isAuthenticated,
   isSigningIn,
-  isLeaving = false,
+  isCompleting = false,
   signInError,
   completionError = null,
   onSignIn,
@@ -277,10 +277,10 @@ export function WelcomeScreen({
           Create an account
         </h1>
         <p className="mt-3 max-w-[400px] text-sm leading-6 text-neutral-400">
-          Create your account for access to faster, larger open models.
+          Run larger models in the cloud without downloading them.
         </p>
         <p className="mt-1 max-w-[400px] text-sm leading-6 text-neutral-400">
-          Your data is never logged or trained on.
+          Your data is never trained on.
         </p>
 
         <div className="mt-7 flex w-full max-w-[240px] flex-col items-center">
@@ -288,11 +288,11 @@ export function WelcomeScreen({
             type="button"
             className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70"
             onClick={onSignUp}
-            disabled={isSigningIn || isLeaving}
-            aria-busy={isSigningIn || isLeaving}
+            disabled={isSigningIn || isCompleting}
+            aria-busy={isSigningIn || isCompleting}
           >
-            {isLeaving
-              ? "Opening apps…"
+            {isCompleting
+              ? "Finishing setup…"
               : isSigningIn
                 ? "Finish in your browser…"
                 : "Sign up"}
@@ -301,9 +301,9 @@ export function WelcomeScreen({
             type="button"
             className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onLocal}
-            disabled={isLeaving}
+            disabled={isCompleting}
           >
-            No thanks, I&apos;ll use Ollama locally
+            Use Ollama locally
           </button>
           <InlineError message={signInError ?? completionError} />
           {completionError && onRetryCompletion && (
@@ -346,7 +346,7 @@ export function RunOllamaScreen({
           />
         </div>
 
-        <p className="mt-3 max-w-xs text-[13px] leading-5 text-neutral-400">
+        <p className="mt-3 max-w-sm text-[13px] leading-5 text-neutral-400">
           Run this command in your terminal to get started.
         </p>
 
@@ -1202,8 +1202,9 @@ export function ConnectAppsScreen({
 
 interface OnboardingProps extends ScreenProps {
   completionError: string | null;
+  isComplete?: boolean;
   isAuthenticated: boolean;
-  onOpenApps: () => Promise<boolean>;
+  onComplete: () => Promise<boolean>;
   onRetryCompletion: () => void;
   onSignUp: () => void;
   onUseLocal: () => void;
@@ -1211,21 +1212,22 @@ interface OnboardingProps extends ScreenProps {
 
 export default function Onboarding(props: OnboardingProps) {
   const [step, setStep] = useState<OnboardingStep>("intro");
-  const [isLeaving, setIsLeaving] = useState(false);
-  const leavingRef = useRef(false);
-  const authenticationHandoffStarted = useRef(false);
-  const { onOpenApps } = props;
+  const [isCompleting, setIsCompleting] = useState(false);
+  const completingRef = useRef(false);
+  const authenticationCompletionStarted = useRef(false);
+  const { onComplete } = props;
 
-  const leave = useCallback(async () => {
-    if (leavingRef.current) return;
-    leavingRef.current = true;
-    setIsLeaving(true);
-    const opened = await onOpenApps();
-    if (!opened) {
-      leavingRef.current = false;
-      setIsLeaving(false);
+  const complete = useCallback(async () => {
+    if (completingRef.current) return;
+    completingRef.current = true;
+    setIsCompleting(true);
+    if (await onComplete()) {
+      setStep("run");
+    } else {
+      completingRef.current = false;
+      setIsCompleting(false);
     }
-  }, [onOpenApps]);
+  }, [onComplete]);
 
   useEffect(() => {
     window.setOnboardingWindow?.(true);
@@ -1234,17 +1236,22 @@ export default function Onboarding(props: OnboardingProps) {
 
   useEffect(() => {
     if (!props.isAuthenticated) {
-      authenticationHandoffStarted.current = false;
+      authenticationCompletionStarted.current = false;
       return;
     }
-    if (step !== "welcome" || authenticationHandoffStarted.current) return;
+    if (
+      props.isComplete ||
+      step !== "welcome" ||
+      authenticationCompletionStarted.current
+    )
+      return;
     // A failed save waits for an explicit retry, even if query updates replace
     // the callback. StrictMode must not start a second completion either.
-    authenticationHandoffStarted.current = true;
-    void leave();
-  }, [step, props.isAuthenticated, leave]);
+    authenticationCompletionStarted.current = true;
+    void complete();
+  }, [step, props.isAuthenticated, props.isComplete, complete]);
 
-  if (step === "run") {
+  if (props.isComplete || step === "run") {
     return (
       <RunOllamaScreen
         completionError={props.completionError}
@@ -1257,10 +1264,10 @@ export default function Onboarding(props: OnboardingProps) {
     return (
       <IntroScreen
         completionError={props.completionError}
-        isLeaving={isLeaving}
-        onRetryCompletion={() => void leave()}
+        isCompleting={isCompleting}
+        onRetryCompletion={() => void complete()}
         onContinue={() => {
-          if (props.isAuthenticated) void leave();
+          if (props.isAuthenticated) void complete();
           else setStep("welcome");
         }}
       />
@@ -1270,10 +1277,10 @@ export default function Onboarding(props: OnboardingProps) {
   return (
     <WelcomeScreen
       {...props}
-      isLeaving={isLeaving}
-      onRetryCompletion={() => void leave()}
+      isCompleting={isCompleting}
+      onRetryCompletion={() => void complete()}
       onLocal={() => {
-        if (leavingRef.current) return;
+        if (completingRef.current) return;
         props.onUseLocal();
         setStep("run");
       }}
