@@ -13,6 +13,10 @@ var (
 			source: mamba2ScanMetalSource,
 			header: "#define MAMBA2_STORE_INTERIOR(index, value)\n",
 		},
+		cuda: gpuSource{
+			source: mamba2ScanCUDASource,
+			header: "#define MAMBA2_STORE_INTERIOR(index, value)\n",
+		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs
 			y, end, _ := mamba2ScanGraph(in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7], false)
@@ -25,6 +29,10 @@ var (
 		outputs: []string{"y", "state_out", "state_seq"},
 		metal: gpuSource{
 			source: mamba2ScanMetalSource,
+			header: "#define MAMBA2_STORE_INTERIOR(index, value) state_seq[index] = value\n",
+		},
+		cuda: gpuSource{
+			source: mamba2ScanCUDASource,
 			header: "#define MAMBA2_STORE_INTERIOR(index, value) state_seq[index] = value\n",
 		},
 		fallback: func(launch gpuLaunch) []*Array {
@@ -89,6 +97,80 @@ for (int t = 0; t < T; ++t) {
 
 for (int i = 0; i < n_per_t; ++i) {
   auto s_idx = n_per_t * lane + i;
+  state_out[state_offset + s_idx] = state[i];
+}
+`
+
+// The CUDA translation of mamba2ScanMetalSource. T arrives as a pointer
+// because the CUDA kernel builder passes every input by address, while Metal
+// scalarizes zero-dimensional ones.
+const mamba2ScanCUDASource = `
+int lane = static_cast<int>(threadIdx.x);
+int d_idx = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+int bh_idx = static_cast<int>(blockIdx.z);
+// Metal dispatches an exact thread count; CUDA rounds the grid up to whole
+// blocks, so a D that is not a multiple of blockDim.y leaves a tail here.
+// blockDim.x is 32, so a warp never straddles two d_idx values and the
+// reduction below still sees all 32 lanes.
+if (d_idx >= D) {
+  return;
+}
+int b_idx = bh_idx / H;
+int h_idx = bh_idx % H;
+// B/C groups repeat across contiguous head blocks.
+int g_idx = h_idx / (H / G);
+constexpr int n_per_t = S / 32;
+constexpr int state_count = B * H * D * S;
+
+int T_val = static_cast<int>(*T);
+
+int state_offset = ((b_idx * H + h_idx) * D + d_idx) * S;
+float state[n_per_t];
+#pragma unroll
+for (int i = 0; i < n_per_t; ++i) {
+  int s_idx = n_per_t * lane + i;
+  state[i] = static_cast<float>(state_in[state_offset + s_idx]);
+}
+
+for (int t = 0; t < T_val; ++t) {
+  int bth = (b_idx * T_val + t) * H + h_idx;
+  float dt_raw = static_cast<float>(dt[bth]) + static_cast<float>(dt_bias[h_idx]);
+  float dt_val = logf(1.0f + expf(dt_raw));
+  float decay = expf(dt_val * static_cast<float>(a[h_idx]));
+  float x_val = static_cast<float>(hidden[bth * D + d_idx]);
+
+  float out = 0.0f;
+  int bs_base = ((b_idx * T_val + t) * G + g_idx) * S;
+#pragma unroll
+  for (int i = 0; i < n_per_t; ++i) {
+    int s_idx = n_per_t * lane + i;
+    float b_val = static_cast<float>(b_state[bs_base + s_idx]);
+    float c_val = static_cast<float>(c_state[bs_base + s_idx]);
+    state[i] = state[i] * decay + x_val * (dt_val * b_val);
+    out += state[i] * c_val;
+  }
+
+  if (t + 1 < T_val) {
+    int seq_offset = t * state_count + state_offset;
+#pragma unroll
+    for (int i = 0; i < n_per_t; ++i) {
+      int s_idx = n_per_t * lane + i;
+      MAMBA2_STORE_INTERIOR(seq_offset + s_idx, state[i]);
+    }
+  }
+
+  // Warp reduction. Only lane 0 stores, so the total need not be broadcast.
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    out += __shfl_down_sync(0xffffffff, out, offset);
+  }
+  if (lane == 0) {
+    y[bth * D + d_idx] = out + x_val * static_cast<float>(d[h_idx]);
+  }
+}
+
+#pragma unroll
+for (int i = 0; i < n_per_t; ++i) {
+  int s_idx = n_per_t * lane + i;
   state_out[state_offset + s_idx] = state[i];
 }
 `
