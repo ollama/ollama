@@ -303,6 +303,8 @@ console.log(response.message.content);
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
 
+- [Dev Companion](https://ashuujha.github.io/devcompanion-launch/) - Local project memory, proactive help and approved checks; free Linux binary preview
+
 ### Productivity & Apps
 
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
