@@ -1200,3 +1200,45 @@ func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }
+
+func TestFromChatRequest_TopPNotForcedWhenOmitted(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := result.Options["top_p"]; ok {
+		t.Errorf("expected no top_p option when omitted, got %v", result.Options["top_p"])
+	}
+}
+
+func TestFromChatRequest_TopPHonoredWhenSet(t *testing.T) {
+	topP := 0.5
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		TopP: &topP,
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, ok := result.Options["top_p"]
+	if !ok {
+		t.Fatal("expected top_p option to be set when provided")
+	}
+	if got != topP {
+		t.Errorf("expected top_p %v, got %v", topP, got)
+	}
+}
