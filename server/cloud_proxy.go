@@ -264,8 +264,27 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 			"request_context_err", ctxErr,
 			"error", err,
 		)
+		abortProxyStream(c)
 		return
 	}
+}
+
+// abortProxyStream closes the downstream connection so the client observes a
+// truncated upstream response as a failed request instead of a normal
+// completion. Status and headers are already written when the copy fails, so
+// the status cannot change; only an abrupt close is still client-observable.
+// A panic with http.ErrAbortHandler would not work here: gin's Recovery
+// middleware recovers it into a no-op 500 after headers are sent.
+func abortProxyStream(c *gin.Context) {
+	hj, ok := c.Writer.(http.Hijacker)
+	if !ok {
+		return
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	conn.Close()
 }
 
 func replaceJSONModelField(body []byte, model string) ([]byte, error) {
