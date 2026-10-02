@@ -12,14 +12,25 @@ type Scorer interface {
 	Score(context.Context, ScoreRequest) (ScoreResponse, error)
 }
 
-// ScoreRequest uses either prompt Rows or Segments and Fields for a decision head.
+// ScoreRequest uses candidate Rows, independent PointerRows, or joint Segments
+// and Fields, depending on the model's decision head.
 type ScoreRequest struct {
-	Rows          []ScoreRow      `json:"rows,omitempty"`
-	Segments      []string        `json:"segments,omitempty"`
-	Fields        []ScoreField    `json:"fields,omitempty"`
-	MaxTokens     int             `json:"max_tokens"`
-	Images        []api.ImageData `json:"images,omitempty"`
-	ImagePosition int             `json:"image_position,omitempty"` // Segment boundary at which images are inserted.
+	Rows          []ScoreRow        `json:"rows,omitempty"`
+	PointerRows   []ScorePointerRow `json:"pointer_rows,omitempty"`
+	Segments      []string          `json:"segments,omitempty"`
+	Fields        []ScoreField      `json:"fields,omitempty"`
+	MaxTokens     int               `json:"max_tokens"`
+	Images        []api.ImageData   `json:"images,omitempty"`
+	ImagePosition int               `json:"image_position,omitempty"` // Segment boundary at which images are inserted.
+}
+
+// ScorePointerRow is an independent state/question pair. Options are byte spans
+// in Prompt, which must be tokenized as a whole to preserve BPE boundaries.
+type ScorePointerRow struct {
+	Prefix  string   `json:"prefix"`
+	Prompt  string   `json:"prompt"`
+	Type    int      `json:"type"`
+	Options [][2]int `json:"options"`
 }
 
 type ScoreRow struct {

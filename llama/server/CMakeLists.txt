@@ -188,6 +188,14 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(llama_cpp)
 target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef/clef.cpp)
 target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef)
+target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../strands/strands.cpp)
+target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../strands)
+
+add_executable(strands-head-test EXCLUDE_FROM_ALL
+    ../strands/strands_test.cpp ../strands/strands.cpp)
+target_link_libraries(strands-head-test PRIVATE llama-common)
+set_target_properties(strands-head-test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bin)
+target_compile_features(strands-head-test PRIVATE cxx_std_17)
 
 if(NOT COMMAND license_add_file)
     message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")

@@ -1,6 +1,6 @@
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -1240,6 +1240,18 @@
+@@ -1240,6 +1240,20 @@
      std::vector<llama_sampler_seq_config> samplers_seq_config;
  };
  
@@ -13,22 +13,25 @@
 +    if (llama_model_meta_val_str(model, key.c_str(), value, sizeof(value)) < 0) {
 +        return COMMON_DECISION_TYPE_NONE;
 +    }
-+    return std::strcmp(value, "clef") == 0 ? COMMON_DECISION_TYPE_CLEF : COMMON_DECISION_TYPE_UNKNOWN;
++    if (std::strcmp(value, "clef") == 0) return COMMON_DECISION_TYPE_CLEF;
++    if (std::strcmp(value, "strands") == 0) return COMMON_DECISION_TYPE_STRANDS;
++    return COMMON_DECISION_TYPE_UNKNOWN;
 +}
 +
  common_init_result::common_init_result(common_params & params, bool model_only) :
      pimpl(new impl{}) {
      auto mparams = common_model_params_to_llama(params);
-@@ -1291,6 +1303,18 @@
+@@ -1291,6 +1305,19 @@
      }
  
      const llama_vocab * vocab = llama_model_get_vocab(model);
 +
-+    if (common_get_decision_type(model) == COMMON_DECISION_TYPE_CLEF) {
++    if ((common_get_decision_type(model) == COMMON_DECISION_TYPE_CLEF ||
++        common_get_decision_type(model) == COMMON_DECISION_TYPE_STRANDS)) {
 +        params.embedding = cparams.embeddings = true;
 +        cparams.ctx_type = LLAMA_CONTEXT_TYPE_DECISION;
 +        params.pooling_type = cparams.pooling_type = LLAMA_POOLING_TYPE_NONE;
-+        // The joint head consumes every hidden state; retain the whole input.
++        // Decision heads consume token hidden states; retain the whole input.
 +        const auto n_ctx = cparams.n_ctx ? cparams.n_ctx : llama_model_n_ctx_train(model);
 +        params.n_batch = cparams.n_batch = n_ctx;
 +        params.n_ubatch = cparams.n_ubatch = n_ctx;
@@ -40,13 +43,14 @@
      for (auto & la : params.lora_adapters) {
 --- a/common/common.h
 +++ b/common/common.h
-@@ -940,6 +940,14 @@
+@@ -940,6 +940,15 @@
  
  struct common_sampler;
  
 +enum common_decision_type {
 +    COMMON_DECISION_TYPE_NONE,
 +    COMMON_DECISION_TYPE_CLEF,
++    COMMON_DECISION_TYPE_STRANDS,
 +    COMMON_DECISION_TYPE_UNKNOWN,
 +};
 +
@@ -87,13 +91,14 @@
          : to_json_non_oaicompat();
 --- a/tools/server/server-context.cpp
 +++ b/tools/server/server-context.cpp
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include "server-context.h"
 +#include "clef.h"
++#include "strands.h"
  #include "server-chat.h"
  #include "server-common.h"
  #include "server-http.h"
-@@ -247,6 +248,7 @@
+@@ -247,6 +249,7 @@
      // multimodal
      mtmd_context * mctx = nullptr;
      mtmd::batch_ptr mbatch = nullptr;
@@ -101,7 +106,7 @@
  
      // speculative decoding
      common_speculative * spec;
-@@ -370,6 +372,7 @@
+@@ -370,6 +373,7 @@
          SLT_DBG(*this, "%s", "\n");
  
          spec_is_replay = false;
@@ -109,7 +114,7 @@
  
          last_nl_pos    = 0;
          generated_text = "";
-@@ -428,6 +431,18 @@
+@@ -428,6 +432,18 @@
  
          SLT_TRC(*this, "init sampler, took %0.2f ms, tokens: text = %d, total = %d\n",
                  (ggml_time_us() - t_start) / 1000.0, n_text, (int) prompt.tokens.size());
@@ -128,7 +133,7 @@
      }
  
      bool need_embd() const {
-@@ -748,9 +763,7 @@
+@@ -748,9 +764,7 @@
  // returns 0 on success
  // caller need to update prompt.tokens after a successful call to keep track of the processing progress
  // note: this is not a member of server_slot because we want to run it inside yield_to_queue
@@ -139,7 +144,7 @@
      GGML_ASSERT(slot.mctx);
      const auto & mctx = slot.mctx;
      const auto & input_tokens = slot.task->tokens;
-@@ -761,12 +774,11 @@
+@@ -761,12 +775,11 @@
          if (mbatch) {
              float * embd = mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
              if (embd) {
@@ -156,25 +161,33 @@
                      return 0;
                  };
  
-@@ -849,6 +861,7 @@
+@@ -849,6 +862,8 @@
      //  - when not in sleeping state
      //  - and, with thread-safe APIs (e.g., tokenizer calls)
      llama_model * model_tgt = nullptr;
 +    std::unique_ptr<clef_head> clef;
++    std::unique_ptr<strands_head> strands;
  
      mtmd_context * mctx = nullptr;
      // note: video_params.ffmpeg_bin_dir points into params_base, which outlives this struct
-@@ -2166,6 +2179,20 @@
+@@ -2166,6 +2181,27 @@
          res->index     = slot.task->index;
          res->n_tokens  = slot.task->n_tokens();
          res->res_type  = slot.task->params.res_type;
 +
 +        if (!slot.task->score_fields.is_null()) {
 +            try {
-+                if (!clef) clef.reset(new clef_head(params_base.model.path));
-+                llama_tokens tokens;
-+                for (size_t i = 0; i < slot.task->tokens.size(); ++i) tokens.push_back(slot.task->tokens[i]);
-+                res->score_logits = clef->score(slot.score_embeddings, tokens, slot.task->score_fields);
++                if (common_get_decision_type(model_tgt) == COMMON_DECISION_TYPE_STRANDS) {
++                    if (!strands) strands.reset(new strands_head(params_base.model.path));
++                    res->score_logits = strands->score(slot.score_embeddings, slot.task->score_fields);
++                } else if (common_get_decision_type(model_tgt) == COMMON_DECISION_TYPE_CLEF) {
++                    if (!clef) clef.reset(new clef_head(params_base.model.path));
++                    llama_tokens tokens;
++                    for (size_t i = 0; i < slot.task->tokens.size(); ++i) tokens.push_back(slot.task->tokens[i]);
++                    res->score_logits = clef->score(slot.score_embeddings, tokens, slot.task->score_fields);
++                } else {
++                    throw std::runtime_error("model has no supported decision head");
++                }
 +            } catch (const std::exception & e) {
 +                send_error(slot, e.what(), ERROR_TYPE_SERVER);
 +                return;
@@ -185,7 +198,7 @@
  
          const int n_embd_out = llama_model_n_embd_out(model_tgt);
  
-@@ -3814,6 +3841,7 @@
+@@ -3814,6 +3850,7 @@
          };
  
          iterate(slots, [&](server_slot & slot) {
@@ -193,18 +206,19 @@
              // optionally send prompt processing progress
              if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_DONE_PROMPT) {
                  if (slot.task->params.stream && slot.task->params.return_progress) {
-@@ -4274,6 +4302,10 @@
+@@ -4274,6 +4311,11 @@
      GGML_ASSERT(type == SERVER_TASK_TYPE_COMPLETION || type == SERVER_TASK_TYPE_INFILL);
  
      auto res = create_response();
-+    if (common_get_decision_type(ctx_server.model_tgt) == COMMON_DECISION_TYPE_CLEF) {
++    if ((common_get_decision_type(ctx_server.model_tgt) == COMMON_DECISION_TYPE_CLEF ||
++        common_get_decision_type(ctx_server.model_tgt) == COMMON_DECISION_TYPE_STRANDS)) {
 +        res->error(format_error_response("This model requires a decision request", ERROR_TYPE_INVALID_REQUEST));
 +        return res;
 +    }
      auto completion_id = gen_chatcmplid();
      auto & rd = res->rd;
      auto & params = this->params;
-@@ -5466,6 +5498,43 @@
+@@ -5466,6 +5508,43 @@
              // OAI-compat
              task.params.res_type = res_type;
              task.params.embd_normalize = embd_normalize;

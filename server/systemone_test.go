@@ -35,6 +35,9 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 	if len(input.Fields) > 0 {
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
+	if len(input.PointerRows) > 0 {
+		return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123}, r.err
+	}
 	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
@@ -49,6 +52,7 @@ func TestSystemOneHandler(t *testing.T) {
 		undeclared                                     bool
 	}{
 		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
+		{"renamed-strands", "qwen35", "", "Ignored for the pointer head", "", 4096, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
 		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
@@ -62,6 +66,9 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		if modelConfig.name == "renamed-clef" {
 			kv[modelConfig.architecture+".decision.type"] = "clef"
+		}
+		if modelConfig.name == "renamed-strands" {
+			kv["qwen35.decision.type"] = "strands"
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
@@ -120,6 +127,8 @@ func TestSystemOneHandler(t *testing.T) {
 		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef null state and default instructions", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
 		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Strands pointer head", `{"model":"renamed-strands","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Strands rejects images", `{"model":"renamed-strands","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -202,11 +211,17 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 {
+				if len(runner.request.Fields) > 0 || len(runner.request.PointerRows) > 0 {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
+				}
+				if len(runner.request.PointerRows) > 0 {
+					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 0 || runner.request.PointerRows[0].Prefix != "<state>\nrefund please\n</state>\n" || runner.request.MaxTokens != 4096 {
+						t.Fatal("invalid pointer scoring request")
+					}
+					return
 				}
 				if len(runner.request.Fields) > 0 {
 					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 2048 {
