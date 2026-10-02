@@ -19,6 +19,8 @@ Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://oll
 ollama pull nimble
 ```
 
+Nimble, Tev1, [Clef](https://ollama.com/library/clef), and [Clef Flash](https://ollama.com/library/clef-flash) are decision models. The Clef models can also judge images and require v0.35.1 or later.
+
 Local requests do not need an API key.
 
 ## Choose a label
@@ -59,6 +61,54 @@ Example response:
     }
   },
   "usage": {"input_tokens": 174, "output_tokens": 1}
+}
+```
+
+## Judge an image
+
+[Clef](https://ollama.com/library/clef) and [Clef Flash](https://ollama.com/library/clef-flash) read images alongside the state. Send base64-encoded PNG, JPEG, or WebP files in `images`; they are shared by all questions, in request order. URLs and data URLs are not accepted. `state` is still required — it holds the context for the decision.
+
+```shell image.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef-flash",
+    "state": "A user took this screenshot and wants to know what it shows.",
+    "images": ["<base64-encoded image>"],
+    "questions": {
+      "has_ollama": {
+        "type": "noul",
+        "instructions": "Does this image contain Ollama?"
+      },
+      "app": {
+        "type": "choice",
+        "instructions": "Which application is shown in this screenshot?",
+        "criteria": {
+          "vscode": "Visual Studio Code",
+          "terminal": "A terminal emulator",
+          "browser": "A web browser",
+          "other": "A different application"
+        }
+      }
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model": "clef-flash",
+  "answers": {
+    "has_ollama": {"type": "noul", "noul": 0.959},
+    "app": {
+      "type": "choice",
+      "choice": "vscode",
+      "probabilities": {"vscode": 0.966, "other": 0.017, "browser": 0.010, "terminal": 0.007},
+      "confidence": 0.868
+    }
+  },
+  "usage": {"input_tokens": 677, "output_tokens": 0}
 }
 ```
 
