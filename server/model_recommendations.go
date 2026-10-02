@@ -156,7 +156,13 @@ func (c *modelRecommendationsCache) run(ctx context.Context) {
 		started, err := c.refreshIfIdle(ctx)
 		switch {
 		case !started:
-			failures = 0
+			// Another refresh (e.g. a read-triggered one) is already in
+			// flight. We have no information about whether it will
+			// succeed or fail, so leave the backoff state untouched
+			// rather than assuming success: resetting failures here would
+			// silently erase a real, ongoing outage's backoff progress
+			// the moment a read happens to collide with a periodic tick,
+			// which becomes more likely the longer the outage persists.
 			slog.Debug("skipping timer model recommendations refresh because refresh is already running")
 		case err == nil:
 			failures = 0
