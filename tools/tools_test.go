@@ -756,6 +756,23 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:    "qwen raw json fallback",
+			inputs:  []string{`{"name": "get_conditions", "arguments": {"location": "San Francisco"}}`},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: testArgs(map[string]any{
+							"location": "San Francisco",
+						}),
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
