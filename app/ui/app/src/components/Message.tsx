@@ -356,19 +356,20 @@ function InlineSearchTerm({ term }: { term: string }) {
 }
 
 function cursorToPageText(
-  cursor: number,
+  cursor: number | undefined,
   browserToolResult: BrowserToolResult | undefined,
 ): string {
   if (browserToolResult) {
-    let page = browserToolResult.page_stack[cursor];
-    if (page) {
+    let page =
+      cursor === undefined ? undefined : browserToolResult.page_stack?.[cursor];
+    if (typeof page === "string" && page) {
       if (page.startsWith("search_results_")) {
         const searchTerm = page.replace(/^search_results_/, "");
         page = `Search results for "${searchTerm}"`;
       }
       return page;
     }
-    return page || "Unknown page";
+    return "Unknown page";
   }
 
   if (cursor === undefined) {
@@ -380,7 +381,7 @@ function cursorToPageText(
 }
 
 function cursorToPage(
-  cursor: number,
+  cursor: number | undefined,
   browserToolResult: BrowserToolResult | undefined,
 ) {
   const pageText = cursorToPageText(cursor, browserToolResult);
@@ -400,8 +401,19 @@ function BrowserToolHistory({
   toolCall: ToolCall;
   browserToolResult?: BrowserToolResult;
 }) {
-  const args = JSON.parse(toolCall.function.arguments);
-  if (toolCall.function.name === "browser.search") {
+  let args: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(toolCall.function.arguments);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      args = parsed;
+    }
+  } catch {
+    // Interrupted tool calls can contain partial JSON; show the saved text below.
+  }
+  if (
+    toolCall.function.name === "browser.search" &&
+    typeof args?.query === "string"
+  ) {
     const query = args.query;
     return (
       <div className="text-neutral-600 dark:text-neutral-400 relative mb-3 select-text">
@@ -418,7 +430,15 @@ function BrowserToolHistory({
         </div>
       </div>
     );
-  } else if (toolCall.function.name === "browser.open") {
+  } else if (
+    toolCall.function.name === "browser.open" &&
+    args &&
+    (args.cursor === undefined || typeof args.cursor === "number") &&
+    (args.id === undefined ||
+      typeof args.id === "string" ||
+      typeof args.id === "number") &&
+    (args.loc === undefined || typeof args.loc === "number")
+  ) {
     const cursor = args.cursor;
     const id = args.id;
     const idAllNumeric = !isNaN(Number(id));
@@ -460,7 +480,11 @@ function BrowserToolHistory({
         </div>
       );
     }
-  } else if (toolCall.function.name === "browser.find") {
+  } else if (
+    toolCall.function.name === "browser.find" &&
+    typeof args?.pattern === "string" &&
+    typeof args.cursor === "number"
+  ) {
     const cursor = args.cursor;
     const pattern = args.pattern;
 

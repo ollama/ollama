@@ -165,6 +165,70 @@ it("shows saved messages and the last model without live chat controls", async (
   expect(page()).not.toContain("Last used:");
 });
 
+it.each(['{"query":', "", "null", '{"query":{"text":"Ollama"}}'])(
+  "keeps history readable and exportable with incomplete saved tool arguments: %s",
+  async (args) => {
+    vi.mocked(getChat).mockResolvedValueOnce(
+      new Chat({
+        ...first,
+        messages: [
+          ...first.messages,
+          {
+            role: "assistant",
+            content: "Saved tool reply",
+            tool_calls: [
+              {
+                type: "function",
+                function: { name: "browser.search", arguments: args },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await renderHistory();
+    expect(page()).toContain("Saved tool reply");
+    expect(
+      renderer.root.findAllByType("code").map((node) => node.children.join("")),
+    ).toContain(`args: ${args}`);
+    await click("Export");
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    expect(exportChat).toHaveBeenCalledWith(first.id);
+  },
+);
+
+it.each([{}, { page_stack: [123] }])(
+  "keeps history readable when saved browser state lacks page titles: %j",
+  async (browserState) => {
+    vi.mocked(getChat).mockResolvedValueOnce(
+      new Chat({
+        ...first,
+        browser_state: browserState,
+        messages: [
+          ...first.messages,
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                type: "function",
+                function: {
+                  name: "browser.open",
+                  arguments: '{"cursor":0,"id":1}',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await renderHistory();
+    expect(page()).toContain("Latest reply");
+    await click("Export");
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    expect(exportChat).toHaveBeenCalledWith(first.id);
+  },
+);
+
 it("exports the selected chat and keeps progress and errors scoped to it", async () => {
   let resolve!: (value: ExportResult | null) => void;
   vi.mocked(exportChat).mockImplementationOnce(
