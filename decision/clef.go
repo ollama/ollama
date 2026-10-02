@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -58,6 +59,13 @@ func encodeClef(req Request, c *Compiled) error {
 		}
 		add("END FIELD\n")
 		input.Fields = append(input.Fields, field)
+		if len(f.order) > 0 {
+			choices := make([]Choice, len(f.Choices))
+			for j, index := range f.order {
+				choices[index] = f.Choices[j]
+			}
+			f.Choices = choices
+		}
 		c.fields = append(c.fields, f)
 	}
 	add("\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nJOINT SCHEMA DECISIONS:")
@@ -111,11 +119,20 @@ func clefField(name string, q Question) (compiledField, error) {
 		if !ok {
 			return f, fmt.Errorf("choice criteria must be an object")
 		}
+		ordered := orderedmap.New[string, json.RawMessage]()
+		if err := json.Unmarshal(q.Criteria, ordered); err != nil {
+			return f, err
+		}
+		var original []string
+		for key := range ordered.All() {
+			original = append(original, key)
+		}
 		for _, key := range slices.Sorted(maps.Keys(values)) {
 			if strings.TrimSpace(key) == "" {
 				return f, fmt.Errorf("choice keys must not be empty")
 			}
 			add(key, values[key])
+			f.order = append(f.order, slices.Index(original, key))
 		}
 	case "score":
 		values, ok := criteria.([]any)
