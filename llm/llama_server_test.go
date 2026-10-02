@@ -2039,6 +2039,34 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	}
 }
 
+func TestAppendThreadpoolPollArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		gpus []ml.DeviceInfo
+		want []string
+	}{
+		{
+			name: "gpu present disables threadpool spinning",
+			gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 13, ComputeMajor: 12, ComputeMinor: 0}},
+			want: []string{"base", "--poll", "0"},
+		},
+		{
+			name: "cpu only keeps llama-server default",
+			gpus: nil,
+			want: []string{"base"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := appendThreadpoolPollArgs([]string{"base"}, tt.gpus)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("appendThreadpoolPollArgs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppendMainGPUArgs(t *testing.T) {
 	tests := []struct {
 		name string
