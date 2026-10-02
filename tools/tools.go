@@ -75,7 +75,9 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		if p.tag == "{" || p.tag == "[" {
 			if strings.TrimSpace(content) != "" {
 				p.state = toolsState_Done
-				return nil, content + string(p.buffer)
+				content += string(p.buffer)
+				p.buffer = []byte{}
+				return nil, content
 			}
 		}
 
