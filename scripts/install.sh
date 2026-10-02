@@ -269,8 +269,96 @@ if [ -f /etc/nv_tegra_release ] ; then
 fi
 
 # Install GPU dependencies on Linux
-if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
+#
+# Discrete Intel Arc GPUs are detected from PCI device IDs under
+# /sys/bus/pci/devices (no OS VERSION_ID allowlist). lspci/lshw are only
+# required as fallbacks for NVIDIA/AMD and for older systems without sysfs.
+
+# Return 0 if $1 is a known discrete Intel Arc PCI device ID (0x.... or bare hex).
+# Ranges: Alchemist DG2 (0x4F80-0x4F8F, 0x5600-0x56FF), Battlemage (0xE200-0xE2FF).
+# Explicit IDs include Arc Pro B60 (0xE211) and other shipping B-series cards.
+is_intel_arc_device_id() {
+    local id dec
+    id=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+    id=${id#0x}
+    # Require 4 hex digits
+    case "$id" in
+        [0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+        *) return 1 ;;
+    esac
+    dec=$(printf '%d' "0x$id" 2>/dev/null) || return 1
+    # Battlemage (Xe2 / BMG): 0xE200-0xE2FF
+    if [ "$dec" -ge 57856 ] && [ "$dec" -le 58111 ]; then
+        return 0
+    fi
+    # Alchemist (Xe-HPG / DG2): 0x5600-0x56FF
+    if [ "$dec" -ge 22016 ] && [ "$dec" -le 22271 ]; then
+        return 0
+    fi
+    # Alchemist early DG2 IDs: 0x4F80-0x4F8F
+    if [ "$dec" -ge 20352 ] && [ "$dec" -le 20367 ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Detect discrete Intel Arc via sysfs PCI enumeration (preferred: no extra tools).
+check_intel_arc_sysfs() {
+    local dev vendor class device
+    [ -d /sys/bus/pci/devices ] || return 1
+    for dev in /sys/bus/pci/devices/*; do
+        [ -r "$dev/vendor" ] || continue
+        vendor=$(cat "$dev/vendor" 2>/dev/null) || continue
+        [ "$vendor" = "0x8086" ] || continue
+        class=$(cat "$dev/class" 2>/dev/null) || continue
+        # VGA-compatible (0x030000) or other display controller (0x038000)
+        case "$class" in
+            0x030000|0x038000) ;;
+            *) continue ;;
+        esac
+        device=$(cat "$dev/device" 2>/dev/null) || continue
+        if is_intel_arc_device_id "$device"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Fallback: parse lspci -nn for Intel display devices with Arc device IDs.
+check_intel_arc_lspci() {
+    local line id
+    available lspci || return 1
+    # Example: 06:00.0 VGA compatible controller [0300]: Intel ... [8086:e211]
+    # Use a here-doc so the loop is not a pipe subshell (return must exit this function).
+    while IFS= read -r line; do
+        case "$line" in
+            *VGA*|*Display*|*3D*)
+                id=$(printf '%s\n' "$line" | sed -n 's/.*\[8086:\([0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]\)\].*/\1/p')
+                if [ -n "$id" ] && is_intel_arc_device_id "$id"; then
+                    return 0
+                fi
+                ;;
+        esac
+    done <<EOF
+$(lspci -nn -d '8086:' 2>/dev/null)
+EOF
+    return 1
+}
+
+check_intel_arc() {
+    check_intel_arc_sysfs || check_intel_arc_lspci
+}
+
+# True if an optional download package exists (HEAD succeeds for .tar.zst or .tgz).
+package_available() {
+    local url_base="$1"
+    local filename="$2"
+    curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1 \
+        || curl --fail --silent --head --location "${url_base}/${filename}.tgz${VER_PARAM}" >/dev/null 2>&1
+}
+
+if ! available lspci && ! available lshw && ! [ -d /sys/bus/pci/devices ]; then
+    warning "Unable to detect NVIDIA/AMD/Intel GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
 fi
 
@@ -291,22 +379,54 @@ check_gpu() {
     esac
 }
 
+# Optional AMD ROCm package (also used for multi-GPU hosts that already have NVIDIA).
+install_amd_rocm_if_present() {
+    if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
+        status "AMD GPU ready."
+        return 0
+    fi
+    return 1
+}
+
+# Intel Arc: detect by PCI device ID (Battlemage/Alchemist), never by OS version.
+# Download the optional oneAPI package when published for this release (same
+# pattern as ROCm). Base install already includes the Vulkan backend.
+install_intel_oneapi_if_present() {
+    if ! check_intel_arc; then
+        return 1
+    fi
+    status "Intel Arc GPU detected."
+    if package_available "https://ollama.com/download" "ollama-linux-${ARCH}-oneapi"; then
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-oneapi"
+        status "Intel GPU (oneAPI) ready."
+    else
+        status "Intel Arc GPU detected. oneAPI package not available for this release; Vulkan backend is included in the base install."
+    fi
+    return 0
+}
+
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
+    # Multi-GPU: still pull optional AMD/Intel packages when those devices exist.
+    install_amd_rocm_if_present || true
+    install_intel_oneapi_if_present || true
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if install_amd_rocm_if_present; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
 
-if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
-
+if install_intel_oneapi_if_present; then
     install_success
-    status "AMD GPU ready."
+    exit 0
+fi
+
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia; then
+    install_success
+    warning "No NVIDIA/AMD/Intel Arc GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
 
