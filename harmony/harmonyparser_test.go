@@ -3,6 +3,8 @@ package harmony
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/ollama/ollama/api"
 	"testing"
 )
 
@@ -536,3 +538,71 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 		})
 	}
 }
+func TestParseToolCallFunctionArguments(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    map[string]any
+		wantErr bool
+	}{
+		{
+			name: "plain object",
+			raw:  `{"location": "San Francisco, CA"}`,
+			want: map[string]any{"location": "San Francisco, CA"},
+		},
+		{
+			name: "array-wrapped object",
+			raw:  `[{"input": "x"}]`,
+			want: map[string]any{"input": "x"},
+		},
+		{
+			name: "object with trailing bracket",
+			raw:  `{"input": "x"}]`,
+			want: map[string]any{"input": "x"},
+		},
+		{
+			name:    "empty",
+			raw:     "",
+			wantErr: true,
+		},
+		{
+			name:    "invalid json",
+			raw:     `{not json}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseToolCallFunctionArguments(tt.raw)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseToolCallFunctionArguments(%q) error = %v, wantErr %v", tt.raw, err, tt.wantErr)
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got.ToMap(), tt.want) {
+				t.Errorf("parseToolCallFunctionArguments(%q) = %v, want %v", tt.raw, got.ToMap(), tt.want)
+			}
+		})
+	}
+}
+
+func TestHarmonyMessageHandlerToolArgumentTolerance(t *testing.T) {
+	handler := NewHarmonyMessageHandler()
+	handler.Init([]api.Tool{{Type: "function", Function: api.ToolFunction{Name: "get_weather"}}}, nil, nil)
+
+	// Model emits a single-element JSON array for the tool arguments.
+	_, _, calls, err := handler.Add(`<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>[{"location":"Zurich"}]<|call|>`, true)
+	if err != nil {
+		t.Fatalf("unexpected error parsing array-wrapped tool arguments: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Errorf("got function name %q, want get_weather", calls[0].Function.Name)
+	}
+
+	wantArgs := map[string]any{"location": "Zurich"}
+	if !reflect.DeepEqual(calls[0].Function.Arguments.ToMap(), wantArgs) {
+		t.Errorf("got arguments %v, want %v", calls[0].Function.Arguments.ToMap(), wantArgs)
+	}
+}
+
