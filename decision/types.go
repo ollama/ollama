@@ -2,6 +2,7 @@ package decision
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
@@ -50,6 +51,9 @@ type Response struct {
 	Model   string   `json:"model"`
 	Answers *Answers `json:"answers"`
 	Usage   Usage    `json:"usage"`
+
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
 }
 
 type Usage struct {
