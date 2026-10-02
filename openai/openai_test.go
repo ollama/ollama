@@ -158,7 +158,9 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 }
 
 func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
+	const image2 = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`
 	imgData, _ := base64.StdEncoding.DecodeString(image)
+	img2Data, _ := base64.StdEncoding.DecodeString(image2)
 
 	req := ChatCompletionRequest{
 		Model: "test-model",
@@ -179,12 +181,16 @@ func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
 				Role:       "tool",
 				ToolCallID: "call_1",
 				Content: []any{
-					map[string]any{"type": "text", "text": "Captured "},
+					map[string]any{"type": "text", "text": "Before: "},
 					map[string]any{
 						"type":      "image_url",
 						"image_url": map[string]any{"url": prefix + image},
 					},
-					map[string]any{"type": "text", "text": "screen.png"},
+					map[string]any{"type": "text", "text": " After: "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image2},
+					},
 				},
 			},
 		},
@@ -203,11 +209,12 @@ func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
 	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "screenshot" {
 		t.Errorf("expected tool message for call_1/screenshot, got role=%q id=%q name=%q", tool.Role, tool.ToolCallID, tool.ToolName)
 	}
-	if tool.Content != "Captured screen.png" {
-		t.Errorf("expected content 'Captured screen.png', got %q", tool.Content)
+	// each image keeps its position among the text parts
+	if tool.Content != "Before: [img] After: [img]" {
+		t.Errorf("expected content 'Before: [img] After: [img]', got %q", tool.Content)
 	}
-	if len(tool.Images) != 1 || string(tool.Images[0]) != string(imgData) {
-		t.Errorf("expected the tool image to be kept, got %d images", len(tool.Images))
+	if len(tool.Images) != 2 || string(tool.Images[0]) != string(imgData) || string(tool.Images[1]) != string(img2Data) {
+		t.Errorf("expected both tool images to be kept in order, got %d images", len(tool.Images))
 	}
 }
 

@@ -684,11 +684,12 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				}
 			}
 			// a tool message is a single result, so keep its parts together and
-			// preserve the tool call it answers
+			// preserve the tool call it answers. an [img] placeholder keeps each
+			// image at its position among the text parts
 			if strings.ToLower(msg.Role) == "tool" && (len(messages) > start || toolName != "" || msg.ToolCallID != "") {
 				tool := api.Message{Role: msg.Role, ToolName: toolName, ToolCallID: msg.ToolCallID}
 				for _, part := range messages[start:] {
-					tool.Content += part.Content
+					tool.Content += part.Content + strings.Repeat("[img]", len(part.Images))
 					tool.Images = append(tool.Images, part.Images...)
 				}
 				messages = append(messages[:start], tool)
