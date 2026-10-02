@@ -1403,6 +1403,38 @@ func TestParseGemma4ToolCall_RepairsIssue15315Examples(t *testing.T) {
 	}
 }
 
+func TestParseGemma4ToolCall_TrailingNoise(t *testing.T) {
+	tests := []struct {
+		name, content string
+		want          string
+		wantErr       bool
+	}{
+		{"noise after complete object", `call:write{content:<|"|>hello<|"|>}$$`, "hello", false},
+		{"braces inside quoted argument", `call:write{content:<|"|>a {b} c<|"|>}$$`, "a {b} c", false},
+		{"incomplete object", `call:write{content:<|"|>hello<|"|>$$`, "", true},
+		{"invalid value before close", `call:write{content:???}$$`, "", true},
+		{"second JSON object is not noise", `call:write{content:<|"|>hello<|"|>} {content:<|"|>other<|"|>}`, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(tt.content, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected invalid tool call, got %v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall: %v", err)
+			}
+			value, ok := got.Function.Arguments.Get("content")
+			if !ok || value != tt.want {
+				t.Fatalf("content = %v, want %q", value, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseGemma4ToolCall_RepairsMultipleProperties(t *testing.T) {
 	tests := []struct {
 		name    string
