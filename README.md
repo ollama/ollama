@@ -201,7 +201,6 @@ console.log(response.message.content);
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
-- [AiRC Orchestration](https://github.com/AiRC-ai/AiRC-Orchestration) - Desktop AI workspace with projects and tools for local Ollama, remote Ollama servers, and Ollama Cloud
 
 #### Mobile
 
@@ -269,6 +268,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [AiRC Orchestration](https://github.com/AiRC-ai/AiRC-Orchestration) - AI agent orchestrator with parallel model swarms, tools, persistent goals, and supervised workflows across local Ollama, remote Ollama servers, and Ollama Cloud
 
 ### RAG & Knowledge Bases
 
