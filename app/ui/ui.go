@@ -706,6 +706,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	if !ok {
 		return errors.New("streaming not supported")
 	}
+	kw := newKeepaliveWriter(w, flusher)
+	w, flusher = kw, kw
 
 	if r.Method != "POST" {
 		return not.Found
@@ -820,6 +822,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	// Keep the stream alive while the model is checked, pulled, loaded, or
+	// processing a long prompt, so the webview doesn't time out the request
+	// before the first bytes arrive.
+	defer kw.start(ctx)()
 
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
