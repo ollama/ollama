@@ -309,6 +309,72 @@ func collectExpertProjections(tensors map[string]*mlx.Array, cfg *TextConfig, pr
 	return
 }
 
+// loadStackedExpertProjection loads one pre-stacked [experts, out, in]
+// projection stored under base, with or without a ".weight" suffix. It stays
+// packed for GatherQMM when scale companions are present.
+func loadStackedExpertProjection(tensors map[string]*mlx.Array, cfg *TextConfig, base string) *stackedExpertResult {
+	key, w := firstTensorKey(tensors, base+".weight", base)
+	if w == nil {
+		return nil
+	}
+	scales := tensors[key+"_scale"]
+	if scales == nil {
+		return &stackedExpertResult{Weight: w}
+	}
+	globalScale, _ := model.ReadGlobalScale(tensors, key)
+	groupSize, bits, mode := model.ResolveLinearQuantParams(
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant, key, w, scales)
+	return &stackedExpertResult{
+		Weight:       w,
+		Scales:       scales,
+		Biases:       tensors[key+"_qbias"],
+		GlobalScales: model.PrepareGatherQMMGlobalScale(globalScale, w.Dim(0)),
+		Bits:         bits,
+		GroupSize:    groupSize,
+		Mode:         mode,
+	}
+}
+
+// loadStackedExpertProjections loads unfused, pre-stacked gate/up/down
+// projections from the first prefix that has a gate projection. up and down
+// are nil when that prefix is incomplete.
+func loadStackedExpertProjections(tensors map[string]*mlx.Array, cfg *TextConfig, prefixes ...string) (gate, up, down *stackedExpertResult) {
+	for _, prefix := range prefixes {
+		if gate = loadStackedExpertProjection(tensors, cfg, prefix+".gate_proj"); gate != nil {
+			up = loadStackedExpertProjection(tensors, cfg, prefix+".up_proj")
+			down = loadStackedExpertProjection(tensors, cfg, prefix+".down_proj")
+			return gate, up, down
+		}
+	}
+	return nil, nil, nil
+}
+
+// setUnfusedExperts configures an MoE block from separate stacked gate, up and
+// down projections: GatherQMM when all three are quantized, GatherMM
+// otherwise.
+func setUnfusedExperts(moe *MoEBlock, gate, up, down *stackedExpertResult) {
+	if gate.Scales == nil || up.Scales == nil || down.Scales == nil {
+		// Unquantized: transpose for GatherMM (expects [experts, in, out]).
+		moe.GateWeight = transposeForGatherMM(denseStackedExpertResult(gate))
+		moe.UpWeight = transposeForGatherMM(denseStackedExpertResult(up))
+		moe.DownWeight = transposeForGatherMM(denseStackedExpertResult(down))
+		return
+	}
+
+	moe.UseQuantized = true
+	moe.GateWeightQ, moe.GateScales, moe.GateBiases = gate.Weight, gate.Scales, gate.Biases
+	moe.UpWeightQ, moe.UpScales, moe.UpBiases = up.Weight, up.Scales, up.Biases
+	moe.DownWeightQ, moe.DownScales, moe.DownBiases = down.Weight, down.Scales, down.Biases
+	moe.GateGlobalScales = gate.GlobalScales
+	moe.UpGlobalScales = up.GlobalScales
+	moe.DownGlobalScales = down.GlobalScales
+	moe.GateGroupSize, moe.GateBits = gate.GroupSize, gate.Bits
+	moe.UpGroupSize, moe.UpBits = up.GroupSize, up.Bits
+	moe.DownGroupSize, moe.DownBits = down.GroupSize, down.Bits
+	moe.QuantMode = gate.Mode
+	moe.DownQuantMode = down.Mode
+}
+
 func denseStackedExpertResult(w *stackedExpertResult) *mlx.Array {
 	if w.Scales == nil {
 		return w.Weight
@@ -939,18 +1005,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 					return fmt.Errorf("layer %d: missing MoE down_proj for fused gate_up_proj %q", i, gateUpKey)
 				}
 				m.loadFusedExperts(moe, tensors, gateUpKey, gateUp, downKey, down)
-			} else if gateW := firstNonNil(tensors,
-				layerPrefix+".experts.gate_proj", layerPrefix+".moe.gate_proj"); gateW != nil {
-				// Separate (non-fused) pre-stacked gate/up projections (older HF
-				// layout, dense only). Transpose for GatherMM.
-				moe.GateWeight = transposeForGatherMM(gateW)
-				moe.UpWeight = transposeForGatherMM(firstNonNil(tensors,
-					layerPrefix+".experts.up_proj", layerPrefix+".moe.up_proj"))
-				moe.DownWeight = transposeForGatherMM(firstNonNil(tensors,
-					layerPrefix+".experts.down_proj", layerPrefix+".moe.down_proj"))
-				if moe.UpWeight == nil || moe.DownWeight == nil {
+			} else if gate, up, down := loadStackedExpertProjections(tensors, m.TextConfig,
+				layerPrefix+".experts", layerPrefix+".moe", layerPrefix+".experts.switch_glu",
+			); gate != nil {
+				// Separate (non-fused) pre-stacked gate/up/down projections: the
+				// older HF layout (dense) and the SwitchGLU layout mlx-lm and
+				// mlx-vlm write (dense or quantized).
+				if up == nil || down == nil {
 					return fmt.Errorf("layer %d: incomplete pre-stacked MoE weights", i)
 				}
+				setUnfusedExperts(moe, gate, up, down)
 			} else {
 				// Per-expert tensors (from create path).
 				// Try separate gate_proj/up_proj first, then fused gate_up_proj.
@@ -1002,35 +1066,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				if gateStacked == nil || upStacked == nil || downStacked == nil {
 					return fmt.Errorf("layer %d: missing MoE expert weights", i)
 				}
-				// Use GatherQMM if all projections have quantized weights.
-				if gateStacked.Scales != nil && upStacked.Scales != nil && downStacked.Scales != nil {
-					moe.GateWeightQ = gateStacked.Weight
-					moe.GateScales = gateStacked.Scales
-					moe.GateBiases = gateStacked.Biases
-					moe.GateGlobalScales = gateStacked.GlobalScales
-					moe.UpWeightQ = upStacked.Weight
-					moe.UpScales = upStacked.Scales
-					moe.UpBiases = upStacked.Biases
-					moe.UpGlobalScales = upStacked.GlobalScales
-					moe.DownWeightQ = downStacked.Weight
-					moe.DownScales = downStacked.Scales
-					moe.DownBiases = downStacked.Biases
-					moe.DownGlobalScales = downStacked.GlobalScales
-					moe.UseQuantized = true
-					moe.GateGroupSize = gateStacked.GroupSize
-					moe.GateBits = gateStacked.Bits
-					moe.UpGroupSize = upStacked.GroupSize
-					moe.UpBits = upStacked.Bits
-					moe.DownGroupSize = downStacked.GroupSize
-					moe.DownBits = downStacked.Bits
-					moe.QuantMode = gateStacked.Mode
-					moe.DownQuantMode = downStacked.Mode
-				} else {
-					// Unquantized: transpose for GatherMM (expects [experts, in, out]).
-					moe.GateWeight = transposeForGatherMM(denseStackedExpertResult(gateStacked))
-					moe.UpWeight = transposeForGatherMM(denseStackedExpertResult(upStacked))
-					moe.DownWeight = transposeForGatherMM(denseStackedExpertResult(downStacked))
-				}
+				setUnfusedExperts(moe, gateStacked, upStacked, downStacked)
 			}
 			layer.MoE = moe
 
