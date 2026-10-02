@@ -136,7 +136,7 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		if value := answers.Damage.Score; !(value >= 0 && value <= 2) {
 			t.Fatalf("missing or invalid damage score: %s", body)
 		}
-		if diff := cmp.Diff(map[string]string{"0": "Undamaged", "1": "Minor damage", "2": "Destroyed"}, answers.Damage.Legend.ToMap()); diff != "" {
+		if diff := cmp.Diff(map[string]any{"0": "Undamaged", "1": "Minor damage", "2": "Destroyed"}, answers.Damage.Legend.ToMap()); diff != "" {
 			t.Fatalf("damage legend (-want +got):\n%s", diff)
 		}
 		return result
