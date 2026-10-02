@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/format"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/progress"
 )
 
@@ -255,7 +256,8 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 
 // showOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
 func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy, isCloudModel bool) error {
-	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
+	// Ask for the platform default, so a stale local variant is re-pulled below.
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: model, Runner: manifest.RunnerAuto}); err == nil {
 		return nil
 	} else {
 		if isCloudModel {

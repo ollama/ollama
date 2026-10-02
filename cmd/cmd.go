@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -829,7 +830,10 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 // name the caller should continue with. verb is the user-facing command
 // ("run" or "pull") used in hint text.
 func showOrPullModel(cmd *cobra.Command, client *api.Client, name, runner string, insecure bool, verb string) (*api.ShowResponse, string, error) {
-	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name, Runner: runner})
+	// About to run the model, so ask for the platform default rather than
+	// whatever is installed: a stale local variant reports not found and is
+	// re-pulled below.
+	info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: name, Runner: cmp.Or(runner, manifest.RunnerAuto)})
 	if err == nil {
 		return info, name, nil
 	}
