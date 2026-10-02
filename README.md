@@ -260,6 +260,7 @@ console.log(response.message.content);
 
 ### Frameworks & Agents
 
+- [AgentBridge](https://github.com/Graphene-Lab/AgentBridge) - Self-hosted AI personal assistant with a terminal chat and an OpenAI-compatible API, using Ollama for local models
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
 - [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
