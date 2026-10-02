@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 )
@@ -67,7 +68,7 @@ func TestCreateCapabilities(t *testing.T) {
 				if !slices.Contains(shown.Capabilities, model.CapabilityDecision) || !strings.Contains(shown.Modelfile, "CAPABILITY decision\n") {
 					t.Fatalf("show %s lost capability: %+v", name, shown)
 				}
-				if want := []model.Capability{model.CapabilityDecision}; !slices.Equal(shown.Capabilities, want) || shown.Thinking != nil {
+				if want := []model.Capability{model.CapabilityDecision, model.CapabilityVision}; !slices.Equal(shown.Capabilities, want) || shown.Thinking != nil {
 					t.Fatalf("show %s capabilities = %v thinking = %v, want only %v", name, shown.Capabilities, shown.Thinking, want)
 				}
 				m, err := GetModel(name)
@@ -87,7 +88,7 @@ func TestCreateCapabilities(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, m := range listed {
-				want := []model.Capability{model.CapabilityDecision}
+				want := []model.Capability{model.CapabilityDecision, model.CapabilityVision}
 				if m.Name == "base:latest" {
 					want = []model.Capability{model.CapabilityCompletion, model.CapabilityVision}
 				}
@@ -108,6 +109,65 @@ func TestCreateRejectsUnknownCapability(t *testing.T) {
 		})
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unknown capability") {
 			t.Fatalf("capability %q: %d %s", capability, w.Code, w.Body)
+		}
+	}
+}
+
+func TestDecisionPublicCapabilities(t *testing.T) {
+	for _, format := range []string{"gguf", "safetensors"} {
+		for _, declaredVision := range []bool{false, true} {
+			name := format + "-decision"
+			if declaredVision {
+				name += "-vision"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Setenv("OLLAMA_MODELS", t.TempDir())
+				cfg := model.ConfigV2{ModelFormat: format, Parser: "qwen3.5", Capabilities: []string{"decision"}}
+				want := []model.Capability{model.CapabilityDecision}
+				if declaredVision {
+					cfg.Capabilities = append(cfg.Capabilities, "vision")
+					want = append(want, model.CapabilityVision)
+				}
+				_, digest := createBinFile(t, map[string]any{
+					"general.architecture": "qwen35", "qwen35.vision.block_count": uint32(1),
+				}, nil)
+				if format == "gguf" {
+					config, err := createConfigLayer(cfg)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := manifest.WriteManifest(model.ParseName(name), *config, []manifest.Layer{{
+						MediaType: "application/vnd.ollama.image.model", Digest: digest,
+					}}); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					createSafetensorsTestModel(t, name, cfg, []manifest.Layer{{
+						MediaType: "application/vnd.ollama.image.projector", Digest: digest,
+					}})
+				}
+				m, err := GetModel(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := m.CheckCapabilities(model.CapabilityDecision, model.CapabilityVision, model.CapabilityThinking); err != nil {
+					t.Fatalf("fixture must retain runtime capabilities: %v", err)
+				}
+				shown, err := GetModelInfo(api.ShowRequest{Model: name})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(shown.Capabilities, want) || shown.Thinking != nil {
+					t.Fatalf("show capabilities = %v thinking = %v, want %v and no thinking", shown.Capabilities, shown.Thinking, want)
+				}
+				listed, err := listModels(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(listed) != 1 || !slices.Equal(listed[0].Capabilities, want) {
+					t.Fatalf("list models = %+v, want one model with capabilities %v", listed, want)
+				}
+			})
 		}
 	}
 }

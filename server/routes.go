@@ -909,8 +909,17 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if len(req.Images) == 0 && len(body) > 64<<10 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 64 KiB without images"})
+	textOnly := req
+	textOnly.Images = nil
+	var text bytes.Buffer
+	enc := json.NewEncoder(&text)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(textOnly); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(bytes.TrimSpace(text.Bytes())) > 64<<10 {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "text and schema must not exceed 64 KiB"})
 		return
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
@@ -936,11 +945,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if !m.isGGUF() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not supported by System One; use a local GGUF model", req.Model)})
-		return
+	encoding := m.metadata.String("decision.type")
+	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef") {
+		encoding = m.Config.Renderer
 	}
-	compiled, err := decision.CompileWithEncoder(req, m.metadata.String("decision.type"))
+	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1680,8 +1689,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Runner:            m.Runner,
 	}
 
-	// For safetensors LLM models, populate details from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// For safetensors completion and decision models, populate details from config.json.
+	isSafetensorsLLM := m.IsMLX() && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "decision"))
+	if isSafetensorsLLM {
 		if info, err := getSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
@@ -1718,7 +1728,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Template:     m.Template.String(),
 		Details:      modelDetails,
 		Messages:     msgs,
-		Capabilities: publicCapabilities(m.Capabilities()),
+		Capabilities: m.publicCapabilities(),
 		ModifiedAt:   mf.FileInfo().ModTime(),
 		Requires:     m.Config.Requires,
 		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
@@ -1800,8 +1810,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	// For safetensors LLM models, populate ModelInfo from config.json.
-	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+	// For safetensors completion and decision models, populate ModelInfo from config.json.
+	if isSafetensorsLLM {
 		if info, err := getSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			resp.ModelInfo = info
 		}

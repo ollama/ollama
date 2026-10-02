@@ -485,7 +485,7 @@ func stageSafetensorsSourceFiles(ctx context.Context, files map[string]string) (
 
 func isSafetensorsMetadataFile(filePath string) bool {
 	switch path.Base(filePath) {
-	case "config.json", "generation_config.json", "model.safetensors.index.json", "tokenizer_config.json", "chat_template.jinja":
+	case "config.json", "rl_agent_config.json", "joint_head_config.json", "generation_config.json", "model.safetensors.index.json", "tokenizer_config.json", "chat_template.jinja":
 		return true
 	default:
 		return false

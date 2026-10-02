@@ -39,6 +39,7 @@ func TestAPI(t *testing.T) {
 		"api-show-model",
 		"generate-logprobs",
 		"chat-logprobs",
+		"system-one",
 	)
 }
 
