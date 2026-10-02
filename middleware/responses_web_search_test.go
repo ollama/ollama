@@ -925,7 +925,7 @@ func TestWebSearchResponsesWriterNonStreamingSurfacesMixedToolCalls(t *testing.T
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	request := openai.ResponsesRequest{Model: "test-model", Tools: []openai.ResponsesTool{{Type: "web_search"}, {Type: "function", Name: "get_weather", Description: ptr("weather"), Parameters: map[string]any{"type": "object"}}}}
+	request := openai.ResponsesRequest{Model: "test-model", Tools: []openai.ResponsesTool{{Type: "web_search"}, {Type: "namespace", Name: "weather", Tools: []openai.ResponsesTool{{Type: "function", Name: "lookup", Description: ptr("weather"), Parameters: map[string]any{"type": "object"}}}}}}
 	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, model: request.Model, responseID: "resp_test", itemID: "msg_test", request: request}
 	writer := &WebSearchResponsesWriter{
 		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
@@ -947,10 +947,10 @@ func TestWebSearchResponsesWriterNonStreamingSurfacesMixedToolCalls(t *testing.T
 		},
 	}
 
-	// Non-streaming response with both web_search and get_weather tool calls.
+	// Non-streaming response with both web_search and namespaced tool calls.
 	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{
 		{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}},
-		{ID: "call_2", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "SF"})}},
+		{ID: "call_2", Function: api.ToolCallFunction{Name: "weather.lookup", Arguments: testArgs(map[string]any{"city": "SF"})}},
 	}}}
 	data, _ := json.Marshal(initial)
 	if _, err := writer.Write(data); err != nil {
@@ -962,15 +962,15 @@ func TestWebSearchResponsesWriterNonStreamingSurfacesMixedToolCalls(t *testing.T
 		t.Fatalf("decode response: %v: %s", err, recorder.Body.String())
 	}
 
-	// Output should include a function_call item for get_weather.
+	// Output should restore the request-scoped namespace on the mixed call.
 	var hasFunctionCall bool
 	for _, item := range response.Output {
-		if item.Type == "function_call" && item.Name == "get_weather" {
+		if item.Type == "function_call" && item.Name == "lookup" && item.Namespace == "weather" && item.ID == "fc_mixed_0" {
 			hasFunctionCall = true
 		}
 	}
 	if !hasFunctionCall {
-		t.Fatalf("mixed tool call (get_weather) was not surfaced: %#v", response.Output)
+		t.Fatalf("mixed namespaced tool call was not restored: %#v", response.Output)
 	}
 }
 
