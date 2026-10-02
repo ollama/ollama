@@ -83,8 +83,10 @@ func TestBatchMatchesIndividualDecisions(t *testing.T) {
 				InputIDs:     mlx.FromValues([]int32{1, 2, 3, 4, 5, 6, 7, 5}, 2, 4),
 				SeqOffsets:   []int32{0, 0},
 				SeqQueryLens: []int32{4, 4},
+				Layout:       []any{types[0], types[1]},
 			}
-			out := m.Unembed(m.decisionHidden(b, types)).Reshape(-1)
+			hidden, _ := m.Forward(b, nil)
+			out := m.Unembed(hidden).Reshape(-1)
 			mlx.Eval(out)
 			got := out.Floats()
 			for i, ids := range rows {
@@ -92,8 +94,10 @@ func TestBatchMatchesIndividualDecisions(t *testing.T) {
 					InputIDs:     mlx.FromValues(ids, 1, len(ids)),
 					SeqOffsets:   []int32{0},
 					SeqQueryLens: []int32{int32(len(ids))},
+					Layout:       []any{types[i]},
 				}
-				scores := m.Unembed(m.decisionHidden(single, types[i:i+1])).Reshape(-1)
+				one, _ := m.Forward(single, nil)
+				scores := m.Unembed(one).Reshape(-1)
 				mlx.Eval(scores)
 				for j, want := range scores.Floats() {
 					if !(math.Abs(float64(got[i*4+j]-want)) <= 1e-5) {

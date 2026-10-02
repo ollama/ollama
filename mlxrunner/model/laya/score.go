@@ -15,6 +15,14 @@ import (
 
 var _ llm.Scorer = (*Model)(nil)
 
+// ScoreRow is a complete bidirectional input. Its marker positions refer to
+// real tokens, not to a padded batch tail.
+type ScoreRow struct {
+	Tokens  []int32
+	Markers []int32
+	Type    int32
+}
+
 func (m *Model) sequence(state string, q llm.ScoreQuestion, maxLen int) (ids, markers []int32, qtype int32, err error) {
 	switch q.Type {
 	case "choice":
@@ -85,19 +93,21 @@ func (m *Model) temperature(qtype int32, count int) float32 {
 	return max(0.5, min(5, t))
 }
 
-// Score executes on the runner's MLX thread. Encoder requests never use the
-// decoder prefix cache: changing an option changes every bidirectional state.
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
-	var result llm.ScoreResponse
-	badRequest := func(err error) (llm.ScoreResponse, error) {
-		return result, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+// PrepareScore is CPU-only and needs no MLX thread or array scope, allowing
+// preparation to overlap GPU work. Score currently calls it serially.
+// Encoder rows cannot use causal prefix snapshots:
+// changing an option changes every bidirectional hidden state.
+func (m *Model) PrepareScore(ctx context.Context, input llm.ScoreRequest) ([]ScoreRow, error) {
+	badRequest := func(err error) ([]ScoreRow, error) {
+		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
 	if len(input.Rows) < 1 || len(input.Rows) > 64 || input.MaxTokens < 1 || input.MaxTokens > m.config.MaxLen {
 		return badRequest(fmt.Errorf("invalid Laya row count or context limit"))
 	}
+	rows := make([]ScoreRow, len(input.Rows))
 	for i, row := range input.Rows {
 		if err := ctx.Err(); err != nil {
-			return result, err
+			return nil, err
 		}
 		if row.Question == nil {
 			return badRequest(fmt.Errorf("Laya requires structured decision inputs"))
@@ -106,20 +116,49 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		if err != nil {
 			return badRequest(fmt.Errorf("question %d: %w", i, err))
 		}
+		rows[i] = ScoreRow{Tokens: ids, Markers: markers, Type: qtype}
+	}
+	return rows, nil
+}
+
+// FinishScore reads only real marker positions from a completed row.
+// Call it on the MLX thread, within the caller's scope, with one complete hidden row.
+func (m *Model) FinishScore(row ScoreRow, hidden *mlx.Array) []float32 {
+	selected := hidden.TakeAxis(mlx.FromValues(row.Markers, len(row.Markers)), 1)
+	output := mlx.DivScalar(m.Unembed(selected).AsType(mlx.DTypeFloat32), m.temperature(row.Type, len(row.Markers))).Reshape(-1)
+	mlx.Eval(output)
+	return output.Floats()
+}
+
+// Score retains the serial runner path while sharing preparation and readout.
+// Keep preparation and readout model-owned and separate from forward execution
+// so scheduling can evolve without duplicating model logic.
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+	var result llm.ScoreResponse
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	rows, err := m.PrepareScore(ctx, input)
+	if err != nil {
+		return result, err
+	}
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		var logits []float32
 		mlx.Scoped(func() {
-			h := m.decisionHidden(&batch.Batch{
-				InputIDs:     mlx.FromValues(ids, 1, len(ids)),
+			b := &batch.Batch{
+				InputIDs:     mlx.FromValues(row.Tokens, 1, len(row.Tokens)),
 				SeqOffsets:   []int32{0},
-				SeqQueryLens: []int32{int32(len(ids))},
-			}, []int32{qtype})
-			selected := h.TakeAxis(mlx.FromValues(markers, len(markers)), 1)
-			out := mlx.DivScalar(m.Unembed(selected).AsType(mlx.DTypeFloat32), m.temperature(qtype, len(markers))).Reshape(-1)
-			mlx.Eval(out)
-			logits = out.Floats()
+				SeqQueryLens: []int32{int32(len(row.Tokens))},
+				Layout:       []any{row.Type},
+			}
+			hidden, _ := m.Forward(b, nil)
+			logits = m.FinishScore(row, hidden)
 		})
 		result.Logits = append(result.Logits, logits)
-		result.InputTokens += len(ids)
+		result.InputTokens += len(row.Tokens)
 	}
 	return result, ctx.Err()
 }

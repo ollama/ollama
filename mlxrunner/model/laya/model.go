@@ -135,6 +135,23 @@ func attention(b *batch.Batch, qkv *mlx.Array, heads int, theta float32, mask nn
 }
 
 func (m *Model) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+	h := m.encoderForward(b)
+	// The question type is model-owned row metadata. A missing layout denotes
+	// the choice type for load-time probes.
+	types := make([]int32, b.InputIDs.Dim(0))
+	for i, layout := range b.Layout {
+		if layout != nil {
+			types[i] = layout.(int32)
+		}
+	}
+	h = h.Add(m.TypeEmbedding.TakeAxis(mlx.FromValues(types, len(types)), 0).ExpandDims(1))
+	for _, l := range m.Head {
+		h = l.forward(b, h, max(1, m.encoder.HiddenSize/64))
+	}
+	return h, nil
+}
+
+func (m *Model) encoderForward(b *batch.Batch) *mlx.Array {
 	h := m.EmbeddingNorm.Forward(m.Embeddings.TakeAxis(b.InputIDs, 0))
 	// Build the quadratic mask on the device; host input remains linear in n.
 	positions := mlx.Arange(0, float64(b.InputIDs.Dim(1)), 1, mlx.DTypeInt32)
@@ -147,7 +164,7 @@ func (m *Model) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array
 		}
 		h = l.forward(b, h, m.encoder.Heads, theta, mask)
 	}
-	return m.FinalNorm.Forward(h), nil
+	return m.FinalNorm.Forward(h)
 }
 
 func (l encoderLayer) forward(b *batch.Batch, h *mlx.Array, heads int, theta float32, mask nn.AttentionMask) *mlx.Array {
@@ -166,15 +183,6 @@ func (l headLayer) forward(b *batch.Batch, h *mlx.Array, heads int) *mlx.Array {
 	h = h.Add(l.Out.Forward(attention(b, l.QKV.Forward(l.Norm1.Forward(h)), heads, 0, nn.AttentionMask{})))
 	// PyTorch TransformerEncoderLayer defaults to ReLU, not GELU.
 	return h.Add(l.Down.Forward(mlx.ReLU(l.In.Forward(l.Norm2.Forward(h)))))
-}
-
-func (m *Model) decisionHidden(b *batch.Batch, qtypes []int32) *mlx.Array {
-	h, _ := m.Forward(b, nil)
-	h = h.Add(m.TypeEmbedding.TakeAxis(mlx.FromValues(qtypes, len(qtypes)), 0).ExpandDims(1))
-	for _, l := range m.Head {
-		h = l.forward(b, h, max(1, m.encoder.HiddenSize/64))
-	}
-	return h
 }
 
 func (m *Model) Unembed(h *mlx.Array) *mlx.Array {

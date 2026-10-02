@@ -48,3 +48,16 @@ func TestScoreRejectsInvalidInputs(t *testing.T) {
 		t.Errorf("cancelled score: %v", err)
 	}
 }
+
+func TestPrepareScoreCancellation(t *testing.T) {
+	m := Model{config: config{MaxLen: 512}}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rows, err := m.PrepareScore(ctx, llm.ScoreRequest{
+		MaxTokens: 512,
+		Rows:      []llm.ScoreRow{{Question: &llm.ScoreQuestion{Type: "choice", Options: []string{"yes", "no"}}}},
+	})
+	if !errors.Is(err, context.Canceled) || rows != nil {
+		t.Fatalf("cancelled preparation: rows=%v, err=%v", rows, err)
+	}
+}
