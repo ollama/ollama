@@ -58,8 +58,8 @@ all probabilities and token usage:
 ollama ask nimble "Is this a refund request?" "I was charged twice." --json
 ```
 
-To ask multiple questions or customize yes/no criteria, save the API's `questions`
-object in a JSON file, then run:
+To ask multiple questions about the same input or customize yes/no criteria, save
+the API's `questions` object in a JSON file, then run:
 
 ```shell
 ollama ask nimble --questions questions.json "I was charged twice."
@@ -70,6 +70,9 @@ The file contains named questions with `type`, `instructions`, and `criteria`, a
 the [multiple-question example](#ask-multiple-questions) below. This mode defaults
 to the full JSON response when stdout is redirected. `--choice`, `--score`, and
 `--questions` are mutually exclusive.
+
+`ollama ask` accepts one input per invocation. To process several independent
+texts, run it once per text. Multiple lines on stdin form a single input.
 
 Successful answers exit with status 0, regardless of the probability or score.
 Invalid input, unavailable models, and server errors exit nonzero, with diagnostics
@@ -134,7 +137,9 @@ For `choice` and `score`, `confidence` measures how strongly the model favors on
 
 ## Ask multiple questions
 
-Combine question types in one request. Here, both questions use the same ticket:
+Combine question types in one request. All questions use the same `state`; submit
+a separate request for each independent input. Here, both questions use the same
+ticket:
 
 ```shell multiple.sh
 curl http://localhost:11434/v1/systemone \
