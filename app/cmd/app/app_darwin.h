@@ -18,7 +18,7 @@ enum AppMove
     MoveError,
 };
 
-void run(bool showOnboarding, bool startHidden);
+void run(bool showOnboarding, bool startHidden, bool showMenuBarIcon);
 typedef struct {
     int pid;
     int64_t started_at;
@@ -68,6 +68,7 @@ void RefreshClaudeProxyMenu(void);
 void updateClaudeProxyMenu(unsigned long long routed);
 bool ShowAppsInMenu(void);
 void SetShowAppsInMenu(bool visible);
+void SetMenuBarIconVisible(bool visible);
 enum ClaudeInstallResult
 {
     ClaudeInstallCancelled,
