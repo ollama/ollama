@@ -79,18 +79,16 @@ describe("Onboarding", () => {
     );
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).not.toMatch(/alt="Ollama waving" class="[^"]*dark:/);
-    expect(html).toContain(
-      "Run open models with your coding agents so you can spend less while keeping your data private.",
-    );
-    expect(html.indexOf("Connect your apps")).toBeLessThan(
+    expect(html).toContain("Run open models on your computer or in the cloud.");
+    expect(html.indexOf("Build with the Ollama API")).toBeLessThan(
       html.indexOf("Easily switch models"),
     );
     expect(html.indexOf("Easily switch models")).toBeLessThan(
       html.indexOf("Your data stays yours"),
     );
-    expect(html).toContain("Power your existing coding apps with open models");
-    expect(html).toContain("Swap between frontier models in one click.");
-    expect(html).toContain("Your prompt data is never logged or trained on.");
+    expect(html).toContain("Add open models to your own applications.");
+    expect(html).toContain("Choose the right model for each task.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
   });
@@ -436,7 +434,7 @@ describe("Onboarding", () => {
         isSigningIn={false}
         signInError={null}
         completionError={null}
-        onOpenApps={vi.fn().mockResolvedValue(true)}
+        onComplete={vi.fn().mockResolvedValue(true)}
         onSignIn={vi.fn()}
         onSignUp={vi.fn()}
         onRetryCompletion={vi.fn()}
@@ -601,11 +599,11 @@ describe("Onboarding", () => {
     expect(html).toContain("Create an account");
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(
-      "Create your account for access to faster, larger open models.",
+      "Run larger models in the cloud without downloading them.",
     );
-    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).toContain("Sign up");
-    expect(html).toContain("No thanks, I&#x27;ll use Ollama locally");
+    expect(html).toContain("Use Ollama locally");
     expect(html).toContain("Sign in");
     expect(html).not.toContain("Skip");
   });
@@ -624,9 +622,9 @@ describe("Onboarding", () => {
 
     expect(html).toContain("Create an account");
     expect(html).toContain(
-      "Create your account for access to faster, larger open models.",
+      "Run larger models in the cloud without downloading them.",
     );
-    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).not.toContain(">Sign in<");
   });
 
@@ -703,13 +701,13 @@ function appsIntegrations(claudeInstalled: boolean): IntegrationStatuses {
   ];
 }
 
-function onboardingProps(onOpenApps: () => Promise<boolean>) {
+function onboardingProps(onComplete: () => Promise<boolean>) {
   return {
     isAuthenticated: true,
     isSigningIn: false,
     signInError: null,
     completionError: null,
-    onOpenApps,
+    onComplete,
     onSignIn: vi.fn(),
     onSignUp: vi.fn(),
     onRetryCompletion: vi.fn(),
@@ -743,8 +741,8 @@ function stubOnboardingWindow(platform = "darwin") {
   });
 }
 
-describe("Onboarding handoff", () => {
-  it("preserves local setup without opening Apps", async () => {
+describe("Onboarding completion", () => {
+  it("finishes local setup on Run Ollama", async () => {
     stubOnboardingWindow();
     const props = { ...onboardingProps(vi.fn()), isAuthenticated: false };
     let renderer: ReactTestRenderer | undefined;
@@ -755,13 +753,13 @@ describe("Onboarding handoff", () => {
       await act(async () => {
         renderer!.root.findByType(IntroScreen).props.onContinue();
       });
-      expect(props.onOpenApps).not.toHaveBeenCalled();
+      expect(props.onComplete).not.toHaveBeenCalled();
       await act(async () => {
         renderer!.root.findByType(WelcomeScreen).props.onLocal();
       });
       expect(renderer!.root.findByType(RunOllamaScreen)).toBeTruthy();
       expect(props.onUseLocal).toHaveBeenCalledOnce();
-      expect(props.onOpenApps).not.toHaveBeenCalled();
+      expect(props.onComplete).not.toHaveBeenCalled();
     } finally {
       if (renderer) act(() => renderer?.unmount());
       vi.unstubAllGlobals();
