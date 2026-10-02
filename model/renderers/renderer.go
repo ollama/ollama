@@ -121,6 +121,8 @@ func rendererForName(name string) Renderer {
 		return &CohereRenderer{}
 	case "glimmer":
 		return &GlimmerRenderer{useImgTags: RenderImgTags}
+	case "granite-thinking":
+		return &GraniteThinkingRenderer{}
 	default:
 		return nil
 	}
