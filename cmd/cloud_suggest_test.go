@@ -362,6 +362,53 @@ func TestPullHandler_CloudSuggestionUnrelatedError(t *testing.T) {
 	}
 }
 
+func TestLaunchCloudSuggestPullHookWired(t *testing.T) {
+	server := newCloudSuggestServer(t)
+	stubCloudSuggest(t, true, func(string) (bool, error) { return true, nil })
+
+	if launch.DefaultCloudSuggestPull == nil {
+		t.Fatal("launch.DefaultCloudSuggestPull is not wired")
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := launch.DefaultCloudSuggestPull(t.Context(), client, "some-model", func(cloudName string) string {
+		return "ollama launch claude --model " + cloudName
+	})
+	if err != nil {
+		t.Fatalf("DefaultCloudSuggestPull returned error: %v", err)
+	}
+	if resolved != "some-model:cloud" {
+		t.Fatalf("resolved = %q, want %q", resolved, "some-model:cloud")
+	}
+	if want := []string{"some-model", "some-model:cloud"}; !slices.Equal(server.pullModels, want) {
+		t.Fatalf("pulled models = %v, want %v", server.pullModels, want)
+	}
+}
+
+func TestLaunchCloudSuggestPullHookNonInteractiveHint(t *testing.T) {
+	newCloudSuggestServer(t)
+	stubCloudSuggest(t, false, nil)
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = launch.DefaultCloudSuggestPull(t.Context(), client, "some-model", func(cloudName string) string {
+		return "ollama launch claude --model " + cloudName
+	})
+	if err == nil {
+		t.Fatal("DefaultCloudSuggestPull returned nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "ollama launch claude --model some-model:cloud") {
+		t.Fatalf("error = %q, want it to hint at the launch retry command", err)
+	}
+}
+
 func TestRunHandler_CloudSuggestionAccepted_RunsCloudModel(t *testing.T) {
 	server := newCloudSuggestServer(t)
 	stubCloudSuggest(t, true, func(string) (bool, error) { return true, nil })
