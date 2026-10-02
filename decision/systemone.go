@@ -31,7 +31,7 @@ type Compiled struct {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef":
+	case "", "tev1", "clef", "strands":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -66,6 +66,12 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		return nil, fmt.Errorf("state must not be empty")
 	}
 	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	if encoding == "strands" {
+		if err := encodeStrands(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
 	if encoding == "clef" {
 		if err := encodeClef(req, c); err != nil {
 			return nil, err

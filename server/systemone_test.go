@@ -86,6 +86,8 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
 	config.Renderer = "tev1"
 	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
+	config.Renderer = "strands"
+	createSafetensorsTestModel(t, "safetensors-strands", config, []manifest.Layer{params})
 	config.Renderer = "clef"
 	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision", "vision"}
@@ -191,6 +193,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Strands pointer head", `{"model":"safetensors-strands","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Clef decision only text", `{"model":"safetensors-clef-text","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Clef decision only image", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-text", 1) + `aW1hZ2U="]}`, nil, 400, 0, false},
 		{"Clef image above text limit", imagePrefix + image + `"]}`, nil, 200, 1, false},
@@ -291,6 +294,9 @@ func TestSystemOneHandler(t *testing.T) {
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
+				if ref.model.Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
+					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
+				}
 				var prompt string
 				if len(runner.request.Rows) > 0 {
 					prompt = runner.request.Rows[0].Prompt
@@ -308,6 +314,10 @@ func TestSystemOneHandler(t *testing.T) {
 					}
 					if ref.model.isGGUF() {
 						wantContext = 2048
+					}
+				} else if len(runner.request.PointerRows) > 0 {
+					if len(runner.request.Rows) != 0 {
+						t.Fatal("pointer head must bypass chat templates")
 					}
 				} else if ref.model.HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {

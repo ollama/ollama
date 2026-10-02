@@ -198,6 +198,35 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 			wantArch:      "custom",
 		},
 		{
+			name:          "Strands decision architecture over backbone",
+			architectures: []string{"StrandsDeciderForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Clef decision architecture over backbone",
+			architectures: []string{"ClefForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "clef",
+		},
+		{
+			name:          "Laya decision architecture",
+			architectures: []string{"LayaForDecision"},
+			modelType:     "laya",
+			wantArch:      "laya",
+		},
+		{
+			name:          "decision architecture without model_type",
+			architectures: []string{"StrandsDeciderForDecision"},
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Qwen fine-tune retains backbone architecture",
+			architectures: []string{"Qwen3_5ForConditionalGeneration"},
+			modelType:     "qwen3_5",
+			wantArch:      "qwen3_5",
+		},
+		{
 			name:          "empty architectures with model_type",
 			architectures: nil,
 			modelType:     "mymodel",
@@ -208,13 +237,21 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := modelConfig{
-				Architectures: tt.architectures,
-				ModelType:     tt.modelType,
+				Architectures:         tt.architectures,
+				ModelType:             tt.modelType,
+				MaxPositionEmbeddings: 4096,
+				HiddenSize:            2048,
+				NumHiddenLayers:       24,
 			}
 			info := buildModelInfo(config, 0, 0)
 
 			if arch, ok := info["general.architecture"].(string); !ok || arch != tt.wantArch {
 				t.Errorf("architecture = %v, want %v", info["general.architecture"], tt.wantArch)
+			}
+			for key, want := range map[string]int{"context_length": 4096, "embedding_length": 2048, "block_count": 24} {
+				if got := info[tt.wantArch+"."+key]; got != want {
+					t.Errorf("%s.%s = %v, want %d", tt.wantArch, key, got, want)
+				}
 			}
 		})
 	}
