@@ -197,6 +197,7 @@ func TestSystemOneHandler(t *testing.T) {
 						Noul float64 `json:"noul"`
 					} `json:"answers"`
 					Usage decision.Usage `json:"usage"`
+					api.Metrics
 				}
 				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 					t.Fatal(err)
@@ -207,6 +208,9 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
+				}
+				if response.LoadDuration <= 0 || response.TotalDuration < response.LoadDuration {
+					t.Fatalf("invalid request durations: %+v", response.Metrics)
 				}
 				if len(runner.request.Fields) > 0 {
 					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 2048 {

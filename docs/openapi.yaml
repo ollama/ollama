@@ -994,6 +994,12 @@ components:
       type: object
       required: [model, answers, usage]
       properties:
+        total_duration:
+          type: integer
+          description: Time spent processing the request in nanoseconds, excluding response transmission.
+        load_duration:
+          type: integer
+          description: Time spent on request setup and acquiring or loading the model in nanoseconds. Included in total_duration.
         model:
           type: string
           description: Model name from the request.
