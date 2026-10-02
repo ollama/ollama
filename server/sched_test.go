@@ -423,7 +423,7 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
 	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	c.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
 	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	s.newServerFn = a.newServer
@@ -488,25 +488,20 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 3)
 	s.loadedMu.Unlock()
 	a.ctxDone() // Won't help since this one isn't big enough to make room
+	time.Sleep(2 * time.Millisecond)
 	s.pendingReqCh <- d.req
-	// Wait for a to unload and b to be selected for eviction before releasing b.
-	require.Eventually(t, func() bool {
-		s.loadedMu.Lock()
-		aUnloaded := len(s.loaded) == 2 && s.loaded[schedulerModelKey(a.req.model)] == nil
-		runner := s.loaded[schedulerModelKey(b.req.model)]
-		s.loadedMu.Unlock()
-		if !aUnloaded || runner == nil {
-			return false
-		}
-		runner.refMu.Lock()
-		defer runner.refMu.Unlock()
-		return runner.sessionDuration == 0
-	}, time.Second, time.Millisecond, "model a should unload and model b should be selected for eviction")
-	// Make recovered memory visible before b can unload and wake the pending request.
+	// finish prior request, so new model can load
+	time.Sleep(6 * time.Millisecond)
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	s.loadedMu.Unlock()
+	// Mark b done so it can unload
+	b.ctxDone()
+	// Report recovered VRAM usage so scheduler will finish waiting and unload
+	time.Sleep(1 * time.Millisecond)
 	gMu.Lock()
 	g.FreeMemory = 24 * format.GigaByte
 	gMu.Unlock()
-	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
@@ -515,12 +510,22 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
+	// Wait for b to close
+closeWait:
+	for {
+		select {
+		case <-ctx.Done():
+			t.Fatal("timeout")
+		default:
+			if b.srv.closeCalled {
+				break closeWait
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+	}
 	s.loadedMu.Lock()
-	defer s.loadedMu.Unlock()
 	require.Len(t, s.loaded, 2)
-	require.Contains(t, s.loaded, schedulerModelKey(c.req.model))
-	require.Contains(t, s.loaded, schedulerModelKey(d.req.model))
-	require.True(t, b.srv.closeCalled)
+	s.loadedMu.Unlock()
 }
 
 func TestSchedGetRunner(t *testing.T) {

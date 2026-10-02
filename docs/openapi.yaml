@@ -938,7 +938,7 @@ components:
       type: number
       minimum: 0
       maximum: 1
-      description: Confidence from 0 to 1, calculated from the answer distribution using the model's scoring method. A higher value does not guarantee correctness.
+      description: Distribution concentration, calculated as 1 - H(p) / ln(N), where H(p) is entropy and N is the candidate count. Zero means uniform probabilities; values near 1 mean one candidate dominates. Not calibrated correctness.
     SystemOneChoiceAnswer:
       title: Choice
       type: object

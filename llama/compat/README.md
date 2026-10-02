@@ -25,17 +25,13 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   small tensor repacking primitives.
 - `001-llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
-- `002-decision-models.patch` - shared decision-model execution: hidden states
-  without vocabulary logits, scoring requests and responses, and dispatch to
-  the Clef and Strands heads. The model-specific implementations live in
-  `llama/clef` and `llama/strands`.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
   this directory by numeric filename order.
 
-The compatibility and decision-head source files stay in the Ollama tree and
-are linked into the fetched llama.cpp targets.
+The compatibility source files stay in this directory and are linked into the
+fetched llama.cpp targets. The patch file only adds call sites.
 
 ## Load-Time Hooks
 

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -168,26 +166,4 @@ func strandsContent(raw json.RawMessage) (string, error) {
 		return clefJSON(token)
 	}
 	return render(0)
-}
-
-func strandsConfidence(p []float64, typ string, smoothing float64) float64 {
-	n := float64(len(p))
-	if typ == "choice" {
-		return max(0, min(1, (n*slices.Max(p)-1)/(n-1)))
-	}
-	var mean, variance float64
-	for i, v := range p {
-		mean += float64(i) * v
-	}
-	for i, v := range p {
-		variance += v * math.Pow(float64(i)-mean, 2)
-	}
-	sigma, ceiling, floor := math.Sqrt(variance), (n-1)/2, math.Sqrt(max(0, smoothing))
-	if ceiling <= floor {
-		if sigma <= floor {
-			return 1
-		}
-		return 0
-	}
-	return max(0, min(1, (ceiling-sigma)/(ceiling-floor)))
 }

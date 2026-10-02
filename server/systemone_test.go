@@ -69,7 +69,6 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		if modelConfig.name == "renamed-strands" {
 			kv["qwen35.decision.type"] = "strands"
-			kv["qwen35.decision.ordinal_smoothing"] = float32(0.1)
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}

@@ -47,19 +47,18 @@ func TestCompileStrands(t *testing.T) {
 	if !strings.Contains(c.Request.PointerRows[1].Prompt, "1. false — the statement does not hold for this state\n2. true — the statement holds for this state") {
 		t.Fatal("wrong noul defaults")
 	}
-	c.OrdinalSmoothing = 0.1
 	answer, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{{0, 2}, {0, 2}, {0, 2}}, InputTokens: 99})
 	if err != nil {
 		t.Fatal(err)
 	}
 	v, _ := answer.Answers.Get("team")
 	choice := v.(ChoiceAnswer)
-	if choice.Choice != "a" || math.Abs(choice.Confidence-0.7615941559557646) > 1e-8 {
+	if choice.Choice != "a" || math.Abs(choice.Confidence-0.4729346589968384) > 1e-8 {
 		t.Fatalf("wrong choice: %+v", choice)
 	}
 	v, _ = answer.Answers.Get("rating")
 	score := v.(ScoreAnswer)
-	if math.Abs(score.Score-0.8807970779778823) > 1e-8 || math.Abs(score.Confidence-0.9575595798883334) > 1e-8 {
+	if math.Abs(score.Score-0.8807970779778823) > 1e-8 || math.Abs(score.Confidence-choice.Confidence) > 1e-8 {
 		t.Fatalf("wrong score: %+v", score)
 	}
 	if answer.Usage.InputTokens != 99 || answer.Usage.OutputTokens != 0 {
@@ -120,23 +119,5 @@ func TestStrandsValidation(t *testing.T) {
 	req.Images = []api.ImageData{[]byte("image")}
 	if _, err := CompileWithEncoder(req, "strands"); err == nil {
 		t.Fatal("accepted images")
-	}
-}
-
-func TestStrandsConfidence(t *testing.T) {
-	for _, tt := range []struct {
-		p               []float64
-		typ             string
-		smoothing, want float64
-	}{
-		{[]float64{0.5, 0.5}, "choice", 0, 0},
-		{[]float64{0, 1, 0}, "choice", 0, 1},
-		{[]float64{0.5, 0, 0.5}, "score", 0.1, 0},
-		{[]float64{0.05, 0.9, 0.05}, "score", 0.1, 1},
-		{[]float64{0.5, 0.5}, "score", 1, 1},
-	} {
-		if got := strandsConfidence(tt.p, tt.typ, tt.smoothing); math.Abs(got-tt.want) > 1e-8 {
-			t.Fatalf("%+v: got %v", tt, got)
-		}
 	}
 }

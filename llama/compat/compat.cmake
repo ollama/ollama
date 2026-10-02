@@ -18,7 +18,7 @@
 # The compat layer consists of:
 #   1. Ollama-owned compat source files linked into the fetched llama.cpp
 #      targets from this directory.
-#   2. A small ordered patch set for loader hooks and decision-model execution.
+#   2. A small ordered patch set that adds call-sites in llama.cpp loaders.
 
 set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 get_filename_component(_ollama_patch_applier
@@ -32,8 +32,8 @@ get_filename_component(_ollama_patch_applier
 #
 # The compat source files are NOT copied into the fetched tree.
 # Instead, llama/server/CMakeLists.txt does target_sources() on the llama
-# targets after FetchContent_MakeAvailable. That keeps the compatibility and
-# decision-head implementations in Ollama's tree.
+# target after FetchContent_MakeAvailable. That keeps Ollama's code in
+# Ollama's tree and makes the patch pure call-site insertions.
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     ${CMAKE_COMMAND}
         -DPATCH_DIR=${_compat_dir}
