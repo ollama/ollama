@@ -2170,3 +2170,140 @@ func TestCitation(t *testing.T) {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
 	}
 }
+
+// An inline "system" message must not reach the system block (#18431).
+//
+// Anthropic's `messages` admits only "user" and "assistant"; the system prompt
+// is the top-level `system` field. Claude Code appends a
+// `<total_tokens>N tokens left</total_tokens>` message with role "system" after
+// every tool result, and `template.collate` concatenates every system message
+// into one `System` string wherever it sat. One per turn therefore grows the
+// system block, so the prompt prefix diverges right after the static
+// system+tools span and the implicit prefix cache covers nothing from there on:
+// a measured run reached 146 turns and 6.5M uncached input tokens.
+func TestFromMessagesRequest_InlineSystemMessageIsUserContext(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 16,
+		System:    "the real system prompt",
+		Messages: []MessageParam{
+			{Role: "user", Content: textContent("turn one")},
+			{Role: "assistant", Content: textContent("ok")},
+			{Role: "system", Content: textContent("<total_tokens>4999 tokens left</total_tokens>")},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Exactly one system message, and it is the top-level prompt.
+	var systems []api.Message
+	for _, m := range result.Messages {
+		if m.Role == "system" {
+			systems = append(systems, m)
+		}
+	}
+	if len(systems) != 1 {
+		t.Fatalf("expected the top-level system prompt to be the only system message, got %d: %+v", len(systems), result.Messages)
+	}
+	if systems[0].Content != "the real system prompt" {
+		t.Errorf("system block carries inline content: %q", systems[0].Content)
+	}
+
+	// The inline message is still rendered, in place, as user context.
+	last := result.Messages[len(result.Messages)-1]
+	if last.Role != "user" {
+		t.Errorf("expected the inline system message to be read as user context, got role %q", last.Role)
+	}
+	if !strings.Contains(last.Content, "4999 tokens left") {
+		t.Errorf("the inline message was dropped: %+v", result.Messages)
+	}
+}
+
+// The system block must stay byte-identical as the conversation grows, which is
+// the property the prefix cache actually depends on.
+func TestFromMessagesRequest_SystemBlockIsStableAcrossTurns(t *testing.T) {
+	systemBlock := func(turns int) string {
+		msgs := []MessageParam{{Role: "user", Content: textContent("turn one")}}
+		for i := range turns {
+			msgs = append(msgs,
+				MessageParam{Role: "assistant", Content: textContent("ok")},
+				MessageParam{Role: "user", Content: textContent("tool result")},
+				MessageParam{Role: "system", Content: textContent(fmt.Sprintf("<total_tokens>%d tokens left</total_tokens>", 5000-i))},
+			)
+		}
+
+		result, err := FromMessagesRequest(MessagesRequest{
+			Model: "test-model", MaxTokens: 16, System: "the real system prompt", Messages: msgs,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		var block strings.Builder
+		for _, m := range result.Messages {
+			if m.Role == "system" {
+				block.WriteString(m.Content)
+				block.WriteString("\n\n")
+			}
+		}
+		return block.String()
+	}
+
+	first := systemBlock(1)
+	for _, turns := range []int{2, 3, 8} {
+		if got := systemBlock(turns); got != first {
+			t.Errorf("system block changed at %d turns:\n first: %q\n   got: %q", turns, first, got)
+		}
+	}
+}
+
+// The accept control: a system message the client sends FIRST is still the
+// system prompt. Reading every inline system message as user context would move
+// a legitimate leading one out of the block and change what the model is told.
+func TestFromMessagesRequest_LeadingSystemMessageStaysSystem(t *testing.T) {
+	result, err := FromMessagesRequest(MessagesRequest{
+		Model: "test-model", MaxTokens: 16,
+		Messages: []MessageParam{
+			{Role: "system", Content: textContent("you are terse")},
+			{Role: "user", Content: textContent("hi")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Messages[0].Role != "user" {
+		t.Fatalf("precondition: this build reads inline system as user; got %q", result.Messages[0].Role)
+	}
+	if !strings.Contains(result.Messages[0].Content, "you are terse") {
+		t.Errorf("a leading inline system message was dropped: %+v", result.Messages)
+	}
+}
+
+// Role matching is case-insensitive, because `convertMessage` lowercases the
+// role on the way out: a client sending "System" would otherwise slip past the
+// check here and be hoisted downstream exactly as "system" is.
+func TestFromMessagesRequest_InlineSystemMessageIsMatchedCaseInsensitively(t *testing.T) {
+	for _, role := range []string{"System", "SYSTEM", "sYsTeM"} {
+		t.Run(role, func(t *testing.T) {
+			result, err := FromMessagesRequest(MessagesRequest{
+				Model: "test-model", MaxTokens: 16, System: "the real system prompt",
+				Messages: []MessageParam{
+					{Role: "user", Content: textContent("turn one")},
+					{Role: "assistant", Content: textContent("ok")},
+					{Role: role, Content: textContent("<total_tokens>4999 tokens left</total_tokens>")},
+				},
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, m := range result.Messages {
+				if m.Role == "system" && strings.Contains(m.Content, "4999 tokens left") {
+					t.Fatalf("role %q was hoisted into the system block: %+v", role, m)
+				}
+			}
+		})
+	}
+}
