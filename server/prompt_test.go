@@ -565,6 +565,35 @@ func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
 	}
 }
 
+func TestChatPromptPreservesLastUserMessageOnTruncation(t *testing.T) {
+	m := Model{
+		Config: testConfigWithRenderer("qwen3.8"),
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 1}}
+	think := false
+
+	msgs := []api.Message{
+		{Role: "system", Content: "You are a helpful assistant with web search."},
+		{Role: "user", Content: "Search for the latest qwen3.8 model settings"},
+		{Role: "assistant", Content: "", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "web_search"}}}},
+		{Role: "tool", Content: "http://example.com/search?q=qwen3.8+settings\nlorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"},
+		{Role: "assistant", Content: "", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_url"}}}},
+		{Role: "tool", Content: "http://example.com/page\n" + strings.Repeat("quid est veritas et quis est qui loquitur ", 40)},
+	}
+
+	// Without preserving the last user message, truncation to 1 token drops the
+	// user query entirely and the qwen3.8 renderer rejects the transcript with
+	// "no user query found in messages" (issue #17778).
+	prompt, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(prompt, "Search for the latest qwen3.8 model settings") {
+		t.Fatalf("prompt dropped the most recent user query, got: %q", prompt)
+	}
+}
+
 func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
 	msgs := []api.Message{{Role: "user", Content: "Hello"}}
 
