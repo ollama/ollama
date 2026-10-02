@@ -99,6 +99,43 @@ func TestCreateCapabilities(t *testing.T) {
 	}
 }
 
+func TestCreatePersistsGGUFDecisionCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name         string
+		architecture string
+		decisionType string
+	}{
+		{name: "strands", architecture: "qwen35", decisionType: "strands"},
+		{name: "clef", architecture: "gemma4", decisionType: "clef"},
+		{name: "ordinary", architecture: "qwen35"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			kv := map[string]any{"general.architecture": tt.architecture}
+			if tt.decisionType != "" {
+				kv[tt.architecture+".decision.type"] = tt.decisionType
+			}
+			_, digest := createBinFile(t, kv, nil)
+			var s Server
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Model: "inferred", Files: map[string]string{"model.gguf": digest}, Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("create: %d %s", w.Code, w.Body)
+			}
+			cfg := readCreatedModelConfig(t, "inferred")
+			var want []string
+			if tt.decisionType != "" {
+				want = []string{"decision"}
+			}
+			if !slices.Equal(cfg.Capabilities, want) {
+				t.Fatalf("persisted capabilities = %v, want %v", cfg.Capabilities, want)
+			}
+		})
+	}
+}
+
 func TestCreateRejectsUnknownCapability(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	var s Server

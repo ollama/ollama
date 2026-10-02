@@ -36,7 +36,10 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 	badRequest := func(format string, args ...any) (ScoreResponse, error) {
 		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf(format, args...)}
 	}
-	if len(input.Segments) == 0 && len(input.Fields) == 0 && (len(input.Rows) < 1 || len(input.Rows) > 64) {
+	if len(input.PointerRows) > 64 {
+		return badRequest("scoring requires 1–64 prompts")
+	}
+	if len(input.PointerRows) == 0 && len(input.Segments) == 0 && len(input.Fields) == 0 && (len(input.Rows) < 1 || len(input.Rows) > 64) {
 		return badRequest("scoring requires 1–64 prompts")
 	}
 	if input.MaxTokens < 1 || input.MaxTokens > s.ContextLength() {
@@ -53,6 +56,9 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 		return result, fmt.Errorf("unexpected server status: %s", status)
 	}
 
+	if len(input.PointerRows) > 0 {
+		return s.scorePointers(ctx, input)
+	}
 	if len(input.Segments) > 0 || len(input.Fields) > 0 {
 		return s.scoreFields(ctx, input)
 	}
@@ -284,6 +290,13 @@ func (s *llamaServerRunner) scoreRequest(ctx context.Context, path string, input
 	return nil
 }
 
+type scoreHeadRequest struct {
+	Images        []api.ImageData `json:"images,omitempty"`
+	ImagePosition int             `json:"image_position"`
+	Input         []int           `json:"input"`
+	Fields        []ScoreField    `json:"score_fields"`
+}
+
 func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest) (ScoreResponse, error) {
 	bad := func(message string) (ScoreResponse, error) {
 		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: message}
@@ -350,12 +363,10 @@ func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest)
 		}
 		imagePosition = offsets[input.ImagePosition]
 	}
-	request := struct {
-		Images        []api.ImageData `json:"images,omitempty"`
-		ImagePosition int             `json:"image_position"`
-		Input         []int           `json:"input"`
-		Fields        []ScoreField    `json:"score_fields"`
-	}{images, imagePosition, tokens, fields}
+	return s.scoreHead(ctx, scoreHeadRequest{Images: images, ImagePosition: imagePosition, Input: tokens, Fields: fields}, input.MaxTokens)
+}
+
+func (s *llamaServerRunner) scoreHead(ctx context.Context, request scoreHeadRequest, maxTokens int) (ScoreResponse, error) {
 	var result []struct {
 		Logits [][]float32 `json:"logits"`
 		Tokens int         `json:"tokens_evaluated"`
@@ -363,8 +374,99 @@ func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest)
 	if err := s.scoreRequest(ctx, "/embedding", request, &result); err != nil {
 		return ScoreResponse{}, err
 	}
-	if len(result) != 1 || result[0].Tokens > input.MaxTokens || (len(images) == 0 && result[0].Tokens != len(tokens)) || (len(images) > 0 && result[0].Tokens <= len(tokens)) || len(result[0].Logits) != len(fields) {
+	if len(result) != 1 || result[0].Tokens > maxTokens || (len(request.Images) == 0 && result[0].Tokens != len(request.Input)) || (len(request.Images) > 0 && result[0].Tokens <= len(request.Input)) || len(result[0].Logits) != len(request.Fields) {
 		return ScoreResponse{}, fmt.Errorf("decision runner did not score the complete request")
 	}
+	for i, field := range request.Fields {
+		if len(result[0].Logits[i]) != len(field.Options) {
+			return ScoreResponse{}, fmt.Errorf("decision runner did not score every option")
+		}
+	}
 	return ScoreResponse{Logits: result[0].Logits, InputTokens: result[0].Tokens}, nil
+}
+
+func (s *llamaServerRunner) scorePointers(ctx context.Context, input ScoreRequest) (ScoreResponse, error) {
+	bad := func(message string) (ScoreResponse, error) {
+		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: message}
+	}
+	// Validate and tokenize every question before starting any inference.
+	requests := make([]scoreHeadRequest, 0, len(input.PointerRows))
+	prefixes := map[string][]int{}
+	for _, row := range input.PointerRows {
+		if row.Type < 0 || row.Type > 2 || len(row.Options) < 2 || len(row.Options) > 255 {
+			return bad("invalid pointer scoring field")
+		}
+		prefix, ok := prefixes[row.Prefix]
+		if !ok {
+			special := true
+			var err error
+			prefix, err = s.tokenize(ctx, row.Prefix, true, &special)
+			if err != nil {
+				return ScoreResponse{}, err
+			}
+			prefixes[row.Prefix] = prefix
+		}
+		var encoded struct {
+			Tokens []struct {
+				ID    int             `json:"id"`
+				Piece json.RawMessage `json:"piece"`
+			} `json:"tokens"`
+		}
+		if err := s.scoreRequest(ctx, "/tokenize", map[string]any{
+			"content": row.Prompt, "add_special": false, "parse_special": true, "with_pieces": true,
+		}, &encoded); err != nil {
+			return ScoreResponse{}, err
+		}
+		if len(encoded.Tokens) == 0 || len(prefix)+len(encoded.Tokens) > input.MaxTokens {
+			return bad("decision prompt exceeds the model context or is empty (input is never truncated)")
+		}
+		tokens := append([]int(nil), prefix...)
+		spans := make([][2]int, len(encoded.Tokens))
+		var text strings.Builder
+		for i, token := range encoded.Tokens {
+			var piece string
+			if err := json.Unmarshal(token.Piece, &piece); err != nil {
+				// llama-server represents pieces splitting a UTF-8 character as bytes.
+				var b []byte
+				if err := json.Unmarshal(token.Piece, &b); err != nil {
+					return ScoreResponse{}, fmt.Errorf("invalid tokenizer piece: %w", err)
+				}
+				piece = string(b)
+			}
+			start := text.Len()
+			text.WriteString(piece)
+			spans[i] = [2]int{start, text.Len()}
+			tokens = append(tokens, token.ID)
+		}
+		if text.String() != row.Prompt {
+			return ScoreResponse{}, fmt.Errorf("pointer tokenizer did not preserve the prompt")
+		}
+		field := ScoreField{Type: row.Type, Question: [2]int{len(tokens) - 1, len(tokens)}}
+		for _, option := range row.Options {
+			if option[0] < 0 || option[0] >= option[1] || option[1] > len(row.Prompt) {
+				return bad("invalid pointer option span")
+			}
+			last := -1
+			for i, span := range spans {
+				if span[0] >= option[0] && span[1] <= option[1] && span[1] > span[0] {
+					last = i
+				}
+			}
+			if last < 0 {
+				return bad("pointer option has no complete token")
+			}
+			field.Options = append(field.Options, [2]int{len(prefix) + last, len(prefix) + last + 1})
+		}
+		requests = append(requests, scoreHeadRequest{Input: tokens, Fields: []ScoreField{field}})
+	}
+	var result ScoreResponse
+	for _, req := range requests {
+		response, err := s.scoreHead(ctx, req, input.MaxTokens)
+		if err != nil {
+			return ScoreResponse{}, err
+		}
+		result.Logits = append(result.Logits, response.Logits...)
+		result.InputTokens += response.InputTokens
+	}
+	return result, nil
 }

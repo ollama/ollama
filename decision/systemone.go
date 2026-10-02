@@ -25,6 +25,9 @@ type Compiled struct {
 	Request  llm.ScoreRequest
 	fields   []compiledField
 	messages [][]api.Message
+	strands  bool
+	// OrdinalSmoothing is the trained variance floor for Strands score confidence.
+	OrdinalSmoothing float64
 }
 
 // Compile validates the request and prepares candidate scoring for Nimble and Tev.
@@ -52,6 +55,15 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	case "clef":
 		c := &Compiled{}
 		if err := encodeClef(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	case "strands":
+		if len(req.Images) > 0 {
+			return nil, fmt.Errorf("this decision model does not support images")
+		}
+		c := &Compiled{strands: true}
+		if err := encodeStrands(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil
@@ -245,6 +257,9 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			legend.Set(key, choice.Description)
 		}
 		confidence := max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		if c.strands {
+			confidence = strandsConfidence(p, f.typ, c.OrdinalSmoothing)
+		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
 			response.Answers.Set(f.Name, ChoiceAnswer{f.typ, f.Choices[winner].Value.(string), probabilities, confidence})

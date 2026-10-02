@@ -421,7 +421,7 @@ func TestLlamaServerScoreCancellation(t *testing.T) {
 }
 
 func TestLlamaServerScoreFields(t *testing.T) {
-	for _, failure := range []string{"", "truncated", "missing head", "malformed JSON", "upstream error", "too long", "invalid span", "max exceeds context", "empty fields", "canceled", "image", "image over context", "invalid image", "invalid image position"} {
+	for _, failure := range []string{"", "truncated", "missing head", "missing option", "malformed JSON", "upstream error", "too long", "invalid span", "max exceeds context", "empty fields", "canceled", "image", "image over context", "invalid image", "invalid image position"} {
 		t.Run(failure, func(t *testing.T) {
 			calls := 0
 			mux := http.NewServeMux()
@@ -475,6 +475,8 @@ func TestLlamaServerScoreFields(t *testing.T) {
 					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":6}]`)
 				case "missing head":
 					fmt.Fprint(w, `[{"embedding":[[2,0]]}]`)
+				case "missing option":
+					fmt.Fprint(w, `[{"logits":[[2]],"tokens_evaluated":7}]`)
 				default:
 					fmt.Fprint(w, `[{"logits":[[2,0]],"tokens_evaluated":7}]`)
 				}
@@ -540,6 +542,103 @@ func TestLlamaServerScoreFields(t *testing.T) {
 				t.Fatal("scoring did not release the runner")
 			}
 			runner.sem.Release(1)
+		})
+	}
+}
+
+func TestLlamaServerScorePointers(t *testing.T) {
+	for _, failure := range []string{"", "later invalid row", "truncated", "missing logits", "missing option", "changed text", "context overflow", "empty span"} {
+		t.Run(failure, func(t *testing.T) {
+			calls, prefixes := 0, 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, `{"status":"ok"}`) })
+			mux.HandleFunc("/tokenize", func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					Content      string
+					AddSpecial   bool `json:"add_special"`
+					ParseSpecial bool `json:"parse_special"`
+					WithPieces   bool `json:"with_pieces"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					return
+				}
+				if !req.ParseSpecial {
+					t.Error("special tokens must be parsed")
+				}
+				if req.Content == "state" {
+					prefixes++
+					if !req.AddSpecial || req.WithPieces {
+						t.Error("wrong prefix tokenizer options")
+					}
+					fmt.Fprint(w, `{"tokens":[1,2]}`)
+					return
+				}
+				if req.Content != "a.\né!\n<answer>" || req.AddSpecial || !req.WithPieces {
+					t.Errorf("question was split or tokenizer options changed: %+v", req)
+				}
+				// Punctuation merges with the following newline; the pointer must
+				// select the last token wholly inside the option. é is split into bytes.
+				if failure == "changed text" {
+					fmt.Fprint(w, `{"tokens":[{"id":3,"piece":"different"}]}`)
+					return
+				}
+				fmt.Fprint(w, `{"tokens":[{"id":3,"piece":"a"},{"id":4,"piece":".\n"},{"id":5,"piece":[195]},{"id":6,"piece":[169]},{"id":7,"piece":"!\n"},{"id":8,"piece":"<answer>"}]}`)
+			})
+			mux.HandleFunc("/embedding", func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var req struct {
+					Input  []int
+					Fields []ScoreField `json:"score_fields"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Error(err)
+					return
+				}
+				want := []ScoreField{{Type: 1, Question: [2]int{7, 8}, Options: [][2]int{{2, 3}, {5, 6}}}}
+				if !reflect.DeepEqual(req.Input, []int{1, 2, 3, 4, 5, 6, 7, 8}) || !reflect.DeepEqual(req.Fields, want) {
+					t.Errorf("incorrect pointer tokens/spans: %+v", req)
+				}
+				if failure == "truncated" {
+					fmt.Fprint(w, `[{"logits":[[0,2]],"tokens_evaluated":7}]`)
+					return
+				}
+				if failure == "missing logits" {
+					fmt.Fprint(w, `[{"logits":[],"tokens_evaluated":8}]`)
+					return
+				}
+				if failure == "missing option" {
+					fmt.Fprint(w, `[{"logits":[[0]],"tokens_evaluated":8}]`)
+					return
+				}
+				fmt.Fprint(w, `[{"logits":[[0,2]],"tokens_evaluated":8}]`)
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), options: api.Options{Runner: api.Runner{NumCtx: 8}}, sem: semaphore.NewWeighted(1)}
+			row := ScorePointerRow{Prefix: "state", Prompt: "a.\né!\n<answer>", Type: 1, Options: [][2]int{{0, 2}, {3, 6}}}
+			input := ScoreRequest{MaxTokens: 8, PointerRows: []ScorePointerRow{row, row}}
+			switch failure {
+			case "later invalid row":
+				input.PointerRows[1].Type = 4
+			case "context overflow":
+				input.MaxTokens = 7
+			case "empty span":
+				input.PointerRows[1].Options = [][2]int{{1, 2}, {3, 6}}
+			}
+			result, err := runner.Score(t.Context(), input)
+			if failure == "" {
+				if err != nil || prefixes != 1 || calls != 2 || result.InputTokens != 16 || result.OutputTokens != 0 || !reflect.DeepEqual(result.Logits, [][]float32{{0, 2}, {0, 2}}) {
+					t.Fatalf("result=%+v err=%v calls=%d prefixes=%d", result, err, calls, prefixes)
+				}
+			} else {
+				if err == nil {
+					t.Fatal("accepted invalid request/response")
+				}
+				if failure != "truncated" && failure != "missing logits" && failure != "missing option" && calls != 0 {
+					t.Fatal("inference started before validating all rows")
+				}
+			}
 		})
 	}
 }

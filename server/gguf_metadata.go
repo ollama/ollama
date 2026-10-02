@@ -63,6 +63,15 @@ func (m ggufMetadata) Int(key string) int64 {
 	return i
 }
 
+func (m ggufMetadata) Float(key string) float64 {
+	n, ok := m.number(key)
+	if !ok {
+		return 0
+	}
+	f, _ := n.Float64()
+	return f
+}
+
 func (m ggufMetadata) Bool(key string, defaultValue ...bool) bool {
 	v, _ := m.lookup(key)
 	if value, valid := v.(bool); valid {

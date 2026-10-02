@@ -894,6 +894,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	compiled.OrdinalSmoothing = m.metadata.Float("decision.ordinal_smoothing")
 	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {
 		caps = append(caps, model.CapabilityVision)

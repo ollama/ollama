@@ -813,6 +813,11 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 				config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGUF.Architecture())
 				config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.parameterCount))
 				config.FileType = cmp.Or(config.FileType, layer.GGUF.FileType().String())
+				// Persist the decision capability for registry consumers that only read
+				// the config layer rather than inspecting the model's GGUF metadata.
+				if layer.GGUF.String("decision.type") != "" {
+					config.AddCapabilities(model.CapabilityDecision.String())
+				}
 				architecture := layer.GGUF.Architecture()
 				if !slices.Contains(config.ModelFamilies, architecture) {
 					config.ModelFamilies = append(config.ModelFamilies, architecture)
