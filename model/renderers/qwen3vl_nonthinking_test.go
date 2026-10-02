@@ -381,7 +381,9 @@ before
 </tool_call>
 <tool_call>
 {"name": "mul", "arguments": {"x": 4, "y": 5}}
-</tool_call>`,
+</tool_call><|im_end|>
+<|im_start|>assistant
+`,
 		},
 		{
 			name: "consecutive tool responses grouped",

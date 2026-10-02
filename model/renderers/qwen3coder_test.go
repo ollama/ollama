@@ -252,6 +252,33 @@ Tell me something interesting.<|im_end|>
 I'll tell you something interesting about cats`,
 		},
 		{
+			name: "last assistant tool call starts next assistant turn",
+			msgs: []api.Message{
+				{Role: "user", Content: "call tool"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{Function: api.ToolCallFunction{
+						Name: "echo",
+						Arguments: testArgs(map[string]any{
+							"payload": "ok",
+						}),
+					}},
+				}},
+			},
+			expected: `<|im_start|>user
+call tool<|im_end|>
+<|im_start|>assistant
+
+<tool_call>
+<function=echo>
+<parameter=payload>
+ok
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+`,
+		},
+		{
 			name: "complex tool call arguments should remain json encoded",
 			msgs: []api.Message{
 				{Role: "user", Content: "call tool"},
