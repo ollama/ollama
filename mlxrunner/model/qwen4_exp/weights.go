@@ -14,6 +14,8 @@ type hyperConnection struct {
 	InputMixDown nn.LinearLayer
 	InputMixUp   nn.LinearLayer
 	BlockInject  nn.LinearLayer
+	PackedInput  nn.LinearLayer
+	MixDownDim   int32
 }
 
 type linearAttention struct {
@@ -120,6 +122,7 @@ type PLE struct {
 	HeadVocabSizes   *mlx.Array
 	EmbeddingShards  []nn.EmbeddingLayer
 	ShardRows        int
+	hostEmbedding    *hostPLETable
 }
 
 type streamRMSNorm struct {
@@ -191,6 +194,7 @@ func loadHyperConnection(linears model.LinearFactory, tensors map[string]*mlx.Ar
 	if h.InputMixDown, err = requiredLinear(linears, prefix+".input_mix_weight_down"); err != nil {
 		return nil, err
 	}
+	h.MixDownDim = h.InputMixDown.OutputDim()
 	if h.InputMixUp, err = requiredLinear(linears, prefix+".input_mix_weight_up"); err != nil {
 		return nil, err
 	}
@@ -198,8 +202,44 @@ func loadHyperConnection(linears model.LinearFactory, tensors map[string]*mlx.Ar
 		if h.BlockInject, err = requiredLinear(linears, prefix+".block_inject_weight"); err != nil {
 			return nil, err
 		}
+		if packed := packHyperConnectionInput(h.InputMixDown, h.BlockInject); packed != nil {
+			h.PackedInput = packed
+			h.InputMixDown = nil
+			h.BlockInject = nil
+		}
 	}
 	return h, nil
+}
+
+func packHyperConnectionInput(down, inject nn.LinearLayer) nn.LinearLayer {
+	switch down := down.(type) {
+	case *nn.Linear:
+		inject, ok := inject.(*nn.Linear)
+		if !ok || down.Bias != nil || inject.Bias != nil || down.Weight.Dim(1) != inject.Weight.Dim(1) {
+			return nil
+		}
+		return nn.NewLinear(mlx.Concatenate([]*mlx.Array{down.Weight, inject.Weight}, 0), nil)
+	case *nn.QuantizedLinear:
+		inject, ok := inject.(*nn.QuantizedLinear)
+		if !ok || down.Bias != nil || inject.Bias != nil ||
+			down.Scales == nil || inject.Scales == nil ||
+			down.QBiases != nil || inject.QBiases != nil ||
+			down.GlobalScale != nil || inject.GlobalScale != nil ||
+			down.GroupSize != inject.GroupSize || down.Bits != inject.Bits || down.Mode != inject.Mode ||
+			down.Weight.NumDims() != 2 || inject.Weight.NumDims() != 2 ||
+			down.Scales.NumDims() != 2 || inject.Scales.NumDims() != 2 ||
+			down.Weight.Dim(1) != inject.Weight.Dim(1) || down.Scales.Dim(1) != inject.Scales.Dim(1) {
+			return nil
+		}
+		return &nn.QuantizedLinear{
+			Weight:    mlx.Concatenate([]*mlx.Array{down.Weight, inject.Weight}, 0),
+			Scales:    mlx.Concatenate([]*mlx.Array{down.Scales, inject.Scales}, 0),
+			GroupSize: down.GroupSize,
+			Bits:      down.Bits,
+			Mode:      down.Mode,
+		}
+	}
+	return nil
 }
 
 func loadLinearAttention(linears model.LinearFactory, tensors map[string]*mlx.Array, prefix string) (*linearAttention, error) {
@@ -337,6 +377,12 @@ func (m *Model) loadPLE(linears model.LinearFactory, tensors map[string]*mlx.Arr
 	}
 	if p.HeadVocabSizes, err = requiredArray(tensors, prefix+".ple_embedding.ngram_heads_vocab_sizes"); err != nil {
 		return nil, err
+	}
+
+	if table := m.hostPLE[prefix]; table != nil {
+		p.hostEmbedding = table
+		p.ShardRows = table.rows
+		return p, nil
 	}
 
 	p.EmbeddingShards = make([]nn.EmbeddingLayer, m.SplitNGramParts)
