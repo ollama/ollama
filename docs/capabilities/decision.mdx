@@ -7,7 +7,8 @@ Use System One to classify text, answer yes/no questions, or score text against 
 
 ## Setup
 
-Start [Ollama](/quickstart) v0.35.0 or later, then pull [Nimble](https://ollama.com/library/nimble):
+1. Start [Ollama](/quickstart) v0.35.0 or later.
+2. Pull [Nimble](https://ollama.com/library/nimble):
 
 ```shell setup.sh
 ollama pull nimble
@@ -15,7 +16,7 @@ ollama pull nimble
 
 ## Ask from the terminal
 
-Choose a decision model and ask a yes/no question with `ollama ask`:
+Use `ollama ask` to ask a decision model a yes/no question:
 
 ```shell
 ollama ask nimble "Is water made of hydrogen and oxygen?"
@@ -23,13 +24,16 @@ ollama ask nimble "Is this a refund request?" "I was charged twice."
 cat ticket.txt | ollama ask nimble "Is this urgent?"
 ```
 
-The model is the first argument, as with `ollama run`. Give a self-contained question,
-or quote the question and additional text as separate arguments. Piped text is read
-as one input, including newlines. If you provide a text argument, stdin is ignored.
-With no additional text or stdin, the question itself is also the model's input.
-Use `ollama pull MODEL` if the model is unavailable.
+Specify the model first, as with `ollama run`. Quote the question.
+If you supply additional text, quote it as a separate argument.
 
-Supply choices as labels, or as `label=description`. Repeat `--choice` for each:
+The command treats all stdin text, including newlines, as one input.
+If you supply a text argument, the command ignores stdin.
+If you supply neither additional text nor stdin, the command uses the question as input.
+
+If the model is unavailable, use `ollama pull MODEL`.
+
+Use a label or `label=description` for each choice. Repeat `--choice` for each choice:
 
 ```shell
 ollama ask nimble "Which label fits this ticket?" "Checkout returns 500 errors." \
@@ -38,7 +42,7 @@ ollama ask nimble "Which label fits this ticket?" "Checkout returns 500 errors."
   --choice 'account=Login and account access'
 ```
 
-For a score, repeat `--score` from the lowest level to the highest:
+Repeat `--score` for each criterion. Order the criteria from lowest to highest:
 
 ```shell
 ollama ask nimble "How urgently does this need a response?" "Checkout is down." \
@@ -47,40 +51,47 @@ ollama ask nimble "How urgently does this need a response?" "Checkout is down." 
   --score 'Immediate: a critical service is unavailable'
 ```
 
-In a terminal, a yes/no answer displays a percentage, such as `Yes: 99.94%`.
-A choice displays the selected label and its probability, and a score displays
-its value and scale.
-When stdout is redirected, the output is just the yes probability from 0 to 1,
-the label, or the numeric score. Use `--json` for the full API response, including
-all probabilities and token usage:
+In a terminal:
+
+- A yes/no answer shows a percentage, such as `Yes: 99.94%`.
+- A choice shows the selected label and its probability.
+- A score shows its value and scale.
+
+If stdout is redirected, the output contains only the yes probability from 0 to 1,
+the label, or the numeric score.
+
+Use `--json` to print the full API response. The response includes all probabilities
+and token usage:
 
 ```shell
 ollama ask nimble "Is this a refund request?" "I was charged twice." --json
 ```
 
-To ask multiple questions about the same input or customize yes/no criteria, save
-the API's `questions` object in a JSON file, then run:
+To ask multiple questions about one input, save the API's `questions` object in a JSON file.
+You can also use this file to change the yes/no criteria. Specify the file with `--questions`:
 
 ```shell
 ollama ask nimble --questions questions.json "I was charged twice."
 cat ticket.txt | ollama ask nimble --questions questions.json
 ```
 
-The file contains named questions with `type`, `instructions`, and `criteria`, as in
-the [multiple-question example](#ask-multiple-questions) below. This mode defaults
-to the full JSON response when stdout is redirected. `--choice`, `--score`, and
-`--questions` are mutually exclusive.
+Each question specifies `type` and `instructions`.
+Use `criteria` to define choices, score levels, or custom yes/no descriptions.
+Use the `questions` object from the [multiple-question example](#ask-multiple-questions) below.
 
-`ollama ask` accepts one input per invocation. To process several independent
-texts, run it once per text. Multiple lines on stdin form a single input.
+If stdout is redirected, `--questions` prints the full JSON response by default.
+Use only one of `--choice`, `--score`, or `--questions`.
 
-Successful answers exit with status 0, regardless of the probability or score.
-Invalid input, unavailable models, and server errors exit nonzero, with diagnostics
-on stderr and no answer on stdout. `ollama ask` does not pull missing models automatically.
+Run `ollama ask` once for each independent input.
+
+Successful answers return exit status 0, regardless of the probability or score.
+If input is invalid, the model is unavailable, or the server fails, the command returns
+a nonzero exit status. Errors appear on stderr. The command writes no answer to stdout.
+The command does not pull missing models automatically.
 
 ## Choose a label
 
-Put your input in `state` and describe the possible answers in `criteria`:
+Set `state` to your input. Use `criteria` to describe the possible answers:
 
 ```shell choice.sh
 curl http://localhost:11434/v1/systemone \
@@ -133,13 +144,14 @@ For the urgency criteria below:
 score = 0 × P(Routine) + 1 × P(Soon) + 2 × P(Immediate)
 ```
 
-For `choice` and `score`, `confidence` measures how strongly the model favors one answer over the others, from 0 to 1. A higher value does not guarantee the answer is correct.
+For `choice` and `score`, `confidence` measures how strongly the model favors one answer.
+The value ranges from 0 to 1. A higher value does not guarantee a correct answer.
 
 ## Ask multiple questions
 
-Combine question types in one request. All questions use the same `state`; submit
-a separate request for each independent input. Here, both questions use the same
-ticket:
+You can mix question types in one request. All questions use the same `state`.
+Send a separate request for each independent input.
+In this example, both questions use the same ticket:
 
 ```shell multiple.sh
 curl http://localhost:11434/v1/systemone \
@@ -169,6 +181,8 @@ curl http://localhost:11434/v1/systemone \
   }'
 ```
 
-This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
+Example results are a refund probability of `0.9989` and an urgency score of `0.8308`.
+The urgency scale is 0–2. These values are rounded.
+Results can vary with the model and configuration.
 
 See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.

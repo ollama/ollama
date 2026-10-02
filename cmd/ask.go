@@ -29,15 +29,22 @@ func newAskCommand() *cobra.Command {
 		Use:   "ask MODEL QUESTION [TEXT]",
 		Short: "Ask a decision model about text",
 		Long: `Ask a decision model a yes/no question, choose a label, or score text against a rubric.
-Give a self-contained question, add text as a second quoted argument, or pipe text through stdin.
-With --questions FILE, use: ollama ask MODEL --questions FILE [TEXT]. The file contains
-the System One API's named questions, each with type, instructions, and criteria.
+Quote QUESTION and TEXT separately. You can also supply text through stdin.
+If you supply QUESTION without TEXT or stdin, the question is also the input.
 
-In a terminal, answers include probabilities or the score's scale. When redirected,
-stdout contains only the yes probability (0–1), chosen label, or numeric score.
---json prints the full API response; --questions also defaults to JSON when redirected.
-Errors go to stderr and exit nonzero. Successful answers, including low yes
-probabilities, exit zero. Use ollama pull MODEL if the model is unavailable.`,
+To ask multiple questions about one input, use:
+  ollama ask MODEL --questions FILE [TEXT]
+FILE contains the System One questions object with type, instructions, and criteria.
+Use only one of --choice, --score, or --questions.
+
+In a terminal, answers include probabilities or the score scale.
+If stdout is redirected, output contains only the yes probability (0–1), label, or score.
+Use --json to print the full API response.
+With --questions, redirected output uses JSON by default.
+
+Successful answers return exit status 0, regardless of the probability or score.
+Errors appear on stderr. The command returns a nonzero exit status for errors.
+If the model is unavailable, use ollama pull MODEL.`,
 		Example: `  ollama ask nimble "Is water made of hydrogen and oxygen?"
   ollama ask nimble "Is this a refund request?" "I was charged twice."
   cat ticket.txt | ollama ask nimble "Is this urgent?"
@@ -46,10 +53,10 @@ probabilities, exit zero. Use ollama pull MODEL if the model is unavailable.`,
   ollama ask nimble --questions questions.json "I was charged twice." --json`,
 		RunE: askHandler,
 	}
-	cmd.Flags().StringArray("choice", nil, "Possible label or label=description (repeat for each choice)")
-	cmd.Flags().StringArray("score", nil, "Score criterion, from lowest to highest (repeat for each level)")
-	cmd.Flags().String("questions", "", "Read named System One questions from a JSON file")
-	cmd.Flags().Bool("json", false, "Print the full JSON response, including probabilities and token usage")
+	cmd.Flags().StringArray("choice", nil, "Label or label=description (repeat for each choice)")
+	cmd.Flags().StringArray("score", nil, "Score criterion (repeat in order from lowest to highest)")
+	cmd.Flags().String("questions", "", "Read the System One questions object from a JSON file")
+	cmd.Flags().Bool("json", false, "Print the full JSON response with probabilities and token usage")
 	cmd.MarkFlagsMutuallyExclusive("choice", "score", "questions")
 	return cmd
 }
