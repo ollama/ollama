@@ -3,27 +3,97 @@ title: Decision
 description: Classify text, estimate yes/no probabilities, and score ordered criteria.
 ---
 
-<Note>
-Currently available locally in Ollama.
-</Note>
-
 Use System One to classify text, answer yes/no questions, or score text against a rubric.
 
 See the [full list of decision models](https://ollama.com/search?c=decision).
 
 ## Setup
 
-Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
+1. Start [Ollama](/quickstart) v0.35.0 or later.
+2. Pull [Nimble](https://ollama.com/library/nimble):
 
 ```shell setup.sh
 ollama pull nimble
 ```
 
-Local requests do not need an API key.
+## Ask from the terminal
+
+Use `ollama ask` to ask a decision model a yes/no question:
+
+```shell
+ollama ask nimble "Is water made of hydrogen and oxygen?"
+ollama ask nimble "Is this a refund request?" "I was charged twice."
+cat ticket.txt | ollama ask nimble "Is this urgent?"
+```
+
+Specify the model first, as with `ollama run`. Quote the question.
+If you supply additional text, quote it as a separate argument.
+
+The command treats all stdin text, including newlines, as one input.
+If you supply a text argument, the command ignores stdin.
+If you supply neither additional text nor stdin, the command uses the question as input.
+
+If the model is unavailable, use `ollama pull MODEL`.
+
+Use a label or `label=description` for each choice. Repeat `--choice` for each choice:
+
+```shell
+ollama ask nimble "Which label fits this ticket?" "Checkout returns 500 errors." \
+  --choice 'billing=Payments and refunds' \
+  --choice 'bug=Software errors' \
+  --choice 'account=Login and account access'
+```
+
+Repeat `--score` for each criterion. Order the criteria from lowest to highest:
+
+```shell
+ollama ask nimble "How urgently does this need a response?" "Checkout is down." \
+  --score 'Routine: no time pressure' \
+  --score 'Soon: a customer is inconvenienced' \
+  --score 'Immediate: a critical service is unavailable'
+```
+
+In a terminal:
+
+- A yes/no answer shows a percentage, such as `Yes: 99.94%`.
+- A choice shows the selected label and its probability.
+- A score shows its value and scale.
+
+If stdout is redirected, the output contains only the yes probability from 0 to 1,
+the label, or the numeric score.
+
+Use `--json` to print the full API response. The response includes all probabilities
+and token usage:
+
+```shell
+ollama ask nimble "Is this a refund request?" "I was charged twice." --json
+```
+
+To ask multiple questions about one input, save the API's `questions` object in a JSON file.
+You can also use this file to change the yes/no criteria. Specify the file with `--questions`:
+
+```shell
+ollama ask nimble --questions questions.json "I was charged twice."
+cat ticket.txt | ollama ask nimble --questions questions.json
+```
+
+Each question specifies `type` and `instructions`.
+Use `criteria` to define choices, score levels, or custom yes/no descriptions.
+Use the `questions` object from the [multiple-question example](#ask-multiple-questions) below.
+
+If stdout is redirected, `--questions` prints the full JSON response by default.
+Use only one of `--choice`, `--score`, or `--questions`.
+
+Run `ollama ask` once for each independent input.
+
+Successful answers return exit status 0, regardless of the probability or score.
+If input is invalid, the model is unavailable, or the server fails, the command returns
+a nonzero exit status. Errors appear on stderr. The command writes no answer to stdout.
+The command does not pull missing models automatically.
 
 ## Choose a label
 
-Put your input in `state` and describe the possible answers in `criteria`:
+Set `state` to your input. Use `criteria` to describe the possible answers:
 
 ```shell choice.sh
 curl http://localhost:11434/v1/systemone \
@@ -76,11 +146,14 @@ For the urgency criteria below:
 score = 0 × P(Routine) + 1 × P(Soon) + 2 × P(Immediate)
 ```
 
-For `choice` and `score`, `confidence` measures how strongly the model favors one answer over the others, from 0 to 1. A higher value does not guarantee the answer is correct.
+For `choice` and `score`, `confidence` measures how strongly the model favors one answer.
+The value ranges from 0 to 1. A higher value does not guarantee a correct answer.
 
 ## Ask multiple questions
 
-Combine question types in one request. Here, both questions use the same ticket:
+You can mix question types in one request. All questions use the same `state`.
+Send a separate request for each independent input.
+In this example, both questions use the same ticket:
 
 ```shell multiple.sh
 curl http://localhost:11434/v1/systemone \
@@ -110,6 +183,8 @@ curl http://localhost:11434/v1/systemone \
   }'
 ```
 
-This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
+Example results are a refund probability of `0.9989` and an urgency score of `0.8308`.
+The urgency scale is 0–2. These values are rounded.
+Results can vary with the model and configuration.
 
 See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.
