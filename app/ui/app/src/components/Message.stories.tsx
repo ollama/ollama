@@ -40,7 +40,6 @@ export const UserMessage: Story = {
       role: "user",
       content: "Can you help me understand how React hooks work?",
     }),
-    isStreaming: false,
   },
 };
 
@@ -51,7 +50,6 @@ export const UserMessageWithMarkdown: Story = {
       content:
         "Here's my code:\n```javascript\nconst [count, setCount] = useState(0);\n```\nWhy isn't it working?",
     }),
-    isStreaming: false,
   },
 };
 
@@ -63,7 +61,6 @@ export const AssistantMessage: Story = {
       content:
         "I'd be happy to help you understand React hooks! React hooks are functions that let you use state and other React features in functional components.",
     }),
-    isStreaming: false,
   },
 };
 
@@ -92,7 +89,6 @@ function Counter() {
 
 This creates a simple counter component that tracks its state.`,
     }),
-    isStreaming: false,
   },
 };
 
@@ -107,7 +103,6 @@ export const AssistantMessageWithThinking: Story = {
       thinkingTimeStart: new Date(Date.now() - 3000),
       thinkingTimeEnd: new Date(Date.now() - 1000),
     }),
-    isStreaming: false,
   },
 };
 
@@ -120,7 +115,6 @@ export const AssistantMessageThinkingOnly: Story = {
         "Processing the user's request and analyzing the code structure. This might take a moment while I consider the best approach...",
       thinkingTimeStart: new Date(Date.now() - 2000),
     }),
-    isStreaming: false,
   },
 };
 
@@ -138,7 +132,6 @@ export const ToolMessage: Story = {
   }
 }`,
     }),
-    isStreaming: false,
   },
 };
 
@@ -166,7 +159,6 @@ export const AssistantWithToolCall: Story = {
         }),
       ],
     }),
-    isStreaming: false,
   },
 };
 
@@ -200,7 +192,6 @@ export const AssistantWithMultipleToolCalls: Story = {
         }),
       ],
     }),
-    isStreaming: false,
   },
 };
 
@@ -250,14 +241,12 @@ function MyComponent() {
       thinkingTimeStart: new Date(Date.now() - 5000),
       thinkingTimeEnd: new Date(Date.now() - 3000),
     }),
-    isStreaming: false,
   },
 };
 
 // Assistant Message with Raw HTML
 export const AssistantMessageWithHTML: Story = {
   args: {
-    isStreaming: false,
     message: createMessage({
       role: "assistant",
       content: `Here are some HTML examples and how they render:
@@ -414,6 +403,5 @@ function useCounter(initialValue = 0) {
 
 This is just the beginning of what you can do with React Hooks!`,
     }),
-    isStreaming: false,
   },
 };

@@ -1,11 +1,5 @@
 // Type declarations for webview API functions
 
-interface ImageData {
-  filename: string;
-  path: string;
-  dataURL: string; // base64 encoded file data
-}
-
 interface MenuItem {
   label: string;
   enabled?: boolean;
@@ -118,10 +112,7 @@ type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
 type CodexDesktopInstallResult = "opened" | "cancelled" | "failed";
 
 interface WebviewAPI {
-  selectFile: () => Promise<ImageData | null>;
-  selectMultipleFiles: () => Promise<ImageData[] | null>;
   selectModelsDirectory: () => Promise<string | null>;
-  selectWorkingDirectory: () => Promise<string | null>;
 }
 
 declare global {
@@ -167,8 +158,6 @@ declare global {
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
-    OLLAMA_TOOLS?: boolean;
-    OLLAMA_WEBSEARCH?: boolean;
     OLLAMA_PLATFORM?: "darwin" | "windows";
   }
 
@@ -203,6 +192,5 @@ export type {
   CodexDesktopStatus,
   ContextMenuItem,
   ContextMenuResult,
-  ImageData,
   WebviewAPI,
 };

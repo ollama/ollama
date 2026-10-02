@@ -5,7 +5,6 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { routeTree } from "./routeTree.gen";
 import { queryClient } from "./lib/queryClient";
 import { userQueryOptions } from "./hooks/useUser";
-import { StreamingProvider } from "./contexts/StreamingContext";
 
 void queryClient.prefetchQuery(userQueryOptions);
 
@@ -27,9 +26,7 @@ if (!rootElement.innerHTML) {
   root.render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <StreamingProvider>
-          <RouterProvider router={router} />
-        </StreamingProvider>
+        <RouterProvider router={router} />
       </QueryClientProvider>
     </StrictMode>,
   );

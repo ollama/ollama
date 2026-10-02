@@ -1,7 +1,7 @@
 import { act, create, type ReactTestInstance } from "react-test-renderer";
 import { forwardRef, useImperativeHandle } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Settings as SettingsType } from "@/gotypes";
+import { ChatInfo, Settings as SettingsType } from "@/gotypes";
 import { Badge } from "./ui/badge";
 import Settings from "./Settings";
 
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   resetChatGPTModels: vi.fn(),
   updateSettings: vi.fn(),
   updateCloudSetting: vi.fn(),
+  exportAllChats: vi.fn(),
   setShowAppsInMenu: vi.fn(),
   refetchUser: vi.fn(),
   disconnectUser: vi.fn(),
@@ -84,6 +85,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     .QueryClient,
   useQueryClient: () => mocks.queryClient,
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
+    if (queryKey[0] === "history-chats") {
+      return { data: [new ChatInfo({ id: "saved-chat" })] };
+    }
     if (queryKey[0] === "settings") {
       return {
         data: { settings: mocks.settings },
@@ -139,10 +143,12 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 }));
 
 vi.mock("@/api", () => ({
+  getChats: vi.fn(),
   getSettings: vi.fn(),
   getInferenceCompute: vi.fn(),
   updateSettings: mocks.updateSettings,
   updateCloudSetting: mocks.updateCloudSetting,
+  exportAllChats: mocks.exportAllChats,
 }));
 
 function textContent(node: ReactTestInstance): string {
@@ -300,6 +306,56 @@ describe("Settings reset interactions", () => {
         renderer?.unmount();
         await Promise.resolve();
       });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shows export progress and stops the export when Cancel is clicked", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+      setTimeout(() => callback(0), 16),
+    );
+    let exportSignal: AbortSignal;
+    mocks.exportAllChats.mockImplementationOnce((signal, onProgress) => {
+      exportSignal = signal;
+      onProgress({ completed: 1, total: 4 });
+      return new Promise((_, reject) => {
+        signal.addEventListener("abort", () =>
+          reject(new DOMException("Export cancelled", "AbortError")),
+        );
+      });
+    });
+    let renderer;
+    try {
+      await act(async () => {
+        renderer = create(<Settings />);
+      });
+      const button = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Export all chats")!;
+      await act(async () => button.props.onClick());
+      expect(button.props.disabled).toBe(true);
+      expect(textContent(button)).toBe("Exporting…");
+      expect(mocks.exportAllChats).not.toHaveBeenCalled();
+      await act(async () => button.props.onClick());
+      await act(async () => vi.advanceTimersByTimeAsync(20));
+      expect(mocks.exportAllChats).toHaveBeenCalledOnce();
+      const progress = renderer!.root.findByProps({ role: "progressbar" });
+      expect(progress.props["aria-valuenow"]).toBe(1);
+      expect(progress.props["aria-valuemax"]).toBe(4);
+      const cancel = renderer!.root
+        .findAllByType("button")
+        .find((button) => textContent(button) === "Cancel")!;
+      await act(async () => cancel.props.onClick());
+      expect(exportSignal!.aborted).toBe(true);
+      expect(button.props.disabled).toBeFalsy();
+      expect(textContent(button)).toBe("Export all chats");
+      expect(
+        renderer!.root.findAllByProps({ role: "progressbar" }),
+      ).toHaveLength(0);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });

@@ -12,34 +12,6 @@
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Add selectFiles method if available
-      if (typeof window.selectFiles === "function") {
-        window.webview = window.webview || {};
-
-        // Single file selection (returns first file or null)
-        window.webview.selectFile = function () {
-          return new Promise((resolve) => {
-            window.__selectFilesCallback = (data) => {
-              window.__selectFilesCallback = null;
-              // For single file, return first file or null
-              resolve(data && data.length > 0 ? data[0] : null);
-            };
-            window.selectFiles();
-          });
-        };
-
-        // Multiple file selection (returns array or null)
-        window.webview.selectMultipleFiles = function () {
-          return new Promise((resolve) => {
-            window.__selectFilesCallback = (data) => {
-              window.__selectFilesCallback = null;
-              resolve(data); // Returns array of files or null if cancelled
-            };
-            window.selectFiles();
-          });
-        };
-      }
-
       // Add directory selection methods if available
       if (typeof window.selectModelsDirectory === "function") {
         window.webview = window.webview || {};
@@ -50,19 +22,6 @@
               resolve(path); // Returns directory path or null if cancelled
             };
             window.selectModelsDirectory();
-          });
-        };
-      }
-
-      if (typeof window.selectWorkingDirectory === "function") {
-        window.webview = window.webview || {};
-        window.webview.selectWorkingDirectory = function () {
-          return new Promise((resolve) => {
-            window.__selectWorkingDirectoryCallback = (path) => {
-              window.__selectWorkingDirectoryCallback = null;
-              resolve(path); // Returns directory path or null if cancelled
-            };
-            window.selectWorkingDirectory();
           });
         };
       }

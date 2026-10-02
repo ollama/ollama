@@ -6,15 +6,10 @@ package main
 import "C"
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,27 +128,8 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 				window.addEventListener('load', updateScrollbarStyles);
 			`
 		}
-		// on windows make ctrl+n open new chat
-		// TODO (jmorganca): later we should use proper accelerators
-		// once we introduce a native menu for the window
-		// this is only used on windows since macOS uses the proper accelerators
-		if runtime.GOOS == "windows" {
-			init += `
-				document.addEventListener('keydown', function(e) {
-					if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
-						e.preventDefault();
-						// Use the existing navigation method
-						history.pushState({}, '', '/c/new');
-						window.dispatchEvent(new PopStateEvent('popstate'));
-						return false;
-					}
-				});
-			`
-		}
-
 		init += fmt.Sprintf(`
 			window.OLLAMA_PLATFORM = %q;
-			window.OLLAMA_WEBSEARCH = true;
 		`, runtime.GOOS)
 
 		wv.Init(init)
@@ -284,99 +260,6 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			}()
 		})
 
-		// Bind selectFiles function for selecting multiple files at once
-		wv.Bind("selectFiles", func() {
-			go func() {
-				// Helper function to call the JavaScript callback with data or null
-				callCallback := func(data interface{}) {
-					dataJSON, _ := json.Marshal(data)
-					wv.Dispatch(func() {
-						wv.Eval(fmt.Sprintf("window.__selectFilesCallback && window.__selectFilesCallback(%s)", dataJSON))
-					})
-				}
-
-				// Define allowed extensions for native dialog filtering
-				textExts := []string{
-					"pdf", "docx", "txt", "md", "csv", "json", "xml", "html", "htm",
-					"js", "jsx", "ts", "tsx", "py", "java", "cpp", "c", "cc", "h", "cs", "php", "rb",
-					"go", "rs", "swift", "kt", "scala", "sh", "bat", "yaml", "yml", "toml", "ini",
-					"cfg", "conf", "log", "rtf",
-				}
-				imageExts := []string{"png", "jpg", "jpeg", "webp"}
-				allowedExts := append(textExts, imageExts...)
-
-				// Use native multiple file selection with extension filtering
-				filenames, err := dialog.File().
-					Filter("Supported Files", allowedExts...).
-					Title("Select Files").
-					LoadMultiple()
-				if err != nil {
-					slog.Debug("Multiple file selection cancelled or failed", "error", err)
-					callCallback(nil)
-					return
-				}
-
-				if len(filenames) == 0 {
-					callCallback(nil)
-					return
-				}
-
-				var files []map[string]string
-				maxFileSize := int64(10 * 1024 * 1024) // 10MB
-
-				for _, filename := range filenames {
-					// Check file extension (double-check after native dialog filtering)
-					ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(filename), "."))
-					validExt := false
-					for _, allowedExt := range allowedExts {
-						if ext == allowedExt {
-							validExt = true
-							break
-						}
-					}
-					if !validExt {
-						slog.Warn("file extension not allowed, skipping", "filename", filepath.Base(filename), "extension", ext)
-						continue
-					}
-
-					// Check file size before reading (pre-filter large files)
-					fileStat, err := os.Stat(filename)
-					if err != nil {
-						slog.Error("failed to get file info", "error", err, "filename", filename)
-						continue
-					}
-
-					if fileStat.Size() > maxFileSize {
-						slog.Warn("file too large, skipping", "filename", filepath.Base(filename), "size", fileStat.Size())
-						continue
-					}
-
-					fileBytes, err := os.ReadFile(filename)
-					if err != nil {
-						slog.Error("failed to read file", "error", err, "filename", filename)
-						continue
-					}
-
-					mimeType := http.DetectContentType(fileBytes)
-					dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(fileBytes))
-
-					fileResult := map[string]string{
-						"filename": filepath.Base(filename),
-						"path":     filename,
-						"dataURL":  dataURL,
-					}
-
-					files = append(files, fileResult)
-				}
-
-				if len(files) == 0 {
-					callCallback(nil)
-				} else {
-					callCallback(files)
-				}
-			}()
-		})
-
 		wv.Bind("drag", func() {
 			wv.Dispatch(func() {
 				drag(wv.Window())
@@ -387,28 +270,6 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 			wv.Dispatch(func() {
 				doubleClick(wv.Window())
 			})
-		})
-
-		// Add binding for working directory selection
-		wv.Bind("selectWorkingDirectory", func() {
-			go func() {
-				// Helper function to call the JavaScript callback with data or null
-				callCallback := func(data interface{}) {
-					dataJSON, _ := json.Marshal(data)
-					wv.Dispatch(func() {
-						wv.Eval(fmt.Sprintf("window.__selectWorkingDirectoryCallback && window.__selectWorkingDirectoryCallback(%s)", dataJSON))
-					})
-				}
-
-				directory, err := dialog.Directory().Title("Select Working Directory").ShowHidden(true).Browse()
-				if err != nil {
-					slog.Debug("Directory selection cancelled or failed", "error", err)
-					callCallback(nil)
-					return
-				}
-				slog.Debug("Directory selected", "path", directory)
-				callCallback(directory)
-			}()
 		})
 
 		wv.Bind("setContextMenuItems", func(items []map[string]interface{}) error {
@@ -493,6 +354,26 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 	}
 
 	return w.webview.Window()
+}
+
+// pickExportPath opens native pickers on the initialized UI thread. In
+// particular, the Windows folder picker requires that thread's COM apartment.
+func (w *Webview) pickExportPath(pick func() (string, error)) (string, error) {
+	w.mutex.Lock()
+	if w.webview == nil {
+		w.mutex.Unlock()
+		return "", fmt.Errorf("export is unavailable in this window")
+	}
+	var path string
+	var err error
+	done := make(chan struct{})
+	w.webview.Dispatch(func() {
+		path, err = pick()
+		close(done)
+	})
+	w.mutex.Unlock()
+	<-done
+	return path, err
 }
 
 func (w *Webview) Terminate() {

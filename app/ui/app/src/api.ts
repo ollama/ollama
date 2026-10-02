@@ -1,17 +1,11 @@
 import {
   ChatResponse,
   ChatsResponse,
-  ChatEvent,
-  DownloadEvent,
-  ErrorEvent,
   InferenceComputeResponse,
-  ModelCapabilitiesResponse,
   Model,
-  ChatRequest,
   Settings,
   User,
 } from "@/gotypes";
-import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
 import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
@@ -94,19 +88,6 @@ export function getCodexDesktopModelsSettings(
   );
 }
 
-// Helper function to convert Uint8Array to base64
-function uint8ArrayToBase64(uint8Array: Uint8Array): string {
-  const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
-  let binary = "";
-
-  for (let i = 0; i < uint8Array.length; i += chunkSize) {
-    const chunk = uint8Array.subarray(i, i + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-
-  return btoa(binary);
-}
-
 export async function fetchUser(): Promise<User | null> {
   const response = await fetch(`${API_BASE}/api/me`, {
     method: "POST",
@@ -165,81 +146,6 @@ export async function disconnectUser(): Promise<void> {
   }
 }
 
-export async function getChats(): Promise<ChatsResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chats`);
-  const data = await response.json();
-  return new ChatsResponse(data);
-}
-
-export async function getChat(chatId: string): Promise<ChatResponse> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`);
-  const data = await response.json();
-  return new ChatResponse(data);
-}
-
-export async function getModels(query?: string): Promise<Model[]> {
-  try {
-    const { models: modelsResponse } = await ollama.list();
-
-    let models: Model[] = modelsResponse
-      .filter((m: ModelResponse) => {
-        const families = m.details?.families;
-
-        if (!families || families.length === 0) {
-          return true;
-        }
-
-        const isBertOnly = families.every((family: string) =>
-          family.toLowerCase().includes("bert"),
-        );
-
-        return !isBertOnly;
-      })
-      .map((m: ModelResponse) => {
-        // Remove the latest tag from the returned model
-        const modelName = m.name.replace(/:latest$/, "");
-
-        return new Model({
-          model: modelName,
-          digest: m.digest,
-          modified_at: m.modified_at ? new Date(m.modified_at) : undefined,
-        });
-      });
-
-    // Filter by query if provided
-    if (query) {
-      const normalizedQuery = query.toLowerCase().trim();
-
-      const filteredModels = models.filter((m: Model) => {
-        return m.model.toLowerCase().startsWith(normalizedQuery);
-      });
-
-      let exactMatch = false;
-      for (const m of filteredModels) {
-        if (m.model.toLowerCase() === normalizedQuery) {
-          exactMatch = true;
-          break;
-        }
-      }
-
-      // Add query if it's in the registry and not already in the list
-      if (!exactMatch) {
-        const result = await getModelUpstreamInfo(new Model({ model: query }));
-        const existsUpstream = result.exists;
-        if (existsUpstream) {
-          filteredModels.push(new Model({ model: query }));
-        }
-      }
-
-      models = filteredModels;
-    }
-
-    return models;
-  } catch (err) {
-    throw new Error(`Failed to fetch models: ${err}`);
-  }
-}
-
 export async function getClaudeDesktopAvailableModels(
   includeCloudModels = false,
 ): Promise<Model[]> {
@@ -288,9 +194,7 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name
-          .replace(/:latest$/, "")
-          .replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;
@@ -315,87 +219,6 @@ export async function getClaudeDesktopAvailableModels(
       );
   } catch (err) {
     throw new Error(`Failed to fetch Ollama models: ${err}`);
-  }
-}
-
-export async function getModelCapabilities(
-  modelName: string,
-): Promise<ModelCapabilitiesResponse> {
-  try {
-    const showResponse = await ollama.show({ model: modelName });
-
-    return new ModelCapabilitiesResponse({
-      capabilities: Array.isArray(showResponse.capabilities)
-        ? showResponse.capabilities
-        : [],
-    });
-  } catch (error) {
-    // Model might not be downloaded yet, return empty capabilities
-    console.error(`Failed to get capabilities for ${modelName}:`, error);
-    return new ModelCapabilitiesResponse({ capabilities: [] });
-  }
-}
-
-export type ChatEventUnion = ChatEvent | DownloadEvent | ErrorEvent;
-
-export async function* sendMessage(
-  chatId: string,
-  message: string,
-  model: Model,
-  attachments?: Array<{ filename: string; data: Uint8Array }>,
-  signal?: AbortSignal,
-  index?: number,
-  webSearch?: boolean,
-  fileTools?: boolean,
-  forceUpdate?: boolean,
-  think?: boolean | string,
-): AsyncGenerator<ChatEventUnion> {
-  // Convert Uint8Array to base64 for JSON serialization
-  const serializedAttachments = attachments?.map((att) => ({
-    filename: att.filename,
-    data: uint8ArrayToBase64(att.data),
-  }));
-
-  // Send think parameter when it's explicitly set (true, false, or a non-empty string).
-  const shouldSendThink =
-    think !== undefined &&
-    (typeof think === "boolean" || (typeof think === "string" && think !== ""));
-
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(
-      new ChatRequest({
-        model: model.model,
-        prompt: message,
-        ...(index !== undefined ? { index } : {}),
-        ...(serializedAttachments !== undefined
-          ? { attachments: serializedAttachments }
-          : {}),
-        // Always send web_search as a boolean value (default to false)
-        web_search: webSearch ?? false,
-        file_tools: fileTools ?? false,
-        ...(forceUpdate !== undefined ? { forceUpdate } : {}),
-        ...(shouldSendThink ? { think } : {}),
-      }),
-    ),
-    signal,
-  });
-
-  for await (const event of parseJsonlFromResponse<ChatEventUnion>(response)) {
-    switch (event.eventName) {
-      case "download":
-        yield new DownloadEvent(event);
-        break;
-      case "error":
-        yield new ErrorEvent(event);
-        break;
-      default:
-        yield new ChatEvent(event);
-        break;
-    }
   }
 }
 
@@ -454,125 +277,89 @@ export async function updateCloudSetting(
   };
 }
 
-export async function renameChat(chatId: string, title: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}/rename`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ title: title.trim() }),
+export async function getChats() {
+  const response = await fetch(`${API_BASE}/api/v1/chats`);
+  if (!response.ok) throw new Error("Could not load your chats.");
+  return new ChatsResponse(await response.json()).chatInfos;
+}
+
+export async function getChat(chatId: string) {
+  const response = await fetch(
+    `${API_BASE}/api/v1/chat/${encodeURIComponent(chatId)}`,
+  );
+  if (!response.ok) throw new Error("Could not load this chat.");
+  return new ChatResponse(await response.json()).chat;
+}
+
+export interface ExportResult {
+  path: string;
+  warnings?: string[];
+}
+
+export interface ExportProgress {
+  completed: number;
+  total: number;
+}
+
+export async function exportChat(chatId: string): Promise<ExportResult | null> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/chat/${encodeURIComponent(chatId)}/export`,
+    { method: "POST" },
+  );
+  const data = await response.json();
+  if (!response.ok)
+    throw new Error(data.error ?? "Could not export your chat.");
+  return data;
+}
+
+export async function exportAllChats(
+  signal: AbortSignal,
+  onProgress: (progress: ExportProgress) => void,
+): Promise<ExportResult | null> {
+  const response = await fetch(`${API_BASE}/api/v1/chats/export`, {
+    method: "POST",
+    signal,
   });
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error || "Failed to rename chat");
+    const data = await response.json();
+    throw new Error(data.error ?? "Could not export your chats.");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Could not read export progress.");
+  const decoder = new TextDecoder();
+  let pending = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      pending += decoder.decode(value, { stream: !done });
+      const lines = pending.split("\n");
+      pending = lines.pop()!;
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const update: ExportProgress | ExportResult | { error: string } | null =
+          JSON.parse(line);
+        if (update === null || "path" in update) return update;
+        if ("error" in update) throw new Error(update.error);
+        onProgress(update);
+      }
+      if (done) throw new Error("Export stopped before it finished.");
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
 export async function deleteChat(chatId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}`, {
-    method: "DELETE",
-  });
+  const response = await fetch(
+    `${API_BASE}/api/v1/chat/${encodeURIComponent(chatId)}`,
+    {
+      method: "DELETE",
+    },
+  );
   if (!response.ok) {
     const error = await response.text();
     throw new Error(error || "Failed to delete chat");
   }
-}
-
-// Get upstream information for model staleness checking
-export async function getModelUpstreamInfo(
-  model: Model,
-): Promise<{ stale: boolean; exists: boolean; error?: string }> {
-  try {
-    const response = await fetch(`${API_BASE}/api/v1/model/upstream`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: model.model,
-      }),
-    });
-
-    if (!response.ok) {
-      console.warn(
-        `Failed to check upstream for ${model.model}: ${response.status}`,
-      );
-      return { stale: false, exists: false };
-    }
-
-    const data = await response.json();
-
-    if (data.error) {
-      console.warn(`Upstream check: ${data.error}`);
-      return { stale: false, exists: false, error: data.error };
-    }
-
-    return { stale: !!data.stale, exists: true };
-  } catch (error) {
-    console.warn(`Error checking model staleness:`, error);
-    return { stale: false, exists: false };
-  }
-}
-
-export async function* pullModel(
-  modelName: string,
-  signal?: AbortSignal,
-): AsyncGenerator<{
-  status: string;
-  digest?: string;
-  total?: number;
-  completed?: number;
-  done?: boolean;
-}> {
-  const response = await fetch(`${API_BASE}/api/v1/models/pull`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: modelName }),
-    signal,
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to pull model: ${response.statusText}`);
-  }
-
-  for await (const event of parseJsonlFromResponse<{
-    status: string;
-    digest?: string;
-    total?: number;
-    completed?: number;
-    done?: boolean;
-  }>(response)) {
-    yield event;
-  }
-}
-
-export interface ModelRecommendation {
-  model: string;
-  description: string;
-  context_length?: number;
-  max_output_tokens?: number;
-  vram_bytes?: number;
-}
-
-export interface ModelRecommendationsResponse {
-  recommendations: ModelRecommendation[];
-}
-
-export async function getModelRecommendations(): Promise<
-  ModelRecommendation[]
-> {
-  const response = await fetch(
-    `${API_BASE}/api/experimental/model-recommendations`,
-  );
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch model recommendations: ${response.statusText}`,
-    );
-  }
-  const data: ModelRecommendationsResponse = await response.json();
-  return data.recommendations || [];
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
@@ -585,29 +372,6 @@ export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
 
   const data = await response.json();
   return new InferenceComputeResponse(data);
-}
-
-export async function fetchHealth(): Promise<boolean> {
-  try {
-    // Use the /api/version endpoint as a health check
-    const response = await fetch(`${API_BASE}/api/version`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      // If we get a version back, the server is healthy
-      return !!data.version;
-    }
-
-    return false;
-  } catch (error) {
-    console.error("Error checking health:", error);
-    return false;
-  }
 }
 
 export async function getCloudStatus(): Promise<CloudStatusResponse | null> {

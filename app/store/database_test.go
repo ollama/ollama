@@ -4,6 +4,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -288,10 +289,7 @@ func TestChatDeletionWithCascade(t *testing.T) {
 			},
 		}
 
-		// Save the chat with messages
-		if err := db.saveChat(testChat); err != nil {
-			t.Fatalf("failed to save test chat: %v", err)
-		}
+		seedChat(t, db, testChat)
 
 		// Verify chat and messages exist
 		chatCount := countRows(t, db, "chats")
@@ -596,5 +594,84 @@ func TestCodexDesktopUsedMigration(t *testing.T) {
 	}
 	if settings.CodexDesktopUsed {
 		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
+	}
+}
+
+// Seed the previous app's data format without restoring chat-writing APIs.
+func seedChat(t *testing.T, db *database, chat Chat) {
+	t.Helper()
+	tx, err := db.conn.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("INSERT INTO chats (id, title, created_at, browser_state) VALUES (?, ?, ?, ?)", chat.ID, chat.Title, chat.CreatedAt, []byte(chat.BrowserState)); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range chat.Messages {
+		var result any
+		if m.ToolResult != nil {
+			result = []byte(*m.ToolResult)
+		}
+		r, err := tx.Exec(`INSERT INTO messages (chat_id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, chat.ID, m.Role, m.Content, m.Thinking, m.Stream, m.Model, m.CreatedAt, m.UpdatedAt, m.ThinkingTimeStart, m.ThinkingTimeEnd, result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := r.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range m.Attachments {
+			if _, err := tx.Exec("INSERT INTO attachments (message_id, filename, data) VALUES (?, ?, ?)", id, file.Filename, file.Data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, call := range m.ToolCalls {
+			result, err := json.Marshal(call.Function.Result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec("INSERT INTO tool_calls (message_id, type, function_name, function_arguments, function_result) VALUES (?, ?, ?, ?, ?)", id, call.Type, call.Function.Name, call.Function.Arguments, result); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSavedHistoryKeepsMetadataAndRejectsCorruptRecords(t *testing.T) {
+	db, err := newDatabase(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	result := json.RawMessage(`{"answer":"saved result"}`)
+	seedChat(t, db, Chat{ID: "saved", Title: "Saved title", CreatedAt: now, BrowserState: json.RawMessage(`{"page_stack":["https://example.com"]}`), Messages: []Message{
+		{Role: "user", Content: "Question", CreatedAt: now, UpdatedAt: now, Attachments: []File{{Filename: "notes.txt", Data: []byte("original bytes")}}},
+		{Role: "assistant", Content: "Answer", Thinking: "Original thinking", Stream: true, Model: "gpt-oss:120b-cloud", CreatedAt: now, UpdatedAt: now, ThinkingTimeStart: &now, ThinkingTimeEnd: &now, ToolResult: &result, ToolCalls: []ToolCall{{Type: "function", Function: ToolFunction{Name: "web_search", Arguments: `{"query":"plants"}`, Result: result}}}},
+	}})
+	// One connection also verifies that child records use the same transaction.
+	db.conn.SetMaxOpenConns(1)
+	chat, err := db.getChat("saved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.Title != "Saved title" || len(chat.Messages) != 2 || string(chat.Messages[0].Attachments[0].Data) != "original bytes" || chat.Messages[1].Model != "gpt-oss:120b-cloud" || chat.Messages[1].Thinking != "Original thinking" || !chat.Messages[1].ThinkingTimeEnd.Equal(now) || string(*chat.Messages[1].ToolResult) != string(result) || chat.Messages[1].ToolCalls[0].Function.Name != "web_search" || len(chat.BrowserState) == 0 {
+		t.Fatalf("lost saved conversation fields: %+v", chat)
+	}
+	if chat.Messages[1].Stream || chat.Messages[1].Content != "Answer" {
+		t.Fatal("saved reply should retain its text with the streaming flag cleared")
+	}
+	if _, err := db.conn.Exec(`UPDATE messages SET tool_result = '{broken' WHERE role = 'assistant'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.getChat("saved"); err == nil {
+		t.Fatal("corrupt tool result was silently omitted")
+	}
+	if err := db.deleteChat("saved"); err != nil {
+		t.Fatalf("a corrupt chat should still be deletable: %v", err)
 	}
 }

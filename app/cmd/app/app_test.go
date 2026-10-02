@@ -5,9 +5,64 @@ package main
 import (
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/ollama/ollama/app/dialog"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/webview"
 )
+
+type exportPickerWebview struct {
+	webview.WebView
+	callbacks chan func()
+}
+
+func (w *exportPickerWebview) Dispatch(callback func()) {
+	w.callbacks <- callback
+}
+
+func TestExportPickerUsesUIThread(t *testing.T) {
+	for _, pickerError := range []error{nil, dialog.ErrCancelled, errors.New("picker failed")} {
+		view := &exportPickerWebview{callbacks: make(chan func(), 1)}
+		window := &Webview{webview: view}
+		type result struct {
+			path string
+			err  error
+		}
+		finished := make(chan result, 1)
+		called := false
+		go func() {
+			path, err := window.pickExportPath(func() (string, error) {
+				called = true
+				return "selected folder", pickerError
+			})
+			finished <- result{path, err}
+		}()
+		select {
+		case callback := <-view.callbacks:
+			if called {
+				t.Fatal("picker ran before the UI handled the callback")
+			}
+			callback()
+		case <-time.After(time.Second):
+			t.Fatal("picker was not dispatched to the UI")
+		}
+		select {
+		case got := <-finished:
+			if !called || got.path != "selected folder" || !errors.Is(got.err, pickerError) {
+				t.Fatalf("picker result was not preserved: %+v", got)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("export did not resume after the picker closed")
+		}
+	}
+	if _, err := new(Webview).pickExportPath(func() (string, error) {
+		t.Fatal("picker ran without an initialized window")
+		return "", nil
+	}); err == nil {
+		t.Fatal("missing window should report an error")
+	}
+}
 
 func TestShouldShowOnboarding(t *testing.T) {
 	tests := []struct {
