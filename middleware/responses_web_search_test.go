@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1031,6 +1032,137 @@ func TestWebSearchResponsesWriterStreamingSurfacesMixedToolCalls(t *testing.T) {
 	}
 	if !hasFunctionCall || !hasFinalMessage {
 		t.Fatalf("terminal output missing mixed call or final message: %#v", output)
+	}
+}
+
+func TestWebSearchResponsesWriterStreamingErrorWhileSearchPending(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	stream := true
+	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+	writer := &WebSearchResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request}
+
+	textChunk, _ := json.Marshal(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "Searching "}})
+	if _, err := writer.Write(textChunk); err != nil {
+		t.Fatal(err)
+	}
+
+	searchChunk, _ := json.Marshal(api.ChatResponse{Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"})}}}}})
+	if _, err := writer.Write(searchChunk); err != nil {
+		t.Fatal(err)
+	}
+
+	// The error envelope arrives while webSearchPending is set and before any
+	// Done chunk was ever buffered. Without special-casing it, this used to
+	// unmarshal into an empty api.ChatResponse and get buffered like any other
+	// chunk, leaving the stream to end with no terminal event.
+	errChunk, err := json.Marshal(gin.H{"error": "model runner exited"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(errChunk); err != nil {
+		t.Fatal(err)
+	}
+
+	body := recorder.Body.String()
+	blocks := strings.Split(strings.TrimSuffix(body, "\n\n"), "\n\n")
+	if len(blocks) == 0 || !strings.HasPrefix(blocks[len(blocks)-1], "event: response.failed\n") {
+		t.Fatalf("stream did not end with response.failed: %s", body)
+	}
+
+	var found bool
+	for _, block := range blocks {
+		if !strings.HasPrefix(block, "event: response.output_item.done\n") {
+			continue
+		}
+		dataAt := strings.Index(block, "\ndata: ")
+		var payload struct {
+			Item struct {
+				Type   string `json:"type"`
+				Status string `json:"status"`
+			} `json:"item"`
+		}
+		if err := json.Unmarshal([]byte(block[dataAt+7:]), &payload); err != nil {
+			t.Fatalf("decode response.output_item.done: %v: %s", err, block)
+		}
+		if payload.Item.Type == "message" {
+			found = true
+			if payload.Item.Status != "incomplete" {
+				t.Errorf("message item status = %q, want %q", payload.Item.Status, "incomplete")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("message item was never closed: %s", body)
+	}
+}
+
+func TestWebSearchResponsesWriterFollowUpStreamErrorClosesMessageItem(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	stream := true
+	request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+	inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+	writer := &WebSearchResponsesWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+		chat:   &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+		search: func(context.Context, string) (*api.WebSearchResponse, error) { return &api.WebSearchResponse{}, nil },
+		followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+			// The search succeeds and the follow-up starts answering before
+			// generation fails, leaving the message item open.
+			if err := yield(api.ChatResponse{Message: api.Message{Role: "assistant", Content: "partial "}}); err != nil {
+				return err
+			}
+			return errors.New("model runner exited")
+		},
+	}
+
+	initial := api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "test"})}}}}}
+	data, _ := json.Marshal(initial)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatal(err)
+	}
+
+	body := recorder.Body.String()
+	if n := strings.Count(body, "event: response.failed\n"); n != 1 {
+		t.Fatalf("response.failed count = %d, want 1: %s", n, body)
+	}
+	if strings.Contains(body, "event: response.completed") {
+		t.Fatalf("stream reported completion for a failed generation: %s", body)
+	}
+
+	blocks := strings.Split(strings.TrimSuffix(body, "\n\n"), "\n\n")
+	if !strings.HasPrefix(blocks[len(blocks)-1], "event: response.failed\n") {
+		t.Fatalf("stream did not end with response.failed: %s", body)
+	}
+
+	var found bool
+	for _, block := range blocks {
+		if !strings.HasPrefix(block, "event: response.output_item.done\n") {
+			continue
+		}
+		dataAt := strings.Index(block, "\ndata: ")
+		var payload struct {
+			Item struct {
+				Type   string `json:"type"`
+				Status string `json:"status"`
+			} `json:"item"`
+		}
+		if err := json.Unmarshal([]byte(block[dataAt+7:]), &payload); err != nil {
+			t.Fatalf("decode response.output_item.done: %v: %s", err, block)
+		}
+		if payload.Item.Type == "message" {
+			found = true
+			if payload.Item.Status != "incomplete" {
+				t.Errorf("message item status = %q, want %q", payload.Item.Status, "incomplete")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("message item was never closed: %s", body)
 	}
 }
 
