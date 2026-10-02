@@ -67,6 +67,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Verify patch migrations
+        shell: bash
+        run: cmake -DTEST_BINARY_DIR="$RUNNER_TEMP/patch-applier-tests" -P cmake/tests/apply-git-patches.cmake
       - name: Verify patches apply cleanly
         shell: bash
         run: |

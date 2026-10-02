@@ -69,7 +69,9 @@ func TestCompileStrands(t *testing.T) {
 
 func TestStrandsContent(t *testing.T) {
 	for _, tt := range []struct{ input, want string }{
-		{`"  text\n"`, "text"}, {`[]`, "[]"}, {`{}`, "{}"},
+		{`"  text\n"`, "text"},
+		{`[]`, "[]"},
+		{`{}`, "{}"},
 		{`{"z":{},"a":[1.0,-0.0,1e-5]}`, "{\n  \"z\": {},\n  \"a\": [\n    1.0,\n    -0.0,\n    1e-05\n  ]\n}"},
 	} {
 		got, err := strandsContent(json.RawMessage(tt.input))
@@ -82,10 +84,16 @@ func TestStrandsContent(t *testing.T) {
 func TestStrandsValidation(t *testing.T) {
 	for _, q := range []string{
 		`{"type":"noul"}`, `{"type":"noul","instructions":null}`, `{"type":"unknown","instructions":"x"}`,
+		`{"type":"noul","instructions":""}`,
+		`{"type":"noul","instructions":" \t\n "}`,
+		`{"type":"choice","instructions":" \t\n ","criteria":{"a":"one","b":"two"}}`,
+		`{"type":"score","instructions":" \t\n ","criteria":["one","two"]}`,
 		`{"type":"noul","instructions":"x","criteria":{"true":null}}`,
 		`{"type":"noul","instructions":"x","criteria":{"maybe":"yes"}}`,
 		`{"type":"choice","instructions":"x","criteria":{"a":"only"}}`,
 		`{"type":"choice","instructions":"x","criteria":{"a":null,"b":"two"}}`,
+		`{"type":"choice","instructions":"x","criteria":{"":"one","valid":"two"}}`,
+		`{"type":"choice","instructions":"x","criteria":{" \t\n ":"one","valid":"two"}}`,
 		`{"type":"score","instructions":"x","criteria":["one",null]}`,
 		`{"type":"score","instructions":"x","criteria":["0","1","2","3","4","5","6","7","8","9","10"]}`,
 	} {
@@ -121,7 +129,8 @@ func TestStrandsConfidence(t *testing.T) {
 		typ             string
 		smoothing, want float64
 	}{
-		{[]float64{0.5, 0.5}, "choice", 0, 0}, {[]float64{0, 1, 0}, "choice", 0, 1},
+		{[]float64{0.5, 0.5}, "choice", 0, 0},
+		{[]float64{0, 1, 0}, "choice", 0, 1},
 		{[]float64{0.5, 0, 0.5}, "score", 0.1, 0},
 		{[]float64{0.05, 0.9, 0.05}, "score", 0.1, 1},
 		{[]float64{0.5, 0.5}, "score", 1, 1},

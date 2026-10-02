@@ -59,8 +59,8 @@ func strandsField(name string, q Question) (compiledField, error) {
 	}
 	var err error
 	f.Description, err = strandsContent(q.Instructions)
-	if err != nil {
-		return f, fmt.Errorf("instructions: %w", err)
+	if err != nil || strings.TrimSpace(f.Description) == "" {
+		return f, fmt.Errorf("instructions must be a nonempty string, object, or array")
 	}
 	add := func(value any, description string) {
 		f.Choices = append(f.Choices, Choice{Value: value, Description: strings.TrimSpace(description)})
@@ -92,6 +92,9 @@ func strandsField(name string, q Question) (compiledField, error) {
 			return f, fmt.Errorf("choice criteria must map option keys to string descriptions")
 		}
 		for k, v := range criteria.All() {
+			if strings.TrimSpace(k) == "" {
+				return f, fmt.Errorf("choice keys must not be empty")
+			}
 			if v == nil {
 				return f, fmt.Errorf("choice descriptions must be strings")
 			}
