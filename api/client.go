@@ -426,6 +426,15 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
+// SystemOne answers typed questions with a decision model without streaming.
+func (c *Client) SystemOne(ctx context.Context, req *SystemOneRequest) (*SystemOneResponse, error) {
+	var resp SystemOneResponse
+	if err := c.do(ctx, http.MethodPost, "/v1/systemone", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // Embed generates embeddings from a model.
 func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
 	var resp EmbedResponse

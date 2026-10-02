@@ -3,21 +3,77 @@ title: Decision
 description: Classify text, estimate yes/no probabilities, and score ordered criteria.
 ---
 
-<Note>
-Currently available locally in Ollama.
-</Note>
-
 Use System One to classify text, answer yes/no questions, or score text against a rubric.
 
 ## Setup
 
-Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
+Start [Ollama](/quickstart) v0.35.0 or later, then pull [Nimble](https://ollama.com/library/nimble):
 
 ```shell setup.sh
 ollama pull nimble
 ```
 
-Local requests do not need an API key.
+## Ask from the terminal
+
+Choose a decision model and ask a yes/no question with `ollama ask`:
+
+```shell
+ollama ask nimble "Is water made of hydrogen and oxygen?"
+ollama ask nimble "Is this a refund request?" "I was charged twice."
+cat ticket.txt | ollama ask nimble "Is this urgent?"
+```
+
+The model is the first argument, as with `ollama run`. Give a self-contained question,
+or quote the question and additional text as separate arguments. Piped text is read
+as one input, including newlines. If you provide a text argument, stdin is ignored.
+With no additional text or stdin, the question itself is also the model's input.
+Use `ollama pull MODEL` if the model is unavailable.
+
+Supply choices as labels, or as `label=description`. Repeat `--choice` for each:
+
+```shell
+ollama ask nimble "Which label fits this ticket?" "Checkout returns 500 errors." \
+  --choice 'billing=Payments and refunds' \
+  --choice 'bug=Software errors' \
+  --choice 'account=Login and account access'
+```
+
+For a score, repeat `--score` from the lowest level to the highest:
+
+```shell
+ollama ask nimble "How urgently does this need a response?" "Checkout is down." \
+  --score 'Routine: no time pressure' \
+  --score 'Soon: a customer is inconvenienced' \
+  --score 'Immediate: a critical service is unavailable'
+```
+
+In a terminal, a yes/no answer displays a percentage, such as `Yes: 99.94%`.
+A choice displays the selected label and its probability, and a score displays
+its value and scale.
+When stdout is redirected, the output is just the yes probability from 0 to 1,
+the label, or the numeric score. Use `--json` for the full API response, including
+all probabilities and token usage:
+
+```shell
+ollama ask nimble "Is this a refund request?" "I was charged twice." --json
+```
+
+To ask multiple questions or customize yes/no criteria, save the API's `questions`
+object in a JSON file, then run:
+
+```shell
+ollama ask nimble --questions questions.json "I was charged twice."
+cat ticket.txt | ollama ask nimble --questions questions.json
+```
+
+The file contains named questions with `type`, `instructions`, and `criteria`, as in
+the [multiple-question example](#ask-multiple-questions) below. This mode defaults
+to the full JSON response when stdout is redirected. `--choice`, `--score`, and
+`--questions` are mutually exclusive.
+
+Successful answers exit with status 0, regardless of the probability or score.
+Invalid input, unavailable models, and server errors exit nonzero, with diagnostics
+on stderr and no answer on stdout. `ollama ask` does not pull missing models automatically.
 
 ## Choose a label
 
