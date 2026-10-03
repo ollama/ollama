@@ -306,6 +306,8 @@ console.log(response.message.content);
 ### Productivity & Apps
 
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
+- [CAJAL](https://github.com/Agnuxo1/CAJAL) - Scientific paper generation with structured output and peer-review tribunal scoring. Runs 100% locally via Ollama
+- [CAJAL](https://github.com/Agnuxo1/CAJAL) - Scientific paper generation with structured output and peer-review tribunal scoring. Runs 100% locally via Ollama
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
