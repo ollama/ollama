@@ -64,6 +64,21 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFileNames_InvarianceUnderSubpathExtensionCollisions(t *testing.T) {
+	// Assert that a single, contiguous, valid file-path sequence is evaluated monolithically
+	// and remains invariant when a directory segment, within the path, contains
+	// a valid file extension terminal string.
+	input := "./directory.png/image.png"
+	expected := []string{"./directory.png/image.png"}
+
+	res := extractFileNames(input)
+
+	// The evaluation must yield exactly 1 continuous string segment.
+	// Bug behavior: yields a fractured slice: ["./directory.png/", "/image.png"]
+	assert.Len(t, res, 1, "Path parsing fractured a single continuous token due to non-greedy evaluation of internal extension substrings")
+	assert.Equal(t, expected, res, "The extracted path must preserve the full terminal file name sequence")
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
