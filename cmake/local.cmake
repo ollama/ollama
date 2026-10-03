@@ -12,6 +12,20 @@ set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v1
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
+set(OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX "" CACHE PATH
+    "Optional separate staging prefix for the MLX overlay payload")
+
+get_filename_component(_ollama_mlx_base_install_prefix
+    "${OLLAMA_PAYLOAD_INSTALL_PREFIX}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+set(_ollama_mlx_payload_install_prefix "${_ollama_mlx_base_install_prefix}")
+set(_ollama_mlx_overlay_package OFF)
+if(OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX)
+    get_filename_component(_ollama_mlx_payload_install_prefix
+        "${OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+    if(NOT "${_ollama_mlx_payload_install_prefix}" STREQUAL "${_ollama_mlx_base_install_prefix}")
+        set(_ollama_mlx_overlay_package ON)
+    endif()
+endif()
 
 string(REGEX REPLACE "^v" "" OLLAMA_VERSION "${OLLAMA_VERSION}")
 
@@ -100,6 +114,12 @@ if(NOT DEFINED OLLAMA_MLX_BACKENDS)
     set(OLLAMA_MLX_BACKENDS "${_ollama_default_mlx_backends}" CACHE STRING "${_ollama_mlx_backends_doc}")
 else()
     set(OLLAMA_MLX_BACKENDS "${OLLAMA_MLX_BACKENDS}" CACHE STRING "${_ollama_mlx_backends_doc}")
+endif()
+
+if(OLLAMA_MLX_BACKENDS AND _ollama_mlx_overlay_package)
+    add_custom_target(ollama-mlx-overlay-clean
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_ollama_mlx_payload_install_prefix}"
+        COMMENT "Cleaning MLX overlay staging directory")
 endif()
 
 if(NOT OLLAMA_HAVE_LLAMA_SERVER)
@@ -509,13 +529,14 @@ function(ollama_add_mlx_build name)
     ollama_collect_cache_args_with_prefix("MLX_" _mlx_cache_args)
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${OLLAMA_PAYLOAD_INSTALL_PREFIX}
+        -DCMAKE_INSTALL_PREFIX=${_ollama_mlx_base_install_prefix}
         -DOLLAMA_LIB_DIR:STRING=${OLLAMA_LIB_DIR}
         -DOLLAMA_RUNNER_DIR=${ARG_RUNNER_DIR}
         -DOLLAMA_SOURCE_DIR=${CMAKE_SOURCE_DIR}
         -DFETCHCONTENT_SOURCE_DIR_MLX=${OLLAMA_MLX_SOURCE_DIR}
         -DFETCHCONTENT_SOURCE_DIR_MLX-C=${OLLAMA_MLX_C_SOURCE_DIR}
         -DOLLAMA_MLX_GENERATE_WRAPPERS=OFF
+        -DOLLAMA_MLX_OVERLAY_PACKAGE=${_ollama_mlx_overlay_package}
         ${ARG_CMAKE_ARGS}
         ${_mlx_cache_args}
     )
@@ -556,6 +577,26 @@ function(ollama_add_mlx_build name)
             ${_cmake_args})
     endif()
 
+    set(_install_command)
+    list(APPEND _install_command
+        ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_payload_install_prefix}"
+            --component MLX
+        COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_payload_install_prefix}"
+            --component MLX_VENDOR
+        COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_base_install_prefix}"
+            --component MLX_SHARED)
+
+    set(_mlx_dependencies ollama-mlx-sources)
+    if(_ollama_mlx_overlay_package)
+        list(APPEND _mlx_dependencies ollama-mlx-overlay-clean)
+    endif()
+
     ExternalProject_Add(ollama-mlx-${name}
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/cmake/mlx
         BINARY_DIR ${_build_dir}
@@ -565,13 +606,8 @@ function(ollama_add_mlx_build name)
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ollama_xgrammar
-        INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            --component MLX
-            COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            --component MLX_VENDOR
-        DEPENDS ollama-mlx-sources
+        INSTALL_COMMAND ${_install_command}
+        DEPENDS ${_mlx_dependencies}
         LIST_SEPARATOR |
         BUILD_ALWAYS TRUE
         ${OLLAMA_NATIVE_EXTERNAL_OPTIONS}
