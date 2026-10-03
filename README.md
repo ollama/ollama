@@ -345,6 +345,10 @@ console.log(response.message.content);
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
 
+#### Load Balancing
+
+- [marbor](https://github.com/Anirudhx7/marbor) - GPU-aware control plane and warm-state router for self-hosted Ollama/vLLM/TGI/llama.cpp/MLX fleets, with cost-aware cloud overflow
+
 #### Package Managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
