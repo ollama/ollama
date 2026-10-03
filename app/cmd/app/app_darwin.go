@@ -197,6 +197,34 @@ func init() {
 	}
 }
 
+func pathWithinDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+
+	return rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func inApplicationsDir(path string) bool {
+	dirs := []string{
+		filepath.Dir(updater.SystemWidePath),
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, "Applications"))
+	}
+
+	for _, dir := range dirs {
+		if pathWithinDir(path, dir) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // maybeMoveAndRestart checks if we should relocate
 // and returns true if we did and should immediately exit
 func maybeMoveAndRestart() appMove {
@@ -205,7 +233,7 @@ func maybeMoveAndRestart() appMove {
 		return CannotMove
 	}
 	// Respect users intent if they chose "keep" vs. "replace" when dragging to Applications
-	if strings.HasPrefix(updater.BundlePath, strings.TrimSuffix(updater.SystemWidePath, filepath.Ext(updater.SystemWidePath))) {
+	if inApplicationsDir(updater.BundlePath) {
 		return AlreadyMoved
 	}
 
