@@ -442,6 +442,156 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+func TestStopHandler(t *testing.T) {
+	t.Run("single model", func(t *testing.T) {
+		stopped := false
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(api.ShowResponse{})
+			case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+				var req api.GenerateRequest
+				json.NewDecoder(r.Body).Decode(&req)
+				if req.Model == "model-a" {
+					stopped = true
+					json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+				} else {
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}
+		}))
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+		t.Cleanup(mockServer.Close)
+
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.SetContext(t.Context())
+		if err := StopHandler(cmd, []string{"model-a"}); err != nil {
+			t.Fatalf("StopHandler single model failed: %v", err)
+		}
+		if !stopped {
+			t.Fatal("expected model-a to be stopped")
+		}
+	})
+
+	t.Run("multiple models", func(t *testing.T) {
+		var stoppedModels []string
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(api.ShowResponse{})
+			case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+				var req api.GenerateRequest
+				json.NewDecoder(r.Body).Decode(&req)
+				stoppedModels = append(stoppedModels, req.Model)
+				json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+			}
+		}))
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+		t.Cleanup(mockServer.Close)
+
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.SetContext(t.Context())
+		if err := StopHandler(cmd, []string{"model-a", "model-b"}); err != nil {
+			t.Fatalf("StopHandler multi-model failed: %v", err)
+		}
+		if len(stoppedModels) != 2 || stoppedModels[0] != "model-a" || stoppedModels[1] != "model-b" {
+			t.Fatalf("expected [model-a model-b], got %v", stoppedModels)
+		}
+	})
+
+	t.Run("all flag", func(t *testing.T) {
+		var stoppedModels []string
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/api/ps" && r.Method == http.MethodGet:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(api.ProcessResponse{
+					Models: []api.ProcessModelResponse{
+						{Name: "model-x"},
+						{Name: "model-y"},
+					},
+				})
+			case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(api.ShowResponse{})
+			case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+				var req api.GenerateRequest
+				json.NewDecoder(r.Body).Decode(&req)
+				stoppedModels = append(stoppedModels, req.Model)
+				json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+			}
+		}))
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+		t.Cleanup(mockServer.Close)
+
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.Flags().Set("all", "true")
+		cmd.SetContext(t.Context())
+		if err := StopHandler(cmd, nil); err != nil {
+			t.Fatalf("StopHandler --all failed: %v", err)
+		}
+		if len(stoppedModels) != 2 || stoppedModels[0] != "model-x" || stoppedModels[1] != "model-y" {
+			t.Fatalf("expected [model-x model-y], got %v", stoppedModels)
+		}
+	})
+
+	t.Run("all flag with empty ps", func(t *testing.T) {
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/api/ps" && r.Method == http.MethodGet:
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(api.ProcessResponse{})
+			}
+		}))
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+		t.Cleanup(mockServer.Close)
+
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.Flags().Set("all", "true")
+		cmd.SetContext(t.Context())
+		if err := StopHandler(cmd, nil); err != nil {
+			t.Fatalf("StopHandler --all with no running models should succeed, got: %v", err)
+		}
+	})
+
+	t.Run("all flag with args errors", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.Flags().Set("all", "true")
+		cmd.SetContext(t.Context())
+		err := StopHandler(cmd, []string{"model-a"})
+		if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("expected mutually exclusive error, got: %v", err)
+		}
+	})
+
+	t.Run("model not found", func(t *testing.T) {
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"error": "model 'no-such-model' not found"})
+			}
+		}))
+		t.Setenv("OLLAMA_HOST", mockServer.URL)
+		t.Cleanup(mockServer.Close)
+
+		cmd := &cobra.Command{}
+		cmd.Flags().BoolP("all", "a", false, "")
+		cmd.SetContext(t.Context())
+		err := StopHandler(cmd, []string{"no-such-model"})
+		if err == nil || !strings.Contains(err.Error(), "couldn't find model") {
+			t.Fatalf("expected not-found error, got: %v", err)
+		}
+	})
+}
+
 func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

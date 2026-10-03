@@ -676,15 +676,39 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
-	opts := &runOptions{
-		Model:     args[0],
-		KeepAlive: &api.Duration{Duration: 0},
+	all, _ := cmd.Flags().GetBool("all")
+
+	if all && len(args) > 0 {
+		return fmt.Errorf("--all and model arguments are mutually exclusive")
 	}
-	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+
+	var models []string
+	if all {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
 		}
-		return err
+		running, err := client.ListRunning(cmd.Context())
+		if err != nil {
+			return err
+		}
+		for _, m := range running.Models {
+			models = append(models, m.Name)
+		}
+	} else {
+		models = args
+	}
+
+	for _, name := range models {
+		if err := loadOrUnloadModel(cmd, &runOptions{
+			Model:     name,
+			KeepAlive: &api.Duration{Duration: 0},
+		}); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("couldn't find model \"%s\" to stop", name)
+			}
+			return err
+		}
 	}
 	return nil
 }
@@ -2467,12 +2491,19 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
 
 	stopCmd := &cobra.Command{
-		Use:     "stop MODEL",
-		Short:   "Stop a running model",
-		Args:    cobra.ExactArgs(1),
+		Use:   "stop [MODEL [MODEL...]]",
+		Short: "Stop one or more running models",
+		Args: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool("all")
+			if !all && len(args) == 0 {
+				return fmt.Errorf("requires at least 1 arg(s) or --all flag")
+			}
+			return nil
+		},
 		PreRunE: checkServerHeartbeat,
 		RunE:    StopHandler,
 	}
+	stopCmd.Flags().BoolP("all", "a", false, "Stop all running models")
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
