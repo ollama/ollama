@@ -1469,6 +1469,16 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	// Reclaim blobs left unreferenced by this or any earlier removal.
+	// Orphaned blobs were previously only collected by the housekeeping
+	// pass at server startup, so `ollama rm` leaked disk space until the
+	// next restart. See https://github.com/ollama/ollama/issues/18595.
+	if !envconfig.NoPrune() {
+		if err := PruneLayers(); err != nil {
+			slog.Warn("couldn't prune unused layers after delete", "error", err)
+		}
+	}
 }
 
 func (s *Server) ShowHandler(c *gin.Context) {
