@@ -221,7 +221,11 @@ func compileField(name string, q Question) (compiledField, error) {
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
-	response := Response{Model: model, Answers: &Answers{}, Usage: Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}}
+	response := Response{
+		Model: model, Answers: &Answers{},
+		Usage:                 Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens},
+		PromptEvalCachedCount: result.CachedTokens,
+	}
 	if len(result.Logits) != len(c.fields) {
 		return response, fmt.Errorf("scorer returned %d rows for %d questions", len(result.Logits), len(c.fields))
 	}

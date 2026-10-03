@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/mlx/mlxthread"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 type scoreRow struct {
@@ -50,6 +51,9 @@ func (r *Runner) scoreHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Runner) score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+	if scorer, ok := r.Model.(model.CachedScorer); ok {
+		return scorer.Score(ctx, input, r.scoreHiddenRow)
+	}
 	if scorer, ok := r.Model.(llm.Scorer); ok {
 		return scorer.Score(ctx, input)
 	}
@@ -90,21 +94,21 @@ func (r *Runner) score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRe
 			rows[i].candidates = append(rows[i].candidates, id)
 		}
 	}
-	logits, err := r.scoreRows(ctx, rows, scorePrefixLength(rows))
+	logits, cached, err := r.scoreRows(ctx, rows, scorePrefixLength(rows))
+	result.CachedTokens = &cached
 	result.Logits = logits
 	return result, err
 }
 
-// Leave at least one token for each branch, including identical prompts. Its
-// final hidden state predicts the answer; generation's one-token-short prefill
-// cannot supply that state.
+// Shared boundaries retain both recurrent state and hidden outputs, including
+// the complete shorter row when one prompt is a prefix of another.
 func scorePrefixLength(rows []scoreRow) int {
 	if len(rows) < 2 {
 		return 0
 	}
-	n := len(rows[0].tokens) - 1
+	n := len(rows[0].tokens)
 	for _, row := range rows[1:] {
-		n = min(n, len(row.tokens)-1)
+		n = min(n, len(row.tokens))
 		for i := 0; i < n; i++ {
 			if row.tokens[i] != rows[0].tokens[i] {
 				n = i
@@ -115,104 +119,111 @@ func scorePrefixLength(rows []scoreRow) int {
 	return max(0, n)
 }
 
-// scoreRows runs only on the MLX worker. Caches belong to this request and never
-// enter the generation prefix trie. Restore rewinds KV storage and reinstates
-// both convolution and recurrent state before each suffix.
-func (r *Runner) scoreRows(ctx context.Context, rows []scoreRow, prefix int) ([][]float32, error) {
-	caches := r.Model.NewCaches()
-	snapshots := make([]cache.Snapshot, len(caches))
-	defer func() {
-		// Close lazy snapshots before freeing their backing caches.
-		for _, snapshot := range snapshots {
-			if snapshot != nil {
-				snapshot.Close()
-			}
-		}
-		for _, c := range caches {
-			if c != nil {
-				c.Free()
-			}
-		}
-	}()
-	if prefix > 0 {
-		if _, err := r.scoreForward(ctx, rows[0].tokens[:prefix], 0, caches, nil); err != nil {
-			return nil, err
-		}
-		for i, c := range caches {
-			if c != nil {
-				snapshots[i] = c.Snapshot(0)
-				if snapshots[i] == nil {
-					return nil, fmt.Errorf("cache %d cannot snapshot the scoring prefix", i)
-				}
-			}
-		}
+// Scoring has no draft writes. Keep its model caches separate from generation's
+// target/draft pair, using the same prefix matching, snapshots and eviction.
+func (r *Runner) scoringCache() *prefixCache {
+	if r.scoreCache == nil {
+		caches := r.Model.NewCaches()
+		r.scoreHidden = cache.NewHiddenCache()
+		caches = append(caches, r.scoreHidden)
+		r.scoreCache = newPrefixCache(caches)
 	}
-	result := make([][]float32, len(rows))
-	for i, row := range rows {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if i > 0 {
-			for j, c := range caches {
-				if c == nil {
-					continue
-				}
-				if prefix == 0 {
-					c.Free()
-				} else if !c.Restore(snapshots[j], prefix) {
-					return nil, fmt.Errorf("cache %d cannot restore the scoring prefix", j)
-				}
-			}
-		}
-		logits, err := r.scoreForward(ctx, row.tokens[prefix:], prefix, caches, row.candidates)
-		if err != nil {
-			return nil, err
-		}
-		result[i] = logits
-	}
-	return result, ctx.Err()
+	return r.scoreCache
 }
 
-func (r *Runner) scoreForward(ctx context.Context, tokens []int32, offset int, caches []cache.Cache, candidates []int32) ([]float32, error) {
-	var logits []float32
+func (r *Runner) scoreRows(ctx context.Context, rows []scoreRow, prefix int) ([][]float32, int, error) {
+	result := make([][]float32, len(rows))
+	cached := 0
+	for i, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		var err error
+		mlx.Scoped(func() {
+			session := r.scoringCache().beginScore(row.tokens, nil)
+			defer session.close()
+			session.schedulePrefillSnapshots(scoreSnapshots(len(row.tokens), prefix))
+			offset := len(row.tokens) - len(session.remaining)
+			cached += offset
+			err = r.scoreForward(ctx, session.remaining, offset, session.caches, nil)
+			if err != nil {
+				return
+			}
+			hidden := r.scoreHidden.State()[0]
+			last := hidden.Slice(mlx.Slice(), mlx.Slice(len(row.tokens)-1, len(row.tokens)), mlx.Slice())
+			ids := mlx.FromValues(row.candidates, len(row.candidates))
+			var selected *mlx.Array
+			if m, ok := r.Model.(candidateUnembedder); ok {
+				selected = m.UnembedCandidates(last, ids)
+			} else {
+				selected = r.Model.Unembed(last).Reshape(-1).TakeAxis(ids, 0)
+			}
+			result[i] = selected.AsType(mlx.DTypeFloat32).Floats()
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	return result, cached, ctx.Err()
+}
+
+func scoreSnapshots(length, shared int) []int {
+	offsets := []int{shared}
+	for n := prefillSnapshotInterval; n < length; n += prefillSnapshotInterval {
+		offsets = append(offsets, n)
+	}
+	return offsets
+}
+
+func (r *Runner) scoreHiddenRow(ctx context.Context, input *model.PreparedRequest, segments []model.Segment) (*mlx.Array, int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	items, err := bindItems(input, segments)
+	if err != nil {
+		return nil, 0, err
+	}
+	session := r.scoringCache().beginScore(input.Tokens, items)
+	defer session.close()
+	session.schedulePrefillSnapshots(scoreSnapshots(len(input.Tokens), 0))
+	media := r.openMedia(Request{Tokens: input.Tokens, MediaItems: items, Layout: input.Layout})
+	defer media.close()
+	offset := len(input.Tokens) - len(session.remaining)
+	media.free(offset)
+	if err := r.scoreForward(ctx, session.remaining, offset, session.caches, media); err != nil {
+		return nil, 0, err
+	}
+	return r.scoreHidden.State()[0].Slice(mlx.Slice(), mlx.Slice(), mlx.Slice()), offset, nil
+}
+
+func (r *Runner) scoreForward(ctx context.Context, tokens []int32, offset int, caches []cache.Cache, media *requestMedia) error {
 	for len(tokens) > 0 {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
-		n := min(prefillChunkSize(), len(tokens))
+		n := media.extendChunk(offset, min(prefillChunkSize(), len(tokens)))
 		mlx.Scoped(func() {
-			output := mlx.ScopedArrays(func() []*mlx.Array {
+			mlx.Scoped(func() {
 				hidden, _ := r.Model.Forward(&batch.Batch{
 					InputIDs:     mlx.FromValues(tokens[:n], 1, n),
 					SeqOffsets:   []int32{int32(offset)},
 					SeqQueryLens: []int32{int32(n)},
-				}, caches)
-				if n != len(tokens) || len(candidates) == 0 {
-					return nil
-				}
-				last := hidden.Slice(mlx.Slice(), mlx.Slice(n-1, n), mlx.Slice())
-				ids := mlx.FromValues(candidates, len(candidates))
-				var selected *mlx.Array
-				if m, ok := r.Model.(candidateUnembedder); ok {
-					selected = m.UnembedCandidates(last, ids)
-				} else {
-					selected = r.Model.Unembed(last).Reshape(-1).TakeAxis(ids, 0)
-				}
-				return []*mlx.Array{selected.AsType(mlx.DTypeFloat32)}
+					Media:        media.batchMedia(offset, n),
+					Layout:       media.rowLayout(),
+				}, caches[:len(caches)-1])
+				r.scoreHidden.Append(hidden)
 			})
-			state := slices.Clone(output)
+			var state []*mlx.Array
 			for _, c := range caches {
 				if c != nil {
 					state = append(state, c.State()...)
 				}
 			}
 			mlx.Eval(state...)
-			if len(output) > 0 {
-				logits = output[0].Floats()
-			}
 		})
 		tokens = tokens[n:]
 		offset += n
+		media.free(offset)
 	}
-	return logits, ctx.Err()
+	return ctx.Err()
 }

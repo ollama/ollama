@@ -164,8 +164,8 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities hides inferred capabilities on decision models while
-// preserving declared vision support. Serving still uses Capabilities.
+// publicCapabilities limits decision models to decision and explicitly declared
+// vision support. Serving still uses Capabilities.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
 	if slices.Contains(capabilities, model.CapabilityDecision) {

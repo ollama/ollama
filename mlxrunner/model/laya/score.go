@@ -135,6 +135,10 @@ func (m *Model) FinishScore(row ScoreRow, hidden *mlx.Array) []float32 {
 // so scheduling can evolve without duplicating model logic.
 func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
+	// Bidirectional attention makes every hidden position depend on the suffix.
+	// Causal prefix state cannot be reused across these rows or requests.
+	cached := 0
+	result.CachedTokens = &cached
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}

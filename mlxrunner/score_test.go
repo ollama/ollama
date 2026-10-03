@@ -49,15 +49,26 @@ func (m *scoringTestModel) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.A
 	for i := range positions {
 		positions[i] = float32(offset + i + 1)
 	}
-	conv := history.ConvState().Add(x.SumAxis(1, true).Reshape(1, 1, 1))
-	delta := history.DeltaState().Add(x.Multiply(mlx.FromValues(positions, 1, n)).SumAxis(1, true).Reshape(1, 1, 1, 1))
-	rc.Put(b, []*mlx.Array{conv}, []*mlx.Array{delta})
-	values := mlx.Concatenate([]*mlx.Array{
-		kv.V().SumAxis(2, true).Reshape(1), conv.Reshape(1), delta.Reshape(1),
-		x.Slice(mlx.Slice(), mlx.Slice(n-1, n)).Reshape(1),
-		mlx.FromValues([]float32{float32(offset + n), 1, 2, 3}, 4),
-	}, 0).Reshape(1, 1, 8)
-	hidden := mlx.Zeros(mlx.DTypeFloat32, 1, n, 8).Add(values)
+	convPrefix := history.ConvState().Reshape(1, 1).Add(x.Cumsum(1, false, true))
+	deltaPrefix := history.DeltaState().Reshape(1, 1).Add(x.Multiply(mlx.FromValues(positions, 1, n)).Cumsum(1, false, true))
+	valuePrefix := kv.V().Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, offset), mlx.Slice()).SumAxis(2, true).Reshape(1, 1).Add(x.Multiply(x).Cumsum(1, false, true))
+	var conv, delta *mlx.Array
+	var convStates, deltaStates []*mlx.Array
+	for _, end := range append(rc.SnapshotSplits(n), n) {
+		prefix := x.Slice(mlx.Slice(), mlx.Slice(0, end))
+		conv = history.ConvState().Add(prefix.SumAxis(1, true).Reshape(1, 1, 1))
+		delta = history.DeltaState().Add(prefix.Multiply(mlx.FromValues(positions[:end], 1, end)).SumAxis(1, true).Reshape(1, 1, 1, 1))
+		convStates = append(convStates, conv)
+		deltaStates = append(deltaStates, delta)
+	}
+	rc.Put(b, convStates, deltaStates)
+	hidden := mlx.Stack([]*mlx.Array{
+		valuePrefix, convPrefix, deltaPrefix, x,
+		mlx.FromValues(positions, 1, n),
+		mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, n), 1),
+		mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, n), 2),
+		mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, 1, n), 3),
+	}, -1)
 	if m.cancel != nil && len(m.positions) == m.cancelAfter {
 		m.cancel()
 	}
@@ -93,48 +104,47 @@ func TestScoreSharedPrefix(t *testing.T) {
 			for i, tokens := range tt.tokens {
 				rows[i] = scoreRow{tokens: tokens, candidates: []int32{2, 0, 1, 3, 4}}
 			}
-			independent, err := r.scoreRows(context.Background(), rows, 0)
-			if err != nil {
-				t.Fatal(err)
+			independent := make([][]float32, len(rows))
+			for i, row := range rows {
+				cold := &Runner{Model: &scoringTestModel{}}
+				got, _, err := cold.scoreRows(context.Background(), []scoreRow{row}, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				independent[i] = got[0]
+				cold.scoreCache.close()
 			}
+			defer func() { r.scoreCache.close() }()
 			prefix := scorePrefixLength(rows)
-			// Repeated requests must release cache state and isolate branches.
-			for range 3 {
+			for repeat := range 3 {
 				m.positions, m.lengths, m.projections = nil, nil, 0
-				got, err := r.scoreRows(context.Background(), rows, prefix)
+				got, cached, err := r.scoreRows(context.Background(), rows, prefix)
 				if err != nil {
 					t.Fatal(err)
 				}
 				for i := range got {
 					if !slices.Equal(got[i], independent[i]) {
-						t.Fatalf("row %d shared %v != independent %v", i, got[i], independent[i])
-					}
-				}
-				for _, c := range m.caches {
-					if c != nil && c.Offset() != 0 {
-						t.Fatal("request left its caches alive")
-					}
-					if c != nil {
-						for _, state := range c.State() {
-							if state != nil {
-								t.Fatal("request retained cache arrays")
-							}
-						}
+						t.Fatalf("repeat %d row %d shared %v != independent %v", repeat, i, got[i], independent[i])
 					}
 				}
 				if m.projections != len(rows) {
 					t.Fatalf("got %d projections for %d rows", m.projections, len(rows))
 				}
-				total := 0
-				for _, n := range m.lengths {
-					total += n
-				}
-				want := prefix
-				for _, row := range rows {
-					want += len(row.tokens) - prefix
-				}
-				if total != want {
-					t.Fatalf("forwarded %d tokens, want %d", total, want)
+				if repeat > 0 {
+					total := 0
+					for _, n := range m.lengths {
+						total += n
+					}
+					input := 0
+					for _, row := range rows {
+						input += len(row.tokens)
+					}
+					if cached != input-total {
+						t.Fatalf("cached=%d, want %d", cached, input-total)
+					}
+					if total != 0 {
+						t.Fatalf("repeat forwarded %d tokens, want zero", total)
+					}
 				}
 			}
 		})
@@ -148,21 +158,18 @@ func TestScoreCancellation(t *testing.T) {
 			defer cancel()
 			m := &scoringTestModel{cancel: cancel, cancelAfter: cancelAfter}
 			r := &Runner{Model: m}
+			defer func() { r.scoreCache.close() }()
 			rows := []scoreRow{{tokens: []int32{1, 2, 3}, candidates: []int32{0}}, {tokens: []int32{1, 2, 4}, candidates: []int32{0}}}
-			_, err := r.scoreRows(ctx, rows, 2)
+			_, _, err := r.scoreRows(ctx, rows, 2)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("got %v, want context cancellation", err)
 			}
 			if len(m.positions) != cancelAfter {
 				t.Fatal("cancellation did extra forwards")
 			}
-			for _, c := range m.caches {
-				if c != nil && c.Offset() != 0 {
-					t.Fatal("cancelled request retained cache state")
-				}
-			}
+
 			m.cancel = nil
-			if _, err := r.scoreRows(context.Background(), rows, 2); err != nil {
+			if _, _, err := r.scoreRows(context.Background(), rows, 2); err != nil {
 				t.Fatalf("request after cancellation: %v", err)
 			}
 		})
@@ -193,29 +200,26 @@ func TestScoreValidation(t *testing.T) {
 	}
 }
 
-func TestScoreHandlerReleasesMemory(t *testing.T) {
-	worker, err := mlxthread.Start("score-test", func() error {
-		if err := mlx.CheckInit(); err != nil {
-			return err
-		}
+func TestScoreHandlerClearsScratchCache(t *testing.T) {
+	worker := mlxtest.Worker(t)
+	if err := worker.Do(context.Background(), func() error {
 		if !mlx.GPUIsAvailable() {
 			return errors.New("GPU unavailable")
 		}
-		mlx.SetDefaultDeviceGPU()
 		mlx.ClearCache()
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		t.Skipf("MLX GPU not available: %v", err)
 	}
-	defer worker.Stop(context.Background(), mlx.ClearCache)
 	r := &Runner{Tokenizer: newTestTokenizer(t, []int32{7}), contextLength: 512, mlxThread: worker}
+	defer worker.Do(context.Background(), func() error { r.Close(); return nil })
 	for _, n := range []int{16, 128, 512, 16} {
 		for _, cancelled := range []bool{false, true} {
 			// Model prior requests leaving differently sized scratch buffers.
 			// These CPU-filled arrays are freed synchronously into MLX's cache.
 			const scratchBytes = 4 << 20
 			if err := worker.Do(context.Background(), func() error {
+				r.Close()
 				mlx.Scoped(func() { mlx.FromValues(make([]int32, scratchBytes/4), scratchBytes/4) })
 				return nil
 			}); err != nil {
@@ -245,16 +249,16 @@ func TestScoreHandlerReleasesMemory(t *testing.T) {
 			if response.Code != wantStatus {
 				t.Fatalf("tokens=%d cancelled=%t: status %d: %s", n, cancelled, response.Code, response.Body)
 			}
-			memory, err := mlxthread.Call(context.Background(), worker, func() ([2]int, error) {
-				return [2]int{mlx.ActiveMemory(), mlx.CacheMemory()}, nil
+			memory, err := mlxthread.Call(context.Background(), worker, func() (int, error) {
+				return mlx.CacheMemory(), nil
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Metal may still be retiring this tiny request's buffers. Older
-			// requests' scratch storage must not remain resident, though.
-			if memory[0]+memory[1] >= scratchBytes {
-				t.Fatalf("tokens=%d cancelled=%t: retained %d active and %d cached bytes", n, cancelled, memory[0], memory[1])
+			// The injected scratch buffer must be cleared. Active allocations
+			// belong to live model caches or other tests on the shared worker.
+			if memory >= scratchBytes {
+				t.Fatalf("tokens=%d cancelled=%t: retained %d scratch bytes", n, cancelled, memory)
 			}
 		}
 	}

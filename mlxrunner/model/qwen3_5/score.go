@@ -6,7 +6,7 @@ import (
 )
 
 // UnembedCandidates scores one hidden position. For dense heads, gather before
-// casting so FP32 accumulation neither rounds logits to BF16 nor allocates an
+// casting so the output stays in FP32 without allocating an
 // FP32 copy of the full vocabulary head. This also covers tied dense embeddings.
 func (m *Model) UnembedCandidates(hidden, candidates *mlx.Array) *mlx.Array {
 	if head, ok := m.LMHead.(*nn.Linear); ok {

@@ -43,6 +43,7 @@ type ScoreResponse struct {
 	Logits       [][]float32 `json:"logits"`
 	InputTokens  int         `json:"input_tokens"`            // Sum of complete prompt lengths, including shared tokens.
 	OutputTokens int         `json:"output_tokens,omitempty"` // Tokens generated internally to obtain candidate scores.
+	CachedTokens *int        `json:"cached_tokens,omitempty"` // Subset of InputTokens restored instead of evaluated; nil when unavailable.
 }
 
 // ScoreField identifies a question and its allowed options for a decision head.

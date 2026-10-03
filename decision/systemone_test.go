@@ -132,8 +132,10 @@ func TestAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	cached := 450
 	result, err := c.Answer("nimble", llm.ScoreResponse{
 		Logits: [][]float32{{0, 0}, {-1000, 1000}, {1000, 1000, 1000}}, InputTokens: 900,
+		CachedTokens: &cached,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +155,9 @@ func TestAnswers(t *testing.T) {
 	}
 	if result.Usage.InputTokens != 900 || result.Usage.OutputTokens != 0 {
 		t.Fatalf("bad direct-scoring usage: %+v", result.Usage)
+	}
+	if result.PromptEvalCachedCount == nil || *result.PromptEvalCachedCount != cached {
+		t.Fatalf("cached tokens = %v, want %d", result.PromptEvalCachedCount, cached)
 	}
 	for _, logits := range [][][]float32{nil, {{1}, {1, 2}, {1, 2, 3}}, {{float32(math.NaN()), 0}, {0, 1}, {1, 2, 3}}} {
 		if _, err := c.Answer("nimble", llm.ScoreResponse{Logits: logits}); err == nil {

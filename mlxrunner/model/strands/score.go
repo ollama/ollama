@@ -9,11 +9,11 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-var _ llm.Scorer = (*Model)(nil)
+var _ model.CachedScorer = (*Model)(nil)
 
 // ScoreRow is one independent question. Pointers refer to real option tokens;
 // the query is the final real token, even when the forward row is padded.
@@ -97,8 +97,10 @@ func (m *Model) FinishScore(row ScoreRow, hidden *mlx.Array) []float32 {
 	return output.Floats()
 }
 
-func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
+func (m *Model) Score(ctx context.Context, input llm.ScoreRequest, forward model.ScoreForward) (llm.ScoreResponse, error) {
 	var result llm.ScoreResponse
+	cached := 0
+	result.CachedTokens = &cached
 	rows, err := m.PrepareScore(ctx, input)
 	if err != nil {
 		return result, err
@@ -106,7 +108,9 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 	for _, row := range rows {
 		mlx.Scoped(func() {
 			var hidden *mlx.Array
-			hidden, err = m.prefill(ctx, row.Tokens)
+			var restored int
+			hidden, restored, err = forward(ctx, &model.PreparedRequest{Tokens: row.Tokens}, nil)
+			cached += restored
 			if err == nil {
 				result.Logits = append(result.Logits, m.FinishScore(row, hidden))
 			}
@@ -117,50 +121,4 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 		result.InputTokens += len(row.Tokens)
 	}
 	return result, ctx.Err()
-}
-
-// Bound evaluation so cancellation can release the MLX worker between chunks.
-func (m *Model) prefill(ctx context.Context, tokens []int32) (*mlx.Array, error) {
-	caches := m.NewCaches()
-	defer func() {
-		for _, c := range caches {
-			if c != nil {
-				c.Free()
-			}
-		}
-	}()
-	var err error
-	out := mlx.ScopedArrays(func() []*mlx.Array {
-		var chunks []*mlx.Array
-		const chunkSize = 2048
-		for pos := 0; pos < len(tokens); pos += chunkSize {
-			if err = ctx.Err(); err != nil {
-				return nil
-			}
-			n := min(chunkSize, len(tokens)-pos)
-			hidden := mlx.ScopedArrays(func() []*mlx.Array {
-				hidden, _ := m.Forward(&batch.Batch{
-					InputIDs:   mlx.FromValues(tokens[pos:pos+n], 1, n),
-					SeqOffsets: []int32{int32(pos)}, SeqQueryLens: []int32{int32(n)},
-				}, caches)
-				return []*mlx.Array{hidden}
-			})[0]
-			state := []*mlx.Array{hidden}
-			for _, c := range caches {
-				if c != nil {
-					state = append(state, c.State()...)
-				}
-			}
-			mlx.Eval(state...)
-			chunks = append(chunks, hidden)
-		}
-		if err = ctx.Err(); err != nil {
-			return nil
-		}
-		return []*mlx.Array{mlx.Concatenate(chunks, 1)}
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out[0], nil
 }

@@ -1,4 +1,4 @@
-package clef
+package mlxrunner
 
 import (
 	"context"
@@ -11,12 +11,13 @@ import (
 	"github.com/ollama/ollama/mlx/mlxtest"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/clef"
 	"github.com/ollama/ollama/mlxrunner/model/qwen3_5"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 // A small real backbone exercises both recurrent state and attention history.
-func prefillTestModel() *Model {
+func prefillTestModel() *clef.Model {
 	seed := 0
 	weight := func(shape ...int) *mlx.Array {
 		n := 1
@@ -58,7 +59,7 @@ func prefillTestModel() *Model {
 		}
 		m.Layers = append(m.Layers, layer)
 	}
-	return &Model{Model: m}
+	return &clef.Model{Model: m}
 }
 
 func TestPrefillPreservesHiddenStates(t *testing.T) {
@@ -76,14 +77,16 @@ func TestPrefillPreservesHiddenStates(t *testing.T) {
 						h, _ := m.Model.Forward(&batch.Batch{InputIDs: ids, SeqOffsets: []int32{0}, SeqQueryLens: []int32{int32(n)}}, nil)
 						return []*mlx.Array{h}
 					})[0]
-					got, err := m.prefill(context.Background(), ids, &model.PreparedRequest{})
+					r := &Runner{Model: m}
+					defer func() { r.scoreCache.close() }()
+					got, _, err := r.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: tokens}, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
 					if !slices.Equal(got.Dims(), want.Dims()) {
 						t.Fatalf("%d tokens: hidden shape %v, want %v", n, got.Dims(), want.Dims())
 					}
-					// A one-token tail can use TF32 matmul on supported GPUs.
+					// Chunking changes the forward shapes and floating-point arithmetic.
 					values := want.Floats()
 					for i, v := range got.Floats() {
 						w := values[i]
@@ -119,20 +122,23 @@ func TestPrefillCancellation(t *testing.T) {
 			m := prefillTestModel()
 			embedding := &cancellingEmbedding{EmbeddingLayer: m.EmbedTokens}
 			m.EmbedTokens = embedding
-			ids := mlx.Zeros(mlx.DTypeInt32, 1, 4097)
-			prepared := &model.PreparedRequest{}
-			want, err := m.prefill(context.Background(), ids, prepared)
+			prepared := &model.PreparedRequest{Tokens: make([]int32, 4097)}
+			r := &Runner{Model: m}
+			defer func() { r.scoreCache.close() }()
+			want, _, err := r.scoreHiddenRow(context.Background(), prepared, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			mlx.Eval(want)
 			for _, after := range []int{0, 1, 2, 3, 1, 2} {
+				r.scoreCache.close()
+				r.scoreCache, r.scoreHidden = nil, nil
 				ctx, cancel := context.WithCancel(context.Background())
 				embedding.calls, embedding.cancelAfter, embedding.cancel = 0, after, cancel
 				if after == 0 {
 					cancel()
 				}
-				got, err := m.prefill(ctx, ids, prepared)
+				got, _, err := r.scoreHiddenRow(ctx, prepared, nil)
 				cancel()
 				if !errors.Is(err, context.Canceled) || got != nil {
 					t.Fatalf("cancel after %d chunks: hidden=%v, err=%v", after, got, err)
@@ -142,7 +148,7 @@ func TestPrefillCancellation(t *testing.T) {
 				}
 				embedding.cancelAfter = 0
 				mlx.Scoped(func() {
-					got, err := m.prefill(context.Background(), ids, prepared)
+					got, _, err := r.scoreHiddenRow(context.Background(), prepared, nil)
 					if err != nil {
 						t.Fatalf("request after cancellation: %v", err)
 					}
@@ -152,5 +158,42 @@ func TestPrefillCancellation(t *testing.T) {
 				})
 			}
 		})
+	})
+}
+
+// Reuse must preserve every earlier hidden state read by decision heads, not
+// just the final token used by ordinary vocabulary scoring.
+func TestScoreHiddenPrefixReuse(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		m := prefillTestModel()
+		r := &Runner{Model: m}
+		defer func() { r.scoreCache.close() }()
+		original := slices.Repeat([]int32{1, 2, 3, 4}, 520)
+		branch := slices.Clone(original)
+		branch[1024] = 5
+		rows := [][]int32{original, branch, original[:1024], branch, original}
+		for _, tokens := range rows {
+			cold := &Runner{Model: m}
+			want, _, err := cold.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: tokens}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantValues := want.Floats()
+			cold.scoreCache.close()
+			for repeat := range 2 {
+				got, cached, err := r.scoreHiddenRow(context.Background(), &model.PreparedRequest{Tokens: tokens}, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if repeat == 1 && cached != len(tokens) {
+					t.Fatalf("exact hit reused %d/%d tokens", cached, len(tokens))
+				}
+				for i, v := range got.Floats() {
+					if math.IsNaN(float64(v)) || math.Abs(float64(v-wantValues[i])) > 1e-3*(1+math.Abs(float64(wantValues[i]))) {
+						t.Fatalf("cached hidden[%d]=%g, cold=%g", i, v, wantValues[i])
+					}
+				}
+			}
+		}
 	})
 }

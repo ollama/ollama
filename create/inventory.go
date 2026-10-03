@@ -122,8 +122,8 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	return clefWeightFiles(dir, files)
 }
 
-// SafetensorsConfigFiles lists the metadata transferred by remote create and
-// retained by the local importer. Auxiliary checkpoint subfolders are excluded.
+// SafetensorsConfigFiles lists source metadata for remote transfer and local
+// JSON import. Auxiliary checkpoint subfolders are excluded.
 func SafetensorsConfigFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
