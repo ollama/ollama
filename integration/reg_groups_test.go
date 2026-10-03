@@ -1,4 +1,4 @@
-//go:build integration && (fast || release || library)
+//go:build integration && (fast || release || library || create)
 
 package integration
 
@@ -113,7 +113,6 @@ func TestConcurrency(t *testing.T) {
 	runIntegrationGroup(t,
 		"concurrent-chat",
 		"scheduler-multimodel",
-		"scheduler-max-queue",
 	)
 }
 

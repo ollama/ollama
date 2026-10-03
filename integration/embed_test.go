@@ -19,7 +19,7 @@ func dotProduct[V float32 | float64](v1, v2 []V) V {
 		return result
 	}
 
-	for i := 0; i < len(v1); i++ {
+	for i := range v1 {
 		result += v1[i] * v2[i]
 	}
 	return result
@@ -79,7 +79,7 @@ func euclideanDistance[V float32 | float64](v1, v2 []V) V {
 	}
 
 	var sum V = 0
-	for i := 0; i < len(v1); i++ {
+	for i := range v1 {
 		diff := v1[i] - v2[i]
 		sum += diff * diff
 	}
@@ -93,7 +93,7 @@ func manhattanDistance[V float32 | float64](v1, v2 []V) V {
 	}
 
 	var sum V = 0
-	for i := 0; i < len(v1); i++ {
+	for i := range v1 {
 		sum += V(math.Abs(float64(v1[i] - v2[i])))
 	}
 

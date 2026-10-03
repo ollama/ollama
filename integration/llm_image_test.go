@@ -43,11 +43,7 @@ func runVisionTextModel(t *testing.T, model string) {
 				},
 			},
 		},
-		Stream: &stream,
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
-		},
+		Stream:    &stream,
 		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 	}
 
@@ -72,8 +68,10 @@ func runIntegrationSplitBatch(t *testing.T, model string) {
 		System: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed aliquet, justo in malesuada lobortis, odio ligula volutpat quam, quis faucibus ipsum magna quis sapien. Aliquam in venenatis diam, eu viverra magna. Phasellus imperdiet hendrerit volutpat. Vivamus sem ex, facilisis placerat felis non, dictum elementum est. Phasellus aliquam imperdiet lacus, eget placerat ligula sodales vel. Pellentesque nec auctor mi. Curabitur arcu nisi, faucibus eget nunc id, viverra interdum mi. Curabitur ornare ipsum ex, ac euismod ex aliquam in. Vestibulum id magna at purus accumsan fermentum. Proin scelerisque posuere nunc quis interdum. Maecenas sed mollis nisl. Etiam vitae ipsum interdum, placerat est quis, tincidunt velit. Nullam tempor nibh non lorem volutpat efficitur. Cras laoreet diam imperdiet ipsum auctor bibendum. Suspendisse ultrices urna sed metus sagittis suscipit. Quisque ullamcorper aliquam nibh ut mollis. Aenean dapibus mauris pharetra, venenatis elit ac, hendrerit odio. Cras vestibulum erat tempor, lobortis justo eu, lobortis ipsum. Nam laoreet dapibus sem. Proin vel diam ultrices, elementum ante et, ornare lectus. Proin eu accumsan nisl. Praesent ac ex vitae ipsum vulputate tristique facilisis sit amet lacus. Nullam faucibus magna a pellentesque pretium. Nunc lacinia ullamcorper sollicitudin. Donec vitae accumsan turpis, sed porttitor est. Donec porttitor mi vitae augue faucibus, vel mollis diam tincidunt.",
 		Prompt: "what does the text in this image say?",
 		Stream: &stream,
+		// Smaller vision models like qwen3.5:2b tend to loop or get stuck on
+		// this prompt, filling the context with thinking and returning empty
+		// content. temp=0 reduces the probability of that.
 		Options: map[string]any{
-			"seed":        42,
 			"temperature": 0.0,
 		},
 		Images: []api.ImageData{
