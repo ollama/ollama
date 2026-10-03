@@ -87,6 +87,17 @@ See [ollama.com/library](https://ollama.com/library) for the full list.
 
 See the [quickstart guide](https://docs.ollama.com/quickstart) for more details.
 
+### GPU Selection
+
+Ollama automatically detects available GPUs. For manual selection:
+- **NVIDIA**: Uses CUDA automatically if `nvidia-smi` is available
+- **Apple Silicon**: Uses Metal GPU acceleration
+- **AMD**: Use `OLLAMA_VULKAN=1` environment variable
+
+To check GPU usage during inference, monitoring tools differ by GPU type:
+- NVIDIA: `nvidia-smi`
+- AMD: `rocm-smi` or watch GPU metrics in Activity Monitor
+
 ## REST API
 
 Ollama has a REST API for running and managing models.
