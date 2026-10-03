@@ -8,6 +8,8 @@ Endpoints return appropriate HTTP status codes based on the success or failure o
 
 - `200`: Success
 - `400`: Bad Request (missing parameters, invalid JSON, etc.)
+- `401`: Unauthorized (authentication required but not provided or invalid)
+- `403`: Forbidden (e.g. cloud model access is disabled or not available)
 - `404`: Not Found (model doesn't exist, etc.)
 - `429`: Too Many Requests (e.g. when a rate limit is exceeded)
 - `500`: Internal Server Error
