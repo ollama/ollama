@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -583,30 +584,33 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
-		"\\ ", " ", // Escaped space
-		"\\(", "(", // Escaped left parenthesis
-		"\\)", ")", // Escaped right parenthesis
-		"\\[", "[", // Escaped left square bracket
-		"\\]", "]", // Escaped right square bracket
-		"\\{", "{", // Escaped left curly brace
-		"\\}", "}", // Escaped right curly brace
-		"\\$", "$", // Escaped dollar sign
-		"\\&", "&", // Escaped ampersand
-		"\\;", ";", // Escaped semicolon
-		"\\'", "'", // Escaped single quote
-		"\\\\", "\\", // Escaped backslash
-		"\\*", "*", // Escaped asterisk
-		"\\?", "?", // Escaped question mark
-		"\\~", "~", // Escaped tilde
-	).Replace(fp)
+	fp = strings.TrimSpace(fp)
+	fp = strings.Trim(fp, "\"'")
+
+	if strings.HasPrefix(fp, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			fp = filepath.Join(home, fp[2:])
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		// On Windows, backslashes are path separators, but spaces might still be escaped in bash-like environments.
+		// So we only replace backslash-escaped spaces with a space.
+		fp = strings.ReplaceAll(fp, `\ `, ` `)
+		return fp
+	}
+
+	// Generic shell unescaper: replace backslash followed by any character with that character
+	re := regexp.MustCompile(`\\(.)`)
+	return re.ReplaceAllString(fp, "$1")
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, / ./ ~/ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|~/|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
