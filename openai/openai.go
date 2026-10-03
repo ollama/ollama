@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -683,16 +684,24 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					return nil, errors.New("invalid message format")
 				}
 			}
-			// a tool message is a single result, so keep its parts together and
-			// preserve the tool call it answers. an [img] placeholder keeps each
-			// image at its position among the text parts
-			if strings.ToLower(msg.Role) == "tool" && (len(messages) > start || toolName != "" || msg.ToolCallID != "") {
-				tool := api.Message{Role: msg.Role, ToolName: toolName, ToolCallID: msg.ToolCallID}
-				for _, part := range messages[start:] {
-					tool.Content += part.Content + strings.Repeat("[img]", len(part.Images))
-					tool.Images = append(tool.Images, part.Images...)
+			// a tool message is a single result, so every message built from it
+			// keeps the tool call it answers. text parts are merged into one
+			// message; parts with images stay split so each image keeps its
+			// position among the text
+			if strings.ToLower(msg.Role) == "tool" {
+				parts := messages[start:]
+				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images) > 0 }) {
+					for i := range parts {
+						parts[i].ToolName = toolName
+						parts[i].ToolCallID = msg.ToolCallID
+					}
+				} else if len(parts) > 0 || toolName != "" || msg.ToolCallID != "" {
+					var sb strings.Builder
+					for _, part := range parts {
+						sb.WriteString(part.Content)
+					}
+					messages = append(messages[:start], api.Message{Role: msg.Role, Content: sb.String(), ToolName: toolName, ToolCallID: msg.ToolCallID})
 				}
-				messages = append(messages[:start], tool)
 			}
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message
