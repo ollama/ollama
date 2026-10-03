@@ -857,6 +857,26 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			expected: `{"name":"test","count":5,"active":true,"tags":["a"]}`,
 		},
 		{
+			name:     "equals_separator_bare_key",
+			input:    `{save_as=<|"|>report.docx<|"|>}`,
+			expected: `{"save_as":"report.docx"}`,
+		},
+		{
+			name:     "equals_separator_multiple_bare_keys",
+			input:    `{save_as=<|"|>report.docx<|"|>,format=<|"|>docx<|"|>}`,
+			expected: `{"save_as":"report.docx","format":"docx"}`,
+		},
+		{
+			name:     "mixed_separators",
+			input:    `{save_as=<|"|>report.docx<|"|>,format:<|"|>docx<|"|>}`,
+			expected: `{"save_as":"report.docx","format":"docx"}`,
+		},
+		{
+			name: "equals_separator_nested_object",
+			input: `{config={enabled=true,name=<|"|>test<|"|>}}`,
+			expected: `{"config":{"enabled":true,"name":"test"}}`,
+		},
+		{
 			name:     "null_value",
 			input:    `{value:null}`,
 			expected: `{"value":null}`,
@@ -1045,6 +1065,16 @@ func TestRepairGemma4SingleQuotedValues(t *testing.T) {
 			name:     "converts_single_quoted_value",
 			input:    `{pattern:':\s*\w+'}`,
 			expected: `{pattern:<|"|>:\s*\w+<|"|>}`,
+		},
+		{
+			name:     "converts_single_quoted_value_with_equals_separator",
+			input:    `{save_as='report.docx'}`,
+			expected: `{save_as=<|"|>report.docx<|"|>}`,
+		},
+		{
+			name:     "converts_middle_single_quoted_value_with_equals_separator",
+			input:    `{save_as='a',format:'docx',path='b'}`,
+			expected: `{save_as=<|"|>a<|"|>,format:<|"|>docx<|"|>,path=<|"|>b<|"|>}`,
 		},
 		{
 			name:     "converts_middle_single_quoted_value",
