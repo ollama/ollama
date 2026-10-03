@@ -199,6 +199,7 @@ console.log(response.message.content);
 - [BoltAI for Mac](https://boltai.com) - AI chat client for Mac
 - [IntelliBar](https://intellibar.app/) - AI-powered assistant for macOS
 - [Kerlig AI](https://www.kerlig.com/) - AI writing assistant for macOS
+- [Plumo](https://getplumo.app/?src=ollama) - Fix and translate selected text in any app with ⌘C ⌘C, free with Ollama
 - [Hillnote](https://hillnote.com) - Markdown-first AI workspace
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
 
