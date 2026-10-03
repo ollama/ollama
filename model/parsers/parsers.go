@@ -105,6 +105,8 @@ func ParserForName(name string) Parser {
 		return &CohereParser{}
 	case "glimmer":
 		return &GlimmerParser{}
+	case "minicpm5":
+		return &MiniCPM5Parser{hasThinkingSupport: true}
 	default:
 		return nil
 	}
