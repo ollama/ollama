@@ -280,6 +280,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [dir2mcp](https://github.com/dirstral/dir2mcp) - Serve a folder as an MCP knowledge server with cited answers, local with Ollama
 
 ### Bots & Messaging
 
