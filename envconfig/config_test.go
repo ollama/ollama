@@ -437,3 +437,25 @@ func TestNoCloud(t *testing.T) {
 		})
 	}
 }
+
+func TestContextShift(t *testing.T) {
+	cases := map[string]struct {
+		value string
+		want  bool
+	}{
+		"empty keeps the default":    {"", true},
+		"false refuses long prompts": {"false", false},
+		"zero refuses long prompts":  {"0", false},
+		"true shifts":                {"true", true},
+		"nonsense keeps the default": {"banana", true},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_SHIFT", tt.value)
+			if got := ContextShift(true); got != tt.want {
+				t.Errorf("ContextShift(true) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
