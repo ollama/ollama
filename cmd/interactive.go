@@ -583,7 +583,7 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
+	fp = strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
@@ -595,11 +595,28 @@ func normalizeFilePath(fp string) string {
 		"\\&", "&", // Escaped ampersand
 		"\\;", ";", // Escaped semicolon
 		"\\'", "'", // Escaped single quote
+		"\\\"", "\"", // Escaped double quote
 		"\\\\", "\\", // Escaped backslash
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
+		"\\@", "@", // Escaped at sign
+		"\\#", "#", // Escaped hash tag
+		"\\!", "!", // Escaped exclamation mark
+		"\\%", "%", // Escaped percent
+		"\\^", "^", // Escaped caret
+		"\\=", "=", // Escaped equal sign
+		"\\+", "+", // Escaped plus sign
+		"\\,", ",", // Escaped comma
 	).Replace(fp)
+
+	if strings.HasPrefix(fp, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = filepath.Join(home, fp[2:])
+		}
+	}
+
+	return fp
 }
 
 func extractFileNames(input string) []string {
