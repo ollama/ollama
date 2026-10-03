@@ -721,3 +721,75 @@ func TestDeepSeekParser_EdgeCases(t *testing.T) {
 		})
 	}
 }
+
+func TestDeepSeekParser_ThinkSuppression(t *testing.T) {
+	t.Run("think false suppresses reasoning", func(t *testing.T) {
+		parser := &DeepSeek3Parser{hasThinkingSupport: true}
+		parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+		content, thinking, _, err := parser.Add("hidden reasoning...</think>visible answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "" {
+			t.Errorf("expected thinking to be suppressed, got: %q", thinking)
+		}
+		if content != "visible answer" {
+			t.Errorf("expected content without thinking, got: %q", content)
+		}
+	})
+
+	t.Run("think true returns reasoning", func(t *testing.T) {
+		parser := &DeepSeek3Parser{hasThinkingSupport: true}
+		parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+		content, thinking, _, err := parser.Add("reasoning here...</think>answer", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "reasoning here..." {
+			t.Errorf("expected thinking content, got: %q", thinking)
+		}
+		if content != "answer" {
+			t.Errorf("expected content, got: %q", content)
+		}
+	})
+
+	t.Run("no thinking support unaffected", func(t *testing.T) {
+		parser := &DeepSeek3Parser{hasThinkingSupport: false}
+		parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+		content, thinking, _, err := parser.Add("plain text", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if thinking != "" {
+			t.Errorf("expected no thinking, got: %q", thinking)
+		}
+		if content != "plain text" {
+			t.Errorf("expected plain text, got: %q", content)
+		}
+	})
+
+	t.Run("streaming think false suppresses across chunks", func(t *testing.T) {
+		parser := &DeepSeek3Parser{hasThinkingSupport: true}
+		parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+		chunks := []string{"hidden ", "reasoning...</think>", "visible ", "answer"}
+		var allContent, allThinking string
+		for i, chunk := range chunks {
+			content, thinking, _, err := parser.Add(chunk, i == len(chunks)-1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			allContent += content
+			allThinking += thinking
+		}
+		if allThinking != "" {
+			t.Errorf("expected no thinking in streaming, got: %q", allThinking)
+		}
+		if allContent != "visible answer" {
+			t.Errorf("expected 'visible answer', got: %q", allContent)
+		}
+	})
+}
