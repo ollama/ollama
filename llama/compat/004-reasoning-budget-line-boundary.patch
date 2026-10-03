@@ -1,0 +1,825 @@
+diff --git a/common/arg.cpp b/common/arg.cpp
+index 79405b59e..b7df6dd13 100644
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -3733,6 +3733,20 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
+             params.sampling.reasoning_budget_tokens = value;
+         }
+     ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_THINK_BUDGET"));
++    add_opt(common_arg(
++        {"--reasoning-budget-scope"}, "SCOPE",
++        "whether the reasoning budget bounds one thinking block or the whole response: block, response (default: block)",
++        [](common_params & params, const std::string & value) {
++            if (value == "block") {
++                params.sampling.reasoning_budget_cumulative = false;
++            } else if (value == "response") {
++                params.sampling.reasoning_budget_cumulative = true;
++            } else {
++                throw std::invalid_argument(
++                    string_format("error: unknown value for --reasoning-budget-scope: '%s'\n", value.c_str()));
++            }
++        }
++    ).set_examples({LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_THINK_BUDGET_SCOPE"));
+     add_opt(common_arg(
+         {"--reasoning-budget-message"}, "MESSAGE",
+         "message injected before the end-of-thinking tag when reasoning budget is exhausted (default: none)",
+diff --git a/common/common.h b/common/common.h
+index 4e9448bb1..4538dc045 100644
+--- a/common/common.h
++++ b/common/common.h
+@@ -291,6 +291,8 @@ struct common_params_sampling {
+     std::vector<llama_tokens> reasoning_budget_end;            // end tag token sequences; the first tag is used as the forcing sequence
+     std::vector<llama_token>  reasoning_budget_forced;         // forced sequence (message + first end tag)
+     std::string               reasoning_budget_message;        // message injected before end tag when budget exhausted
++    bool                      reasoning_budget_cumulative = false; // spend the budget across the response, not per block
++    std::vector<llama_tokens> reasoning_budget_reset;           // sequences that forgive the spend so far (cumulative only)
+     bool                      reasoning_control = false;       // create the budget sampler on demand so reasoning can be ended at runtime
+ 
+     bool backend_sampling = false;
+diff --git a/common/reasoning-budget.cpp b/common/reasoning-budget.cpp
+index 4884299f3..ba6d4e732 100644
+--- a/common/reasoning-budget.cpp
++++ b/common/reasoning-budget.cpp
+@@ -52,12 +52,20 @@ struct token_matcher {
+ struct common_reasoning_budget_ctx {
+     const llama_vocab * vocab;
+ 
++    common_reasoning_budget_piece_cb piece_cb;        // when set, used instead of vocab
++    void *                           piece_user_data;
++
+     token_matcher start_matcher;
+     token_matcher end_matcher;
++    token_matcher reset_matcher;
+     llama_tokens forced_tokens;
+ 
+     int32_t budget;           // maximum tokens in reasoning block
+     int32_t remaining;        // tokens remaining in budget
++    int32_t spent;            // tokens spent in this response, across blocks
++    int32_t line_grace;       // tokens still allowed while waiting for a line boundary
++
++    common_reasoning_budget_scope scope;
+ 
+     common_reasoning_budget_state state;
+ 
+@@ -67,6 +75,27 @@ struct common_reasoning_budget_ctx {
+     int32_t end_match;        // index into end_matcher.seqs of the sequence that transitioned to DONE, -1 if none
+ };
+ 
++// Decodes token, or reports that this sampler has no way to decode it.
++static bool common_reasoning_budget_piece(
++        const common_reasoning_budget_ctx * ctx, llama_token token, std::string & piece) {
++    if (ctx->piece_cb != nullptr) {
++        piece = ctx->piece_cb(ctx->piece_user_data, token);
++        return true;
++    }
++    if (ctx->vocab != nullptr) {
++        piece = common_token_to_piece(ctx->vocab, token, false);
++        return true;
++    }
++    return false;
++}
++
++bool common_reasoning_budget_is_line_boundary(const std::string & piece) {
++    // A piece that contains a newline anywhere ends a line: whatever follows it
++    // in the same token belongs to the next line, and cutting after the token
++    // still leaves the reasoning block ending on a complete line.
++    return piece.find('\n') != std::string::npos;
++}
++
+ static const char * common_reasoning_budget_name(const struct llama_sampler * /*smpl*/) {
+     return "reasoning-budget";
+ }
+@@ -74,6 +103,16 @@ static const char * common_reasoning_budget_name(const struct llama_sampler * /*
+ static void common_reasoning_budget_accept(struct llama_sampler * smpl, llama_token token) {
+     auto * ctx = (common_reasoning_budget_ctx *) smpl->ctx;
+ 
++    // Checked in every state and before anything else: a reset sequence says the
++    // model did something other than think -- called a tool, typically -- so the
++    // thinking it did to get there should not count against what comes next.
++    if (ctx->reset_matcher.advance(token) >= 0) {
++        if (ctx->spent > 0) {
++            COM_TRC("reset sequence seen, forgiving %d spent tokens\n", ctx->spent);
++        }
++        ctx->spent = 0;
++    }
++
+     switch (ctx->state) {
+         case REASONING_BUDGET_IDLE:
+         {
+@@ -92,6 +131,7 @@ static void common_reasoning_budget_accept(struct llama_sampler * smpl, llama_to
+         }
+         case REASONING_BUDGET_COUNTING:
+         case REASONING_BUDGET_WAITING_UTF8:
++        case REASONING_BUDGET_WAITING_BOUNDARY:
+         {
+             const int32_t match = ctx->end_matcher.advance(token);
+             if (match >= 0) {
+@@ -101,32 +141,58 @@ static void common_reasoning_budget_accept(struct llama_sampler * smpl, llama_to
+                 break;
+             }
+ 
++            // With no way to decode the token there is no piece to inspect, so
++            // neither wait can be evaluated and the sampler cuts as soon as the
++            // budget is out.
+             bool utf8_complete = true;
+-            if (ctx->vocab != nullptr) {
+-                const std::string piece = common_token_to_piece(ctx->vocab, token, false);
++            bool line_boundary = true;
++            std::string piece;
++            if (common_reasoning_budget_piece(ctx, token, piece)) {
+                 utf8_complete = common_utf8_is_complete(piece);
++                line_boundary = common_reasoning_budget_is_line_boundary(piece);
+             }
+ 
+-            if (ctx->state == REASONING_BUDGET_WAITING_UTF8) {
+-                if (utf8_complete) {
+-                    ctx->state = REASONING_BUDGET_FORCING;
+-                    ctx->force_pos = 0;
+-                    ctx->end_matcher.reset();
+-                    COM_TRC("%s", "UTF-8 complete, now forcing end sequence\n");
+-                }
+-            } else if (ctx->state == REASONING_BUDGET_COUNTING) {
++            if (ctx->state == REASONING_BUDGET_COUNTING) {
+                 ctx->remaining--;
+-                if (ctx->remaining <= 0) {
+-                    if (utf8_complete) {
+-                        ctx->state = REASONING_BUDGET_FORCING;
+-                        ctx->force_pos = 0;
+-                        ctx->end_matcher.reset();
+-                        COM_TRC("%s", "budget exhausted, forcing end sequence\n");
+-                    } else {
+-                        ctx->state = REASONING_BUDGET_WAITING_UTF8;
+-                        ctx->end_matcher.reset();
+-                        COM_TRC("%s", "budget exhausted, waiting for UTF-8 completion\n");
+-                    }
++                ctx->spent++;
++                if (ctx->remaining > 0) {
++                    break;
++                }
++                ctx->line_grace = COMMON_REASONING_BUDGET_LINE_GRACE;
++            } else if (ctx->state == REASONING_BUDGET_WAITING_BOUNDARY) {
++                ctx->line_grace--;
++            }
++
++            // The budget is spent; what is left is deciding where to cut. The
++            // end matcher keeps its position across the waits, so a multi-token
++            // end sequence that starts arriving during one still deactivates
++            // the sampler naturally.
++            if (!utf8_complete) {
++                ctx->state = REASONING_BUDGET_WAITING_UTF8;
++                COM_TRC("%s", "waiting for UTF-8 completion\n");
++                break;
++            }
++
++            if (!line_boundary && ctx->line_grace > 0) {
++                ctx->state = REASONING_BUDGET_WAITING_BOUNDARY;
++                COM_TRC("waiting up to %d more tokens for a line boundary\n", ctx->line_grace);
++                break;
++            }
++
++            ctx->state = REASONING_BUDGET_FORCING;
++            ctx->force_pos = 0;
++            ctx->end_matcher.reset();
++            // Keep the wording a spent budget has always logged, so anything
++            // watching for it keeps working, and say where the cut landed only
++            // when the wait actually changed it.
++            {
++                const int32_t waited = COMMON_REASONING_BUDGET_LINE_GRACE - ctx->line_grace;
++                if (waited <= 0) {
++                    COM_TRC("%s", "budget exhausted, forcing end sequence\n");
++                } else if (line_boundary) {
++                    COM_TRC("budget exhausted, forcing end sequence (line boundary after %d tokens)\n", waited);
++                } else {
++                    COM_TRC("%s", "budget exhausted, forcing end sequence (no line boundary within grace)\n");
+                 }
+             }
+             break;
+@@ -148,10 +214,13 @@ static void common_reasoning_budget_accept(struct llama_sampler * smpl, llama_to
+             // per response, and each should get a fresh budget window.
+             if (ctx->start_matcher.advance(token) >= 0) {
+                 ctx->state = REASONING_BUDGET_COUNTING;
+-                ctx->remaining = ctx->budget;
++                ctx->remaining = ctx->scope == REASONING_BUDGET_SCOPE_RESPONSE
++                    ? std::max(0, ctx->budget - ctx->spent)
++                    : ctx->budget;
++                ctx->line_grace = COMMON_REASONING_BUDGET_LINE_GRACE;
+                 ctx->end_matcher.reset();
+                 ctx->end_match = -1;
+-                COM_TRC("re-activated on new start tag, budget=%d tokens\n", ctx->budget);
++                COM_TRC("re-activated on new start tag, budget=%d tokens\n", ctx->remaining);
+ 
+                 if (ctx->remaining <= 0) {
+                     ctx->state = REASONING_BUDGET_FORCING;
+@@ -189,16 +258,21 @@ static void common_reasoning_budget_reset(struct llama_sampler * smpl) {
+     auto * ctx = (common_reasoning_budget_ctx *) smpl->ctx;
+     ctx->state = REASONING_BUDGET_IDLE;
+     ctx->remaining = ctx->budget;
++    ctx->spent = 0;
++    ctx->line_grace = COMMON_REASONING_BUDGET_LINE_GRACE;
+     ctx->start_matcher.reset();
++    ctx->reset_matcher.reset();
+     ctx->end_matcher.reset();
+     ctx->force_pos = 0;
+     ctx->end_match = -1;
+ }
+ 
+ static struct llama_sampler * common_reasoning_budget_init_state(
+-        const struct llama_vocab * vocab, const std::vector<llama_tokens> & start_seqs,
++        const struct llama_vocab * vocab, common_reasoning_budget_piece_cb piece_cb, void * piece_user_data,
++        const std::vector<llama_tokens> & start_seqs,
+         const std::vector<llama_tokens> & end_seqs, const llama_tokens & forced_tokens,
+-        int32_t budget, common_reasoning_budget_state initial_state);
++        int32_t budget, common_reasoning_budget_state initial_state,
++        common_reasoning_budget_scope scope, const std::vector<llama_tokens> & reset_seqs);
+ 
+ static struct llama_sampler * common_reasoning_budget_clone(const struct llama_sampler * smpl);
+ 
+@@ -231,12 +305,16 @@ static struct llama_sampler * common_reasoning_budget_clone(const struct llama_s
+ }
+ 
+ static struct llama_sampler * common_reasoning_budget_init_state(
+-        const struct llama_vocab        * vocab,
+-        const std::vector<llama_tokens> & start_seqs,
++        const struct llama_vocab         * vocab,
++        common_reasoning_budget_piece_cb   piece_cb,
++        void                             * piece_user_data,
++        const std::vector<llama_tokens>  & start_seqs,
+         const std::vector<llama_tokens> & end_seqs,
+         const llama_tokens              & forced_tokens,
+         int32_t                           budget,
+-        common_reasoning_budget_state     initial_state) {
++        common_reasoning_budget_state     initial_state,
++        common_reasoning_budget_scope     scope,
++        const std::vector<llama_tokens> & reset_seqs) {
+     // promote COUNTING with budget <= 0 to FORCING
+     if (initial_state == REASONING_BUDGET_COUNTING && budget <= 0) {
+         initial_state = REASONING_BUDGET_FORCING;
+@@ -245,12 +323,18 @@ static struct llama_sampler * common_reasoning_budget_init_state(
+     return llama_sampler_init(
+         /* .iface = */ &common_reasoning_budget_i,
+         /* .ctx   = */ new common_reasoning_budget_ctx {
+-            /* .vocab         = */ vocab,
++            /* .vocab           = */ vocab,
++            /* .piece_cb        = */ piece_cb,
++            /* .piece_user_data = */ piece_user_data,
+             /* .start_matcher = */ token_matcher(start_seqs),
+             /* .end_matcher   = */ token_matcher(end_seqs),
++            /* .reset_matcher = */ token_matcher(reset_seqs),
+             /* .forced_tokens = */ forced_tokens,
+             /* .budget        = */ budget,
+             /* .remaining     = */ budget,
++            /* .spent         = */ 0,
++            /* .line_grace    = */ COMMON_REASONING_BUDGET_LINE_GRACE,
++            /* .scope         = */ scope,
+             /* .state         = */ initial_state,
+             /* .force_pos     = */ 0,
+             /* .end_match     = */ -1,
+@@ -264,8 +348,25 @@ struct llama_sampler * common_reasoning_budget_init(
+         const std::vector<llama_tokens> & end_seqs,
+         const llama_tokens              & forced_tokens,
+         int32_t                           budget,
+-        common_reasoning_budget_state     initial_state) {
+-    return common_reasoning_budget_init_state(vocab, start_seqs, end_seqs, forced_tokens, budget, initial_state);
++        common_reasoning_budget_state     initial_state,
++        common_reasoning_budget_scope     scope,
++        const std::vector<llama_tokens> & reset_seqs) {
++    return common_reasoning_budget_init_state(
++        vocab, nullptr, nullptr, start_seqs, end_seqs, forced_tokens, budget, initial_state, scope, reset_seqs);
++}
++
++struct llama_sampler * common_reasoning_budget_init_pieces(
++        common_reasoning_budget_piece_cb  piece_cb,
++        void                            * piece_user_data,
++        const std::vector<llama_tokens> & start_seqs,
++        const std::vector<llama_tokens> & end_seqs,
++        const llama_tokens              & forced_tokens,
++        int32_t                           budget,
++        common_reasoning_budget_state     initial_state,
++        common_reasoning_budget_scope     scope,
++        const std::vector<llama_tokens> & reset_seqs) {
++    return common_reasoning_budget_init_state(
++        nullptr, piece_cb, piece_user_data, start_seqs, end_seqs, forced_tokens, budget, initial_state, scope, reset_seqs);
+ }
+ 
+ common_reasoning_budget_state common_reasoning_budget_get_state(const struct llama_sampler * smpl) {
+@@ -295,9 +396,12 @@ bool common_reasoning_budget_force(struct llama_sampler * smpl) {
+ 
+     auto * ctx = (common_reasoning_budget_ctx *) smpl->ctx;
+ 
+-    // only a sampler that is actively counting down the budget may be forced;
+-    // any other state (idle, already forcing/waiting, or done) is left untouched
+-    if (ctx->state != REASONING_BUDGET_COUNTING) {
++    // only a sampler that is still inside the reasoning block may be forced.
++    // Waiting for a line boundary counts: the caller is asking to end the block
++    // now, and unlike the UTF-8 wait there is nothing half-emitted to corrupt.
++    // Any other state (idle, already forcing, mid UTF-8 sequence, or done) is
++    // left untouched.
++    if (ctx->state != REASONING_BUDGET_COUNTING && ctx->state != REASONING_BUDGET_WAITING_BOUNDARY) {
+         return false;
+     }
+ 
+diff --git a/common/reasoning-budget.h b/common/reasoning-budget.h
+index 1b89a04c4..39f71f78d 100644
+--- a/common/reasoning-budget.h
++++ b/common/reasoning-budget.h
+@@ -5,25 +5,81 @@
+ #include "common.h"
+ 
+ #include <cstdint>
++#include <string>
+ #include <vector>
+ 
+ enum common_reasoning_budget_state {
+-    REASONING_BUDGET_IDLE,         // waiting for start sequence
+-    REASONING_BUDGET_COUNTING,     // counting down tokens
+-    REASONING_BUDGET_FORCING,      // forcing budget message + end sequence
+-    REASONING_BUDGET_WAITING_UTF8, // budget exhausted, waiting for UTF-8 completion
+-    REASONING_BUDGET_DONE,         // passthrough forever
++    REASONING_BUDGET_IDLE,             // waiting for start sequence
++    REASONING_BUDGET_COUNTING,         // counting down tokens
++    REASONING_BUDGET_FORCING,          // forcing budget message + end sequence
++    REASONING_BUDGET_WAITING_UTF8,     // budget exhausted, waiting for UTF-8 completion
++    REASONING_BUDGET_WAITING_BOUNDARY, // budget exhausted, waiting for a line boundary
++    REASONING_BUDGET_DONE,             // passthrough forever
+ };
+ 
++// How many tokens past an exhausted budget the sampler will wait for a line
++// boundary before cutting anyway.
++//
++// The budget expires wherever the model happens to be, which is usually mid
++// sentence and often mid word: "Actually, I'" followed straight by the budget
++// message is what the user reads. Waiting for the model to finish the line
++// first costs a handful of tokens and produces a reasoning block that ends
++// where a thought ends.
++//
++// The wait has to be bounded, because a line boundary is not guaranteed to
++// arrive: a model dumping base64, a long single-line table or a run-on
++// paragraph can go for thousands of tokens without a newline. When the grace
++// runs out the sampler cuts where it stands, which is the behaviour it had
++// before this wait existed.
++#define COMMON_REASONING_BUDGET_LINE_GRACE 64
++
++// True when a decoded token piece ends a line, i.e. the budget can cut after it
++// without splitting a word. Exposed for testing.
++bool common_reasoning_budget_is_line_boundary(const std::string & piece);
++
++// Whether the budget is spent per thinking block or across the whole response.
++//
++// Per block is the original behaviour and the default: every new start sequence
++// re-arms a full window, on the grounds that a model emitting several blocks
++// should have each of them budgeted.
++//
++// The trouble is that it bounds a block rather than a response. A model that
++// closes each block by itself just before its window runs out, then opens
++// another, is never cut: measured live, six consecutive blocks against an
++// 8,000-token budget consumed a 32,000-token output cap without ever
++// exhausting the budget, so the message that tells the model to wrap up was
++// never injected and the turn ended with no answer.
++//
++// Across the response, the tokens spent in earlier blocks are subtracted when
++// the sampler re-arms, so the allowance is what its name suggests. Sequences in
++// reset_seqs forgive the accumulated spend when they appear -- a tool call
++// between two blocks means the model is making progress rather than circling,
++// and the next block starts from a full window again.
++enum common_reasoning_budget_scope {
++    REASONING_BUDGET_SCOPE_BLOCK,    // every block re-arms a full window
++    REASONING_BUDGET_SCOPE_RESPONSE, // blocks share one window until a reset sequence
++};
++
++// Decodes a token to its text piece. Only the waits need this, and consulting a
++// vocab means a test cannot reach them without loading a model, so a caller may
++// supply the pieces instead — see common_reasoning_budget_init_pieces.
++typedef std::string (*common_reasoning_budget_piece_cb)(void * user_data, llama_token token);
++
+ // Creates a reasoning budget sampler that limits token generation inside a
+ // reasoning block (e.g. between <think> and </think>).
+ //
+-// State machine: IDLE -> COUNTING -> WAITING_UTF8 -> FORCING -> DONE
+-//   IDLE:         passthrough, watching for a start sequence
+-//   COUNTING:     counting down remaining tokens, watching for a natural end sequence
+-//   WAITING_UTF8: budget exhausted, allowing tokens to complete a UTF-8 sequence
+-//   FORCING:      forces forced_tokens token-by-token (all other logits -> -inf)
+-//   DONE:         passthrough forever
++// State machine: IDLE -> COUNTING -> WAITING_UTF8 -> WAITING_BOUNDARY -> FORCING -> DONE
++//   IDLE:             passthrough, watching for a start sequence
++//   COUNTING:         counting down remaining tokens, watching for a natural end sequence
++//   WAITING_UTF8:     budget exhausted, allowing tokens to complete a UTF-8 sequence
++//   WAITING_BOUNDARY: budget exhausted, allowing tokens up to the end of the line
++//   FORCING:          forces forced_tokens token-by-token (all other logits -> -inf)
++//   DONE:             passthrough forever
++//
++// The two waiting states are entered as the conditions call for them rather
++// than in a fixed order, and a natural end sequence still wins from either of
++// them. Both are skipped when the sampler cannot decode tokens, since it then
++// has no piece to inspect.
+ //
+ // Parameters:
+ //   vocab          - vocabulary (used for UTF-8 boundary detection; can be nullptr)
+@@ -33,13 +89,30 @@ enum common_reasoning_budget_state {
+ //   budget         - max tokens allowed in the reasoning block
+ //   initial_state  - initial state
+ //
++//   scope          - whether budget bounds one block or the whole response
++//   reset_seqs     - token sequences that forgive the spend so far (response scope only)
+ struct llama_sampler * common_reasoning_budget_init(
+         const struct llama_vocab        * vocab,
+         const std::vector<llama_tokens> & start_seqs,
+         const std::vector<llama_tokens> & end_seqs,
+         const llama_tokens              & forced_tokens,
+         int32_t                           budget,
+-        common_reasoning_budget_state     initial_state = REASONING_BUDGET_IDLE);
++        common_reasoning_budget_state     initial_state = REASONING_BUDGET_IDLE,
++        common_reasoning_budget_scope     scope         = REASONING_BUDGET_SCOPE_BLOCK,
++        const std::vector<llama_tokens> & reset_seqs    = {});
++
++// As common_reasoning_budget_init, but tokens are decoded through piece_cb
++// instead of a vocab. Everything else behaves identically.
++struct llama_sampler * common_reasoning_budget_init_pieces(
++        common_reasoning_budget_piece_cb  piece_cb,
++        void                            * piece_user_data,
++        const std::vector<llama_tokens> & start_seqs,
++        const std::vector<llama_tokens> & end_seqs,
++        const llama_tokens              & forced_tokens,
++        int32_t                           budget,
++        common_reasoning_budget_state     initial_state = REASONING_BUDGET_IDLE,
++        common_reasoning_budget_scope     scope         = REASONING_BUDGET_SCOPE_BLOCK,
++        const std::vector<llama_tokens> & reset_seqs    = {});
+ 
+ common_reasoning_budget_state common_reasoning_budget_get_state(const struct llama_sampler * smpl);
+ 
+diff --git a/common/sampling.cpp b/common/sampling.cpp
+index 06dea1e1c..0cbb005b3 100644
+--- a/common/sampling.cpp
++++ b/common/sampling.cpp
+@@ -314,7 +314,10 @@ struct common_sampler * common_sampler_init(
+             {params.reasoning_budget_start},
+             params.reasoning_budget_end,
+             params.reasoning_budget_forced,
+-            params.reasoning_budget_tokens < 0 ? INT_MAX : params.reasoning_budget_tokens);
++            params.reasoning_budget_tokens < 0 ? INT_MAX : params.reasoning_budget_tokens,
++            REASONING_BUDGET_IDLE,
++            params.reasoning_budget_cumulative ? REASONING_BUDGET_SCOPE_RESPONSE : REASONING_BUDGET_SCOPE_BLOCK,
++            params.reasoning_budget_reset);
+ 
+         for (const auto & token : prefill_tokens) {
+             llama_sampler_accept(rbudget, token);
+diff --git a/tests/test-reasoning-budget.cpp b/tests/test-reasoning-budget.cpp
+index 3bcc77e17..39f91d474 100644
+--- a/tests/test-reasoning-budget.cpp
++++ b/tests/test-reasoning-budget.cpp
+@@ -11,6 +11,7 @@
+ #include <cmath>
+ #include <cstddef>
+ #include <cstdio>
++#include <map>
+ #include <string>
+ #include <vector>
+ 
+@@ -333,6 +334,291 @@ static void test_reasoning_budget_end_match() {
+     fprintf(stderr, "  Test 'matched end sequence' passed\n");
+ }
+ 
++// Response-scope budget tests
++//
++// A budget that re-arms in full on every block bounds a block, not a turn.
++// Measured live: six consecutive blocks against an 8,000-token budget ate a
++// 32,000-token output cap, each one closing naturally just short of its window,
++// so the budget message never fired and the turn produced no answer.
++static void test_reasoning_budget_response_scope() {
++    const std::vector<llama_token> start  = {100};
++    const std::vector<llama_token> end    = {101};
++    const std::vector<llama_token> forced = {102, 101};
++    const std::vector<llama_token> tool   = {105}; // <|tool_call>
++
++    // blocks share one window: the second picks up where the first left off
++    {
++        auto * sampler = common_reasoning_budget_init(
++            nullptr, {start}, {end}, forced, 4, REASONING_BUDGET_IDLE,
++            REASONING_BUDGET_SCOPE_RESPONSE);
++
++        llama_sampler_accept(sampler, 100); // block 1, remaining=4
++        llama_sampler_accept(sampler, 50);  // spent=1
++        llama_sampler_accept(sampler, 51);  // spent=2
++        llama_sampler_accept(sampler, 101); // model closes it itself -> DONE
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_DONE);
++
++        llama_sampler_accept(sampler, 100); // block 2 re-arms with 4-2=2
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_COUNTING);
++        llama_sampler_accept(sampler, 60);  // spent=3
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_COUNTING);
++        llama_sampler_accept(sampler, 61);  // spent=4, allowance gone
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING
++                    && "the response allowance must bound blocks together");
++
++        llama_sampler_free(sampler);
++    }
++
++    // a block opened with nothing left is cut immediately
++    {
++        auto * sampler = common_reasoning_budget_init(
++            nullptr, {start}, {end}, forced, 2, REASONING_BUDGET_IDLE,
++            REASONING_BUDGET_SCOPE_RESPONSE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        llama_sampler_accept(sampler, 101); // closed after 1 token
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 60);  // spends the last one
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING);
++        llama_sampler_accept(sampler, 102);
++        llama_sampler_accept(sampler, 101); // forced sequence complete -> DONE
++
++        llama_sampler_accept(sampler, 100); // a third block, allowance exhausted
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING
++                    && "a block opened with no allowance left must be cut at once");
++
++        llama_sampler_free(sampler);
++    }
++
++    // a tool call between blocks forgives the spend: the model made progress
++    {
++        auto * sampler = common_reasoning_budget_init(
++            nullptr, {start}, {end}, forced, 4, REASONING_BUDGET_IDLE,
++            REASONING_BUDGET_SCOPE_RESPONSE, {tool});
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        llama_sampler_accept(sampler, 51);
++        llama_sampler_accept(sampler, 51);
++        llama_sampler_accept(sampler, 101); // closed with 3 spent
++
++        llama_sampler_accept(sampler, 105); // <|tool_call>: spend forgiven
++        llama_sampler_accept(sampler, 70);
++
++        llama_sampler_accept(sampler, 100); // block 2 gets a full window again
++        for (int i = 0; i < 3; i++) {
++            llama_sampler_accept(sampler, 80 + i);
++            GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_COUNTING
++                        && "a tool call between blocks must restore the full window");
++        }
++        llama_sampler_accept(sampler, 90); // fourth token of block 2
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING);
++
++        llama_sampler_free(sampler);
++    }
++
++    // block scope is the default and is unchanged
++    {
++        auto * sampler = common_reasoning_budget_init(
++            nullptr, {start}, {end}, forced, 2, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        llama_sampler_accept(sampler, 101); // closed after 1 token
++
++        llama_sampler_accept(sampler, 100); // re-arms with a full 2
++        llama_sampler_accept(sampler, 60);
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_COUNTING
++                    && "block scope must still re-arm the whole window");
++
++        llama_sampler_free(sampler);
++    }
++
++    fprintf(stderr, "  Test 'response scope budget' passed\n");
++}
++
++// Line-boundary waiting tests
++//
++// The budget expires wherever the model happens to be, so without a wait the
++// forced message splices into the middle of a word: "Actually, I'" followed
++// straight by the budget message. These drive the sampler through a piece
++// callback, which is the only way to reach the waits without loading a model.
++struct piece_table {
++    std::map<llama_token, std::string> pieces;
++    std::string fallback = "word";
++};
++
++static std::string piece_lookup(void * user_data, llama_token token) {
++    const auto * table = (const piece_table *) user_data;
++    const auto it = table->pieces.find(token);
++    return it == table->pieces.end() ? table->fallback : it->second;
++}
++
++static void test_reasoning_budget_line_boundary() {
++    const std::vector<llama_token> start  = {100};
++    const std::vector<llama_token> end    = {101};
++    const std::vector<llama_token> forced = {102, 101};
++
++    // the budget runs out mid word, and the cut waits for the end of the line
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.pieces[50]  = "Actually";
++        table.pieces[51]  = ", I'";      // budget runs out here -- mid word
++        table.pieces[52]  = "d rather check the file";
++        table.pieces[53]  = " first.\n"; // line ends here
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 2, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100); // COUNTING, remaining=2
++        llama_sampler_accept(sampler, 50);  // remaining=1
++        llama_sampler_accept(sampler, 51);  // remaining=0, mid word
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY
++                    && "budget must not cut in the middle of a word");
++
++        llama_sampler_accept(sampler, 52);  // still no newline
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY);
++
++        llama_sampler_accept(sampler, 53);  // line ends
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING
++                    && "budget must cut once the line ends");
++        GGML_ASSERT(get_forced_token(sampler, 102) == 102);
++
++        llama_sampler_free(sampler);
++    }
++
++    // a budget that expires exactly at the end of a line cuts straight away
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.pieces[50]  = "Let me check.\n";
++        table.pieces[51]  = "Right.\n";
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 2, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        llama_sampler_accept(sampler, 51); // remaining=0 on a line boundary
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING
++                    && "a budget that expires on a boundary must not wait");
++
++        llama_sampler_free(sampler);
++    }
++
++    // no newline in sight -- base64, a long table row, a run-on paragraph -- so
++    // the wait gives up and cuts where it stands
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.fallback = "AAAABBBBCCCC"; // never a newline
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 1, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50); // remaining=0, grace armed
++
++        // token ids well clear of the start, end and forced ids
++        for (int i = 0; i < COMMON_REASONING_BUDGET_LINE_GRACE; i++) {
++            GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY);
++            llama_sampler_accept(sampler, 200 + i);
++        }
++
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING
++                    && "the wait for a line boundary must be bounded");
++
++        llama_sampler_free(sampler);
++    }
++
++    // an incomplete UTF-8 sequence is still finished before anything else
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.pieces[50]  = "caf";
++        table.pieces[51]  = std::string("\xC3", 1);         // first byte of e-acute
++        table.pieces[52]  = std::string("\xA9 au lait", 9); // continuation, then more text
++        table.pieces[53]  = ", strong.\n";
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 2, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        llama_sampler_accept(sampler, 51); // remaining=0 mid UTF-8 sequence
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_UTF8);
++
++        llama_sampler_accept(sampler, 52); // sequence complete, but mid line
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY);
++
++        llama_sampler_accept(sampler, 53);
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING);
++
++        llama_sampler_free(sampler);
++    }
++
++    // a natural end sequence arriving during the wait still wins
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.pieces[101] = "</think>";
++        table.pieces[50]  = "done thinking";
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 1, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50); // remaining=0, waiting for a boundary
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY);
++
++        llama_sampler_accept(sampler, 101);
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_DONE
++                    && "the model ending its own reasoning must still deactivate the sampler");
++
++        const llama_tokens * matched = common_reasoning_budget_get_end_match(sampler);
++        GGML_ASSERT(matched != nullptr && *matched == end
++                    && "an end sequence matched during the wait must still be reported");
++
++        llama_sampler_free(sampler);
++    }
++
++    // the caller can still end the block during the wait
++    {
++        piece_table table;
++        table.pieces[100] = "<think>";
++        table.pieces[50]  = "thinking";
++
++        auto * sampler = common_reasoning_budget_init_pieces(
++            piece_lookup, &table, {start}, {end}, forced, 1, REASONING_BUDGET_IDLE);
++
++        llama_sampler_accept(sampler, 100);
++        llama_sampler_accept(sampler, 50);
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_WAITING_BOUNDARY);
++
++        GGML_ASSERT(common_reasoning_budget_force(sampler) && "force() should succeed while waiting for a boundary");
++        GGML_ASSERT(common_reasoning_budget_get_state(sampler) == REASONING_BUDGET_FORCING);
++
++        llama_sampler_free(sampler);
++    }
++
++    fprintf(stderr, "  Test 'line boundary waiting' passed\n");
++}
++
++static void test_line_boundary_detection() {
++    GGML_ASSERT(common_reasoning_budget_is_line_boundary("done.\n"));
++    GGML_ASSERT(common_reasoning_budget_is_line_boundary("\n"));
++    GGML_ASSERT(common_reasoning_budget_is_line_boundary("\n\n"));
++    GGML_ASSERT(common_reasoning_budget_is_line_boundary("a\nb")); // newline anywhere ends a line
++
++    GGML_ASSERT(!common_reasoning_budget_is_line_boundary(""));
++    GGML_ASSERT(!common_reasoning_budget_is_line_boundary("word"));
++    GGML_ASSERT(!common_reasoning_budget_is_line_boundary(" I'"));
++    GGML_ASSERT(!common_reasoning_budget_is_line_boundary("\r")); // carriage return alone is not a line end
++    GGML_ASSERT(!common_reasoning_budget_is_line_boundary("\xC3\xA9"));
++}
++
+ // UTF-8 boundary detection unit test
+ // Tests common_utf8_is_complete() from reasoning-budget.h
+ static void test_utf8_boundary_detection() {
+@@ -494,12 +780,18 @@ int main(void) {
+     test_reasoning_budget_clone_mid_forcing();
+     test_reasoning_budget_force_manual();
+     test_reasoning_budget_end_match();
++    test_reasoning_budget_line_boundary();
++    test_reasoning_budget_response_scope();
+ 
+-    printf("OK (12 tests passed)\n");
++    printf("OK (14 tests passed)\n");
+ 
+     printf("Testing UTF-8 boundary detection... ");
+     test_utf8_boundary_detection();
+     printf("OK\n");
+ 
++    printf("Testing line boundary detection... ");
++    test_line_boundary_detection();
++    printf("OK\n");
++
+     return 0;
+ }
+diff --git a/tools/server/server-schema.cpp b/tools/server/server-schema.cpp
+index 64b925129..e7c6f3bb8 100644
+--- a/tools/server/server-schema.cpp
++++ b/tools/server/server-schema.cpp
+@@ -412,6 +412,31 @@ std::vector<std::unique_ptr<field>> make_llama_cmpl_schema(const common_params &
+             }
+         }));
+ 
++    add((new field_str("reasoning_budget_scope"))
++        ->set_desc("Whether the reasoning budget bounds one thinking block ('block', the default) or the whole response ('response')")
++        ->set_handler([&](field_eval_context & ctx, const json & data) {
++            const std::string scope = data.at("reasoning_budget_scope").get<std::string>();
++            if (scope == "block") {
++                ctx.params.sampling.reasoning_budget_cumulative = false;
++            } else if (scope == "response") {
++                ctx.params.sampling.reasoning_budget_cumulative = true;
++            } else {
++                throw std::runtime_error("invalid reasoning_budget_scope: " + scope);
++            }
++        }));
++
++    add((new field_str("reasoning_budget_reset_tag"))
++        ->set_desc("Token string that forgives the reasoning tokens spent so far, e.g. the tag opening a tool call. Only meaningful with reasoning_budget_scope 'response'")
++        ->set_handler([&](field_eval_context & ctx, const json & data) {
++            GGML_ASSERT(ctx.vocab != nullptr);
++            const std::string tag = data.at("reasoning_budget_reset_tag").get<std::string>();
++            if (tag.empty()) {
++                ctx.params.sampling.reasoning_budget_reset.clear();
++                return;
++            }
++            ctx.params.sampling.reasoning_budget_reset = { common_tokenize(ctx.vocab, tag, false, true) };
++        }));
++
+     add((new field_str("reasoning_budget_message"))
+         ->set_desc("Message to prepend to the reasoning budget end tag when forcing it")
+         ->set_handler([&](field_eval_context & ctx, const json & data) {
