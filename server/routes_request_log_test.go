@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
+func TestInferenceRequestLoggerMiddlewareWritesReplayArtifactsBeforeHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	logDir := t.TempDir()
@@ -25,6 +25,14 @@ func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
 
 	r := gin.New()
 	r.POST(route, requestLogger.middleware(route), func(c *gin.Context) {
+		entries, err := os.ReadDir(logDir)
+		if err != nil {
+			t.Fatalf("failed to read request log directory in handler: %v", err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("expected request logs before handler runs, got %d files (%v)", len(entries), entries)
+		}
+
 		body, err := io.ReadAll(c.Request.Body)
 		if err != nil {
 			t.Fatalf("failed to read body in handler: %v", err)
