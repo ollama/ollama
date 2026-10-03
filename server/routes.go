@@ -258,6 +258,8 @@ func signinURL() (string, error) {
 
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	AcquirePowerLock()          // Prevent sleep during inference
+	defer ReleasePowerLock()
 	var req api.GenerateRequest
 	body := struct {
 		*api.GenerateRequest
@@ -2621,6 +2623,8 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
+	AcquirePowerLock()          // Prevent sleep during inference
+	defer ReleasePowerLock()
 	var req api.ChatRequest
 	body := struct {
 		*api.ChatRequest
