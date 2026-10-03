@@ -126,6 +126,36 @@ On Windows, Ollama inherits your user and system environment variables.
 
 6. Start the Ollama application from the Windows Start menu.
 
+### Available environment variables
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `OLLAMA_HOST` | IP address and port for the Ollama server | `127.0.0.1:11434` |
+| `OLLAMA_MODELS` | Path to the models directory | `~/.ollama/models` |
+| `OLLAMA_KEEP_ALIVE` | Duration that models stay loaded in memory | `5m` |
+| `OLLAMA_CONTEXT_LENGTH` | Default context length for models | Auto (based on available VRAM) |
+| `OLLAMA_NUM_PARALLEL` | Maximum number of parallel requests | `1` |
+| `OLLAMA_MAX_LOADED_MODELS` | Maximum number of loaded models per GPU | Auto |
+| `OLLAMA_MAX_QUEUE` | Maximum number of queued requests | `512` |
+| `OLLAMA_DEBUG` | Show additional debug information (1 = debug, 2 = trace) | `0` |
+| `OLLAMA_FLASH_ATTENTION` | Enable flash attention | `false` |
+| `OLLAMA_KV_CACHE_TYPE` | Quantization type for the K/V cache | `f16` |
+| `OLLAMA_GPU_OVERHEAD` | Reserve VRAM per GPU (bytes) | `0` |
+| `OLLAMA_LLM_LIBRARY` | Set LLM library to bypass autodetection | Auto |
+| `OLLAMA_LOAD_TIMEOUT` | How long to allow model loads to stall | `5m` |
+| `OLLAMA_NOHISTORY` | Do not preserve readline history | `false` |
+| `OLLAMA_NOPRUNE` | Do not prune model blobs on startup | `false` |
+| `OLLAMA_ORIGINS` | Comma-separated list of allowed origins | Default origins |
+| `OLLAMA_SCHED_SPREAD` | Schedule model across all GPUs | `false` |
+| `OLLAMA_MULTIUSER_CACHE` | Optimize prompt caching for multi-user scenarios | `false` |
+| `OLLAMA_NEW_ENGINE` | Enable the new Ollama engine | `false` |
+| `OLLAMA_EDITOR` | Path to editor for interactive prompt editing (Ctrl+G) | System default |
+| `OLLAMA_REMOTES` | Allowed hosts for remote models | `ollama.com` |
+| `OLLAMA_NO_CLOUD` | Disable Ollama cloud features | `false` |
+| `OLLAMA_VULKAN` | Enable the Vulkan GPU backend | `false` |
+| `HTTPS_PROXY` | HTTPS proxy for model downloads | None |
+| `NO_PROXY` | Hosts to exclude from proxy | None |
+
 ## How do I use Ollama behind a proxy?
 
 Ollama pulls models from the Internet and may require a proxy server to access the models. Use `HTTPS_PROXY` to redirect outbound requests through the proxy. Ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
