@@ -263,7 +263,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		*api.GenerateRequest
 		Think json.RawMessage `json:"think"`
 	}{GenerateRequest: &req}
-	if err := c.ShouldBindJSON(&body); errors.Is(err, io.EOF) {
+	if err := bindRequestJSON(c, &body); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
