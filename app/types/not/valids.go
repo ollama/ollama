@@ -34,7 +34,7 @@ func (e ValidError) Field() string {
 // Valids is for building a list of validation errors.
 type Valids []ValidError
 
-// Addf adds a validation error to the list with a formatted message using fmt.Sprintf.
+// Add adds a validation error to the list.
 func (b *Valids) Add(name, message string, args ...any) {
 	*b = append(*b, ValidError{name, message, args})
 }
