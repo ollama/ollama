@@ -90,6 +90,94 @@ func TestCompile(t *testing.T) {
 	}
 }
 
+func TestCompileStructuredCriteria(t *testing.T) {
+	var req Request
+	if err := json.Unmarshal([]byte(`{
+		"model":"nimble",
+		"state":"The parcel arrived on Tuesday.",
+		"questions": {
+			"condition": {
+				"type":"choice",
+				"instructions":"How was the parcel?",
+				"criteria": {
+					"plain":"Arrived as expected",
+					"structured":{"what":"Arrived in good condition","examples":["intact"]},
+					"listed":["Arrived in good condition",{"example":"no damage"}],
+					"other":null
+				}
+			},
+			"packed": {
+				"type":"noul",
+				"instructions":"Was the parcel well packed?",
+				"criteria": {
+					"false":["Loose or damaged packaging"],
+					"true":{"what":"Protected contents","not_for":["A padded envelope alone"]}
+				}
+			},
+			"quality": {
+				"type":"score",
+				"instructions":"How well packed?",
+				"criteria":["poor","good",{"what":"excellent"}]
+			}
+		}
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Compile(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][]string{
+		{`"Arrived as expected"`, `{"examples":["intact"],"what":"Arrived in good condition"}`, `["Arrived in good condition",{"example":"no damage"}]`, `"other"`},
+		{`["Loose or damaged packaging"]`, `{"not_for":["A padded envelope alone"],"what":"Protected contents"}`},
+		{`"poor"`, `"good"`, `{"what":"excellent"}`},
+	}
+	for i, field := range c.fields {
+		for j, choice := range field.Choices {
+			got, err := json.Marshal(choice.Description)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != want[i][j] {
+				t.Errorf("field %q choice %d description = %s, want %s", field.Name, j, got, want[i][j])
+			}
+		}
+	}
+
+	// Check the serialized schema sent to the scorer, not just the decoded
+	// choices, so structured descriptions cannot be accepted and then lost.
+	var prompt struct {
+		Schema []Field `json:"schema"`
+	}
+	payload, _, ok := strings.Cut(c.messages[0][0].Content, "\n\nRequested field: ")
+	if !ok {
+		t.Fatal("missing requested field marker")
+	}
+	if err := json.Unmarshal([]byte(payload), &prompt); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := json.Marshal(prompt.Schema[0].Choices[1].Description); err != nil || string(got) != want[0][1] {
+		t.Fatalf("structured choice description was not serialized: %s, %v", got, err)
+	}
+}
+
+func TestCompileNullableNoulCriteria(t *testing.T) {
+	for _, raw := range []string{
+		`{"true":null,"false":{"what":"not true"}}`,
+		`null`,
+	} {
+		var req Request
+		body := `{"model":"nimble","state":"x","questions":{"q":{"type":"noul","instructions":"q","criteria":` + raw + `}}}`
+		if err := json.Unmarshal([]byte(body), &req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Compile(req); err != nil {
+			t.Fatalf("criteria %s: %v", raw, err)
+		}
+	}
+}
+
 func TestCompileUnsupportedEncoding(t *testing.T) {
 	if _, err := CompileWithEncoder(testRequest(t), "unknown"); err == nil {
 		t.Fatal("accepted unsupported decision encoding")
@@ -196,7 +284,7 @@ func TestInvalidRequests(t *testing.T) {
 		`{"model":"nimble","state":"x","questions":{"":{"type":"noul","instructions":"q"}}}`,
 		`{"model":"nimble","state":"x","questions":{"x":{"type":"choice","instructions":"q","criteria":{"a":"a"}}}}`,
 		`{"model":"nimble","state":"x","questions":{"x":{"type":"score","instructions":"q","criteria":["a",null]}}}`,
-		`{"model":"nimble","state":"x","questions":{"x":{"type":"noul","instructions":"q","criteria":{"true":null}}}}`,
+		`{"model":"nimble","state":"x","questions":{"x":{"type":"noul","instructions":"q","criteria":{"true":42}}}}`,
 		`{"model":"nimble","state":"x","questions":{"x":{"type":"noul","instructions":"q","criteria":{"yes":"Yes"}}}}`,
 	} {
 		t.Run(data, func(t *testing.T) {

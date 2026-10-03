@@ -27,6 +27,8 @@ Local requests do not need an API key.
 
 Put your input in `state` and describe the possible answers in `criteria`:
 
+Criteria descriptions can be strings, JSON objects, or arrays. For `choice`, use `null` when the option name should describe itself.
+
 ```shell choice.sh
 curl http://localhost:11434/v1/systemone \
   -H 'Content-Type: application/json' \
@@ -116,9 +118,9 @@ Example response:
 
 | Type | Criteria | Result |
 | --- | --- | --- |
-| `choice` | 2–26 named options with descriptions | The most likely option and each option's probability |
-| `noul` | Descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
-| `score` | 2–26 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
+| `choice` | 2–26 named options with string, object, or array descriptions; `null` uses the option name | The most likely option and each option's probability |
+| `noul` | Optional string, object, or array descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
+| `score` | 2–26 string, object, or array descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
 
 For the urgency criteria below:
 
