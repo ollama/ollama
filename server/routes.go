@@ -1932,7 +1932,7 @@ func isLocalIP(ip netip.Addr) bool {
 func allowedHost(host string) bool {
 	host = strings.ToLower(host)
 
-	if host == "" || host == "localhost" {
+	if host == "localhost" {
 		return true
 	}
 
