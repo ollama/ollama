@@ -586,13 +586,21 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx          int   `json:"num_ctx,omitempty"`
-	NumBatch        int   `json:"num_batch,omitempty"`
-	NumGPU          int   `json:"num_gpu,omitempty"`
-	MainGPU         *int  `json:"main_gpu,omitempty"`
-	UseMMap         *bool `json:"use_mmap,omitempty"`
-	NumThread       int   `json:"num_thread,omitempty"`
-	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
+	NumCtx   int  `json:"num_ctx,omitempty"`
+	NumBatch int  `json:"num_batch,omitempty"`
+	NumGPU   int  `json:"num_gpu,omitempty"`
+	MainGPU  *int `json:"main_gpu,omitempty"`
+	// TensorSplit is a comma-separated list of proportions controlling how much
+	// of the model is placed on each device, e.g. "0.3,0.7". It is passed
+	// through to llama-server's --tensor-split.
+	//
+	// A string rather than a float slice: Options.FromMap only decodes JSON
+	// arrays into []string, and a string keeps the Modelfile form identical to
+	// the llama.cpp flag -- PARAMETER tensor_split 0.3,0.7
+	TensorSplit     string `json:"tensor_split,omitempty"`
+	UseMMap         *bool  `json:"use_mmap,omitempty"`
+	NumThread       int    `json:"num_thread,omitempty"`
+	DraftNumPredict int    `json:"draft_num_predict,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
