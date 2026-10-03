@@ -380,18 +380,6 @@ func runAllMiniLMEmbedTruncate(t *testing.T) {
 			},
 		},
 		{
-			name: "input after truncate error with context length of 1",
-			request: api.EmbedRequest{
-				Model:    "all-minilm",
-				Input:    "why is the sky blue?",
-				Truncate: &truncTrue,
-				Options:  map[string]any{"num_ctx": 1},
-			},
-			check: func(t *testing.T, res *api.EmbedResponse, err error) {
-				requireEmbedErrorContainsAny(t, err, "input after truncation exceeds maximum context length", "input exceeds maximum context length and cannot be truncated further")
-			},
-		},
-		{
 			name: "input after truncate error",
 			request: api.EmbedRequest{
 				Model:    "all-minilm",

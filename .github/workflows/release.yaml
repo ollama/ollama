@@ -145,10 +145,10 @@ jobs:
             cuda-version: '13.4'
           - os: windows
             arch: amd64
-            preset: 'ROCm 7'
-            build-steps: rocm7
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
-            rocm-version: '7.1'
+            preset: 'ROCm 10'
+            build-steps: rocm10
+            install: rocm-wheel-10.0.0-device-all
+            rocm-version: '10.0.0'
           - os: windows
             arch: amd64
             preset: Vulkan
@@ -208,7 +208,7 @@ jobs:
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
             throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
           }
-      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
         id: cache-install
         uses: actions/cache/restore@v4
         with:
@@ -244,16 +244,21 @@ jobs:
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          $venv = "C:\rocm-wheel-10.0.0"
+          $python = Join-Path $venv "Scripts\python.exe"
+          $rocmSDK = Join-Path $venv "Scripts\rocm-sdk.exe"
+          if (-not (Test-Path -LiteralPath (Join-Path $venv "root.txt"))) {
+            python -m venv $venv
+            & $python -m pip install --upgrade pip
+            & $python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel,device-all]==${{ matrix.rocm-version }}"
+            & $rocmSDK init
+            (& $rocmSDK path --root).Trim() | Set-Content -LiteralPath (Join-Path $venv "root.txt") -Encoding ascii
           }
 
-          $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+          $hipPath = (Get-Content -LiteralPath (Join-Path $venv "root.txt") -Raw).Trim()
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$hipPath\lib\llvm\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "HIP_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: matrix.preset == 'Vulkan'
@@ -289,7 +294,7 @@ jobs:
           echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+      - if: ${{ !cancelled() && !startsWith(matrix.preset, 'ROCm ') && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -490,7 +495,7 @@ jobs:
           - arch: amd64
             target: mlx
           - arch: amd64
-            target: llama-server-rocm_v7_2
+            target: llama-server-rocm_v10_0
           - arch: amd64
             target: llama-server-vulkan
           - arch: arm64
@@ -597,7 +602,7 @@ jobs:
               type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v12
               type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v13
               type=registry,ref=ollama/release:cache-amd64-mlx
-              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v10_0
               type=registry,ref=ollama/release:cache-amd64-llama-server-vulkan
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           - os: linux
@@ -615,7 +620,7 @@ jobs:
               OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
               type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
-              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
+              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v10_0
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
