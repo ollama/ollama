@@ -38,7 +38,7 @@ func TestParseNameParts(t *testing.T) {
 				Tag:            "tag",
 				ProtocolScheme: "scheme",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "tag"),
 		},
 		{
 			in: "host/namespace/model:tag",
@@ -58,7 +58,7 @@ func TestParseNameParts(t *testing.T) {
 				Model:     "model",
 				Tag:       "tag",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "tag"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "tag"),
 		},
 		{
 			in: "host/namespace/model",
@@ -76,7 +76,7 @@ func TestParseNameParts(t *testing.T) {
 				Namespace: "namespace",
 				Model:     "model",
 			},
-			wantFilepath: filepath.Join("host:port", "namespace", "model", "latest"),
+			wantFilepath: filepath.Join("host%port", "namespace", "model", "latest"),
 		},
 		{
 			in: "namespace/model",
@@ -265,10 +265,31 @@ func TestFilepathAllocs(t *testing.T) {
 	}
 }
 
+func TestLegacyFilepath(t *testing.T) {
+	n := ParseName("host:port/namespace/model:tag")
+	legacy, ok := n.LegacyFilepath()
+	if !ok {
+		t.Fatal("expected a legacy path for a host that contains a colon")
+	}
+	if legacy != filepath.Join("host:port", "namespace", "model", "tag") {
+		t.Fatalf("LegacyFilepath() = %q", legacy)
+	}
+	if got := n.Filepath(); got != filepath.Join("host%port", "namespace", "model", "tag") {
+		t.Fatalf("Filepath() = %q", got)
+	}
+
+	plain := ParseName("host/namespace/model:tag")
+	if _, ok := plain.LegacyFilepath(); ok {
+		t.Fatal("host without a colon should not have a distinct legacy path")
+	}
+}
+
 func TestParseNameFromFilepath(t *testing.T) {
 	cases := map[string]Name{
 		filepath.Join("host", "namespace", "model", "tag"):      {Host: "host", Namespace: "namespace", Model: "model", Tag: "tag"},
 		filepath.Join("host:port", "namespace", "model", "tag"): {Host: "host:port", Namespace: "namespace", Model: "model", Tag: "tag"},
+		filepath.Join("host%port", "namespace", "model", "tag"): {Host: "host:port", Namespace: "namespace", Model: "model", Tag: "tag"},
+		filepath.Join("a%b%c", "namespace", "model", "tag"):     {Host: "a:b:c", Namespace: "namespace", Model: "model", Tag: "tag"},
 		filepath.Join("namespace", "model", "tag"):              {},
 		filepath.Join("model", "tag"):                           {},
 		"model":                                                 {},

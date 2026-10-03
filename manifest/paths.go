@@ -46,6 +46,16 @@ func PathForName(n model.Name) (string, error) {
 		return "", err
 	}
 
+	// Prefer a pre-encoding manifest (host directory still contains ':') so
+	// pulls and deletes update the file that is already on disk. New names
+	// are written with ':' encoded as '%', which Windows can create.
+	if legacy, ok := n.LegacyFilepath(); ok {
+		legacyPath := filepath.Join(manifests, legacy)
+		if _, err := os.Stat(legacyPath); err == nil {
+			return legacyPath, nil
+		}
+	}
+
 	return filepath.Join(manifests, n.Filepath()), nil
 }
 

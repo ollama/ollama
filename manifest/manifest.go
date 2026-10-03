@@ -144,12 +144,10 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, model.Unqualified(n)
 	}
 
-	manifests, err := Path()
+	p, err := PathForName(n)
 	if err != nil {
 		return nil, err
 	}
-
-	p := filepath.Join(manifests, n.Filepath())
 
 	var m Manifest
 	f, err := os.Open(p)
@@ -176,12 +174,10 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 }
 
 func WriteManifest(name model.Name, config Layer, layers []Layer) error {
-	manifests, err := Path()
+	p, err := PathForName(name)
 	if err != nil {
 		return err
 	}
-
-	p := filepath.Join(manifests, name.Filepath())
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}

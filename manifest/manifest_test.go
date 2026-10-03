@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/types/model"
@@ -147,4 +149,83 @@ func TestManifests(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestColonHostManifestRoundTrip(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", d)
+
+	n := model.ParseName("localhost:3000/library/tmp:latest")
+	if err := WriteManifest(n, Layer{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(n.Filepath(), ":") {
+		t.Fatalf("Filepath %q still contains a colon", n.Filepath())
+	}
+
+	encoded := filepath.Join(d, "manifests", n.Filepath())
+	if _, err := os.Stat(encoded); err != nil {
+		t.Fatalf("encoded manifest %s: %v", encoded, err)
+	}
+
+	if _, err := ParseNamedManifest(n); err != nil {
+		t.Fatalf("ParseNamedManifest: %v", err)
+	}
+
+	ms, err := Manifests(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifestListHas(ms, n) {
+		t.Fatalf("manifest list missing %s", n)
+	}
+}
+
+func TestLegacyColonHostManifestStillOpens(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a directory name containing ':' cannot be created on Windows")
+	}
+
+	d := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", d)
+
+	n := model.ParseName("localhost:3000/library/tmp:latest")
+	legacy, ok := n.LegacyFilepath()
+	if !ok {
+		t.Fatal("expected legacy path")
+	}
+	createManifest(t, d, legacy)
+
+	if _, err := ParseNamedManifest(n); err != nil {
+		t.Fatalf("ParseNamedManifest legacy path: %v", err)
+	}
+
+	// A later write should update the existing colon directory rather than
+	// creating a second encoded copy that list would also see.
+	if err := WriteManifest(n, Layer{MediaType: "application/vnd.ollama.image.json"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(d, "manifests", n.Filepath())); !os.IsNotExist(err) {
+		t.Fatalf("write created a second encoded manifest: %v", err)
+	}
+
+	ms, err := Manifests(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 1 {
+		t.Fatalf("got %d manifests, want 1", len(ms))
+	}
+	if !manifestListHas(ms, n) {
+		t.Fatalf("manifest list missing %s", n)
+	}
+}
+
+func manifestListHas(ms map[model.Name]*Manifest, n model.Name) bool {
+	for got := range ms {
+		if got.EqualFold(n) {
+			return true
+		}
+	}
+	return false
 }
