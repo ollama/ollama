@@ -234,7 +234,7 @@ func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 			n := model.ParseNameFromFilepath(rel)
 			if !n.IsValid() {
 				if !continueOnError {
-					return nil, fmt.Errorf("%s %w", rel, err)
+					return nil, fmt.Errorf("%s: %w", rel, model.ErrUnqualifiedName)
 				}
 				slog.Warn("bad manifest name", "path", rel)
 				continue
