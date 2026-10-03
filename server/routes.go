@@ -242,15 +242,20 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 		}
 		name = existingName.String()
 	}
-	selectedName := model.ParseName(name)
-
 	model, err := GetModelForRunner(name, selectedRunner)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	return s.scheduleRunnerForModel(ctx, model, caps, requestOpts, keepAlive, shift)
+}
+
+// scheduleRunnerForModel retains the request's resolved model, including its selected
+// manifest-list child, without repeating model lookup and metadata loading.
+func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
+	selectedName := model.ParseName(m.Name)
 	if !manifest.IsDigestReferenceName(selectedName) {
-		runner := model.Runner
-		if runner == "" && model.isGGUF() {
+		runner := m.Runner
+		if runner == "" && m.isGGUF() {
 			runner = manifest.RunnerGGML
 		}
 		if runner == manifest.RunnerGGML {
@@ -258,23 +263,23 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 		}
 	}
 
-	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(m.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
-	if err := model.CheckCapabilities(caps...); err != nil {
-		return nil, nil, nil, fmt.Errorf("%s %w", model.Name, err)
+	if err := m.CheckCapabilities(caps...); err != nil {
+		return nil, nil, nil, fmt.Errorf("%s %w", m.Name, err)
 	}
 
-	numCtxAuto := usesAutomaticNumCtx(model, requestOpts)
-	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(model, requestOpts)
-	numBatchAuto := usesAutomaticNumBatch(model, requestOpts) && !embeddingBatchDefault
-	opts, err := s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, embeddingBatchDefault)
+	numCtxAuto := usesAutomaticNumCtx(m, requestOpts)
+	embeddingBatchDefault := shouldApplyEmbeddingBatchDefault(m, requestOpts)
+	numBatchAuto := usesAutomaticNumBatch(m, requestOpts) && !embeddingBatchDefault
+	opts, err := s.modelOptionsWithEmbeddingBatchDefault(m, requestOpts, embeddingBatchDefault)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.getRunner(ctx, model, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
+	runnerCh, errCh := s.sched.getRunner(ctx, m, opts, keepAlive, numCtxAuto, numBatchAuto, shift)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -282,7 +287,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 		return nil, nil, nil, err
 	}
 
-	return runner.llama, model, &opts, nil
+	return runner.llama, m, &opts, nil
 }
 
 func signinURL() (string, error) {
@@ -958,7 +963,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	if len(req.Images) > 0 {
 		caps = append(caps, model.CapabilityVision)
 	}
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), "", caps, nil, req.KeepAlive, nil)
+	r, _, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
