@@ -43,6 +43,7 @@ type Request struct {
 
 type Runner struct {
 	Model         model.Model
+	Extractor     model.Extractor
 	weights       *mlx.Scope
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
@@ -77,6 +78,32 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		if e != nil {
 			err = e
 			return nil
+		}
+
+		extractor, e := model.NewExtractor(root)
+		if e != nil {
+			err = e
+			return nil
+		}
+		if extractor != nil {
+			if root.Draft != nil {
+				err = errors.New("extraction models do not support draft models")
+				return nil
+			}
+			tensors, e := loadTensorsFromManifest(root)
+			if e != nil {
+				err = e
+				return nil
+			}
+			if mlx.MetalIsAvailable() {
+				mlx.Eval(slices.Collect(maps.Values(tensors))...)
+			}
+			if err = extractor.LoadWeights(tensors); err != nil {
+				return nil
+			}
+			r.Extractor = extractor
+			r.contextLength = extractor.MaxContextLength()
+			return mlx.Collect(extractor)
 		}
 
 		m, e := model.New(root)

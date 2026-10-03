@@ -87,6 +87,7 @@ func Execute(args []string) error {
 	)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/extract", runner.extractHandler)
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewEncoder(w).Encode(statusResponse{
 			Status:        0,
@@ -118,6 +119,10 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
+		if runner.Extractor != nil {
+			http.Error(w, "extraction models do not support completion", http.StatusBadRequest)
+			return
+		}
 		request := Request{Responses: make(chan CompletionResponse)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.CompletionRequest); err != nil {
@@ -189,6 +194,10 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/tokenize", func(w http.ResponseWriter, r *http.Request) {
+		if runner.Tokenizer == nil {
+			http.Error(w, "tokenization is not available for this model", http.StatusBadRequest)
+			return
+		}
 		var b bytes.Buffer
 		if _, err := io.Copy(&b, r.Body); err != nil {
 			slog.Error("Failed to read request body", "error", err)

@@ -46,6 +46,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityAudio      = errors.New("audio")
 	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityExtraction = errors.New("extraction")
 	errCapabilityThinking   = errors.New("thinking")
 	errCapabilityImage      = errors.New("image generation")
 	errInsecureProtocol     = errors.New("insecure protocol http")
@@ -549,6 +550,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityAudio:      errCapabilityAudio,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
+		model.CapabilityExtraction: errCapabilityExtraction,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
 		model.CapabilityDecision:   errors.New("decision"),
