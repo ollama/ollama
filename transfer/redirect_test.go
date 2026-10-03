@@ -368,3 +368,95 @@ func TestValidateRedirectScheme(t *testing.T) {
 		})
 	}
 }
+
+// withProxy points checkedClient at proxy for the duration of the test.
+func withProxy(t *testing.T, proxy *url.URL) {
+	t.Helper()
+	orig := proxyFromEnvironment
+	proxyFromEnvironment = func(*http.Request) (*url.URL, error) { return proxy, nil }
+	t.Cleanup(func() { proxyFromEnvironment = orig })
+}
+
+func TestRedirectClientUsesProxy(t *testing.T) {
+	// Blob downloads must go through the configured proxy (issue #15708):
+	// behind a corporate proxy the CDN host is unreachable directly. The
+	// proxy itself sits on a private address, which must not be refused.
+	var gotHost atomic.Value
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost.Store(r.URL.Host)
+		fmt.Fprint(w, "blob")
+	}))
+	defer proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	withProxy(t, proxyURL)
+
+	client := NewRedirectClient("https://registry.example", false)
+	// .invalid never resolves, so success proves the request went via the proxy.
+	resp, err := client.Get("http://blobs.example.invalid/sha256-abc")
+	if err != nil {
+		t.Fatalf("download through proxy failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := gotHost.Load(); got != "blobs.example.invalid" {
+		t.Errorf("proxy saw host %v, want blobs.example.invalid", got)
+	}
+}
+
+func TestCheckedClientProxyExemptionIsPortScoped(t *testing.T) {
+	// Only the proxy's own host:port skips the dial check; other ports on
+	// the same private host stay blocked.
+	proxyURL, _ := url.Parse("http://127.0.0.1:3128")
+	withProxy(t, proxyURL)
+
+	tr := checkedClient("", false).Transport.(*http.Transport)
+	req, _ := http.NewRequest(http.MethodGet, "https://blobs.example.invalid/x", nil)
+	if _, err := tr.Proxy(req); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := tr.DialContext(t.Context(), "tcp", "127.0.0.1:3128")
+	if strings.Contains(fmt.Sprint(err), "not allowed") {
+		t.Errorf("proxy address was validated at dial time: %v", err)
+	}
+	_, err = tr.DialContext(t.Context(), "tcp", "127.0.0.1:6379")
+	if !strings.Contains(fmt.Sprint(err), "not allowed") {
+		t.Errorf("non-proxy port on proxy host was not rejected: %v", err)
+	}
+}
+
+func TestProxyAddr(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://proxy.corp:8080":   "proxy.corp:8080",
+		"http://Proxy.Corp":        "proxy.corp:80",
+		"https://proxy.corp":       "proxy.corp:443",
+		"socks5://10.0.0.1":        "10.0.0.1:1080",
+		"http://[fd00::1]:3128":    "[fd00::1]:3128",
+		"http://user:pw@10.0.0.1/": "10.0.0.1:80",
+	} {
+		u, _ := url.Parse(in)
+		if got := proxyAddr(u); got != want {
+			t.Errorf("proxyAddr(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestValidateRedirectTargetBehindProxy(t *testing.T) {
+	// Behind a proxy, local DNS may not resolve public hosts (issue #15708);
+	// the proxy resolves them. Names that resolve locally are still checked.
+	unresolvable, _ := url.Parse("https://blobs.example.invalid/x")
+	private, _ := url.Parse("https://localhost/x")
+
+	if err := ValidateRedirectTarget(t.Context(), unresolvable, "https://registry.example", false); err == nil {
+		t.Error("unresolvable target allowed without a proxy")
+	}
+
+	proxyURL, _ := url.Parse("http://127.0.0.1:3128")
+	withProxy(t, proxyURL)
+
+	if err := ValidateRedirectTarget(t.Context(), unresolvable, "https://registry.example", false); err != nil {
+		t.Errorf("unresolvable target rejected behind a proxy: %v", err)
+	}
+	if err := ValidateRedirectTarget(t.Context(), private, "https://registry.example", false); err == nil {
+		t.Error("locally private target allowed behind a proxy")
+	}
+}
