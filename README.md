@@ -293,6 +293,7 @@ console.log(response.message.content);
 
 - [aichat](https://github.com/sigoden/aichat) - All-in-one LLM CLI with Shell Assistant, RAG, and AI tools
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
+- [Termalime](https://github.com/daveymason/Termalime) - Terminal emulator with built-in Ollama copilot, interactive code blocks, and preflight safety
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
 - [tlm](https://github.com/yusufcanb/tlm) - Local shell copilot
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
