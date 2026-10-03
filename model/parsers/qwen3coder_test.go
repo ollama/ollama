@@ -558,6 +558,129 @@ Hello! 你好! 🌟 مرحبا
 	}
 }
 
+// A parameter's value is character data, not markup. Rewriting `<tag=value>`
+// everywhere in the block reached into values that only looked like tags, and
+// changed them without saying so -- the first case here is a shell command that
+// would have run altered.
+func TestQwenToolCallValuesAreNotRewritten(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{
+			name:  "comparison followed by an assignment",
+			value: `node -e "if (a<b=c>d) console.log(1)"`,
+		},
+		{
+			name:  "text that looks like a tag",
+			value: "const el = <div=foo>;",
+		},
+	}
+
+	for _, tc := range cases {
+		raw := "<function=editor>\n<parameter=new_text>\n" + tc.value + "\n</parameter>\n</function>"
+		gotToolCall, err := parseToolCall(qwenEventRawToolCall{raw: raw}, []api.Tool{})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		got, _ := gotToolCall.Function.Arguments.Get("new_text")
+		if got != tc.value {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.value)
+		}
+	}
+}
+
+// A model under long context stops emitting closing tags. All three shapes here
+// were taken from one agent session (2026-08-21), which produced both
+// `element <parameter> closed by </function>` and `unexpected EOF` from the same
+// model; the third is the same defect between two parameters. None of them is
+// ambiguous, because parameters do not nest.
+func TestQwenToolCallRecoversMissingClosingTags(t *testing.T) {
+	cases := []struct {
+		name         string
+		rawToolCall  string
+		wantToolCall api.ToolCall
+	}{
+		{
+			name: "parameter not closed before the next parameter",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html
+<parameter=old_text>
+this.sX()
+</parameter>
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "editor",
+					Arguments: testArgs(map[string]any{
+						"path":     "manic_miner.html",
+						"old_text": "this.sX()",
+					}),
+				},
+			},
+		},
+		{
+			name: "parameter closed by the function's closing tag",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html
+</function>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "editor",
+					Arguments: testArgs(map[string]any{"path": "manic_miner.html"}),
+				},
+			},
+		},
+		{
+			name: "nothing closed at all",
+			rawToolCall: `<function=editor>
+<parameter=path>
+manic_miner.html`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "editor",
+					Arguments: testArgs(map[string]any{"path": "manic_miner.html"}),
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		gotToolCall, err := parseToolCall(qwenEventRawToolCall{raw: tc.rawToolCall}, []api.Tool{})
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if !toolCallEqual(gotToolCall, tc.wantToolCall) {
+			t.Errorf("%s: got tool call %#v, want %#v", tc.name, gotToolCall, tc.wantToolCall)
+		}
+	}
+}
+
+// Without a `<function>` header there is no name to dispatch, so the call cannot
+// be recovered -- but failing the request is worse than saying nothing, because
+// the turn may already have run commands and there is no safe automatic retry
+// (mann1x/cline#54). The block goes back as content instead.
+func TestQwenUnrecoverableToolCallBecomesContent(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	raw := "\n<parameter=command>\nls\n</parameter>\n</function>\n"
+	content, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
+	if err != nil {
+		t.Fatalf("expected the malformed call to be tolerated, got error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("expected no tool calls, got %d", len(calls))
+	}
+	if want := toolOpenTag + raw + toolCloseTag; content != want {
+		t.Errorf("got content %q, want %q", content, want)
+	}
+}
+
 func TestTrailingWhitespaceLenUnicode(t *testing.T) {
 	cases := []struct {
 		name  string
