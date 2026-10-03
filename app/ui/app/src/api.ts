@@ -15,6 +15,10 @@ import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
 import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
+import type {
+  ClaudeDesktopStatus,
+  CodexDesktopModelsSettingsResult,
+} from "./types/webview";
 
 // Extend Model class with utility methods
 declare module "@/gotypes" {
@@ -50,6 +54,46 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
   }
   return response.json();
 }
+
+async function getDesktopModelSettings<T>(
+  integration: string,
+  catalog: boolean,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/integrations/${integration}/models?catalog=${catalog}`,
+    { signal },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch ${integration} model settings: ${response.status}`,
+    );
+  }
+  return response.json();
+}
+
+export function getClaudeDesktopModelsSettings(
+  catalog: boolean,
+  signal?: AbortSignal,
+) {
+  return getDesktopModelSettings<ClaudeDesktopStatus>(
+    "claude-desktop",
+    catalog,
+    signal,
+  );
+}
+
+export function getCodexDesktopModelsSettings(
+  catalog: boolean,
+  signal?: AbortSignal,
+) {
+  return getDesktopModelSettings<CodexDesktopModelsSettingsResult>(
+    "chatgpt",
+    catalog,
+    signal,
+  );
+}
+
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow

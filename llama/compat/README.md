@@ -25,17 +25,10 @@ intentionally skipped so a developer can iterate on a local llama.cpp tree.
   small tensor repacking primitives.
 - `001-llama-cpp-hooks.patch` - small additive call-site edits in llama.cpp files.
   It currently touches `src/llama-model-loader.cpp` and `tools/mtmd/clip.cpp`.
-- `002-llama-cpp-ui-empty-assets.patch` - lets the llama.cpp UI embed helper
-  generate an empty asset table when no UI assets are present.
 - `compat.cmake` - CMake glue that invokes the shared
   `cmake/apply-git-patches.cmake` idempotent applier (used by
   `llama/server/CMakeLists.txt`) for every `*.patch` under
-  this directory by numeric filename order — the hooks patch plus each
-  `models/` architecture patch.
-- `models/` - the sibling **new-architecture** layer: implementations of
-  architectures llama.cpp doesn't support yet, each added via a small
-  registration patch. (Those files *add* archs; the files above *translate*
-  existing GGUFs onto archs llama.cpp already has.)
+  this directory by numeric filename order.
 
 The compatibility source files stay in this directory and are linked into the
 fetched llama.cpp targets. The patch file only adds call sites.

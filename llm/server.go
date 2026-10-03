@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -13,7 +12,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -78,34 +77,26 @@ type LlamaServer interface {
 }
 
 type LlamaServerConfig struct {
-	DisableJinja   bool
-	ContextShift   bool
-	EnableMTP      bool
-	DraftModelPath string
+	DisableJinja         bool
+	ContextShift         bool
+	EnableMTP            bool
+	ManifestDigest       string
+	DraftModelPath       string
+	DraftModelShardPaths []string
 }
 
-// LoadModel will load a model from disk. The model must be in the GGML format.
+// LoadModel loads GGUF model metadata from disk.
 //
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
-	if _, err := os.Stat(model); err != nil {
-		return nil, err
-	}
-
-	f, err := os.Open(model)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return ggml.Decode(f, maxArraySize)
+func LoadModel(model string, maxArraySize int, shards ...string) (*gguf.Model, error) {
+	return gguf.ReadModel(model, maxArraySize, shards...)
 }
 
 // NewLlamaServer creates a new llama-server runner for the given model.
-// All GGML models are served via the upstream llama-server subprocess.
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int, config LlamaServerConfig) (LlamaServer, error) {
+// All GGUF models are served via the upstream llama-server subprocess.
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *gguf.Model, adapters, projectors []string, opts api.Options, numParallel int, config LlamaServerConfig) (LlamaServer, error) {
 	slog.Info("using llama-server for model", "model", modelPath)
 
 	// Verify the requested context size is <= the model training size
@@ -214,6 +205,10 @@ type CompletionRequest struct {
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
+	// ThinkingClose holds the strings any of which ends the thinking the
+	// response begins with, which Format leaves free; none when the response
+	// starts in content.
+	ThinkingClose []string
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
@@ -235,14 +230,15 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Message            api.Message   `json:"message"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
-	Logprobs           []Logprob     `json:"logprobs,omitempty"`
+	Message               api.Message   `json:"message"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount *int          `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
+	Logprobs              []Logprob     `json:"logprobs,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -278,13 +274,14 @@ type Logprob struct {
 }
 
 type CompletionResponse struct {
-	Content            string        `json:"content"`
-	DoneReason         DoneReason    `json:"done_reason"`
-	Done               bool          `json:"done"`
-	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
-	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	Content               string        `json:"content"`
+	DoneReason            DoneReason    `json:"done_reason"`
+	Done                  bool          `json:"done"`
+	PromptEvalCount       int           `json:"prompt_eval_count"`
+	PromptEvalCachedCount *int          `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
+	EvalCount             int           `json:"eval_count"`
+	EvalDuration          time.Duration `json:"eval_duration"`
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -269,31 +268,6 @@ func SimilarDeviceMemory(a, b uint64) bool {
 		tolerance = 512 * 1024 * 1024
 	}
 	return maxMemory-min(a, b) <= tolerance
-}
-
-// For a SameBackendDevice, return true if b is better than a
-// e.g. newer GPU library version
-func (a DeviceInfo) IsBetter(b DeviceInfo) bool {
-	aLib := a.LibraryPath[len(a.LibraryPath)-1]
-	bLib := b.LibraryPath[len(b.LibraryPath)-1]
-	if aLib == bLib {
-		return false
-	}
-	aLibSplit := strings.SplitN(aLib, "_", 2)
-	bLibSplit := strings.SplitN(bLib, "_", 2)
-	if len(aLibSplit) < 2 || len(bLibSplit) < 2 {
-		return false
-	}
-	if aLibSplit[0] != bLibSplit[0] {
-		slog.Debug("unexpected libraries", "a", aLib, "b", bLib)
-		return false
-	}
-	if aLibSplit[1] == bLibSplit[1] {
-		return false
-	}
-	cmp := []string{aLibSplit[1], bLibSplit[1]}
-	sort.Sort(sort.Reverse(sort.StringSlice(cmp)))
-	return cmp[0] == bLibSplit[1]
 }
 
 // FlashAttentionSupported reports whether flash attention can be used across

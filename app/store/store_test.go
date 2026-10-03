@@ -3,8 +3,13 @@
 package store
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/internal/onboarding"
 )
 
 func TestStore(t *testing.T) {
@@ -253,6 +258,127 @@ func TestOnboardingVersionRoundTrip(t *testing.T) {
 	}
 }
 
+func setupPairedOnboarding(t *testing.T) *Store {
+	t.Helper()
+	s, cleanup := setupTestStore(t)
+	t.Cleanup(cleanup)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	previous := defaultDBPath
+	defaultDBPath = onboarding.AppDatabasePath()
+	t.Cleanup(func() { defaultDBPath = previous })
+	s.DBPath = ""
+	return s
+}
+
+func TestSettingsSurviveInvalidOnboardingMarker(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	t.Cleanup(cleanup)
+	marker := filepath.Join(filepath.Dir(s.DBPath), "onboarding-v1.completed")
+	if err := os.MkdirAll(marker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSettings(Settings{SelectedModel: "saved-model"}); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := s.Settings()
+	if err != nil || settings.SelectedModel != "saved-model" || settings.OnboardingVersion != 0 {
+		t.Fatalf("invalid marker must preserve readable database settings: %+v, %v", settings, err)
+	}
+}
+
+func TestAppCompletionReachesCLI(t *testing.T) {
+	for _, source := range []string{"app", "existing database"} {
+		t.Run(source, func(t *testing.T) {
+			s := setupPairedOnboarding(t)
+			if err := s.ensureDB(); err != nil {
+				t.Fatal(err)
+			}
+			if needed, err := config.NeedsWelcome(); err != nil || !needed {
+				t.Fatalf("unfinished app skipped CLI onboarding: %v, %v", needed, err)
+			}
+			settings := Settings{OnboardingVersion: CurrentOnboardingVersion}
+			save := s.SetSettings
+			if source == "existing database" {
+				save = s.db.setSettings // Older app completed without publishing a marker.
+			}
+			if err := save(settings); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if needed, err := config.NeedsWelcome(); err != nil || needed {
+				t.Fatalf("app completion did not reach CLI: %v, %v", needed, err)
+			}
+		})
+	}
+}
+
+func TestLegacyAppCompletionReachesCLI(t *testing.T) {
+	for _, schema := range []int{1, 16, 17, 0} {
+		t.Run(fmt.Sprint(schema), func(t *testing.T) {
+			s := setupPairedOnboarding(t)
+			if err := s.ensureDB(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.conn.Exec("ALTER TABLE settings DROP COLUMN onboarding_version"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.db.conn.Exec("UPDATE settings SET schema_version = ?", schema); err != nil {
+				t.Fatal(err)
+			}
+			wantWelcome := schema < 1 || schema > 16
+			if needed, err := config.NeedsWelcome(); err != nil || needed != wantWelcome {
+				t.Fatalf("welcome needed=%v, err=%v; want %v", needed, err, wantWelcome)
+			}
+			var unchanged int
+			if err := s.db.conn.QueryRow("SELECT schema_version FROM settings WHERE id = 1").Scan(&unchanged); err != nil || unchanged != schema {
+				t.Fatalf("CLI changed the app schema: %d, %v", unchanged, err)
+			}
+			var columns int
+			if err := s.db.conn.QueryRow("SELECT count(*) FROM pragma_table_info('settings') WHERE name = 'onboarding_version'").Scan(&columns); err != nil || columns != 0 {
+				t.Fatalf("CLI migrated the app database: columns=%d, err=%v", columns, err)
+			}
+		})
+	}
+}
+
+func TestCLICompletionReachesApp(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		s := setupPairedOnboarding(t)
+		stale := Settings{SelectedModel: "saved-model"}
+		if installed {
+			if err := s.SetSettings(stale); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := config.CompleteWelcome(); err != nil {
+			t.Fatal(err)
+		}
+		if !installed {
+			if _, err := os.Stat(defaultDBPath); !os.IsNotExist(err) {
+				t.Fatal("CLI completion must not create the app database")
+			}
+		}
+		settings, err := s.Settings()
+		if err != nil || settings.OnboardingVersion != CurrentOnboardingVersion {
+			t.Fatalf("app did not import CLI completion: %+v, %v", settings, err)
+		}
+		if installed && settings.SelectedModel != stale.SelectedModel {
+			t.Fatal("completion changed app settings")
+		}
+		if err := s.SetSettings(stale); err != nil {
+			t.Fatal(err)
+		}
+		if saved, err := s.Settings(); err != nil || saved.OnboardingVersion != CurrentOnboardingVersion {
+			t.Fatalf("stale settings reset completion: %+v, %v", saved, err)
+		}
+	}
+}
+
 func TestClaudeDesktopUsedRoundTrip(t *testing.T) {
 	s, cleanup := setupTestStore(t)
 	defer cleanup()
@@ -276,6 +402,61 @@ func TestClaudeDesktopUsedRoundTrip(t *testing.T) {
 	}
 	if !loaded.ClaudeDesktopUsed {
 		t.Fatal("expected Claude Desktop history to persist")
+	}
+}
+
+func TestCodexDesktopUsedPreservedBySettings(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Browser = true
+	settings.ClaudeDesktopUsed = true
+	settings.CodexDesktopUsed = true
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CodexDesktopUsed {
+		t.Fatal("ordinary settings save acknowledged the intro")
+	}
+	settings.CodexDesktopUsed = false
+	if saved != settings {
+		t.Fatal("ordinary settings save lost unrelated settings")
+	}
+
+	for range 2 {
+		if err := s.MarkCodexDesktopUsed(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := settings
+	want.CodexDesktopUsed = true
+	if saved != want {
+		t.Fatal("acknowledgment did not preserve unrelated settings")
+	}
+
+	settings.Browser = false
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	saved, err = s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.Browser = false
+	if saved != want {
+		t.Fatal("stale settings save lost acknowledgment or the requested setting")
 	}
 }
 

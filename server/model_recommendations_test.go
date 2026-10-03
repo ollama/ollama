@@ -42,6 +42,27 @@ func TestModelRecommendationsDefaultOrder(t *testing.T) {
 	}
 }
 
+func TestCloneModelRecommendationsCopiesThinkingMetadata(t *testing.T) {
+	original := []api.ModelRecommendation{{
+		Model: "thinking-model",
+		Thinking: &api.ModelRecommendationThinking{
+			Values:  []any{false, true, "max"},
+			Default: true,
+		},
+	}}
+
+	cloned := cloneModelRecommendations(original)
+	cloned[0].Thinking.Values[0] = "changed"
+	cloned[0].Thinking.Default = false
+
+	if got := original[0].Thinking.Values[0]; got != false {
+		t.Fatalf("original thinking value = %#v, want false after clone mutation", got)
+	}
+	if got := original[0].Thinking.Default; got != true {
+		t.Fatalf("original thinking default = %#v, want true after clone mutation", got)
+	}
+}
+
 func TestModelRecommendationsCacheRefreshAppliesServerSideChanges(t *testing.T) {
 	setupModelRecommendationsTestEnv(t, "")
 

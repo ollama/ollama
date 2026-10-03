@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
@@ -257,6 +258,7 @@ type ModelItem struct {
 	RequiredPlan    string
 	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
+	Thinking        *api.ModelRecommendationThinking
 	Size            int64
 	Details         api.ModelDetails
 }
@@ -736,7 +738,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		}
 	}
 
-	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, []string{target}), req)
+	return launchAfterConfiguration(name, runner, target, c.resolveRunModels(ctx, name, []string{target}), req)
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -769,12 +771,12 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	var launchModels []LaunchModel
 	liveConfigMatches := slices.Equal(editor.Models(), models)
 	if needsConfigure || req.ModelOverride != "" || !savedMatchesModels(saved, models) || !liveConfigMatches {
-		launchModels = c.modelInventory().Resolve(ctx, models)
+		launchModels = c.resolveRunModels(ctx, name, models)
 		if err := prepareEditorIntegration(name, editor, launchModels); err != nil {
 			return err
 		}
 	} else {
-		launchModels = c.resolveRunModels(ctx, models)
+		launchModels = c.resolveRunModels(ctx, name, models)
 	}
 
 	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
@@ -801,12 +803,17 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	liveConfigMissing := current == ""
 	liveConfigDrifted := current != "" && target != current
 	configured := false
+	var runModels []LaunchModel
 	if needsConfigure || req.ModelOverride != "" || liveConfigMissing || liveConfigDrifted || !savedMatchesModels(saved, []string{target}) {
 		configureModels, err := c.managedSingleConfigureModels(ctx, managed, target)
 		if err != nil {
 			return err
 		}
-		if err := prepareManagedSingleIntegration(name, managed, target, c.modelInventory().Resolve(ctx, configureModels)); err != nil {
+		resolvedModels := c.resolveRunModels(ctx, name, configureModels)
+		if primary, ok := findLaunchModel(resolvedModels, target); ok {
+			runModels = []LaunchModel{primary}
+		}
+		if err := prepareManagedSingleIntegration(name, managed, target, resolvedModels); err != nil {
 			return err
 		}
 		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
@@ -836,7 +843,10 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
+	if len(runModels) == 0 {
+		runModels = c.resolveRunModels(ctx, name, []string{target})
+	}
+	return runIntegration(runner, target, runModels, req.ExtraArgs)
 }
 
 func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Context, name string, runner Runner, autodiscovery ManagedAutodiscoveryIntegration, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -878,7 +888,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		return nil
 	}
 
-	return runIntegration(runner, target, c.resolveRunModels(ctx, []string{target}), req.ExtraArgs)
+	return runIntegration(runner, target, c.resolveRunModels(ctx, name, []string{target}), req.ExtraArgs)
 }
 
 func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {
@@ -1224,6 +1234,7 @@ func (c *launcherClient) requestRecommendations(ctx context.Context) ([]ModelIte
 			VRAMBytes:       rec.VRAMBytes,
 			MaxOutputTokens: rec.MaxOutputTokens,
 			RequiredPlan:    strings.TrimSpace(rec.RequiredPlan),
+			Thinking:        rec.Thinking.Clone(),
 			Details: api.ModelDetails{
 				ContextLength: rec.ContextLength,
 			},
@@ -1442,8 +1453,37 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 	return false
 }
 
-func (c *launcherClient) resolveRunModels(ctx context.Context, models []string) []LaunchModel {
-	return c.modelInventory().Resolve(ctx, models)
+func (c *launcherClient) resolveRunModels(ctx context.Context, integration string, models []string) []LaunchModel {
+	recommendations := c.recommendations(ctx)
+	resolved := c.modelInventory().Resolve(ctx, models)
+	byName := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
+	for _, recommendation := range recommendations {
+		if recommendation.Thinking != nil {
+			byName[launchModelRecommendationKey(recommendation.Name)] = recommendation.Thinking
+		}
+	}
+	for i := range resolved {
+		if thinking := byName[launchModelRecommendationKey(resolved[i].Name)]; thinking != nil {
+			resolved[i].Thinking = thinking.Clone()
+		}
+	}
+	if integration != "codex" && integration != chatGPTIntegrationName && integration != codexAppIntegrationName {
+		return resolved
+	}
+	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for i := range resolved {
+		if showCtx.Err() == nil {
+			if show, err := c.apiClient.Show(showCtx, &api.ShowRequest{Model: resolved[i].Name}); err == nil && show.Thinking.Valid() {
+				resolved[i].Thinking = show.Thinking.Clone()
+			}
+		}
+	}
+	return resolved
+}
+
+func launchModelRecommendationKey(name string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), ":latest"))
 }
 
 func runIntegration(runner Runner, modelName string, models []LaunchModel, args []string) error {

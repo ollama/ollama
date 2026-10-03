@@ -223,6 +223,7 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 		})
 
 		bindClaudeDesktop(wv)
+		bindCodexDesktop(wv)
 
 		wv.Bind("close", func() {
 			hideWindow(wv.Window())
@@ -234,6 +235,13 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 				if enabled {
 					wv.SetSize(onboardingWindowWidth, onboardingWindowHeight, webview.HintFixed)
 					setOnboardingWindowStyle(wv.Window(), true)
+					return
+				}
+
+				if runtime.GOOS == "darwin" {
+					// Keep the current frame through the handoff. SetSize also
+					// recenters the macOS window and would jump before Apps paints.
+					setOnboardingWindowStyle(wv.Window(), false)
 					return
 				}
 

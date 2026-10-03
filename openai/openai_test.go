@@ -3,6 +3,8 @@ package openai
 import (
 	"encoding/base64"
 	"encoding/json"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +31,10 @@ const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
+
+func testIntPtr(v int) *int {
+	return &v
+}
 
 func TestFromChatRequest_Basic(t *testing.T) {
 	req := ChatCompletionRequest{
@@ -180,8 +186,9 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{
-			PromptEvalCount: 10,
-			EvalCount:       20,
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             20,
 		},
 	}
 
@@ -190,6 +197,9 @@ func TestToUsage(t *testing.T) {
 	if usage.PromptTokens != 10 {
 		t.Errorf("expected PromptTokens 10, got %d", usage.PromptTokens)
 	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 {
+		t.Errorf("expected CachedTokens 4, got %#v", usage.PromptTokensDetails)
+	}
 
 	if usage.CompletionTokens != 20 {
 		t.Errorf("expected CompletionTokens 20, got %d", usage.CompletionTokens)
@@ -197,6 +207,68 @@ func TestToUsage(t *testing.T) {
 
 	if usage.TotalTokens != 30 {
 		t.Errorf("expected TotalTokens 30, got %d", usage.TotalTokens)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":4}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToUsageOmitsUnreportedCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 10, EvalCount: 2}})
+	if usage.PromptTokensDetails != nil {
+		t.Fatalf("expected no cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["prompt_tokens_details"]; ok {
+		t.Fatalf("unexpected cache details in %s", data)
+	}
+}
+
+func TestToUsageIncludesZeroCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: testIntPtr(0),
+		EvalCount:             2,
+	}})
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 0 {
+		t.Fatalf("expected zero cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":0}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToCompletionUsageIncludesCachedTokens(t *testing.T) {
+	completion := ToCompletion("completion-id", api.GenerateResponse{
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             2,
+		},
+	})
+	if completion.Usage.PromptTokens != 10 || completion.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected usage: %#v", completion.Usage)
+	}
+	if details := completion.Usage.PromptTokensDetails; details == nil || details.CachedTokens != 4 {
+		t.Fatalf("expected 4 cached tokens, got %#v", details)
 	}
 }
 
@@ -1048,5 +1120,83 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
 			}
 		})
+	}
+}
+
+func TestFromChatRequest_KeepAlive(t *testing.T) {
+	// keep_alive is how an OpenAI-API client releases a model; 0 unloads
+	// immediately and a negative value pins it. Both arrive as JSON numbers.
+	for _, tt := range []struct {
+		name string
+		body string
+		want *api.Duration
+	}{
+		{"absent", `{"model":"m","messages":[]}`, nil},
+		{"unload", `{"model":"m","messages":[],"keep_alive":0}`, &api.Duration{Duration: 0}},
+		{"forever", `{"model":"m","messages":[],"keep_alive":-1}`, &api.Duration{Duration: time.Duration(math.MaxInt64)}},
+		{"seconds", `{"model":"m","messages":[],"keep_alive":30}`, &api.Duration{Duration: 30 * time.Second}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.body), &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch {
+			case tt.want == nil && got.KeepAlive != nil:
+				t.Fatalf("expected no KeepAlive, got %v", got.KeepAlive)
+			case tt.want != nil && got.KeepAlive == nil:
+				t.Fatal("expected KeepAlive to be carried through, got nil")
+			case tt.want != nil && got.KeepAlive.Duration != tt.want.Duration:
+				t.Errorf("KeepAlive = %v, want %v", got.KeepAlive.Duration, tt.want.Duration)
+			}
+		})
+	}
+}
+
+func TestToTimings(t *testing.T) {
+	if got := ToTimings(api.Metrics{}); got != nil {
+		t.Fatalf("ToTimings(empty) = %+v, want nil", got)
+	}
+
+	got := ToTimings(api.Metrics{
+		PromptEvalCount:    20,
+		PromptEvalDuration: 2 * time.Second,
+		EvalCount:          10,
+		EvalDuration:       time.Second,
+	})
+	if got == nil {
+		t.Fatal("ToTimings(populated) = nil")
+	}
+	if got.PromptN != 20 || got.PromptMS != 2000 || got.PromptPerSecond != 10 {
+		t.Errorf("unexpected prompt timings: %+v", got)
+	}
+	if got.PredictedN != 10 || got.PredictedMS != 1000 || got.PredictedPerSecond != 10 {
+		t.Errorf("unexpected generation timings: %+v", got)
+	}
+}
+
+func TestNonStreamingResponsesOmitTimings(t *testing.T) {
+	chat, err := json.Marshal(ToChatCompletion("id", api.ChatResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(chat), `"timings"`) {
+		t.Errorf("chat completion unexpectedly contains timings: %s", chat)
+	}
+
+	completion, err := json.Marshal(ToCompletion("id", api.GenerateResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(completion), `"timings"`) {
+		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }

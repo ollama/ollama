@@ -32,10 +32,13 @@ type Progress struct {
 	stopOnce sync.Once
 	// done is closed to tell the render loop to exit.
 	done chan struct{}
+	// loopDone is closed by the render loop when it exits; stop waits on it so
+	// no in-flight render can race the writes in Stop and StopAndClear.
+	loopDone chan struct{}
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{})}
+	p := &Progress{w: bufio.NewWriter(w), done: make(chan struct{}), loopDone: make(chan struct{})}
 	go p.start()
 	return p
 }
@@ -48,6 +51,9 @@ func (p *Progress) stop() (bool, int) {
 		close(p.done)
 		stopped = true
 	})
+
+	// Wait for the render loop to exit so no render can race the writes below.
+	<-p.loopDone
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -74,12 +80,12 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
+	stopped, pos := p.stop()
 	defer p.w.Flush()
 
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	stopped, pos := p.stop()
 	if stopped {
 		// clear all progress lines
 		for i := range pos {
@@ -144,6 +150,7 @@ func (p *Progress) renderLocked() {
 func (p *Progress) start() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	defer close(p.loopDone)
 
 	for {
 		select {

@@ -169,14 +169,28 @@ if(OLLAMA_MLX_BACKENDS)
         list(APPEND _mlx_source_targets ollama-mlx-source)
     endif()
 
+    # Temporary MLX-C carry patch for gather_qmm global-scale support, carried
+    # until it merges upstream into ml-explore/mlx-c. Then bump MLX_C_VERSION
+    # and delete mlx/compat/.
+    find_package(Git REQUIRED)
+    set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
+        ${CMAKE_COMMAND}
+            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx-c
+            -DPATCH_LABEL=mlx/compat/mlx-c
+            -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
+        CACHE INTERNAL "MLX-C carry patch")
+
+    set(_mlx_c_source_override FALSE)
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX-C}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using MLX-C source override: ${OLLAMA_MLX_C_SOURCE_DIR}")
+        set(_mlx_c_source_override TRUE)
     elseif(DEFINED ENV{OLLAMA_MLX_C_SOURCE})
         get_filename_component(OLLAMA_MLX_C_SOURCE_DIR
             "$ENV{OLLAMA_MLX_C_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local MLX-C source: ${OLLAMA_MLX_C_SOURCE_DIR}")
+        set(_mlx_c_source_override TRUE)
     else()
         set(OLLAMA_MLX_C_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/mlx-c-src")
         ExternalProject_Add(ollama-mlx-c-source
@@ -188,8 +202,21 @@ if(OLLAMA_MLX_BACKENDS)
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            USES_TERMINAL_DOWNLOAD TRUE)
+            PATCH_COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
+            USES_TERMINAL_DOWNLOAD TRUE
+            USES_TERMINAL_PATCH TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
+    endif()
+    if(_mlx_c_source_override)
+        # Source overrides bypass the ExternalProject patch step, so the carry
+        # patch has to be applied to the override checkout as well. The
+        # applier is idempotent, which keeps repeated builds safe.
+        add_custom_target(ollama-mlx-c-override-patch
+            COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
+            WORKING_DIRECTORY ${OLLAMA_MLX_C_SOURCE_DIR}
+            COMMENT "Applying MLX-C compat patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
+            VERBATIM)
+        list(APPEND _mlx_source_targets ollama-mlx-c-override-patch)
     endif()
     # XGrammar has no pre-fetch: without an override each variant's build
     # clones it via FetchContent.
@@ -209,7 +236,7 @@ if(OLLAMA_MLX_BACKENDS)
     add_custom_target(ollama-mlx-vendor-headers
         COMMAND ${CMAKE_COMMAND}
             -DMLX_C_HEADERS_DIR=${OLLAMA_MLX_C_SOURCE_DIR}/mlx/c
-            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c
+            -DMLX_C_HEADERS_DEST=${CMAKE_SOURCE_DIR}/mlx/include/mlx/c
             -P "${CMAKE_SOURCE_DIR}/cmake/vendor-mlx-c-headers.cmake"
         DEPENDS ${_mlx_source_targets}
         COMMENT "Vendoring MLX-C headers"
@@ -596,7 +623,7 @@ if(OLLAMA_MLX_BACKENDS)
         add_custom_target(ollama-mlx-generate-wrappers
             COMMAND ${CMAKE_COMMAND} -E env
                 CC= CGO_CFLAGS= CGO_CXXFLAGS=
-                ${GO_EXECUTABLE} generate ./x/...
+                ${GO_EXECUTABLE} generate ./mlx/...
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             DEPENDS ollama-mlx-sources
             COMMENT "Regenerating MLX Go wrappers"

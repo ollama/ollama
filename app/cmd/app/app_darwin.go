@@ -152,6 +152,12 @@ func openUI(path string) {
 	StartUI(p)
 }
 
+func openAppsUI() {
+	p := C.CString("/connect")
+	defer C.free(unsafe.Pointer(p))
+	C.uiRequest(p)
+}
+
 //export StopUI
 func StopUI() {
 	wv.Terminate()
@@ -1237,6 +1243,37 @@ func IsClaudeDesktopRunning() C.bool {
 	return C._Bool(launch.ClaudeDesktopRunning())
 }
 
+//export IsCodexDesktopInstalled
+func IsCodexDesktopInstalled() C.bool {
+	return C._Bool(codexDesktop.Installed())
+}
+
+//export IsCodexDesktopConnected
+func IsCodexDesktopConnected() C.bool {
+	return C._Bool(codexDesktop.OllamaConfigured())
+}
+
+//export IsCodexDesktopRunning
+func IsCodexDesktopRunning() C.bool {
+	return C._Bool(codexDesktop.Running())
+}
+
+//export CodexDesktopRequestCount
+func CodexDesktopRequestCount() C.ulonglong {
+	return C.ulonglong(codexDesktop.OllamaRequestCount())
+}
+
+//export SetCodexDesktopConnected
+func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
+	shouldConnect := connected != C._Bool(false)
+	confirmed := restartConfirmed != C._Bool(false)
+	if err := setCodexDesktopConnection(shouldConnect, confirmed); err != nil {
+		slog.Warn("failed to change ChatGPT integration", "connected", shouldConnect, "error", err)
+		return C._Bool(false)
+	}
+	return C._Bool(true)
+}
+
 //export IsClaudeGatewayConfigured
 func IsClaudeGatewayConfigured() C.bool {
 	return C._Bool(claudeDesktop.UsesOllamaGateway())
@@ -1318,6 +1355,10 @@ func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 }
 
 func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
+	return claudeDesktopConnectionStatus(context.Background())
+}
+
+func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
@@ -1331,7 +1372,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
 		claudeProxyMu.Unlock()
 		var accessErr error
-		accessState, accessErr = claudeAccessStateResolver(context.Background())
+		accessState, accessErr = claudeAccessStateResolver(ctx)
 		if accessErr != nil {
 			slog.Debug("could not resolve Claude model access for Settings", "error", accessErr)
 		}
@@ -1342,7 +1383,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 		if accessErr == nil && accessState.Cloud == proxy.ClaudeDesktopCloudOn {
 			// Local-only startup deliberately seeds the cache with only the active
 			// routes. Settings still needs the recommendation catalog when Cloud is on.
-			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(context.Background(), current, !cachedCatalogHasCloud)
+			availableModels, selectedModels, modelSource = refreshClaudeDesktopCatalog(ctx, current, !cachedCatalogHasCloud)
 		} else {
 			selectedModels = current
 			if len(selectedModels) == 0 {
@@ -1361,7 +1402,7 @@ func getClaudeDesktopConnectionStatus() claudeDesktopStatus {
 	var localNames []string
 	var localErr error
 	if len(availableModels) > 0 {
-		localNames, localErr = claudeLocalModelsResolver(context.Background())
+		localNames, localErr = claudeLocalModelsResolver(ctx)
 		if localErr != nil {
 			slog.Debug("could not load local models for Claude Settings", "error", localErr)
 		}
@@ -1725,6 +1766,21 @@ func requestClaudeDesktopInstall() claudeDesktopInstallResult {
 	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
 }
 
+func requestCodexDesktopInstall() codexDesktopInstallResult {
+	return codexDesktopInstallResultFromCode(int(C.installCodexDesktop()))
+}
+
+func codexDesktopInstallResultFromCode(code int) codexDesktopInstallResult {
+	switch code {
+	case int(C.ClaudeInstallerOpened):
+		return codexDesktopInstallerOpened
+	case int(C.ClaudeInstallCancelled):
+		return codexDesktopInstallCancelled
+	default:
+		return codexDesktopInstallFailed
+	}
+}
+
 func claudeDesktopDownloadEndpoint(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/download-app?app=claude-desktop&type=mac-zip"
 }
@@ -1774,6 +1830,26 @@ func InstallClaudeDesktopArchive(path *C.cchar_t) C.bool {
 		return C._Bool(false)
 	}
 	slog.Info("installed Claude Desktop", "path", installedPath)
+	return C._Bool(true)
+}
+
+//export InstallCodexDesktopDiskImage
+func InstallCodexDesktopDiskImage(path *C.cchar_t) C.bool {
+	imagePath := C.GoString((*C.char)(unsafe.Pointer(path)))
+	installedPath, err := installCodexDesktopDiskImage(imagePath, codexDesktopInstallDestinations(), verifyCodexDesktopBundle)
+	if err != nil && installedPath != "" {
+		slog.Warn("installed ChatGPT but could not clean up its disk image", "path", installedPath, "error", err)
+		return C._Bool(true)
+	}
+	if errors.Is(err, errCodexDesktopDestinationExists) && codexDesktop.Installed() {
+		slog.Info("ChatGPT was installed while its download was in progress")
+		return C._Bool(true)
+	}
+	if err != nil {
+		slog.Warn("failed to install ChatGPT disk image", "error", err)
+		return C._Bool(false)
+	}
+	slog.Info("installed ChatGPT", "path", installedPath)
 	return C._Bool(true)
 }
 
