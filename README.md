@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [Lyra](https://github.com/amineutron/lyra) - Local-first voice DevOps assistant in French (Whisper, Piper, MCP tools for KVM, backups and smart home)
 
 ### Productivity & Apps
 
