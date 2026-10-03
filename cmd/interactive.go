@@ -583,7 +583,13 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
+	prefix := ""
+	if strings.HasPrefix(fp, `\\`) {
+		prefix = `\\`
+		fp = strings.TrimPrefix(fp, prefix)
+	}
+
+	return prefix + strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
