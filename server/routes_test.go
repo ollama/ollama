@@ -29,6 +29,7 @@ import (
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -796,6 +797,48 @@ func TestShow(t *testing.T) {
 
 	if resp.ProjectorInfo["general.architecture"] != "clip" {
 		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
+}
+
+func TestShowModelfileRecreatesLargeIntegerParameters(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:       "show-large-params",
+		Files:      map[string]string{"model.gguf": digest},
+		Parameters: map[string]any{"num_ctx": 1048576, "seed": 1000000},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: expected status code 200, actual %d", w.Code)
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-large-params"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("show: expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	// The generated Modelfile must be usable to create the model again.
+	modelfile, err := parser.ParseFile(strings.NewReader(resp.Modelfile))
+	if err != nil {
+		t.Fatalf("parse modelfile: %v\n%s", err, resp.Modelfile)
+	}
+
+	req, err := modelfile.CreateRequest(t.TempDir())
+	if err != nil {
+		t.Fatalf("create request from modelfile: %v\n%s", err, resp.Modelfile)
+	}
+
+	if req.Parameters["num_ctx"] != int64(1048576) || req.Parameters["seed"] != int64(1000000) {
+		t.Fatalf("parameters = %v, want num_ctx 1048576 and seed 1000000", req.Parameters)
 	}
 }
 
