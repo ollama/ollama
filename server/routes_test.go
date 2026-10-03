@@ -942,7 +942,10 @@ func TestNormalize(t *testing.T) {
 		{input: []float32{0, 1, 2, 3}, expectError: false},
 		{input: []float32{0.1, 0.2, 0.3}, expectError: false},
 		{input: []float32{-0.1, 0.2, 0.3, -0.4}, expectError: false},
-		{input: []float32{0, 0, 0}, expectError: false},
+		{input: []float32{0, 0, 0}, expectError: true},
+		{input: nil, expectError: true},
+		{input: []float32{math.MaxFloat32, math.MaxFloat32}, expectError: false},
+		{input: []float32{math.SmallestNonzeroFloat32, math.SmallestNonzeroFloat32}, expectError: false},
 		{input: []float32{float32(math.NaN()), 0.2, 0.3}, expectError: true},
 		{input: []float32{0.1, float32(math.NaN()), 0.3}, expectError: true},
 		{input: []float32{float32(math.Inf(1)), 0.2, 0.3}, expectError: true},
@@ -952,13 +955,9 @@ func TestNormalize(t *testing.T) {
 	isNormalized := func(vec []float32) (res bool) {
 		sum := 0.0
 		for _, v := range vec {
-			sum += float64(v * v)
+			sum += float64(v) * float64(v)
 		}
-		if math.Abs(sum-1) > 1e-6 {
-			return sum == 0
-		} else {
-			return true
-		}
+		return !math.IsNaN(sum) && math.Abs(sum-1) <= 1e-6
 	}
 
 	for _, tc := range testCases {
