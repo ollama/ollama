@@ -302,6 +302,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [Gullwing Protocol](https://github.com/Chikimonki/Gullwing-Protocol) — Convergent binary intelligence platform with air-gapped LLM analysis for CRA compliance
 
 ### Productivity & Apps
 
