@@ -1548,6 +1548,10 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		store.Settings
 		OnboardingVersion *int
 		ClaudeDesktopUsed *bool
+		SpeechVoice       *string
+		SpeechRate        *float64
+		SpeechVolume      *float64
+		SpeechAutoRead    *bool
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return fmt.Errorf("invalid request body: %w", err)
@@ -1563,6 +1567,26 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		settings.ClaudeDesktopUsed = old.ClaudeDesktopUsed
 	} else {
 		settings.ClaudeDesktopUsed = *request.ClaudeDesktopUsed
+	}
+	if request.SpeechVoice == nil {
+		settings.SpeechVoice = old.SpeechVoice
+	} else {
+		settings.SpeechVoice = *request.SpeechVoice
+	}
+	if request.SpeechRate == nil {
+		settings.SpeechRate = old.SpeechRate
+	} else {
+		settings.SpeechRate = *request.SpeechRate
+	}
+	if request.SpeechVolume == nil {
+		settings.SpeechVolume = old.SpeechVolume
+	} else {
+		settings.SpeechVolume = *request.SpeechVolume
+	}
+	if request.SpeechAutoRead == nil {
+		settings.SpeechAutoRead = old.SpeechAutoRead
+	} else {
+		settings.SpeechAutoRead = *request.SpeechAutoRead
 	}
 
 	if err := s.Store.SetSettings(settings); err != nil {
