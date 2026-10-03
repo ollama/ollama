@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 )
 
@@ -57,10 +58,61 @@ func (t *Thinking) Clone() *Thinking {
 	return &Thinking{Values: slices.Clone(t.Values), Default: t.Default}
 }
 
-// ThinkValue represents a boolean or model-defined thinking level.
+// ThinkValue represents a boolean, a model-defined thinking level, or a
+// positive integer thinking-token budget.
 type ThinkValue struct {
-	// Value can be a bool or string
+	// Value can be a bool, string or int
 	Value any
+}
+
+// thinkLevels are the effort levels that carry a thinking budget, weakest
+// first. A model can define levels of its own; those are handed to it as a
+// string and carry no budget, since the table below has no share for them.
+var thinkLevels = []string{"minimal", "low", "medium", "high", "max"}
+
+// thinkBudgetFraction maps an effort level to the share of the context window
+// the model is allowed to spend on thinking. Without a cap, models that
+// support long reasoning traces can loop until the context is exhausted and
+// never emit an answer. The steps halve rather than crowding the top of the
+// range: how long a model thinks depends on the prompt, not on how much room
+// it was given, so shares near the whole context stop bounding anything once
+// the context is large. A level absent from this table stays valid: it reaches
+// the model as a string and simply carries no budget.
+var thinkBudgetFraction = map[string][2]int{
+	"max":     {4, 5},
+	"high":    {1, 2},
+	"medium":  {1, 4},
+	"low":     {1, 8},
+	"minimal": {1, 16},
+}
+
+// thinkLevelAliases are alternative spellings of a level in thinkLevels. The
+// AI SDK calls the top of its effort scale "xhigh", which is the position
+// "max" holds here, so a client built on that vocabulary sends it verbatim.
+// Rejecting it would put the strongest level out of reach over spelling.
+var thinkLevelAliases = map[string]string{
+	"xhigh": "max",
+}
+
+// canonicalThinkLevel resolves an alias to the level it names and leaves
+// everything else alone, so the tables above only ever have to carry one entry
+// per level.
+func canonicalThinkLevel(level string) string {
+	if canonical, ok := thinkLevelAliases[level]; ok {
+		return canonical
+	}
+	return level
+}
+
+// ThinkLevels returns the effort levels that carry a thinking budget, weakest
+// first.
+func ThinkLevels() []string {
+	return slices.Clone(thinkLevels)
+}
+
+// IsThinkLevel reports whether a string is an effort level with a budget.
+func IsThinkLevel(level string) bool {
+	return slices.Contains(thinkLevels, canonicalThinkLevel(level))
 }
 
 // IsValid checks the transport type. The model resolves supported effort names.
@@ -69,11 +121,13 @@ func (t *ThinkValue) IsValid() bool {
 		return true // nil is valid (means not set)
 	}
 
-	switch t.Value.(type) {
+	switch v := t.Value.(type) {
 	case bool:
 		return true
 	case string:
 		return true
+	case int:
+		return v > 0
 	default:
 		return false
 	}
@@ -97,6 +151,15 @@ func (t *ThinkValue) IsString() bool {
 	return ok
 }
 
+// IsInt returns true if the value is an explicit thinking-token budget
+func (t *ThinkValue) IsInt() bool {
+	if t == nil || t.Value == nil {
+		return false
+	}
+	_, ok := t.Value.(int)
+	return ok
+}
+
 // Bool returns the value as a bool (true if enabled in any way)
 func (t *ThinkValue) Bool() bool {
 	if t == nil || t.Value == nil {
@@ -109,8 +172,56 @@ func (t *ThinkValue) Bool() bool {
 	case string:
 		// Named levels request thinking; the renderer resolves the actual level.
 		return true
+	case int:
+		// A budget only makes sense when thinking is on
+		return v > 0
 	default:
 		return false
+	}
+}
+
+// BudgetTokens returns the number of tokens the model may spend inside a
+// thinking block, or 0 when thinking is unrestricted. An explicit integer
+// value is used as-is; effort levels are a share of window, the room the
+// response has to work in — see api.ThinkBudgetWindow.
+func (t *ThinkValue) BudgetTokens(window int) int {
+	if t == nil || t.Value == nil {
+		return 0
+	}
+
+	switch v := t.Value.(type) {
+	case int:
+		if v > 0 {
+			return v
+		}
+	case string:
+		frac, ok := thinkBudgetFraction[canonicalThinkLevel(v)]
+		if !ok || window <= 0 {
+			return 0
+		}
+		// Round down so the budget never consumes the whole window
+		if budget := window * frac[0] / frac[1]; budget > 0 {
+			return budget
+		}
+	}
+
+	return 0
+}
+
+// Level returns the effort level to hand a model that consumes levels
+// directly, or "" when there is none to send. Models that take a level as a
+// string recognise low, medium and high, and gpt-oss writes whatever it is
+// given straight into its system prompt, so the levels outside that range are
+// reported as the nearest one they know. The budget is unaffected and keeps
+// the share of the context the requested level asked for.
+func (t *ThinkValue) Level() string {
+	switch level := canonicalThinkLevel(t.String()); level {
+	case "max":
+		return "high"
+	case "minimal":
+		return "low"
+	default:
+		return level
 	}
 }
 
@@ -139,12 +250,22 @@ func (t *ThinkValue) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
 	}
-	switch value.(type) {
+	switch v := value.(type) {
 	case nil, bool, string:
 		t.Value = value
 		return nil
+	case float64:
+		// An explicit thinking-token budget
+		if v != math.Trunc(v) {
+			return fmt.Errorf("invalid think budget: %v (must be a whole number of tokens)", v)
+		}
+		if v <= 0 {
+			return fmt.Errorf("invalid think budget: %v (must be greater than 0; use false to disable thinking)", v)
+		}
+		t.Value = int(v)
+		return nil
 	default:
-		return fmt.Errorf("think must be a boolean or string")
+		return fmt.Errorf("think must be a boolean, a string or a positive thinking-token budget")
 	}
 }
 

@@ -57,6 +57,12 @@ func (p *LFM2Parser) ThinkingClose() []string {
 	return nil
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *LFM2Parser) ThinkingTags() (string, string) {
+	return lfm2ThinkingOpenTag, lfm2ThinkingCloseTag
+}
+
 func (p *LFM2Parser) PreservedTokens() []string {
 	return []string{
 		lfm2ThinkingOpenTag,

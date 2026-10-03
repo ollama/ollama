@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
@@ -164,6 +165,56 @@ func TestModelShowCacheStartupSkipsLocalHydration(t *testing.T) {
 
 	if len(cache.local) != 0 {
 		t.Fatalf("local cache entries = %d, want 0", len(cache.local))
+	}
+}
+
+func TestModelShowCacheKeysOnTheThinkValue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	// think_budget and think_budget_tokens are answers about the think value
+	// the caller intends to send, so two requests differing only in think are
+	// two different questions. A key that ignores it freezes whichever was
+	// asked first. Asking think: true and then think: false is the order that
+	// matters -- it reports an armed budget for a request that switched
+	// thinking off, the opposite of what the completion path will do, and a
+	// client writes its prompt from that number.
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+	var create Server
+	w := createRequest(t, create.CreateHandler, api.CreateRequest{
+		Model:      "show-cache-think",
+		Files:      map[string]string{"model.gguf": digest},
+		Parameters: map[string]any{"think_budget": "max", "num_ctx": 32768},
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create model status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	s := Server{modelCaches: &modelCaches{show: newModelShowCache()}}
+	ask := func(think *api.ThinkValue) api.ShowResponse {
+		t.Helper()
+		// No options and no system, so the request takes the cached path.
+		w := createRequest(t, s.ShowHandler, api.ShowRequest{Model: "show-cache-think", Think: think})
+		if w.Code != http.StatusOK {
+			t.Fatalf("show status = %d, want 200: %s", w.Code, w.Body.String())
+		}
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode show response: %v", err)
+		}
+		return resp
+	}
+
+	if on := ask(&api.ThinkValue{Value: true}); on.ThinkBudgetTokens != 26214 {
+		t.Fatalf("think true: tokens = %d, want 26214 (budget %#v)", on.ThinkBudgetTokens, on.ThinkBudget)
+	}
+	if off := ask(&api.ThinkValue{Value: false}); off.ThinkBudget != nil || off.ThinkBudgetTokens != 0 {
+		t.Errorf("think false after think true: budget = %#v, tokens = %d, want none/0",
+			off.ThinkBudget, off.ThinkBudgetTokens)
+	}
+	if again := ask(&api.ThinkValue{Value: true}); again.ThinkBudgetTokens != 26214 {
+		t.Errorf("think true again: tokens = %d, want 26214", again.ThinkBudgetTokens)
 	}
 }
 
