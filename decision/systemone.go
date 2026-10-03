@@ -139,27 +139,28 @@ func compileField(name string, q Question) (compiledField, error) {
 		return f, fmt.Errorf("instructions must be a nonempty string, object, or array")
 	}
 	f.Description = description
-	add := func(value any, description string) {
+	add := func(value, description any) {
 		f.Choices = append(f.Choices, Choice{string(rune('A' + len(f.Choices))), value, description})
 	}
 	switch q.Type {
 	case "noul":
-		criteria := orderedmap.New[string, *string]()
-		if len(q.Criteria) > 0 {
-			if err := json.Unmarshal(q.Criteria, criteria); err != nil || string(q.Criteria) == "null" {
+		criteria := orderedmap.New[string, json.RawMessage]()
+		if raw := bytes.TrimSpace(q.Criteria); len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, criteria); err != nil {
 				return f, fmt.Errorf("noul criteria must be an object of true/false descriptions")
 			}
 		}
-		no, yes := "No", "Yes"
-		for key, value := range criteria.All() {
-			if value == nil {
-				return f, fmt.Errorf("noul descriptions must be strings")
+		var no, yes any = "No", "Yes"
+		for key, raw := range criteria.All() {
+			description, err := criteriaDescription(raw, true)
+			if err != nil {
+				return f, fmt.Errorf("noul descriptions must be strings, objects, or arrays")
 			}
 			switch key {
 			case "false":
-				no = *value
+				no = description
 			case "true":
-				yes = *value
+				yes = description
 			default:
 				return f, fmt.Errorf("unknown noul criterion %q", key)
 			}
@@ -167,30 +168,35 @@ func compileField(name string, q Question) (compiledField, error) {
 		add(false, no)
 		add(true, yes)
 	case "choice":
-		criteria := orderedmap.New[string, *string]()
+		criteria := orderedmap.New[string, json.RawMessage]()
 		if err := json.Unmarshal(q.Criteria, criteria); err != nil {
 			return f, fmt.Errorf("choice criteria must map option keys to descriptions or null")
 		}
-		for key, value := range criteria.All() {
+		for key, raw := range criteria.All() {
 			if strings.TrimSpace(key) == "" {
 				return f, fmt.Errorf("choice keys must not be empty")
 			}
-			description := key
-			if value != nil {
-				description = *value
+			var description any = key
+			if string(bytes.TrimSpace(raw)) != "null" {
+				var err error
+				description, err = criteriaDescription(raw, false)
+				if err != nil {
+					return f, fmt.Errorf("choice descriptions must be strings, objects, or arrays")
+				}
 			}
 			add(key, description)
 		}
 	case "score":
-		var criteria []*string
+		var criteria []json.RawMessage
 		if err := json.Unmarshal(q.Criteria, &criteria); err != nil {
 			return f, fmt.Errorf("score criteria must be an array of descriptions")
 		}
-		for i, description := range criteria {
-			if description == nil {
-				return f, fmt.Errorf("score descriptions must be strings")
+		for i, raw := range criteria {
+			description, err := criteriaDescription(raw, false)
+			if err != nil {
+				return f, fmt.Errorf("score descriptions must be strings, objects, or arrays")
 			}
-			add(strconv.Itoa(i), *description)
+			add(strconv.Itoa(i), description)
 		}
 	default:
 		return f, fmt.Errorf("type must be choice, noul, or score")
@@ -199,6 +205,25 @@ func compileField(name string, q Question) (compiledField, error) {
 		return f, fmt.Errorf("criteria must contain 2–26 candidates")
 	}
 	return f, nil
+}
+
+// criteriaDescription decodes one description while keeping the schema
+// portable with the reference System One API. Numbers, booleans, and other
+// scalar JSON values are not descriptions, even when they are valid JSON.
+func criteriaDescription(raw json.RawMessage, allowNull bool) (any, error) {
+	value, err := clefValue(raw)
+	if err != nil {
+		return nil, err
+	}
+	switch value.(type) {
+	case string, []any, map[string]any:
+		return value, nil
+	case nil:
+		if allowNull {
+			return nil, nil
+		}
+	}
+	return nil, fmt.Errorf("must be a string, object, or array")
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {

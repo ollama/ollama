@@ -837,6 +837,14 @@ components:
           additionalProperties: true
         - type: array
           items: {}
+    SystemOneCriterionDescription:
+      description: A string, object, or array describing a criterion or outcome.
+      oneOf:
+        - type: string
+        - type: object
+          additionalProperties: true
+        - type: array
+          items: {}
     SystemOneChoiceQuestion:
       title: Choice
       type: object
@@ -855,7 +863,9 @@ components:
           propertyNames:
             pattern: '\S'
           additionalProperties:
-            type: [string, "null"]
+            oneOf:
+              - $ref: "#/components/schemas/SystemOneCriterionDescription"
+              - type: "null"
     SystemOneNoulQuestion:
       title: Noul
       type: object
@@ -867,16 +877,20 @@ components:
         instructions:
           $ref: "#/components/schemas/SystemOneContent"
         criteria:
-          type: object
-          description: Optional descriptions for the two outcomes. Omitted entries use No and Yes.
-          properties:
-            "false":
-              type: string
-              default: "No"
-            "true":
-              type: string
-              default: "Yes"
-          additionalProperties: false
+          description: Optional descriptions for the two outcomes. Omitted entries use No and Yes; null leaves an outcome undescribed.
+          oneOf:
+            - type: object
+              properties:
+                "false":
+                  oneOf:
+                    - $ref: "#/components/schemas/SystemOneCriterionDescription"
+                    - type: "null"
+                "true":
+                  oneOf:
+                    - $ref: "#/components/schemas/SystemOneCriterionDescription"
+                    - type: "null"
+              additionalProperties: false
+            - type: "null"
     SystemOneScoreQuestion:
       title: Score
       type: object
@@ -893,7 +907,7 @@ components:
           minItems: 2
           maxItems: 26
           items:
-            type: string
+            $ref: "#/components/schemas/SystemOneCriterionDescription"
     SystemOneRequest:
       type: object
       required: [model, state, questions]
@@ -984,7 +998,7 @@ components:
           type: object
           description: Zero-based indices as string keys mapped to the criterion descriptions.
           additionalProperties:
-            type: string
+            $ref: "#/components/schemas/SystemOneCriterionDescription"
         probabilities:
           $ref: "#/components/schemas/SystemOneProbabilities"
           description: Probabilities keyed by zero-based criterion indices as strings.
