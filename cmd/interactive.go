@@ -604,12 +604,26 @@ func normalizeFilePath(fp string) string {
 
 func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
-	// and followed by more characters and a file extension
-	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
+	// and followed by more characters and a file extension.
+	//
+	// The extension must be path-terminal: a parent directory whose name ends in
+	// an image extension (e.g. "/photos.png/cat.jpg") must not cut the match
+	// short at the directory. We require the extension to be followed by a true
+	// delimiter — anything but '.', a path separator, or a word character — or
+	// end of input, capturing the path in group 1 so the delimiter isn't
+	// included. Go's RE2 has no lookahead, so a trailing capture group stands in
+	// for a negative lookahead.
+	//
+	// This will capture non filename strings, but we'll check for file existence to remove mismatches.
+	regexPattern := `((?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav))(?:[^./\\\w]|$)`
 	re := regexp.MustCompile(regexPattern)
 
-	return re.FindAllString(input, -1)
+	matches := re.FindAllStringSubmatch(input, -1)
+	names := make([]string, 0, len(matches))
+	for _, m := range matches {
+		names = append(names, m[1])
+	}
+	return names
 }
 
 func extractFileData(input string) (string, []api.ImageData, error) {
