@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,55 @@ import (
 
 	"github.com/ollama/ollama/app/store"
 )
+
+func TestAddrInUse(t *testing.T) {
+	// Occupy a port so we can assert addrInUse detects the conflict.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+	busy := ln.Addr().String()
+
+	t.Run("in use", func(t *testing.T) {
+		t.Setenv("OLLAMA_HOST", busy)
+		addr, inUse := addrInUse(false)
+		if !inUse {
+			t.Errorf("expected addr %s to be reported in use", busy)
+		}
+		if addr != busy {
+			t.Errorf("addr = %q, want %q", addr, busy)
+		}
+	})
+
+	t.Run("expose probes all interfaces", func(t *testing.T) {
+		// With expose the child binds 0.0.0.0, so addrInUse must probe the
+		// wildcard address rather than the configured host.
+		_, port, err := net.SplitHostPort(busy)
+		if err != nil {
+			t.Fatalf("split host port: %v", err)
+		}
+		t.Setenv("OLLAMA_HOST", net.JoinHostPort("127.0.0.1", port))
+		if addr, _ := addrInUse(true); addr != net.JoinHostPort("0.0.0.0", port) {
+			t.Errorf("addr = %q, want %q", addr, net.JoinHostPort("0.0.0.0", port))
+		}
+	})
+
+	t.Run("free", func(t *testing.T) {
+		// Grab a port then release it so it is free when we probe.
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+		addr := free.Addr().String()
+		free.Close()
+
+		t.Setenv("OLLAMA_HOST", addr)
+		if _, inUse := addrInUse(false); inUse {
+			t.Errorf("expected addr %s to be free", addr)
+		}
+	})
+}
 
 func TestNew(t *testing.T) {
 	tmpDir := t.TempDir()
