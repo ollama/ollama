@@ -492,6 +492,63 @@ Do not enable "mxfp8" by default.
 	}
 }
 
+// The reasoning-budget sampler closes the block between the model's <|channel>
+// token and the "thought\n" header that follows it, because <|channel> is the
+// first thing that tells the sampler the budget is gone. The model writes the
+// header anyway, into a block that is already closed. Measured live: it reached
+// the chat panel as the word "thought" sitting after the budget message.
+func TestGemma4Parser_StrayChannelNameAfterForcedClose(t *testing.T) {
+	budgetMessage := "\n\nI have used my thinking budget. I must stop analysing now and act on what I have."
+
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+	}{
+		{
+			name: "in one chunk",
+			chunks: []string{
+				"<|channel>thought\nSome reasoning that ran long." + budgetMessage + "<channel|>thought\nThe answer is 42.",
+			},
+		},
+		{
+			name: "split across chunks",
+			chunks: []string{
+				"<|channel>thought\nSome reasoning that ran long.",
+				budgetMessage,
+				"<channel|>",
+				"thou",
+				"ght\n",
+				"The answer is 42.",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			var content, thinking strings.Builder
+			for i, chunk := range tc.chunks {
+				c, th, _, err := parser.Add(chunk, i == len(tc.chunks)-1)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+				content.WriteString(c)
+				thinking.WriteString(th)
+			}
+
+			if got := content.String(); got != "The answer is 42." {
+				t.Errorf("content = %q, want %q", got, "The answer is 42.")
+			}
+			if strings.Contains(content.String(), "thought") {
+				t.Errorf("channel name leaked into content: %q", content.String())
+			}
+			if !strings.Contains(thinking.String(), "I have used my thinking budget") {
+				t.Errorf("budget message missing from thinking: %q", thinking.String())
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_Streaming(t *testing.T) {
 	parser := &Gemma4Parser{hasThinkingSupport: true}
 	parser.Init(nil, nil, &api.ThinkValue{Value: true})
