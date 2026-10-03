@@ -517,6 +517,25 @@ func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
 	return t, io.NewSectionReader(f.file, offset, numBytes), nil
 }
 
+// TensorRange returns the absolute file offset and byte size of ti's data,
+// validating that the range is fully contained in the file. Metadata parsing is
+// fast-forwarded so the tensor data offset is resolved; ti should come from
+// TensorInfos.
+func (f *File) TensorRange(ti TensorInfo) (int64, int64, error) {
+	// Fast-forward through key values and tensor metadata so the tensor data
+	// offset is resolved before the range is validated.
+	_ = f.keyValues.rest()
+	f.tensors.rest()
+	if err := f.Err(); err != nil {
+		return 0, 0, err
+	}
+	fileInfo, err := f.file.Stat()
+	if err != nil {
+		return 0, 0, err
+	}
+	return f.tensorRange(ti, fileInfo.Size())
+}
+
 func (f *File) validateTensorData() error {
 	for range f.TensorInfos() {
 	}
