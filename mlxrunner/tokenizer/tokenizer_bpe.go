@@ -1,8 +1,12 @@
 package tokenizer
 
-import "container/heap"
+import (
+	"container/heap"
+	"unicode/utf8"
+)
 
 type bpeMergeNode struct {
+	start int
 	prev  int
 	next  int
 	token string
@@ -41,18 +45,24 @@ func (h *bpePairHeap) Pop() any {
 // Uses the heap/linked-list pair merge strategy from tokenizer/bytepairencoding.go:
 // merge the lowest-rank valid pair, then only recheck adjacent pairs.
 func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
-	runes := []rune(encoded)
-	if len(runes) == 0 {
+	if encoded == "" {
 		return ids
 	}
 
-	nodes := make([]bpeMergeNode, len(runes))
-	for i := range runes {
-		nodes[i] = bpeMergeNode{
+	// Normalize malformed UTF-8 to replacement runes before using byte offsets.
+	if !utf8.ValidString(encoded) {
+		encoded = string([]rune(encoded))
+	}
+	// Most pretokenized pieces fit here; append grows for longer pieces.
+	nodes := make([]bpeMergeNode, 0, 32)
+	for offset, r := range encoded {
+		i := len(nodes)
+		nodes = append(nodes, bpeMergeNode{
+			start: offset,
 			prev:  i - 1,
 			next:  i + 1,
-			token: string(runes[i]),
-		}
+			token: encoded[offset : offset+utf8.RuneLen(r)],
+		})
 	}
 
 	pairwise := func(left, right int) *bpePair {
@@ -69,7 +79,8 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 			return nil
 		}
 
-		value := leftToken + rightToken
+		// Merged tokens remain contiguous spans of the encoded input.
+		value := encoded[nodes[left].start : nodes[right].start+len(rightToken)]
 		if _, ok := t.vocab.Reverse[value]; !ok {
 			return nil
 		}
@@ -84,7 +95,7 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 
 	pairs := bpePairHeap{}
 	heap.Init(&pairs)
-	for i := range len(runes) - 1 {
+	for i := range len(nodes) - 1 {
 		if pair := pairwise(i, i+1); pair != nil {
 			heap.Push(&pairs, pair)
 		}

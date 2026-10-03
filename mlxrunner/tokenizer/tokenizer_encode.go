@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/unicode/norm"
@@ -16,36 +15,18 @@ const (
 	encodeParallelMinChunksPerWorker = 8
 )
 
-type tokenMatch struct {
-	start int
-	end   int
-}
-
 type encodeChunk struct {
 	text      string
 	isSpecial bool
 }
 
-// isNonNewlineWhitespace returns true if s contains only whitespace characters (no newlines)
-func isNonNewlineWhitespace(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r == '\n' || r == '\r' {
-			return false
-		}
-		if !unicode.IsSpace(r) {
-			return false
-		}
-	}
-	return true
-}
-
 // splitBySpecialTokens splits text into parts, keeping special tokens as separate elements
-func (t *Tokenizer) splitBySpecialTokens(s string) []string {
+func (t *Tokenizer) splitBySpecialTokens(s string) []encodeChunk {
+	if s == "" {
+		return nil
+	}
 	if len(t.specialTokens) == 0 {
-		return []string{s}
+		return []encodeChunk{{text: s}}
 	}
 
 	tokens := t.sortedSpecialTokens
@@ -60,14 +41,14 @@ func (t *Tokenizer) splitBySpecialTokens(s string) []string {
 		})
 	}
 
-	var result []string
+	var result []encodeChunk
 	remaining := s
 
 	for len(remaining) > 0 {
 		found := false
 		for _, tok := range tokens {
 			if strings.HasPrefix(remaining, tok) {
-				result = append(result, tok)
+				result = append(result, encodeChunk{text: tok, isSpecial: true})
 				remaining = remaining[len(tok):]
 				found = true
 				break
@@ -82,7 +63,7 @@ func (t *Tokenizer) splitBySpecialTokens(s string) []string {
 				}
 			}
 			if nextPos > 0 {
-				result = append(result, remaining[:nextPos])
+				result = append(result, encodeChunk{text: remaining[:nextPos]})
 			}
 			remaining = remaining[nextPos:]
 		}
@@ -91,47 +72,7 @@ func (t *Tokenizer) splitBySpecialTokens(s string) []string {
 	return result
 }
 
-func adjustWhitespaceBoundary(part string, curr, next *tokenMatch, spaceBeforePunct bool) {
-	m := part[curr.start:curr.end]
-	nextText := part[next.start:next.end]
-
-	if !isNonNewlineWhitespace(m) || len(nextText) == 0 {
-		return
-	}
-
-	firstRune, _ := utf8.DecodeRuneInString(nextText)
-	shiftASCIIOnly := !unicode.IsLetter(firstRune)
-	if shiftASCIIOnly && (!spaceBeforePunct || unicode.IsNumber(firstRune) || unicode.IsSpace(firstRune)) {
-		return
-	}
-
-	lastSpaceStart := curr.end
-	for j := curr.end; j > curr.start; {
-		r, size := utf8.DecodeLastRuneInString(part[curr.start:j])
-		if unicode.IsSpace(r) {
-			if shiftASCIIOnly && r != ' ' {
-				return
-			}
-			lastSpaceStart = j - size
-			break
-		}
-		j -= size
-	}
-	if lastSpaceStart > curr.start {
-		curr.end = lastSpaceStart
-		next.start = lastSpaceStart
-	} else {
-		next.start = curr.start
-		curr.end = curr.start
-	}
-}
-
 func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
-	if _, ok := t.specialTokens[part]; ok {
-		fn(encodeChunk{text: part, isSpecial: true})
-		return
-	}
-
 	if t.pretokenizer == nil {
 		if t.metaspace != nil && t.metaspace.Split {
 			start := 0
@@ -148,34 +89,16 @@ func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
 		return
 	}
 
-	re := t.pretokenizer
-	offset := 0
-	loc := re.FindStringIndex(part[offset:])
-	if loc == nil {
-		return
+	parts := []string{part}
+	for _, stage := range t.pretokenizer {
+		var next []string
+		for _, text := range parts {
+			next = append(next, stage.split(text)...)
+		}
+		parts = next
 	}
-
-	curr := tokenMatch{start: offset + loc[0], end: offset + loc[1]}
-	offset += loc[1]
-
-	for {
-		loc = re.FindStringIndex(part[offset:])
-		if loc == nil {
-			if curr.end > curr.start {
-				fn(encodeChunk{text: part[curr.start:curr.end], isSpecial: false})
-			}
-			return
-		}
-
-		next := tokenMatch{start: offset + loc[0], end: offset + loc[1]}
-		offset += loc[1]
-
-		adjustWhitespaceBoundary(part, &curr, &next, t.pretokenizerSpaceBeforePunctuation)
-
-		if curr.end > curr.start {
-			fn(encodeChunk{text: part[curr.start:curr.end], isSpecial: false})
-		}
-		curr = next
+	for _, text := range parts {
+		fn(encodeChunk{text: text})
 	}
 }
 
@@ -193,19 +116,28 @@ func (t *Tokenizer) appendEncodedChunk(ids []int32, c encodeChunk) []int32 {
 // Encode tokenizes text to token IDs.
 // Parallel encoding is used only for very large inputs with enough chunks per worker.
 func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
-	// First: split by special tokens
+	// Preserve original added-token identity. Only normalized=true tokens may
+	// also be recognized after normalization, before pretokenizer prefixes.
 	parts := t.splitBySpecialTokens(s)
 	for i, part := range parts {
-		if _, ok := t.specialTokens[part]; ok {
+		if part.isSpecial {
 			continue
 		}
 		if t.normalizeNFC {
-			part = norm.NFC.String(part)
+			part.text = norm.NFC.String(part.text)
+		}
+		if t.normalizeSpaces {
+			part.text = strings.ReplaceAll(part.text, " ", "▁")
+		}
+		if t.normalizedTokens[part.text] {
+			part.isSpecial = true
+			parts[i] = part
+			continue
 		}
 		if t.metaspace != nil {
-			part = strings.ReplaceAll(part, " ", "▁")
-			if (t.metaspace.PrependScheme == "always" || (t.metaspace.PrependScheme == "first" && i == 0)) && !strings.HasPrefix(part, "▁") {
-				part = "▁" + part
+			part.text = strings.ReplaceAll(part.text, " ", "▁")
+			if (t.metaspace.PrependScheme == "always" || (t.metaspace.PrependScheme == "first" && i == 0)) && !strings.HasPrefix(part.text, "▁") {
+				part.text = "▁" + part.text
 			}
 		}
 		parts[i] = part
@@ -215,7 +147,11 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 	if len(s) < encodeParallelMinInputBytes {
 		var ids []int32
 		for _, part := range parts {
-			t.forEachPartChunk(part, func(c encodeChunk) {
+			if part.isSpecial {
+				ids = t.appendEncodedChunk(ids, part)
+				continue
+			}
+			t.forEachPartChunk(part.text, func(c encodeChunk) {
 				ids = t.appendEncodedChunk(ids, c)
 			})
 		}
@@ -229,7 +165,11 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 	// For large inputs collect chunks to enable parallel processing.
 	var allChunks []encodeChunk
 	for _, part := range parts {
-		t.forEachPartChunk(part, func(c encodeChunk) {
+		if part.isSpecial {
+			allChunks = append(allChunks, part)
+			continue
+		}
+		t.forEachPartChunk(part.text, func(c encodeChunk) {
 			allChunks = append(allChunks, c)
 		})
 	}
@@ -310,9 +250,12 @@ func (t *Tokenizer) encodeChunkInto(s string, ids []int32) []int32 {
 		encoded = sb.String()
 	}
 
-	// Fast path: check if entire chunk is a single token
-	if id, ok := t.vocab.Reverse[encoded]; ok {
-		return append(ids, id)
+	// A whole-vocabulary match can bypass ranked merges only when the model
+	// requests it. Otherwise a higher-priority pair may split that same word.
+	if t.ignoreMerges || utf8.RuneCountInString(encoded) == 1 {
+		if id, ok := t.vocab.Reverse[encoded]; ok {
+			return append(ids, id)
+		}
 	}
 
 	return t.encodeBPEMerge(encoded, ids)

@@ -3,9 +3,7 @@ package tokenizer
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
-	"strings"
 )
 
 // TokenizerConfig holds optional configuration data that can be passed to LoadFromBytesWithConfig.
@@ -46,19 +44,25 @@ func LoadFromBytesWithConfig(data []byte, config *TokenizerConfig) (*Tokenizer, 
 func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 	var raw struct {
 		Model struct {
-			Type   string           `json:"type"` // "BPE"
-			Vocab  map[string]int32 `json:"vocab"`
-			Merges json.RawMessage  `json:"merges"` // Can be []string or [][]string (BPE only)
+			Type         string           `json:"type"` // "BPE"
+			IgnoreMerges bool             `json:"ignore_merges"`
+			Vocab        map[string]int32 `json:"vocab"`
+			Merges       json.RawMessage  `json:"merges"` // Can be []string or [][]string (BPE only)
 		} `json:"model"`
 		PreTokenizer json.RawMessage `json:"pre_tokenizer"`
 		Normalizer   struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Pattern struct {
+				String *string `json:"String"`
+			} `json:"pattern"`
+			Content string `json:"content"`
 		} `json:"normalizer"`
 		Decoder     json.RawMessage `json:"decoder"`
 		AddedTokens []struct {
-			ID      int32  `json:"id"`
-			Content string `json:"content"`
-			Special bool   `json:"special"`
+			ID         int32  `json:"id"`
+			Content    string `json:"content"`
+			Special    bool   `json:"special"`
+			Normalized bool   `json:"normalized"`
 		} `json:"added_tokens"`
 	}
 
@@ -100,7 +104,8 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			BOS:     -1,
 			PAD:     -1,
 		},
-		specialTokens: make(map[string]int32),
+		specialTokens:    make(map[string]int32),
+		normalizedTokens: make(map[string]bool),
 	}
 
 	// Build values array
@@ -124,6 +129,10 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 	// if it's a "truly special" token like BOS/EOS/PAD, but for tokenization we need
 	// to treat all added_tokens as special to match HuggingFace behavior.
 	for _, tok := range raw.AddedTokens {
+		// Hugging Face ignores empty added tokens; they cannot consume input.
+		if tok.Content == "" {
+			continue
+		}
 		if int(tok.ID) >= len(t.vocab.Values) {
 			newValues := make([]string, tok.ID+1)
 			copy(newValues, t.vocab.Values)
@@ -131,6 +140,9 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		}
 		t.vocab.Values[tok.ID] = tok.Content
 		t.specialTokens[tok.Content] = tok.ID // Add ALL added_tokens to special tokens
+		if tok.Normalized {
+			t.normalizedTokens[tok.Content] = true
+		}
 	}
 
 	// Precompute byte token IDs for <0xNN> fallback
@@ -145,6 +157,8 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 	}
 
 	t.normalizeNFC = raw.Normalizer.Type == "NFC"
+	t.normalizeSpaces = raw.Normalizer.Type == "Replace" && raw.Normalizer.Pattern.String != nil && *raw.Normalizer.Pattern.String == " " && raw.Normalizer.Content == "▁"
+	t.ignoreMerges = raw.Model.IgnoreMerges
 	var pre struct {
 		Type string `json:"type"`
 		metaspace
@@ -161,18 +175,12 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		t.metaspace = &pre.metaspace
 		t.typ = TokenizerSentencePiece
 	}
-	// Parse and compile pretokenizer pattern (BPE only).
 	if t.typ == TokenizerBPE {
-		pattern := extractPretokenizer(raw.PreTokenizer)
-		if pattern == "" {
-			pattern = `'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`
-		}
-		re, err := regexp.Compile(rewritePatternForRE2(pattern))
+		var err error
+		t.pretokenizer, err = loadPretokenizers(raw.PreTokenizer)
 		if err != nil {
-			return nil, fmt.Errorf("failed to compile pretokenizer regex %q: %w", pattern, err)
+			return nil, err
 		}
-		t.pretokenizer = re
-		t.pretokenizerSpaceBeforePunctuation = strings.Contains(pattern, ` ?[^\s\p{L}\p{N}]`)
 	}
 
 	cacheSortedSpecialTokens(t)
@@ -346,33 +354,6 @@ func extractTokenString(v interface{}) string {
 	return ""
 }
 
-// rewritePatternForRE2 rewrites HuggingFace pretokenizer regex patterns to be
-// compatible with Go's regexp package (RE2). HuggingFace patterns use PCRE features:
-//   - (?!\S) negative lookahead - RE2 doesn't support this
-//   - (?i:...) inline case-insensitive groups - RE2 doesn't support this
-//
-// We replace \s+(?!\S)|\s+ with \s+ and fix whitespace boundaries in encodeWithRegex().
-// The lookahead version splits "a  b" into ["a", " ", " b"] (space prepended to word).
-// Simple \s+ would give ["a", "  ", "b"]. We post-process to match Python's behavior.
-func rewritePatternForRE2(pattern string) string {
-	// Replace lookahead pattern with simple \s+ - we fix boundaries in encodeWithRegex()
-	pattern = strings.ReplaceAll(pattern, `\s+(?!\S)|\s+`, `\s+`)
-
-	// Handle the pattern when it appears with a ? suffix (optional contractions in GPT-4o style)
-	// IMPORTANT: Must be done before the non-optional version to avoid partial replacement
-	pattern = strings.ReplaceAll(pattern,
-		`(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
-		`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])?`)
-
-	// Expand case-insensitive contraction pattern to explicit alternations
-	// (?i:'s|'t|'re|'ve|'m|'ll|'d) -> '[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD]
-	pattern = strings.ReplaceAll(pattern,
-		`(?i:'s|'t|'re|'ve|'m|'ll|'d)`,
-		`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])`)
-
-	return pattern
-}
-
 // loadSpecialTokenConfigFromBytes loads special token configuration from byte slices.
 func loadSpecialTokenConfigFromBytes(t *Tokenizer, config *TokenizerConfig) {
 	applySpecialTokenConfig(t, specialTokenConfigData{
@@ -435,44 +416,4 @@ func initByteTokens(t *Tokenizer) {
 			t.vocab.byteTokens[b] = id
 		}
 	}
-}
-
-// extractPretokenizer extracts the regex pattern from the pre_tokenizer config
-func extractPretokenizer(data json.RawMessage) string {
-	if data == nil {
-		return ""
-	}
-
-	// Try to parse as a single Split pretokenizer
-	var single struct {
-		Type    string `json:"type"`
-		Pattern struct {
-			Regex string `json:"Regex"`
-		} `json:"pattern"`
-	}
-	if err := json.Unmarshal(data, &single); err == nil && single.Pattern.Regex != "" {
-		return single.Pattern.Regex
-	}
-
-	// Try to parse as Sequence of pretokenizers - use first Split pattern
-	var seq struct {
-		Type          string `json:"type"`
-		Pretokenizers []struct {
-			Type    string `json:"type"`
-			Pattern struct {
-				Regex string `json:"Regex"`
-			} `json:"pattern"`
-		} `json:"pretokenizers"`
-	}
-	if err := json.Unmarshal(data, &seq); err == nil && seq.Type == "Sequence" {
-		for _, pt := range seq.Pretokenizers {
-			if pt.Type == "Split" && pt.Pattern.Regex != "" {
-				if _, err := regexp.Compile(rewritePatternForRE2(pt.Pattern.Regex)); err == nil {
-					return pt.Pattern.Regex
-				}
-			}
-		}
-	}
-
-	return ""
 }
