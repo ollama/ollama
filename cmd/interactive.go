@@ -32,6 +32,8 @@ const (
 )
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
+	vimMode, _ := cmd.Flags().GetBool("vim")
+
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
@@ -85,6 +87,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
 		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
 		fmt.Fprintln(os.Stderr, "")
+		if vimMode {
+			fmt.Fprintln(os.Stderr, "Vim mode (started with --vim):")
+			fmt.Fprintln(os.Stderr, "  Esc                 Enter normal mode")
+			fmt.Fprintln(os.Stderr, "  h l                 Move cursor left / right")
+			fmt.Fprintln(os.Stderr, "  0 $                 Move to start / end of line")
+			fmt.Fprintln(os.Stderr, "  w b                 Move forward / backward one word")
+			fmt.Fprintln(os.Stderr, "  x                   Delete the character under the cursor")
+			fmt.Fprintln(os.Stderr, "  dd                  Delete the entire line")
+			fmt.Fprintln(os.Stderr, "  dw                  Delete the word after the cursor")
+			fmt.Fprintln(os.Stderr, "  i a I A o           Return to insert mode")
+			fmt.Fprintln(os.Stderr, "")
+		}
 	}
 
 	usageShow := func() {
@@ -125,6 +139,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
+	scanner.VimMode = vimMode
+
+	if vimMode {
+		fmt.Fprintln(os.Stderr, "Vim mode enabled. Press Esc for normal mode, then ? for a list of commands.")
+	}
+
 	if envconfig.NoHistory() {
 		scanner.HistoryDisable()
 	}
@@ -162,6 +182,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				continue
 			}
 			scanner.Prefill = content
+			continue
+		case errors.Is(err, readline.ErrVimHelp):
+			usageShortcuts()
+			if line != "" {
+				scanner.Prefill = line
+			}
 			continue
 		case err != nil:
 			return err
