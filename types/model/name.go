@@ -185,7 +185,11 @@ func ParseNameFromFilepath(s string) (n Name) {
 		return Name{}
 	}
 
-	n.Host = parts[0]
+	// Hosts that contain a colon are stored with '%' in place of ':' so the
+	// path is a legal directory name on Windows. Decode that back here.
+	// A literal colon is still accepted so manifests written before the
+	// encoding continue to parse.
+	n.Host = decodeFilepathHost(parts[0])
 	n.Namespace = parts[1]
 	n.Model = parts[2]
 	n.Tag = parts[3]
@@ -194,6 +198,16 @@ func ParseNameFromFilepath(s string) (n Name) {
 	}
 
 	return n
+}
+
+// decodeFilepathHost reverses the colon encoding used by [Name.Filepath].
+// '%' is not a valid host character, so every '%' in a stored host is an
+// encoded ':'.
+func decodeFilepathHost(host string) string {
+	if !strings.Contains(host, "%") {
+		return host
+	}
+	return strings.ReplaceAll(host, "%", ":")
 }
 
 // Merge merges the host, namespace, tag, and protocol scheme parts of the two names,
@@ -285,6 +299,11 @@ func (n Name) IsFullyQualified() bool {
 //
 //	{host}/{namespace}/{model}/{tag}
 //
+// A colon in the host is written as '%'. Windows rejects ':' in a directory
+// name, so a registry such as "localhost:3000" cannot otherwise be stored.
+// '%' is not a valid host character, and [ParseNameFromFilepath] decodes it
+// back to ':'.
+//
 // It uses the system's filepath separator and ensures the path is clean.
 //
 // It panics if the name is not fully qualified. Use [Name.IsFullyQualified]
@@ -293,12 +312,31 @@ func (n Name) Filepath() string {
 	if !n.IsFullyQualified() {
 		panic("illegal attempt to get filepath of invalid name")
 	}
-	return filepath.Join(
-		n.Host,
-		n.Namespace,
-		n.Model,
-		n.Tag,
-	)
+	return n.joinedFilepath(encodeFilepathHost(n.Host))
+}
+
+// LegacyFilepath returns the on-disk path used before hosts were encoded,
+// with a literal colon in the host directory. The boolean is false when the
+// name has no colon, because that path is identical to [Name.Filepath].
+//
+// Non-Windows installs may still have manifests under this path. Callers that
+// open an existing manifest should try it when [Name.Filepath] is missing.
+func (n Name) LegacyFilepath() (string, bool) {
+	if !n.IsFullyQualified() || !strings.Contains(n.Host, ":") {
+		return "", false
+	}
+	return n.joinedFilepath(n.Host), true
+}
+
+func (n Name) joinedFilepath(host string) string {
+	return filepath.Join(host, n.Namespace, n.Model, n.Tag)
+}
+
+func encodeFilepathHost(host string) string {
+	if !strings.Contains(host, ":") {
+		return host
+	}
+	return strings.ReplaceAll(host, ":", "%")
 }
 
 // LogValue returns a slog.Value that represents the name as a string.

@@ -840,17 +840,18 @@ func CopyModel(src, dst model.Name) error {
 		return nil
 	}
 
-	manifests, err := manifest.Path()
+	dstpath, err := manifest.PathForName(dst)
 	if err != nil {
 		return err
 	}
-
-	dstpath := filepath.Join(manifests, dst.Filepath())
 	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
 		return err
 	}
 
-	srcpath := filepath.Join(manifests, src.Filepath())
+	srcpath, err := manifest.PathForName(src)
+	if err != nil {
+		return err
+	}
 	srcfile, err := os.Open(srcpath)
 	if err != nil {
 		return err
