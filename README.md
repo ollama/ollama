@@ -280,6 +280,7 @@ console.log(response.message.content);
 - [Archyve](https://github.com/nickthecook/archyve) - RAG-enabling document library
 - [Casibase](https://casibase.org) - AI knowledge base with RAG and SSO
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) - Native client with RAG and multi-agent automation
+- [NexusMem](https://github.com/yaminbkk/NexusMem) - Local-first memory for AI coding agents; indexes shell history, git commits/diffs and docs into SQLite, embeds locally through Ollama, and serves back a ranked, token-budgeted context slice over MCP
 
 ### Bots & Messaging
 
