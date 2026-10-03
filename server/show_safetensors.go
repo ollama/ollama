@@ -81,13 +81,17 @@ func getSafetensorsLLMInfoForRunner(name model.Name, runner string) (map[string]
 func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map[string]any {
 	// Determine architecture
 	arch := config.ModelType
-	if arch == "" && len(config.Architectures) > 0 {
-		// Convert HuggingFace architecture name to Ollama format
-		// e.g., "Gemma3ForCausalLM" -> "gemma3"
+	if len(config.Architectures) > 0 {
 		hfArch := config.Architectures[0]
-		arch = strings.ToLower(hfArch)
-		arch = strings.TrimSuffix(arch, "forcausallm")
-		arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+		if decisionArch, ok := strings.CutSuffix(hfArch, "ForDecision"); ok {
+			// model_type can describe only the backbone, omitting the decision head.
+			arch = strings.ToLower(decisionArch)
+		} else if arch == "" {
+			// Convert HuggingFace architecture names, e.g. "Gemma3ForCausalLM" to "gemma3".
+			arch = strings.ToLower(hfArch)
+			arch = strings.TrimSuffix(arch, "forcausallm")
+			arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+		}
 	}
 
 	// Use text_config values if they exist (for multimodal models)

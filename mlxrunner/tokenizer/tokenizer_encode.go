@@ -7,6 +7,8 @@ import (
 	"sync"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 const (
@@ -131,6 +133,17 @@ func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
 	}
 
 	if t.pretokenizer == nil {
+		if t.metaspace != nil && t.metaspace.Split {
+			start := 0
+			for i, r := range part {
+				if i > 0 && r == '▁' {
+					fn(encodeChunk{text: part[start:i]})
+					start = i
+				}
+			}
+			fn(encodeChunk{text: part[start:]})
+			return
+		}
 		fn(encodeChunk{text: part, isSpecial: false})
 		return
 	}
@@ -182,6 +195,21 @@ func (t *Tokenizer) appendEncodedChunk(ids []int32, c encodeChunk) []int32 {
 func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 	// First: split by special tokens
 	parts := t.splitBySpecialTokens(s)
+	for i, part := range parts {
+		if _, ok := t.specialTokens[part]; ok {
+			continue
+		}
+		if t.normalizeNFC {
+			part = norm.NFC.String(part)
+		}
+		if t.metaspace != nil {
+			part = strings.ReplaceAll(part, " ", "▁")
+			if (t.metaspace.PrependScheme == "always" || (t.metaspace.PrependScheme == "first" && i == 0)) && !strings.HasPrefix(part, "▁") {
+				part = "▁" + part
+			}
+		}
+		parts[i] = part
+	}
 
 	// Fast path: encode sequentially without materializing chunk slices.
 	if len(s) < encodeParallelMinInputBytes {

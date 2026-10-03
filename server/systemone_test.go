@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -38,11 +39,62 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
+func TestDecisionModelRejectsCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// No scheduler: capability rejection must happen before a runner is loaded.
+	s := &Server{}
+	for _, cfg := range []struct {
+		name         string
+		capabilities []string
+	}{
+		{"decision-only", []string{"decision"}},
+		{"decision-vision", []string{"decision", "vision"}},
+	} {
+		createSafetensorsTestModel(t, cfg.name, model.ConfigV2{
+			ModelFormat: "safetensors", Capabilities: cfg.capabilities,
+		}, nil)
+		for _, tc := range []struct {
+			name    string
+			handler gin.HandlerFunc
+			body    any
+		}{
+			{"generate", s.GenerateHandler, api.GenerateRequest{Model: cfg.name, Prompt: "hello"}},
+			{"chat", s.ChatHandler, api.ChatRequest{Model: cfg.name, Messages: []api.Message{{Role: "user", Content: "hello"}}}},
+		} {
+			t.Run(cfg.name+"/"+tc.name, func(t *testing.T) {
+				w := createRequest(t, tc.handler, tc.body)
+				want := fmt.Sprintf("does not support %s", tc.name)
+				if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+					t.Fatalf("status=%d body=%s, want 400 containing %q", w.Code, w.Body, want)
+				}
+			})
+		}
+	}
+}
+
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	config := model.ConfigV2{ModelFormat: "safetensors", Renderer: "qwen3.5", Capabilities: []string{"completion", "decision"}}
-	createSafetensorsTestModel(t, "safetensors-decision", config, nil)
+	params, err := manifest.NewLayer(strings.NewReader(`{"num_ctx":8192}`), "application/vnd.ollama.image.params")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createSafetensorsTestModel(t, "safetensors-decision", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-decision-only", config, []manifest.Layer{params})
+	config.Renderer = "tev1"
+	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
+	config.Renderer = "strands"
+	createSafetensorsTestModel(t, "safetensors-strands", config, []manifest.Layer{params})
+	config.Renderer = "clef"
+	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision", "vision"}
+	createSafetensorsTestModel(t, "safetensors-clef", config, []manifest.Layer{params})
+	config.Renderer = "qwen3.5"
+	config.Capabilities = []string{"completion"}
+	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
 	for _, modelConfig := range []struct {
 		name, architecture, renderer, system, template string
 		contextLength                                  int
@@ -50,6 +102,7 @@ func TestSystemOneHandler(t *testing.T) {
 	}{
 		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
+		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
 		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
 		{"no-system", "qwen35", "qwen3.5", "", "", 1024, false},
@@ -102,8 +155,11 @@ func TestSystemOneHandler(t *testing.T) {
 	}
 
 	const prefix = `{"model":"decision-test","state":"`
-	const suffix = `","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`
+	const suffix = `","questions":{"refund":{"type":"noul","instructions":"Refund requested?","criteria":{}}}}`
 	stateLimit := (64 << 10) - len(prefix) - len(suffix)
+	image := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("image"), 16<<10))
+	const imagePrefix = `{"model":"safetensors-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["`
+	largeText := strings.Replace(prefix+strings.Repeat("x", stateLimit+1)+suffix, "decision-test", "safetensors-clef", 1)
 	for _, tt := range []struct {
 		name   string
 		body   string
@@ -135,10 +191,25 @@ func TestSystemOneHandler(t *testing.T) {
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
 		{"cloud", `{"model":"decision:cloud","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"safetensors unsupported", `{"model":"safetensors-decision","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"safetensors success", `{"model":"safetensors-decision","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors decision only", `{"model":"safetensors-decision-only","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Strands pointer head", `{"model":"safetensors-strands","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Clef decision only text", `{"model":"safetensors-clef-text","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Clef decision only image", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-text", 1) + `aW1hZ2U="]}`, nil, 400, 0, false},
+		{"Clef image above text limit", imagePrefix + image + `"]}`, nil, 200, 1, false},
+		{"other model image", `{"model":"decision-test","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["aW1hZ2U="]}`, nil, 400, 0, false},
+		{"invalid image base64", imagePrefix + `!not-base64"]}`, nil, 400, 0, false},
+		{"image data URL", imagePrefix + `data:image/png;base64,aW1hZ2U="]}`, nil, 400, 0, false},
+		{"Tev1 safetensors", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Tev1 too many candidates", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
+		{"Tev1 empty description", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
+		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
-		{"at body limit", prefix + strings.Repeat("x", stateLimit) + suffix, nil, 200, 1, false},
-		{"over body limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
+		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
+		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &systemOneTestRunner{err: tt.err}
@@ -176,6 +247,9 @@ func TestSystemOneHandler(t *testing.T) {
 			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
 			}
+			if tt.name == "Clef decision only image" && !strings.Contains(w.Body.String(), "vision") {
+				t.Fatalf("expected missing vision capability: %s", w.Body)
+			}
 			if tt.calls > 0 {
 				want := time.Hour
 				if tt.expire {
@@ -192,6 +266,18 @@ func TestSystemOneHandler(t *testing.T) {
 				t.Fatal("images were not passed to scoring")
 			}
 			if tt.status == 200 {
+				var sent decision.Request
+				if err := json.Unmarshal([]byte(tt.body), &sent); err != nil {
+					t.Fatal(err)
+				}
+				if len(runner.request.Images) != len(sent.Images) {
+					t.Fatalf("runner received %d images, want %d", len(runner.request.Images), len(sent.Images))
+				}
+				for i := range sent.Images {
+					if !bytes.Equal(runner.request.Images[i], sent.Images[i]) {
+						t.Fatalf("image %d changed during request compilation", i)
+					}
+				}
 				var response struct {
 					Answers map[string]struct {
 						Noul float64 `json:"noul"`
@@ -208,15 +294,32 @@ func TestSystemOneHandler(t *testing.T) {
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
-				if len(runner.request.Fields) > 0 {
-					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || runner.request.MaxTokens != 2048 {
-						t.Fatal("invalid joint scoring request")
-					}
-					return
+				if ref.model.Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
+					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
 				}
-				prompt := runner.request.Rows[0].Prompt
+				var prompt string
+				if len(runner.request.Rows) > 0 {
+					prompt = runner.request.Rows[0].Prompt
+				}
+				if ref.model.Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
+					t.Fatalf("Tev1 did not receive its per-question prompt: %q", prompt)
+				}
 				wantContext := 1024
-				if ref.model.HasGoTemplate {
+				if !ref.model.isGGUF() {
+					wantContext = 8192
+				}
+				if len(runner.request.Fields) > 0 {
+					if len(runner.request.Rows) != 0 || len(runner.request.Fields) != 1 || len(runner.request.Segments) < 3 {
+						t.Fatal("Clef scoring must preserve the segmented schema")
+					}
+					if ref.model.isGGUF() {
+						wantContext = 2048
+					}
+				} else if len(runner.request.PointerRows) > 0 {
+					if len(runner.request.Rows) != 0 {
+						t.Fatal("pointer head must bypass chat templates")
+					}
+				} else if ref.model.HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
 					}

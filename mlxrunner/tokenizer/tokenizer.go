@@ -41,6 +41,14 @@ type Tokenizer struct {
 	specialTokens                      map[string]int32 // Special tokens for direct lookup
 	sortedSpecialTokens                []string         // Special tokens sorted by length, longest first
 	typ                                TokenizerType    // Algorithm type
+	normalizeNFC                       bool
+	metaspace                          *metaspace
+}
+
+type metaspace struct {
+	Replacement   string `json:"replacement"`
+	PrependScheme string `json:"prepend_scheme"`
+	Split         bool   `json:"split"`
 }
 
 // Precomputed GPT-2 byte-level encoding table

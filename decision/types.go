@@ -47,9 +47,10 @@ type (
 )
 
 type Response struct {
-	Model   string   `json:"model"`
-	Answers *Answers `json:"answers"`
-	Usage   Usage    `json:"usage"`
+	Model                 string   `json:"model"`
+	Answers               *Answers `json:"answers"`
+	Usage                 Usage    `json:"usage"`
+	PromptEvalCachedCount *int     `json:"prompt_eval_cached_count,omitempty"`
 }
 
 type Usage struct {

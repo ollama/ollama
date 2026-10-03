@@ -51,8 +51,11 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			Merges json.RawMessage  `json:"merges"` // Can be []string or [][]string (BPE only)
 		} `json:"model"`
 		PreTokenizer json.RawMessage `json:"pre_tokenizer"`
-		Decoder      json.RawMessage `json:"decoder"`
-		AddedTokens  []struct {
+		Normalizer   struct {
+			Type string `json:"type"`
+		} `json:"normalizer"`
+		Decoder     json.RawMessage `json:"decoder"`
+		AddedTokens []struct {
 			ID      int32  `json:"id"`
 			Content string `json:"content"`
 			Special bool   `json:"special"`
@@ -141,7 +144,24 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		t.typ = TokenizerBPE
 	}
 
-	// Parse and compile pretokenizer pattern (BPE only - SentencePiece doesn't use pretokenizer)
+	t.normalizeNFC = raw.Normalizer.Type == "NFC"
+	var pre struct {
+		Type string `json:"type"`
+		metaspace
+	}
+	if len(raw.PreTokenizer) > 0 {
+		if err := json.Unmarshal(raw.PreTokenizer, &pre); err != nil {
+			return nil, fmt.Errorf("failed to parse pre_tokenizer: %w", err)
+		}
+	}
+	if pre.Type == "Metaspace" {
+		if pre.Replacement != "▁" || (pre.PrependScheme != "always" && pre.PrependScheme != "first" && pre.PrependScheme != "never") {
+			return nil, fmt.Errorf("unsupported Metaspace pretokenizer: %s", raw.PreTokenizer)
+		}
+		t.metaspace = &pre.metaspace
+		t.typ = TokenizerSentencePiece
+	}
+	// Parse and compile pretokenizer pattern (BPE only).
 	if t.typ == TokenizerBPE {
 		pattern := extractPretokenizer(raw.PreTokenizer)
 		if pattern == "" {

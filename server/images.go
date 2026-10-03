@@ -164,11 +164,16 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities hides a decision model's other capabilities from show and
-// list so clients don't offer it for general chat. Serving still uses Capabilities.
-func publicCapabilities(capabilities []model.Capability) []model.Capability {
+// publicCapabilities limits decision models to decision and explicitly declared
+// vision support. Serving still uses Capabilities.
+func (m *Model) publicCapabilities() []model.Capability {
+	capabilities := m.Capabilities()
 	if slices.Contains(capabilities, model.CapabilityDecision) {
-		return []model.Capability{model.CapabilityDecision}
+		public := []model.Capability{model.CapabilityDecision}
+		if slices.Contains(m.Config.Capabilities, "vision") && slices.Contains(capabilities, model.CapabilityVision) {
+			public = append(public, model.CapabilityVision)
+		}
+		return public
 	}
 	return capabilities
 }

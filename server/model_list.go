@@ -200,7 +200,7 @@ func describeModelFromManifest(name model.Name, mf *manifest.Manifest, runner st
 		return summary, nil
 	}
 	summary.Details.ParentModel = m.ParentModel
-	summary.Capabilities = publicCapabilities(m.Capabilities())
+	summary.Capabilities = m.publicCapabilities()
 
 	if m.ModelPath != "" && m.isGGUF() {
 		if summary.Details.ContextLength == 0 {
