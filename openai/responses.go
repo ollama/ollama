@@ -768,9 +768,13 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 	var tools []api.Tool
 	hasWebSearch := HasWebSearchTool(r.Tools)
 	hasToolSearch := HasToolSearchTool(r.Tools)
-	for _, t := range r.Tools {
+	seenTools := make(map[string]struct{})
+	for _, t := range availableTools {
 		if isWebSearchTool(t) {
-			tools = append(tools, WebSearchFunctionTool())
+			if _, ok := seenTools["web_search"]; !ok {
+				tools = append(tools, WebSearchFunctionTool())
+				seenTools["web_search"] = struct{}{}
+			}
 			continue
 		}
 		if isToolSearchTool(t) {
@@ -781,7 +785,10 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 			if err != nil {
 				return nil, err
 			}
-			tools = append(tools, tool)
+			if _, ok := seenTools[tool.Function.Name]; !ok {
+				tools = append(tools, tool)
+				seenTools[tool.Function.Name] = struct{}{}
+			}
 			continue
 		}
 		expanded, err := convertTools(t)
@@ -795,6 +802,10 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 				(hasToolSearch && tool.Function.Name == "tool_search") {
 				continue
 			}
+			if _, ok := seenTools[tool.Function.Name]; ok {
+				continue
+			}
+			seenTools[tool.Function.Name] = struct{}{}
 			tools = append(tools, tool)
 		}
 	}
