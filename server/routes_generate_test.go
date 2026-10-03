@@ -3032,3 +3032,131 @@ func TestImageGenerateUnsupported(t *testing.T) {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
 	}
 }
+
+func TestGenerateThinkFalseStillParsesReasoning(t *testing.T) {
+	// A model told not to think may still emit a reasoning block. Those tags
+	// belong in `thinking`, never raw in `response`. /api/chat is clean here
+	// because the native path lets llama-server split reasoning_content
+	// regardless of the think value; /api/generate builds its own parser and
+	// used to skip it whenever think was false, leaking the raw block (#18044).
+	t.Setenv("OLLAMA_GO_TEMPLATE", "1")
+	gin.SetMode(gin.TestMode)
+
+	mock := &mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+
+	s := &Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{llama: mock}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*gguftest.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-thinking-generate",
+		Files: map[string]string{"file.gguf": digest},
+		// InferTags needs a `.Thinking` field inside a `range .Messages` to learn
+		// the tag pair, which is also what gives the model CapabilityThinking.
+		Template: `{{- range .Messages }}
+{{- if eq .Role "user" }}user: {{ .Content }}
+{{ else if eq .Role "assistant" }}assistant: {{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}
+{{ end }}{{ end }}<think>`,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, tt := range []struct {
+		name  string
+		think *api.ThinkValue
+	}{
+		{"think omitted", nil},
+		{"think false", &api.ThinkValue{Value: false}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mock.CompletionResponse = llm.CompletionResponse{
+				Content:            " The user asked for OK. </think>OK",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			}
+			mock.CompletionFn = nil
+
+			streamRequest := false
+			w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+				Model:  "test-thinking-generate",
+				Prompt: "Reply with exactly: OK",
+				Stream: &streamRequest,
+				Think:  tt.think,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp api.GenerateResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+
+			if strings.Contains(resp.Response, "</think>") {
+				t.Errorf("response leaked raw think tags: %q", resp.Response)
+			}
+			if resp.Response != "OK" {
+				t.Errorf("expected response %q, got %q", "OK", resp.Response)
+			}
+			if resp.Thinking == "" {
+				t.Errorf("expected the reasoning trace in thinking, got %q", resp.Thinking)
+			}
+		})
+	}
+}
