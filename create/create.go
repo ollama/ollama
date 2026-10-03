@@ -460,6 +460,24 @@ func buildSourceFP8Reader(weightTD, scaleTD *safetensors.TensorData) io.Reader {
 }
 
 func validateScalarFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
+	validated, err := validateFloat32TensorData(td, name)
+	if err != nil || validated == nil {
+		if err != nil && td != nil && strings.EqualFold(td.Dtype, "F32") {
+			return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+		}
+		return validated, err
+	}
+	n := int64(1)
+	for _, dim := range validated.Shape {
+		n *= int64(dim)
+	}
+	if n != 1 {
+		return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", validated.Shape)
+	}
+	return validated, nil
+}
+
+func validateFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
 	if td == nil {
 		return nil, nil
 	}
@@ -469,35 +487,36 @@ func validateScalarFloat32TensorData(td *safetensors.TensorData, name string) (*
 	n := int64(1)
 	for _, dim := range td.Shape {
 		if dim <= 0 || n > math.MaxInt64/int64(dim) {
-			return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+			return nil, fmt.Errorf("expected non-empty F32 tensor, got shape %v", td.Shape)
 		}
 		n *= int64(dim)
 	}
-	if n != 1 || td.Size != 4 {
-		return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+	if n > math.MaxInt64/4 || td.Size != n*4 {
+		return nil, fmt.Errorf("expected non-empty F32 tensor, got shape %v", td.Shape)
 	}
 	return td.WithName(name), nil
 }
 
-func invertScalarFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
-	td, err := validateScalarFloat32TensorData(td, name)
-	if err != nil {
-		return nil, err
+func invertFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
+	td, err := validateFloat32TensorData(td, name)
+	if err != nil || td == nil {
+		return td, err
 	}
 	raw, err := io.ReadAll(td.Reader())
 	if err != nil {
 		return nil, err
 	}
-	if len(raw)%4 != 0 {
-		return nil, fmt.Errorf("invalid F32 tensor byte length %d", len(raw))
+	if int64(len(raw)) != td.Size {
+		return nil, fmt.Errorf("invalid F32 tensor byte length %d, expected %d", len(raw), td.Size)
 	}
 	out := make([]byte, len(raw))
 	for i := 0; i < len(raw); i += 4 {
 		v := math.Float32frombits(binary.LittleEndian.Uint32(raw[i : i+4]))
-		if v == 0 {
-			return nil, fmt.Errorf("cannot invert zero F32 scale")
+		inverse := 1 / v
+		if !(v > 0) || math.IsInf(float64(v), 0) || math.IsInf(float64(inverse), 0) {
+			return nil, fmt.Errorf("cannot invert F32 scale %v: expected a finite positive scale with a finite reciprocal", v)
 		}
-		binary.LittleEndian.PutUint32(out[i:i+4], math.Float32bits(1/v))
+		binary.LittleEndian.PutUint32(out[i:i+4], math.Float32bits(inverse))
 	}
 	return safetensors.NewTensorDataFromBytes(name, td.Dtype, td.Shape, out), nil
 }

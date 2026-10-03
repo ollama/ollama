@@ -433,7 +433,7 @@ func parseSafetensorsAllHeaders(r io.Reader) ([]safetensorsTensorInfo, error) {
 		}
 		info.Name = name
 
-		if globalQuantType != "" {
+		if globalQuantType != "" && headerKeys[name+".scale"] {
 			// Use global metadata
 			info.QuantType = globalQuantType
 			info.GroupSize = globalGroupSize
