@@ -24,6 +24,25 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
     | sudo tar x -C /usr
 ```
 
+### Install without root access
+
+To install Ollama for the current user, extract the package into a user-writable directory:
+
+```shell
+mkdir -p "$HOME/.local"
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+    | tar x -C "$HOME/.local"
+```
+
+Add `$HOME/.local/bin` to your `PATH` in your shell profile, then apply it to the current shell:
+
+```shell
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For ARM64, use the `ollama-linux-arm64.tar.zst` package instead. For an AMD GPU, extract the
+additional `ollama-linux-amd64-rocm.tar.zst` package into the same directory.
+
 Start Ollama:
 
 ```shell
