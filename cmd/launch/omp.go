@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/types/model"
 	"gopkg.in/yaml.v3"
 )
@@ -138,7 +140,7 @@ func ompExecutableNames() []string {
 func (o *OMP) Run(model string, _ []LaunchModel, args []string) error {
 	ompPath, err := o.findPath()
 	if err != nil {
-		return fmt.Errorf("omp is not installed, install from https://omp.sh")
+		return errors.New(i18n.T("omp is not installed, install from https://omp.sh"))
 	}
 
 	ensureOMPWebSearchPlugin(ompPath)
@@ -153,37 +155,37 @@ func (o *OMP) Run(model string, _ []LaunchModel, args []string) error {
 
 func ensureOMPWebSearchPlugin(bin string) {
 	if !shouldManageOllamaWebSearch() {
-		fmt.Fprintf(os.Stderr, "%sCloud is disabled; skipping %s setup.%s\n", ansiGray, ompWebSearchPlugin, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%sCloud is disabled; skipping %s setup.%s\n"), ansiGray, ompWebSearchPlugin, ansiReset)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "%sChecking OMP web search plugin...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sChecking OMP web search plugin...%s\n"), ansiGray, ansiReset)
 
 	installed, err := ompPluginInstalled(bin, ompWebSearchPlugin)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not check %s installation: %v%s\n", ansiYellow, ompWebSearchPlugin, err, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not check %s installation: %v%s\n"), ansiYellow, ompWebSearchPlugin, err, ansiReset)
 		return
 	}
 
-	verb := "Installing"
-	warnVerb := "install"
-	doneVerb := "Installed"
+	verb := i18n.T("Installing")
+	warnVerb := i18n.T("install")
+	doneVerb := i18n.T("Installed")
 	if installed {
-		verb = "Updating"
-		warnVerb = "update"
-		doneVerb = "Updated"
+		verb = i18n.T("Updating")
+		warnVerb = i18n.T("update")
+		doneVerb = i18n.T("Updated")
 	}
 
-	fmt.Fprintf(os.Stderr, "%s%s %s...%s\n", ansiGray, verb, ompWebSearchPlugin, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%s%s %s...%s\n"), ansiGray, verb, ompWebSearchPlugin, ansiReset)
 	cmd := exec.Command(bin, "plugin", "install", ompWebSearchPlugin)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not %s %s: %v%s\n", ansiYellow, warnVerb, ompWebSearchPlugin, err, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not %s %s: %v%s\n"), ansiYellow, warnVerb, ompWebSearchPlugin, err, ansiReset)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "%s  ✓ %s %s%s\n", ansiGreen, doneVerb, ompWebSearchPlugin, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%s  ✓ %s %s%s\n"), ansiGreen, doneVerb, ompWebSearchPlugin, ansiReset)
 }
 
 func ompPluginInstalled(bin, plugin string) (bool, error) {

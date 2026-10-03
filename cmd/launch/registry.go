@@ -1,11 +1,14 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/i18n"
 )
 
 // IntegrationInstallSpec describes how launcher should detect and guide installation.
@@ -39,7 +42,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "claude",
 		Runner:      &Claude{},
-		Description: "Anthropic's coding tool with subagents",
+		Description: i18n.T("Anthropic's coding tool with subagents"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := (&Claude{}).findPath()
@@ -57,7 +60,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Runner:      &ClaudeDesktop{},
 		Aliases:     []string{"claude-app"},
 		Hidden:      true,
-		Description: "Use Ollama models in Claude Desktop",
+		Description: i18n.T("Use Ollama models in Claude Desktop"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return ClaudeDesktopInstalled()
@@ -68,7 +71,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "cline",
 		Runner:      &Cline{},
-		Description: "Autonomous coding agent with parallel execution",
+		Description: i18n.T("Autonomous coding agent with parallel execution"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("cline")
@@ -84,7 +87,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "codex",
 		Runner:      &Codex{},
-		Description: "OpenAI's open-source coding agent",
+		Description: i18n.T("OpenAI's open-source coding agent"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("codex")
@@ -98,7 +101,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        chatGPTIntegrationName,
 		Runner:      &CodexApp{},
 		Aliases:     []string{codexAppIntegrationName, "codex-desktop", "codex-gui"},
-		Description: "Use Ollama models in ChatGPT",
+		Description: i18n.T("Use Ollama models in ChatGPT"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return codexAppInstalled()
@@ -109,7 +112,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "kimi",
 		Runner:      &Kimi{},
-		Description: "Moonshot's coding agent for terminal and IDEs",
+		Description: i18n.T("Moonshot's coding agent for terminal and IDEs"),
 		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
@@ -127,7 +130,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "muse",
 		Runner:      &Muse{},
 		Aliases:     []string{"muse-code"},
-		Description: "Meta's agentic coding CLI",
+		Description: i18n.T("Meta's agentic coding CLI"),
 		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
@@ -145,7 +148,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "copilot",
 		Runner:      &Copilot{},
 		Aliases:     []string{"copilot-cli"},
-		Description: "GitHub's AI coding agent for the terminal",
+		Description: i18n.T("GitHub's AI coding agent for the terminal"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := (&Copilot{}).findPath()
@@ -157,7 +160,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "droid",
 		Runner:      &Droid{},
-		Description: "Factory's coding agent across terminal and IDEs",
+		Description: i18n.T("Factory's coding agent across terminal and IDEs"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("droid")
@@ -170,7 +173,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        deepSeekHarnessIntegrationName,
 		Runner:      &DeepSeekHarness{},
 		Aliases:     []string{"deepseek-harness"},
-		Description: "DeepSeek's open-source agent harness",
+		Description: i18n.T("DeepSeek's open-source agent harness"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := deepSeekHarnessLookPath("dsh")
@@ -187,7 +190,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "opencode",
 		Runner:      &OpenCode{},
-		Description: "Anomaly's open-source coding agent",
+		Description: i18n.T("Anomaly's open-source coding agent"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, ok := findOpenCode()
@@ -203,7 +206,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "omp",
 		Runner:      &OMP{},
-		Description: "AI coding agent with IDE integration",
+		Description: i18n.T("AI coding agent with IDE integration"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := (&OMP{}).findPath()
@@ -216,7 +219,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "openclaw",
 		Runner:      &Openclaw{},
 		Aliases:     []string{"clawdbot", "moltbot"},
-		Description: "Personal AI with 100+ skills",
+		Description: i18n.T("Personal AI with 100+ skills"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				if _, err := exec.LookPath("openclaw"); err == nil {
@@ -237,7 +240,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "pi",
 		Runner:      &Pi{},
-		Description: "Minimal AI agent toolkit with plugin support",
+		Description: i18n.T("Minimal AI agent toolkit with plugin support"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("pi")
@@ -253,7 +256,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "pool",
 		Runner:      &Poolside{},
-		Description: "Poolside's software agent for enterprise development",
+		Description: i18n.T("Poolside's software agent for enterprise development"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := exec.LookPath("pool")
@@ -265,7 +268,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "hermes",
 		Runner:      &Hermes{},
-		Description: "Self-improving AI agent built by Nous Research",
+		Description: i18n.T("Self-improving AI agent built by Nous Research"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return (&Hermes{}).installed()
@@ -279,7 +282,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "hermes-desktop",
 		Runner:      &HermesDesktop{},
-		Description: "Desktop app for Hermes Agent by Nous Research",
+		Description: i18n.T("Desktop app for Hermes Agent by Nous Research"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return (&Hermes{}).installed()
@@ -294,7 +297,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "vscode",
 		Runner:      &VSCode{},
 		Aliases:     []string{"code"},
-		Description: "Microsoft's open-source AI code editor",
+		Description: i18n.T("Microsoft's open-source AI code editor"),
 		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
@@ -306,7 +309,7 @@ var integrationSpecs = []*IntegrationSpec{
 	{
 		Name:        "qwen",
 		Runner:      &Qwen{},
-		Description: "Qwen's AI coding agent with tool use",
+		Description: i18n.T("Qwen's AI coding agent with tool use"),
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				_, err := (&Qwen{}).findPath()
@@ -390,7 +393,7 @@ func rebuildIntegrationSpecIndexes() {
 func LookupIntegrationSpec(name string) (*IntegrationSpec, error) {
 	spec, ok := integrationSpecsByName[strings.ToLower(name)]
 	if !ok {
-		return nil, fmt.Errorf("unknown integration: %s", name)
+		return nil, fmt.Errorf(i18n.T("unknown integration: %s"), name)
 	}
 	return spec, nil
 }
@@ -460,7 +463,7 @@ func ListIntegrationInfos() []IntegrationInfo {
 func IntegrationSelectionItems() ([]ModelItem, error) {
 	visible := ListVisibleIntegrationSpecs()
 	if len(visible) == 0 {
-		return nil, fmt.Errorf("no integrations available")
+		return nil, errors.New(i18n.T("no integrations available"))
 	}
 
 	items := make([]ModelItem, 0, len(visible))
@@ -478,7 +481,7 @@ func IntegrationSelectionItems() ([]ModelItem, error) {
 func IsIntegrationInstalled(name string) bool {
 	integration, err := integrationFor(name)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Ollama couldn't find integration %q, so it'll show up as not installed.\n", name)
+		fmt.Fprintf(os.Stderr, i18n.T("Ollama couldn't find integration %q, so it'll show up as not installed.\n"), name)
 		return false
 	}
 	return integration.installed
@@ -510,9 +513,9 @@ func integrationFor(name string) (integration, error) {
 	_, editor := spec.Runner.(Editor)
 	hint := ""
 	if spec.Install.URL != "" {
-		hint = "Install from " + hyperlink(spec.Install.URL, spec.Install.URL)
+		hint = i18n.T("Install from ") + hyperlink(spec.Install.URL, spec.Install.URL)
 	} else if len(spec.Install.Command) > 0 {
-		hint = "Install with: " + strings.Join(spec.Install.Command, " ")
+		hint = i18n.T("Install with: ") + strings.Join(spec.Install.Command, " ")
 	}
 
 	return integration{
@@ -528,7 +531,7 @@ func integrationFor(name string) (integration, error) {
 func EnsureIntegrationInstalled(name string, runner Runner) error {
 	integration, err := integrationFor(name)
 	if err != nil {
-		return fmt.Errorf("%s is not installed", runner)
+		return fmt.Errorf(i18n.T("%s is not installed"), runner)
 	}
 
 	if supported, ok := runner.(SupportedIntegration); ok {
@@ -550,10 +553,10 @@ func EnsureIntegrationInstalled(name string, runner Runner) error {
 
 	switch {
 	case integration.spec.Install.URL != "":
-		return fmt.Errorf("%s is not installed, install from %s", integration.spec.Name, integration.spec.Install.URL)
+		return fmt.Errorf(i18n.T("%s is not installed, install from %s"), integration.spec.Name, integration.spec.Install.URL)
 	case len(integration.spec.Install.Command) > 0:
-		return fmt.Errorf("%s is not installed, install with: %s", integration.spec.Name, strings.Join(integration.spec.Install.Command, " "))
+		return fmt.Errorf(i18n.T("%s is not installed, install with: %s"), integration.spec.Name, strings.Join(integration.spec.Install.Command, " "))
 	default:
-		return fmt.Errorf("%s is not installed", runner)
+		return fmt.Errorf(i18n.T("%s is not installed"), runner)
 	}
 }

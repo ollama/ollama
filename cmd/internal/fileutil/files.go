@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/i18n"
 )
 
 // Keep a bounded number of backups per file so config backups do not grow
@@ -87,32 +89,32 @@ func WriteWithBackup(path string, data []byte, integration ...string) error {
 		}
 		backupPath, err = writeBackupCopy(path, backupIntegration)
 		if err != nil {
-			return fmt.Errorf("backup failed: %w", err)
+			return fmt.Errorf(i18n.T("backup failed: %w"), err)
 		}
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read existing file: %w", err)
+		return fmt.Errorf(i18n.T("read existing file: %w"), err)
 	}
 
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temp failed: %w", err)
+		return fmt.Errorf(i18n.T("create temp failed: %w"), err)
 	}
 	tmpPath := tmp.Name()
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write failed: %w", err)
+		return fmt.Errorf(i18n.T("write failed: %w"), err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("sync failed: %w", err)
+		return fmt.Errorf(i18n.T("sync failed: %w"), err)
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close failed: %w", err)
+		return fmt.Errorf(i18n.T("close failed: %w"), err)
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
@@ -120,7 +122,7 @@ func WriteWithBackup(path string, data []byte, integration ...string) error {
 		if backupPath != "" {
 			_ = copyFile(backupPath, path)
 		}
-		return fmt.Errorf("rename failed: %w", err)
+		return fmt.Errorf(i18n.T("rename failed: %w"), err)
 	}
 
 	return nil

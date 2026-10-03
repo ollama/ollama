@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/internal/proxy"
 )
 
@@ -95,15 +96,15 @@ func (c *ClaudeDesktop) ConfigureAutodiscoveryWithAutoMode(autoMode bool) error 
 }
 
 func (c *ClaudeDesktop) RestoreHint() string {
-	return claudeDesktopRestoreMessage
+	return i18n.T(claudeDesktopRestoreMessage)
 }
 
 func (c *ClaudeDesktop) ConfigurationSuccessMessage() string {
-	return claudeDesktopSuccessMessage + "\n" + claudeDesktopRestoreMessage
+	return i18n.T(claudeDesktopSuccessMessage) + "\n" + i18n.T(claudeDesktopRestoreMessage)
 }
 
 func (c *ClaudeDesktop) RestoreSuccessMessage() string {
-	return claudeDesktopRestoredMessage
+	return i18n.T(claudeDesktopRestoredMessage)
 }
 
 func (c *ClaudeDesktop) AutodiscoveryConfigured() bool {
@@ -162,7 +163,7 @@ func (c *ClaudeDesktop) SetInstalledFromDesktopWithAutoMode(installed, restart, 
 
 	running, err := claudeDesktopIsRunning(context.Background())
 	if err != nil {
-		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+		return fmt.Errorf(i18n.T("check whether Claude Desktop is running: %w"), err)
 	}
 	if !running {
 		if err := applyProfile(); err != nil {
@@ -188,7 +189,7 @@ func (c *ClaudeDesktop) ApplyProfileChange(change func() error, restartConfirmed
 	}
 	running, err := claudeDesktopIsRunning(context.Background())
 	if err != nil {
-		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+		return fmt.Errorf(i18n.T("check whether Claude Desktop is running: %w"), err)
 	}
 	if !running {
 		return change()
@@ -206,13 +207,13 @@ func (c *ClaudeDesktop) RestoreForShutdown(ctx context.Context) error {
 	}
 	running, err := claudeDesktopIsRunning(ctx)
 	if err != nil {
-		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+		return fmt.Errorf(i18n.T("check whether Claude Desktop is running: %w"), err)
 	}
 	if !running {
 		return restoreClaudeDesktopProfile()
 	}
 	if err := claudeDesktopQuitApp(ctx); err != nil {
-		return fmt.Errorf("quit Claude Desktop: %w", err)
+		return fmt.Errorf(i18n.T("quit Claude Desktop: %w"), err)
 	}
 	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		return err
@@ -271,7 +272,7 @@ func ClaudeDesktopModelMappings() map[string]string {
 // subset in the shared launcher configuration.
 func SaveClaudeDesktopModels(models []string) error {
 	if len(models) == 0 {
-		return errors.New("select at least one Claude Desktop model")
+		return errors.New(i18n.T("select at least one Claude Desktop model"))
 	}
 	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
 		return err
@@ -291,7 +292,7 @@ func SaveClaudeDesktopModelMappings(mappings map[string]string) error {
 		}
 	}
 	if len(models) == 0 {
-		return errors.New("map at least one Claude Desktop route")
+		return errors.New(i18n.T("map at least one Claude Desktop route"))
 	}
 	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
 		return err
@@ -336,7 +337,7 @@ func claudeDesktopAutoModePreference() (bool, error) {
 		return true, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("load Claude Desktop auto mode preference: %w", err)
+		return false, fmt.Errorf(i18n.T("load Claude Desktop auto mode preference: %w"), err)
 	}
 	if integrationConfig.AutoMode == nil {
 		return true, nil
@@ -357,12 +358,12 @@ func (c *ClaudeDesktop) Run(_ string, _ []LaunchModel, args []string) error {
 		return err
 	}
 	if len(args) > 0 {
-		return errors.New("claude-desktop does not accept extra arguments")
+		return errors.New(i18n.T("claude-desktop does not accept extra arguments"))
 	}
 	if err := ensureClaudeDesktopGateway(); err != nil {
 		return err
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use Ollama?", c.ConfigureAutodiscovery)
+	return claudeDesktopLaunchOrRestart(i18n.T("Restart Claude Desktop to use Ollama?"), c.ConfigureAutodiscovery)
 }
 
 func (c *ClaudeDesktop) Restore() error {
@@ -377,7 +378,7 @@ func (c *ClaudeDesktop) Restore() error {
 	if err := restoreClaudeDesktopTargets(targets); err != nil {
 		return err
 	}
-	return claudeDesktopLaunchOrRestart("Restart Claude Desktop to use the usual Claude profile?", func() error {
+	return claudeDesktopLaunchOrRestart(i18n.T("Restart Claude Desktop to use the usual Claude profile?"), func() error {
 		return restoreClaudeDesktopTargets(targets)
 	})
 }
@@ -426,21 +427,21 @@ func claudeDesktopSupported() error {
 	if claudeDesktopGOOS == "darwin" {
 		return nil
 	}
-	return errors.New("Claude Desktop launch is only supported on macOS")
+	return errors.New(i18n.T("Claude Desktop launch is only supported on macOS"))
 }
 
 func claudeDesktopRestoreSupported() error {
 	if claudeDesktopGOOS == "darwin" || claudeDesktopGOOS == "windows" {
 		return nil
 	}
-	return errors.New("Claude Desktop restore is only supported on macOS and Windows")
+	return errors.New(i18n.T("Claude Desktop restore is only supported on macOS and Windows"))
 }
 
 func ensureClaudeDesktopGateway() error {
 	ctx, cancel := context.WithTimeout(context.Background(), claudeDesktopProbeTimeout)
 	defer cancel()
 	if err := claudeDesktopProbeGateway(ctx, claudeDesktopGatewayBaseURL); err != nil {
-		return fmt.Errorf("Claude gateway is unavailable at %s: %w; restart Ollama and try again", claudeDesktopGatewayBaseURL, err)
+		return fmt.Errorf(i18n.T("Claude gateway is unavailable at %s: %w; restart Ollama and try again"), claudeDesktopGatewayBaseURL, err)
 	}
 	return nil
 }
@@ -602,7 +603,7 @@ func claudeDesktopWindowsConfigPaths() (claudeDesktopPaths, error) {
 func claudeDesktopProfileDir(normal bool) (string, error) {
 	candidates := claudeDesktopProfileDirCandidates(normal)
 	if len(candidates) == 0 {
-		return "", errors.New("Claude Desktop profile directory could not be resolved")
+		return "", errors.New(i18n.T("Claude Desktop profile directory could not be resolved"))
 	}
 	for _, candidate := range candidates {
 		if _, err := claudeDesktopStat(candidate); err == nil {
@@ -705,7 +706,7 @@ func claudeDesktopLocalAppData() (string, error) {
 func writeClaudeDesktopDeploymentMode(path, mode string) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
-		return fmt.Errorf("parse Claude Desktop config: %w", err)
+		return fmt.Errorf(i18n.T("parse Claude Desktop config: %w"), err)
 	}
 	cfg["deploymentMode"] = mode
 	return writeClaudeDesktopJSON(path, cfg)
@@ -714,7 +715,7 @@ func writeClaudeDesktopDeploymentMode(path, mode string) error {
 func writeClaudeDesktopMeta(path, id, name string) error {
 	meta, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
-		return fmt.Errorf("parse Claude Desktop config metadata: %w", err)
+		return fmt.Errorf(i18n.T("parse Claude Desktop config metadata: %w"), err)
 	}
 
 	meta["appliedId"] = id
@@ -741,7 +742,7 @@ func writeClaudeDesktopMeta(path, id, name string) error {
 func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser, autoMode bool) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
-		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
+		return fmt.Errorf(i18n.T("parse Claude Desktop Ollama profile: %w"), err)
 	}
 	cfg["inferenceProvider"] = "gateway"
 	cfg["inferenceGatewayBaseUrl"] = baseURL
@@ -761,7 +762,7 @@ func writeClaudeDesktopGatewayProfile(path, baseURL, apiKey string, forceChooser
 func restoreClaudeDesktopMeta(path string) error {
 	meta, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
-		return fmt.Errorf("parse Claude Desktop config metadata: %w", err)
+		return fmt.Errorf(i18n.T("parse Claude Desktop config metadata: %w"), err)
 	}
 	if len(meta) == 0 {
 		return nil
@@ -796,7 +797,7 @@ func restoreClaudeDesktopMeta(path string) error {
 func restoreClaudeDesktopOllamaProfile(path string) error {
 	cfg, err := readClaudeDesktopJSONAllowMissing(path)
 	if err != nil {
-		return fmt.Errorf("parse Claude Desktop Ollama profile: %w", err)
+		return fmt.Errorf(i18n.T("parse Claude Desktop Ollama profile: %w"), err)
 	}
 	if len(cfg) == 0 {
 		return nil
@@ -978,7 +979,7 @@ func claudeDesktopAnySlice(value any) []any {
 func claudeDesktopLaunchOrRestart(prompt string, reapplyProfile func() error) error {
 	running, err := claudeDesktopIsRunning(context.Background())
 	if err != nil {
-		return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+		return fmt.Errorf(i18n.T("check whether Claude Desktop is running: %w"), err)
 	}
 	if !running {
 		return claudeDesktopOpenApp()
@@ -988,7 +989,7 @@ func claudeDesktopLaunchOrRestart(prompt string, reapplyProfile func() error) er
 		return err
 	}
 	if !restart {
-		fmt.Fprintln(os.Stderr, "\nQuit and reopen Claude Desktop when you're ready for the profile change to take effect.")
+		fmt.Fprintln(os.Stderr, i18n.T("\nQuit and reopen Claude Desktop when you're ready for the profile change to take effect."))
 		return nil
 	}
 	return restartClaudeDesktop(reapplyProfile)
@@ -1002,7 +1003,7 @@ func restartClaudeDesktop(reapplyProfile func() error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := claudeDesktopQuitApp(ctx); err != nil {
-		return fmt.Errorf("quit Claude Desktop: %w", err)
+		return fmt.Errorf(i18n.T("quit Claude Desktop: %w"), err)
 	}
 	if err := waitForClaudeDesktopExit(ctx); err != nil {
 		return err
@@ -1010,9 +1011,9 @@ func restartClaudeDesktop(reapplyProfile func() error) error {
 	// Claude persists settings while shutting down. Reapply the profile after
 	// exit so its last write cannot restore stale surface or gateway values.
 	if err := reapplyProfile(); err != nil {
-		reapplyErr := fmt.Errorf("reapply Claude Desktop profile: %w", err)
+		reapplyErr := fmt.Errorf(i18n.T("reapply Claude Desktop profile: %w"), err)
 		if openErr := openClaudeDesktopAfterRestart(restartAppPath); openErr != nil {
-			return errors.Join(reapplyErr, fmt.Errorf("reopen Claude Desktop after profile failure: %w", openErr))
+			return errors.Join(reapplyErr, fmt.Errorf(i18n.T("reopen Claude Desktop after profile failure: %w"), openErr))
 		}
 		return reapplyErr
 	}
@@ -1030,14 +1031,14 @@ func waitForClaudeDesktopExit(ctx context.Context) error {
 	for {
 		running, err := claudeDesktopIsRunning(ctx)
 		if err != nil {
-			return fmt.Errorf("check whether Claude Desktop is running: %w", err)
+			return fmt.Errorf(i18n.T("check whether Claude Desktop is running: %w"), err)
 		}
 		if !running {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return errors.New("Claude Desktop did not quit; quit it manually and re-run the command")
+			return errors.New(i18n.T("Claude Desktop did not quit; quit it manually and re-run the command"))
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
@@ -1101,11 +1102,11 @@ func defaultClaudeDesktopOpenApp() error {
 		if path := claudeDesktopRunningAppPath(); path != "" {
 			return claudeDesktopOpenAppPath(path)
 		}
-		return errors.New("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop --restore'")
+		return errors.New(i18n.T("Claude Desktop executable was not found; open Claude Desktop manually once and re-run 'ollama launch claude-desktop --restore'"))
 	case "darwin":
 		path := claudeDesktopAppPath()
 		if path == "" {
-			return errors.New("Claude Desktop app was not found")
+			return errors.New(i18n.T("Claude Desktop app was not found"))
 		}
 		return openClaudeDesktopDarwin(path)
 	default:

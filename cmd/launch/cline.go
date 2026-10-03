@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 const clineLaunchProvider = "ollama"
@@ -40,31 +42,31 @@ func ensureClineInstalled() (string, error) {
 	}
 
 	if _, err := exec.LookPath("npm"); err != nil {
-		return "", fmt.Errorf("cline is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch cline")
+		return "", errors.New(i18n.T("cline is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch cline"))
 	}
 
-	ok, err := ConfirmPrompt("Cline is not installed. Install with npm?")
+	ok, err := ConfirmPrompt(i18n.T("Cline is not installed. Install with npm?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("cline installation cancelled")
+		return "", errors.New(i18n.T("cline installation cancelled"))
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Cline...\n")
+	fmt.Print(i18n.T("\nInstalling Cline...\n"))
 	cmd := exec.Command("npm", "install", "-g", "cline@latest")
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install cline: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install cline: %w"), err)
 	}
 
 	if _, err := exec.LookPath("cline"); err != nil {
-		return "", fmt.Errorf("cline was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("cline was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sCline installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sCline installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return "cline", nil
 }
 
@@ -138,7 +140,7 @@ func readClineConfig(configPath string) (map[string]any, error) {
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
 		if err := json.Unmarshal(data, &config); err != nil {
-			return nil, fmt.Errorf("failed to parse config: %w, at: %s", err, configPath)
+			return nil, fmt.Errorf(i18n.T("failed to parse config: %w, at: %s"), err, configPath)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err

@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/progress"
 )
 
@@ -31,7 +32,7 @@ const maxUploadRetries = 6
 // and MLX quantization against its own hardware.
 func createModelRemote(ctx context.Context, client *api.Client, opts createOptions, p *progress.Progress) error {
 	if opts.Force {
-		return errors.New("--force is only supported for local MLX safetensors imports")
+		return errors.New(i18n.T("--force is only supported for local MLX safetensors imports"))
 	}
 	isSafetensors := create.IsSafetensorsModelDir(opts.ModelDir)
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
@@ -39,10 +40,10 @@ func createModelRemote(ctx context.Context, client *api.Client, opts createOptio
 		return err
 	}
 	if !isSafetensors {
-		return fmt.Errorf("%s is not a supported safetensors model directory (needs config.json + *.safetensors)", opts.ModelDir)
+		return fmt.Errorf(i18n.T("%s is not a supported safetensors model directory (needs config.json + *.safetensors)"), opts.ModelDir)
 	}
 	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
-		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
+		return fmt.Errorf(i18n.T("draft %s is not a supported safetensors model directory"), opts.Modelfile.Draft)
 	}
 	if err := validateDistinctSafetensorsSources(opts.ModelDir, opts.Modelfile); err != nil {
 		return err
@@ -69,7 +70,7 @@ func createModelRemote(ctx context.Context, client *api.Client, opts createOptio
 		return err
 	}
 
-	fmt.Printf("Created safetensors model '%s'\n", opts.ModelName)
+	fmt.Printf(i18n.T("Created safetensors model '%s'\n"), opts.ModelName)
 	return nil
 }
 
@@ -154,7 +155,7 @@ func uploadRemoteSourceFiles(ctx context.Context, client *api.Client, files []re
 
 	var bar *progress.Bar
 	if p != nil {
-		bar = progress.NewBar("transferring model", total, 0)
+		bar = progress.NewBar(i18n.T("transferring model"), total, 0)
 		p.Add("transfer", bar)
 	}
 
@@ -191,7 +192,7 @@ func uploadRemoteSourceFile(ctx context.Context, client *api.Client, f remoteSou
 		}
 		lastErr = err
 	}
-	return fmt.Errorf("upload failed for %s after %d attempts: %w", f.logical, maxUploadRetries, lastErr)
+	return fmt.Errorf(i18n.T("upload failed for %s after %d attempts: %w"), f.logical, maxUploadRetries, lastErr)
 }
 
 func shouldRetryUpload(err error) bool {
@@ -215,7 +216,7 @@ func shouldRetryUpload(err error) bool {
 func uploadRemoteSourceFileOnce(ctx context.Context, client *api.Client, f remoteSourceFile, transferred *atomic.Int64, bar *progress.Bar) error {
 	exists, err := client.HeadBlob(ctx, f.digest)
 	if err != nil {
-		return fmt.Errorf("HEAD check %s: %w", f.logical, err)
+		return fmt.Errorf(i18n.T("HEAD check %s: %w"), f.logical, err)
 	}
 	if exists {
 		if bar != nil {
@@ -244,7 +245,7 @@ func uploadRemoteSourceFileOnce(ctx context.Context, client *api.Client, f remot
 		if bar != nil {
 			bar.Set(transferred.Add(-blobTransferred.Load()))
 		}
-		return fmt.Errorf("upload %s: %w", f.logical, err)
+		return fmt.Errorf(i18n.T("upload %s: %w"), f.logical, err)
 	}
 	return nil
 }
@@ -302,7 +303,7 @@ func runRemoteCreateRequest(ctx context.Context, client *api.Client, req *api.Cr
 	status := "creating safetensors model"
 	var spinner *progress.Spinner
 	if p != nil {
-		spinner = progress.NewSpinner(status)
+		spinner = progress.NewSpinner(i18n.Status(status))
 		p.Add("create", spinner)
 	}
 	err := client.Create(ctx, req, func(resp api.ProgressResponse) error {
@@ -311,7 +312,7 @@ func runRemoteCreateRequest(ctx context.Context, client *api.Client, req *api.Cr
 		}
 		spinner.Stop()
 		status = resp.Status
-		spinner = progress.NewSpinner(status)
+		spinner = progress.NewSpinner(i18n.Status(resp.Status))
 		p.Add("create", spinner)
 		return nil
 	})
@@ -319,7 +320,7 @@ func runRemoteCreateRequest(ctx context.Context, client *api.Client, req *api.Cr
 		spinner.Stop()
 	}
 	if err != nil {
-		return fmt.Errorf("server create failed: %w", err)
+		return fmt.Errorf(i18n.T("server create failed: %w"), err)
 	}
 	return nil
 }

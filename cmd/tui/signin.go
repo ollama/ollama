@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/i18n"
 )
 
 type signInTickMsg struct{}
@@ -194,17 +195,17 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 
 	var s strings.Builder
 
-	fmt.Fprintf(&s, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(modelName))
+	fmt.Fprintf(&s, i18n.T("To use %s, please sign in.\n\n"), selectorSelectedItemStyle.Render(modelName))
 
-	s.WriteString("Navigate to:\n")
+	s.WriteString(i18n.T("Navigate to:\n"))
 	s.WriteString(urlWrap.Render(urlColor.Render(signInURL)))
 	s.WriteString("\n\n")
 
 	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
-		frame + " Waiting for sign in to complete..."))
+		frame + " " + i18n.T("Waiting for sign in to complete...")))
 	s.WriteString("\n\n")
 
-	s.WriteString(selectorHelpStyle.Render("esc cancel"))
+	s.WriteString(selectorHelpStyle.Render(i18n.T("esc cancel")))
 
 	return lipgloss.NewStyle().PaddingLeft(2).Render(s.String())
 }
@@ -228,31 +229,31 @@ func renderUpgrade(modelName string, spinner, width int, polling, openNow bool) 
 
 	var s strings.Builder
 
-	fmt.Fprintf(&s, "To use %s, upgrade your Ollama plan.\n\n", selectorSelectedItemStyle.Render(modelName))
+	fmt.Fprintf(&s, i18n.T("To use %s, upgrade your Ollama plan.\n\n"), selectorSelectedItemStyle.Render(modelName))
 
-	s.WriteString("Navigate to:\n")
+	s.WriteString(i18n.T("Navigate to:\n"))
 	s.WriteString(urlWrap.Render(urlColor.Render(launch.DefaultUpgradeURL)))
 	s.WriteString("\n\n")
 
 	if !polling {
 		var yesBtn, noBtn string
 		if openNow {
-			yesBtn = confirmActiveStyle.Render(" Yes ")
-			noBtn = confirmInactiveStyle.Render(" No ")
+			yesBtn = confirmActiveStyle.Render(" " + i18n.T("Yes") + " ")
+			noBtn = confirmInactiveStyle.Render(" " + i18n.T("No") + " ")
 		} else {
-			yesBtn = confirmInactiveStyle.Render(" Yes ")
-			noBtn = confirmActiveStyle.Render(" No ")
+			yesBtn = confirmInactiveStyle.Render(" " + i18n.T("Yes") + " ")
+			noBtn = confirmActiveStyle.Render(" " + i18n.T("No") + " ")
 		}
 
-		s.WriteString("Open now?\n")
+		s.WriteString(i18n.T("Open now?\n"))
 		s.WriteString("  " + yesBtn + "  " + noBtn)
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("←/→ navigate • enter confirm • esc cancel"))
+		s.WriteString(selectorHelpStyle.Render(i18n.T("←/→ navigate • enter confirm • esc cancel")))
 	} else {
 		s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
-			frame + " Waiting for upgrade to complete..."))
+			frame + " " + i18n.T("Waiting for upgrade to complete...")))
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("esc cancel"))
+		s.WriteString(selectorHelpStyle.Render(i18n.T("esc cancel")))
 	}
 
 	return lipgloss.NewStyle().PaddingLeft(2).Render(s.String())
@@ -303,7 +304,7 @@ func RunSignIn(modelName, signInURL string) (string, error) {
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", fmt.Errorf("error running sign-in: %w", err)
+		return "", fmt.Errorf(i18n.T("error running sign-in: %w"), err)
 	}
 
 	fm := finalModel.(signInModel)
@@ -325,7 +326,7 @@ func RunUpgrade(modelName, requiredPlan string) (string, error) {
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", fmt.Errorf("error running upgrade: %w", err)
+		return "", fmt.Errorf(i18n.T("error running upgrade: %w"), err)
 	}
 
 	fm := finalModel.(upgradeModel)

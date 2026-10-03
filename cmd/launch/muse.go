@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Muse implements Runner and Editor for Meta's Muse Code CLI.
@@ -66,26 +68,26 @@ func ensureMuseInstalled() (string, error) {
 		return path, nil
 	}
 
-	ok, err := ConfirmPrompt("Muse is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("Muse is not installed. Install now?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("muse installation cancelled")
+		return "", errors.New(i18n.T("muse installation cancelled"))
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Muse...\n")
+	fmt.Print(i18n.T("\nInstalling Muse...\n"))
 	cmd := exec.Command(museInstallCommand[0], museInstallCommand[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("muse installation failed: %w", err)
+		return "", fmt.Errorf(i18n.T("muse installation failed: %w"), err)
 	}
 
 	path, err := findMuse()
 	if err != nil {
-		return "", fmt.Errorf("muse installer finished but the binary was not found")
+		return "", errors.New(i18n.T("muse installer finished but the binary was not found"))
 	}
 	return path, nil
 }
@@ -110,7 +112,7 @@ func (m *Muse) String() string { return "Muse Code" }
 
 func (m *Muse) Supported() error {
 	if museGOOS == "windows" {
-		return fmt.Errorf("Warning: Muse is not currently supported on Windows")
+		return errors.New(i18n.T("Warning: Muse is not currently supported on Windows"))
 	}
 	return nil
 }
@@ -120,7 +122,7 @@ func (m *Muse) Run(model string, models []LaunchModel, args []string) error {
 		return err
 	}
 	if strings.TrimSpace(model) == "" {
-		return fmt.Errorf("model is required")
+		return errors.New(i18n.T("model is required"))
 	}
 
 	bin, err := ensureMuseInstalled()
@@ -133,7 +135,7 @@ func (m *Muse) Run(model string, models []LaunchModel, args []string) error {
 	// Preserve Edit's backup by avoiding a second backup for that refresh.
 	backup := !slices.Equal(m.Models(), launchModelNames(runModels))
 	if err := writeMuseSettingsFile(runModels, backup); err != nil {
-		return fmt.Errorf("failed to configure muse: %w", err)
+		return fmt.Errorf(i18n.T("failed to configure muse: %w"), err)
 	}
 
 	configHome, err := museConfigHome()
@@ -203,7 +205,7 @@ func findMuse() (string, error) {
 	}
 	fallback := filepath.Join(home, ".local", "bin", "muse")
 	if info, err := os.Stat(fallback); err != nil || info.IsDir() {
-		return "", fmt.Errorf("muse binary not found")
+		return "", errors.New(i18n.T("muse binary not found"))
 	}
 	return fallback, nil
 }
@@ -253,7 +255,7 @@ func museBaseSettings() (map[string]any, error) {
 		case err == nil && settings != nil:
 			return settings, nil
 		case err != nil && !os.IsNotExist(err):
-			return nil, fmt.Errorf("read muse settings %s: %w", path, err)
+			return nil, fmt.Errorf(i18n.T("read muse settings %s: %w"), path, err)
 		}
 	}
 	if path, err := museUserSettingsPath(); err == nil {

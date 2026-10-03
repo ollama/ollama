@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Claude implements Runner for Claude Code integration.
@@ -46,7 +48,7 @@ func (c *Claude) findPath() (string, error) {
 			return fallback, nil
 		}
 	}
-	return "", fmt.Errorf("claude binary not found")
+	return "", errors.New(i18n.T("claude binary not found"))
 }
 
 func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
@@ -95,12 +97,12 @@ func ensureClaudeInstalled() (string, error) {
 		return "", err
 	}
 
-	ok, err := ConfirmPrompt("Claude Code is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("Claude Code is not installed. Install now?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("claude installation cancelled")
+		return "", errors.New(i18n.T("claude installation cancelled"))
 	}
 
 	bin, args, err := claudeInstallerCommand(runtime.GOOS)
@@ -108,21 +110,21 @@ func ensureClaudeInstalled() (string, error) {
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Claude Code...\n")
+	fmt.Print(i18n.T("\nInstalling Claude Code...\n"))
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install claude: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install claude: %w"), err)
 	}
 
 	path, err := (&Claude{}).findPath()
 	if err != nil {
-		return "", fmt.Errorf("claude was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("claude was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sClaude Code installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sClaude Code installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return path, nil
 }
 
@@ -130,7 +132,7 @@ func checkClaudeInstallerDependencies() error {
 	switch runtime.GOOS {
 	case "windows":
 		if _, err := exec.LookPath("powershell"); err != nil {
-			return fmt.Errorf("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch claude")
+			return errors.New(i18n.T("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  PowerShell: https://learn.microsoft.com/powershell/\n\nThen re-run:\n  ollama launch claude"))
 		}
 	default:
 		var missing []string
@@ -141,7 +143,7 @@ func checkClaudeInstallerDependencies() error {
 			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch claude", strings.Join(missing, "\n  "))
+			return fmt.Errorf(i18n.T("claude is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch claude"), strings.Join(missing, "\n  "))
 		}
 	}
 	return nil
@@ -163,7 +165,7 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 			"curl -fsSL https://claude.ai/install.sh | bash",
 		}, nil
 	default:
-		return "", nil, fmt.Errorf("unsupported platform for claude install: %s", goos)
+		return "", nil, fmt.Errorf(i18n.T("unsupported platform for claude install: %s"), goos)
 	}
 }
 

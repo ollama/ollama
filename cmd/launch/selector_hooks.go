@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ollama/ollama/i18n"
 	"golang.org/x/term"
 )
 
@@ -105,7 +106,7 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 		return true, nil
 	}
 	if currentLaunchConfirmPolicy.requireYesMessage {
-		return false, fmt.Errorf("%s requires confirmation; re-run with --yes to continue", prompt)
+		return false, fmt.Errorf(i18n.T("%s requires confirmation; re-run with --yes to continue"), prompt)
 	}
 
 	if DefaultConfirmPrompt != nil {
@@ -134,17 +135,17 @@ func ConfirmPromptWithOptions(prompt string, options ConfirmOptions) (bool, erro
 
 		switch buf[0] {
 		case 'Y', 'y':
-			fmt.Fprintf(os.Stderr, "yes\r\n")
+			fmt.Print(i18n.T("yes\r\n"))
 			return true, nil
 		case 13:
 			if defaultNo {
-				fmt.Fprintf(os.Stderr, "no\r\n")
+				fmt.Print(i18n.T("no\r\n"))
 				return false, nil
 			}
-			fmt.Fprintf(os.Stderr, "yes\r\n")
+			fmt.Print(i18n.T("yes\r\n"))
 			return true, nil
 		case 'N', 'n', 27, 3:
-			fmt.Fprintf(os.Stderr, "no\r\n")
+			fmt.Print(i18n.T("no\r\n"))
 			return false, nil
 		}
 	}

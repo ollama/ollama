@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/cmd/launch"
+	"github.com/ollama/ollama/i18n"
 )
 
 var (
@@ -440,7 +442,7 @@ func (m selectorModel) renderContent() string {
 	s.WriteString(selectorTitleStyle.Render(m.title))
 	s.WriteString(" ")
 	if m.filter == "" {
-		s.WriteString(selectorFilterStyle.Render("Type to filter..."))
+		s.WriteString(selectorFilterStyle.Render(i18n.T("Type to filter...")))
 	} else {
 		s.WriteString(selectorInputStyle.Render(m.filter))
 	}
@@ -449,10 +451,10 @@ func (m selectorModel) renderContent() string {
 	filtered := m.filteredItems()
 
 	if len(filtered) == 0 {
-		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
+		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render(i18n.T("(no matches)"))))
 		s.WriteString("\n")
 	} else if m.filter != "" {
-		s.WriteString(sectionHeaderStyle.Render("Top Results"))
+		s.WriteString(sectionHeaderStyle.Render(i18n.T("Top Results")))
 		s.WriteString("\n")
 
 		displayCount := min(len(filtered), maxSelectorItems)
@@ -465,7 +467,7 @@ func (m selectorModel) renderContent() string {
 		}
 
 		if remaining := len(filtered) - m.scrollOffset - displayCount; remaining > 0 {
-			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... and %d more"), remaining)))
 			s.WriteString("\n")
 		}
 	} else {
@@ -481,7 +483,7 @@ func (m selectorModel) renderContent() string {
 
 		// Always render all recommended items (pinned)
 		if len(recItems) > 0 {
-			s.WriteString(sectionHeaderStyle.Render("Recommended"))
+			s.WriteString(sectionHeaderStyle.Render(i18n.T("Recommended")))
 			s.WriteString("\n")
 			for _, idx := range recItems {
 				m.renderItem(&s, filtered[idx], idx)
@@ -490,7 +492,7 @@ func (m selectorModel) renderContent() string {
 
 		if len(otherItems) > 0 {
 			s.WriteString("\n")
-			s.WriteString(sectionHeaderStyle.Render("More"))
+			s.WriteString(sectionHeaderStyle.Render(i18n.T("More")))
 			s.WriteString("\n")
 
 			maxOthers := maxSelectorItems - len(recItems)
@@ -508,14 +510,14 @@ func (m selectorModel) renderContent() string {
 			}
 
 			if remaining := len(otherItems) - m.scrollOffset - displayCount; remaining > 0 {
-				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... and %d more"), remaining)))
 				s.WriteString("\n")
 			}
 		}
 	}
 
 	s.WriteString("\n")
-	help := "↑/↓ navigate • enter select • ← back"
+	help := i18n.T("↑/↓ navigate • enter select • ← back")
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -530,7 +532,7 @@ func (m selectorModel) RenderCompactContent(maxItems int) string {
 	s.WriteString(selectorTitleStyle.Render(m.title))
 	s.WriteString(" ")
 	if m.filter == "" {
-		s.WriteString(selectorFilterStyle.Render("Type to filter..."))
+		s.WriteString(selectorFilterStyle.Render(i18n.T("Type to filter...")))
 	} else {
 		s.WriteString(selectorInputStyle.Render(m.filter))
 	}
@@ -538,7 +540,7 @@ func (m selectorModel) RenderCompactContent(maxItems int) string {
 
 	filtered := m.filteredItems()
 	if len(filtered) == 0 {
-		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
+		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render(i18n.T("(no matches)"))))
 		s.WriteString("\n")
 	} else {
 		maxItems = max(1, maxItems)
@@ -554,19 +556,19 @@ func (m selectorModel) RenderCompactContent(maxItems int) string {
 		}
 		end := min(len(filtered), start+maxItems)
 		if start > 0 {
-			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... %d more above", start)))
+			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... %d more above"), start)))
 			s.WriteString("\n")
 		}
 		for idx := start; idx < end; idx++ {
 			m.renderCompactItem(&s, filtered[idx], idx)
 		}
 		if remaining := len(filtered) - end; remaining > 0 {
-			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... and %d more"), remaining)))
 			s.WriteString("\n")
 		}
 	}
 
-	help := "↑/↓ navigate • enter select • esc cancel"
+	help := i18n.T("↑/↓ navigate • enter select • esc cancel")
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -707,7 +709,7 @@ func SelectSingle(title string, items []SelectItem, current string) (string, err
 
 func SelectSingleWithUpdates(title string, items []SelectItem, current string, updates <-chan []SelectItem) (string, error) {
 	if len(items) == 0 {
-		return "", fmt.Errorf("no items to select from")
+		return "", errors.New(i18n.T("no items to select from"))
 	}
 
 	m := selectorModelWithCurrent(title, items, current)
@@ -716,7 +718,7 @@ func SelectSingleWithUpdates(title string, items []SelectItem, current string, u
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return "", fmt.Errorf("error running selector: %w", err)
+		return "", fmt.Errorf(i18n.T("error running selector: %w"), err)
 	}
 
 	fm := finalModel.(selectorModel)
@@ -1052,7 +1054,7 @@ func (m multiSelectorModel) renderMultiItem(s *strings.Builder, item SelectItem,
 
 	suffix := ""
 	if len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx {
-		suffix = " " + selectorDefaultTagStyle.Render("(default)")
+		suffix = " " + selectorDefaultTagStyle.Render(i18n.T("(default)"))
 	}
 
 	if idx == m.cursor {
@@ -1084,7 +1086,7 @@ func (m multiSelectorModel) View() string {
 	s.WriteString(selectorTitleStyle.Render(m.title))
 	s.WriteString(" ")
 	if m.filter == "" {
-		s.WriteString(selectorFilterStyle.Render("Type to filter..."))
+		s.WriteString(selectorFilterStyle.Render(i18n.T("Type to filter...")))
 	} else {
 		s.WriteString(selectorInputStyle.Render(m.filter))
 	}
@@ -1093,7 +1095,7 @@ func (m multiSelectorModel) View() string {
 	filtered := m.filteredItems()
 
 	if len(filtered) == 0 {
-		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
+		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render(i18n.T("(no matches)"))))
 		s.WriteString("\n")
 	} else if m.filter != "" {
 		// Filtering: flat scroll through all matches
@@ -1107,7 +1109,7 @@ func (m multiSelectorModel) View() string {
 		}
 
 		if remaining := len(filtered) - m.scrollOffset - displayCount; remaining > 0 {
-			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... and %d more"), remaining)))
 			s.WriteString("\n")
 		}
 	} else {
@@ -1123,7 +1125,7 @@ func (m multiSelectorModel) View() string {
 
 		// Always render all recommended items (pinned)
 		if len(recItems) > 0 {
-			s.WriteString(sectionHeaderStyle.Render("Recommended"))
+			s.WriteString(sectionHeaderStyle.Render(i18n.T("Recommended")))
 			s.WriteString("\n")
 			for _, idx := range recItems {
 				renderItem(&s, filtered[idx], idx)
@@ -1132,7 +1134,7 @@ func (m multiSelectorModel) View() string {
 
 		if len(otherItems) > 0 {
 			s.WriteString("\n")
-			s.WriteString(sectionHeaderStyle.Render("More"))
+			s.WriteString(sectionHeaderStyle.Render(i18n.T("More")))
 			s.WriteString("\n")
 
 			maxOthers := maxSelectorItems - len(recItems)
@@ -1150,7 +1152,7 @@ func (m multiSelectorModel) View() string {
 			}
 
 			if remaining := len(otherItems) - m.scrollOffset - displayCount; remaining > 0 {
-				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf(i18n.T("... and %d more"), remaining)))
 				s.WriteString("\n")
 			}
 		}
@@ -1161,18 +1163,18 @@ func (m multiSelectorModel) View() string {
 	count := m.selectedCount()
 	if !m.multi {
 		if count > 0 {
-			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press tab to edit", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf(i18n.T("%d models selected - press tab to edit"), count)))
 			s.WriteString("\n\n")
 		}
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
+		s.WriteString(selectorHelpStyle.Render(i18n.T("↑/↓ navigate • enter select • tab add multiple • ← back")))
 	} else {
 		if count == 0 {
-			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
+			s.WriteString(sectionHeaderStyle.Render(i18n.T("Select at least one model.")))
 		} else {
-			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf(i18n.T("%d models selected - press enter to continue"), count)))
 		}
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
+		s.WriteString(selectorHelpStyle.Render(i18n.T("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back")))
 	}
 
 	result := s.String()
@@ -1188,7 +1190,7 @@ func SelectMultiple(title string, items []SelectItem, preChecked []string) ([]st
 
 func SelectMultipleWithUpdates(title string, items []SelectItem, preChecked []string, updates <-chan []SelectItem) ([]string, error) {
 	if len(items) == 0 {
-		return nil, fmt.Errorf("no items to select from")
+		return nil, errors.New(i18n.T("no items to select from"))
 	}
 
 	m := newMultiSelectorModel(title, items, preChecked)
@@ -1197,7 +1199,7 @@ func SelectMultipleWithUpdates(title string, items []SelectItem, preChecked []st
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
-		return nil, fmt.Errorf("error running selector: %w", err)
+		return nil, fmt.Errorf(i18n.T("error running selector: %w"), err)
 	}
 
 	fm := finalModel.(multiSelectorModel)

@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Pi implements Runner and Editor for Pi (Pi Coding Agent) integration
@@ -34,12 +36,12 @@ func (p *Pi) String() string { return "Pi" }
 var npmRegistryBaseURL = "https://registry.npmjs.org"
 
 func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
-	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("\n%sPreparing Pi...%s\n"), ansiGray, ansiReset)
 	if err := ensureNpmInstalled(); err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "%sChecking Pi installation...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sChecking Pi installation...%s\n"), ansiGray, ansiReset)
 	bin, err := ensurePiInstalled()
 	if err != nil {
 		return err
@@ -47,7 +49,7 @@ func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
 
 	ensurePiWebSearchPackage(bin)
 
-	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("\n%sLaunching Pi...%s\n\n"), ansiGray, ansiReset)
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
@@ -58,7 +60,7 @@ func (p *Pi) Run(_ string, _ []LaunchModel, args []string) error {
 
 func ensureNpmInstalled() error {
 	if _, err := exec.LookPath("npm"); err != nil {
-		return fmt.Errorf("npm (Node.js) is required to launch pi\n\nInstall it first:\n  https://nodejs.org/\n\nThen re-run:\n  ollama launch pi")
+		return errors.New(i18n.T("npm (Node.js) is required to launch pi\n\nInstall it first:\n  https://nodejs.org/\n\nThen re-run:\n  ollama launch pi"))
 	}
 	return nil
 }
@@ -67,13 +69,13 @@ func ensurePiInstalled() (string, error) {
 	if _, err := exec.LookPath("pi"); err == nil {
 		install, pkgErr := installedPiPackageInfo()
 		if pkgErr != nil {
-			fmt.Fprintf(os.Stderr, "%sCould not verify which Pi package is installed: %v%s\n", ansiYellow, pkgErr, ansiReset)
-			fmt.Fprintf(os.Stderr, "Pi will still launch. To switch to the official package manually:\n  npm uninstall -g %s\n  npm install -g %s\n\n", piLegacyNpmPackage, piNpmPackage)
+			fmt.Fprintf(os.Stderr, i18n.T("%sCould not verify which Pi package is installed: %v%s\n"), ansiYellow, pkgErr, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("Pi will still launch. To switch to the official package manually:\n  npm uninstall -g %s\n  npm install -g %s\n\n"), piLegacyNpmPackage, piNpmPackage)
 			return "pi", nil
 		}
 
 		if install.packageName == piLegacyNpmPackage {
-			fmt.Fprintf(os.Stderr, "%sUpdating Pi...%s\n", ansiGray, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%sUpdating Pi...%s\n"), ansiGray, ansiReset)
 			if err := migrateLegacyPiPackage(install.npmPrefix); err != nil {
 				return "", err
 			}
@@ -85,12 +87,12 @@ func ensurePiInstalled() (string, error) {
 	}
 
 	if _, err := exec.LookPath("npm"); err != nil {
-		return "", fmt.Errorf("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch pi")
+		return "", errors.New(i18n.T("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch pi"))
 	}
 
 	install, pkgErr := installedPiPackageInfo()
 	if pkgErr == nil && install.packageName == piLegacyNpmPackage {
-		fmt.Fprintf(os.Stderr, "%sUpdating Pi...%s\n", ansiGray, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%sUpdating Pi...%s\n"), ansiGray, ansiReset)
 		if err := migrateLegacyPiPackage(install.npmPrefix); err != nil {
 			return "", err
 		}
@@ -100,7 +102,7 @@ func ensurePiInstalled() (string, error) {
 		return "pi", nil
 	}
 	if pkgErr == nil && install.packageName == piNpmPackage {
-		fmt.Fprintf(os.Stderr, "%sInstalling Pi...%s\n", ansiGray, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%sInstalling Pi...%s\n"), ansiGray, ansiReset)
 		if err := installPiPackageWithPrefix(install.npmPrefix); err != nil {
 			return "", err
 		}
@@ -110,15 +112,15 @@ func ensurePiInstalled() (string, error) {
 		return "pi", nil
 	}
 
-	ok, err := ConfirmPrompt("Install Pi with npm?")
+	ok, err := ConfirmPrompt(i18n.T("Install Pi with npm?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("pi installation cancelled")
+		return "", errors.New(i18n.T("pi installation cancelled"))
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling Pi...\n")
+	fmt.Print(i18n.T("\nInstalling Pi...\n"))
 	if err := installPiPackage(); err != nil {
 		return "", err
 	}
@@ -127,13 +129,13 @@ func ensurePiInstalled() (string, error) {
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "%sPi installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sPi installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return "pi", nil
 }
 
 func requirePiOnPath() error {
 	if _, err := exec.LookPath("pi"); err != nil {
-		return fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return errors.New(i18n.T("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 	return nil
 }
@@ -144,7 +146,7 @@ func installPiPackage() error {
 
 func installPiPackageWithPrefix(prefix string) error {
 	if err := runQuietCommand("npm", npmArgs(prefix, "install", "-g", piNpmPackage+"@latest")...); err != nil {
-		return fmt.Errorf("failed to install pi: %w", err)
+		return fmt.Errorf(i18n.T("failed to install pi: %w"), err)
 	}
 	return nil
 }
@@ -156,10 +158,10 @@ func migrateLegacyPiPackage(prefix string) error {
 
 	installed, err := npmPackageInstalledWithPrefix(piNpmPackage, prefix)
 	if err != nil {
-		return fmt.Errorf("failed to verify official pi package: %w", err)
+		return fmt.Errorf(i18n.T("failed to verify official pi package: %w"), err)
 	}
 	if !installed {
-		return fmt.Errorf("failed to verify official pi package")
+		return errors.New(i18n.T("failed to verify official pi package"))
 	}
 
 	if err := uninstallLegacyPiPackageWithPrefix(prefix); err != nil {
@@ -170,14 +172,14 @@ func migrateLegacyPiPackage(prefix string) error {
 
 func installPiPackageForced(prefix string) error {
 	if err := runQuietCommand("npm", npmArgs(prefix, "install", "-g", piNpmPackage+"@latest", "--force")...); err != nil {
-		return fmt.Errorf("failed to install pi: %w", err)
+		return fmt.Errorf(i18n.T("failed to install pi: %w"), err)
 	}
 	return nil
 }
 
 func uninstallLegacyPiPackageWithPrefix(prefix string) error {
 	if err := runQuietCommand("npm", npmArgs(prefix, "uninstall", "-g", piLegacyNpmPackage)...); err != nil {
-		return fmt.Errorf("failed to remove legacy pi package: %w", err)
+		return fmt.Errorf(i18n.T("failed to remove legacy pi package: %w"), err)
 	}
 	return nil
 }
@@ -352,29 +354,29 @@ func npmArgs(prefix string, args ...string) []string {
 
 func ensurePiWebSearchPackage(bin string) {
 	if !shouldManageOllamaWebSearch() {
-		fmt.Fprintf(os.Stderr, "%sCloud is disabled; skipping %s setup.%s\n", ansiGray, piWebSearchPkg, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%sCloud is disabled; skipping %s setup.%s\n"), ansiGray, piWebSearchPkg, ansiReset)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "%sChecking Pi web search package...%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sChecking Pi web search package...%s\n"), ansiGray, ansiReset)
 
 	pkg, err := piPackageInfo(bin, piWebSearchSource)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not check %s installation: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not check %s installation: %v%s\n"), ansiYellow, piWebSearchPkg, err, ansiReset)
 		return
 	}
 
 	if !pkg.installed {
-		fmt.Fprintf(os.Stderr, "%sInstalling %s...%s\n", ansiGray, piWebSearchPkg, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%sInstalling %s...%s\n"), ansiGray, piWebSearchPkg, ansiReset)
 		cmd := exec.Command(bin, "install", piWebSearchSource)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: could not install %s: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+			fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not install %s: %v%s\n"), ansiYellow, piWebSearchPkg, err, ansiReset)
 			return
 		}
 
-		fmt.Fprintf(os.Stderr, "%s  ✓ Installed %s%s\n", ansiGreen, piWebSearchPkg, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  ✓ Installed %s%s\n"), ansiGreen, piWebSearchPkg, ansiReset)
 		return
 	}
 
@@ -383,16 +385,16 @@ func ensurePiWebSearchPackage(bin string) {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "%sUpdating %s...%s\n", ansiGray, piWebSearchPkg, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sUpdating %s...%s\n"), ansiGray, piWebSearchPkg, ansiReset)
 	cmd := exec.Command(bin, "update", piWebSearchSource)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "%s  Warning: could not update %s: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+		fmt.Fprintf(os.Stderr, i18n.T("%s  Warning: could not update %s: %v%s\n"), ansiYellow, piWebSearchPkg, err, ansiReset)
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "%s  ✓ Updated %s%s\n", ansiGreen, piWebSearchPkg, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%s  ✓ Updated %s%s\n"), ansiGreen, piWebSearchPkg, ansiReset)
 }
 
 func shouldManageOllamaWebSearch() bool {
@@ -500,7 +502,7 @@ func npmLatestPackageVersion(pkg string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("npm registry returned %s", resp.Status)
+		return "", fmt.Errorf(i18n.T("npm registry returned %s"), resp.Status)
 	}
 
 	var payload struct {

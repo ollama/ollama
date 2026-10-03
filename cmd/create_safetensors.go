@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/create"
+	"github.com/ollama/ollama/i18n"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx/quant"
 	"github.com/ollama/ollama/parser"
@@ -78,7 +80,7 @@ func configFromModelfile(modelfile *parser.Modelfile) (string, *modelfileConfig,
 				requires = "v" + requires
 			}
 			if !semver.IsValid(requires) {
-				return "", nil, fmt.Errorf("requires must be a valid semver (e.g. 0.14.0)")
+				return "", nil, errors.New(i18n.T("requires must be a valid semver (e.g. 0.14.0)"))
 			}
 			mfConfig.Requires = strings.TrimPrefix(requires, "v")
 		case "adapter":
@@ -141,15 +143,15 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 		return err
 	}
 	if isBaseModelWithDraft && opts.Quantize != "" {
-		return fmt.Errorf("--quantize is only supported when importing a safetensors source directory")
+		return errors.New(i18n.T("--quantize is only supported when importing a safetensors source directory"))
 	}
 
 	if !isSafetensors && !isBaseModelWithDraft {
-		return fmt.Errorf("%s is not a supported safetensors model directory (needs config.json + *.safetensors)", opts.ModelDir)
+		return fmt.Errorf(i18n.T("%s is not a supported safetensors model directory (needs config.json + *.safetensors)"), opts.ModelDir)
 	}
 
 	if hasDraft && !create.IsSafetensorsModelDir(opts.Modelfile.Draft) {
-		return fmt.Errorf("draft %s is not a supported safetensors model directory", opts.Modelfile.Draft)
+		return fmt.Errorf(i18n.T("draft %s is not a supported safetensors model directory"), opts.Modelfile.Draft)
 	}
 	if isSafetensors {
 		if err := validateDistinctSafetensorsSources(opts.ModelDir, opts.Modelfile); err != nil {
@@ -164,12 +166,12 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 	mlxOpts := create.MLXValidationOptions{
 		Force: opts.Force,
 		Warning: func(message string) {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", message)
+			fmt.Fprintf(os.Stderr, i18n.T("warning: %s\n"), message)
 		},
 	}
 	// Set up progress spinner
-	statusMsg := "importing safetensors model"
-	spinner := progress.NewSpinner(statusMsg)
+	statusMsg := i18n.T("importing safetensors model")
+	spinner := progress.NewSpinner(i18n.Status(statusMsg))
 	if p != nil {
 		p.Add(spinnerKey, spinner)
 	}
@@ -177,7 +179,7 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 	progressFn := func(msg string) {
 		spinner.Stop()
 		statusMsg = msg
-		spinner = progress.NewSpinner(statusMsg)
+		spinner = progress.NewSpinner(i18n.Status(statusMsg))
 		if p != nil {
 			p.Add(spinnerKey, spinner)
 		}
@@ -203,7 +205,7 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Created safetensors model '%s'\n", opts.ModelName)
+		fmt.Printf(i18n.T("Created safetensors model '%s'\n"), opts.ModelName)
 		return nil
 	}
 
@@ -233,20 +235,20 @@ func createModel(ctx context.Context, opts createOptions, p *progress.Progress) 
 		return err
 	}
 
-	fmt.Printf("Created safetensors model '%s'\n", opts.ModelName)
+	fmt.Printf(i18n.T("Created safetensors model '%s'\n"), opts.ModelName)
 	return nil
 }
 
 func validateSafetensorsQuantization(opts createOptions) error {
 	hasDraft := opts.Modelfile != nil && opts.Modelfile.Draft != ""
 	if opts.DraftQuantize != "" && !hasDraft {
-		return fmt.Errorf("--draft-quantize requires a DRAFT model")
+		return errors.New(i18n.T("--draft-quantize requires a DRAFT model"))
 	}
 	if opts.Quantize != "" && quant.Canonical(opts.Quantize) == "" {
-		return fmt.Errorf("unsupported --quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.Quantize)
+		return fmt.Errorf(i18n.T("unsupported --quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8"), opts.Quantize)
 	}
 	if opts.DraftQuantize != "" && quant.Canonical(opts.DraftQuantize) == "" {
-		return fmt.Errorf("unsupported --draft-quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", opts.DraftQuantize)
+		return fmt.Errorf(i18n.T("unsupported --draft-quantize %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8"), opts.DraftQuantize)
 	}
 	return nil
 }
@@ -255,10 +257,10 @@ func createModelFromBaseWithDraft(ctx context.Context, opts createOptions, draft
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	progressFn(fmt.Sprintf("loading base model %s", opts.ModelDir))
+	progressFn(fmt.Sprintf(i18n.T("loading base model %s"), opts.ModelDir))
 	baseName := model.ParseName(opts.ModelDir)
 	if !baseName.IsValid() {
-		return fmt.Errorf("invalid base model name: %s", opts.ModelDir)
+		return fmt.Errorf(i18n.T("invalid base model name: %s"), opts.ModelDir)
 	}
 	baseManifest, err := manifest.ParseNamedManifest(baseName)
 	if err != nil {
@@ -287,7 +289,7 @@ func createModelFromBaseWithDraft(ctx context.Context, opts createOptions, draft
 		}
 	}
 	if configLayer == nil {
-		return fmt.Errorf("base model %s does not contain config.json", opts.ModelDir)
+		return fmt.Errorf(i18n.T("base model %s does not contain config.json"), opts.ModelDir)
 	}
 
 	layers := make([]create.LayerInfo, 0, len(baseManifest.Layers)+len(draftLayers))
@@ -304,7 +306,7 @@ func createModelFromBaseWithDraft(ctx context.Context, opts createOptions, draft
 	}
 	layers = append(layers, draftLayers...)
 
-	progressFn(fmt.Sprintf("writing manifest for %s", opts.ModelName))
+	progressFn(fmt.Sprintf(i18n.T("writing manifest for %s"), opts.ModelName))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -334,13 +336,13 @@ func isDraftLayer(layer manifest.Layer) bool {
 func readConfigV2(m *manifest.Manifest) (*model.ConfigV2, error) {
 	f, err := m.Config.Open()
 	if err != nil {
-		return nil, fmt.Errorf("failed to open base config: %w", err)
+		return nil, fmt.Errorf(i18n.T("failed to open base config: %w"), err)
 	}
 	defer f.Close()
 
 	var cfg model.ConfigV2
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse base config: %w", err)
+		return nil, fmt.Errorf(i18n.T("failed to parse base config: %w"), err)
 	}
 	return &cfg, nil
 }
@@ -352,14 +354,14 @@ func validateDistinctSafetensorsSources(modelDir string, modelfile *modelfileCon
 
 	modelInfo, err := os.Stat(modelDir)
 	if err != nil {
-		return fmt.Errorf("stat FROM source %s: %w", modelDir, err)
+		return fmt.Errorf(i18n.T("stat FROM source %s: %w"), modelDir, err)
 	}
 	draftInfo, err := os.Stat(modelfile.Draft)
 	if err != nil {
-		return fmt.Errorf("stat DRAFT source %s: %w", modelfile.Draft, err)
+		return fmt.Errorf(i18n.T("stat DRAFT source %s: %w"), modelfile.Draft, err)
 	}
 	if os.SameFile(modelInfo, draftInfo) {
-		return fmt.Errorf("DRAFT must not reference the same local path as FROM: %s", modelfile.Draft)
+		return fmt.Errorf(i18n.T("DRAFT must not reference the same local path as FROM: %s"), modelfile.Draft)
 	}
 	return nil
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/i18n"
 )
 
 const (
@@ -222,11 +223,11 @@ func availabilityBadge(item ModelItem, state AccountState) string {
 	switch state.Status {
 	case accountStateSignedOut:
 		if itemHasRecommendationMetadata(item) {
-			return "Sign in required"
+			return i18n.T("Sign in required")
 		}
 	case accountStateSignedIn:
 		if item.RequiredPlan != "" && !PlanSatisfies(state.Plan, item.RequiredPlan) {
-			return "Upgrade required"
+			return i18n.T("Upgrade required")
 		}
 	}
 	return ""
@@ -300,7 +301,7 @@ func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) err
 		return nil
 	}
 
-	yes, err := ConfirmPrompt(fmt.Sprintf("Upgrade to use %s?", item.Name))
+	yes, err := ConfirmPrompt(fmt.Sprintf(i18n.T("Upgrade to use %s?"), item.Name))
 	if errors.Is(err, ErrCancelled) {
 		return errUpgradeCancelled
 	}
@@ -311,8 +312,8 @@ func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) err
 		return errUpgradeCancelled
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTo upgrade, navigate to:\n    %s\n\n", DefaultUpgradeURL)
-	openNow, err := ConfirmPrompt("Open now?")
+	fmt.Fprintf(os.Stderr, i18n.T("\nTo upgrade, navigate to:\n    %s\n\n"), DefaultUpgradeURL)
+	openNow, err := ConfirmPrompt(i18n.T("Open now?"))
 	if errors.Is(err, ErrCancelled) {
 		return errUpgradeCancelled
 	}
@@ -327,7 +328,7 @@ func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) err
 
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0
-	fmt.Fprintf(os.Stderr, "\033[90mwaiting for upgrade to complete... %s\033[0m", spinnerFrames[0])
+	fmt.Fprintf(os.Stderr, "\033[90m"+i18n.T("waiting for upgrade to complete... %s")+"\033[0m", spinnerFrames[0])
 
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -339,7 +340,7 @@ func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) err
 			return ctx.Err()
 		case <-ticker.C:
 			frame++
-			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for upgrade to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+			fmt.Fprintf(os.Stderr, "\r\033[90m"+i18n.T("waiting for upgrade to complete... %s")+"\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 			if frame%10 != 0 {
 				continue
 			}
@@ -349,7 +350,7 @@ func (c *launcherClient) runUpgradeFlow(ctx context.Context, item ModelItem) err
 				return ErrPlanVerificationUnavailable
 			}
 			if state.Status == accountStateSignedIn && PlanSatisfies(state.Plan, item.RequiredPlan) {
-				fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1mplan updated\033[0m\n")
+				fmt.Fprint(os.Stderr, "\r\033[K\033[A\r\033[K\033[1m"+i18n.T("plan updated")+"\033[0m\n")
 				return nil
 			}
 		}

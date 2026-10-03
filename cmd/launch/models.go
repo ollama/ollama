@@ -17,18 +17,19 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/i18n"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 )
 
 var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.6:cloud", Description: "State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
-	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
-	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
-	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true, Details: api.ModelDetails{ContextLength: 204_800}, MaxOutputTokens: 128_000},
-	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAMBytes: 12 * format.GigaByte},
-	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAMBytes: 14 * format.GigaByte},
+	{Name: "kimi-k2.6:cloud", Description: i18n.T("State-of-the-art coding, long-horizon execution, and multimodal agent swarm capability"), Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 262_144},
+	{Name: "qwen3.5:cloud", Description: i18n.T("Reasoning, coding, and agentic tool use with vision"), Recommended: true, Details: api.ModelDetails{ContextLength: 262_144}, MaxOutputTokens: 32_768},
+	{Name: "glm-5.1:cloud", Description: i18n.T("Reasoning and code generation"), Recommended: true, Details: api.ModelDetails{ContextLength: 202_752}, MaxOutputTokens: 131_072},
+	{Name: "minimax-m2.7:cloud", Description: i18n.T("Fast, efficient coding and real-world productivity"), Recommended: true, Details: api.ModelDetails{ContextLength: 204_800}, MaxOutputTokens: 128_000},
+	{Name: "gemma4", Description: i18n.T("Reasoning and code generation locally"), Recommended: true, VRAMBytes: 12 * format.GigaByte},
+	{Name: "qwen3.5", Description: i18n.T("Reasoning, coding, and visual understanding locally"), Recommended: true, VRAMBytes: 14 * format.GigaByte},
 }
 
 func displayVRAM(vramBytes int64) string {
@@ -198,7 +199,7 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 		return nil
 	}
 	if err == nil || aErr.SigninURL == "" {
-		return fmt.Errorf("%s requires sign in", modelList)
+		return fmt.Errorf(i18n.T("%s requires sign in"), modelList)
 	}
 
 	if DefaultSignIn != nil {
@@ -207,12 +208,12 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 			return ErrCancelled
 		}
 		if err != nil {
-			return fmt.Errorf("%s requires sign in", modelList)
+			return fmt.Errorf(i18n.T("%s requires sign in"), modelList)
 		}
 		return nil
 	}
 
-	yes, err := ConfirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
+	yes, err := ConfirmPrompt(fmt.Sprintf(i18n.T("sign in to use %s?"), modelList))
 	if errors.Is(err, ErrCancelled) {
 		return ErrCancelled
 	}
@@ -223,12 +224,12 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 		return ErrCancelled
 	}
 
-	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
+	fmt.Fprintf(os.Stderr, i18n.T("\nTo sign in, navigate to:\n    %s\n\n"), aErr.SigninURL)
 	OpenBrowser(aErr.SigninURL)
 
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0
-	fmt.Fprintf(os.Stderr, "\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[0])
+	fmt.Fprintf(os.Stderr, "\033[90m"+i18n.T("waiting for sign in to complete... %s")+"\033[0m", spinnerFrames[0])
 
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
@@ -240,12 +241,12 @@ func ensureCloudAuth(ctx context.Context, client *api.Client, modelList string) 
 			return ctx.Err()
 		case <-ticker.C:
 			frame++
-			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+			fmt.Fprintf(os.Stderr, "\r\033[90m"+i18n.T("waiting for sign in to complete... %s")+"\033[0m", spinnerFrames[frame%len(spinnerFrames)])
 
 			if frame%10 == 0 {
 				u, err := whoamiWithTimeout(ctx, client)
 				if err == nil && u != nil && u.Name != "" {
-					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
+					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1m"+i18n.T("signed in:")+"\033[0m %s\n", u.Name)
 					return nil
 				}
 			}
@@ -264,7 +265,7 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 			}
 			var statusErr api.StatusError
 			if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("model %q not found", model)
+				return fmt.Errorf(i18n.T("model %q not found"), model)
 			}
 			return nil
 		}
@@ -279,14 +280,14 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	case missingModelAutoPull:
 		return pullMissingModel(ctx, client, model)
 	case missingModelFail:
-		return fmt.Errorf("model %q not found; run 'ollama pull %s' first, or use --yes to auto-pull", model, model)
+		return fmt.Errorf(i18n.T("model %q not found; run 'ollama pull %s' first, or use --yes to auto-pull"), model, model)
 	default:
 		return confirmAndPull(ctx, client, model)
 	}
 }
 
 func confirmAndPull(ctx context.Context, client *api.Client, model string) error {
-	if ok, err := ConfirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
+	if ok, err := ConfirmPrompt(fmt.Sprintf(i18n.T("Download %s?"), model)); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
@@ -297,7 +298,7 @@ func confirmAndPull(ctx context.Context, client *api.Client, model string) error
 
 func pullMissingModel(ctx context.Context, client *api.Client, model string) error {
 	if err := pullModel(ctx, client, model, false); err != nil {
-		return fmt.Errorf("failed to pull %s: %w", model, err)
+		return fmt.Errorf(i18n.T("failed to pull %s: %w"), model, err)
 	}
 	return nil
 }
@@ -305,10 +306,10 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, editor Editor, models []LaunchModel) error {
 	if err := editor.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
+		return fmt.Errorf(i18n.T("setup failed: %w"), err)
 	}
 	if err := config.SaveIntegration(name, launchModelNames(models)); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+		return fmt.Errorf(i18n.T("failed to save: %w"), err)
 	}
 	return nil
 }
@@ -321,23 +322,23 @@ func prepareManagedSingleIntegration(name string, managed ManagedSingleModel, mo
 		err = managed.Configure(model)
 	}
 	if err != nil {
-		return fmt.Errorf("setup failed: %w", err)
+		return fmt.Errorf(i18n.T("setup failed: %w"), err)
 	}
 	if current := managed.CurrentModel(); current != "" {
 		model = current
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+		return fmt.Errorf(i18n.T("failed to save: %w"), err)
 	}
 	return nil
 }
 
 func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAutodiscoveryIntegration, model string) error {
 	if err := autodiscovery.ConfigureAutodiscovery(); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
+		return fmt.Errorf(i18n.T("setup failed: %w"), err)
 	}
 	if err := config.SaveIntegration(name, []string{model}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+		return fmt.Errorf(i18n.T("failed to save: %w"), err)
 	}
 	return nil
 }
@@ -427,7 +428,7 @@ func buildModelListWithRecommendations(existing []modelInfo, recommendations []M
 			if vram := displayVRAM(items[i].VRAMBytes); vram != "" {
 				parts = append(parts, vram)
 			}
-			parts = append(parts, "(not downloaded)")
+			parts = append(parts, i18n.T("(not downloaded)"))
 			items[i].Description = strings.Join(parts, ", ")
 		}
 	}
@@ -565,7 +566,7 @@ func pullModel(ctx context.Context, client *api.Client, model string, insecure b
 				if isDigest {
 					name = name[:min(12, len(name))]
 				}
-				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
+				bar = progress.NewBar(fmt.Sprintf(i18n.T("pulling %s:"), name), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -577,7 +578,7 @@ func pullModel(ctx context.Context, client *api.Client, model string, insecure b
 			}
 
 			status = resp.Status
-			spinner = progress.NewSpinner(status)
+			spinner = progress.NewSpinner(i18n.Status(status))
 			p.Add(status, spinner)
 		}
 

@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
@@ -74,12 +76,12 @@ func ensureOpenCodeInstalled() (string, error) {
 		return "", err
 	}
 
-	ok, err := ConfirmPrompt("OpenCode is not installed. Install now?")
+	ok, err := ConfirmPrompt(i18n.T("OpenCode is not installed. Install now?"))
 	if err != nil {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("opencode installation cancelled")
+		return "", errors.New(i18n.T("opencode installation cancelled"))
 	}
 
 	bin, args, err := openCodeInstallerCommand(openCodeGOOS)
@@ -87,21 +89,21 @@ func ensureOpenCodeInstalled() (string, error) {
 		return "", err
 	}
 
-	fmt.Fprintf(os.Stderr, "\nInstalling OpenCode...\n")
+	fmt.Print(i18n.T("\nInstalling OpenCode...\n"))
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install opencode: %w", err)
+		return "", fmt.Errorf(i18n.T("failed to install opencode: %w"), err)
 	}
 
 	opencodePath, ok := findOpenCode()
 	if !ok {
-		return "", fmt.Errorf("opencode was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+		return "", errors.New(i18n.T("opencode was installed but the binary was not found on PATH\n\nYou may need to restart your shell"))
 	}
 
-	fmt.Fprintf(os.Stderr, "%sOpenCode installed successfully%s\n\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, i18n.T("%sOpenCode installed successfully%s\n\n"), ansiGreen, ansiReset)
 	return opencodePath, nil
 }
 
@@ -109,7 +111,7 @@ func checkOpenCodeInstallerDependencies() error {
 	switch openCodeGOOS {
 	case "windows":
 		if _, err := exec.LookPath("npm"); err != nil {
-			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch opencode")
+			return errors.New(i18n.T("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/\n\nThen re-run:\n  ollama launch opencode"))
 		}
 	default:
 		var missing []string
@@ -120,7 +122,7 @@ func checkOpenCodeInstallerDependencies() error {
 			missing = append(missing, "bash: https://www.gnu.org/software/bash/")
 		}
 		if len(missing) > 0 {
-			return fmt.Errorf("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch opencode", strings.Join(missing, "\n  "))
+			return fmt.Errorf(i18n.T("opencode is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch opencode"), strings.Join(missing, "\n  "))
 		}
 	}
 	return nil
@@ -133,7 +135,7 @@ func openCodeInstallerCommand(goos string) (string, []string, error) {
 	case "darwin", "linux":
 		return "bash", []string{"-c", "set -o pipefail; " + openCodeInstallScript}, nil
 	default:
-		return "", nil, fmt.Errorf("unsupported platform for opencode install: %s", goos)
+		return "", nil, fmt.Errorf(i18n.T("unsupported platform for opencode install: %s"), goos)
 	}
 }
 

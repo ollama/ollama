@@ -2,6 +2,7 @@ package progress
 
 import (
 	"fmt"
+	"github.com/mattn/go-runewidth"
 	"os"
 	"strings"
 	"sync"
@@ -138,7 +139,7 @@ func (b *Bar) String() string {
 
 	var mid strings.Builder
 	// add 5 extra spaces: 2 boundary characters and 1 space at each end
-	f := termWidth - pre.Len() - suf.Len() - 5
+	f := termWidth - runewidth.StringWidth(pre.String()) - suf.Len() - 5
 	n := int(float64(f) * b.percent() / 100)
 
 	mid.WriteString(" ▕")

@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/i18n"
 )
 
 // Droid implements Runner and Editor for Droid integration
@@ -42,7 +44,7 @@ func (d *Droid) String() string { return "Droid" }
 
 func (d *Droid) Run(model string, _ []LaunchModel, args []string) error {
 	if _, err := exec.LookPath("droid"); err != nil {
-		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
+		return errors.New(i18n.T("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart"))
 	}
 
 	cmd := exec.Command("droid", args...)
@@ -85,7 +87,7 @@ func (d *Droid) Edit(models []LaunchModel) error {
 	var settings droidSettings
 	if data, err := os.ReadFile(settingsPath); err == nil {
 		if err := json.Unmarshal(data, &settingsMap); err != nil {
-			return fmt.Errorf("failed to parse settings file: %w, at: %s", err, settingsPath)
+			return fmt.Errorf(i18n.T("failed to parse settings file: %w, at: %s"), err, settingsPath)
 		}
 		json.Unmarshal(data, &settings) // ignore error, zero values are fine
 	}

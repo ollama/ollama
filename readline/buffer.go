@@ -454,7 +454,7 @@ func (b *Buffer) ClearScreen() {
 	fmt.Print(ClearScreen + CursorReset + b.Prompt.prompt())
 	if b.IsEmpty() {
 		ph := b.Prompt.placeholder()
-		fmt.Print(ColorGrey + ph + CursorLeftN(len(ph)) + ColorDefault)
+		fmt.Print(ColorGrey + ph + CursorLeftN(runewidth.StringWidth(ph)) + ColorDefault)
 	} else {
 		currPos := b.DisplayPos
 		currIndex := b.Pos

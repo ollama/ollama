@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
+	"github.com/ollama/ollama/i18n"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -59,7 +59,7 @@ func checkWelcomeAccount(ctx context.Context) tui.WelcomeAccount {
 	if user != nil && strings.TrimSpace(user.Name) != "" {
 		return tui.WelcomeAccount{SignedIn: true}
 	}
-	return tui.WelcomeAccount{Err: fmt.Errorf("could not verify the Ollama account")}
+	return tui.WelcomeAccount{Err: errors.New(i18n.T("could not verify the Ollama account"))}
 }
 
 func ensureWelcome(show func() error) error {
