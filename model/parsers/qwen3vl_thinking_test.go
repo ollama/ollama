@@ -353,6 +353,7 @@ func TestQwen3VLParserState(t *testing.T) {
 		desc        string
 		hasThinking bool
 		last        *api.Message
+		think       *api.ThinkValue
 		wantState   qwenParserState
 	}{
 		{
@@ -360,6 +361,27 @@ func TestQwen3VLParserState(t *testing.T) {
 			hasThinking: false,
 			last:        nil,
 			wantState:   CollectingContent,
+		},
+		{
+			desc:        "thinking support, think=false => CollectingContent",
+			hasThinking: true,
+			last:        nil,
+			think:       &api.ThinkValue{Value: false},
+			wantState:   CollectingContent,
+		},
+		{
+			desc:        "thinking support, think=true => CollectingThinkingContent",
+			hasThinking: true,
+			last:        nil,
+			think:       &api.ThinkValue{Value: true},
+			wantState:   CollectingThinkingContent,
+		},
+		{
+			desc:        "thinking support, think=high => CollectingThinkingContent",
+			hasThinking: true,
+			last:        nil,
+			think:       &api.ThinkValue{Value: "high"},
+			wantState:   CollectingThinkingContent,
 		},
 		{
 			desc:        "thinking support, no last message => CollectingThinkingContent",
@@ -389,7 +411,7 @@ func TestQwen3VLParserState(t *testing.T) {
 
 	for _, tc := range cases {
 		parser := Qwen3VLParser{hasThinkingSupport: tc.hasThinking}
-		parser.Init(nil, tc.last, nil)
+		parser.Init(nil, tc.last, tc.think)
 		if parser.state != tc.wantState {
 			t.Errorf("%s: got state %v, want %v", tc.desc, parser.state, tc.wantState)
 		}
