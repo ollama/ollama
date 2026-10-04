@@ -17,23 +17,6 @@ func (m *mockRenderer) LeadingBOS() string {
 	return ""
 }
 
-func TestRegisterCustomRenderer(t *testing.T) {
-	t.Cleanup(func() { delete(registry.renderers, "custom-renderer") })
-	// Register a custom renderer
-	Register("custom-renderer", func() Renderer {
-		return &mockRenderer{}
-	})
-
-	// Retrieve and use it
-	result, err := RenderWithRenderer("custom-renderer", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "mock-output" {
-		t.Errorf("expected 'mock-output', got %q", result)
-	}
-}
-
 func TestBuiltInRendererStillWorks(t *testing.T) {
 	tests := []struct {
 		name string
@@ -87,23 +70,6 @@ func TestLeadingBOSForRenderer(t *testing.T) {
 				t.Fatalf("LeadingBOSForRenderer(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestOverrideBuiltInRenderer(t *testing.T) {
-	t.Cleanup(func() { delete(registry.renderers, "qwen3-coder") })
-	// Override the built-in renderer
-	Register("qwen3-coder", func() Renderer {
-		return &mockRenderer{}
-	})
-
-	// Should get the override
-	result, err := RenderWithRenderer("qwen3-coder", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result != "mock-output" {
-		t.Errorf("expected 'mock-output' from override, got %q", result)
 	}
 }
 

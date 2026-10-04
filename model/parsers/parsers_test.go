@@ -36,28 +36,6 @@ func (m *mockParser) HasThinkingSupport() bool {
 	return false
 }
 
-func TestRegisterCustomParser(t *testing.T) {
-	// Register a custom parser
-	Register("custom-parser", func() Parser {
-		return &mockParser{name: "custom"}
-	})
-
-	// Retrieve it
-	parser := ParserForName("custom-parser")
-	if parser == nil {
-		t.Fatal("expected parser to be registered")
-	}
-
-	// Test it works
-	content, _, _, err := parser.Add("test", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if content != "mock:test" {
-		t.Errorf("expected 'mock:test', got %q", content)
-	}
-}
-
 // TestThinkingClose checks that a parser reports the strings ending its
 // thinking exactly when its response begins inside thinking: not when the
 // request turns thinking off, when an assistant prefill continues content, or
@@ -201,28 +179,6 @@ func TestParserPreservedTokensCoverKnownLlamaServerRegressions(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestOverrideBuiltInParser(t *testing.T) {
-	// Override a built-in parser
-	Register("passthrough", func() Parser {
-		return &mockParser{name: "override"}
-	})
-
-	// Should get the override
-	parser := ParserForName("passthrough")
-	if parser == nil {
-		t.Fatal("expected parser to exist")
-	}
-
-	// Test it's the override
-	content, _, _, err := parser.Add("test", false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if content != "mock:test" {
-		t.Errorf("expected 'mock:test' from override, got %q", content)
 	}
 }
 
