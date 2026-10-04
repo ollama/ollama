@@ -251,15 +251,6 @@ func MarkIntegrationOnboarded(appName string) error {
 	return save(cfg)
 }
 
-// IntegrationModel returns the first configured model for an integration, or empty string if not configured.
-func IntegrationModel(appName string) string {
-	integrationConfig, err := LoadIntegration(appName)
-	if err != nil || len(integrationConfig.Models) == 0 {
-		return ""
-	}
-	return integrationConfig.Models[0]
-}
-
 // IntegrationModels returns all configured models for an integration, or nil.
 func IntegrationModels(appName string) []string {
 	integrationConfig, err := LoadIntegration(appName)
@@ -344,18 +335,4 @@ func SaveAliases(appName string, aliases map[string]string) error {
 
 	cfg.Integrations[key] = existing
 	return save(cfg)
-}
-
-func listIntegrations() ([]integration, error) {
-	cfg, err := load()
-	if err != nil {
-		return nil, err
-	}
-
-	result := make([]integration, 0, len(cfg.Integrations))
-	for _, integrationConfig := range cfg.Integrations {
-		result = append(result, *integrationConfig)
-	}
-
-	return result, nil
 }

@@ -456,24 +456,6 @@ func ListIntegrationInfos() []IntegrationInfo {
 	return infos
 }
 
-// IntegrationSelectionItems returns the sorted integration items shown by launcher selection UIs.
-func IntegrationSelectionItems() ([]ModelItem, error) {
-	visible := ListVisibleIntegrationSpecs()
-	if len(visible) == 0 {
-		return nil, fmt.Errorf("no integrations available")
-	}
-
-	items := make([]ModelItem, 0, len(visible))
-	for _, spec := range visible {
-		description := spec.Runner.String()
-		if conn, err := loadStoredIntegrationConfig(spec.Name); err == nil && len(conn.Models) > 0 {
-			description = fmt.Sprintf("%s (%s)", spec.Runner.String(), conn.Models[0])
-		}
-		items = append(items, ModelItem{Name: spec.Name, Description: description})
-	}
-	return items, nil
-}
-
 // IsIntegrationInstalled checks if an integration binary is installed.
 func IsIntegrationInstalled(name string) bool {
 	integration, err := integrationFor(name)
