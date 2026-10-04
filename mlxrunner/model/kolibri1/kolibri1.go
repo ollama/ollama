@@ -36,6 +36,7 @@ type Config struct {
 	RMSNormEps                   float32  `json:"rms_norm_eps"`
 	RopeTheta                    float32  `json:"rope_theta"`
 	HeadDim                      int32    `json:"head_dim"`
+	HeadDType                    string   `json:"head_dtype"`
 	MaxPositionEmbeddings        int32    `json:"max_position_embeddings"`
 	TieWordEmbeddings            bool     `json:"tie_word_embeddings"`
 
@@ -244,6 +245,11 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
+	if m.HeadDType == "float32" {
+		// Cast before projection so logits are never rounded through BF16,
+		// including when the head uses packed quantized weights.
+		x = x.AsType(mlx.DTypeFloat32)
+	}
 	return m.LMHead.Forward(x)
 }
 

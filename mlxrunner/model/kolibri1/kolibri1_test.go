@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
@@ -11,6 +12,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
 const tinyConfig = `{"hidden_size":32,"num_hidden_layers":2,"num_attention_heads":2,"num_key_value_heads":1,"head_dim":8,"num_experts":3,"num_experts_per_tok":2,"moe_intermediate_size":32,"shared_expert_intermediate_size":32,"vocab_size":17,"max_position_embeddings":128,"layer_types":["sliding_attention","full_attention"],"sliding_window":3}`
@@ -34,6 +36,50 @@ func TestConfig(t *testing.T) {
 		b, _ := json.Marshal(fields)
 		if _, err := parseConfig(b); err == nil {
 			t.Errorf("accepted %s", change)
+		}
+	}
+}
+
+func TestUnembedHeadDType(t *testing.T) {
+	for _, quantized := range []bool{false, true} {
+		for _, headDType := range []string{"", "float32"} {
+			mlxtest.RunSubtest(t, fmt.Sprintf("quantized=%t/head_dtype=%s", quantized, headDType), func(t *mlxtest.T) {
+				cfg, err := parseConfig([]byte(strings.Replace(tinyConfig, "{", fmt.Sprintf(`{"head_dtype":%q,`, headDType), 1)))
+				if err != nil {
+					t.Fatal(err)
+				}
+				weights := make([]float32, 32*32)
+				for i := range weights {
+					weights[i] = 1
+				}
+				w := mlx.FromValues(weights, 32, 32).AsType(mlx.DTypeBFloat16)
+				m := &Model{Config: &cfg, LMHead: nn.NewLinear(w, nil)}
+				if quantized {
+					// The NVFP4 import policy uses MXFP8 for the output head.
+					m.LMHead = nn.NewQuantizedLinear(w, nil, 32, 8, "mxfp8")
+				}
+				values := make([]float32, 32)
+				values[0], values[1] = 1, 1.0/512
+				for _, length := range []int32{1, 64} {
+					x := mlx.BroadcastTo(mlx.FromValues(values, 1, 1, 32).AsType(mlx.DTypeBFloat16), 1, length, 32)
+					logits := m.Unembed(x)
+					wantDType, want := mlx.DTypeBFloat16, float32(1)
+					if headDType == "float32" {
+						// BF16 projection followed by an FP32 cast loses this term.
+						wantDType, want = mlx.DTypeFloat32, 1+1.0/512
+					}
+					if logits.DType() != wantDType {
+						t.Fatalf("length %d: dtype %v, want %v", length, logits.DType(), wantDType)
+					}
+					logits = logits.AsType(mlx.DTypeFloat32)
+					mlx.Eval(logits)
+					for i, got := range logits.Floats() {
+						if got != want {
+							t.Fatalf("length %d: logit[%d] = %g, want %g", length, i, got, want)
+						}
+					}
+				}
+			})
 		}
 	}
 }
