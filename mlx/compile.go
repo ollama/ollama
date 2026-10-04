@@ -106,16 +106,6 @@ func Compile2(name string, fn func(*Array, *Array) *Array, opts ...CompileOption
 	}
 }
 
-// Compile3 compiles a ternary function. See Compile.
-func Compile3(name string, fn func(*Array, *Array, *Array) *Array, opts ...CompileOption) func(*Array, *Array, *Array) *Array {
-	cf := Compile(name, func(in ...*Array) []*Array {
-		return []*Array{fn(in[0], in[1], in[2])}
-	}, opts...)
-	return func(a, b, c *Array) *Array {
-		return cf(a, b, c)[0]
-	}
-}
-
 // tracing is true while a compile callback is running. Since MLX is
 // single-threaded at this level a plain Go bool suffices.
 var tracing bool
