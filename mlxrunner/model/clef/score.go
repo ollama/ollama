@@ -48,7 +48,6 @@ func (m *Model) PrepareScore(ctx context.Context, input llm.ScoreRequest) (*Scor
 	if err != nil {
 		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
-	// Reserve the entire image prefix before truncating only the state.
 	record, err := encode(m.Tokenizer(), input, prepared.Tokens)
 	if err != nil {
 		return nil, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}

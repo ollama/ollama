@@ -37,24 +37,34 @@ func (m *Model) sequence(state string, q llm.ScoreQuestion, maxLen int) (ids, ma
 	if len(q.Options) < 2 || len(q.Options) > 26 {
 		return nil, nil, 0, fmt.Errorf("decision requires 2–26 options")
 	}
-	encode := func(s string) []int32 { return m.tok.Encode(strings.ReplaceAll(s, m.maskToken, " "), false) }
-	head := encode(q.Type + " question: " + q.Instructions)
+	if strings.Contains(state, m.maskToken) {
+		return nil, nil, 0, fmt.Errorf("state contains reserved token %q", m.maskToken)
+	}
+	if strings.Contains(q.Instructions, m.maskToken) {
+		return nil, nil, 0, fmt.Errorf("instructions contain reserved token %q", m.maskToken)
+	}
+	head := m.tok.Encode(q.Type+" question: "+q.Instructions, false)
 	opts := make([][]int32, len(q.Options))
 	budget := m.config.HeadMaxLen
 	for i, text := range q.Options {
-		tokens := encode(" " + text)
-		opts[i] = append([]int32{m.mask}, tokens[:min(48, len(tokens))]...)
+		if strings.Contains(text, m.maskToken) {
+			return nil, nil, 0, fmt.Errorf("option %d contains reserved token %q", i, m.maskToken)
+		}
+		tokens := m.tok.Encode(" "+text, false)
+		if len(tokens) > 48 {
+			return nil, nil, 0, fmt.Errorf("option %d has %d tokens; limit is 48", i, len(tokens))
+		}
+		opts[i] = append([]int32{m.mask}, tokens...)
 		budget -= len(opts[i])
 	}
+	// Keep the publisher's head limits, but reject inputs that would be clipped.
 	if budget < 16 {
-		per := max(4, (m.config.HeadMaxLen-16)/len(opts))
-		budget = m.config.HeadMaxLen
-		for i := range opts {
-			opts[i] = opts[i][:min(per, len(opts[i]))]
-			budget -= len(opts[i])
-		}
+		return nil, nil, 0, fmt.Errorf("decision options exceed the %d-token budget", m.config.HeadMaxLen-16)
 	}
-	ids = append([]int32{m.cls}, head[:min(len(head), max(8, budget))]...)
+	if len(head) > budget {
+		return nil, nil, 0, fmt.Errorf("instructions with the question type have %d tokens; limit is %d with these options", len(head), budget)
+	}
+	ids = append([]int32{m.cls}, head...)
 	ids = append(ids, m.sep)
 	for _, tokens := range opts {
 		markers = append(markers, int32(len(ids)))
@@ -62,12 +72,13 @@ func (m *Model) sequence(state string, q llm.ScoreQuestion, maxLen int) (ids, ma
 	}
 	ids = append(ids, m.sep)
 	if len(ids)+1 > maxLen {
-		return nil, nil, 0, fmt.Errorf("decision options exceed the %d-token context", maxLen)
+		return nil, nil, 0, fmt.Errorf("decision question requires %d tokens; context limit is %d", len(ids)+1, maxLen)
 	}
-	stateTokens := encode(state)
-	// Match the publisher's question/state budget: options and instructions
-	// have their own cap, then state is truncated on the right to fit.
-	ids = append(ids, stateTokens[:min(len(stateTokens), maxLen-len(ids)-1)]...)
+	stateTokens := m.tok.Encode(state, false)
+	if limit := maxLen - len(ids) - 1; len(stateTokens) > limit {
+		return nil, nil, 0, fmt.Errorf("state has %d tokens; limit is %d with this question", len(stateTokens), limit)
+	}
+	ids = append(ids, stateTokens...)
 	ids = append(ids, m.sep)
 	return ids, markers, qtype, nil
 }
@@ -158,7 +169,11 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 				SeqQueryLens: []int32{int32(len(row.Tokens))},
 				Layout:       []any{row.Type},
 			}
-			hidden, _ := m.Forward(b, nil)
+			// Release forward intermediates before evaluating the decision head.
+			hidden := mlx.ScopedArrays(func() []*mlx.Array {
+				h, _ := m.Forward(b, nil)
+				return []*mlx.Array{h}
+			})[0]
 			logits = m.FinishScore(row, hidden)
 		})
 		result.Logits = append(result.Logits, logits)
