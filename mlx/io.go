@@ -67,22 +67,6 @@ func (s *SafetensorsFile) Get(name string) *Array {
 	return arr
 }
 
-// GetMetadata retrieves a metadata value by key.
-func (s *SafetensorsFile) GetMetadata(key string) string {
-	cKey := C.CString(key)
-	defer C.free(unsafe.Pointer(cKey))
-
-	var cValue *C.char
-	rc := C.mlx_map_string_to_string_get(&cValue, s.metadata, cKey)
-	if err := lastError(); err != nil {
-		panic(err)
-	}
-	if rc != 0 {
-		return ""
-	}
-	return C.GoString(cValue)
-}
-
 // Free releases the loaded safetensors maps.
 func (s *SafetensorsFile) Free() {
 	if s == nil {
