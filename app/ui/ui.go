@@ -480,15 +480,6 @@ func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 
 	user.AvatarURL = fmt.Sprintf("%s/%s", OllamaDotCom, user.AvatarURL)
 
-	storeUser := store.User{
-		Name:  user.Name,
-		Email: user.Email,
-		Plan:  user.Plan,
-	}
-	if err := s.Store.SetUser(storeUser); err != nil {
-		s.log().Warn("failed to cache user data", "error", err)
-	}
-
 	return &user, nil
 }
 
