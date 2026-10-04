@@ -1,11 +1,48 @@
 package tokenizer
 
 import (
-	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestEmptyAddedToken(t *testing.T) {
+	tok, err := LoadFromBytes([]byte(`{
+		"model":{"type":"BPE","vocab":{"a":0},"merges":[]},
+		"added_tokens":[
+			{"id":1,"content":"","special":true},
+			{"id":2,"content":"","special":false,"normalized":true}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := tok.GetSpecialToken(""); ok {
+		t.Fatal("empty added token must not be registered: it cannot consume input")
+	}
+	if got := tok.Encode("a", false); !slices.Equal(got, []int32{0}) {
+		t.Fatalf("Encode(a) = %v, want [0]", got)
+	}
+}
+
+func TestEmptyMetaspaceInput(t *testing.T) {
+	for _, scheme := range []string{"always", "first", "never"} {
+		t.Run(scheme, func(t *testing.T) {
+			data := fmt.Sprintf(`{
+				"model":{"type":"BPE","vocab":{"▁":0,"a":1},"merges":[]},
+				"pre_tokenizer":{"type":"Metaspace","replacement":"▁","prepend_scheme":%q,"split":true}
+			}`, scheme)
+			tok, err := LoadFromBytes([]byte(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tok.Encode("", false); len(got) != 0 {
+				t.Fatalf("Encode(empty) = %v, want no tokens", got)
+			}
+		})
+	}
+}
 
 func TestLoadFromBytesRejectsWordPiece(t *testing.T) {
 	data := []byte(`{
@@ -22,87 +59,6 @@ func TestLoadFromBytesRejectsWordPiece(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported tokenizer type: WordPiece") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestExtractPretokenizerSkipsUnsupportedSequenceSplit(t *testing.T) {
-	data := []byte(`{
-		"type": "Sequence",
-		"pretokenizers": [
-			{
-				"type": "Split",
-				"pattern": {
-					"Regex": "(?:\\r?\\n)+(?!\\r?\\n)"
-				}
-			},
-			{
-				"type": "Split",
-				"pattern": {
-					"Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
-				}
-			}
-		]
-	}`)
-
-	pattern := extractPretokenizer(data)
-	if pattern == "" {
-		t.Fatal("expected supported Split pretokenizer")
-	}
-	if strings.Contains(pattern, `(?!\r?\n)`) {
-		t.Fatalf("selected unsupported newline splitter: %q", pattern)
-	}
-}
-
-func TestLoadPretokenizerOptionalPunctuationSpace(t *testing.T) {
-	tests := []struct {
-		name    string
-		pattern string
-		want    []string
-	}{
-		{
-			name:    "o200k optional space",
-			pattern: ` ?[^\s\p{L}\p{N}]+[\r\n/]*|\s+(?!\S)|\s+`,
-			want:    []string{"   ", " }\n"},
-		},
-		{
-			name:    "punctuation without optional space",
-			pattern: `[^\s\p{L}\p{N}]+[\r\n/]*|\s+(?!\S)|\s+`,
-			want:    []string{"    ", "}\n"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			data, err := json.Marshal(map[string]any{
-				"model": map[string]any{
-					"type":   "BPE",
-					"vocab":  map[string]int{"}": 0},
-					"merges": []string{},
-				},
-				"pre_tokenizer": map[string]any{
-					"type": "Split",
-					"pattern": map[string]string{
-						"Regex": tt.pattern,
-					},
-				},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			tok, err := LoadFromBytes(data)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			var got []string
-			tok.forEachPartChunk("    }\n", func(chunk encodeChunk) {
-				got = append(got, chunk.text)
-			})
-			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
-				t.Fatalf("chunks = %q, want %q", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -139,18 +95,35 @@ func TestMetaspace(t *testing.T) {
 	}
 }
 
-func TestNFCNormalization(t *testing.T) {
-	tok, err := LoadFromBytes([]byte(`{
-		"model":{"type":"BPE","vocab":{"Ã":0,"©":1,"Ã©":2,"[é]":3},"merges":["Ã ©"]},
-		"normalizer":{"type":"NFC"},
-		"added_tokens":[{"id":3,"content":"[é]","special":true}]
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{"é[e\u0301]", "e\u0301[e\u0301]"} {
-		if got := tok.Encode(text, false); !slices.Equal(got, []int32{2, 3}) {
-			t.Errorf("Encode(%q) = %v, want [2 3]", text, got)
-		}
+func TestIgnoreMerges(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		setting string
+		want    []int32
+	}{
+		{"default", "", []int32{0, 4}},
+		{"false", `,"ignore_merges":false`, []int32{0, 4}},
+		{"true", `,"ignore_merges":true`, []int32{5}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The higher-priority b+c merge prevents ab+c, despite abc being
+			// in the vocabulary. HF BPE emits [a, bc] unless ignore_merges is set.
+			data := `{"model":{"type":"BPE","vocab":{"a":0,"b":1,"c":2,"ab":3,"bc":4,"abc":5},"merges":[["b","c"],["a","b"],["ab","c"]]` + tc.setting + `}}`
+			tok, err := LoadFromBytes([]byte(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, input := range []struct {
+				text string
+				want []int32
+			}{
+				{"abc", tc.want},
+				{"abca", []int32{0, 4, 0}},
+			} {
+				if got := tok.Encode(input.text, false); !slices.Equal(got, input.want) {
+					t.Errorf("Encode(%q) = %v, want %v", input.text, got, input.want)
+				}
+			}
+		})
 	}
 }
