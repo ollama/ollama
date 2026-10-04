@@ -12,49 +12,8 @@ import (
 	"unsafe"
 )
 
-type AlertParams struct {
-	p C.AlertDlgParams
-}
-
-func mkAlertParams(msg, title string, style C.AlertStyle) *AlertParams {
-	a := AlertParams{C.AlertDlgParams{msg: C.CString(msg), style: style}}
-	if title != "" {
-		a.p.title = C.CString(title)
-	}
-	return &a
-}
-
-func (a *AlertParams) run() C.DlgResult {
-	return C.alertDlg(&a.p)
-}
-
-func (a *AlertParams) free() {
-	C.free(unsafe.Pointer(a.p.msg))
-	if a.p.title != nil {
-		C.free(unsafe.Pointer(a.p.title))
-	}
-}
-
 func nsStr(s string) unsafe.Pointer {
 	return C.NSStr(unsafe.Pointer(&[]byte(s)[0]), C.int(len(s)))
-}
-
-func YesNoDlg(msg, title string) bool {
-	a := mkAlertParams(msg, title, C.MSG_YESNO)
-	defer a.free()
-	return a.run() == C.DLG_OK
-}
-
-func InfoDlg(msg, title string) {
-	a := mkAlertParams(msg, title, C.MSG_INFO)
-	defer a.free()
-	a.run()
-}
-
-func ErrorDlg(msg, title string) {
-	a := mkAlertParams(msg, title, C.MSG_ERROR)
-	defer a.free()
-	a.run()
 }
 
 const (
@@ -65,22 +24,6 @@ const (
 // MultiFileDlg opens a file dialog that allows multiple file selection
 func MultiFileDlg(title string, exts []string, relaxExt bool, startDir string, showHidden bool) ([]string, error) {
 	return fileDlgWithOptions(C.LOADDLG, title, exts, relaxExt, startDir, "", showHidden, true)
-}
-
-// FileDlg opens a file dialog for single file selection (kept for compatibility)
-func FileDlg(save bool, title string, exts []string, relaxExt bool, startDir string, filename string, showHidden bool) (string, error) {
-	mode := C.LOADDLG
-	if save {
-		mode = C.SAVEDLG
-	}
-	files, err := fileDlgWithOptions(mode, title, exts, relaxExt, startDir, filename, showHidden, false)
-	if err != nil {
-		return "", err
-	}
-	if len(files) == 0 {
-		return "", nil
-	}
-	return files[0], nil
 }
 
 func DirDlg(title string, startDir string, showHidden bool) (string, error) {
