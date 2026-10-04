@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -396,5 +397,21 @@ func TestGetInferenceInfoTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Fatalf("unexpected error: %s", err)
+	}
+}
+
+func TestServerCmdExposeKeepsPort(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:12345")
+	st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	defer st.Close()
+	if err := st.SetSettings(store.Settings{Expose: true}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := (&Server{store: st}).cmd(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(cmd.Env, "OLLAMA_HOST=0.0.0.0:12345") {
+		t.Errorf("exposed server should keep the port from OLLAMA_HOST, env = %q", cmd.Env)
 	}
 }
