@@ -609,7 +609,7 @@ func preloadGenerateModel(ctx context.Context, t *testing.T, client *api.Client,
 // through and fail the test — we never want to mask a real Mac regression.
 //
 // The fingerprints are the exact wrapper strings produced by the MLX code
-// paths (see x/mlxrunner/server.go, x/mlxrunner/mlx/dynamic.go). Model-level errors
+// paths (see mlxrunner/server.go, mlx/dynamic.go). Model-level errors
 // (unsupported architecture, tensor mismatches, runtime failures) do not
 // contain these strings, so this helper will not mask them.
 func skipIfMLXUnsupported(t *testing.T, err error) {

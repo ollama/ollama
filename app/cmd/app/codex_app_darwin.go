@@ -214,6 +214,12 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 }
 
 func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return codexDesktopSettingsWithInventory(ctx, codexDesktopSettingsSummary())
+}
+
+func codexDesktopSettingsSummary() codexDesktopModelsSettings {
 	settings := codexDesktopModelsSettings{
 		Supported: true,
 		Installed: codexDesktop.Installed(),
@@ -230,8 +236,10 @@ func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
 	if len(settings.Selected) > codexDesktopMaxModels {
 		settings.Selected = settings.Selected[:codexDesktopMaxModels]
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	return settings
+}
+
+func codexDesktopSettingsWithInventory(ctx context.Context, settings codexDesktopModelsSettings) (codexDesktopModelsSettings, error) {
 	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
 		return settings, err
@@ -365,7 +373,7 @@ func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (s
 	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
 }
 
-// /api/show supplies capabilities and family metadata without replacing recommended thinking controls.
+// /api/show refreshes selected model metadata; recommendations remain the fallback.
 func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.LaunchModel) []launch.LaunchModel {
 	client, err := codexDesktopClientFactory()
 	if err != nil {
@@ -383,6 +391,9 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 		}
 		if response.Details.Family != "" || len(response.Details.Families) > 0 {
 			hydrated[i].Details = response.Details
+		}
+		if response.Thinking.Valid() {
+			hydrated[i].Thinking = response.Thinking.Clone()
 		}
 	}
 	return hydrated

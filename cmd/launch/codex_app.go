@@ -135,7 +135,7 @@ func (c *CodexApp) ConfigureWithModels(primary string, models []LaunchModel) err
 	if err != nil {
 		return err
 	}
-	if err := writeCodexAppConfig(configPath, primary, catalogPath); err != nil {
+	if err := writeCodexAppConfig(configPath, primary, catalogPath, models); err != nil {
 		if createdAuth {
 			if removeErr := removeCodexAppManagedAuth(configPath); removeErr != nil {
 				return errors.Join(err, fmt.Errorf("remove ChatGPT local auth after failed configuration: %w", removeErr))
@@ -309,7 +309,7 @@ func codexAppFirstRoutingModel() string {
 	return models[0]
 }
 
-func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
+func writeCodexAppConfig(configPath, model, modelCatalogPath string, models []LaunchModel) error {
 	baseURL := codexAppProxyBaseURL()
 
 	content, readErr := os.ReadFile(configPath)
@@ -330,7 +330,15 @@ func writeCodexAppConfig(configPath, model, modelCatalogPath string) error {
 	text = codexRemoveRootValue(text, codexRootModelProviderKey)
 	text = codexSetRootStringValue(text, codexRootModelCatalogJSONKey, modelCatalogPath)
 	text = codexSetRootStringValue(text, codexRootOpenAIBaseURLKey, baseURL)
-	text = codexAppSetReasoningEfforts(text, codexAppReasoningEffortsForConfig(text))
+	efforts := codexAppReasoningEffortsForConfig(text)
+	for _, selected := range models {
+		for _, level := range codexAppThinkingContractForModel(selected).levels {
+			if !slices.Contains(efforts, level) {
+				efforts = append(efforts, level)
+			}
+		}
+	}
+	text = codexAppSetReasoningEfforts(text, efforts)
 
 	parsed, err := codexParseConfig(text)
 	if err != nil {
@@ -1105,9 +1113,10 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReview c
 		return fmt.Errorf("chatgpt routing catalog cannot be empty")
 	}
 	type thinkingMetadata struct {
-		Supported bool           `json:"supported"`
-		Levels    []string       `json:"levels,omitempty"`
-		Values    map[string]any `json:"values,omitempty"`
+		Supported bool               `json:"supported"`
+		Levels    []string           `json:"levels,omitempty"`
+		Values    map[string]any     `json:"values,omitempty"`
+		Controls  *modelpkg.Thinking `json:"controls,omitempty"`
 	}
 	type routingEntry struct {
 		Slug     string           `json:"slug"`
@@ -1122,6 +1131,7 @@ func writeCodexAppRoutingCatalog(path string, models []LaunchModel, autoReview c
 				Supported: len(metadata.thinking.levels) > 0,
 				Levels:    metadata.thinking.levels,
 				Values:    metadata.thinking.values,
+				Controls:  metadata.thinking.controls,
 			},
 		})
 	}
@@ -1237,6 +1247,7 @@ type codexAppThinkingContract struct {
 	defaultLevel string
 	levels       []string
 	values       map[string]any
+	controls     *modelpkg.Thinking
 }
 
 func codexAppDefaultModelMetadata() codexAppModelMetadata {
@@ -1281,27 +1292,30 @@ func codexAppThinkingContractForModel(model LaunchModel) codexAppThinkingContrac
 		}
 	}
 
-	// Binary thinking maps "none" to off and "medium" to on.
+	// Binary thinking maps "none" to off and "high" to on.
 	return codexAppThinkingContract{
-		defaultLevel: "medium",
-		levels:       []string{"none", "medium"},
-		values:       map[string]any{"none": false, "medium": true},
+		defaultLevel: "high",
+		levels:       []string{"none", "high"},
+		values:       map[string]any{"none": false, "high": true},
 	}
 }
 
 func codexAppThinkingContractFromRecommendation(thinking *api.ModelRecommendationThinking) (codexAppThinkingContract, bool) {
-	if thinking == nil || len(thinking.Values) == 0 || thinking.Default == nil {
+	if !thinking.Valid() {
 		return codexAppThinkingContract{}, false
 	}
 
-	contract := codexAppThinkingContract{values: make(map[string]any, len(thinking.Values))}
+	contract := codexAppThinkingContract{values: make(map[string]any, len(thinking.Values)), controls: thinking.Clone()}
 	for _, value := range thinking.Values {
+		if value == true && thinking.Supports("high") {
+			continue
+		}
 		level, ok := codexAppThinkingLevelForOllamaValue(value)
 		if !ok {
-			return codexAppThinkingContract{}, false
+			continue
 		}
 		if _, duplicate := contract.values[level]; duplicate {
-			return codexAppThinkingContract{}, false
+			continue
 		}
 		contract.levels = append(contract.levels, level)
 		contract.values[level] = value
@@ -1310,10 +1324,12 @@ func codexAppThinkingContractFromRecommendation(thinking *api.ModelRecommendatio
 	defaultLevel, ok := codexAppThinkingLevelForOllamaValue(thinking.Default)
 	advertisedDefault, advertised := contract.values[defaultLevel]
 	if !ok || !advertised || advertisedDefault != thinking.Default {
-		return codexAppThinkingContract{}, false
+		return contract, true
 	}
-	if len(contract.levels) == 1 && contract.levels[0] == "none" {
-		return codexAppThinkingContract{}, true
+	if len(thinking.Values) == 1 && thinking.Supports(false) {
+		contract.levels = nil
+		contract.values = nil
+		return contract, true
 	}
 	contract.defaultLevel = defaultLevel
 	return contract, true
@@ -1323,12 +1339,15 @@ func codexAppThinkingLevelForOllamaValue(value any) (string, bool) {
 	switch value := value.(type) {
 	case bool:
 		if value {
-			return "medium", true
+			return "high", true
 		}
 		return "none", true
 	case string:
-		think := api.ThinkValue{Value: value}
-		return value, think.IsValid()
+		switch value {
+		case "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+			return value, true
+		}
+		return "", false
 	}
 	return "", false
 }
@@ -2141,12 +2160,7 @@ func defaultCodexAppIsRunning() bool {
 	case "windows":
 		return len(codexAppMatchingProcessIDs()) > 0
 	case "darwin":
-		out, err := exec.Command("osascript", "-e", `tell application "System Events" to exists process "ChatGPT"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
-			return true
-		}
-		out, err = exec.Command("osascript", "-e", `tell application "System Events" to exists process "Codex"`).Output()
-		if err == nil && strings.TrimSpace(string(out)) == "true" {
+		if err := exec.Command("pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
 			return true
 		}
 		return len(codexAppMatchingProcessIDs()) > 0

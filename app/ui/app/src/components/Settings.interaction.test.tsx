@@ -79,7 +79,9 @@ vi.mock("@tanstack/react-router", () => ({
   useBlocker: vi.fn(),
 }));
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  QueryClient: (await importOriginal<typeof import("@tanstack/react-query")>())
+    .QueryClient,
   useQueryClient: () => mocks.queryClient,
   useQuery: ({ queryKey }: { queryKey: string[] }) => {
     if (queryKey[0] === "settings") {

@@ -19,6 +19,11 @@ type Parser interface {
 	// PreservedTokens returns parser grammar tokens that must remain visible in
 	// llama-server detokenized output for this parser to recognize boundaries.
 	PreservedTokens() []string
+	// ThinkingClose returns the strings any of which ends the thinking the
+	// response begins with, or none when it starts in content. Answered after
+	// Init, which decides that from the think value, a prefill, and the
+	// parser's default.
+	ThinkingClose() []string
 	HasToolSupport() bool
 	HasThinkingSupport() bool
 }
@@ -117,6 +122,10 @@ func (p *PassthroughParser) Add(s string, done bool) (content string, thinking s
 }
 
 func (p *PassthroughParser) PreservedTokens() []string {
+	return nil
+}
+
+func (p *PassthroughParser) ThinkingClose() []string {
 	return nil
 }
 

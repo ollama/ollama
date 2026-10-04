@@ -24,14 +24,14 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/transfer"
 )
 
 // Blobs newer than this may belong to another process that has not written its
@@ -65,7 +65,9 @@ type Model struct {
 	Config             model.ConfigV2
 	ShortName          string
 	ModelPath          string
+	ModelShardPaths    []string
 	DraftPath          string
+	DraftShardPaths    []string
 	ParentModel        string
 	HasChatTemplate    bool
 	HasGoTemplate      bool
@@ -79,7 +81,8 @@ type Model struct {
 	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
-	Template *template.Template
+	Template       *template.Template
+	templateDigest string
 
 	// Metadata of the model blob and of each projector, read from their
 	// metadata files when the model is loaded.
@@ -93,6 +96,15 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func (m *Model) modelPaths() []string {
+	if m == nil || m.ModelPath == "" {
+		return nil
+	}
+	paths := make([]string, 1, len(m.ModelShardPaths)+1)
+	paths[0] = m.ModelPath
+	return append(paths, m.ModelShardPaths...)
 }
 
 func generationDefaultsFromMetadata(md ggufMetadata) model.GenerationDefaults {
@@ -147,6 +159,15 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
+// publicCapabilities hides a decision model's other capabilities from show and
+// list so clients don't offer it for general chat. Serving still uses Capabilities.
+func publicCapabilities(capabilities []model.Capability) []model.Capability {
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		return []model.Capability{model.CapabilityDecision}
+	}
+	return capabilities
+}
+
 func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
@@ -182,10 +203,13 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 	case templateCapabilityChat:
 		capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 	}
-	if m.metadata.Valid("pooling_type") {
+	switch {
+	case m.metadata.String("decision.type") != "":
+		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	case m.metadata.Valid("pooling_type"):
 		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
+	default:
+		// Otherwise, assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
 	if m.metadata.Valid("vision.block_count") {
@@ -206,7 +230,7 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 	if chatTemplateHasToolSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityTools)
 	}
-	if chatTemplateHasThinkingSupport(chatTemplate) {
+	if thinking.TemplateSupportsThinking(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityThinking)
 	}
 
@@ -232,19 +256,6 @@ func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
 		strings.Contains(chatTemplate, `message.role == 'tool'`) ||
 		strings.Contains(chatTemplate, `message.role == "tool"`) ||
 		strings.Contains(chatTemplate, "ipython"))
-}
-
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
 }
 
 func goTemplateCapabilities(t *template.Template) []model.Capability {
@@ -455,31 +466,26 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 	if suppressAudioCapability(m, modelArch) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
-		})
-	}
-	if suppressVisionCapability(m) {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision
 		})
 	}
 
 	return capabilities
 }
 
-func suppressVisionCapability(m *Model) bool {
-	// The current MLX Nemotron path is text-only. Do not advertise vision for
-	// safetensors manifests until the runner can load and serve that modality.
-	return isNemotron3NanoSafetensors(m)
-}
-
 func suppressAudioCapability(m *Model, arch string) bool {
 	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "glimmer" {
 		return true
 	}
-	if isNemotron3NanoSafetensors(m) {
+	if isNemotronSafetensors(m) {
 		return true
 	}
 
@@ -493,14 +499,16 @@ func suppressAudioCapability(m *Model, arch string) bool {
 	return false
 }
 
-func isNemotron3NanoSafetensors(m *Model) bool {
-	return isNemotron3NanoSafetensorsConfig(m.Config)
+func isNemotronSafetensors(m *Model) bool {
+	return isNemotronSafetensorsConfig(m.Config)
 }
 
-func isNemotron3NanoSafetensorsConfig(cfg model.ConfigV2) bool {
+func isNemotronSafetensorsConfig(cfg model.ConfigV2) bool {
 	return cfg.ModelFormat == "safetensors" &&
 		(cfg.Parser == "nemotron-3-nano" ||
 			cfg.Renderer == "nemotron-3-nano" ||
+			cfg.Parser == "nemotron-3.5-nano" ||
+			cfg.Renderer == "nemotron-3.5-nano" ||
 			cfg.ModelFamily == "nemotron_h_omni" ||
 			slices.Contains(cfg.ModelFamilies, "nemotron_h_omni"))
 }
@@ -543,6 +551,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
+		model.CapabilityDecision:   errors.New("decision"),
 	}
 
 	for _, cap := range want {
@@ -626,6 +635,12 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "parser",
 			Args: m.Config.Parser,
+		})
+	}
+	for _, capability := range m.Config.Capabilities {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "capability",
+			Args: capability,
 		})
 	}
 
@@ -712,6 +727,10 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
+			if m.ModelPath != "" {
+				m.ModelShardPaths = append(m.ModelShardPaths, filename)
+				break
+			}
 			m.ModelPath = filename
 			m.ParentModel = layer.From
 			if m.isGGUF() {
@@ -727,7 +746,11 @@ func GetModel(name string) (*Model, error) {
 				m.GenerationDefaults = generationDefaultsFromMetadata(md)
 			}
 		case manifest.MediaTypeImageDraft:
-			m.DraftPath = filename
+			if m.DraftPath == "" {
+				m.DraftPath = filename
+			} else {
+				m.DraftShardPaths = append(m.DraftShardPaths, filename)
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -744,6 +767,7 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			m.HasGoTemplate = true
+			m.templateDigest = layer.Digest
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
@@ -1184,15 +1208,16 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
-		Blobs:           blobs,
-		BaseURL:         baseURL,
-		DestDir:         destDir,
-		Repository:      n.DisplayNamespaceModel(),
-		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
-		Progress:        progress,
-		Token:           regOpts.Token,
-		GetToken:        getToken,
-		Logger:          slog.Default(),
+		Blobs:             blobs,
+		BaseURL:           baseURL,
+		DestDir:           destDir,
+		Repository:        n.DisplayNamespaceModel(),
+		BodyConcurrency:   max(1, int(envconfig.MaxTransferStreams())),
+		Progress:          progress,
+		Token:             regOpts.Token,
+		GetToken:          getToken,
+		Logger:            slog.Default(),
+		AllowPrivateHosts: regOpts != nil && regOpts.Insecure,
 	}); err != nil {
 		return err
 	}
@@ -1261,17 +1286,18 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	return transfer.Upload(ctx, transfer.UploadOptions{
-		Blobs:           blobs,
-		BaseURL:         baseURL,
-		SrcDir:          srcDir,
-		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
-		Progress:        progress,
-		Token:           regOpts.Token,
-		GetToken:        getToken,
-		Logger:          slog.Default(),
-		Manifest:        manifestJSON,
-		ManifestRef:     n.Tag,
-		Repository:      n.DisplayNamespaceModel(),
+		Blobs:             blobs,
+		BaseURL:           baseURL,
+		SrcDir:            srcDir,
+		BodyConcurrency:   max(1, int(envconfig.MaxTransferStreams())),
+		Progress:          progress,
+		Token:             regOpts.Token,
+		GetToken:          getToken,
+		Logger:            slog.Default(),
+		Manifest:          manifestJSON,
+		ManifestRef:       n.Tag,
+		Repository:        n.DisplayNamespaceModel(),
+		AllowPrivateHosts: regOpts != nil && regOpts.Insecure,
 	})
 }
 
@@ -1373,6 +1399,20 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 // structured in a way that makes this easy, so this will have to do for now.
 var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
+var errBlockedRedirect = errors.New("blocked redirect to a different host")
+
+// isAllowedHost reports whether host may receive cross-host redirects.
+var allowedRedirectHosts = []string{"ollama.com", "ollama.ai", "hf.co", "huggingface.co"}
+
+func isAllowedHost(host string) bool {
+	for _, h := range allowedRedirectHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
@@ -1406,8 +1446,32 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
+	var checkRedirect func(req *http.Request, via []*http.Request) error
+	if regOpts != nil {
+		checkRedirect = regOpts.CheckRedirect
+	}
+	if checkRedirect == nil {
+		insecure := regOpts != nil && regOpts.Insecure
+		// Default redirect policy: same-host only, so a registry can't steer
+		// manifest or blob requests at internal addresses. CDN-backed
+		// registries redirect among their own hosts, allowed via
+		// isAllowedHost. --insecure opts out for trusted LAN/local registries.
+		checkRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) > 10 {
+				return errMaxRedirectsExceeded
+			}
+			if insecure || req.URL.Host == via[0].URL.Host {
+				return nil
+			}
+			if isAllowedHost(via[0].URL.Hostname()) && isAllowedHost(req.URL.Hostname()) {
+				return nil
+			}
+			return errBlockedRedirect
+		}
+	}
+
 	c := &http.Client{
-		CheckRedirect: regOpts.CheckRedirect,
+		CheckRedirect: checkRedirect,
 	}
 	if testMakeRequestDialContext != nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
