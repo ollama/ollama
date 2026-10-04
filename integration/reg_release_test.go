@@ -40,13 +40,11 @@ var (
 		"nemotron3:33b",
 		"gemma4",
 		"qwen3.6:27b",
-		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 	}
 	releaseVisionTextModels = []string{
 		"gemma4",
 		"qwen3.6:27b",
 		"qwen3.5:2b",
-		// "llama3.2-vision", // TODO: re-enable when llama.cpp supports mllama.
 		"ministral-3:3b",
 	}
 	releaseToolsModels = []string{

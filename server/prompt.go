@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -96,10 +95,6 @@ func imageTaggedMessages(m *Model, msgs []api.Message, start int, clearImages bo
 	var media []llm.MediaData
 
 	for cnt, msg := range renderMsgs[start:] {
-		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
-			return nil, nil, errors.New("this model only supports one image while more than one image requested")
-		}
-
 		var prefix string
 		prompt := msg.Content
 
