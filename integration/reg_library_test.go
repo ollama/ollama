@@ -87,7 +87,6 @@ var libraryModels = []string{
 	"tulu3",
 	"athene-v2",
 	"opencoder",
-	"llama3.2-vision",
 	"smollm2",
 	"granite3-guardian",
 	"aya-expanse",
