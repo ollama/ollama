@@ -101,7 +101,7 @@ _merge_darwin_payload() {
             [ -e "$F" ] || continue
             BASE=$(basename "$F")
             case "$BASE" in
-                llama-server|llama-quantize|mlx_*) continue ;;
+                llama-server|mlx_*) continue ;;
             esac
             [ -e "dist/darwin/lib/ollama/$BASE" ] || cp -P "$F" dist/darwin/lib/ollama/
         done
@@ -146,17 +146,13 @@ _prepare_darwin_runtime() {
     chmod +x dist/darwin/llama-server
     lipo dist/darwin/llama-server -verify_arch x86_64 arm64
 
-    lipo -create -output dist/darwin/llama-quantize dist/darwin-amd64/lib/ollama/llama-quantize dist/darwin-arm64/lib/ollama/llama-quantize
-    chmod +x dist/darwin/llama-quantize
-    lipo dist/darwin/llama-quantize -verify_arch x86_64 arm64
-
     _merge_darwin_payload
 }
 
 _create_darwin_runtime_tarball() {
     status "Creating universal tarball..."
     rm -f dist/ollama-darwin.tar dist/ollama-darwin.tgz
-    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize
+    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server
     tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin/lib/ollama
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
@@ -169,7 +165,7 @@ _package_darwin_runtime() {
 _sign_darwin() {
     _prepare_darwin_runtime
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
+        for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             case "$F" in *_LICENSE|*_NOTICE) continue ;; esac
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
@@ -236,7 +232,6 @@ _build_macapp() {
     [ -d dist/darwin/lib/ollama ] || _merge_darwin_payload
     cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
     cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
-    cp dist/darwin/llama-quantize dist/Ollama.app/Contents/Resources/
     if [ -d dist/darwin/lib/ollama ]; then
         cp -a dist/darwin/lib/ollama/. dist/Ollama.app/Contents/Resources/
     fi
@@ -246,7 +241,6 @@ _build_macapp() {
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-server
-        codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-quantize
         for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.dylib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.so; do
             [ -f "$lib" ] || continue
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$lib"
@@ -256,7 +250,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib *_LICENSE *_NOTICE mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server *.so *.dylib *.metallib *_LICENSE *_NOTICE mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

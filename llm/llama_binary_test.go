@@ -156,7 +156,7 @@ func TestLlamaCppBinarySearchPrefersPlatformBuildOutput(t *testing.T) {
 		}
 	}
 
-	name := llamaCppBinaryName("llama-quantize", runtime.GOOS)
+	name := llamaCppBinaryName("llama-server", runtime.GOOS)
 	cpuBin := filepath.Join(cpuDir, name)
 	cudaBin := filepath.Join(cudaDir, name)
 	for _, path := range []string{cpuBin, cudaBin} {
@@ -165,7 +165,7 @@ func TestLlamaCppBinarySearchPrefersPlatformBuildOutput(t *testing.T) {
 		}
 	}
 
-	got, _, err := findLlamaCppBinary("llama-quantize", llamaCppBinarySearch{workingDir: root})
+	got, _, err := findLlamaCppBinary("llama-server", llamaCppBinarySearch{workingDir: root})
 	if err != nil {
 		t.Fatal(err)
 	}
