@@ -25,11 +25,6 @@ func FastScaledDotProductAttention(q, k, v *Array, scale float32, mode string, m
 	return out
 }
 
-type LayerNorm struct {
-	Weight *Array `weight:"weight"`
-	Bias   *Array `weight:"bias"`
-}
-
 // fastGatedDeltaUpdate applies MLX's gated-delta recurrence and returns its
 // per-token outputs and final float32 state. state and mask may be nil.
 func fastGatedDeltaUpdate(q, k, v, gates, beta, state, mask *Array) (y, nextState *Array) {
@@ -60,20 +55,4 @@ func fastGatedDeltaUpdate(q, k, v, gates, beta, state, mask *Array) (y, nextStat
 	mlxCheck(C.mlx_vector_array_get(&y.ctx, outVec, C.size_t(0)))
 	mlxCheck(C.mlx_vector_array_get(&nextState.ctx, outVec, C.size_t(1)))
 	return y, nextState
-}
-
-func (r *LayerNorm) Forward(x *Array, eps float32) *Array {
-	out := New("FAST_LAYERNORM")
-	mlxCheck(C.mlx_fast_layer_norm(&out.ctx, x.ctx, r.Weight.ctx, r.Bias.ctx, C.float(eps), DefaultStream().ctx))
-	return out
-}
-
-type RMSNorm struct {
-	Weight *Array `weight:"weight"`
-}
-
-func (r *RMSNorm) Forward(x *Array, eps float32) *Array {
-	out := New("FAST_RMSNORM")
-	mlxCheck(C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx))
-	return out
 }

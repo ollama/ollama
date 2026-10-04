@@ -11,10 +11,6 @@ func RandomKey(seed uint64) *Array {
 	return out
 }
 
-func (t *Array) Categorical(axis int) *Array {
-	return t.CategoricalWithKey(axis, nil)
-}
-
 func (t *Array) CategoricalWithKey(axis int, key *Array) *Array {
 	if key == nil {
 		key = New("")

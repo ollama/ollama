@@ -197,15 +197,6 @@ func (t *Array) Int() int32 {
 	return int32(item)
 }
 
-func (t *Array) Float() float32 {
-	if dt := t.DType(); dt != DTypeFloat32 {
-		panic(fmt.Sprintf("mlx: Float requires a DTypeFloat32 array, got %v", dt))
-	}
-	var item C.float
-	mlxCheck(C.mlx_array_item_float32(&item, t.ctx))
-	return float32(item)
-}
-
 func (t *Array) Ints() []int32 {
 	if dt := t.DType(); dt != DTypeInt32 {
 		panic(fmt.Sprintf("mlx: Ints requires DTypeInt32, got %v", dt))
@@ -226,13 +217,4 @@ func (t *Array) Floats() []float32 {
 	floats := make([]float32, t.Size())
 	copy(floats, unsafe.Slice((*float32)(unsafe.Pointer(data)), len(floats)))
 	return floats
-}
-
-func (t *Array) Save(name string) error {
-	cName := C.CString(name)
-	defer C.free(unsafe.Pointer(cName))
-	if err := mlxError(C.mlx_save(cName, t.ctx)); err != nil {
-		return fmt.Errorf("failed to save array to %s: %w", name, err)
-	}
-	return nil
 }

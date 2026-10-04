@@ -55,28 +55,6 @@ func (t *Array) BitwiseXor(other *Array) *Array {
 	return out
 }
 
-func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
-	cShape := make([]C.int, len(shape))
-	for i, s := range shape {
-		cShape[i] = C.int(s)
-	}
-
-	cStrides := make([]C.int64_t, len(strides))
-	for i, s := range strides {
-		cStrides[i] = C.int64_t(s)
-	}
-
-	out := New("AS_STRIDED")
-	mlxCheck(C.mlx_as_strided(
-		&out.ctx, t.ctx,
-		unsafe.SliceData(cShape), C.size_t(len(shape)),
-		unsafe.SliceData(cStrides), C.size_t(len(strides)),
-		C.size_t(offset),
-		DefaultStream().ctx,
-	))
-	return out
-}
-
 func (t *Array) BitwiseAnd(other *Array) *Array {
 	out := New("BITWISE_AND")
 	mlxCheck(C.mlx_bitwise_and(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx))
@@ -198,12 +176,6 @@ func (t *Array) Negative() *Array {
 	return out
 }
 
-func (t *Array) Power(exponent *Array) *Array {
-	out := New("POWER")
-	mlxCheck(C.mlx_power(&out.ctx, t.ctx, exponent.ctx, DefaultStream().ctx))
-	return out
-}
-
 func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS")
 	mlxCheck(C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx))
@@ -260,21 +232,6 @@ func (t *Array) Sqrt() *Array {
 func (t *Array) Squeeze(axis int) *Array {
 	out := New("SQUEEZE")
 	mlxCheck(C.mlx_squeeze_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx))
-	return out
-}
-
-func (t *Array) StackAxis(axis int, others ...*Array) *Array {
-	vectorData := make([]C.mlx_array, len(others)+1)
-	vectorData[0] = t.ctx
-	for i := range others {
-		vectorData[i+1] = others[i].ctx
-	}
-
-	vector := mlxCheck(C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData))))
-	defer freeVectorArray(vector)
-
-	out := New("STACK_AXIS")
-	mlxCheck(C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx))
 	return out
 }
 

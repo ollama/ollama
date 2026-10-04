@@ -69,12 +69,6 @@ func FromFP8(x *Array, dtype DType) *Array {
 	return out
 }
 
-func ToFP8(x *Array) *Array {
-	out := New("TO_FP8")
-	mlxCheck(C.mlx_to_fp8(&out.ctx, x.ctx, DefaultStream().ctx))
-	return out
-}
-
 // Dequantize applies globalScale itself rather than forwarding it: MLX's own
 // argument accepts only a scalar, and callers pass per-expert banks.
 func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string, globalScale *Array) *Array {
@@ -203,12 +197,6 @@ func BroadcastTo(a *Array, shape ...int32) *Array {
 	return out
 }
 
-func Tri(n, m int32, k int) *Array {
-	out := New("TRI")
-	mlxCheck(C.mlx_tri(&out.ctx, C.int(n), C.int(m), C.int(k), C.mlx_dtype(DTypeFloat32), DefaultStream().ctx))
-	return out
-}
-
 func Where(condition, a, b *Array) *Array {
 	out := New("WHERE")
 	mlxCheck(C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx))
@@ -289,11 +277,6 @@ func PadConstant(a *Array, axes []int, lowPad, highPad []int) *Array {
 	return Pad(a, axes, lowPad, highPad, zero, "constant")
 }
 
-func DepthwiseConv1d(x, weight *Array, bias *Array) *Array {
-	groups := int32(x.Dim(x.NumDims() - 1))
-	return Conv1d(x, weight, bias, 1, 0, 1, groups)
-}
-
 // Maximum returns element-wise maximum of two arrays.
 func Maximum(a, b *Array) *Array {
 	out := New("MAXIMUM")
@@ -316,53 +299,6 @@ func Softplus(a *Array) *Array {
 // ReLU computes max(0, x).
 func ReLU(a *Array) *Array {
 	return Maximum(a, NewScalarArray(float32(0)))
-}
-
-// GLU applies Gated Linear Unit: splits x along last dim into two halves,
-// returns first * sigmoid(second).
-func GLU(a *Array) *Array {
-	lastDim := a.NumDims() - 1
-	halfSize := a.Dim(lastDim) / 2
-	first := SliceStartStop(a,
-		make([]int32, lastDim+1), // all zeros for start
-		appendDims(a, lastDim, int32(halfSize)),
-	)
-	second := SliceStartStop(a,
-		appendDimsStart(a, lastDim, int32(halfSize)),
-		appendDims(a, lastDim, int32(a.Dim(lastDim))),
-	)
-	return first.Multiply(second.Sigmoid())
-}
-
-// helper: builds stop array for SliceStartStop where the target axis = val
-func appendDims(a *Array, targetAxis int, val int32) []int32 {
-	n := a.NumDims()
-	out := make([]int32, n)
-	for i := range n {
-		if i == targetAxis {
-			out[i] = val
-		} else {
-			out[i] = int32(a.Dim(i))
-		}
-	}
-	return out
-}
-
-// helper: builds start array for SliceStartStop where the target axis = val
-func appendDimsStart(a *Array, targetAxis int, val int32) []int32 {
-	n := a.NumDims()
-	out := make([]int32, n)
-	for i := range n {
-		if i == targetAxis {
-			out[i] = val
-		}
-	}
-	return out
-}
-
-// Clamp clamps array values to [min, max].
-func Clamp(a *Array, minVal, maxVal float32) *Array {
-	return Minimum(Maximum(a, NewScalarArray(minVal)), NewScalarArray(maxVal))
 }
 
 // Convenience wrappers (function-style for the model code)
@@ -618,10 +554,6 @@ func RMSNormFn(x, weight *Array, eps float32) *Array {
 	return out
 }
 
-func AddMM(c, a, b *Array, alpha, beta float32) *Array {
-	return c.Addmm(a, b, alpha, beta)
-}
-
 // Scalar helpers
 
 // scalarWithDtype creates a scalar array matching the dtype of a.
@@ -761,8 +693,4 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 
 func EnableCompile() {
 	mlxCheck(C.mlx_enable_compile())
-}
-
-func DisableCompile() {
-	mlxCheck(C.mlx_disable_compile())
 }
