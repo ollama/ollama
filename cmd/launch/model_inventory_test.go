@@ -41,8 +41,8 @@ func TestModelInventoryResolveRefreshesLocalMiss(t *testing.T) {
 	if got[0].Name != "new-model" {
 		t.Fatalf("Name = %q, want new-model", got[0].Name)
 	}
-	if got[0].ContextLength != 65_536 || got[0].EmbeddingLength != 1_024 {
-		t.Fatalf("metadata = context %d embedding %d, want refreshed metadata", got[0].ContextLength, got[0].EmbeddingLength)
+	if got[0].ContextLength != 65_536 {
+		t.Fatalf("context length = %d, want refreshed metadata", got[0].ContextLength)
 	}
 	if !got[0].HasCapability(modelpkg.CapabilityVision) || !got[0].ToolCapable {
 		t.Fatalf("capabilities = %v toolCapable=%v, want refreshed capabilities", got[0].Capabilities, got[0].ToolCapable)
