@@ -64,13 +64,11 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		}
 		layer.Name = srcLayer.Name
 
-		if layer.MediaType == "application/vnd.ollama.image.adapter" {
-			slog.Warn("LoRA adapters are deprecated; the adapter layer is carried over but new adapters cannot be created", "model", name.DisplayShortest(), "digest", layer.Digest)
-		}
 		switch layer.MediaType {
+		case "application/vnd.ollama.image.adapter":
+			return nil, config, fmt.Errorf("%w: %s has a LoRA adapter layer", errAdaptersUnsupported, name.DisplayShortest())
 		case "application/vnd.ollama.image.model",
 			"application/vnd.ollama.image.projector",
-			"application/vnd.ollama.image.adapter",
 			manifest.MediaTypeImageDraft:
 			blobpath, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {

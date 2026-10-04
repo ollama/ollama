@@ -74,7 +74,7 @@ type Scheduler struct {
 	loaded        map[string]*runnerRef
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
-	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
+	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
@@ -618,7 +618,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 
 			config := llamaServerConfigForModel(req.model)
 			config.ContextShift = launchContextShift(req.shift, req.model)
-			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, launchOpts, numParallel, config)
+			llama, err = s.newServerFn(systemInfo, loadGpus, req.model.ModelPath, f, req.model.ProjectorPaths, launchOpts, numParallel, config)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
 				// show a generalized compatibility error until there is a better way to
@@ -1464,8 +1464,6 @@ func (runner *runnerRef) reloadReason(ctx context.Context, req *LlmRequest) stri
 	switch {
 	case loaded == nil:
 		return "no model loaded"
-	case !reflect.DeepEqual(loaded.AdapterPaths, req.model.AdapterPaths):
-		return "adapters changed"
 	case !reflect.DeepEqual(loaded.ProjectorPaths, req.model.ProjectorPaths):
 		return "projectors changed"
 	case !loaded.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew):
