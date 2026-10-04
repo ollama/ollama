@@ -159,8 +159,8 @@ func TestOptionsForPromptLeavesLargerRunnerContext(t *testing.T) {
 	}
 }
 
-func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
-	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *gguf.Model, _, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *gguf.Model, []string, api.Options, int, llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *gguf.Model, _ []string, _ api.Options, _ int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -3030,5 +3030,39 @@ func TestImageGenerateUnsupported(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "image generation models are not currently supported") {
 		t.Fatalf("expected unsupported error in body, got %q", w.Body.String())
+	}
+}
+
+func TestAdapterModelRejectedAtLoad(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	s := newServerWithMockRunner(t, &mockRunner{})
+	createMinimalGGUFModel(t, s, "lora-model", nil, "{{ .Prompt }}", nil)
+
+	name := model.ParseName("lora-model")
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := manifest.NewLayer(bytes.NewReader([]byte("adapter")), "application/vnd.ollama.image.adapter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(name, mf.Config, append(mf.Layers, adapter)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Listing and showing the model still work.
+	if _, err := GetModel(name.String()); err != nil {
+		t.Fatalf("GetModel: %v", err)
+	}
+
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "lora-model", Prompt: "hi", Stream: &stream})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), errAdaptersUnsupported.Error()) {
+		t.Fatalf("generate = %d %s, want 400 with %q", w.Code, w.Body.String(), errAdaptersUnsupported)
+	}
+
+	if _, _, err := parseFromModel(t.Context(), name, func(api.ProgressResponse) {}); err == nil || !strings.Contains(err.Error(), errAdaptersUnsupported.Error()) {
+		t.Fatalf("parseFromModel error = %v, want %q", err, errAdaptersUnsupported)
 	}
 }

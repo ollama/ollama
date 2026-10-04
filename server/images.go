@@ -72,7 +72,6 @@ type Model struct {
 	HasChatTemplate    bool
 	HasGoTemplate      bool
 	PreferChatTemplate bool // set when GGUF chat_template should take precedence over Go TEMPLATE
-	AdapterPaths       []string
 	ProjectorPaths     []string
 	System             string
 	License            []string
@@ -83,6 +82,10 @@ type Model struct {
 
 	Template       *template.Template
 	templateDigest string
+
+	// hasAdapter is set when the manifest still has a LoRA adapter layer,
+	// which can no longer be loaded.
+	hasAdapter bool
 
 	// Metadata of the model blob and of each projector, read from their
 	// metadata files when the model is loaded.
@@ -589,13 +592,6 @@ func (m *Model) String() string {
 		Args: m.ModelPath,
 	})
 
-	for _, adapter := range m.AdapterPaths {
-		modelfile.Commands = append(modelfile.Commands, parser.Command{
-			Name: "adapter",
-			Args: adapter,
-		})
-	}
-
 	if m.DraftPath != "" {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "draft",
@@ -756,7 +752,7 @@ func GetModel(name string) (*Model, error) {
 			// TODO: remove this warning in a future version
 			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
-			m.AdapterPaths = append(m.AdapterPaths, filename)
+			m.hasAdapter = true
 		case "application/vnd.ollama.image.projector":
 			m.ProjectorPaths = append(m.ProjectorPaths, filename)
 			if md, err := readGGUFMetadata(layer.Digest); err != nil {

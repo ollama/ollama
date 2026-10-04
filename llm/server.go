@@ -96,7 +96,7 @@ func LoadModel(model string, maxArraySize int, shards ...string) (*gguf.Model, e
 
 // NewLlamaServer creates a new llama-server runner for the given model.
 // All GGUF models are served via the upstream llama-server subprocess.
-func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *gguf.Model, adapters, projectors []string, opts api.Options, numParallel int, config LlamaServerConfig) (LlamaServer, error) {
+func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, config LlamaServerConfig) (LlamaServer, error) {
 	slog.Info("using llama-server for model", "model", modelPath)
 
 	// Verify the requested context size is <= the model training size
@@ -107,7 +107,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
-	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
+	return NewLlamaServerRunner(gpus, modelPath, f, projectors, opts, numParallel, kvct, config)
 }
 
 // Server status types

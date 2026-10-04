@@ -178,7 +178,6 @@ type llamaServerLaunchConfig struct {
 	projectors           []string
 	mmprojMemory         uint64
 	modelLayers          uint64
-	adapters             []string
 	opts                 api.Options
 	numParallel          int
 	kvCacheType          string
@@ -385,11 +384,6 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
-
-	for _, adapter := range launch.adapters {
-		slog.Warn("LoRA adapters are deprecated and will be removed in a future release", "adapter", adapter)
-		params = append(params, "--lora", adapter)
-	}
 
 	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
 
@@ -854,7 +848,7 @@ func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
 	modelPath string,
 	f *gguf.Model,
-	adapters, projectors []string,
+	projectors []string,
 	opts api.Options,
 	numParallel int,
 	kvCacheType string,
@@ -938,7 +932,6 @@ func NewLlamaServerRunner(
 		projectors:   slices.Clone(splitModel.projectors),
 		mmprojMemory: mmprojMemory,
 		modelLayers:  f.KV().BlockCount() + 1,
-		adapters:     slices.Clone(adapters),
 		opts:         opts,
 		numParallel:  numParallel,
 		kvCacheType:  kvCacheType,
