@@ -98,10 +98,6 @@ func (h *History) Compact() {
 	}
 }
 
-func (h *History) Clear() {
-	h.Buf.Clear()
-}
-
 func (h *History) Prev() (line string) {
 	if h.Pos > 0 {
 		h.Pos -= 1

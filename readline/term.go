@@ -29,9 +29,3 @@ func UnsetRawMode(fd uintptr, termios any) error {
 	t := termios.(*Termios)
 	return setTermios(fd, t)
 }
-
-// IsTerminal returns true if the given file descriptor is a terminal.
-func IsTerminal(fd uintptr) bool {
-	_, err := getTermios(fd)
-	return err == nil
-}

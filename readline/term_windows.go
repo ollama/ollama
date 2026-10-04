@@ -8,13 +8,6 @@ type State struct {
 	mode uint32
 }
 
-// IsTerminal checks if the given file descriptor is associated with a terminal
-func IsTerminal(fd uintptr) bool {
-	var st uint32
-	err := windows.GetConsoleMode(windows.Handle(fd), &st)
-	return err == nil
-}
-
 func SetRawMode(fd uintptr) (*State, error) {
 	var st uint32
 	if err := windows.GetConsoleMode(windows.Handle(fd), &st); err != nil {
