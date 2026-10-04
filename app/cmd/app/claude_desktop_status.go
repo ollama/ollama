@@ -4,14 +4,6 @@ package main
 
 import "github.com/ollama/ollama/internal/proxy"
 
-type claudeDesktopInstallResult string
-
-const (
-	claudeDesktopInstallCancelled claudeDesktopInstallResult = "cancelled"
-	claudeDesktopInstallerOpened  claudeDesktopInstallResult = "opened"
-	claudeDesktopInstallFailed    claudeDesktopInstallResult = "failed"
-)
-
 type claudeDesktopStatus struct {
 	Supported      bool                         `json:"supported"`
 	Used           bool                         `json:"used"`
@@ -46,11 +38,4 @@ type claudeDesktopModelStatus struct {
 	Availability proxy.ClaudeDesktopAvailability `json:"availability"`
 	Reason       proxy.ClaudeDesktopAccessReason `json:"reason,omitempty"`
 	RequiredPlan string                          `json:"requiredPlan,omitempty"`
-}
-
-type claudeDesktopActionResult struct {
-	Status                      claudeDesktopStatus `json:"status"`
-	Error                       string              `json:"error,omitempty"`
-	MappingsApplied             bool                `json:"mappingsApplied,omitempty"`
-	RestartConfirmationRequired bool                `json:"restartConfirmationRequired,omitempty"`
 }

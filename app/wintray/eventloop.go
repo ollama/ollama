@@ -13,7 +13,6 @@ import (
 
 var (
 	quitOnce            sync.Once
-	UI_REQUEST_MSG_ID   = WM_USER + 2
 	FOCUS_WINDOW_MSG_ID = WM_USER + 3
 )
 
@@ -31,21 +30,6 @@ func (t *winTray) TrayRun() {
 	}{}
 	for {
 		ret, _, err := pGetMessage.Call(uintptr(unsafe.Pointer(m)), 0, 0, 0)
-
-		// Ignore WM_QUIT messages from the UI window, which shouldn't exit the main app
-		if m.Message == WM_QUIT && t.app.UIRunning() {
-			if t.app != nil {
-				slog.Debug("converting WM_QUIT to terminate call on webview")
-				t.app.UITerminate()
-			}
-			// Drain any other WM_QUIT messages
-			for {
-				ret, _, err = pGetMessage.Call(uintptr(unsafe.Pointer(m)), 0, 0, 0)
-				if m.Message != WM_QUIT {
-					break
-				}
-			}
-		}
 
 		// If the function retrieves a message other than WM_QUIT, the return value is nonzero.
 		// If the function retrieves the WM_QUIT message, the return value is zero.
@@ -78,12 +62,6 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			t.app.Quit()
 		case updateMenuID:
 			t.app.DoUpdate()
-		case openAppsMenuID:
-			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIRun("/connect")
-		case settingsUIMenuID:
-			// UI must be initialized on this thread so don't use the callbacks
-			t.app.UIRun("/settings")
 		case diagLogsMenuID:
 			t.showLogs()
 		default:
@@ -155,11 +133,6 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			slog.Error(fmt.Sprintf("failed to refresh the taskbar on explorer restart: %s", err))
 		}
 		t.muNID.Unlock()
-	case uint32(UI_REQUEST_MSG_ID):
-		// Requests for the UI must always come from the main event thread
-		l := int(wParam)
-		path := unsafe.String((*byte)(unsafe.Pointer(lParam)), l) //nolint:govet,gosec
-		t.app.UIRun(path)
 	case WM_COPYDATA:
 		// Handle URL scheme requests from other instances
 		if lParam != 0 {
@@ -174,7 +147,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			}
 		}
 	case uint32(FOCUS_WINDOW_MSG_ID):
-		focusUI(t.app)
+		t.app.ShowSettings()
 		lResult = 1 // Return non-zero to indicate success
 	default:
 		// Calls the default window procedure to provide default processing for any window messages that an application does not process.
@@ -190,30 +163,10 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 	return
 }
 
-func focusUI(app AppCallbacks) {
-	if app.UIRunning() && app.UIOnboarding() {
-		app.UIShow()
-		return
-	}
-	app.UIRun("/connect")
-}
-
 func (t *winTray) Quit() {
 	// slog.Debug("XXX in winTray.Quit")
 	t.quitting = true
 	quitOnce.Do(quit)
-}
-
-func SendUIRequestMessage(path string) {
-	boolRet, _, err := pPostMessage.Call(
-		uintptr(wt.window),
-		uintptr(UI_REQUEST_MSG_ID),
-		uintptr(len(path)),
-		uintptr(unsafe.Pointer(unsafe.StringData(path))),
-	)
-	if boolRet == 0 {
-		slog.Error(fmt.Sprintf("failed to post UI request message %s", err))
-	}
 }
 
 func quit() {

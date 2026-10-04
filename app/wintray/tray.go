@@ -45,11 +45,7 @@ type TrayCallbacks interface {
 }
 
 type AppCallbacks interface {
-	UIRun(path string)
-	UIShow()
-	UITerminate()
-	UIRunning() bool
-	UIOnboarding() bool
+	ShowSettings()
 	Quit()
 	DoUpdate()
 }

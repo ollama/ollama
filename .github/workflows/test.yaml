@@ -410,9 +410,6 @@ jobs:
             LLAMA_CPP_VERSION
             MLX_VERSION
             MLX_C_VERSION
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
       - name: Cache MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         uses: actions/cache@v4
@@ -423,16 +420,6 @@ jobs:
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
-      - name: Install UI dependencies
-        working-directory: ./app/ui/app
-        run: npm ci
-      - name: Install tscriptify
-        run: |
-          go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest
-      - name: Run UI tests
-        if: ${{ startsWith(matrix.os, 'ubuntu') }}
-        working-directory: ./app/ui/app
-        run: npm test
       - name: Verify MLX generated files are current
         if: ${{ startsWith(matrix.os, 'ubuntu') }}
         run: |
@@ -444,10 +431,6 @@ jobs:
             mlx/include/mlx/c
       - name: Run go generate
         run: go generate ./...
-
-      - name: Verify UI generated types are current
-        if: ${{ startsWith(matrix.os, 'ubuntu') }}
-        run: git diff --exit-code -- app/ui/app/codegen/gotypes.gen.ts
 
       - name: go test
         if: always()
@@ -488,15 +471,5 @@ jobs:
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      # app/ui embeds app/dist, so the UI has to be built before app/... will
-      # even compile.
-      - name: Build UI
-        working-directory: ./app/ui/app
-        run: |
-          npm ci
-          npm run build
       - name: go test -race
         run: go test -race -count=1 ./...

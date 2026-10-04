@@ -2,8 +2,8 @@
 
 package main
 
-// #cgo CFLAGS: -x objective-c
-// #cgo LDFLAGS: -framework Webkit -framework Cocoa -framework LocalAuthentication -framework ServiceManagement
+// #cgo CFLAGS: -x objective-c -fobjc-arc
+// #cgo LDFLAGS: -framework Cocoa -framework LocalAuthentication -framework ServiceManagement
 // #include "app_darwin.h"
 // #include "../../updater/updater_darwin.h"
 // typedef const char cchar_t;
@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,10 +33,8 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/api"
-	appui "github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
-	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
@@ -102,13 +101,12 @@ var (
 	claudeShutdownTimeout         = 30 * time.Second
 	claudeRecommendationsClient   = &http.Client{Timeout: 3 * time.Second}
 	claudeRecommendationsEndpoint = func() string {
-		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/experimental/model-recommendations?app=claude-desktop"
+		return ollamaDotCom + "/api/experimental/model-recommendations?app=claude-desktop"
 	}
 	claudeCloudModelsClient   = &http.Client{Timeout: 3 * time.Second}
 	claudeCloudModelsEndpoint = func() string {
-		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/tags"
+		return ollamaDotCom + "/api/tags"
 	}
-	signOllamaData            = ollamaAuth.Sign
 	claudeModelsLoader        = loadClaudeDesktopModels
 	claudeCloudModelsResolver = currentClaudeDesktopCloudModels
 	claudeAvailableModels     []proxy.ClaudeDesktopModel
@@ -121,46 +119,12 @@ var (
 
 var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the selected models. Try again")
 
-// TODO(jmorganca): pre-create the window and pass
-// it to the webview instead of using the internal one
-//
-//export StartUI
-func StartUI(path *C.cchar_t) {
-	p := C.GoString(path)
-	wv.Run(p)
-	styleWindow(wv.webview.Window())
-	C.setWindowDelegate(wv.webview.Window())
-}
-
-//export ShowUI
-func ShowUI() {
-	openUI("/")
-}
-
-//export IsOnboardingActive
-func IsOnboardingActive() C.bool {
-	return C._Bool(wv.OnboardingActive())
-}
-
-func openUI(path string) {
-	if wv.IsRunning() && wv.webview != nil {
-		showWindow(wv.webview.Window())
-		return
-	}
-	p := C.CString(path)
+// showSettings opens the settings window at pane, or at the pane people
+// viewed last. It may be called from any goroutine.
+func showSettings(pane settingsPane) {
+	p := C.CString(string(pane))
 	defer C.free(unsafe.Pointer(p))
-	StartUI(p)
-}
-
-func openAppsUI() {
-	p := C.CString("/connect")
-	defer C.free(unsafe.Pointer(p))
-	C.uiRequest(p)
-}
-
-//export StopUI
-func StopUI() {
-	wv.Terminate()
+	C.showSettings(p)
 }
 
 //export StartUpdate
@@ -175,12 +139,25 @@ func StartUpdate() {
 	// not reached if upgrade works, the new app will kill this process
 }
 
-//export darwinStartHiddenTasks
-func darwinStartHiddenTasks() {
-	startHiddenTasks()
+// launchHidden is set when this launch asked to start without showing
+// Settings, such as at login or from the command line.
+var launchHidden bool
+
+//export appDidFinishLaunching
+func appDidFinishLaunching(hidden C.bool) {
+	runInitialUI(launchHidden || bool(hidden), "", startHiddenTasks, handleURLSchemeInCurrentInstance, showSettings)
+}
+
+//export handleURLScheme
+func handleURLScheme(rawURL *C.char) {
+	// Signing in can wait on the network, so keep it off the main thread.
+	go handleURLSchemeInCurrentInstance(C.GoString(rawURL))
 }
 
 func init() {
+	// AppKit runs on the main thread, so keep main.main there.
+	runtime.LockOSThread()
+
 	// Temporary code to mimic Squirrel ShipIt behavior
 	if len(os.Args) > 2 {
 		if os.Args[1] == "___launch___" {
@@ -516,7 +493,7 @@ func UpdateAvailable(ver string) error {
 	return nil
 }
 
-func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ string) {
+func osRun(_ func(), hasCompletedFirstRun, startHidden bool, _ string) {
 	handoffSignal := make(chan os.Signal, 1)
 	handoffDone := make(chan struct{})
 	signal.Notify(handoffSignal, syscall.SIGUSR1)
@@ -531,6 +508,7 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ s
 		}
 	}()
 
+	launchHidden = startHidden
 	registerLaunchAgent(hasCompletedFirstRun)
 	if err := reconcileClaudeAppProxy(); err != nil {
 		slog.Warn("failed to start Claude gateway", "error", err)
@@ -540,7 +518,7 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ s
 	// Run the native macOS app
 	// Note: this will block until the app is closed
 	slog.Debug("starting native darwin event loop")
-	C.run(C._Bool(showOnboarding), C._Bool(startHidden))
+	C.run()
 }
 
 func reconcileClaudeAppProxy() error {
@@ -617,7 +595,7 @@ func startClaudeAppProxy() error {
 		Model:           activeModels[0].OllamaModel,
 		Models:          activeModels,
 		Logger:          slog.Default(),
-		OnCountsChanged: updateClaudeProxyMenu,
+		OnCountsChanged: claudeRequestCountChanged,
 		RefreshModels: func(ctx context.Context, current []proxy.ClaudeDesktopModel) ([]proxy.ClaudeDesktopModel, error) {
 			_, selected, _ := refreshClaudeDesktopCatalog(ctx, current, false)
 			return selected, nil
@@ -1162,11 +1140,6 @@ func SetClaudeGatewayInstalled(installed C.bool, restartClaude C.bool) C.bool {
 		return C._Bool(false)
 	}
 	return C._Bool(true)
-}
-
-//export HasUsedClaudeDesktopIntegration
-func HasUsedClaudeDesktopIntegration() C.bool {
-	return C._Bool(hasUsedClaudeDesktopIntegration())
 }
 
 func hasUsedClaudeDesktopIntegration() bool {
@@ -1762,43 +1735,8 @@ func selectKnownClaudeDesktopModels(available, current []proxy.ClaudeDesktopMode
 	return selected, nil
 }
 
-func requestClaudeDesktopInstall() claudeDesktopInstallResult {
-	return claudeDesktopInstallResultFromCode(int(C.installClaudeDesktop()))
-}
-
-func requestCodexDesktopInstall() codexDesktopInstallResult {
-	return codexDesktopInstallResultFromCode(int(C.installCodexDesktop()))
-}
-
-func codexDesktopInstallResultFromCode(code int) codexDesktopInstallResult {
-	switch code {
-	case int(C.ClaudeInstallerOpened):
-		return codexDesktopInstallerOpened
-	case int(C.ClaudeInstallCancelled):
-		return codexDesktopInstallCancelled
-	default:
-		return codexDesktopInstallFailed
-	}
-}
-
 func claudeDesktopDownloadEndpoint(baseURL string) string {
 	return strings.TrimRight(baseURL, "/") + "/download-app?app=claude-desktop&type=mac-zip"
-}
-
-func newSignedOllamaRequest(ctx context.Context, method, endpoint string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	query := req.URL.Query()
-	query.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
-	req.URL.RawQuery = query.Encode()
-	signature, err := signOllamaData(ctx, []byte(fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI())))
-	if err != nil {
-		return nil, fmt.Errorf("sign request: %w", err)
-	}
-	req.Header.Set("Authorization", signature)
-	return req, nil
 }
 
 //export ClaudeDesktopDownloadRequest
@@ -1808,7 +1746,7 @@ func ClaudeDesktopDownloadRequest(authorization **C.char) *C.char {
 	}
 	*authorization = nil
 
-	req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint(appui.OllamaDotCom))
+	req, err := newSignedOllamaRequest(context.Background(), http.MethodGet, claudeDesktopDownloadEndpoint(ollamaDotCom))
 	if err != nil {
 		slog.Warn("failed to prepare Claude Desktop download request", "error", err)
 		return nil
@@ -1853,38 +1791,22 @@ func InstallCodexDesktopDiskImage(path *C.cchar_t) C.bool {
 	return C._Bool(true)
 }
 
-func getShowAppsInMenu() bool {
-	return bool(C.ShowAppsInMenu())
-}
-
-func setShowAppsInMenu(visible bool) {
-	C.SetShowAppsInMenu(C._Bool(visible))
-}
-
-func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {
-	switch code {
-	case int(C.ClaudeInstallerOpened):
-		return claudeDesktopInstallerOpened
-	case int(C.ClaudeInstallCancelled):
-		return claudeDesktopInstallCancelled
-	default:
-		return claudeDesktopInstallFailed
-	}
-}
-
-//export RefreshClaudeProxyMenu
-func RefreshClaudeProxyMenu() {
+// ClaudeGatewayRequestCount returns how many requests Claude sent through
+// the gateway, or -1 when the gateway isn't running.
+//
+//export ClaudeGatewayRequestCount
+func ClaudeGatewayRequestCount() C.longlong {
 	claudeProxyMu.Lock()
-	proxy := claudeAppProxy
+	gateway := claudeAppProxy
 	claudeProxyMu.Unlock()
-	if proxy == nil {
-		return
+	if gateway == nil {
+		return -1
 	}
-	updateClaudeProxyMenu(proxy.Counts())
+	return C.longlong(gateway.Counts().Routed)
 }
 
-func updateClaudeProxyMenu(counts proxy.ClaudeDesktopCounts) {
-	C.updateClaudeProxyMenu(C.ulonglong(counts.Routed))
+func claudeRequestCountChanged(proxy.ClaudeDesktopCounts) {
+	C.claudeRequestCountChanged()
 }
 
 func stopClaudeAppProxy() {
@@ -1985,23 +1907,6 @@ func logStartup() {
 	slog.Info("starting Ollama", "app", appPath, "version", version.Version, "OS", updater.UserAgentOS)
 }
 
-func hideWindow(ptr unsafe.Pointer) {
-	C.hideWindow(C.uintptr_t(uintptr(ptr)))
-}
-
-func showWindow(ptr unsafe.Pointer) {
-	C.showWindow(C.uintptr_t(uintptr(ptr)))
-}
-
-func styleWindow(ptr unsafe.Pointer) {
-	C.styleWindow(C.uintptr_t(uintptr(ptr)))
-}
-
-func setOnboardingWindowStyle(ptr unsafe.Pointer, enabled bool) {
-	styleWindow(ptr)
-	C.setWindowResizable(C.uintptr_t(uintptr(ptr)), C.bool(!enabled))
-}
-
 func runInBackground() {
 	cmd := exec.Command(filepath.Join(updater.BundlePath, "Contents", "MacOS", "Ollama"), "hidden")
 	if cmd != nil {
@@ -2014,19 +1919,6 @@ func runInBackground() {
 		slog.Error("failed to start Ollama in background", "bundlePath", updater.BundlePath)
 		os.Exit(1)
 	}
-}
-
-func drag(ptr unsafe.Pointer) {
-	C.drag(C.uintptr_t(uintptr(ptr)))
-}
-
-func doubleClick(ptr unsafe.Pointer) {
-	C.doubleClick(C.uintptr_t(uintptr(ptr)))
-}
-
-//export handleConnectURL
-func handleConnectURL() {
-	handleConnectURLScheme()
 }
 
 // checkAndHandleExistingInstance is not needed on non-Windows platforms

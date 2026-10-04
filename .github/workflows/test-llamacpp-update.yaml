@@ -514,10 +514,6 @@ jobs:
             exit 1
           }
           $ErrorActionPreference='Stop'
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
       - name: Build Windows binaries and app launchers
         run: ./scripts/build_windows.ps1 ollama ollamaArm64 app appArm64
       - name: Verify Windows build payloads

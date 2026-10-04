@@ -186,24 +186,6 @@ _sign_darwin() {
 }
 
 _build_macapp() {
-    if ! command -v npm &> /dev/null; then
-        echo "npm is not installed. Please install Node.js and npm first:"
-        echo "   Visit: https://nodejs.org/"
-        exit 1
-    fi
-
-    if ! command -v tsc &> /dev/null; then
-        echo "Installing TypeScript compiler..."
-        npm install -g typescript
-    fi
-
-    echo "Installing required Go tools..."
-
-    cd app/ui/app
-    npm install
-    npm run build
-    cd ../../..
-
     # Build the Ollama.app bundle
     rm -rf dist/Ollama.app
     cp -a ./app/darwin/Ollama.app dist/Ollama.app

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	appui "github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/modelref"
@@ -54,37 +53,11 @@ var (
 	codexDesktopAccessState                                    = currentClaudeDesktopAccessState
 	codexDesktopRecommendationsClient                          = &http.Client{Timeout: 3 * time.Second}
 	codexDesktopRecommendationsEndpoint                        = func() string {
-		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/experimental/model-recommendations?app=codex-desktop"
+		return ollamaDotCom + "/api/experimental/model-recommendations?app=codex-desktop"
 	}
 	codexDesktopModelLoadAttempts = 20
 	codexDesktopModelRetryWait    = 250 * time.Millisecond
 	codexDesktopMu                sync.Mutex
-)
-
-type codexDesktopStatus struct {
-	Used      bool     `json:"used"`
-	Supported bool     `json:"supported"`
-	Installed bool     `json:"installed"`
-	Connected bool     `json:"connected"`
-	Running   bool     `json:"running"`
-	Model     string   `json:"model,omitempty"`
-	Models    []string `json:"models,omitempty"`
-	MaxModels int      `json:"maxModels"`
-	Requests  uint64   `json:"requests"`
-}
-
-type codexDesktopActionResult struct {
-	Status                      codexDesktopStatus `json:"status"`
-	Error                       string             `json:"error,omitempty"`
-	RestartConfirmationRequired bool               `json:"restartConfirmationRequired,omitempty"`
-}
-
-type codexDesktopInstallResult string
-
-const (
-	codexDesktopInstallCancelled codexDesktopInstallResult = "cancelled"
-	codexDesktopInstallerOpened  codexDesktopInstallResult = "opened"
-	codexDesktopInstallFailed    codexDesktopInstallResult = "failed"
 )
 
 type codexDesktopModelsSettings struct {
@@ -111,13 +84,6 @@ type codexDesktopModelStatus struct {
 	RequiredPlan string `json:"requiredPlan,omitempty"`
 }
 
-type codexDesktopModelsSettingsResult struct {
-	Settings                    codexDesktopModelsSettings `json:"settings"`
-	Error                       string                     `json:"error,omitempty"`
-	Warning                     string                     `json:"warning,omitempty"`
-	RestartConfirmationRequired bool                       `json:"restartConfirmationRequired,omitempty"`
-}
-
 type codexDesktopModelInventory struct {
 	Available      []launch.LaunchModel
 	Catalog        []codexDesktopCatalogModel
@@ -135,31 +101,11 @@ type codexDesktopCatalogModel struct {
 	RequiredPlan string
 }
 
-func getCodexDesktopStatus() codexDesktopStatus {
-	connected := codexDesktop.OllamaConfigured()
-	requests := uint64(0)
-	if connected {
-		requests = codexDesktop.OllamaRequestCount()
+func codexDesktopModelRefreshError(settings codexDesktopModelsSettings) string {
+	if len(settings.Selected) > 0 {
+		return "Couldn’t refresh available models. Your saved models are unchanged."
 	}
-	var models []string
-	if saved, err := config.LoadIntegration(codexDesktopIntegrationName); err == nil && len(saved.Models) > 0 {
-		models = append([]string(nil), saved.Models...)
-	}
-	model := ""
-	if len(models) > 0 {
-		model = models[0]
-	}
-	return codexDesktopStatus{
-		Used:      hasUsedCodexDesktopIntegration(),
-		Supported: true,
-		Installed: codexDesktop.Installed(),
-		Connected: connected,
-		Running:   codexDesktop.Running(),
-		Model:     model,
-		Models:    models,
-		MaxModels: codexDesktopMaxModels,
-		Requests:  requests,
-	}
+	return "Couldn’t refresh available models. Try again."
 }
 
 func setCodexDesktopConnection(enabled, restartConfirmed bool) error {

@@ -12,6 +12,4 @@ const (
 	updateAvailableMenuTitle = "An update is available"
 	updateMenuTitle          = "Restart to update"
 	diagLogsMenuTitle        = "View logs"
-	openAppsMenuTitle        = "Open Ollama"
-	settingsUIMenuTitle      = "Settings"
 )
