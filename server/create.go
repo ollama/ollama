@@ -834,6 +834,12 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 					case "laguna":
 						config.Renderer = cmp.Or(config.Renderer, "laguna")
 						config.Parser = cmp.Or(config.Parser, "laguna")
+					case "qwen35", "qwen35moe":
+						chatTemplate := layer.GGUF.String("tokenizer.chat_template")
+						if strings.Contains(chatTemplate, "resolved_reasoning_effort") && strings.Contains(chatTemplate, "preserve_thinking") {
+							config.Renderer = cmp.Or(config.Renderer, "qwen3.8")
+							config.Parser = cmp.Or(config.Parser, "qwen3.5")
+						}
 					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
