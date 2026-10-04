@@ -53,10 +53,6 @@ type File struct {
 	byteOrder    binary.ByteOrder
 }
 
-func Open(path string) (_ *File, err error) {
-	return open(path, -1)
-}
-
 func open(path string, maxArraySize int) (_ *File, err error) {
 	f := &File{bts: make([]byte, 4096), maxArraySize: maxArraySize}
 	f.file, err = os.Open(path)
@@ -455,10 +451,6 @@ func (f *File) KeyValue(key string) KeyValue {
 	return KeyValue{}
 }
 
-func (f *File) NumKeyValues() int {
-	return int(f.keyValues.count)
-}
-
 func (f *File) KeyValues() iter.Seq2[int, KeyValue] {
 	return f.keyValues.All()
 }
@@ -481,40 +473,10 @@ func (f *File) TensorInfo(name string) TensorInfo {
 	return TensorInfo{}
 }
 
-func (f *File) NumTensors() int {
-	return int(f.tensors.count)
-}
-
 func (f *File) TensorInfos() iter.Seq2[int, TensorInfo] {
 	// fast forward through key values if we haven't already
 	f.keyValues.rest()
 	return f.tensors.All()
-}
-
-func (f *File) TensorReader(name string) (TensorInfo, io.Reader, error) {
-	t := f.TensorInfo(name)
-	if err := f.Err(); err != nil {
-		return TensorInfo{}, nil, err
-	}
-	if t.Name == "" {
-		return TensorInfo{}, nil, fmt.Errorf("tensor %s not found", name)
-	}
-	// fast forward through tensor info if we haven't already
-	f.tensors.rest()
-	if err := f.Err(); err != nil {
-		return TensorInfo{}, nil, err
-	}
-
-	fileInfo, err := f.file.Stat()
-	if err != nil {
-		return TensorInfo{}, nil, err
-	}
-	offset, numBytes, err := f.tensorRange(t, fileInfo.Size())
-	if err != nil {
-		return TensorInfo{}, nil, err
-	}
-
-	return t, io.NewSectionReader(f.file, offset, numBytes), nil
 }
 
 func (f *File) validateTensorData() error {

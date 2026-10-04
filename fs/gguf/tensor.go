@@ -12,10 +12,6 @@ type TensorInfo struct {
 	Type   TensorType
 }
 
-func (ti TensorInfo) Valid() bool {
-	return ti.Name != "" && ti.NumBytes() > 0
-}
-
 func (ti TensorInfo) NumValues() int64 {
 	n, ok := ti.numValues()
 	if !ok {
