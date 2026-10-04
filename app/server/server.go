@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/envconfig"
 )
 
 const restartDelay = time.Second
@@ -183,8 +185,12 @@ func (s *Server) Run(ctx context.Context) error {
 	s.log = l
 	defer s.log.Close()
 
-	if err := cleanup(); err != nil {
-		slog.Warn("failed to cleanup previous ollama process", "err", err)
+	// Development builds share the installed app's pid file, so they leave
+	// its server alone.
+	if !s.dev {
+		if err := cleanup(); err != nil {
+			slog.Warn("failed to cleanup previous ollama process", "err", err)
+		}
 	}
 
 	reaped := false
@@ -204,9 +210,10 @@ func (s *Server) Run(ctx context.Context) error {
 			return err
 		}
 
-		err = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644)
-		if err != nil {
-			slog.Warn("failed to write pid file", "file", pidFile, "err", err)
+		if !s.dev {
+			if err := os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
+				slog.Warn("failed to write pid file", "file", pidFile, "err", err)
+			}
 		}
 
 		if err = cmd.Wait(); err != nil && !errors.Is(err, context.Canceled) {
@@ -248,7 +255,8 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		env[s[0]] = s[1]
 	}
 	if settings.Expose {
-		env["OLLAMA_HOST"] = "0.0.0.0"
+		// Listen on every interface, on the port the server would use anyway.
+		env["OLLAMA_HOST"] = net.JoinHostPort("0.0.0.0", envconfig.Host().Port())
 	}
 	if settings.Browser {
 		env["OLLAMA_ORIGINS"] = "*"
