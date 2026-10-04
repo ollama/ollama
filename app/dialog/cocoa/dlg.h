@@ -1,17 +1,5 @@
 #include <objc/NSObjCRuntime.h>
 
-typedef enum {
-	MSG_YESNO,
-	MSG_ERROR,
-	MSG_INFO,
-} AlertStyle;
-
-typedef struct {
-	char* msg;
-	char* title;
-	AlertStyle style;
-} AlertDlgParams;
-
 #define LOADDLG 0
 #define SAVEDLG 1
 #define DIRDLG 2 // browse for directory
@@ -36,7 +24,6 @@ typedef enum {
 	DLG_URLFAIL,
 } DlgResult;
 
-DlgResult alertDlg(AlertDlgParams*);
 DlgResult fileDlg(FileDlgParams*);
 
 void* NSStr(void* buf, int len);
