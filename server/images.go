@@ -29,9 +29,9 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/transfer"
 )
 
 // Blobs newer than this may belong to another process that has not written its
@@ -159,6 +159,15 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
+// publicCapabilities hides a decision model's other capabilities from show and
+// list so clients don't offer it for general chat. Serving still uses Capabilities.
+func publicCapabilities(capabilities []model.Capability) []model.Capability {
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		return []model.Capability{model.CapabilityDecision}
+	}
+	return capabilities
+}
+
 func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
@@ -194,10 +203,13 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 	case templateCapabilityChat:
 		capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 	}
-	if m.metadata.Valid("pooling_type") {
+	switch {
+	case m.metadata.String("decision.type") != "":
+		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	case m.metadata.Valid("pooling_type"):
 		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
+	default:
+		// Otherwise, assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
 	if m.metadata.Valid("vision.block_count") {
@@ -454,6 +466,12 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 	if suppressAudioCapability(m, modelArch) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
@@ -533,6 +551,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
+		model.CapabilityDecision:   errors.New("decision"),
 	}
 
 	for _, cap := range want {
@@ -616,6 +635,12 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "parser",
 			Args: m.Config.Parser,
+		})
+	}
+	for _, capability := range m.Config.Capabilities {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "capability",
+			Args: capability,
 		})
 	}
 

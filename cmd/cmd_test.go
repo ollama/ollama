@@ -1902,8 +1902,8 @@ func TestCreateHandlerRejectsTypicalPBeforeUpload(t *testing.T) {
 	cmd.Flags().Bool("force", false, "")
 	cmd.SetContext(t.Context())
 
-	if err := CreateHandler(cmd, []string{"test-model"}); !errors.Is(err, errTypicalPUnsupported) {
-		t.Fatalf("error = %v, want %v", err, errTypicalPUnsupported)
+	if err := CreateHandler(cmd, []string{"test-model"}); !errors.Is(err, errTypicalPDeprecated) {
+		t.Fatalf("error = %v, want %v", err, errTypicalPDeprecated)
 	}
 }
 

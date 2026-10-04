@@ -575,7 +575,7 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"` // Deprecated: rejected on new requests and models; still honored from existing model parameters
+	TypicalP         float32  `json:"typical_p,omitempty"` // Deprecated: rejected as a model parameter; still accepted per request with a warning
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
@@ -702,6 +702,9 @@ type CreateRequest struct {
 
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
+
+	// Capabilities adds to the model's inherited or inferred capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
 
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`

@@ -378,6 +378,12 @@ func loadTestMetadata(t *testing.T, m *Model) {
 }
 
 func TestModelCapabilities(t *testing.T) {
+	decisionModelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":    "qwen35",
+		"qwen35.decision.type":    "clef",
+		"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}<think>{{ messages }}</think>`,
+	}, []*gguftest.Tensor{})
+
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
@@ -442,6 +448,22 @@ func TestModelCapabilities(t *testing.T) {
 		model        Model
 		expectedCaps []model.Capability
 	}{
+		{
+			name: "Clef exposes decision instead of completion",
+			model: Model{
+				ModelPath: decisionModelPath,
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "Clef filters inherited generation capabilities",
+			model: Model{
+				ModelPath:      decisionModelPath,
+				ProjectorPaths: []string{visionModelPath},
+				Config:         model.ConfigV2{Capabilities: []string{"decision", "vision", "completion", "insert", "tools", "thinking"}},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision, model.CapabilityVision},
+		},
 		{
 			name: "model with image generation capability via config",
 			model: Model{

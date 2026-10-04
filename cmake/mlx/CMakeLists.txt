@@ -62,7 +62,7 @@ endforeach()
 add_subdirectory(${OLLAMA_SOURCE_DIR}/mlx ${CMAKE_BINARY_DIR}/mlx)
 
 include(FetchContent)
-set(XGRAMMAR_VERSION v0.2.5)
+set(XGRAMMAR_VERSION v0.2.7)
 FetchContent_Declare(xgrammar
     GIT_REPOSITORY "https://github.com/mlc-ai/xgrammar.git"
     GIT_TAG ${XGRAMMAR_VERSION}
@@ -87,18 +87,7 @@ target_compile_definitions(xgrammar PUBLIC
     XGRAMMAR_ENABLE_CPPTRACE=0
     XGRAMMAR_ENABLE_INTERNAL_CHECK=0)
 
-add_library(ollama_xgrammar SHARED
-    "${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native/xgrammar.cpp")
-target_include_directories(ollama_xgrammar PRIVATE
-    "${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native")
-target_compile_definitions(ollama_xgrammar PRIVATE
-    OLLAMA_XGRAMMAR_BUILD=1
-    OLLAMA_XGRAMMAR_VERSION="${XGRAMMAR_VERSION}")
-# Export only the ollama_xgrammar_* API; xgrammar's own C++ symbols stay hidden.
-set_target_properties(ollama_xgrammar PROPERTIES
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON)
-target_link_libraries(ollama_xgrammar PRIVATE xgrammar Threads::Threads)
+add_subdirectory(${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native ${CMAKE_BINARY_DIR}/xgrammar)
 
 # Find CUDA toolkit if MLX is built with CUDA support.
 find_package(CUDAToolkit)

@@ -292,7 +292,7 @@ func safetensorsCreateOptions(modelfile *parser.Modelfile, filename, modelName s
 var (
 	errAdaptersUnsupported = errors.New("LoRA adapters are no longer supported")
 	errForceLocalOnly      = errors.New("--force is only supported for local MLX safetensors imports")
-	errTypicalPUnsupported = errors.New("typical_p is no longer supported")
+	errTypicalPDeprecated  = errors.New("typical_p is deprecated and cannot be set as a model parameter; pass it as a request option instead")
 )
 
 // createSafetensorsModel imports in-process when the server is local and
@@ -336,7 +336,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return errAdaptersUnsupported
 	}
 	if slices.ContainsFunc(modelfile.Commands, func(c parser.Command) bool { return c.Name == "typical_p" }) {
-		return errTypicalPUnsupported
+		return errTypicalPDeprecated
 	}
 
 	opts, isSafetensorsCreate, err := safetensorsCreateOptions(modelfile, filename, modelName)

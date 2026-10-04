@@ -266,11 +266,12 @@ func main() {
 				done <- osrv.Run(octx)
 			}()
 		},
-		Store:        st,
-		ToolRegistry: toolRegistry,
-		Dev:          devMode,
-		Logger:       slog.Default(),
-		Updater:      upd,
+		Store:             st,
+		IntegrationModels: desktopModelSettingsHandler(),
+		ToolRegistry:      toolRegistry,
+		Dev:               devMode,
+		Logger:            slog.Default(),
+		Updater:           upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
 		},
