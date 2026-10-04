@@ -1377,8 +1377,10 @@ func checkPullRequires(requires, clientVersion string) error {
 		slog.Debug("ignoring malformed requires version", "requires", requires)
 		return nil
 	}
-	if semver.Compare(requires, "v"+clientVersion) > 0 {
-		return fmt.Errorf("model requires ollama version %s or newer (this client is v%s)", requires, clientVersion)
+	// Prerelease builds must be able to test models targeting their release.
+	currentVersion, _, _ := strings.Cut(semver.Canonical("v"+clientVersion), "-")
+	if semver.Compare(requires, currentVersion) > 0 {
+		return fmt.Errorf("model requires ollama version %s or newer (current version is v%s)", requires, clientVersion)
 	}
 	return nil
 }
