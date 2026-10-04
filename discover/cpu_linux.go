@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -85,16 +84,4 @@ func getUint64ValueFromFile(path string) (uint64, error) {
 		return strconv.ParseUint(line, 10, 64)
 	}
 	return 0, errors.New("empty file content")
-}
-
-func IsNUMA() bool {
-	ids := map[string]any{}
-	packageIds, _ := filepath.Glob("/sys/devices/system/cpu/cpu*/topology/physical_package_id")
-	for _, packageId := range packageIds {
-		id, err := os.ReadFile(packageId)
-		if err == nil {
-			ids[strings.TrimSpace(string(id))] = struct{}{}
-		}
-	}
-	return len(ids) > 1
 }
