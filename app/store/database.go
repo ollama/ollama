@@ -639,6 +639,14 @@ func columnNotExists(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such column")
 }
 
+func (db *database) getChatCount() (int, error) {
+	var count int
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM chats").Scan(&count); err != nil {
+		return 0, fmt.Errorf("count chats: %w", err)
+	}
+	return count, nil
+}
+
 func (db *database) getAllChats() ([]Chat, error) {
 	// Query chats with their first user message and latest update time
 	query := `
