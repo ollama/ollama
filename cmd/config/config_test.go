@@ -674,3 +674,17 @@ func TestSave(t *testing.T) {
 		}
 	})
 }
+
+func listIntegrations() ([]integration, error) {
+	cfg, err := load()
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]integration, 0, len(cfg.Integrations))
+	for _, integrationConfig := range cfg.Integrations {
+		result = append(result, *integrationConfig)
+	}
+
+	return result, nil
+}

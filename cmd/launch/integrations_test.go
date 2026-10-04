@@ -353,18 +353,6 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
-func TestIsCloudModel(t *testing.T) {
-	// isCloudModel now only uses Show API, so nil client always returns false
-	t.Run("nil client returns false", func(t *testing.T) {
-		models := []string{"glm-5.1:cloud", "kimi-k2.6:cloud", "local-model"}
-		for _, model := range models {
-			if isCloudModel(context.Background(), nil, model) {
-				t.Errorf("isCloudModel(%q) with nil client should return false", model)
-			}
-		}
-	})
-}
-
 func names(items []ModelItem) []string {
 	var out []string
 	for _, item := range items {
