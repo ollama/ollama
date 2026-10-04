@@ -227,12 +227,3 @@ func (t *Array) Floats() []float32 {
 	copy(floats, unsafe.Slice((*float32)(unsafe.Pointer(data)), len(floats)))
 	return floats
 }
-
-func (t *Array) Save(name string) error {
-	cName := C.CString(name)
-	defer C.free(unsafe.Pointer(cName))
-	if err := mlxError(C.mlx_save(cName, t.ctx)); err != nil {
-		return fmt.Errorf("failed to save array to %s: %w", name, err)
-	}
-	return nil
-}
