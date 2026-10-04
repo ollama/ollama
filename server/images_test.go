@@ -595,8 +595,11 @@ func TestCopyModelNarrowsManifestListToLocalChildren(t *testing.T) {
 
 func TestPullModelManifestListDownloadsSelectedChildOnly(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	oldVersion := version.Version
+	t.Cleanup(func() { version.Version = oldVersion })
+	version.Version = "0.40.0-rc0"
 
-	configData := []byte(`{"architecture":"test"}`)
+	configData := []byte(`{"architecture":"test","requires":"0.40.0"}`)
 	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
 	layerData := bytes.Repeat([]byte("selected tensor layer"), 64)
 	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
@@ -1460,11 +1463,47 @@ func TestCheckPullRequires(t *testing.T) {
 			clientVersion: "0.33.3",
 		},
 		{
+			name:          "release candidate satisfies release requirement",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc0",
+		},
+		{
+			name:          "development release candidate satisfies release requirement",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc0-g75b952780f",
+		},
+		{
+			name:          "prerelease with build metadata satisfies release requirement",
+			requires:      "v0.40.0",
+			clientVersion: "0.40.0-beta.1+build.2",
+		},
+		{
+			name:          "release candidate does not satisfy newer patch requirement",
+			requires:      "0.40.1",
+			clientVersion: "0.40.0-rc0-g75b952780f",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.1 or newer (current version is v0.40.0-rc0-g75b952780f)",
+		},
+		{
+			name:          "older release candidate fails",
+			requires:      "0.40.0",
+			clientVersion: "0.39.0-rc1",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.0 or newer (current version is v0.39.0-rc1)",
+		},
+		{
+			name:          "malformed prerelease fails",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc?",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.0 or newer (current version is v0.40.0-rc?)",
+		},
+		{
 			name:          "newer requirement fails",
 			requires:      "0.35.0",
 			clientVersion: "0.33.3",
 			wantErr:       true,
-			wantMessage:   "model requires ollama version v0.35.0 or newer (this client is v0.33.3)",
+			wantMessage:   "model requires ollama version v0.35.0 or newer (current version is v0.33.3)",
 		},
 		{
 			name:          "dev build skips check",
