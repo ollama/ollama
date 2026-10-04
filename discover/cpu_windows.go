@@ -32,8 +32,3 @@ func GetCPUMem() (memInfo, error) {
 	}
 	return memInfo{TotalMemory: memStatus.TotalPhys, FreeMemory: memStatus.AvailPhys, FreeSwap: memStatus.AvailPageFile}, nil
 }
-
-func IsNUMA() bool {
-	// numa support in ggml is linux only
-	return false
-}

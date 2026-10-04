@@ -12,12 +12,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/ollama/ollama/format"
 	"golang.org/x/sys/unix"
-)
-
-const (
-	metalMinimumMemory = 512 * format.MebiByte
 )
 
 func GetCPUMem() (memInfo, error) {
@@ -26,11 +21,6 @@ func GetCPUMem() (memInfo, error) {
 		FreeMemory:  uint64(C.getFreeMemory()),
 		// FreeSwap omitted as Darwin uses dynamic paging
 	}, nil
-}
-
-func IsNUMA() bool {
-	// numa support in ggml is linux only
-	return false
 }
 
 // readMemoryHeadroom keeps the existing scheduler estimate separate.
