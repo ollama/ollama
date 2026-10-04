@@ -902,10 +902,9 @@ func TestDownloadParallelism(t *testing.T) {
 	blobData := make([][]byte, numBlobs)
 
 	const (
-		concurrency    = 4
-		perBlobLatency = 100 * time.Millisecond
-		// Download issues two requests per blob: a resolve GET then the body GET.
-		requestsPerBlob = 2
+		concurrency     = 4
+		perBlobLatency  = 100 * time.Millisecond
+		requestsPerBlob = 1
 	)
 	// serialBaseline is the time a strictly serial run would take. 100ms is
 	// large enough that Windows' ~15ms timer granularity is a small fraction
@@ -1758,6 +1757,7 @@ func TestResumeFromPartialFile(t *testing.T) {
 	blob := Blob{Digest: digest, Size: int64(blobSize)}
 
 	var rangeHeader string
+	var fullRequests atomic.Int32
 	var mu sync.Mutex
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1772,6 +1772,9 @@ func TestResumeFromPartialFile(t *testing.T) {
 		mu.Unlock()
 
 		rng := r.Header.Get("Range")
+		if rng == "" {
+			fullRequests.Add(1)
+		}
 		if rng != "" {
 			// Parse "bytes=N-"
 			var start int64
@@ -1807,6 +1810,10 @@ func TestResumeFromPartialFile(t *testing.T) {
 		t.Fatalf("Resume download failed: %v", err)
 	}
 
+	if got := fullRequests.Load(); got != 0 {
+		t.Errorf("full blob requests = %d, want 0 when resuming", got)
+	}
+
 	// Verify Range header was sent
 	mu.Lock()
 	if rangeHeader == "" {
@@ -1837,20 +1844,13 @@ func TestResumeFromPartialFile(t *testing.T) {
 // retries are budgeted rather than unlimited, so the loop cannot spin forever.
 func TestDownloadStallGivesUp(t *testing.T) {
 	const blobSize = 4096
-	blob, data := createTestBlob(t, t.TempDir(), blobSize)
+	blob, _ := createTestBlob(t, t.TempDir(), blobSize)
 
 	release := make(chan struct{})
 
-	// Each attempt issues two GETs: resolve, then the body. Answer the resolve
-	// normally and stall only the body, so the stall lands in copy.
-	var gets atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(blobSize))
 		if r.Method == http.MethodHead {
-			return
-		}
-		if gets.Add(1)%2 == 1 {
-			w.Write(data)
 			return
 		}
 		// Headers only: the body never arrives, so the transfer stalls.
