@@ -441,6 +441,8 @@ static NSImage *ollamaApplicationIcon(void) {
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
                 handleConnectURL();
+            } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
+                [self appsUI];
             } else {
                 [self openUI];
             }
@@ -547,7 +549,7 @@ static NSImage *ollamaApplicationIcon(void) {
                          context:nil];
 
     self.statusItem.menu = menu;
-    [self showIcon];
+    [self refreshStatusItem];
 
     // Application menu
     NSString *appName = @"Ollama";
@@ -593,7 +595,7 @@ static NSImage *ollamaApplicationIcon(void) {
     [fileMenu addItem:newChatItem];
     [fileMenu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(hide:) keyEquivalent:@"w"];
+    NSMenuItem *closeItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(performClose:) keyEquivalent:@"w"];
     [fileMenu addItem:closeItem];
     [fileMenuItem setSubmenu:fileMenu];
     [mainMenu addItem:fileMenuItem];
@@ -746,9 +748,7 @@ static NSImage *ollamaApplicationIcon(void) {
 
 - (void)showUpdateAvailable {
     self.updateAvailable = YES;
-    [self.updateAvailableMenuItem setHidden:NO];
-    [self.restartMenuItem setHidden:NO];
-    [self showIcon];
+    [self refreshStatusItem];
 }
 
 - (void)aboutOllama {
@@ -1484,11 +1484,15 @@ didCompleteWithError:(NSError *)error {
 }
 
 - (BOOL)windowShouldClose:(id)sender {
-    [NSApp hide:nil];
+    // Keep the webview alive without restoring the window on app activation.
+    [sender orderOut:nil];
     return NO;
 }
 
-- (void)showIcon {
+- (void)refreshStatusItem {
+    [self.updateAvailableMenuItem setHidden:!self.updateAvailable];
+    [self.restartMenuItem setHidden:!self.updateAvailable];
+
     NSAppearance *appearance = self.statusItem.button.effectiveAppearance;
     NSString *appearanceName = (NSString *)(appearance.name);
     NSString *iconName = @"ollama";
@@ -1515,7 +1519,7 @@ didCompleteWithError:(NSError *)error {
                       ofObject:(id)object
                         change:(NSDictionary<NSKeyValueChangeKey, id> *)change
                        context:(void *)context {
-    [self showIcon];
+    [self refreshStatusItem];
 }
 
 - (void)hide {
@@ -1865,9 +1869,10 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
 
 AppDelegate *appDelegate;
 void run(bool so, bool sh) {
+    // Retain update notifications that arrive while AppKit initializes.
+    appDelegate = [[AppDelegate alloc] init];
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    appDelegate = [[AppDelegate alloc] init];
     [NSApp setDelegate:appDelegate];
     showOnboarding = so;
     startHidden = sh;

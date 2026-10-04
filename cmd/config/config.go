@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/internal/onboarding"
 )
 
 type integration struct {
@@ -24,9 +27,57 @@ type integration struct {
 type IntegrationConfig = integration
 
 type config struct {
-	Integrations  map[string]*integration `json:"integrations"`
-	LastModel     string                  `json:"last_model,omitempty"`
-	LastSelection string                  `json:"last_selection,omitempty"` // "run" or integration name
+	Integrations      map[string]*integration `json:"integrations"`
+	LastModel         string                  `json:"last_model,omitempty"`
+	LastSelection     string                  `json:"last_selection,omitempty"` // "run" or integration name
+	OnboardingVersion int                     `json:"onboarding_version,omitempty"`
+}
+
+func NeedsWelcome() (bool, error) {
+	if runtime.GOOS == "linux" {
+		return needsWelcomeInConfig()
+	}
+	state := onboarding.State{}
+	completed, err := state.Completed()
+	if completed {
+		return false, err
+	}
+	// Older apps recorded completion only in SQLite.
+	if onboarding.CompletedInApp() {
+		if err := state.Complete(); err != nil {
+			slog.Warn("could not share onboarding completion", "error", err)
+		}
+		return false, nil
+	}
+	return true, err
+}
+
+func CompleteWelcome() error {
+	if runtime.GOOS == "linux" {
+		return completeWelcomeInConfig()
+	}
+	return (onboarding.State{}).Complete()
+}
+
+// Linux keeps completion with CLI preferences; desktop platforms share the marker.
+func needsWelcomeInConfig() (bool, error) {
+	cfg, err := load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.OnboardingVersion < onboarding.CurrentVersion, nil
+}
+
+func completeWelcomeInConfig() error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cfg.OnboardingVersion >= onboarding.CurrentVersion {
+		return nil
+	}
+	cfg.OnboardingVersion = onboarding.CurrentVersion
+	return save(cfg)
 }
 
 func configPath() (string, error) {

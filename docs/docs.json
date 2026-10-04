@@ -97,6 +97,14 @@
       "destination": "/integrations/openclaw"
     },
     {
+      "source": "/integrations/codex-app",
+      "destination": "/integrations/chatgpt"
+    },
+    {
+      "source": "/integrations/codex-app.mdx",
+      "destination": "/integrations/chatgpt"
+    },
+    {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
     }
@@ -120,6 +128,7 @@
               "/capabilities/streaming",
               "/capabilities/thinking",
               "/capabilities/structured-outputs",
+              "/capabilities/decision",
               "/capabilities/vision",
               "/capabilities/embeddings",
               "/capabilities/tool-calling",
@@ -171,8 +180,8 @@
               "/integrations/opencode",
               "/integrations/deepseek-harness",
               "/integrations/cline-cli",
-              "/integrations/codex-app",
               "/integrations/codex",
+              "/integrations/chatgpt",
               "/integrations/copilot-cli",
               "/integrations/droid",
               "/integrations/goose",
@@ -241,6 +250,7 @@
               "POST /api/generate",
               "POST /api/chat",
               "POST /api/embed",
+              "POST /v1/systemone",
               "GET /api/tags",
               "GET /api/ps",
               "POST /api/show",

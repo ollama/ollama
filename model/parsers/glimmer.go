@@ -51,6 +51,19 @@ type GlimmerParser struct {
 func (p *GlimmerParser) HasToolSupport() bool     { return true }
 func (p *GlimmerParser) HasThinkingSupport() bool { return true }
 
+// The model opens the message to the user, with or without naming the
+// recipient, before any content; its self message may end implicitly, so
+// the header alone marks the boundary.
+func (p *GlimmerParser) ThinkingClose() []string {
+	if p.emitThinking {
+		return []string{
+			glimmerStartTag + "assistant to=user" + glimmerMessageTag,
+			glimmerStartTag + "assistant" + glimmerMessageTag,
+		}
+	}
+	return nil
+}
+
 func (p *GlimmerParser) PreservedTokens() []string {
 	return []string{glimmerStartTag, glimmerMessageTag, glimmerEndMessageTag, glimmerEndTurnTag}
 }

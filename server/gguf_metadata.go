@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
@@ -60,6 +61,17 @@ func (m ggufMetadata) Int(key string) int64 {
 		return 0
 	}
 	return i
+}
+
+func (m ggufMetadata) Bool(key string, defaultValue ...bool) bool {
+	v, _ := m.lookup(key)
+	if value, valid := v.(bool); valid {
+		return value
+	}
+	if len(defaultValue) > 0 {
+		return defaultValue[0]
+	}
+	return false
 }
 
 func (m ggufMetadata) number(key string) (json.Number, bool) {
@@ -259,23 +271,25 @@ func decodeGGUFMetadata(data []byte) (ggufMetadata, error) {
 }
 
 func scanGGUFMetadata(path string) (ggufMetadata, error) {
-	f, err := fsgguf.Open(path)
+	metadata, err := fsgguf.ReadFileMetadata(path, ggufMetadataMaxArray)
 	if err != nil {
 		return ggufMetadata{}, err
 	}
-	defer f.Close()
 
 	md := ggufMetadata{KV: make(map[string]any)}
-	for _, kv := range f.KeyValues() {
-		if omitValue(kv.Any()) {
-			md.Omitted = append(md.Omitted, kv.Key)
+	omitted := metadata.OmittedKeys()
+	for key, value := range metadata.Values() {
+		if slices.Contains(omitted, key) {
 			continue
 		}
-		md.KV[kv.Key] = kv.Any()
+		if omitValue(value) {
+			omitted = append(omitted, key)
+			continue
+		}
+		md.KV[key] = value
 	}
-	if err := f.Err(); err != nil {
-		return ggufMetadata{}, err
-	}
+	slices.Sort(omitted)
+	md.Omitted = omitted
 	return md, nil
 }
 

@@ -93,7 +93,7 @@ func TestListModelsFollowsManifestChanges(t *testing.T) {
 	}
 }
 
-func TestCapabilitiesSuppressNemotronSafetensorsMedia(t *testing.T) {
+func TestCapabilitiesExposeNemotronSafetensorsVision(t *testing.T) {
 	caps := []model.Capability{
 		model.CapabilityCompletion,
 		model.CapabilityTools,
@@ -111,15 +111,14 @@ func TestCapabilitiesSuppressNemotronSafetensorsMedia(t *testing.T) {
 		model.CapabilityCompletion,
 		model.CapabilityTools,
 		model.CapabilityThinking,
+		model.CapabilityVision,
 	} {
 		if !slices.Contains(got, capability) {
 			t.Errorf("capabilities = %v, want %s", got, capability)
 		}
 	}
-	for _, capability := range []model.Capability{model.CapabilityVision, model.CapabilityAudio} {
-		if slices.Contains(got, capability) {
-			t.Errorf("capabilities = %v, did not expect %s", got, capability)
-		}
+	if slices.Contains(got, model.CapabilityAudio) {
+		t.Errorf("capabilities = %v, did not expect audio", got)
 	}
 }
 

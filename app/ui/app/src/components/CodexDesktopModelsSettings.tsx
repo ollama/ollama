@@ -1,3 +1,10 @@
+import { getCodexDesktopModelsSettings } from "@/api";
+import {
+  cacheDesktopModels,
+  cachedDesktopModels,
+  desktopModels,
+  invalidateDesktopModels,
+} from "@/lib/desktopModels";
 import { Button } from "@/components/ui/button";
 import type {
   CodexDesktopModelStatus,
@@ -96,6 +103,36 @@ function normalizeSettings(
   };
 }
 
+function modelsCacheKey(settings: ModelsSettings, accountKey?: string) {
+  // Catalog and mutation responses include resolved defaults and inventory;
+  // match them to the saved-settings summary used before opening a picker.
+  return [
+    "chatgpt",
+    accountKey,
+    {
+      ...settings,
+      selected: settings.usesDefaults ? null : settings.selected,
+      available: [],
+      models: [],
+    },
+  ];
+}
+
+function rememberDefaults(
+  result: CodexDesktopModelsSettingsResult | undefined,
+  accountKey?: string,
+) {
+  if (
+    result?.settings.usesDefaults &&
+    result.settings.selected?.length &&
+    !result.error &&
+    !result.warning &&
+    !result.restartConfirmationRequired
+  ) {
+    cacheDesktopModels(modelsCacheKey(result.settings, accountKey), result);
+  }
+}
+
 function modelIsAvailable(model: CodexDesktopModelStatus): boolean {
   return !model.availability || model.availability === "available";
 }
@@ -127,11 +164,13 @@ function ModelOptions({
   selected,
   maxModels,
   onToggle,
+  onOpen,
 }: {
   models: CodexDesktopModelStatus[];
   selected: string[];
   maxModels: number;
   onToggle: (model: string) => void;
+  onOpen: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -148,6 +187,10 @@ function ModelOptions({
   useEffect(() => {
     searchRef.current?.focus({ preventScroll: true });
   }, []);
+
+  useEffect(() => {
+    onOpen();
+  }, [onOpen]);
 
   useEffect(() => {
     setHighlightedIndex(-1);
@@ -286,6 +329,8 @@ export const CodexDesktopModelsSettings = forwardRef<
     normalizedInitialSettings?.selected ?? [],
   );
   const [loading, setLoading] = useState(!initialSettings);
+  const catalogRequested = useRef(false);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [launchAction, setLaunchAction] = useState<"start" | "restart">(
@@ -316,47 +361,79 @@ export const CodexDesktopModelsSettings = forwardRef<
     [],
   );
 
-  const refresh = useCallback(async () => {
-    if (!window.getCodexDesktopModelsSettings) {
-      setError("ChatGPT model settings are unavailable in this Ollama build.");
-      setWarning(null);
-      setLoading(false);
-      return;
-    }
-    const request = ++statusRequestRef.current;
-    try {
-      const result = await window.getCodexDesktopModelsSettings();
-      if (
-        request === statusRequestRef.current &&
-        !operationInFlightRef.current
-      ) {
-        applyResult(result, true);
+  const refresh = useCallback(
+    async (catalog = catalogRequested.current) => {
+      const request = ++statusRequestRef.current;
+      try {
+        const summary = await getCodexDesktopModelsSettings(false);
+        if (
+          request !== statusRequestRef.current ||
+          operationInFlightRef.current
+        )
+          return;
+        const key = modelsCacheKey(summary.settings, accountKey);
+        const cachedDefaults = summary.settings.usesDefaults
+          ? cachedDesktopModels<CodexDesktopModelsSettingsResult>(key)
+          : undefined;
+        // Let Settings render and accept input while the async catalog resolves
+        // implicit defaults. Explicit saved choices are already in the summary.
+        applyResult(cachedDefaults ?? summary, true);
+        setLoading(false);
+        const needsDefaults =
+          summary.settings.usesDefaults && !summary.settings.selected?.length;
+        if (!summary.settings.installed || (!catalog && !needsDefaults)) return;
+        setCatalogLoading(true);
+        const result = await desktopModels(key, (signal) =>
+          getCodexDesktopModelsSettings(true, signal),
+        );
+        if (
+          result.warning &&
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          await invalidateDesktopModels("chatgpt");
+        }
+        if (
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          applyResult(result, true);
+        }
+      } catch {
+        if (
+          request === statusRequestRef.current &&
+          !operationInFlightRef.current
+        ) {
+          setError("Ollama could not load the ChatGPT model settings.");
+          setWarning(null);
+        }
+      } finally {
+        if (request === statusRequestRef.current) {
+          setLoading(false);
+          setCatalogLoading(false);
+        }
       }
-    } catch {
-      if (
-        request === statusRequestRef.current &&
-        !operationInFlightRef.current
-      ) {
-        setError("Ollama could not load the ChatGPT model settings.");
-        setWarning(null);
-      }
-    } finally {
-      if (request === statusRequestRef.current) setLoading(false);
-    }
-  }, [applyResult]);
+    },
+    [accountKey, applyResult],
+  );
+
+  const openCatalog = useCallback(() => {
+    catalogRequested.current = true;
+    setCatalogLoading(true);
+    void refresh(true);
+  }, [refresh]);
 
   useEffect(() => {
-    if (!initialSettings) void refresh();
+    if (!initialSettings || accountKeyRef.current !== accountKey)
+      void refresh();
+    accountKeyRef.current = accountKey;
     const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [initialSettings, refresh]);
-
-  useEffect(() => {
-    if (accountKeyRef.current === accountKey) return;
-    accountKeyRef.current = accountKey;
-    void refresh();
-  }, [accountKey, refresh]);
+    return () => {
+      ++statusRequestRef.current;
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [accountKey, initialSettings, refresh]);
 
   const hasChanges = !selectionsEqual(selected, saved);
   useEffect(() => {
@@ -402,22 +479,25 @@ export const CodexDesktopModelsSettings = forwardRef<
       setError("ChatGPT model settings are available in the Ollama macOS app.");
       return;
     }
-    if (selected.length === 0) {
+    if (selected.length === 0 && (!settings?.usesDefaults || hasChanges)) {
       setError("Choose at least one model for ChatGPT.");
       return;
     }
     if (operationInFlightRef.current) return;
 
     setApplying(true);
+    setCatalogLoading(false);
     setLaunchAction(settings?.running ? "restart" : "start");
     setError(null);
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
+    await invalidateDesktopModels("chatgpt");
+    let result: CodexDesktopModelsSettingsResult | undefined;
     try {
       const modelsToApply =
         !hasChanges && settings?.usesDefaults ? [] : selected;
-      let result = await window.applyCodexDesktopModels(modelsToApply, false);
+      result = await window.applyCodexDesktopModels(modelsToApply, false);
       if (result.restartConfirmationRequired) {
         applyResult(result, true);
         if (
@@ -445,21 +525,23 @@ export const CodexDesktopModelsSettings = forwardRef<
         return;
       }
       if (openedStatus) {
-        setSettings((current) =>
-          current
-            ? {
-                ...current,
-                installed: openedStatus.installed,
-                connected: openedStatus.connected,
-                running: openedStatus.running,
-              }
-            : current,
-        );
+        result = {
+          ...result,
+          settings: {
+            ...result.settings,
+            installed: openedStatus.installed,
+            connected: openedStatus.connected,
+            running: openedStatus.running,
+          },
+        };
+        setSettings(normalizeSettings(result.settings));
       }
     } catch {
       setError("Ollama could not apply the ChatGPT models.");
     } finally {
       ++statusRequestRef.current;
+      await invalidateDesktopModels("chatgpt");
+      rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setApplying(false);
     }
@@ -475,12 +557,15 @@ export const CodexDesktopModelsSettings = forwardRef<
     }
 
     setResetting(true);
+    setCatalogLoading(false);
     setError(null);
     setWarning(null);
     operationInFlightRef.current = true;
     ++statusRequestRef.current;
+    await invalidateDesktopModels("chatgpt");
+    let result: CodexDesktopModelsSettingsResult | undefined;
     try {
-      const result = await resetModels();
+      result = await resetModels();
       ++statusRequestRef.current;
       if (result.error) {
         setSettings(normalizeSettings(result.settings));
@@ -495,10 +580,12 @@ export const CodexDesktopModelsSettings = forwardRef<
       return false;
     } finally {
       ++statusRequestRef.current;
+      await invalidateDesktopModels("chatgpt");
+      rememberDefaults(result, accountKey);
       operationInFlightRef.current = false;
       setResetting(false);
     }
-  }, [applyResult]);
+  }, [accountKey, applyResult]);
 
   useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 
@@ -542,7 +629,12 @@ export const CodexDesktopModelsSettings = forwardRef<
                 type="button"
                 color="white"
                 onClick={() => void applyChanges()}
-                disabled={loading || busy || selected.length === 0}
+                disabled={
+                  loading ||
+                  busy ||
+                  (selected.length === 0 &&
+                    (!settings?.usesDefaults || hasChanges))
+                }
               >
                 {applying && (
                   <ArrowPathIcon data-slot="icon" className="animate-spin" />
@@ -602,7 +694,11 @@ export const CodexDesktopModelsSettings = forwardRef<
                   ))}
                   {selected.length === 0 && (
                     <span className="px-1 py-1 text-sm text-neutral-400">
-                      {loading ? "Loading models…" : "Select models"}
+                      {loading
+                        ? "Loading models…"
+                        : settings?.usesDefaults && !hasChanges
+                          ? "Recommended models"
+                          : "Select models"}
                     </span>
                   )}
                 </div>
@@ -612,11 +708,17 @@ export const CodexDesktopModelsSettings = forwardRef<
                 data-testid="chatgpt-model-options"
                 className="z-50 flex w-[var(--button-width)] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-2xl border border-neutral-100 bg-white text-[15px] text-neutral-800 shadow-xl shadow-black/5 [--anchor-max-height:19rem] dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white"
               >
+                {catalogLoading && (
+                  <p role="status" className="px-3 py-2 text-neutral-400">
+                    Loading models…
+                  </p>
+                )}
                 <ModelOptions
                   models={models}
                   selected={selected}
                   maxModels={maxModels}
                   onToggle={toggleModel}
+                  onOpen={openCatalog}
                 />
               </PopoverPanel>
             </Popover>

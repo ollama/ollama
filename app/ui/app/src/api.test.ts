@@ -7,8 +7,46 @@ vi.mock("./lib/ollama-client", () => ({
 import {
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
+  getClaudeDesktopModelsSettings,
+  getCodexDesktopModelsSettings,
   getIntegrationStatuses,
 } from "./api";
+
+describe("desktop model settings", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("requests summaries and catalogs through the configured API server", async () => {
+    const response = { settings: { selected: ["saved-model"] } };
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(response)));
+    vi.stubGlobal("fetch", fetch);
+    await expect(getCodexDesktopModelsSettings(false)).resolves.toEqual(
+      response,
+    );
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:3001/api/v1/integrations/chatgpt/models?catalog=false",
+      { signal: undefined },
+    );
+    fetch.mockResolvedValue(new Response(JSON.stringify({ installed: true })));
+    const controller = new AbortController();
+    await expect(
+      getClaudeDesktopModelsSettings(true, controller.signal),
+    ).resolves.toEqual({ installed: true });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:3001/api/v1/integrations/claude-desktop/models?catalog=true",
+      { signal: controller.signal },
+    );
+  });
+
+  it("rejects failed discovery responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("timed out", { status: 504 })),
+    );
+    await expect(getCodexDesktopModelsSettings(true)).rejects.toThrow("504");
+  });
+});
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {
