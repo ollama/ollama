@@ -4,13 +4,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -19,23 +16,17 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	"time"
 
-	"github.com/google/uuid"
-	"github.com/ollama/ollama/app/auth"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
-	"github.com/ollama/ollama/app/tools"
-	"github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 )
 
 var (
-	wv           = &Webview{}
-	uiServerPort int
-	appStore     *store.Store
+	appStore *store.Store
+	settings *settingsController
 )
 
 var debug = strings.EqualFold(os.Getenv("OLLAMA_DEBUG"), "true") || os.Getenv("OLLAMA_DEBUG") == "1"
@@ -95,7 +86,8 @@ func main() {
 				// Skip optional steps like pending updates to start quickly for immediate use
 				fastStartup = true
 			case "-dev", "--dev":
-				// Development mode: use local dev server and enable CORS
+				// Development mode: never stop other ollama servers, and allow
+				// OLLAMA_APP_DB_PATH to isolate the app database
 				devMode = true
 			}
 		}
@@ -183,24 +175,6 @@ func main() {
 	// from /usr/local/bin/ollama to the app bundle
 	installSymlink()
 
-	var ln net.Listener
-	if devMode {
-		// Use a fixed port in dev mode for predictable API access
-		ln, err = net.Listen("tcp", "127.0.0.1:3001")
-	} else {
-		ln, err = net.Listen("tcp", "127.0.0.1:0")
-	}
-	if err != nil {
-		slog.Error("failed to find available port", "error", err)
-		return
-	}
-
-	port := ln.Addr().(*net.TCPAddr).Port
-	token := uuid.NewString()
-	wv.port = port
-	wv.token = token
-	uiServerPort = port
-
 	st := &store.Store{}
 	if devMode {
 		if dbPath := strings.TrimSpace(os.Getenv("OLLAMA_APP_DB_PATH")); dbPath != "" {
@@ -210,88 +184,19 @@ func main() {
 	}
 	appStore = st
 
-	// Enable CORS in development mode
-	if devMode {
-		os.Setenv("OLLAMA_CORS", "1")
-
-		// Check if Vite dev server is running on port 5173
-		var conn net.Conn
-		var err error
-		for _, addr := range []string{"127.0.0.1:5173", "localhost:5173"} {
-			conn, err = net.DialTimeout("tcp", addr, 2*time.Second)
-			if err == nil {
-				conn.Close()
-				break
-			}
-		}
-
-		if err != nil {
-			slog.Error("Vite dev server not running on port 5173")
-			fmt.Fprintln(os.Stderr, "Error: Vite dev server is not running on port 5173")
-			fmt.Fprintln(os.Stderr, "Please run 'npm run dev' in the ui/app directory to start the UI in development mode")
-			os.Exit(1)
-		}
-	}
-
-	// Initialize tools registry
-	toolRegistry := tools.NewRegistry()
-	slog.Info("initialized tools registry", "tool_count", len(toolRegistry.List()))
-
 	// ctx is the app-level context that will be used to stop the app
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// octx is the ollama server context that will be used to stop the ollama server
-	octx, ocancel := context.WithCancel(ctx)
-
-	// TODO (jmorganca): instead we should instantiate the
-	// webview with the store instead of assigning it here, however
-	// making the webview a global variable is easier for now
-	wv.Store = st
-	done := make(chan error, 1)
-	osrv := server.New(st, devMode)
-	go func() {
-		slog.Info("starting ollama server")
-		done <- osrv.Run(octx)
-	}()
+	ollama := &ollamaServer{server: server.New(st, devMode)}
+	ollama.Start(ctx)
 
 	upd := &updater.Updater{Store: st}
-
-	uiServer := ui.Server{
-		Token: token,
-		Restart: func() {
-			ocancel()
-			<-done
-			octx, ocancel = context.WithCancel(ctx)
-			go func() {
-				done <- osrv.Run(octx)
-			}()
-		},
-		Store:             st,
-		IntegrationModels: desktopModelSettingsHandler(),
-		ToolRegistry:      toolRegistry,
-		Dev:               devMode,
-		Logger:            slog.Default(),
-		Updater:           upd,
-		UpdateAvailableFunc: func() {
-			UpdateAvailable("")
-		},
+	settings = &settingsController{
+		store:         st,
+		restartServer: ollama.Restart,
+		updater:       upd,
+		notifyUpdate:  func() { UpdateAvailable("") },
 	}
-
-	srv := &http.Server{
-		Handler: uiServer.Handler(),
-	}
-
-	// Start the UI server
-	slog.Info("starting ui server", "port", port)
-	go func() {
-		slog.Debug("starting ui server on port", "port", port)
-		err = srv.Serve(ln)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Warn("desktop server", "error", err)
-		}
-		slog.Debug("background desktop server done")
-	}()
-
 	upd.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
 
 	// Check for pending updates on startup (show tray notification if update is ready)
@@ -336,60 +241,32 @@ func main() {
 		slog.Debug("no URL scheme request to handle")
 	}
 
+	// Refresh the cached account so Settings can show it without waiting.
 	go func() {
-		slog.Debug("waiting for ollama server to be ready")
-		if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
-			slog.Warn("ollama server not ready, continuing anyway", "error", err)
-		}
-
-		if _, err := uiServer.UserData(ctx); err != nil {
-			slog.Warn("failed to load user data", "error", err)
+		if _, err := settings.Account(ctx); err != nil {
+			slog.Debug("failed to refresh account", "error", err)
 		}
 	}()
 
-	settings, settingsErr := st.Settings()
-	showOnboarding := shouldShowOnboarding(settings, settingsErr)
-	if settingsErr != nil {
-		slog.Error("failed to load onboarding state", "error", settingsErr)
-	}
-
-	osRun(cancel, hasCompletedFirstRun, startHidden, showOnboarding, urlSchemeRequest)
-
-	slog.Info("shutting down desktop server")
-	if err := srv.Close(); err != nil {
-		slog.Warn("error shutting down desktop server", "error", err)
-	}
+	osRun(cancel, hasCompletedFirstRun, startHidden, urlSchemeRequest)
 
 	slog.Info("shutting down ollama server")
 	cancel()
-	<-done
+	ollama.Wait()
 }
 
-func shouldShowOnboarding(settings store.Settings, err error) bool {
-	return err != nil || settings.OnboardingVersion < store.CurrentOnboardingVersion
-}
-
-func runInitialWindowsUI(
-	startHidden bool,
-	showOnboarding bool,
-	urlSchemeRequest string,
-	startHiddenFn func(),
-	handleURLFn func(string),
-	showUIFn func(string),
-) {
-	if urlSchemeRequest != "" {
+// runInitialUI decides what to show once the platform UI is ready: a URL
+// scheme request wins, a hidden launch shows nothing, and an interactive
+// launch opens Settings so people can see that Ollama is running.
+func runInitialUI(startHidden bool, urlSchemeRequest string, startHiddenFn func(), handleURLFn func(string), showSettingsFn func(settingsPane)) {
+	switch {
+	case urlSchemeRequest != "":
 		handleURLFn(urlSchemeRequest)
-		return
-	}
-	if startHidden {
+	case startHidden:
 		startHiddenFn()
-		return
+	default:
+		showSettingsFn(settingsPaneDefault)
 	}
-	if showOnboarding {
-		showUIFn("/")
-		return
-	}
-	showUIFn("/connect")
 }
 
 func startHiddenTasks() {
@@ -426,57 +303,19 @@ func startHiddenTasks() {
 	}
 }
 
-func checkUserLoggedIn(uiServerPort int) bool {
-	if uiServerPort == 0 {
-		slog.Debug("UI server not ready yet, skipping auth check")
-		return false
-	}
-
-	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/me", uiServerPort), "application/json", nil)
-	if err != nil {
-		slog.Debug("failed to call local auth endpoint", "error", err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	// Check if the response is successful
-	if resp.StatusCode != http.StatusOK {
-		slog.Debug("auth endpoint returned non-OK status", "status", resp.StatusCode)
-		return false
-	}
-
-	var user struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		slog.Debug("failed to parse user response", "error", err)
-		return false
-	}
-
-	// Verify we have a valid user with an ID and name
-	if user.ID == "" || user.Name == "" {
-		slog.Debug("user response missing required fields", "id", user.ID, "name", user.Name)
-		return false
-	}
-
-	slog.Debug("user is logged in", "user_id", user.ID, "user_name", user.Name)
-	return true
-}
-
-// handleConnectURLScheme fetches the connect URL and opens it in the browser
+// handleConnectURLScheme starts signing in to ollama.com in the browser, or
+// shows the signed-in account when there is nothing to connect.
 func handleConnectURLScheme() {
-	if checkUserLoggedIn(uiServerPort) {
-		slog.Info("user is already logged in, opening app instead")
-		openUI("/")
+	if account, err := settings.Account(context.Background()); err == nil && account.SignedIn {
+		slog.Info("user is already signed in, opening settings instead")
+		showSettings(settingsPaneAccount)
 		return
 	}
 
-	connectURL, err := auth.BuildConnectURL("https://ollama.com")
+	connectURL, err := settings.SignInURL()
 	if err != nil {
 		slog.Error("failed to build connect URL", "error", err)
-		openInBrowser("https://ollama.com/connect")
+		openInBrowser(ollamaDotCom + "/connect")
 		return
 	}
 
@@ -506,7 +345,7 @@ func openInBrowser(url string) {
 }
 
 // parseURLScheme parses an ollama:// URL and validates it
-// Supports: ollama:// (open app), ollama://apps, and ollama://connect (OAuth).
+// Supports: ollama:// (open settings), ollama://apps, and ollama://connect (sign in).
 func parseURLScheme(urlSchemeRequest string) (action string, err error) {
 	parsedURL, err := url.Parse(urlSchemeRequest)
 	if err != nil {
@@ -533,8 +372,10 @@ func parseURLScheme(urlSchemeRequest string) (action string, err error) {
 // handleURLSchemeInCurrentInstance processes URL scheme requests in the current instance
 func handleURLSchemeInCurrentInstance(urlSchemeRequest string) {
 	err := dispatchURLSchemeRequest(urlSchemeRequest, handleConnectURLScheme, func() {
-		openUI("/")
-	}, openAppsUI)
+		showSettings(settingsPaneDefault)
+	}, func() {
+		showSettings(settingsPaneApps)
+	})
 	if err != nil {
 		slog.Error("failed to parse URL scheme request", "url", urlSchemeRequest, "error", err)
 	}

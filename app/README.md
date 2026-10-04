@@ -7,46 +7,19 @@
 
 ## Development
 
-### Desktop App
+The app is a menu bar app with a native settings window: AppKit on macOS
+(`cmd/app/*_darwin.m`) and a tray icon on Windows. Settings logic lives in Go
+(`cmd/app/settings.go`) so both platforms share it.
+
+Run it from the repository root, which is where it finds its icons during
+development:
 
 ```bash
-go generate ./... &&
-go run ./cmd/app
+go run ./app/cmd/app --dev
 ```
 
-### UI Development
-
-#### Setup
-
-Install required tools:
-
-```bash
-go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest
-```
-
-#### Develop UI (Development Mode)
-
-1. Start the React development server (with hot-reload):
-
-```bash
-cd ui/app
-npm install
-npm run dev
-```
-
-2. In a separate terminal, run the Ollama app with the `-dev` flag:
-
-```bash
-go generate ./... &&
-OLLAMA_DEBUG=1 go run ./cmd/app -dev
-```
-
-The `-dev` flag enables:
-
-- Loading the UI from the Vite dev server at http://localhost:5173
-- Fixed UI server port at http://127.0.0.1:3001 for API requests
-- CORS headers for cross-origin requests
-- Hot-reload support for UI development
+`--dev` keeps the app from stopping other running `ollama` servers, and lets
+`OLLAMA_APP_DB_PATH` point the app at a separate database.
 
 ## Build
 

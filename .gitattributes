@@ -7,8 +7,6 @@ llama/**/*.cuh linguist-vendored
 llama/**/*.m linguist-vendored
 llama/**/*.metal linguist-vendored
 
-app/webview linguist-vendored
-
 llama/build-info.cpp linguist-generated
 
 * text=auto
