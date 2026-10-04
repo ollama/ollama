@@ -185,7 +185,7 @@ type Settings struct {
 	CodexDesktopUsed bool
 }
 
-// Keep in sync with CURRENT_ONBOARDING_VERSION in app/ui/app/src/lib/onboarding.ts.
+// CurrentOnboardingVersion is the welcome flow version shared with the CLI.
 const CurrentOnboardingVersion = onboarding.CurrentVersion
 
 type Store struct {
@@ -469,6 +469,15 @@ func (s *Store) MarkCodexDesktopUsed() error {
 		return err
 	}
 	return s.db.markCodexDesktopUsed()
+}
+
+// ChatCount returns how many chats are saved.
+func (s *Store) ChatCount() (int, error) {
+	if err := s.ensureDB(); err != nil {
+		return 0, err
+	}
+
+	return s.db.getChatCount()
 }
 
 func (s *Store) Chats() ([]Chat, error) {
