@@ -49,3 +49,18 @@ func TestKolibri1AssistantContinuation(t *testing.T) {
 		t.Fatalf("invalid continuation: %q", got)
 	}
 }
+
+func TestKolibri1MinimalEffort(t *testing.T) {
+	for _, effort := range []string{"minimal", "low"} {
+		t.Run(effort, func(t *testing.T) {
+			think := ResolveThinking(&api.ThinkValue{Value: effort}, ThinkingForRenderer("kolibri1"))
+			got, err := RenderWithRenderer("kolibri1", []api.Message{{Role: "user", Content: "Hello"}}, nil, think)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(got, "Reasoning effort is set to low. Think briefly through only the essential steps in the user's language, then proceed directly to the answer.") {
+				t.Fatalf("%s did not render low-effort reasoning: %q", effort, got)
+			}
+		})
+	}
+}

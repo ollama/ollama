@@ -12,7 +12,7 @@ type Kolibri1Renderer struct{}
 
 func (*Kolibri1Renderer) LeadingBOS() string { return "" }
 func (*Kolibri1Renderer) Thinking() *model.Thinking {
-	return &model.Thinking{Values: []any{false, "low", "medium", "high"}, Default: "high"}
+	return &model.Thinking{Values: []any{false, "minimal", "low", "medium", "high"}, Default: "high"}
 }
 
 func kolibriReasoning(think *api.ThinkValue) string {
@@ -21,7 +21,7 @@ func kolibriReasoning(think *api.ThinkValue) string {
 	}
 	if think != nil && think.IsString() {
 		switch think.String() {
-		case "low":
+		case "minimal", "low":
 			return "Reasoning effort is set to low. Think briefly through only the essential steps in the user's language, then proceed directly to the answer."
 		case "medium":
 			return "Reasoning effort is set to medium. Think through the task methodically in the user's language, check key assumptions, and provide a well-supported answer."
