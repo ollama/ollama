@@ -102,11 +102,6 @@ func TestClaudeDesktopIntegration(t *testing.T) {
 	t.Run("implements managed autodiscovery integration", func(t *testing.T) {
 		var _ ManagedAutodiscoveryIntegration = c
 	})
-	t.Run("does not use Ollama Cloud auth gate", func(t *testing.T) {
-		if _, ok := any(c).(ManagedAutodiscoveryCloudIntegration); ok {
-			t.Fatal("Claude Desktop's loopback gateway should not require Ollama Cloud sign-in")
-		}
-	})
 	t.Run("implements restore", func(t *testing.T) {
 		var _ RestorableIntegration = c
 	})

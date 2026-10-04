@@ -181,12 +181,6 @@ type ManagedAutodiscoveryIntegration interface {
 	Onboard() error
 }
 
-// ManagedAutodiscoveryCloudIntegration marks an autodiscovery integration whose
-// discovered model catalog depends on the user's local Ollama Cloud auth state.
-type ManagedAutodiscoveryCloudIntegration interface {
-	UsesOllamaCloud() bool
-}
-
 // RestoreHintIntegration can provide a short restore command after launch
 // switches an app into a launch-managed mode.
 type RestoreHintIntegration interface {
@@ -215,12 +209,6 @@ type RestoreInstallCheckSkipper interface {
 // background runtime after launch rewrites their config.
 type ManagedRuntimeRefresher interface {
 	RefreshRuntimeAfterConfigure() error
-}
-
-// ManagedOnboardingValidator lets managed integrations re-check saved
-// onboarding state when launcher needs a stronger live readiness signal.
-type ManagedOnboardingValidator interface {
-	OnboardingComplete() bool
 }
 
 // ManagedInteractiveOnboarding lets a managed integration declare whether its
@@ -672,7 +660,7 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 
 func (c *launcherClient) launcherManagedAutodiscoveryState(ctx context.Context, name string, autodiscovery ManagedAutodiscoveryIntegration) (string, bool, error) {
 	if autodiscovery.AutodiscoveryConfigured() {
-		return autodiscovery.AutodiscoveredModel(), c.managedAutodiscoveryUsable(ctx, autodiscovery), nil
+		return autodiscovery.AutodiscoveredModel(), true, nil
 	}
 
 	cfg, loadErr := loadStoredIntegrationConfig(name)
@@ -824,7 +812,7 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		configured = true
 	}
 
-	if !managedIntegrationOnboarded(saved, managed) {
+	if !savedIntegrationOnboarded(saved) {
 		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(managed) {
 			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
 		}
@@ -855,9 +843,6 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	}
 
 	target := autodiscovery.AutodiscoveredModel()
-	if err := c.ensureManagedAutodiscoveryUsable(ctx, autodiscovery, target); err != nil {
-		return err
-	}
 	needsConfigure := req.ForceConfigure || req.ConfigureOnly || !autodiscovery.AutodiscoveryConfigured() || !savedMatchesModels(saved, []string{target})
 
 	if needsConfigure {
@@ -871,7 +856,7 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 		}
 	}
 
-	if !managedIntegrationOnboarded(saved, autodiscovery) {
+	if !savedIntegrationOnboarded(saved) {
 		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(autodiscovery) {
 			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
 		}
@@ -889,28 +874,6 @@ func (c *launcherClient) launchManagedAutodiscoveryIntegration(ctx context.Conte
 	}
 
 	return runIntegration(runner, target, c.resolveRunModels(ctx, name, []string{target}), req.ExtraArgs)
-}
-
-func (c *launcherClient) managedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration) bool {
-	if !managedAutodiscoveryUsesOllamaCloud(autodiscovery) {
-		return true
-	}
-	if disabled, known := cloudStatusDisabled(ctx, c.apiClient); known && disabled {
-		return false
-	}
-	return true
-}
-
-func (c *launcherClient) ensureManagedAutodiscoveryUsable(ctx context.Context, autodiscovery ManagedAutodiscoveryIntegration, label string) error {
-	if !managedAutodiscoveryUsesOllamaCloud(autodiscovery) {
-		return nil
-	}
-	return ensureCloudAuth(ctx, c.apiClient, label)
-}
-
-func managedAutodiscoveryUsesOllamaCloud(autodiscovery ManagedAutodiscoveryIntegration) bool {
-	cloud, ok := autodiscovery.(ManagedAutodiscoveryCloudIntegration)
-	return ok && cloud.UsesOllamaCloud()
 }
 
 func printRestoreHint(integration any) {
@@ -1020,17 +983,6 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 
 func savedIntegrationOnboarded(saved *config.IntegrationConfig) bool {
 	return saved != nil && saved.Onboarded
-}
-
-func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed any) bool {
-	if !savedIntegrationOnboarded(saved) {
-		return false
-	}
-	validator, ok := managed.(ManagedOnboardingValidator)
-	if !ok {
-		return true
-	}
-	return validator.OnboardingComplete()
 }
 
 // Most managed integrations treat onboarding as an interactive terminal step.
