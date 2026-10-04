@@ -93,12 +93,6 @@ func (m confirmModel) View() string {
 	return s
 }
 
-// RunConfirm shows a bubbletea yes/no confirmation prompt.
-// Returns true if the user confirmed, false if cancelled.
-func RunConfirm(prompt string) (bool, error) {
-	return RunConfirmWithOptions(prompt, ConfirmOptions{})
-}
-
 // RunConfirmWithOptions shows a bubbletea yes/no confirmation prompt with
 // optional custom button labels.
 func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) {
