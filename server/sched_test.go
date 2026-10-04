@@ -88,7 +88,7 @@ func TestSchedLoad(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := []ml.DeviceInfo{}
@@ -103,7 +103,7 @@ func TestSchedLoad(t *testing.T) {
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
 	}
@@ -236,7 +236,7 @@ type reqBundle struct {
 	req     *LlmRequest
 }
 
-func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 	scenario.srv.modelPath = model
 	return scenario.srv, nil
 }
@@ -379,7 +379,7 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 
 	// Trigger a reload
 	s.newServerFn = b.newServer
-	b.req.model.AdapterPaths = []string{"new"}
+	b.req.model.ProjectorPaths = []string{"new"}
 	slog.Info("b")
 	s.pendingReqCh <- b.req
 	// finish first two requests, so model can reload
@@ -724,7 +724,7 @@ func TestSchedExpireRunner(t *testing.T) {
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		server.modelPath = model
 		return server, nil
 	}
@@ -918,7 +918,6 @@ func TestSchedNeedsReload(t *testing.T) {
 	do := api.DefaultOptions()
 	runner := &runnerRef{
 		model: &Model{
-			AdapterPaths:   []string{"adapter1"},
 			ProjectorPaths: []string{"projector1"},
 		},
 		Options:     &do,
@@ -927,15 +926,11 @@ func TestSchedNeedsReload(t *testing.T) {
 	}
 	req := &LlmRequest{
 		model: &Model{
-			AdapterPaths:   []string{"adapter2"},
 			ProjectorPaths: []string{"projector2"},
 		},
 		opts: api.DefaultOptions(),
 	}
 	resp := runner.needsReload(ctx, req)
-	require.True(t, resp)
-	req.model.AdapterPaths = runner.model.AdapterPaths
-	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
 	req.model.ProjectorPaths = runner.model.ProjectorPaths
 	runner.loading = true
@@ -1241,7 +1236,7 @@ func TestSchedUnloadAllRunners(t *testing.T) {
 func TestSchedUnload(t *testing.T) {
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
-	r2 := &runnerRef{model: &Model{AdapterPaths: []string{"A"}}, numParallel: 1}
+	r2 := &runnerRef{model: &Model{}, numParallel: 1}
 	r1.unload()
 	require.True(t, llm1.closeCalled)
 	r2.unload()
@@ -1305,7 +1300,7 @@ func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
 	// Create a request — the model file + KV cache will exceed 100 MiB
 	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
 
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model}, nil
 	}
 
@@ -1341,7 +1336,7 @@ func TestSchedLlamaServerExplicitPartialNumGPUSkipsFullFitEviction(t *testing.T)
 	scenario.srv.vramSize = 0
 
 	called := false
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		called = true
 		require.Equal(t, 1, opts.NumGPU)
 		return scenario.srv, nil
@@ -1418,7 +1413,7 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	scenario.req.opts.NumCtx = 32768
 
 	called := false
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		called = true
 		return scenario.srv, nil
 	}
@@ -1825,7 +1820,7 @@ func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
 
 	// newServerFn returns a mockLlm that crashes in Load()
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -1880,7 +1875,7 @@ func TestSchedLoadOOMReducesAutomaticContextBeforeRetry(t *testing.T) {
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	var seenNumCtx []int
 	var seenNumBatch []int
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		seenNumCtx = append(seenNumCtx, opts.NumCtx)
 		seenNumBatch = append(seenNumBatch, opts.NumBatch)
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
@@ -1937,7 +1932,7 @@ func TestSchedLoadOOMKeepsExplicitContextBeforeRetry(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -1973,7 +1968,7 @@ func TestSchedFirstLoadOOMReducesAutomaticContextAndRetries(t *testing.T) {
 
 	loadCrash := errors.New("cudaMalloc failed: out of memory")
 	var seenNumCtx []int
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		seenNumCtx = append(seenNumCtx, opts.NumCtx)
 		if len(seenNumCtx) == 1 {
 			return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
@@ -2015,7 +2010,7 @@ func TestSchedLoadCrashNoOtherModelsFailsFast(t *testing.T) {
 	s.getSystemInfoFn = getSystemInfoFn
 
 	loadCrash := errors.New("simulated llama-server OOM crash")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 
@@ -2055,7 +2050,7 @@ func TestSchedLoadNonOOMWithOtherModelsFailsFast(t *testing.T) {
 	s.loadedMu.Unlock()
 
 	loadCrash := errors.New("server parse failed")
-	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
 		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
 	}
 

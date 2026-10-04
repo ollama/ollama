@@ -267,6 +267,10 @@ func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []mo
 	// 	}
 	// }
 
+	if m.hasAdapter {
+		return nil, nil, nil, fmt.Errorf("%s: %w", m.ShortName, errAdaptersUnsupported)
+	}
+
 	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(m.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
@@ -3580,7 +3584,7 @@ func countChatImages(msgs []api.Message) int {
 
 func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, errAdaptersUnsupported):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, manifest.ErrNoCompatibleManifest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
