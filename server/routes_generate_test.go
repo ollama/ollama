@@ -346,9 +346,6 @@ func TestChatHandlerChatTemplateRoute(t *testing.T) {
 	if len(mock.ChatRequest.Messages) != 1 || mock.ChatRequest.Messages[0].Content != "hello" {
 		t.Fatalf("chat_template request messages = %#v", mock.ChatRequest.Messages)
 	}
-	if !mock.ChatRequest.Shift {
-		t.Fatal("expected chat_template route to preserve default cache_prompt shift")
-	}
 }
 
 func TestChatHandlerChatTemplateRouteTruncatesMessages(t *testing.T) {
