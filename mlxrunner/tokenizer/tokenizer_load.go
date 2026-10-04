@@ -3,7 +3,6 @@ package tokenizer
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 )
 
 // TokenizerConfig holds optional configuration data that can be passed to LoadFromBytesWithConfig.
@@ -104,8 +103,7 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 			BOS:     -1,
 			PAD:     -1,
 		},
-		specialTokens:    make(map[string]int32),
-		normalizedTokens: make(map[string]bool),
+		specialTokens: make(map[string]int32),
 	}
 
 	// Build values array
@@ -140,9 +138,6 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		}
 		t.vocab.Values[tok.ID] = tok.Content
 		t.specialTokens[tok.Content] = tok.ID // Add ALL added_tokens to special tokens
-		if tok.Normalized {
-			t.normalizedTokens[tok.Content] = true
-		}
 	}
 
 	// Precompute byte token IDs for <0xNN> fallback
@@ -183,25 +178,22 @@ func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
 		}
 	}
 
-	cacheSortedSpecialTokens(t)
+	// Hugging Face gives special tokens precedence when normalization maps
+	// different added-token spellings to the same pattern.
+	for _, special := range []bool{true, false} {
+		for _, tok := range raw.AddedTokens {
+			if tok.Special != special {
+				continue
+			}
+			if tok.Normalized {
+				t.normalizedTokenMatcher.add(t.normalize(tok.Content), tok.Content)
+			} else {
+				t.specialTokenMatcher.add(tok.Content, tok.Content)
+			}
+		}
+	}
 
 	return t, nil
-}
-
-func cacheSortedSpecialTokens(t *Tokenizer) {
-	if len(t.specialTokens) == 0 {
-		t.sortedSpecialTokens = nil
-		return
-	}
-
-	tokens := make([]string, 0, len(t.specialTokens))
-	for tok := range t.specialTokens {
-		tokens = append(tokens, tok)
-	}
-	sort.Slice(tokens, func(i, j int) bool {
-		return len(tokens[i]) > len(tokens[j])
-	})
-	t.sortedSpecialTokens = tokens
 }
 
 type specialTokenConfigData struct {

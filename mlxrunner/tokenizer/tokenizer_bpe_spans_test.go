@@ -1,6 +1,7 @@
 package tokenizer
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +26,26 @@ func TestBPEMergeSpans(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tok.encodeBPEMerge(tc.input, nil); !slices.Equal(got, tc.want) {
 				t.Fatalf("encodeBPEMerge(%q) = %v, want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+	// Overlapping candidates exercise heap growth, rank ordering and stale pairs.
+	for _, n := range []int{31, 32, 33, 255, 256, 257} {
+		t.Run(fmt.Sprintf("equal rank/%d", n), func(t *testing.T) {
+			input := strings.Repeat("a", n)
+			want := slices.Repeat([]int32{10}, n/2)
+			if n%2 != 0 {
+				want = append(want, 1)
+			}
+			if got := tok.encodeBPEMerge(input, nil); !slices.Equal(got, want) {
+				t.Fatalf("encodeBPEMerge(%q) = %v, want %v", input, got, want)
+			}
+		})
+		t.Run(fmt.Sprintf("competing ranks/%d", n), func(t *testing.T) {
+			input := strings.Repeat("abc", n)
+			want := slices.Repeat([]int32{1, 5}, n)
+			if got := tok.encodeBPEMerge(input, nil); !slices.Equal(got, want) {
+				t.Fatalf("encodeBPEMerge(%q) = %v, want %v", input, got, want)
 			}
 		})
 	}

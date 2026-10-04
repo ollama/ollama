@@ -22,7 +22,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func loadTokenizerReference(t *testing.T, modelName string) []byte {
+func loadTokenizerReference(t testing.TB, modelName string) []byte {
 	t.Helper()
 	name := model.ParseName(modelName)
 	fetch := os.Getenv("FETCH_TOKENIZERS") != "" || os.Getenv("VERIFY_TOKENIZERS") != ""
@@ -94,7 +94,7 @@ func loadTokenizerReference(t *testing.T, modelName string) []byte {
 	return data
 }
 
-func fetchTokenizerManifest(t *testing.T, ctx context.Context, url, digest string) *manifest.Manifest {
+func fetchTokenizerManifest(t testing.TB, ctx context.Context, url, digest string) *manifest.Manifest {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

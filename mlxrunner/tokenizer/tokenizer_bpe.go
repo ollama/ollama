@@ -1,9 +1,6 @@
 package tokenizer
 
-import (
-	"container/heap"
-	"unicode/utf8"
-)
+import "unicode/utf8"
 
 type bpeMergeNode struct {
 	start int
@@ -19,31 +16,48 @@ type bpePair struct {
 	value string
 }
 
-type bpePairHeap []*bpePair
+type bpePairHeap []bpePair
 
-func (h bpePairHeap) Len() int { return len(h) }
-
-func (h bpePairHeap) Less(i, j int) bool {
+func (h bpePairHeap) less(i, j int) bool {
 	return h[i].rank < h[j].rank || (h[i].rank == h[j].rank && h[i].left < h[j].left)
 }
 
-func (h bpePairHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-
-func (h *bpePairHeap) Push(x any) {
-	*h = append(*h, x.(*bpePair))
+// Store pairs by value so each candidate merge does not allocate separately.
+func (h bpePairHeap) push(pair bpePair) bpePairHeap {
+	h = append(h, pair)
+	for i := len(h) - 1; i > 0; {
+		parent := (i - 1) / 2
+		if !h.less(i, parent) {
+			break
+		}
+		h[i], h[parent] = h[parent], h[i]
+		i = parent
+	}
+	return h
 }
 
-func (h *bpePairHeap) Pop() any {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[:n-1]
-	return item
+func (h bpePairHeap) pop() (bpePairHeap, bpePair) {
+	pair := h[0]
+	last := len(h) - 1
+	h[0] = h[last]
+	h[last] = bpePair{}
+	h = h[:last]
+	for i := 0; 2*i+1 < len(h); {
+		child := 2*i + 1
+		if child+1 < len(h) && h.less(child+1, child) {
+			child++
+		}
+		if !h.less(child, i) {
+			break
+		}
+		h[i], h[child] = h[child], h[i]
+		i = child
+	}
+	return h, pair
 }
 
-// encodeBPEMerge encodes using BPE merge algorithm.
-// Uses the heap/linked-list pair merge strategy from tokenizer/bytepairencoding.go:
-// merge the lowest-rank valid pair, then only recheck adjacent pairs.
+// encodeBPEMerge merges the lowest-rank valid pair, breaking ties left to right.
+// Only neighboring pairs need to be rechecked after each merge.
 func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 	if encoded == "" {
 		return ids
@@ -65,44 +79,44 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 		})
 	}
 
-	pairwise := func(left, right int) *bpePair {
+	pairwise := func(left, right int) (bpePair, bool) {
 		if left < 0 || right >= len(nodes) {
-			return nil
+			return bpePair{}, false
 		}
 		if nodes[left].token == "" || nodes[right].token == "" {
-			return nil
+			return bpePair{}, false
 		}
 
 		leftToken, rightToken := nodes[left].token, nodes[right].token
 		rank, ok := t.vocab.Merges[leftToken+" "+rightToken]
 		if !ok {
-			return nil
+			return bpePair{}, false
 		}
 
 		// Merged tokens remain contiguous spans of the encoded input.
 		value := encoded[nodes[left].start : nodes[right].start+len(rightToken)]
 		if _, ok := t.vocab.Reverse[value]; !ok {
-			return nil
+			return bpePair{}, false
 		}
 
-		return &bpePair{
+		return bpePair{
 			left:  left,
 			right: right,
 			rank:  rank,
 			value: value,
-		}
+		}, true
 	}
 
-	pairs := bpePairHeap{}
-	heap.Init(&pairs)
+	pairs := make(bpePairHeap, 0, 32)
 	for i := range len(nodes) - 1 {
-		if pair := pairwise(i, i+1); pair != nil {
-			heap.Push(&pairs, pair)
+		if pair, ok := pairwise(i, i+1); ok {
+			pairs = pairs.push(pair)
 		}
 	}
 
-	for pairs.Len() > 0 {
-		pair := heap.Pop(&pairs).(*bpePair)
+	for len(pairs) > 0 {
+		var pair bpePair
+		pairs, pair = pairs.pop()
 		left, right := nodes[pair.left], nodes[pair.right]
 		if left.token == "" || right.token == "" {
 			continue
@@ -121,11 +135,11 @@ func (t *Tokenizer) encodeBPEMerge(encoded string, ids []int32) []int32 {
 			nodes[right.next].prev = pair.left
 		}
 
-		if pair := pairwise(nodes[pair.left].prev, pair.left); pair != nil {
-			heap.Push(&pairs, pair)
+		if pair, ok := pairwise(nodes[pair.left].prev, pair.left); ok {
+			pairs = pairs.push(pair)
 		}
-		if pair := pairwise(pair.left, nodes[pair.left].next); pair != nil {
-			heap.Push(&pairs, pair)
+		if pair, ok := pairwise(pair.left, nodes[pair.left].next); ok {
+			pairs = pairs.push(pair)
 		}
 	}
 

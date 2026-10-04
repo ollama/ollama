@@ -2,7 +2,6 @@ package tokenizer
 
 import (
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -20,56 +19,14 @@ type encodeChunk struct {
 	isSpecial bool
 }
 
-// splitBySpecialTokens splits text into parts, keeping special tokens as separate elements
-func (t *Tokenizer) splitBySpecialTokens(s string) []encodeChunk {
-	if s == "" {
-		return nil
+func (t *Tokenizer) normalize(s string) string {
+	if t.normalizeNFC {
+		s = norm.NFC.String(s)
 	}
-	if len(t.specialTokens) == 0 {
-		return []encodeChunk{{text: s}}
+	if t.normalizeSpaces {
+		s = strings.ReplaceAll(s, " ", "▁")
 	}
-
-	tokens := t.sortedSpecialTokens
-	if len(tokens) == 0 {
-		// Fallback for tokenizers constructed outside the loaders.
-		tokens = make([]string, 0, len(t.specialTokens))
-		for tok := range t.specialTokens {
-			tokens = append(tokens, tok)
-		}
-		sort.Slice(tokens, func(i, j int) bool {
-			return len(tokens[i]) > len(tokens[j])
-		})
-	}
-
-	var result []encodeChunk
-	remaining := s
-
-	for len(remaining) > 0 {
-		found := false
-		for _, tok := range tokens {
-			if strings.HasPrefix(remaining, tok) {
-				result = append(result, encodeChunk{text: tok, isSpecial: true})
-				remaining = remaining[len(tok):]
-				found = true
-				break
-			}
-		}
-		if !found {
-			// Find next special token position
-			nextPos := len(remaining)
-			for _, tok := range tokens {
-				if idx := strings.Index(remaining, tok); idx != -1 && idx < nextPos {
-					nextPos = idx
-				}
-			}
-			if nextPos > 0 {
-				result = append(result, encodeChunk{text: remaining[:nextPos]})
-			}
-			remaining = remaining[nextPos:]
-		}
-	}
-
-	return result
+	return s
 }
 
 func (t *Tokenizer) forEachPartChunk(part string, fn func(encodeChunk)) {
@@ -116,35 +73,41 @@ func (t *Tokenizer) appendEncodedChunk(ids []int32, c encodeChunk) []int32 {
 // Encode tokenizes text to token IDs.
 // Parallel encoding is used only for very large inputs with enough chunks per worker.
 func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
-	// Preserve original added-token identity. Only normalized=true tokens may
-	// also be recognized after normalization, before pretokenizer prefixes.
-	parts := t.splitBySpecialTokens(s)
-	for i, part := range parts {
-		if part.isSpecial {
-			continue
+	// Match normalized=false tokens first so normalization cannot change their
+	// identity. Normalized tokens match anywhere in the remaining text, before
+	// pretokenizer prefixes are inserted.
+	parts := t.specialTokenMatcher.split(s)
+	for i := range parts {
+		if !parts[i].isSpecial {
+			parts[i].text = t.normalize(parts[i].text)
 		}
-		if t.normalizeNFC {
-			part.text = norm.NFC.String(part.text)
+	}
+	if len(t.normalizedTokenMatcher.children) > 0 {
+		var normalized []encodeChunk
+		for _, part := range parts {
+			if part.isSpecial {
+				normalized = append(normalized, part)
+			} else {
+				normalized = append(normalized, t.normalizedTokenMatcher.split(part.text)...)
+			}
 		}
-		if t.normalizeSpaces {
-			part.text = strings.ReplaceAll(part.text, " ", "▁")
-		}
-		if t.normalizedTokens[part.text] {
-			part.isSpecial = true
-			parts[i] = part
-			continue
-		}
-		if t.metaspace != nil {
+		parts = normalized
+	}
+	if t.metaspace != nil {
+		for i, part := range parts {
+			if part.isSpecial {
+				continue
+			}
 			part.text = strings.ReplaceAll(part.text, " ", "▁")
 			if (t.metaspace.PrependScheme == "always" || (t.metaspace.PrependScheme == "first" && i == 0)) && !strings.HasPrefix(part.text, "▁") {
 				part.text = "▁" + part.text
 			}
+			parts[i] = part
 		}
-		parts[i] = part
 	}
 
 	// Fast path: encode sequentially without materializing chunk slices.
-	if len(s) < encodeParallelMinInputBytes {
+	if len(s) < encodeParallelMinInputBytes || runtime.GOMAXPROCS(0) == 1 {
 		var ids []int32
 		for _, part := range parts {
 			if part.isSpecial {

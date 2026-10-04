@@ -58,38 +58,26 @@ func TestSplitBySpecialTokensGreedyLongest(t *testing.T) {
 		]
 	}`)
 
-	for _, tc := range []struct {
-		name       string
-		clearCache bool
+	tok, err := LoadFromBytes(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []struct {
+		text string
+		want []encodeChunk
 	}{
-		{"cache present", false},
-		{"cache cleared", true},
+		{"a<tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
+		{"<tag>x<tag>", []encodeChunk{{text: "<tag>x", isSpecial: true}, {text: "<tag>", isSpecial: true}}},
+		{"a<tag><tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>", isSpecial: true}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
+		{"a<tag", []encodeChunk{{text: "a<tag"}}},
+		{"<<tag>x", []encodeChunk{{text: "<"}, {text: "<tag>x", isSpecial: true}}},
+		{"<tag><ta", []encodeChunk{{text: "<tag>", isSpecial: true}, {text: "<ta"}}},
+		{strings.Repeat("a<tag>x", 800), slices.Repeat([]encodeChunk{{text: "a"}, {text: "<tag>x", isSpecial: true}}, 800)},
+		{"", nil},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tok, err := LoadFromBytes(data)
-			if err != nil {
-				t.Fatalf("failed to load tokenizer: %v", err)
-			}
-			if tc.clearCache {
-				// Simulate construction outside loader path where cache is not set.
-				tok.sortedSpecialTokens = nil
-			}
-
-			for _, input := range []struct {
-				text string
-				want []encodeChunk
-			}{
-				{"a<tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
-				{"<tag>x<tag>", []encodeChunk{{text: "<tag>x", isSpecial: true}, {text: "<tag>", isSpecial: true}}},
-				{"a<tag><tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>", isSpecial: true}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
-				{"a<tag", []encodeChunk{{text: "a<tag"}}},
-				{"", nil},
-			} {
-				if got := tok.splitBySpecialTokens(input.text); !slices.Equal(got, input.want) {
-					t.Errorf("splitBySpecialTokens(%q) = %v, want %v", input.text, got, input.want)
-				}
-			}
-		})
+		if got := tok.specialTokenMatcher.split(input.text); !slices.Equal(got, input.want) {
+			t.Errorf("split(%q) = %v, want %v", input.text, got, input.want)
+		}
 	}
 }
 
@@ -117,4 +105,26 @@ func TestEncodeDeterministicAcrossGOMAXPROCS(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzAddedTokenMatcher(f *testing.F) {
+	var matcher addedTokenMatcher
+	for _, token := range []string{"<tag>", "<tag>x", "éé", "\x00"} {
+		matcher.add(token, token)
+	}
+	for _, input := range []string{"", "plain", "a<tag>xb", "<tag>x<tag>", "<<tag", "aééa", "\xff<tag>\x00"} {
+		f.Add(input)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		remaining := input
+		for _, part := range matcher.split(input) {
+			if part.text == "" || !strings.HasPrefix(remaining, part.text) {
+				t.Fatalf("split(%q) changed or inserted text: %q", input, part.text)
+			}
+			remaining = remaining[len(part.text):]
+		}
+		if remaining != "" {
+			t.Fatalf("split(%q) dropped suffix %q", input, remaining)
+		}
+	})
 }

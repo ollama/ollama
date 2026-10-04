@@ -33,16 +33,16 @@ type Vocabulary struct {
 
 // Tokenizer handles BPE and SentencePiece tokenization
 type Tokenizer struct {
-	vocab               *Vocabulary
-	pretokenizer        []pretokenizer
-	specialTokens       map[string]int32 // Special tokens for direct lookup
-	normalizedTokens    map[string]bool
-	sortedSpecialTokens []string      // Special tokens sorted by length, longest first
-	typ                 TokenizerType // Algorithm type
-	normalizeNFC        bool
-	normalizeSpaces     bool
-	ignoreMerges        bool
-	metaspace           *metaspace
+	vocab                  *Vocabulary
+	pretokenizer           []pretokenizer
+	specialTokens          map[string]int32 // Special tokens for direct lookup
+	specialTokenMatcher    addedTokenMatcher
+	normalizedTokenMatcher addedTokenMatcher
+	typ                    TokenizerType // Algorithm type
+	normalizeNFC           bool
+	normalizeSpaces        bool
+	ignoreMerges           bool
+	metaspace              *metaspace
 }
 
 type metaspace struct {
