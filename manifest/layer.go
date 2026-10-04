@@ -175,12 +175,3 @@ func (l *Layer) Open() (io.ReadSeekCloser, error) {
 
 	return os.Open(blob)
 }
-
-func (l *Layer) Remove() error {
-	if l.Digest == "" {
-		return nil
-	}
-
-	_, err := RemoveUnreferencedBlobs(l.Digest)
-	return err
-}
