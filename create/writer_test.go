@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"testing"
 
 	st "github.com/ollama/ollama/fs/safetensors"
+	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
@@ -194,6 +197,53 @@ func TestWriteBlobsQuantizeFloat(t *testing.T) {
 				t.Errorf("norm dtype = %q, want BF16 (kept, not quantized)", nh.Dtype)
 			}
 		})
+	}
+}
+
+func TestNVFP4SmallWeights(t *testing.T) {
+	mlxtest.SkipIfUnavailable(t)
+	for _, amplitude := range []float32{0, 0.001, 1} {
+		values := make([]float32, 2*32*32)
+		for i := range values {
+			values[i] = amplitude * float32(math.Sin(float64(i)*0.17))
+		}
+		tensor := st.NewTensorDataFromBytes("linear.weight", "F32", []int32{2, 32, 32}, encodeFloat32s(values...))
+		blob, err := quantizeBlob(context.Background(), []quantizeItem{{name: tensor.Name, quantize: "nvfp4", reader: st.BuildPackedSafetensorsReader([]*st.TensorData{tensor})}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "quantized.safetensors")
+		if err := os.WriteFile(path, blob, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err = runOnMLXThread(context.Background(), func() error {
+			file, err := mlx.LoadSafetensorsNative(path)
+			if err != nil {
+				return err
+			}
+			defer file.Free()
+			scale := file.Get("linear.weight.global_scale")
+			if scale == nil {
+				return fmt.Errorf("missing NVFP4 global scale")
+			}
+			got := mlx.Dequantize(file.Get("linear.weight"), file.Get("linear.weight.scale"), nil, 16, 4, "nvfp4", mlx.MulScalar(scale, mlx.Nvfp4MaxProduct)).AsType(mlx.DTypeFloat32)
+			mlx.Eval(got)
+			var error2, norm2 float64
+			for i, v := range got.Floats() {
+				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+					return fmt.Errorf("nonfinite reconstruction at amplitude %g", amplitude)
+				}
+				error2 += math.Pow(float64(v-values[i]), 2)
+				norm2 += math.Pow(float64(values[i]), 2)
+			}
+			if (norm2 == 0 && error2 != 0) || (norm2 > 0 && math.Sqrt(error2/norm2) > 0.15) {
+				return fmt.Errorf("amplitude %g: relative reconstruction error %g", amplitude, math.Sqrt(error2/norm2))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

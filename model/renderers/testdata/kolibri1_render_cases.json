@@ -1,0 +1,168 @@
+[
+  {
+    "name": "think None",
+    "think": null,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "think False",
+    "think": false,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning is disabled. Proceed straight to answering according to the user's instructions.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+  },
+  {
+    "name": "think True",
+    "think": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "think low",
+    "think": "low",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to low. Think briefly through only the essential steps in the user's language, then proceed directly to the answer.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "think medium",
+    "think": "medium",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to medium. Think through the task methodically in the user's language, check key assumptions, and provide a well-supported answer.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "think high",
+    "think": "high",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "system and late system",
+    "messages": [
+      {
+        "role": "system",
+        "content": "Answer in German."
+      },
+      {
+        "role": "user",
+        "content": "Hallo"
+      },
+      {
+        "role": "system",
+        "content": "Be brief."
+      }
+    ],
+    "expected": "<|im_start|>system\nAnswer in German.\n\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nHallo<|im_end|>\n<|im_start|>system\nBe brief.<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "history drops old reasoning",
+    "messages": [
+      {
+        "role": "user",
+        "content": "One"
+      },
+      {
+        "role": "assistant",
+        "content": "1",
+        "thinking": "Old reasoning"
+      },
+      {
+        "role": "user",
+        "content": "Two"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nOne<|im_end|>\n<|im_start|>assistant\n1<|im_end|>\n<|im_start|>user\nTwo<|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "tagged reasoning tool continuation",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather?"
+      },
+      {
+        "role": "assistant",
+        "content": "<think>\nCheck weather\n</think>\n\n",
+        "tool_calls": [
+          {
+            "function": {
+              "name": "weather",
+              "arguments": {
+                "city": "Berlin"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "Sunny"
+      },
+      {
+        "role": "tool",
+        "content": "20 C"
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.<|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n<think>\nCheck weather\n</think>\n\n<tool_call>\n{\"name\": \"weather\", \"arguments\": {\"city\": \"Berlin\"}}\n</tool_call><|im_end|>\n<|im_start|>user\n<tool_response>\nSunny\n</tool_response>\n<tool_response>\n20 C\n</tool_response><|im_end|>\n<|im_start|>assistant\n"
+  },
+  {
+    "name": "tools",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Weather?"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "weather",
+          "description": "Get weather",
+          "parameters": {
+            "type": "object",
+            "required": [
+              "city"
+            ],
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "City name"
+              }
+            }
+          }
+        }
+      }
+    ],
+    "expected": "<|im_start|>system\n# Reasoning effort\n\nReasoning effort is set to high. Think carefully through the task in the user's language, validate key assumptions, consider plausible alternatives, and prioritize correctness and clarity.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"type\": \"function\", \"function\": {\"name\": \"weather\", \"description\": \"Get weather\", \"parameters\": {\"type\": \"object\", \"required\": [\"city\"], \"properties\": {\"city\": {\"type\": \"string\", \"description\": \"City name\"}}}}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n<|im_start|>user\nWeather?<|im_end|>\n<|im_start|>assistant\n"
+  }
+]

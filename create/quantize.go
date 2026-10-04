@@ -184,7 +184,14 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		}
 
 		groupSize, bits, mode := quant.Params(quantize)
-		qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
+		var globalScale *mlx.Array
+		if mode == "nvfp4" {
+			// Without normalization, small weights can round every E4M3 block
+			// scale to zero. A zero tensor uses the identity scale instead.
+			amax := mlx.Flatten(arr.Abs()).MaxAxis(0, false).AsType(mlx.DTypeFloat32)
+			globalScale = mlx.Where(amax.Equal(mlx.FromValue(float32(0))), mlx.FromValue(float32(mlx.Nvfp4MaxProduct)), amax)
+		}
+		qweight, scales, qbiases := mlx.QuantizeWithGlobalScale(arr, groupSize, bits, mode, globalScale)
 		if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
 			err = fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
 			return nil
@@ -199,6 +206,11 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		arrays[name] = qweight
 		arrays[name+".scale"] = scales
 		out := []*mlx.Array{qweight, scales}
+		if globalScale != nil {
+			storedScale := mlx.DivScalar(globalScale, mlx.Nvfp4MaxProduct)
+			arrays[name+".global_scale"] = storedScale
+			out = append(out, storedScale)
+		}
 		if qbiases != nil {
 			qbiases = mlx.Contiguous(qbiases, false)
 			arrays[name+".bias"] = qbiases

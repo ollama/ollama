@@ -237,6 +237,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
 		return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case s == "kolibri1" || s == "kolibri1forcausallm":
+		return "kolibri1", nil
 	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
 		return "cohere", nil
 	case strings.Contains(s, "glm4") || strings.Contains(s, "glm-4"):
@@ -277,6 +279,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
 		return lagunaRendererParserNameFromTemplate(modelDir, chatTemplate)
+	case s == "kolibri1" || s == "kolibri1forcausallm":
+		return "kolibri1", nil
 	case strings.Contains(s, "cohere2moe") || strings.Contains(s, "cohere2_moe"):
 		return "cohere", nil
 	case strings.Contains(s, "gemma4"):

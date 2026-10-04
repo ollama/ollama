@@ -8,6 +8,7 @@ import (
 	_ "github.com/ollama/ollama/mlxrunner/model/gemma4embedding"
 	_ "github.com/ollama/ollama/mlxrunner/model/glimmer"
 	_ "github.com/ollama/ollama/mlxrunner/model/glm4_moe_lite"
+	_ "github.com/ollama/ollama/mlxrunner/model/kolibri1"
 	_ "github.com/ollama/ollama/mlxrunner/model/laguna"
 	_ "github.com/ollama/ollama/mlxrunner/model/laya"
 	_ "github.com/ollama/ollama/mlxrunner/model/llama"

@@ -117,6 +117,8 @@ func rendererForName(name string) Renderer {
 		return &LagunaRenderer{}
 	case "poolside-v1":
 		return &LagunaV8Renderer{}
+	case "kolibri1":
+		return &Kolibri1Renderer{}
 	case "cohere":
 		return &CohereRenderer{}
 	case "glimmer":
