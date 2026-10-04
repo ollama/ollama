@@ -4,22 +4,6 @@ import (
 	"github.com/ollama/ollama/app/dialog/cocoa"
 )
 
-func (b *MsgBuilder) yesNo() bool {
-	return cocoa.YesNoDlg(b.Msg, b.Dlg.Title)
-}
-
-func (b *MsgBuilder) info() {
-	cocoa.InfoDlg(b.Msg, b.Dlg.Title)
-}
-
-func (b *MsgBuilder) error() {
-	cocoa.ErrorDlg(b.Msg, b.Dlg.Title)
-}
-
-func (b *FileBuilder) load() (string, error) {
-	return b.run(false)
-}
-
 func (b *FileBuilder) loadMultiple() ([]string, error) {
 	return b.runMultiple()
 }
@@ -74,7 +58,7 @@ func (b *FileBuilder) runMultiple() ([]string, error) {
 }
 
 func (b *DirectoryBuilder) browse() (string, error) {
-	f, err := cocoa.DirDlg(b.Dlg.Title, b.StartDir, b.ShowHiddenFiles)
+	f, err := cocoa.DirDlg(b.Dlg.Title, "", b.ShowHiddenFiles)
 	if f == "" && err == nil {
 		return "", ErrCancelled
 	}

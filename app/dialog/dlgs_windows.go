@@ -26,19 +26,6 @@ func err() error {
 	return WinDlgError(e)
 }
 
-func (b *MsgBuilder) yesNo() bool {
-	r := w32.MessageBox(w32.HWND(0), b.Msg, firstOf(b.Dlg.Title, "Confirm?"), w32.MB_YESNO)
-	return r == w32.IDYES
-}
-
-func (b *MsgBuilder) info() {
-	w32.MessageBox(w32.HWND(0), b.Msg, firstOf(b.Dlg.Title, "Information"), w32.MB_OK|w32.MB_ICONINFORMATION)
-}
-
-func (b *MsgBuilder) error() {
-	w32.MessageBox(w32.HWND(0), b.Msg, firstOf(b.Dlg.Title, "Error"), w32.MB_OK|w32.MB_ICONERROR)
-}
-
 type filedlg struct {
 	buf     []uint16
 	filters []uint16
@@ -104,14 +91,6 @@ func (d filedlg) parseMultipleFilenames() []string {
 	return files
 }
 
-func (b *FileBuilder) load() (string, error) {
-	d := openfile(w32.OFN_FILEMUSTEXIST|w32.OFN_NOCHANGEDIR, b)
-	if w32.GetOpenFileName(d.opf) {
-		return d.Filename(), nil
-	}
-	return "", err()
-}
-
 func (b *FileBuilder) loadMultiple() ([]string, error) {
 	d := openfile(w32.OFN_FILEMUSTEXIST|w32.OFN_NOCHANGEDIR|w32.OFN_ALLOWMULTISELECT|w32.OFN_EXPLORER, b)
 	d.buf = make([]uint16, multiFileBufferSize)
@@ -139,18 +118,6 @@ func utf16ptr(utf16 []uint16) *uint16 {
 	}
 	h := (*reflect.SliceHeader)(unsafe.Pointer(&utf16))
 	return (*uint16)(unsafe.Pointer(h.Data))
-}
-
-func utf16slice(ptr *uint16) []uint16 { //nolint:unused
-	hdr := reflect.SliceHeader{Data: uintptr(unsafe.Pointer(ptr)), Len: 1, Cap: 1}
-	slice := *(*[]uint16)(unsafe.Pointer(&hdr)) //nolint:govet
-	i := 0
-	for slice[len(slice)-1] != 0 {
-		i++
-	}
-	hdr.Len = i
-	slice = *(*[]uint16)(unsafe.Pointer(&hdr)) //nolint:govet
-	return slice
 }
 
 func openfile(flags uint32, b *FileBuilder) (d filedlg) {
@@ -194,39 +161,10 @@ type dirdlg struct {
 	bi *w32.BROWSEINFO
 }
 
-const (
-	bffm_INITIALIZED     = 1
-	bffm_SELCHANGED      = 2
-	bffm_VALIDATEFAILEDA = 3
-	bffm_VALIDATEFAILEDW = 4
-	bffm_SETSTATUSTEXTA  = (w32.WM_USER + 100)
-	bffm_SETSTATUSTEXTW  = (w32.WM_USER + 104)
-	bffm_ENABLEOK        = (w32.WM_USER + 101)
-	bffm_SETSELECTIONA   = (w32.WM_USER + 102)
-	bffm_SETSELECTIONW   = (w32.WM_USER + 103)
-	bffm_SETOKTEXT       = (w32.WM_USER + 105)
-	bffm_SETEXPANDED     = (w32.WM_USER + 106)
-	bffm_SETSTATUSTEXT   = bffm_SETSTATUSTEXTW
-	bffm_SETSELECTION    = bffm_SETSELECTIONW
-	bffm_VALIDATEFAILED  = bffm_VALIDATEFAILEDW
-)
-
-func callbackDefaultDir(hwnd w32.HWND, msg uint, lParam, lpData uintptr) int {
-	if msg == bffm_INITIALIZED {
-		_ = w32.SendMessage(hwnd, bffm_SETSELECTION, w32.TRUE, lpData)
-	}
-	return 0
-}
-
 func selectdir(b *DirectoryBuilder) (d dirdlg) {
 	d.bi = &w32.BROWSEINFO{Flags: w32.BIF_RETURNONLYFSDIRS | w32.BIF_NEWDIALOGSTYLE}
 	if b.Dlg.Title != "" {
 		d.bi.Title, _ = syscall.UTF16PtrFromString(b.Dlg.Title)
-	}
-	if b.StartDir != "" {
-		s16, _ := syscall.UTF16PtrFromString(b.StartDir)
-		d.bi.LParam = uintptr(unsafe.Pointer(s16))
-		d.bi.CallbackFunc = syscall.NewCallback(callbackDefaultDir)
 	}
 	return d
 }
