@@ -3,7 +3,6 @@ package gemma4
 import (
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/mlx"
@@ -22,35 +21,18 @@ type VisionConfig struct {
 	HeadDim           int32       `json:"head_dim"`
 	PatchSize         int32       `json:"patch_size"`
 	PoolingKernelSize int32       `json:"pooling_kernel_size"`
-	DefaultOutputLen  int32       `json:"default_output_length"`
 	RMSNormEps        float32     `json:"rms_norm_eps"`
 	Standardize       bool        `json:"standardize"`
 	RopeParameters    *RopeParams `json:"rope_parameters"`
 
-	// Unified-embedder field.
-	NumSoftTokens int32 `json:"num_soft_tokens"`
-
 	RopeTheta float32 `json:"-"`
+
+	// Retained at load time so CPU preprocessing need not access MLX arrays.
+	positionEmbeddingSize int
 }
 
 func (v *VisionConfig) unified() bool {
 	return v.ModelType == "gemma4_unified_vision"
-}
-
-// visionSoftTokenBudgets are the soft-token counts the reference processor
-// supports; the budget fixes the patch budget as budget*pooling².
-var visionSoftTokenBudgets = []int32{70, 140, 280, 560, 1120}
-
-// visionSoftTokenBudget returns the per-image soft-token budget the checkpoint
-// requests.
-func (m *Model) visionSoftTokenBudget() int32 {
-	if m.MM.VisionSoftTokensPerImage > 0 {
-		return m.MM.VisionSoftTokensPerImage
-	}
-	if m.Vision.unified() {
-		return m.Vision.NumSoftTokens
-	}
-	return m.Vision.DefaultOutputLen
 }
 
 // VisionTower is the Gemma 4 image encoder: a bidirectional transformer over
@@ -196,6 +178,7 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 
 	m.VisionTower = tower
 	m.EmbedVision = &MultimodalEmbedder{Projection: projection}
+	v.positionEmbeddingSize = table.Dim(1)
 	return nil
 }
 
@@ -249,6 +232,7 @@ func (m *Model) loadUnifiedVisionWeights(tensors map[string]*mlx.Array, linears 
 
 	m.UnifiedEmbedder = e
 	m.EmbedVision = &MultimodalEmbedder{Projection: projection}
+	m.Vision.positionEmbeddingSize = e.PosEmbedding.Dim(0)
 	return nil
 }
 
@@ -396,11 +380,4 @@ func (m *Model) encodeImage(pixels *mlx.Array, positions []int32, geom ImageGeom
 
 	f = mlx.RMSNormFn(f, nil, v.RMSNormEps)
 	return m.EmbedVision.Projection.Forward(f)
-}
-
-func validateVisionSoftTokenBudget(budget int32) error {
-	if !slices.Contains(visionSoftTokenBudgets, budget) {
-		return fmt.Errorf("unsupported vision soft token budget %d", budget)
-	}
-	return nil
 }

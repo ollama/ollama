@@ -29,9 +29,9 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/transfer"
 )
 
 // Blobs newer than this may belong to another process that has not written its
@@ -159,6 +159,15 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
+// publicCapabilities hides a decision model's other capabilities from show and
+// list so clients don't offer it for general chat. Serving still uses Capabilities.
+func publicCapabilities(capabilities []model.Capability) []model.Capability {
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		return []model.Capability{model.CapabilityDecision}
+	}
+	return capabilities
+}
+
 func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
@@ -194,10 +203,13 @@ func (m *Model) ggufCapabilities(capabilities []model.Capability, source templat
 	case templateCapabilityChat:
 		capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 	}
-	if m.metadata.Valid("pooling_type") {
+	switch {
+	case m.metadata.String("decision.type") != "":
+		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	case m.metadata.Valid("pooling_type"):
 		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
+	default:
+		// Otherwise, assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
 	if m.metadata.Valid("vision.block_count") {
@@ -454,6 +466,12 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 	if suppressAudioCapability(m, modelArch) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
@@ -533,6 +551,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
+		model.CapabilityDecision:   errors.New("decision"),
 	}
 
 	for _, cap := range want {
@@ -616,6 +635,12 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "parser",
 			Args: m.Config.Parser,
+		})
+	}
+	for _, capability := range m.Config.Capabilities {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "capability",
+			Args: capability,
 		})
 	}
 
@@ -1376,6 +1401,18 @@ var testMakeRequestDialContext func(ctx context.Context, network, addr string) (
 
 var errBlockedRedirect = errors.New("blocked redirect to a different host")
 
+// isAllowedHost reports whether host may receive cross-host redirects.
+var allowedRedirectHosts = []string{"ollama.com", "ollama.ai", "hf.co", "huggingface.co"}
+
+func isAllowedHost(host string) bool {
+	for _, h := range allowedRedirectHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
@@ -1416,16 +1453,20 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	if checkRedirect == nil {
 		insecure := regOpts != nil && regOpts.Insecure
 		// Default redirect policy: same-host only, so a registry can't steer
-		// manifest or blob requests at internal addresses. --insecure opts out
-		// for trusted LAN/local registries.
+		// manifest or blob requests at internal addresses. CDN-backed
+		// registries redirect among their own hosts, allowed via
+		// isAllowedHost. --insecure opts out for trusted LAN/local registries.
 		checkRedirect = func(req *http.Request, via []*http.Request) error {
 			if len(via) > 10 {
 				return errMaxRedirectsExceeded
 			}
-			if !insecure && req.URL.Host != via[0].URL.Host {
-				return errBlockedRedirect
+			if insecure || req.URL.Host == via[0].URL.Host {
+				return nil
 			}
-			return nil
+			if isAllowedHost(via[0].URL.Hostname()) && isAllowedHost(req.URL.Hostname()) {
+				return nil
+			}
+			return errBlockedRedirect
 		}
 	}
 

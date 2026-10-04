@@ -67,9 +67,7 @@ func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int,
 }
 
 func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
-	// Double-scale nvfp4 (e.g., NVIDIA ModelOpt) applies the per-tensor or
-	// per-row global scale inside QuantizedMatmul.
-	out := mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true, ql.GroupSize, ql.Bits, ql.Mode, ql.GlobalScale)
+	out := ql.matmul(x, ql.GlobalScale)
 	if ql.Bias != nil {
 		bias := ql.Bias
 		if bias.DType() != out.DType() {
@@ -78,6 +76,27 @@ func (ql *QuantizedLinear) Forward(x *mlx.Array) *mlx.Array {
 		out = out.Add(bias)
 	}
 	return out
+}
+
+func (ql *QuantizedLinear) matmul(x, globalScale *mlx.Array) *mlx.Array {
+	return mlx.QuantizedMatmul(x, ql.Weight, ql.Scales, ql.QBiases, true,
+		ql.GroupSize, ql.Bits, ql.Mode, globalScale)
+}
+
+// SwiGLU applies gate and up projections followed by a SwiGLU activation.
+// Quantized projections without bias defer their global scales so the scale
+// and activation operations can be fused.
+func SwiGLU(gate, up LinearLayer, x *mlx.Array) *mlx.Array {
+	gateOut, gateScale := forwardDeferScale(gate, x)
+	upOut, upScale := forwardDeferScale(up, x)
+	return mlx.SwiGLUScaled(gateOut, gateScale, upOut, upScale)
+}
+
+func forwardDeferScale(l LinearLayer, x *mlx.Array) (out, pending *mlx.Array) {
+	if ql, ok := l.(*QuantizedLinear); ok && ql.GlobalScale != nil && ql.Bias == nil {
+		return ql.matmul(x, nil), ql.GlobalScale
+	}
+	return l.Forward(x), nil
 }
 
 func (ql *QuantizedLinear) OutputDim() int32 {

@@ -30,12 +30,15 @@ package transfer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/ollama/ollama/manifest"
 )
 
 // Blob represents a content-addressed blob to transfer.
@@ -109,6 +112,11 @@ const (
 	maxRetries                 = 6
 	defaultUserAgent           = "ollama-transfer/1.0"
 
+	// maxTransientRetries is how many stalled or slow transfers a blob may
+	// absorb before they start counting against maxRetries. Both are usually
+	// recoverable, but a connection that only ever stalls still has to give up.
+	maxTransientRetries = 3
+
 	// resumeThreshold is the minimum blob size for resume support.
 	// Only blobs above this size keep partial .tmp files on failure.
 	resumeThreshold = 64 << 20 // 64 MB
@@ -161,12 +169,27 @@ func (p *progressTracker) add(n int64) {
 
 // Download downloads blobs in parallel with streaming hash verification.
 func Download(ctx context.Context, opts DownloadOptions) error {
+	if err := validateBlobs(opts.Blobs); err != nil {
+		return err
+	}
 	return download(ctx, opts)
 }
 
 // Upload uploads blobs in parallel.
 func Upload(ctx context.Context, opts UploadOptions) error {
+	if err := validateBlobs(opts.Blobs); err != nil {
+		return err
+	}
 	return upload(ctx, opts)
+}
+
+func validateBlobs(blobs []Blob) error {
+	for _, blob := range blobs {
+		if err := manifest.ValidateDigest(blob.Digest); err != nil {
+			return fmt.Errorf("blob %q: %w", blob.Digest, err)
+		}
+	}
+	return nil
 }
 
 // digestToPath converts sha256:abc123 to sha256-abc123

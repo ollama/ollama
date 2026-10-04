@@ -46,6 +46,7 @@ jobs:
             'cmake/**/*' \
             'llama/server/**/*' \
             'llama/compat/**/*' \
+            'llama/clef/**/*' \
             'LLAMA_CPP_VERSION' \
             'MLX_VERSION' \
             'MLX_C_VERSION' \

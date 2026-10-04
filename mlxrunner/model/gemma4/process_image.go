@@ -24,32 +24,56 @@ type preparedImage struct {
 }
 
 // visionTargetSize ports the reference resize: sides floored to
-// multiples of patchSize*poolingKernel under a patch budget, a
+// multiples of patchSize*poolingKernel under a soft-token budget, a
 // zero-flooring side clamped to one multiple.
-func visionTargetSize(height, width, patchSize, poolingKernel, maxPatches int32) (targetH, targetW int32, err error) {
+func visionTargetSize(height, width int, patchSize, poolingKernel, budget int32) (targetH, targetW int32, err error) {
 	if height <= 0 || width <= 0 {
 		return 0, 0, fmt.Errorf("invalid image size %dx%d", width, height)
 	}
 
-	sideMult := patchSize * poolingKernel
-	targetPx := float64(maxPatches) * float64(patchSize) * float64(patchSize)
+	side := int64(patchSize) * int64(poolingKernel)
+	if patchSize <= 0 || poolingKernel <= 0 || budget <= 0 ||
+		side > math.MaxInt32/int64(budget) || int64(poolingKernel)*int64(poolingKernel) > math.MaxInt32/int64(budget) {
+		return 0, 0, fmt.Errorf("invalid vision geometry: patch %d, pool %d, budget %d", patchSize, poolingKernel, budget)
+	}
+	sideMult := float64(side)
+	targetPx := float64(budget) * sideMult * sideMult
 	factor := math.Sqrt(targetPx / (float64(height) * float64(width)))
-	targetH = int32(math.Floor(factor*float64(height)/float64(sideMult))) * sideMult
-	targetW = int32(math.Floor(factor*float64(width)/float64(sideMult))) * sideMult
-	if targetH == 0 && targetW == 0 {
+	h := math.Floor(factor*float64(height)/sideMult) * sideMult
+	w := math.Floor(factor*float64(width)/sideMult) * sideMult
+	if h == 0 && w == 0 {
 		return 0, 0, fmt.Errorf("image %dx%d is too small to process", width, height)
 	}
 
-	maxSide := (maxPatches / (poolingKernel * poolingKernel)) * sideMult
-	if targetH == 0 {
-		targetH = sideMult
-		targetW = min(int32(math.Floor(float64(width)/float64(height)))*sideMult, maxSide)
-	} else if targetW == 0 {
-		targetW = sideMult
-		targetH = min(int32(math.Floor(float64(height)/float64(width)))*sideMult, maxSide)
+	maxSide := float64(budget) * sideMult
+	if h == 0 {
+		h = sideMult
+		w = min(math.Floor(float64(width)/float64(height))*sideMult, maxSide)
+	} else if w == 0 {
+		w = sideMult
+		h = min(math.Floor(float64(height)/float64(width))*sideMult, maxSide)
 	}
-	if float64(targetH)*float64(targetW) > targetPx {
+	if h*w > targetPx || h > maxSide || w > maxSide {
 		return 0, 0, fmt.Errorf("image %dx%d exceeds the patch budget after resize", width, height)
+	}
+	return int32(h), int32(w), nil
+}
+
+// dynamicVisionTargetSize chooses the smallest publisher-supported mode that
+// preserves both source dimensions, or the largest mode when none fits.
+func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32, error) {
+	var targetH, targetW int32
+	for _, budget := range [...]int32{70, 140, 280, 560, 1120} {
+		var err error
+		targetH, targetW, err = visionTargetSize(height, width, patch, pool, budget)
+		if err != nil {
+			return 0, 0, err
+		}
+		// Compare the rounded grid: choosing the nearest area can discard
+		// detail even when a larger supported mode preserves it.
+		if int(targetH) >= height && int(targetW) >= width {
+			return targetH, targetW, nil
+		}
 	}
 	return targetH, targetW, nil
 }
@@ -66,12 +90,19 @@ func (m *Model) preprocessImage(data []byte) (pixels []float32, positions []int3
 
 	patch, pool := m.Vision.PatchSize, m.Vision.PoolingKernelSize
 	bounds := img.Bounds()
-	img = dropAlpha(img, bounds)
-	targetH, targetW, err := visionTargetSize(int32(bounds.Dy()), int32(bounds.Dx()), patch, pool, m.visionSoftTokenBudget()*pool*pool)
+	targetH, targetW, err := dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool)
 	if err != nil {
 		return nil, nil, ImageGeometry{}, err
 	}
+	positionPatch := patch
+	if m.Vision.unified() {
+		positionPatch *= pool
+	}
+	if int(max(targetH, targetW)/positionPatch) > m.Vision.positionEmbeddingSize {
+		return nil, nil, ImageGeometry{}, fmt.Errorf("image patch grid exceeds vision position embedding size %d", m.Vision.positionEmbeddingSize)
+	}
 
+	img = dropAlpha(img, bounds)
 	resized := image.NewRGBA(image.Rect(0, 0, int(targetW), int(targetH)))
 	draw.CatmullRom.Scale(resized, resized.Bounds(), img, bounds, draw.Src, nil)
 

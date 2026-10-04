@@ -1,21 +1,24 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+  queryOptions,
+} from "@tanstack/react-query";
 import { fetchUser, fetchConnectUrl, disconnectUser } from "@/api";
+
+export const userQueryOptions = queryOptions({
+  queryKey: ["user"],
+  queryFn: fetchUser,
+  staleTime: 5 * 60 * 1000,
+  gcTime: 10 * 60 * 1000,
+  retry: 10,
+  retryDelay: (attemptIndex: number) => Math.min(500 * attemptIndex, 2000),
+});
 
 export function useUser() {
   const queryClient = useQueryClient();
 
-  const userQuery = useQuery({
-    queryKey: ["user"],
-    queryFn: async () => {
-      const result = await fetchUser();
-      return result;
-    },
-    staleTime: 5 * 60 * 1000, // Consider data stale after 5 minutes
-    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-    retry: 10,
-    retryDelay: (attemptIndex) => Math.min(500 * attemptIndex, 2000),
-    refetchOnMount: true, // Always fetch when component mounts
-  });
+  const userQuery = useQuery(userQueryOptions);
 
   // Mutation to refresh user data
   const refreshUser = useMutation({

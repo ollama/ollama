@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/png"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/mlx/mlxtest"
@@ -58,7 +59,7 @@ func TestParseMultimodalConfig(t *testing.T) {
 	if uv == nil || !uv.unified() {
 		t.Fatal("unified vision config not retained")
 	}
-	if uv.NumSoftTokens != 280 {
+	if uv.PatchSize != 16 || uv.PoolingKernelSize != 3 {
 		t.Fatalf("unified config = %+v", uv)
 	}
 
@@ -78,13 +79,6 @@ func TestParseMultimodalConfig(t *testing.T) {
 	}
 	if textOnly.VisionConfig != nil {
 		t.Fatal("text-only checkpoint grew a vision config")
-	}
-
-	if err := validateVisionSoftTokenBudget(280); err != nil {
-		t.Fatal(err)
-	}
-	if err := validateVisionSoftTokenBudget(300); err == nil {
-		t.Fatal("budget 300 accepted")
 	}
 }
 
@@ -202,12 +196,12 @@ func TestScatterMedia(t *testing.T) {
 func TestPrepareMediaExpansion(t *testing.T) {
 	m := visionTestModel()
 	m.Vision = &VisionConfig{
-		ModelType:         "gemma4_vision",
-		HiddenSize:        12,
-		PatchSize:         16,
-		PoolingKernelSize: 3,
-		DefaultOutputLen:  70,
-		RMSNormEps:        1e-6,
+		ModelType:             "gemma4_vision",
+		HiddenSize:            12,
+		PatchSize:             16,
+		PoolingKernelSize:     3,
+		RMSNormEps:            1e-6,
+		positionEmbeddingSize: 10240,
 	}
 	m.VisionTower = &VisionTower{}
 
@@ -224,7 +218,7 @@ func TestPrepareMediaExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 96x96 at budget 70 resizes to 384x384: 24x24 patches, 64 soft tokens,
+	// 96x96 selects 70 and resizes to 384x384: 24x24 patches, 64 soft tokens,
 	// spliced after the one-token text run.
 	wantSoft := 64
 	if len(prepared.Tokens) != 1+wantSoft+2 || prepared.Tokens[0] != 9 {
@@ -266,5 +260,92 @@ func TestPrepareMediaExpansion(t *testing.T) {
 	m.VisionTower = nil
 	if _, err := m.PrepareMedia([]model.Segment{{Kind: "image", Data: buf.Bytes()}}); err == nil {
 		t.Fatal("towerless model accepted an image")
+	}
+}
+
+func TestPrepareMediaDynamicImages(t *testing.T) {
+	var small, document bytes.Buffer
+	if err := png.Encode(&small, image.NewRGBA(image.Rect(0, 0, 320, 240))); err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(&document, image.NewRGBA(image.Rect(0, 0, 1800, 1400))); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"gemma4_vision", "gemma4_unified_vision"} {
+		t.Run(kind, func(t *testing.T) {
+			// Old fixed-budget metadata must not pin either image to 280.
+			mm, err := parseMultimodalConfig([]byte(`{
+				"vision_soft_tokens_per_image":280,
+				"vision_config":{"model_type":"` + kind + `",
+				"default_output_length":280,"num_soft_tokens":280}}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := visionTestModel()
+			m.Vision = mm.VisionConfig
+			m.Vision.positionEmbeddingSize = 10240
+			patch, pool := 16, 3
+			if m.Vision.unified() {
+				m.UnifiedEmbedder = &UnifiedVisionEmbedder{}
+				patch, pool = 48, 1
+			} else {
+				m.VisionTower = &VisionTower{}
+			}
+
+			segments := []model.Segment{
+				{Tokens: []int32{9}},
+				{Kind: "image", Data: small.Bytes()},
+				{Tokens: []int32{10, 11}},
+				{Kind: "image", Data: document.Bytes()},
+			}
+			prepared, err := m.PrepareMedia(segments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(prepared.Items) != 2 || len(prepared.Tokens) != 1+65+2+1075 {
+				t.Fatalf("items = %d, tokens = %d", len(prepared.Items), len(prepared.Tokens))
+			}
+			for i, want := range []struct{ start, end, w, h, soft int }{
+				{1, 66, 432, 336, 63},
+				{68, 1143, 1776, 1392, 1073},
+			} {
+				item := prepared.Items[i]
+				if item.Range != [2]int{want.start, want.end} || item.Source != 2*i+1 {
+					t.Fatalf("item %d: range = %v, source = %d", i, item.Range, item.Source)
+				}
+				p := item.Opaque.(preparedImage)
+				wantGeom := ImageGeometry{PatchesW: int32(want.w / patch), PatchesH: int32(want.h / patch), NumSoftTokens: int32(want.soft)}
+				if p.geom != wantGeom || len(p.positions) != 2*want.soft*pool*pool {
+					t.Fatalf("item %d: geometry = %+v, positions = %d", i, p.geom, len(p.positions))
+				}
+				if !slices.Equal(item.Dims, []int{want.soft * pool * pool, patch * patch * 3}) || len(item.MediaData) != want.w*want.h*3 {
+					t.Fatalf("item %d: dims = %v, pixels = %d", i, item.Dims, len(item.MediaData))
+				}
+				if prepared.Tokens[want.start] != m.MM.BOITokenID || prepared.Tokens[want.end-1] != m.MM.EOITokenID {
+					t.Fatalf("item %d: missing image delimiters", i)
+				}
+				for _, token := range prepared.Tokens[want.start+1 : want.end-1] {
+					if token != m.MM.ImageTokenID {
+						t.Fatalf("item %d: soft token = %d", i, token)
+					}
+				}
+			}
+
+			// Preparing the same image again in a continuation retains its
+			// representation, independently of the other image or text.
+			repeated, err := m.PrepareMedia(append(segments[:2:2], model.Segment{Tokens: []int32{12}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, b := prepared.Items[0], repeated.Items[0]
+			pa, pb := a.Opaque.(preparedImage), b.Opaque.(preparedImage)
+			if pa.geom != pb.geom || !slices.Equal(pa.positions, pb.positions) || !slices.Equal(a.Dims, b.Dims) || !slices.Equal(a.MediaData, b.MediaData) {
+				t.Fatal("repeated image changed representation")
+			}
+			m.Vision.positionEmbeddingSize = 1
+			if _, err := m.PrepareMedia(segments); err == nil {
+				t.Fatal("out-of-bounds position grid accepted")
+			}
+		})
 	}
 }

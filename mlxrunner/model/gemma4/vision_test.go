@@ -15,7 +15,8 @@ import (
 func TestVisionTargetSize(t *testing.T) {
 	cases := []struct {
 		name           string
-		h, w, budget   int32
+		h, w           int
+		budget         int32
 		wantH, wantW   int32
 		wantSoftTokens int32
 	}{
@@ -25,10 +26,19 @@ func TestVisionTargetSize(t *testing.T) {
 		{"square large budget", 896, 896, 1120, 1584, 1584, 1089},
 		{"extreme aspect clamps", 10, 10000, 280, 48, 13440, 280},
 		{"tiny upscales", 20, 20, 280, 768, 768, 256},
+		// Reference: Transformers 2c4914fb939fe9de0d8e7a798af4684d552f18b4,
+		// models/gemma4/image_processing_gemma4.py:get_aspect_ratio_preserving_size,
+		// called with (height=1400, width=1800, patch_size=16,
+		// max_patches=budget*9, pooling_kernel_size=3).
+		{"document 70", 1400, 1800, 70, 336, 432, 63},
+		{"document 140", 1400, 1800, 140, 480, 624, 130},
+		{"document 280", 1400, 1800, 280, 672, 864, 252},
+		{"document 560", 1400, 1800, 560, 960, 1248, 520},
+		{"document 1120", 1400, 1800, 1120, 1392, 1776, 1073},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotH, gotW, err := visionTargetSize(c.h, c.w, 16, 3, c.budget*9)
+			gotH, gotW, err := visionTargetSize(c.h, c.w, 16, 3, c.budget)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -38,6 +48,78 @@ func TestVisionTargetSize(t *testing.T) {
 			soft := (gotH / 16) * (gotW / 16) / 9
 			if soft != c.wantSoftTokens {
 				t.Fatalf("soft tokens = %d, want %d", soft, c.wantSoftTokens)
+			}
+		})
+	}
+}
+
+func TestDynamicVisionTargetSize(t *testing.T) {
+	cases := []struct {
+		name         string
+		h, w         int
+		wantH, wantW int32
+	}{
+		{"tiny", 1, 1, 384, 384},
+		{"small counting image", 120, 210, 288, 528},
+		{"small landscape", 240, 320, 336, 432},
+		{"small text preserves resolution", 400, 500, 480, 624},
+		{"portrait text preserves resolution", 500, 400, 624, 480},
+		{"area alone does not preserve height", 49, 858, 96, 2352},
+		{"small square", 512, 512, 528, 528},
+		{"native square", 768, 768, 768, 768},
+		{"large square", 1024, 1024, 1104, 1104},
+		{"landscape", 720, 1280, 816, 1488},
+		{"document", 1400, 1800, 1392, 1776},
+		{"portrait document", 1800, 1400, 1776, 1392},
+		{"4K", 2160, 3840, 1200, 2112},
+		{"thin", 10, 10000, 48, 13440},
+		{"tall", 10000, 10, 13440, 48},
+		{"huge width", 1, math.MaxInt, 48, 53760},
+		{"huge height", math.MaxInt, 1, 53760, 48},
+		{"huge square", math.MaxInt, math.MaxInt, 1584, 1584},
+		{"70 at boundary", 384, 384, 384, 384},
+		{"140 above boundary", 385, 385, 528, 528},
+		{"140 at boundary", 528, 528, 528, 528},
+		{"280 above boundary", 529, 529, 768, 768},
+		{"280 at boundary", 768, 768, 768, 768},
+		{"560 above boundary", 769, 769, 1104, 1104},
+		{"560 at boundary", 1104, 1104, 1104, 1104},
+		{"1120 above boundary", 1105, 1105, 1584, 1584},
+		{"1120 at boundary", 1584, 1584, 1584, 1584},
+		{"1120 caps resolution", 1585, 1585, 1584, 1584},
+		{"wide preserves resolution", 300, 2688, 336, 3360},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h, w, err := dynamicVisionTargetSize(c.h, c.w, 16, 3)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h != c.wantH || w != c.wantW {
+				t.Fatalf("target = %dx%d, want %dx%d", w, h, c.wantW, c.wantH)
+			}
+		})
+	}
+}
+
+func TestVisionTargetSizeInvalid(t *testing.T) {
+	cases := []struct {
+		name                string
+		h, w                int
+		patch, pool, budget int32
+	}{
+		{"empty", 0, 100, 16, 3, 1120},
+		{"negative", 100, -1, 16, 3, 1120},
+		{"zero patch", 100, 100, 0, 3, 1120},
+		{"negative pool", 100, 100, 16, -1, 1120},
+		{"zero budget", 100, 100, 16, 3, 0},
+		{"dimension overflow", 100, 100, math.MaxInt32, 3, 1120},
+		{"patch count overflow", 100, 100, 1, 2000, 1120},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := visionTargetSize(c.h, c.w, c.patch, c.pool, c.budget); err == nil {
+				t.Fatal("invalid geometry accepted")
 			}
 		})
 	}

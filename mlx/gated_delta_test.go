@@ -76,6 +76,24 @@ func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
 	}
 }
 
+func TestGatedDeltaRecurrenceUsesFastUpdate(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("requires Metal")
+		}
+
+		in := fastGatedDeltaPatternInputs(1, 33, 16, 128, 48, 128, DTypeBFloat16)
+		y, state := gatedDeltaRecurrence(in.q, in.k, in.v, in.gates, in.beta, in.state)
+		wantY, wantState := fastGatedDeltaUpdate(in.q, in.k, in.v, in.gates, in.beta, in.state, nil)
+		if err := requireExact("y", y, wantY); err != nil {
+			t.Fatal(err)
+		}
+		if err := requireExact("state", state, wantState); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func TestGatedDeltaGraphRouting(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaGraphRouting(t)

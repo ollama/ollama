@@ -3234,6 +3234,12 @@ bool translate_metadata(const llama_model_loader * ml,
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
     }
+    // Clef's joint head is consumed by the server after backbone evaluation.
+    const int decision_key = gguf_find_key(meta, (arch_name + ".decision.type").c_str());
+    if (decision_key >= 0 && gguf_get_kv_type(meta, decision_key) == GGUF_TYPE_STRING &&
+            std::strcmp(gguf_get_val_str(meta, decision_key), "clef") == 0) {
+        add_skip_prefix(ml, "clef.");
+    }
     // embeddinggemma must run before gemma3: it switches arch_name to
     // "gemma-embedding", which is what later checks (and the loader's KV
     // prefix) need to see.

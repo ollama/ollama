@@ -78,6 +78,20 @@ var SwiGLU = Compile2(
 	Shapeless(),
 )
 
+var swiGLUScaled = Compile(
+	"SwiGLUScaled",
+	func(in ...*Array) []*Array {
+		gate, gateFactor, up, upFactor := in[0], in[1], in[2], in[3]
+		// Preserve the standalone scale path's rounding before applying
+		// SwiGLU. Compile still keeps these casts in the fused kernel instead
+		// of materializing two scaled projection outputs.
+		gate = Mul(gate, gateFactor).AsType(gate.DType())
+		up = Mul(up, upFactor).AsType(up.DType())
+		return []*Array{SiLU(gate).Multiply(up)}
+	},
+	Shapeless(),
+)
+
 // GeGLU returns gelu_approx(gate) * up as a fused kernel. Matches mlx_lm's
 // geglu, used by Gemma-family MLP and MoE paths.
 var GeGLU = Compile2(
@@ -87,6 +101,24 @@ var GeGLU = Compile2(
 	},
 	Shapeless(),
 )
+
+// SwiGLUScaled applies each non-nil quantization global scale, rounds the
+// projection back to its input dtype, then evaluates SwiGLU. A nil scale means
+// that projection is already complete.
+func SwiGLUScaled(gate, gateScale, up, upScale *Array) *Array {
+	if gateScale == nil && upScale == nil {
+		return SwiGLU(gate, up)
+	}
+	if gateScale == nil {
+		gateScale = identityGlobalScale()
+	}
+	if upScale == nil {
+		upScale = identityGlobalScale()
+	}
+	// Rank 0 or one-dimensional, so convert once here rather than per output
+	// element inside the compiled function.
+	return swiGLUScaled(gate, globalScaleFactor(gateScale), up, globalScaleFactor(upScale))[0]
+}
 
 // LogitSoftcap returns tanh(x / cap) * cap as a fused kernel. Matches
 // mlx_lm's logit_softcap. cap must have the same dtype as x.

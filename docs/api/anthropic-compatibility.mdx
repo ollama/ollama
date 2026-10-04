@@ -303,6 +303,8 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
 - [x] `stop_sequences`
 - [x] `tools`
 - [x] `thinking`
+- [x] `output_config`
+  - [x] `effort` (model-defined names)
 - [ ] `tool_choice`
 - [ ] `metadata`
 
@@ -326,6 +328,8 @@ See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [di
 - [x] `message_stop`
 - [x] `ping`
 - [x] `error`
+
+Use `/api/show` to discover a model's supported thinking values and default. `thinking.type: "enabled"` and `"disabled"` act as explicit on/off controls. When a model uses its metadata to resolve named levels, supported `output_config.effort` names are applied exactly and unsupported names resolve to the model default. Models without metadata keep the existing compatibility behavior, which trims and lowercases effort names and maps `"xhigh"` to `"high"`.
 
 ## Models
 

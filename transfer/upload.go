@@ -376,11 +376,11 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (uploadEndpoint, e
 		if !sessionURL.IsAbs() {
 			sessionURL = base.ResolveReference(sessionURL)
 		}
-		if err := validateRedirectScheme(sessionURL, u.baseURL); err != nil {
+		if err := ValidateRedirectScheme(sessionURL, u.baseURL); err != nil {
 			return uploadEndpoint{}, err
 		}
 		if base != nil && sessionURL.Host != base.Host {
-			if err := validateRedirectTarget(ctx, sessionURL, u.baseURL, u.allowPrivate); err != nil {
+			if err := ValidateRedirectTarget(ctx, sessionURL, u.baseURL, u.allowPrivate); err != nil {
 				return uploadEndpoint{}, err
 			}
 		}
@@ -397,7 +397,7 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (uploadEndpoint, e
 			// (percent-encoding case, query ordering) which can change the
 			// canonical form a signed URL was computed over.
 			if d, err := url.Parse(directURL); err == nil && d.IsAbs() {
-				if err := validateRedirectTarget(ctx, d, u.baseURL, u.allowPrivate); err != nil {
+				if err := ValidateRedirectTarget(ctx, d, u.baseURL, u.allowPrivate); err != nil {
 					return uploadEndpoint{}, err
 				}
 				ep.directUploadURL = directURL
@@ -670,7 +670,7 @@ func (u *uploader) uploadOnePart(ctx context.Context, sessionURL *url.URL, part 
 		if redirectURL == nil {
 			return nil, nil, pr.bytes(), fmt.Errorf("patch part %d: 307 without Location", part.n)
 		}
-		if err := validateRedirectTarget(ctx, redirectURL, u.baseURL, u.allowPrivate); err != nil {
+		if err := ValidateRedirectTarget(ctx, redirectURL, u.baseURL, u.allowPrivate); err != nil {
 			return nil, nil, pr.bytes(), err
 		}
 		// The PATCH attempt's progress is wasted — we re-upload to CDN.

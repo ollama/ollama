@@ -15,6 +15,17 @@ import (
 // wrappers that apply it themselves divide it back out.
 const Nvfp4MaxProduct = 448 * 6
 
+// globalScaleFactor converts a stored global scale into the multiplier an
+// output needs.
+func globalScaleFactor(scale *Array) *Array {
+	return DivScalar(scale, Nvfp4MaxProduct)
+}
+
+// identityGlobalScale leaves a value unchanged.
+func identityGlobalScale() *Array {
+	return FromValue(float32(Nvfp4MaxProduct))
+}
+
 // scaleAndCast applies a global scale to an output and casts back, fusing the
 // divide, multiply and cast into one kernel. Eagerly this is several: MLX
 // promotes binary operands with an astype, so a bf16 input times a float32
@@ -22,7 +33,7 @@ const Nvfp4MaxProduct = 448 * 6
 var scaleAndCast = Compile2(
 	"GlobalScaleOutput",
 	func(out, scale *Array) *Array {
-		return Mul(out, DivScalar(scale, Nvfp4MaxProduct)).AsType(out.DType())
+		return Mul(out, globalScaleFactor(scale)).AsType(out.DType())
 	},
 	Shapeless(),
 )

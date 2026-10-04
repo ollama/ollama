@@ -5,9 +5,10 @@
 // still render prompts in Go and call /completion. Other GGUF chat models use
 // llama-server's chat_template handling through /v1/chat/completions.
 //
-// For structured output, JSON schemas are passed directly to llama-server via
-// its json_schema field (avoiding the CGO SchemaToGrammar dependency). Raw BNF
-// grammars are passed via the grammar field.
+// For structured output, a JSON schema is passed to llama-server via its
+// json_schema field and the "json" format as a builtin grammar via the grammar
+// field. A format that applies after a response's thinking is sent as a
+// grammar built around the GBNF llama-server itself derives from the schema.
 //
 // llama-server auto-detects GPU layers (-ngl), thread count (-t), and flash
 // attention (--flash-attn).
@@ -16,6 +17,7 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
@@ -1425,6 +1427,85 @@ type llamaServerCompletionRequest struct {
 	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
 }
 
+// schemaGrammars caches the grammars llama-server derives from JSON schemas,
+// most recently used first. The conversion depends only on the llama-server
+// build, which is fixed for the process, so entries are shared by every
+// runner and never expire.
+var schemaGrammars = struct {
+	sync.Mutex
+	entries map[string]*list.Element
+	order   list.List
+}{entries: map[string]*list.Element{}}
+
+const schemaGrammarsSize = 64
+
+type schemaGrammar struct {
+	schema, grammar string
+}
+
+// schemaGrammar converts a JSON schema to GBNF with llama-server's own
+// converter. An empty completion evaluates and generates nothing, but its
+// final response still reports the grammar the schema was converted to.
+func (s *llamaServerRunner) schemaGrammar(ctx context.Context, schema json.RawMessage) (string, error) {
+	key := string(schema)
+	schemaGrammars.Lock()
+	if e, ok := schemaGrammars.entries[key]; ok {
+		schemaGrammars.order.MoveToFront(e)
+		schemaGrammars.Unlock()
+		return e.Value.(*schemaGrammar).grammar, nil
+	}
+	schemaGrammars.Unlock()
+
+	body, err := json.Marshal(struct {
+		Prompt         [][]int         `json:"prompt"`
+		NPredict       int             `json:"n_predict"`
+		JsonSchema     json.RawMessage `json:"json_schema"`
+		ResponseFields []string        `json:"response_fields"`
+	}{Prompt: [][]int{{}}, JsonSchema: schema, ResponseFields: []string{"generation_settings/grammar"}})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal grammar request: %v", err)
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
+	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("error creating grammar request: %v", err)
+	}
+	serverReq.Header.Set("Content-Type", "application/json")
+	res, err := s.httpClient().Do(serverReq)
+	if err != nil {
+		return "", fmt.Errorf("llama-server grammar request failed: %v", err)
+	}
+	defer res.Body.Close()
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed reading llama-server grammar response: %w", err)
+	}
+	if res.StatusCode >= 400 {
+		return "", api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(resBody)}
+	}
+	var lsRes struct {
+		Grammar string `json:"generation_settings/grammar"`
+	}
+	if err := json.Unmarshal(resBody, &lsRes); err != nil {
+		return "", fmt.Errorf("error unmarshalling llama-server grammar response: %v", err)
+	}
+	if lsRes.Grammar == "" {
+		return "", errors.New("llama-server returned no grammar for the schema")
+	}
+
+	schemaGrammars.Lock()
+	defer schemaGrammars.Unlock()
+	if _, ok := schemaGrammars.entries[key]; !ok {
+		if schemaGrammars.order.Len() == schemaGrammarsSize {
+			oldest := schemaGrammars.order.Back()
+			delete(schemaGrammars.entries, oldest.Value.(*schemaGrammar).schema)
+			schemaGrammars.order.Remove(oldest)
+		}
+		schemaGrammars.entries[key] = schemaGrammars.order.PushFront(&schemaGrammar{schema: key, grammar: lsRes.Grammar})
+	}
+	return lsRes.Grammar, nil
+}
+
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
 	tokens := append([]string{}, parserTokens...)
 	tokens = append(tokens, llamaServerPreservedTokensForToolTag(toolCallTag)...)
@@ -1588,7 +1669,6 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		TypicalP:        req.Options.TypicalP,
 		Seed:            req.Options.Seed,
 		PreservedTokens: llamaServerPreservedTokens(req.PreservedTokens, req.ToolCallTag),
-		TimingsPerToken: req.IncludeIntermediateMetrics,
 	}
 
 	if req.Logprobs {
@@ -1609,6 +1689,19 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
 		}
+	}
+
+	// A format on a thinking response applies after the closing string, which
+	// only a grammar of our own can express, so a schema is converted first.
+	if len(req.ThinkingClose) > 0 && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
+		if lsReq.Grammar == "" {
+			grammar, err := s.schemaGrammar(ctx, lsReq.JsonSchema)
+			if err != nil {
+				return err
+			}
+			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
+		}
+		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
@@ -1716,16 +1809,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
-				resp := CompletionResponse{Content: lsResp.Content}
-				if req.IncludeIntermediateMetrics {
-					resp.PromptEvalCount = lsResp.Timings.promptEvalCount()
-					resp.PromptEvalCachedCount = lsResp.Timings.CacheN
-					resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
-					resp.EvalCount = lsResp.Timings.PredictN
-					resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
-				}
-				resp.Logprobs = convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0)
-				fn(resp)
+				fn(CompletionResponse{
+					Content:  lsResp.Content,
+					Logprobs: convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0),
+				})
 			}
 
 			if lsResp.Stop {

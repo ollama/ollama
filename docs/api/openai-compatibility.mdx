@@ -242,13 +242,15 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [x] `top_p`
 - [x] `max_tokens`
 - [x] `tools`
-- [x] `reasoning_effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
+- [x] `reasoning_effort` (model-defined names and compatibility aliases)
 - [x] `reasoning`
-  - [x] `effort` (`"high"`, `"medium"`, `"low"`, `"max"`, `"none"`)
+  - [x] `effort` (model-defined names and compatibility aliases)
 - [ ] `tool_choice`
 - [ ] `logit_bias`
 - [ ] `user`
 - [ ] `n`
+
+`reasoning_effort` and `reasoning.effort` control model thinking. Use `/api/show` to discover each model's supported values and default. When a model uses its metadata to resolve named levels, supported names are applied exactly and unsupported names resolve to the model default. Boolean-only models that support enabling thinking map recognized compatibility efforts to `true`, while `"none"` requests `false`. Models without metadata retain the existing compatibility aliases: `"minimal"` maps to `"low"`, and `"xhigh"` or `"ultra"` map to `"max"`. GPT-OSS keeps its existing OpenAI compatibility conversion: `"minimal"` uses `"low"`, `"xhigh"` or `"ultra"` use `"high"`, and `"none"` requests no thinking output.
 
 ### `/v1/completions`
 
@@ -338,6 +340,9 @@ Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_output_tokens`
+- [x] `reasoning`
+  - [x] `effort` (model-defined names and compatibility aliases)
+- [x] `think` (Ollama extension; boolean, model-defined string, or `null`)
 - [ ] `previous_response_id` (stateful v1/responses not supported)
 - [ ] `conversation` (stateful v1/responses not supported)
 - [ ] `truncation`

@@ -764,9 +764,6 @@ func newModel(root *model.Root) (model.Model, error) {
 	}
 
 	if m.Vision != nil {
-		if err := validateVisionSoftTokenBudget(m.visionSoftTokenBudget()); err != nil {
-			return nil, err
-		}
 		m.mediaPlaceholderIDs = append(m.mediaPlaceholderIDs, mm.ImageTokenID)
 	}
 	if m.Audio != nil {

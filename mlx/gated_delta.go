@@ -298,6 +298,9 @@ func gatedDeltaRecurrenceGraph(q, k, v, g, beta, state *Array) (y, nextState *Ar
 // directly.
 func gatedDeltaRecurrence(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	if dims, ok := resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state); ok {
+		if supportsFastGatedDeltaUpdate(dims) {
+			return fastGatedDeltaUpdate(q, k, v, g, beta, state, nil)
+		}
 		outs := gatedDeltaRecurrenceKernel.run(gpuLaunch{
 			dtypes: []gpuDTypeArg{{"InT", q.DType()}, {"StT", state.DType()}},
 			ints:   []gpuIntArg{{"Dk", dims.Dk}, {"Dv", dims.Dv}, {"Hk", dims.Hk}, {"Hv", dims.Hv}},
@@ -317,6 +320,17 @@ func gatedDeltaRecurrence(q, k, v, g, beta, state *Array) (y, nextState *Array) 
 		panic("mlx: gated-delta recurrence: invalid inputs or unsupported shapes")
 	}
 	return y, nextState
+}
+
+// supportsFastGatedDeltaUpdate reports whether MLX's Metal kernel is available
+// for this geometry. Short scans stay on Ollama's whole-step kernel, which also
+// serves MTP.
+func supportsFastGatedDeltaUpdate(dims gatedDeltaRecurrenceDims) bool {
+	if !MetalIsAvailable() || dims.T < 16 || dims.Dk != 128 || dims.Dv != 128 {
+		return false
+	}
+	return (dims.Hk == 16 && (dims.Hv == 16 || dims.Hv == 32 || dims.Hv == 48 || dims.Hv == 64)) ||
+		(dims.Hk == 24 && dims.Hv == 24) || (dims.Hk == 32 && dims.Hv == 32)
 }
 
 // gatedDeltaMaxTokens caps the fused scan length at the current token plus
