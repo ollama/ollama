@@ -44,13 +44,14 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		return model.ConfigV2{}, err
 	}
 
-	return model.ConfigV2{
+	config := model.ConfigV2{
 		ModelFormat:        "safetensors",
 		Parser:             parserName,
 		Renderer:           rendererName,
 		Capabilities:       capabilities,
 		GenerationDefaults: generationDefaults,
-	}, nil
+	}
+	return config, nil
 }
 
 func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {

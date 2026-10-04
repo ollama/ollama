@@ -179,16 +179,16 @@ func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, 
 			// A chunk's MediaData rows are mel frames for the conformer
 			// and one raw waveform frame per soft token for the unified
 			// embedder.
-			var chunks []audioChunk
+			var chunks []AudioChunk
 			if m.Audio.unified() {
 				frames, tokens, err := processUnifiedAudio(seg.Data, int(m.Audio.SamplesPerToken))
 				if err != nil {
 					return nil, err
 				}
-				chunks = []audioChunk{{data: frames, frames: tokens, numTokens: tokens}}
+				chunks = []AudioChunk{{Data: frames, Frames: tokens, NumTokens: tokens}}
 			} else {
 				var err error
-				if chunks, err = processAudio(seg.Data); err != nil {
+				if chunks, err = ProcessAudio(seg.Data); err != nil {
 					return nil, err
 				}
 			}
@@ -196,15 +196,15 @@ func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, 
 			prepared.Tokens = append(prepared.Tokens, m.MM.BOATokenID)
 			for _, chunk := range chunks {
 				start := len(prepared.Tokens)
-				for range chunk.numTokens {
+				for range chunk.NumTokens {
 					prepared.Tokens = append(prepared.Tokens, m.MM.AudioTokenID)
 				}
 				prepared.Items = append(prepared.Items, model.PreparedItem{
 					Range:     [2]int{start, len(prepared.Tokens)},
 					Source:    s,
-					MediaData: chunk.data,
-					Dims:      []int{chunk.frames, len(chunk.data) / chunk.frames},
-					Opaque:    preparedAudio{numTokens: int32(chunk.numTokens)},
+					MediaData: chunk.Data,
+					Dims:      []int{chunk.Frames, len(chunk.Data) / chunk.Frames},
+					Opaque:    preparedAudio{numTokens: int32(chunk.NumTokens)},
 					Causal:    true,
 				})
 			}
