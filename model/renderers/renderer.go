@@ -13,29 +13,10 @@ type Renderer interface {
 	LeadingBOS() string
 }
 
-type (
-	RendererConstructor func() Renderer
-	RendererRegistry    struct {
-		renderers map[string]RendererConstructor
-	}
-)
-
 // RenderImgTags is a global flag that tells renderers to use [img] tags
 // for images. This is set by the Ollama server package on init, or left as
 // false for other environments where renderers are used
 var RenderImgTags bool
-
-func (r *RendererRegistry) Register(name string, renderer RendererConstructor) {
-	r.renderers[name] = renderer
-}
-
-var registry = RendererRegistry{
-	renderers: make(map[string]RendererConstructor),
-}
-
-func Register(name string, renderer RendererConstructor) {
-	registry.Register(name, renderer)
-}
 
 func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	renderer := rendererForName(name)
@@ -55,9 +36,6 @@ func LeadingBOSForRenderer(name string) string {
 }
 
 func rendererForName(name string) Renderer {
-	if constructor, ok := registry.renderers[name]; ok {
-		return constructor()
-	}
 	switch name {
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{}
