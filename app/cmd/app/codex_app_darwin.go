@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	appui "github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/modelref"
@@ -38,85 +37,25 @@ type codexDesktopController interface {
 	Running() bool
 	OllamaRequestCount() uint64
 	UseOllamaFromDesktop(string, []launch.LaunchModel, bool) error
-	UpdateOllamaModelsFromDesktop(string, []launch.LaunchModel, bool) error
 	RestoreFromDesktop(bool) error
-	RestartFromDesktop(bool) error
 	Onboard() error
 }
 
 var (
 	codexDesktop                        codexDesktopController = &launch.CodexApp{}
 	codexDesktopClientFactory                                  = api.ClientFromEnvironment
-	codexDesktopLoadModels                                     = loadCodexDesktopModels
 	codexDesktopLoadConnectionModels                           = loadCodexDesktopConnectionModels
 	codexDesktopCloudModels                                    = loadCodexDesktopAccountCloudModels
 	codexDesktopRecommendations                                = loadCodexDesktopRecommendations
 	codexDesktopAccessState                                    = currentClaudeDesktopAccessState
 	codexDesktopRecommendationsClient                          = &http.Client{Timeout: 3 * time.Second}
 	codexDesktopRecommendationsEndpoint                        = func() string {
-		return strings.TrimRight(appui.OllamaDotCom, "/") + "/api/experimental/model-recommendations?app=codex-desktop"
+		return ollamaDotCom + "/api/experimental/model-recommendations?app=codex-desktop"
 	}
 	codexDesktopModelLoadAttempts = 20
 	codexDesktopModelRetryWait    = 250 * time.Millisecond
 	codexDesktopMu                sync.Mutex
 )
-
-type codexDesktopStatus struct {
-	Used      bool     `json:"used"`
-	Supported bool     `json:"supported"`
-	Installed bool     `json:"installed"`
-	Connected bool     `json:"connected"`
-	Running   bool     `json:"running"`
-	Model     string   `json:"model,omitempty"`
-	Models    []string `json:"models,omitempty"`
-	MaxModels int      `json:"maxModels"`
-	Requests  uint64   `json:"requests"`
-}
-
-type codexDesktopActionResult struct {
-	Status                      codexDesktopStatus `json:"status"`
-	Error                       string             `json:"error,omitempty"`
-	RestartConfirmationRequired bool               `json:"restartConfirmationRequired,omitempty"`
-}
-
-type codexDesktopInstallResult string
-
-const (
-	codexDesktopInstallCancelled codexDesktopInstallResult = "cancelled"
-	codexDesktopInstallerOpened  codexDesktopInstallResult = "opened"
-	codexDesktopInstallFailed    codexDesktopInstallResult = "failed"
-)
-
-type codexDesktopModelsSettings struct {
-	Supported bool `json:"supported"`
-	Installed bool `json:"installed"`
-	Connected bool `json:"connected"`
-	Running   bool `json:"running"`
-	// UsesDefaults keeps recommendations implicit without overwriting saved choices.
-	UsesDefaults bool                      `json:"usesDefaults"`
-	Selected     []string                  `json:"selected"`
-	Available    []string                  `json:"available"`
-	Models       []codexDesktopModelStatus `json:"models"`
-	MaxModels    int                       `json:"maxModels"`
-}
-
-type codexDesktopModelStatus struct {
-	Name         string `json:"name"`
-	DisplayName  string `json:"displayName"`
-	Description  string `json:"description,omitempty"`
-	Recommended  bool   `json:"recommended,omitempty"`
-	Selected     bool   `json:"selected"`
-	Availability string `json:"availability"`
-	Reason       string `json:"reason,omitempty"`
-	RequiredPlan string `json:"requiredPlan,omitempty"`
-}
-
-type codexDesktopModelsSettingsResult struct {
-	Settings                    codexDesktopModelsSettings `json:"settings"`
-	Error                       string                     `json:"error,omitempty"`
-	Warning                     string                     `json:"warning,omitempty"`
-	RestartConfirmationRequired bool                       `json:"restartConfirmationRequired,omitempty"`
-}
 
 type codexDesktopModelInventory struct {
 	Available      []launch.LaunchModel
@@ -133,33 +72,6 @@ type codexDesktopCatalogModel struct {
 	Availability proxy.ClaudeDesktopAvailability
 	Reason       proxy.ClaudeDesktopAccessReason
 	RequiredPlan string
-}
-
-func getCodexDesktopStatus() codexDesktopStatus {
-	connected := codexDesktop.OllamaConfigured()
-	requests := uint64(0)
-	if connected {
-		requests = codexDesktop.OllamaRequestCount()
-	}
-	var models []string
-	if saved, err := config.LoadIntegration(codexDesktopIntegrationName); err == nil && len(saved.Models) > 0 {
-		models = append([]string(nil), saved.Models...)
-	}
-	model := ""
-	if len(models) > 0 {
-		model = models[0]
-	}
-	return codexDesktopStatus{
-		Used:      hasUsedCodexDesktopIntegration(),
-		Supported: true,
-		Installed: codexDesktop.Installed(),
-		Connected: connected,
-		Running:   codexDesktop.Running(),
-		Model:     model,
-		Models:    models,
-		MaxModels: codexDesktopMaxModels,
-		Requests:  requests,
-	}
 }
 
 func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
@@ -213,149 +125,6 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	return nil
 }
 
-func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	return codexDesktopSettingsWithInventory(ctx, codexDesktopSettingsSummary())
-}
-
-func codexDesktopSettingsSummary() codexDesktopModelsSettings {
-	settings := codexDesktopModelsSettings{
-		Supported: true,
-		Installed: codexDesktop.Installed(),
-		Connected: codexDesktop.OllamaConfigured(),
-		Running:   codexDesktop.Running(),
-		Selected:  []string{},
-		Available: []string{},
-		Models:    []codexDesktopModelStatus{},
-		MaxModels: codexDesktopMaxModels,
-	}
-	// Keep restart available when inventory cannot be loaded.
-	settings.Selected = config.IntegrationModels(codexDesktopIntegrationName)
-	settings.UsesDefaults = len(settings.Selected) == 0
-	if len(settings.Selected) > codexDesktopMaxModels {
-		settings.Selected = settings.Selected[:codexDesktopMaxModels]
-	}
-	return settings
-}
-
-func codexDesktopSettingsWithInventory(ctx context.Context, settings codexDesktopModelsSettings) (codexDesktopModelsSettings, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
-	if err != nil {
-		return settings, err
-	}
-	settings.Available = codexDesktopModelNames(inventory.Available)
-	if len(settings.Selected) == 0 {
-		settings.Selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	}
-	settings.Models = codexDesktopModelStatuses(inventory, settings.Selected)
-	return settings, nil
-}
-
-func applyCodexDesktopModels(selected []string, restartConfirmed bool) error {
-	codexDesktopMu.Lock()
-	defer codexDesktopMu.Unlock()
-	return applyCodexDesktopModelsLocked(selected, restartConfirmed, true)
-}
-
-func resetCodexDesktopModels() error {
-	codexDesktopMu.Lock()
-	defer codexDesktopMu.Unlock()
-
-	// Reset preferences without enabling the integration or restarting ChatGPT.
-	if len(config.IntegrationModels(codexDesktopIntegrationName)) == 0 && !codexDesktop.OllamaConfigured() {
-		return nil
-	}
-	if err := config.SaveIntegration(codexDesktopIntegrationName, nil); err != nil {
-		return fmt.Errorf("reset ChatGPT models: %w", err)
-	}
-	return nil
-}
-
-func applyCodexDesktopModelsLocked(selected []string, restartConfirmed, openWhenStopped bool) error {
-	previous := config.IntegrationModels(codexDesktopIntegrationName)
-	savedSelection := append([]string(nil), selected...)
-	wasConfigured := codexDesktop.OllamaConfigured()
-	selectionUnchanged := slices.Equal(savedSelection, previous)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	primary, models, err := codexDesktopLoadModels(ctx, selected)
-	if err != nil {
-		if openWhenStopped && wasConfigured && selectionUnchanged {
-			return codexDesktop.RestartFromDesktop(restartConfirmed)
-		}
-		return err
-	}
-	if !wasConfigured && !openWhenStopped {
-		if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
-			return fmt.Errorf("save ChatGPT models: %w", err)
-		}
-		return nil
-	}
-	running := codexDesktop.Running()
-	if running && !restartConfirmed {
-		return errCodexDesktopRestartConfirmationRequired
-	}
-	if err := config.SaveIntegration(codexDesktopIntegrationName, savedSelection); err != nil {
-		return fmt.Errorf("save ChatGPT models: %w", err)
-	}
-	updateModels := codexDesktop.UseOllamaFromDesktop
-	if !openWhenStopped {
-		updateModels = codexDesktop.UpdateOllamaModelsFromDesktop
-	}
-	if err := updateModels(primary, models, restartConfirmed); err == nil {
-		return nil
-	} else if errors.Is(err, errCodexDesktopRestartConfirmationRequired) {
-		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		return err
-	} else if !wasConfigured {
-		if codexDesktop.OllamaConfigured() {
-			if restoreErr := codexDesktop.RestoreFromDesktop(true); restoreErr != nil {
-				_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-				return errors.Join(err, fmt.Errorf("restore ChatGPT after failed update: %w", restoreErr))
-			}
-		}
-		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		return fmt.Errorf("start ChatGPT with selected Ollama models: %w", err)
-	} else {
-		applyErr := err
-		_ = config.SaveIntegration(codexDesktopIntegrationName, previous)
-		rollbackCtx, rollbackCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer rollbackCancel()
-		rollbackPrimary, rollbackModels, rollbackErr := codexDesktopLoadModels(rollbackCtx, previous)
-		if rollbackErr == nil {
-			rollbackErr = updateModels(rollbackPrimary, rollbackModels, true)
-		}
-		if rollbackErr != nil {
-			// Restore the original profile if the previous selection is no longer usable.
-			if restoreErr := codexDesktop.RestoreFromDesktop(true); restoreErr != nil {
-				return errors.Join(
-					fmt.Errorf("apply ChatGPT models: %v; restore previous Ollama profile: %w", applyErr, rollbackErr),
-					fmt.Errorf("restore normal ChatGPT profile: %w", restoreErr),
-				)
-			}
-			return fmt.Errorf("apply ChatGPT models: %v; restore previous Ollama profile: %v; restored the normal ChatGPT profile", applyErr, rollbackErr)
-		}
-		return fmt.Errorf("apply ChatGPT models: %w", applyErr)
-	}
-}
-
-func loadCodexDesktopModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(selected) == 0 {
-		selected = codexDesktopModelNames(codexDesktopDefaultModels(inventory))
-	}
-	_, models, err := selectCodexDesktopModels(selected, inventory.Available)
-	if err != nil {
-		return "", nil, err
-	}
-	primary := codexDesktopPreferredPrimary(inventory.DefaultPrimary, models)
-	return primary, hydrateCodexDesktopModelCapabilities(ctx, models), nil
-}
-
 func loadCodexDesktopConnectionModels(ctx context.Context, selected []string) (string, []launch.LaunchModel, error) {
 	inventory, err := loadCodexDesktopModelInventory(ctx)
 	if err != nil {
@@ -397,11 +166,6 @@ func hydrateCodexDesktopModelCapabilities(ctx context.Context, models []launch.L
 		}
 	}
 	return hydrated
-}
-
-func loadCodexDesktopAvailableModels(ctx context.Context) ([]launch.LaunchModel, error) {
-	inventory, err := loadCodexDesktopModelInventory(ctx)
-	return inventory.Available, err
 }
 
 func loadCodexDesktopModelInventory(ctx context.Context) (codexDesktopModelInventory, error) {
@@ -762,53 +526,6 @@ func codexDesktopPreferredPrimary(preferred string, models []launch.LaunchModel)
 	return ""
 }
 
-func codexDesktopModelStatuses(inventory codexDesktopModelInventory, selected []string) []codexDesktopModelStatus {
-	selectedSet := make(map[string]bool, len(selected))
-	for _, name := range selected {
-		selectedSet[codexDesktopModelKey(name)] = true
-	}
-	statuses := make([]codexDesktopModelStatus, 0, len(inventory.Catalog)+len(selected))
-	seen := make(map[string]bool, cap(statuses))
-	for _, entry := range inventory.Catalog {
-		key := codexDesktopModelKey(entry.Model.Name)
-		seen[key] = true
-		displayName := entry.DisplayName
-		if displayName == "" {
-			displayName = entry.Model.Name
-		}
-		statuses = append(statuses, codexDesktopModelStatus{
-			Name:         entry.Model.Name,
-			DisplayName:  displayName,
-			Description:  entry.Description,
-			Recommended:  entry.Recommended,
-			Selected:     selectedSet[key],
-			Availability: string(entry.Availability),
-			Reason:       string(entry.Reason),
-			RequiredPlan: entry.RequiredPlan,
-		})
-	}
-	for _, name := range selected {
-		key := codexDesktopModelKey(name)
-		if key == "" || seen[key] {
-			continue
-		}
-		seen[key] = true
-		statuses = append(statuses, codexDesktopModelStatus{
-			Name:         name,
-			DisplayName:  name,
-			Selected:     true,
-			Availability: string(proxy.ClaudeDesktopAvailabilityUnknown),
-			Reason:       string(proxy.ClaudeDesktopAccessVerificationUnavailable),
-		})
-	}
-	return statuses
-}
-
-func buildCodexDesktopModels(selected []string, listed []api.ListModelResponse, accountCloud []string) (string, []launch.LaunchModel, error) {
-	available := codexDesktopAvailableModels(listed, accountCloud)
-	return selectCodexDesktopModels(selected, available)
-}
-
 func codexDesktopAvailableModels(listed []api.ListModelResponse, accountCloud []string) []launch.LaunchModel {
 	installed := make(map[string]api.ListModelResponse, len(listed))
 	for _, model := range listed {
@@ -989,24 +706,4 @@ func codexDesktopModelKey(name string) string {
 func codexDesktopCloudModel(name string) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
-}
-
-func hasUsedCodexDesktopIntegration() bool {
-	if appStore == nil {
-		return false
-	}
-	settings, err := appStore.Settings()
-	if err != nil {
-		return false
-	}
-	return settings.CodexDesktopUsed
-}
-
-func markCodexDesktopIntegrationUsed() error {
-	codexDesktopMu.Lock()
-	defer codexDesktopMu.Unlock()
-	if appStore == nil {
-		return errors.New("settings are unavailable")
-	}
-	return appStore.MarkCodexDesktopUsed()
 }
