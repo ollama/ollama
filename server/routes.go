@@ -51,6 +51,7 @@ import (
 	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/updater"
 	"github.com/ollama/ollama/version"
 )
 
@@ -2039,6 +2040,8 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.HEAD("/api/update", s.UpdateHandler)
+	r.GET("/api/update", s.UpdateHandler)
 	r.GET("/api/status", s.StatusHandler)
 	// Codex uses this existing Ollama listener for both native and Ollama
 	// models. The proxy selects the upstream per request.
@@ -2320,6 +2323,31 @@ func (s *Server) StatusHandler(c *gin.Context) {
 			Source:   source,
 		},
 	})
+}
+
+func (s *Server) UpdateHandler(c *gin.Context) {
+	includeRC := c.Query("rc") == "true" || c.Query("prerelease") == "true"
+	info, err := updater.Check(c.Request.Context(), updater.CheckOptions{
+		CurrentVersion: version.Version,
+		IncludeRC:      includeRC,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	resp := api.UpdateResponse{
+		CurrentVersion:  info.CurrentVersion,
+		LatestVersion:   info.LatestVersion,
+		UpdateAvailable: info.UpdateAvailable,
+		IsRC:            info.IsRC,
+		ReleaseURL:      info.ReleaseURL,
+		UpdateVersion:   info.LatestVersion,
+	}
+	if info.Asset != nil {
+		resp.UpdateURL = info.Asset.DownloadURL
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {

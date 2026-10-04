@@ -476,6 +476,15 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return version.Version, nil
 }
 
+// CheckUpdate queries the Ollama server for update information.
+func (c *Client) CheckUpdate(ctx context.Context) (*UpdateResponse, error) {
+	var resp UpdateResponse
+	if err := c.do(ctx, http.MethodGet, "/api/update", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // CloudStatusExperimental returns whether cloud features are disabled on the server.
 func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
 	var status StatusResponse

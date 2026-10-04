@@ -19,6 +19,18 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+// UpdateResponse describes the response from an update check request.
+type UpdateResponse struct {
+	UpdateURL       string `json:"url,omitempty"`
+	UpdateVersion   string `json:"version,omitempty"`
+	CurrentVersion  string `json:"current_version,omitempty"`
+	LatestVersion   string `json:"latest_version,omitempty"`
+	UpdateAvailable bool   `json:"update_available"`
+	IsRC            bool   `json:"is_rc,omitempty"`
+	ReleaseURL      string `json:"release_url,omitempty"`
+	Message         string `json:"message,omitempty"`
+}
+
 // StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int

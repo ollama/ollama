@@ -143,3 +143,44 @@ ollama serve
 ```
 
 To view a list of environment variables that can be set run `ollama serve --help`
+
+### Check for and pull Ollama updates
+
+Check if an update for Ollama is available:
+
+```
+ollama update check
+```
+
+Pull the latest Ollama update for your platform:
+
+```
+ollama update pull
+```
+
+Check and interactively pull an update:
+
+```
+ollama update
+```
+
+Or download and install the update:
+
+```
+sudo ollama update --install
+```
+
+Check for or pull release candidate (RC) and pre-release versions:
+
+```
+ollama update check --rc
+ollama update pull --rc
+```
+
+You can also use `ollama pull --update` or `ollama pull update` to download updates:
+
+```
+ollama pull --update
+ollama pull --update --rc
+```
+
