@@ -208,52 +208,6 @@ type Values struct {
 	forceLegacy bool
 }
 
-func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
-	var walk func(parse.Node) parse.Node
-	walk = func(n parse.Node) parse.Node {
-		if fn(n) {
-			return n
-		}
-
-		switch t := n.(type) {
-		case *parse.ListNode:
-			for _, c := range t.Nodes {
-				if n := walk(c); n != nil {
-					return n
-				}
-			}
-		case *parse.BranchNode:
-			for _, n := range []*parse.ListNode{t.List, t.ElseList} {
-				if n != nil {
-					if n := walk(n); n != nil {
-						return n
-					}
-				}
-			}
-		case *parse.IfNode:
-			return walk(&t.BranchNode)
-		case *parse.WithNode:
-			return walk(&t.BranchNode)
-		case *parse.RangeNode:
-			return walk(&t.BranchNode)
-		}
-
-		return nil
-	}
-
-	if n := walk(t.Tree.Root); n != nil {
-		return (&template.Template{
-			Tree: &parse.Tree{
-				Root: &parse.ListNode{
-					Nodes: []parse.Node{n},
-				},
-			},
-		}).Funcs(funcs)
-	}
-
-	return nil
-}
-
 func (t *Template) Execute(w io.Writer, v Values) error {
 	system, messages := collate(v.Messages)
 	vars, err := t.Vars()
