@@ -863,40 +863,5 @@ func (m *Model) NewCaches() []cache.Cache {
 // MaxContextLength returns the maximum context length
 func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }
 
-// VocabSize returns the vocabulary size
-func (m *Model) VocabSize() int32 { return m.Config.VocabSize }
-
 // Tokenizer returns the model's tokenizer
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return m.tok }
-
-// NewCache creates a new KV cache for the model
-func (m *Model) NewCache(maxSeqLen int32) []cache.Cache {
-	caches := make([]cache.Cache, len(m.Layers))
-	for i := range caches {
-		caches[i] = cache.NewKVCache()
-	}
-	return caches
-}
-
-// FormatPrompt applies the GLM-4 chat template with thinking enabled by default.
-func (m *Model) FormatPrompt(prompt string) string {
-	return "[gMASK]<sop><|user|>" + prompt + "<|assistant|><think>"
-}
-
-// FormatPromptWithThinking applies the GLM-4 chat template with explicit thinking control.
-func (m *Model) FormatPromptWithThinking(prompt string, think bool) string {
-	if think {
-		return "[gMASK]<sop><|user|>" + prompt + "<|assistant|><think>"
-	}
-	return "[gMASK]<sop><|user|>" + prompt + "<|assistant|></think>"
-}
-
-// NewRenderer returns a new Renderer for formatting multi-turn conversations.
-func (m *Model) NewRenderer() *Renderer {
-	return &Renderer{}
-}
-
-// NewParser returns a new Parser for extracting thinking and tool calls from output.
-func (m *Model) NewParser() *Parser {
-	return &Parser{}
-}
