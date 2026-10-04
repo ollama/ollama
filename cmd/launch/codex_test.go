@@ -757,3 +757,40 @@ func TestCodexThinkingControls(t *testing.T) {
 		})
 	}
 }
+
+func codexProviderHeader() string {
+	return codexProviderHeaderFor(codexProfileName)
+}
+
+func codexRootStringValue(text, key string) string {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return ""
+	}
+	return config.RootString(key)
+}
+
+func codexRootStringValueOK(text, key string) (string, bool) {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return "", false
+	}
+	return config.RootStringOK(key)
+}
+
+func codexStringValue(text string, path ...string) (string, bool) {
+	config, err := codexParseConfig(text)
+	if err != nil {
+		return "", false
+	}
+	return config.String(path...)
+}
+
+func codexSectionStringValue(text, header, key string) string {
+	path, ok := codexTableHeaderPath(header)
+	if !ok {
+		return ""
+	}
+	value, _ := codexStringValue(text, append(path, key)...)
+	return value
+}

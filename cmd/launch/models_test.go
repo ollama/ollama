@@ -75,3 +75,8 @@ func TestBuildModelList_InstalledRecommendedPreservesRecommendationAndMetadata(t
 		t.Fatalf("Description = %q, want recommendation description", got.Description)
 	}
 }
+
+// buildModelList merges existing models with recommendations for selection UIs.
+func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+	return buildModelListWithRecommendations(existing, recommendedModels, preChecked, current)
+}

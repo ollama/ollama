@@ -299,15 +299,6 @@ func SaveClaudeDesktopModelMappings(mappings map[string]string) error {
 	return config.SaveAliases(claudeDesktopIntegrationName, normalized)
 }
 
-// RestoreClaudeDesktopModels restores a previously captured selection. A nil
-// selection restores the implicit recommendation defaults.
-func RestoreClaudeDesktopModels(models []string) error {
-	if err := config.SaveIntegration(claudeDesktopIntegrationName, models); err != nil {
-		return err
-	}
-	return config.SaveAliases(claudeDesktopIntegrationName, nil)
-}
-
 // RestoreClaudeDesktopModelMappings restores a previously captured explicit
 // mapping, including the legacy no-mapping state.
 func RestoreClaudeDesktopModelMappings(models []string, mappings map[string]string) error {
@@ -538,13 +529,6 @@ func claudeDesktopDedupePaths(paths []string) []string {
 	return out
 }
 
-type claudeDesktopPaths struct {
-	normalConfig  string
-	desktopConfig string
-	meta          string
-	profile       string
-}
-
 type claudeDesktopThirdPartyPaths struct {
 	desktopConfig string
 	meta          string
@@ -554,62 +538,6 @@ type claudeDesktopThirdPartyPaths struct {
 type claudeDesktopTargets struct {
 	normalConfigs      []string
 	thirdPartyProfiles []claudeDesktopThirdPartyPaths
-}
-
-func claudeDesktopConfigPaths() (claudeDesktopPaths, error) {
-	switch claudeDesktopGOOS {
-	case "darwin":
-		return claudeDesktopDarwinConfigPaths()
-	case "windows":
-		return claudeDesktopWindowsConfigPaths()
-	default:
-		return claudeDesktopPaths{}, claudeDesktopSupported()
-	}
-}
-
-func claudeDesktopDarwinConfigPaths() (claudeDesktopPaths, error) {
-	normalRoots, thirdPartyRoots, err := claudeDesktopDarwinProfileRoots()
-	if err != nil {
-		return claudeDesktopPaths{}, err
-	}
-	normalBase := normalRoots[0]
-	thirdPartyBase := thirdPartyRoots[0]
-	return claudeDesktopPaths{
-		normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
-		desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
-		meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
-		profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
-	}, nil
-}
-
-func claudeDesktopWindowsConfigPaths() (claudeDesktopPaths, error) {
-	normalBase, err := claudeDesktopProfileDir(true)
-	if err != nil {
-		return claudeDesktopPaths{}, err
-	}
-	thirdPartyBase, err := claudeDesktopProfileDir(false)
-	if err != nil {
-		return claudeDesktopPaths{}, err
-	}
-	return claudeDesktopPaths{
-		normalConfig:  filepath.Join(normalBase, "claude_desktop_config.json"),
-		desktopConfig: filepath.Join(thirdPartyBase, "claude_desktop_config.json"),
-		meta:          filepath.Join(thirdPartyBase, "configLibrary", "_meta.json"),
-		profile:       filepath.Join(thirdPartyBase, "configLibrary", claudeDesktopProfileID+".json"),
-	}, nil
-}
-
-func claudeDesktopProfileDir(normal bool) (string, error) {
-	candidates := claudeDesktopProfileDirCandidates(normal)
-	if len(candidates) == 0 {
-		return "", errors.New("Claude Desktop profile directory could not be resolved")
-	}
-	for _, candidate := range candidates {
-		if _, err := claudeDesktopStat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return candidates[0], nil
 }
 
 func claudeDesktopProfileDirCandidates(normal bool) []string {

@@ -342,11 +342,6 @@ func prepareManagedAutodiscoveryIntegration(name string, autodiscovery ManagedAu
 	return nil
 }
 
-// buildModelList merges existing models with recommendations for selection UIs.
-func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
-	return buildModelListWithRecommendations(existing, recommendedModels, preChecked, current)
-}
-
 func buildModelListWithRecommendations(existing []modelInfo, recommendations []ModelItem, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
@@ -509,17 +504,6 @@ func filterCloudItems(items []ModelItem) []ModelItem {
 		}
 	}
 	return filtered
-}
-
-func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
-	if client == nil {
-		return false
-	}
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: name})
-	if err != nil {
-		return false
-	}
-	return resp.RemoteModel != ""
 }
 
 // cloudStatusDisabled returns whether cloud usage is currently disabled.

@@ -81,7 +81,10 @@ func SetLastSelection(selection string) error {
 }
 
 func IntegrationModel(appName string) string {
-	return config.IntegrationModel(appName)
+	if models := config.IntegrationModels(appName); len(models) > 0 {
+		return models[0]
+	}
+	return ""
 }
 
 func IntegrationModels(appName string) []string {

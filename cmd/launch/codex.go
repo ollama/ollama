@@ -345,10 +345,6 @@ func codexProfileHeader() string {
 	return codexProfileHeaderFor(codexProfileName)
 }
 
-func codexProviderHeader() string {
-	return codexProviderHeaderFor(codexProfileName)
-}
-
 func codexProfileHeaderFor(profileName string) string {
 	return fmt.Sprintf("[profiles.%s]", profileName)
 }
@@ -464,39 +460,6 @@ func (c codexParsedConfig) ProfileString(profileName, key string) string {
 
 func (c codexParsedConfig) ProviderString(profileName, key string) string {
 	value, _ := c.String("model_providers", profileName, key)
-	return value
-}
-
-func codexRootStringValue(text, key string) string {
-	config, err := codexParseConfig(text)
-	if err != nil {
-		return ""
-	}
-	return config.RootString(key)
-}
-
-func codexRootStringValueOK(text, key string) (string, bool) {
-	config, err := codexParseConfig(text)
-	if err != nil {
-		return "", false
-	}
-	return config.RootStringOK(key)
-}
-
-func codexStringValue(text string, path ...string) (string, bool) {
-	config, err := codexParseConfig(text)
-	if err != nil {
-		return "", false
-	}
-	return config.String(path...)
-}
-
-func codexSectionStringValue(text, header, key string) string {
-	path, ok := codexTableHeaderPath(header)
-	if !ok {
-		return ""
-	}
-	value, _ := codexStringValue(text, append(path, key)...)
 	return value
 }
 
