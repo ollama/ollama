@@ -148,11 +148,6 @@ func (s ServerStatus) String() string {
 	}
 }
 
-type ServerStatusResponse struct {
-	Status   ServerStatus `json:"status"`
-	Progress float32      `json:"progress"`
-}
-
 // Request/Response types
 
 const (
