@@ -13,18 +13,15 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	modelpkg "github.com/ollama/ollama/types/model"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
 // LauncherState is the launch-owned snapshot used to render the root launcher menu.
 type LauncherState struct {
-	LastSelection  string
-	RunModel       string
-	RunModelUsable bool
-	Integrations   map[string]LauncherIntegrationState
-	AccountState   *AccountState
+	LastSelection string
+	RunModel      string
+	Integrations  map[string]LauncherIntegrationState
 }
 
 // LauncherIntegrationState is the launch-owned status for one launcher integration.
@@ -37,9 +34,7 @@ type LauncherIntegrationState struct {
 	Selectable      bool
 	Changeable      bool
 	CurrentModel    string
-	ModelUsable     bool
 	InstallHint     string
-	Editor          bool
 }
 
 // RunModelRequest controls how the root launcher resolves the chat model.
@@ -244,10 +239,7 @@ type ModelItem struct {
 	VRAMBytes       int64
 	MaxOutputTokens int
 	RequiredPlan    string
-	ToolCapable     bool
-	Capabilities    []modelpkg.Capability
 	Thinking        *api.ModelRecommendationThinking
-	Size            int64
 	Details         api.ModelDetails
 }
 
@@ -556,11 +548,6 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 		RunModel:      config.LastModel(),
 		Integrations:  make(map[string]LauncherIntegrationState),
 	}
-	runModelUsable, err := c.savedModelUsable(ctx, state.RunModel)
-	if err != nil {
-		runModelUsable = false
-	}
-	state.RunModelUsable = runModelUsable
 
 	for _, info := range ListIntegrationInfos() {
 		integrationState, err := c.buildLauncherIntegrationState(ctx, info)
@@ -579,22 +566,12 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		return LauncherIntegrationState{}, err
 	}
 	var currentModel string
-	var usable bool
 	if autodiscovery, ok := integration.spec.Runner.(ManagedAutodiscoveryIntegration); ok {
-		currentModel, usable, err = c.launcherManagedAutodiscoveryState(ctx, info.Name, autodiscovery)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
+		currentModel = launcherManagedAutodiscoveryState(info.Name, autodiscovery)
 	} else if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
-		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
+		currentModel = launcherManagedModelState(info.Name, managed)
 	} else {
-		currentModel, usable, err = c.launcherModelState(ctx, info.Name, integration.editor)
-		if err != nil {
-			return LauncherIntegrationState{}, err
-		}
+		currentModel = c.launcherModelState(ctx, info.Name, integration.editor)
 	}
 
 	return LauncherIntegrationState{
@@ -606,70 +583,42 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		Selectable:      integration.installed || integration.autoInstallable,
 		Changeable:      integration.installed || integration.autoInstallable,
 		CurrentModel:    currentModel,
-		ModelUsable:     usable,
 		InstallHint:     integration.installHint,
-		Editor:          integration.editor,
 	}, nil
 }
 
-func (c *launcherClient) launcherModelState(ctx context.Context, name string, isEditor bool) (string, bool, error) {
+func (c *launcherClient) launcherModelState(ctx context.Context, name string, isEditor bool) string {
 	cfg, loadErr := loadStoredIntegrationConfig(name)
-	hasModels := loadErr == nil && len(cfg.Models) > 0
-	if !hasModels {
-		return "", false, nil
+	if loadErr != nil || len(cfg.Models) == 0 {
+		return ""
 	}
 
 	if isEditor {
-		filtered := c.filterDisabledCloudModels(ctx, cfg.Models)
-		if len(filtered) > 0 {
-			return filtered[0], true, nil
+		if filtered := c.filterDisabledCloudModels(ctx, cfg.Models); len(filtered) > 0 {
+			return filtered[0]
 		}
-		return cfg.Models[0], false, nil
 	}
-
-	model := cfg.Models[0]
-	usable, usableErr := c.savedModelUsable(ctx, model)
-	return model, usableErr == nil && usable, nil
+	return cfg.Models[0]
 }
 
-func (c *launcherClient) launcherManagedModelState(ctx context.Context, name string, managed ManagedSingleModel) (string, bool, error) {
-	current := managed.CurrentModel()
-	if current == "" {
-		cfg, loadErr := loadStoredIntegrationConfig(name)
-		if loadErr == nil {
-			current = primaryModelFromConfig(cfg)
-		}
-		if current != "" {
-			return current, false, nil
-		}
+func launcherManagedModelState(name string, managed ManagedSingleModel) string {
+	if current := managed.CurrentModel(); current != "" {
+		return current
 	}
-	if current == "" {
-		return "", false, nil
+	if cfg, err := loadStoredIntegrationConfig(name); err == nil {
+		return primaryModelFromConfig(cfg)
 	}
-
-	if skips, ok := managed.(ManagedModelReadinessSkipper); ok && skips.SkipModelReadiness() {
-		return current, true, nil
-	}
-
-	usable, err := c.savedModelUsable(ctx, current)
-	if err != nil {
-		return current, false, err
-	}
-	return current, usable, nil
+	return ""
 }
 
-func (c *launcherClient) launcherManagedAutodiscoveryState(ctx context.Context, name string, autodiscovery ManagedAutodiscoveryIntegration) (string, bool, error) {
+func launcherManagedAutodiscoveryState(name string, autodiscovery ManagedAutodiscoveryIntegration) string {
 	if autodiscovery.AutodiscoveryConfigured() {
-		return autodiscovery.AutodiscoveredModel(), true, nil
+		return autodiscovery.AutodiscoveredModel()
 	}
-
-	cfg, loadErr := loadStoredIntegrationConfig(name)
-	if loadErr == nil {
-		if current := primaryModelFromConfig(cfg); current != "" {
-			return current, false, nil
-		}
+	if cfg, err := loadStoredIntegrationConfig(name); err == nil {
+		return primaryModelFromConfig(cfg)
 	}
-	return "", false, nil
+	return ""
 }
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {

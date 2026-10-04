@@ -963,13 +963,12 @@ func codexDesktopLaunchModel(model api.ListModelResponse) launch.LaunchModel {
 		name = strings.TrimSpace(model.Model)
 	}
 	return launch.LaunchModel{
-		Name:            name,
-		Remote:          model.RemoteModel != "" || model.RemoteHost != "" || codexDesktopCloudModel(name),
-		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
-		ContextLength:   model.Details.ContextLength,
-		EmbeddingLength: model.Details.EmbeddingLength,
-		Size:            model.Size,
-		Details:         model.Details,
+		Name:          name,
+		Remote:        model.RemoteModel != "" || model.RemoteHost != "" || codexDesktopCloudModel(name),
+		Capabilities:  append([]modelpkg.Capability(nil), model.Capabilities...),
+		ContextLength: model.Details.ContextLength,
+		Size:          model.Size,
+		Details:       model.Details,
 	}
 }
 

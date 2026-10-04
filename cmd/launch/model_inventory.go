@@ -20,15 +20,11 @@ type LaunchModel struct {
 	Thinking        *api.ModelRecommendationThinking
 	ContextLength   int
 	MaxOutputTokens int
-	EmbeddingLength int
 	Size            int64
 	Details         api.ModelDetails
 }
 
 type modelInfo = LaunchModel
-
-// ModelInfo re-exports launcher model inventory details for callers.
-type ModelInfo = LaunchModel
 
 func (m LaunchModel) HasCapability(capability modelpkg.Capability) bool {
 	return slices.Contains(m.Capabilities, capability)
@@ -135,14 +131,13 @@ func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, b
 
 func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {
 	return LaunchModel{
-		Name:            model.Name,
-		Remote:          model.RemoteModel != "",
-		ToolCapable:     slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
-		Capabilities:    append([]modelpkg.Capability(nil), model.Capabilities...),
-		ContextLength:   model.Details.ContextLength,
-		EmbeddingLength: model.Details.EmbeddingLength,
-		Size:            model.Size,
-		Details:         model.Details,
+		Name:          model.Name,
+		Remote:        model.RemoteModel != "",
+		ToolCapable:   slices.Contains(model.Capabilities, modelpkg.CapabilityTools),
+		Capabilities:  append([]modelpkg.Capability(nil), model.Capabilities...),
+		ContextLength: model.Details.ContextLength,
+		Size:          model.Size,
+		Details:       model.Details,
 	}.WithCloudLimits()
 }
 
