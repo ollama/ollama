@@ -21,11 +21,9 @@ import (
 
 // LauncherState is the launch-owned snapshot used to render the root launcher menu.
 type LauncherState struct {
-	LastSelection  string
-	RunModel       string
-	RunModelUsable bool
-	Integrations   map[string]LauncherIntegrationState
-	AccountState   *AccountState
+	LastSelection string
+	RunModel      string
+	Integrations  map[string]LauncherIntegrationState
 }
 
 // LauncherIntegrationState is the launch-owned status for one launcher integration.
@@ -40,7 +38,6 @@ type LauncherIntegrationState struct {
 	CurrentModel    string
 	ModelUsable     bool
 	InstallHint     string
-	Editor          bool
 }
 
 // RunModelRequest controls how the root launcher resolves the chat model.
@@ -250,10 +247,8 @@ type ModelItem struct {
 	VRAMBytes       int64
 	MaxOutputTokens int
 	RequiredPlan    string
-	ToolCapable     bool
 	Capabilities    []modelpkg.Capability
 	Thinking        *api.ModelRecommendationThinking
-	Size            int64
 	Details         api.ModelDetails
 }
 
@@ -582,12 +577,6 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 		RunModel:      config.LastModel(),
 		Integrations:  make(map[string]LauncherIntegrationState),
 	}
-	runModelUsable, err := c.savedModelUsable(ctx, state.RunModel)
-	if err != nil {
-		runModelUsable = false
-	}
-	state.RunModelUsable = runModelUsable
-
 	for _, info := range ListIntegrationInfos() {
 		integrationState, err := c.buildLauncherIntegrationState(ctx, info)
 		if err != nil {
@@ -634,7 +623,6 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
 		InstallHint:     integration.installHint,
-		Editor:          integration.editor,
 	}, nil
 }
 

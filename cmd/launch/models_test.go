@@ -35,14 +35,8 @@ func TestBuildModelList_UsesInventoryMetadataForInstalledModels(t *testing.T) {
 	if got.Name == "" {
 		t.Fatal("custom-tools not found in items")
 	}
-	if !got.ToolCapable {
-		t.Fatal("expected installed model to preserve tool capability from tags metadata")
-	}
 	if got.Details.ContextLength != 131_072 {
 		t.Fatalf("Details.ContextLength = %d, want 131072", got.Details.ContextLength)
-	}
-	if got.Size != 7500*format.MegaByte {
-		t.Fatalf("Size = %d, want %d", got.Size, 7500*format.MegaByte)
 	}
 	if got.Description != "" {
 		t.Fatalf("Description = %q, want empty for installed model without recommendation copy", got.Description)
@@ -71,8 +65,8 @@ func TestBuildModelList_InstalledRecommendedPreservesRecommendationAndMetadata(t
 	if got.Name == "" {
 		t.Fatal("qwen3.5 not found in items")
 	}
-	if !got.Recommended || !got.ToolCapable {
-		t.Fatalf("recommended/tool metadata = %v/%v, want true/true", got.Recommended, got.ToolCapable)
+	if !got.Recommended {
+		t.Fatal("expected installed recommended model to stay recommended")
 	}
 	if got.Details.ContextLength != 262_144 {
 		t.Fatalf("Details.ContextLength = %d, want 262144", got.Details.ContextLength)

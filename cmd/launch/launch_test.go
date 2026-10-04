@@ -509,9 +509,6 @@ func TestBuildLauncherState_DeprecatedSavedModelIsUsable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLauncherState returned error: %v", err)
 	}
-	if !state.RunModelUsable {
-		t.Fatal("expected deprecated saved run model to stay usable")
-	}
 	if state.Integrations["codex"].CurrentModel != "llama3.2:latest" {
 		t.Fatalf("expected saved integration model to remain visible, got %q", state.Integrations["codex"].CurrentModel)
 	}
@@ -1709,9 +1706,6 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	if state.Integrations["claude"].Installed {
 		t.Fatal("expected claude to be marked not installed")
 	}
-	if state.RunModelUsable {
-		t.Fatal("expected saved cloud run model to be unusable when cloud is disabled")
-	}
 	if state.Integrations["claude"].ModelUsable {
 		t.Fatal("expected claude cloud config to be unusable when cloud is disabled")
 	}
@@ -1806,9 +1800,6 @@ func TestBuildLauncherState_ToleratesInventoryFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLauncherState should tolerate inventory failure, got %v", err)
 	}
-	if !state.RunModelUsable {
-		t.Fatal("expected saved run model to remain usable via show fallback")
-	}
 	if state.Integrations["claude"].CurrentModel != "qwen3:8b" {
 		t.Fatalf("expected saved integration model to remain visible, got %q", state.Integrations["claude"].CurrentModel)
 	}
@@ -1849,9 +1840,6 @@ func TestBuildLauncherState_UsesTagsInventoryWithoutShow(t *testing.T) {
 	state, err := BuildLauncherState(context.Background())
 	if err != nil {
 		t.Fatalf("BuildLauncherState returned error: %v", err)
-	}
-	if !state.RunModelUsable {
-		t.Fatal("expected saved run model to be usable from tags inventory")
 	}
 	if state.Integrations["codex"].CurrentModel != "qwen3:8b" {
 		t.Fatalf("expected codex current model from saved config, got %q", state.Integrations["codex"].CurrentModel)
