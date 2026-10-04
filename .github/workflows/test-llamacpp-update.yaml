@@ -238,7 +238,7 @@ jobs:
             case "${COMPONENT}" in
               bin/ollama*)              echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/*.so*)         echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/llama-server*|lib/ollama/llama-quantize*) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/llama-server*) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_v*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/vulkan*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)          echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-mlx.tar.in ;;

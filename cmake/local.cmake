@@ -695,7 +695,7 @@ if(OLLAMA_HAVE_LLAMA_SERVER)
 
     ollama_add_llama_server_build(local
         RUNNER_DIR ""
-        TARGETS llama-server llama-quantize
+        TARGETS llama-server
         CMAKE_ARGS ${_cpu_args})
 
     add_custom_target(ollama-local ALL

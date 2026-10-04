@@ -236,22 +236,22 @@
     {
       "name": "cpu",
       "configurePreset": "cpu",
-      "targets": ["llama-server", "llama-quantize"]
+      "targets": ["llama-server"]
     },
     {
       "name": "cpu_windows",
       "configurePreset": "cpu_windows",
-      "targets": ["llama-server", "llama-quantize"]
+      "targets": ["llama-server"]
     },
     {
       "name": "cpu_arm64",
       "configurePreset": "cpu_arm64",
-      "targets": ["llama-server", "llama-quantize"]
+      "targets": ["llama-server"]
     },
     {
       "name": "darwin",
       "configurePreset": "darwin",
-      "targets": ["llama-server", "llama-quantize"]
+      "targets": ["llama-server"]
     },
     {
       "name": "llama_cuda_v12_linux",

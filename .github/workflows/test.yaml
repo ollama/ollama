@@ -170,11 +170,9 @@ jobs:
         run: |
           ./ollama --version
           "${{ matrix.superbuild_dir }}/lib/ollama/llama-server" --version
-          test -x "${{ matrix.superbuild_dir }}/lib/ollama/llama-quantize"
           cmake --install "${{ matrix.superbuild_dir }}" --component ollama-local --prefix "$RUNNER_TEMP/ollama-local"
           "$RUNNER_TEMP/ollama-local/bin/ollama" --version
           "$RUNNER_TEMP/ollama-local/lib/ollama/llama-server" --version
-          test -x "$RUNNER_TEMP/ollama-local/lib/ollama/llama-quantize"
   windows:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'
@@ -358,16 +356,10 @@ jobs:
           $ErrorActionPreference = "Stop"
           & ".\ollama.exe" --version
           & "${{ matrix.superbuild_dir }}\lib\ollama\llama-server.exe" --version
-          if (!(Test-Path "${{ matrix.superbuild_dir }}\lib\ollama\llama-quantize.exe")) {
-            throw "missing llama-quantize.exe"
-          }
           $installPrefix = Join-Path $env:RUNNER_TEMP "ollama-local"
           cmake --install "${{ matrix.superbuild_dir }}" --component ollama-local --prefix "$installPrefix"
           & "$installPrefix\bin\ollama.exe" --version
           & "$installPrefix\lib\ollama\llama-server.exe" --version
-          if (!(Test-Path "$installPrefix\lib\ollama\llama-quantize.exe")) {
-            throw "missing installed llama-quantize.exe"
-          }
   go_mod_tidy:
     runs-on: ubuntu-latest
     steps:

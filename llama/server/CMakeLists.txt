@@ -597,20 +597,16 @@ if(OLLAMA_RUNNER_DIR)
         endif()
     endif()
 else()
-    # CPU/base build — install llama-server, llama-quantize + all shared libs + CPU backend modules
+    # CPU/base build — install llama-server + all shared libs + CPU backend modules
     # RUNTIME covers executables and Windows DLLs; LIBRARY covers .so on Linux
-    install(TARGETS llama-server llama-quantize
+    install(TARGETS llama-server
         RUNTIME DESTINATION ${_base_dest} COMPONENT llama-server OPTIONAL)
     set(_llama_server_base_libs ggml-base ggml llama mtmd)
     if(TARGET llama-common)
         list(APPEND _llama_server_base_libs llama-common)
     endif()
-    if(BUILD_SHARED_LIBS)
-        foreach(_impl_lib IN ITEMS llama-server-impl llama-quantize-impl)
-            if(TARGET ${_impl_lib})
-                list(APPEND _llama_server_base_libs ${_impl_lib})
-            endif()
-        endforeach()
+    if(BUILD_SHARED_LIBS AND TARGET llama-server-impl)
+        list(APPEND _llama_server_base_libs llama-server-impl)
     endif()
 
     install(TARGETS ${_llama_server_base_libs}
