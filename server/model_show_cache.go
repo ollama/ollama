@@ -203,13 +203,6 @@ func (c *modelShowCache) setLocal(key modelShowLocalKey, digest string, resp *ap
 	c.mu.Unlock()
 }
 
-func (c *modelShowCache) hasLocal(key modelShowLocalKey, digest string) bool {
-	c.mu.RLock()
-	entry, ok := c.local[key]
-	c.mu.RUnlock()
-	return ok && entry.Digest == digest && entry.Response != nil
-}
-
 func (c *modelShowCache) getCloud(key modelShowCloudKey) (*api.ShowResponse, bool) {
 	c.mu.RLock()
 	resp, ok := c.cloud[key]
@@ -287,48 +280,6 @@ func (c *modelShowCache) refreshCloud(ctx context.Context, key modelShowCloudKey
 	}
 
 	c.setCloud(key, resp)
-	return nil
-}
-
-// hydrateLocal scans manifests at startup and refreshes only entries missing
-// for the current digest. It hydrates non-verbose responses only, avoiding an
-// expensive tensor walk for users who have never asked for verbose show data.
-func (c *modelShowCache) hydrateLocal(ctx context.Context) error {
-	manifests, err := manifest.Manifests(true)
-	if err != nil {
-		return err
-	}
-
-	for name, mf := range manifests {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		if modelShowManifestIsRemote(mf) {
-			continue
-		}
-
-		modelName := name.String()
-		digest := mf.Digest()
-		key := modelShowLocalKey{
-			Model:   modelName,
-			Verbose: false,
-		}
-		if c.hasLocal(key, digest) {
-			continue
-		}
-
-		resp, err := c.getModelInfo(api.ShowRequest{Model: modelName})
-		if err != nil {
-			slog.Warn("failed to hydrate local model show cache", "model", modelName, "error", err)
-			continue
-		}
-		if resp.RemoteHost != "" {
-			continue
-		}
-
-		c.setLocal(key, digest, resp)
-	}
 	return nil
 }
 
@@ -563,30 +514,6 @@ func modelShowNormalizeCloudModel(modelName string) string {
 		return strings.TrimSpace(base)
 	}
 	return modelName
-}
-
-// modelShowManifestIsRemote checks whether a manifest represents a local stub
-// for a remote model. Startup hydration skips these so the local content cache
-// does not store entries whose freshness is governed by cloud state.
-func modelShowManifestIsRemote(mf *manifest.Manifest) bool {
-	if mf == nil || mf.Config.Digest == "" {
-		return false
-	}
-
-	f, err := mf.Config.Open()
-	if err != nil {
-		slog.Warn("failed to open manifest config while checking model show cache eligibility", "error", err)
-		return false
-	}
-	defer f.Close()
-
-	var cfg model.ConfigV2
-	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		slog.Warn("failed to decode manifest config while checking model show cache eligibility", "error", err)
-		return false
-	}
-
-	return cfg.RemoteHost != "" || cfg.RemoteModel != ""
 }
 
 // cloneShowResponse deep-copies mutable fields of api.ShowResponse before

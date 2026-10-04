@@ -117,37 +117,6 @@ func TestModelShowCacheLocalVerboseVariantsAreSeparate(t *testing.T) {
 	}
 }
 
-func TestModelShowCacheLocalHydrationSkipsUnchangedInMemory(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	setTestHome(t, t.TempDir())
-	createShowCacheModel(t, "show-cache-hydrate", map[string]any{"test.context_length": uint32(1024)})
-
-	cache := newModelShowCache()
-	calls := 0
-	cache.getModelInfo = func(req api.ShowRequest) (*api.ShowResponse, error) {
-		calls++
-		return showCacheTestResponse(calls, req.Verbose), nil
-	}
-
-	if err := cache.hydrateLocal(context.Background()); err != nil {
-		t.Fatalf("first hydrateLocal failed: %v", err)
-	}
-	if err := cache.hydrateLocal(context.Background()); err != nil {
-		t.Fatalf("second hydrateLocal failed: %v", err)
-	}
-	resp, err := cache.GetLocal(api.ShowRequest{Model: "show-cache-hydrate"})
-	if err != nil {
-		t.Fatalf("GetLocal after hydration failed: %v", err)
-	}
-
-	if calls != 1 {
-		t.Fatalf("getModelInfo calls after unchanged in-memory hydration = %d, want 1", calls)
-	}
-	if resp.ModelInfo["call"] != 1 {
-		t.Fatalf("hydrated call marker = %v, want 1", resp.ModelInfo["call"])
-	}
-}
-
 func TestModelShowCacheStartupSkipsLocalHydration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
