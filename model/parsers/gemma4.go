@@ -58,6 +58,13 @@ func (p *Gemma4Parser) ThinkingClose() []string {
 	return nil
 }
 
+func (p *Gemma4Parser) ThinkingOpen() []string {
+	if p.thinkingEnabled && p.state == Gemma4CollectingContent && !p.contentPrefill {
+		return []string{gemma4ThinkingOpenTag}
+	}
+	return nil
+}
+
 func (p *Gemma4Parser) PreservedTokens() []string {
 	return []string{
 		gemma4ThinkingOpenTag,

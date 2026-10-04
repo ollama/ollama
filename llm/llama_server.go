@@ -1693,7 +1693,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 
 	// A format on a thinking response applies after the closing string, which
 	// only a grammar of our own can express, so a schema is converted first.
-	if len(req.ThinkingClose) > 0 && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
+	if (len(req.ThinkingOpen) > 0 || len(req.ThinkingClose) > 0) && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
 		if lsReq.Grammar == "" {
 			grammar, err := s.schemaGrammar(ctx, lsReq.JsonSchema)
 			if err != nil {
@@ -1701,7 +1701,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
 		}
-		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
+		lsReq.Grammar = thinkingGrammar(req.ThinkingOpen, req.ThinkingClose, lsReq.Grammar)
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process

@@ -205,9 +205,10 @@ type CompletionRequest struct {
 	PreservedTokens []string // parser tokens to render as text; ignored by non-llama-server runners
 	ToolCallTag     string   // raw generic tool parser tag, if any
 	LeadingBOS      string   // textual BOS emitted by Go rendering, if any
-	// ThinkingClose holds the strings any of which ends the thinking the
-	// response begins with, which Format leaves free; none when the response
-	// starts in content.
+	// ThinkingOpen marks a response boundary that starts thinking from content.
+	ThinkingOpen []string
+	// ThinkingClose marks the end of the unconstrained thinking segment. When
+	// ThinkingOpen is empty, the response starts in thinking.
 	ThinkingClose []string
 
 	// Logprobs specifies whether to include log probabilities in the response

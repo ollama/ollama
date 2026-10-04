@@ -154,8 +154,7 @@ func (c *Client) Close() error {
 }
 
 // requestGrammar returns the structural tag the runner decodes under: the
-// API's format as a json_schema tag, behind the free thinking the response
-// begins with when there is any.
+// API's format as a json_schema tag, optionally after a thinking segment.
 func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 	schema := req.Format
 	switch string(schema) {
@@ -177,9 +176,21 @@ func requestGrammar(req llm.CompletionRequest) json.RawMessage {
 		if len(closings) > 1 {
 			closing = `{"type":"or","elements":[` + strings.Join(closings, ",") + `]}`
 		}
-		// The tail is optional so EOS stays legal mid-thinking.
-		format = `{"type":"sequence","elements":[{"type":"any_text","excludes":[` + strings.Join(excludes, ",") + `]},` +
-			`{"type":"optional","content":{"type":"sequence","elements":[` + closing + `,` + format + `]}}]}`
+		thinking := `{"type":"sequence","elements":[{"type":"any_text","excludes":[` + strings.Join(excludes, ",") + `]},` + closing + `,` + format + `]}`
+		if len(req.ThinkingOpen) > 0 {
+			openings := make([]string, len(req.ThinkingOpen))
+			for i, opening := range req.ThinkingOpen {
+				openings[i] = `{"type":"const_string","value":` + jsonString(opening) + `}`
+			}
+			open := openings[0]
+			if len(openings) > 1 {
+				open = `{"type":"or","elements":[` + strings.Join(openings, ",") + `]}`
+			}
+			thinking = `{"type":"sequence","elements":[` + open + `,` + thinking + `]}`
+			format = `{"type":"or","elements":[` + format + `,` + thinking + `]}`
+		} else {
+			format = thinking
+		}
 	}
 	return json.RawMessage(`{"type":"structural_tag","format":` + format + `}`)
 }
