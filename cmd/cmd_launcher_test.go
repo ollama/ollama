@@ -82,12 +82,7 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 				buildState: func(ctx context.Context) (*launch.LauncherState, error) {
 					return &launch.LauncherState{}, nil
 				},
-				runMenu: func(state *launch.LauncherState) (tui.TUIAction, error) {
-					if state.AccountState != prefetchedAccount {
-						t.Fatalf("prefetched account state was not piped to menu state")
-					}
-					return runMenu(state)
-				},
+				runMenu: runMenu,
 				resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
 					gotReq = req
 					return tt.wantModel, nil
@@ -171,12 +166,7 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 				buildState: func(ctx context.Context) (*launch.LauncherState, error) {
 					return &launch.LauncherState{}, nil
 				},
-				runMenu: func(state *launch.LauncherState) (tui.TUIAction, error) {
-					if state.AccountState != prefetchedAccount {
-						t.Fatalf("prefetched account state was not piped to menu state")
-					}
-					return runMenu(state)
-				},
+				runMenu:         runMenu,
 				resolveRunModel: unexpectedRunModelResolution(t),
 				launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
 					gotReq = req

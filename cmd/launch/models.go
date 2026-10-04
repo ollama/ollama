@@ -491,9 +491,6 @@ func copyModelRecommendationFields(name string, rec ModelItem) ModelItem {
 
 func modelItemFromInventory(name string, info modelInfo, item ModelItem) ModelItem {
 	item.Name = name
-	item.ToolCapable = info.ToolCapable
-	item.Capabilities = slices.Clone(info.Capabilities)
-	item.Size = info.Size
 	item.Details = info.Details
 	return item
 }

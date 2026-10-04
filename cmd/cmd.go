@@ -2461,10 +2461,6 @@ func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) 
 	if err != nil {
 		return false, fmt.Errorf("build launcher state: %w", err)
 	}
-	if state != nil && deps.accountState != nil {
-		state.AccountState = deps.accountState()
-	}
-
 	action, err := deps.runMenu(state)
 	if err != nil {
 		return false, fmt.Errorf("run launcher menu: %w", err)
