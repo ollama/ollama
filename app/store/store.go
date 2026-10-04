@@ -25,13 +25,6 @@ type File struct {
 	Data     []byte `json:"data"`
 }
 
-type User struct {
-	Name     string    `json:"name"`
-	Email    string    `json:"email"`
-	Plan     string    `json:"plan"`
-	CachedAt time.Time `json:"cachedAt"`
-}
-
 type Message struct {
 	Role              string           `json:"role"`
 	Content           string           `json:"content"`
@@ -562,31 +555,6 @@ func (s *Store) UpdateChatBrowserState(chatID string, state json.RawMessage) err
 	}
 
 	return s.db.updateChatBrowserState(chatID, state)
-}
-
-func (s *Store) User() (*User, error) {
-	if err := s.ensureDB(); err != nil {
-		return nil, err
-	}
-
-	return s.db.getUser()
-}
-
-func (s *Store) SetUser(user User) error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	user.CachedAt = time.Now()
-	return s.db.setUser(user)
-}
-
-func (s *Store) ClearUser() error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	return s.db.clearUser()
 }
 
 func (s *Store) Close() error {
