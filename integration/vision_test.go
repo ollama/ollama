@@ -73,8 +73,7 @@ func runVisionMultiTurn(t *testing.T, models []string) {
 
 	// Models that fail on multi-turn detail questions (e.g. misidentifying objects).
 	skipModels := map[string]string{
-		"gemma3":          "misidentifies briefcase as smartphone on turn 3",
-		"llama3.2-vision": "miscounts animals (says 3 instead of 4) on turn 2",
+		"gemma3": "misidentifies briefcase as smartphone on turn 3",
 	}
 
 	for _, model := range testModels(models) {
@@ -141,16 +140,9 @@ func runVisionObjectCounting(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
-	skipModels := map[string]string{
-		"llama3.2-vision": "consistently miscounts (says 3 instead of 4)",
-	}
-
 	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
 			skipKnownIntegrationFlake(t, "vision-count", model)
-			if reason, ok := skipModels[model]; ok && testModel == "" {
-				t.Skipf("skipping: %s", reason)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()
 			client, _, cleanup := InitServerConnection(ctx, t)
@@ -185,8 +177,7 @@ func runVisionSceneUnderstanding(t *testing.T, models []string) {
 
 	// Models known to be too small or not capable enough for cultural reference detection.
 	skipModels := map[string]string{
-		"llama3.2-vision": "3B model lacks cultural reference knowledge",
-		"minicpm-v":       "too small for cultural reference detection",
+		"minicpm-v": "too small for cultural reference detection",
 	}
 
 	for _, model := range testModels(models) {
@@ -303,16 +294,8 @@ func runVisionMultiImage(t *testing.T, models []string) {
 	skipUnderMinVRAM(t, 16)
 	skipIfNoVisionOverride(t)
 
-	// Multi-image support varies across models.
-	skipModels := map[string]string{
-		"llama3.2-vision": "does not support multi-image input",
-	}
-
 	for _, model := range testModels(models) {
 		t.Run(model, func(t *testing.T) {
-			if reason, ok := skipModels[model]; ok && testModel == "" {
-				t.Skipf("skipping: %s", reason)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 			client, _, cleanup := InitServerConnection(ctx, t)
