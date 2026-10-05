@@ -1,10 +1,55 @@
 package mlx
 
 import (
+	"math"
 	"testing"
 
 	"github.com/ollama/ollama/mlx/mlxthread/mlxthreadtest"
 )
+
+func TestContiguousDetachesLargeView(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		ClearCache()
+		baseline := ActiveMemory()
+		holder := NewScope()
+		defer holder.Close()
+		var compact *Array
+		const stateElements = 16 * 128 * 128
+		const stateBytes = stateElements * 4
+
+		Scoped(func() {
+			values := make([]float32, 3*stateElements)
+			values[stateElements] = math.Float32frombits(0x80000000)
+			values[stateElements+1] = math.Float32frombits(0x7fc01234)
+			values[stateElements+2] = 1
+			source := FromValues(values, 3, 1, 16, 128, 128)
+			Eval(source)
+			view := SliceStartStop(source,
+				[]int32{1, 0, 0, 0, 0}, []int32{2, 1, 16, 128, 128}).Reshape(1, 16, 128, 128)
+			compact = Contiguous(view.Clone(), false)
+			Eval(compact)
+			holder.Attach(compact)
+		})
+		copied := compact.Floats()
+		for i, want := range []uint32{0x80000000, 0x7fc01234, 0x3f800000} {
+			if got := math.Float32bits(copied[i]); got != want {
+				t.Fatalf("copied state bits[%d] = %08x, want %08x", i, got, want)
+			}
+		}
+
+		// A dependent GPU operation drains any in-flight use of the source.
+		// A shallow clone still keeps the full 3 MiB after this point.
+		Scoped(func() {
+			Eval(Add(compact, FromValues([]float32{2}, 1)))
+		})
+		ClearCache()
+		// The compact state and dependent output can each occupy one state.
+		// A shared view would also keep the three-state source buffer.
+		if retained := ActiveMemory() - baseline; retained > 2*stateBytes+stateBytes/2 {
+			t.Fatalf("one-state copy retained %d bytes of its 3 MiB source", retained)
+		}
+	})
+}
 
 func TestFromValue(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
