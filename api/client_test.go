@@ -555,6 +555,46 @@ func TestClientWebFetchExperimentalUsesLocalRoute(t *testing.T) {
 	}
 }
 
+func TestCheckUpdate(t *testing.T) {
+	var gotPath string
+	var gotMethod string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewEncoder(w).Encode(UpdateResponse{
+			CurrentVersion:  "0.35.0",
+			LatestVersion:   "v0.40.0-rc1",
+			UpdateAvailable: true,
+			IsRC:            true,
+			UpdateURL:       "https://example.com/download/update.tar.zst",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer ts.Close()
+
+	client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+	resp, err := client.CheckUpdate(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/api/update" {
+		t.Fatalf("path = %q, want /api/update", gotPath)
+	}
+	if !resp.UpdateAvailable {
+		t.Fatalf("expected update_available = true")
+	}
+	if resp.LatestVersion != "v0.40.0-rc1" {
+		t.Fatalf("expected latest_version = v0.40.0-rc1, got %s", resp.LatestVersion)
+	}
+	if !resp.IsRC {
+		t.Fatalf("expected is_rc = true")
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

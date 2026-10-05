@@ -353,6 +353,71 @@ func TestRoutes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "Update Handler",
+			Method: http.MethodGet,
+			Path:   "/api/update",
+			Setup: func(t *testing.T, req *http.Request) {
+				updateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"tag_name": "v99.0.0",
+						"html_url": "https://github.com/ollama/ollama/releases/tag/v99.0.0",
+					})
+				}))
+				t.Cleanup(updateServer.Close)
+				t.Setenv("OLLAMA_UPDATE_URL", updateServer.URL)
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("expected status 200, got %d", resp.StatusCode)
+				}
+				var updateResp api.UpdateResponse
+				if err := json.NewDecoder(resp.Body).Decode(&updateResp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if !updateResp.UpdateAvailable {
+					t.Errorf("expected update_available = true")
+				}
+				if updateResp.LatestVersion != "v99.0.0" {
+					t.Errorf("expected latest_version = v99.0.0, got %s", updateResp.LatestVersion)
+				}
+			},
+		},
+		{
+			Name:   "Update Handler (RC)",
+			Method: http.MethodGet,
+			Path:   "/api/update?rc=true",
+			Setup: func(t *testing.T, req *http.Request) {
+				updateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"tag_name": "v99.0.0-rc1",
+						"html_url": "https://github.com/ollama/ollama/releases/tag/v99.0.0-rc1",
+					})
+				}))
+				t.Cleanup(updateServer.Close)
+				t.Setenv("OLLAMA_UPDATE_URL", updateServer.URL)
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("expected status 200, got %d", resp.StatusCode)
+				}
+				var updateResp api.UpdateResponse
+				if err := json.NewDecoder(resp.Body).Decode(&updateResp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if !updateResp.UpdateAvailable {
+					t.Errorf("expected update_available = true")
+				}
+				if updateResp.LatestVersion != "v99.0.0-rc1" {
+					t.Errorf("expected latest_version = v99.0.0-rc1, got %s", updateResp.LatestVersion)
+				}
+				if !updateResp.IsRC {
+					t.Errorf("expected is_rc = true")
+				}
+			},
+		},
+		{
 			Name:   "Tags Handler (no tags)",
 			Method: http.MethodGet,
 			Path:   "/api/tags",
