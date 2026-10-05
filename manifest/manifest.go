@@ -1564,6 +1564,26 @@ func checkBlobDigestReader(r io.Reader, digest string) error {
 	return nil
 }
 
+// FindName returns the stored spelling of a case-insensitive name match, or
+// os.ErrNotExist. Like Manifests, it ignores invalid manifests and prefers v2
+// entries, but only reads manifest contents for matching names.
+func FindName(n model.Name) (model.Name, error) {
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return model.Name{}, err
+	}
+
+	for name, ref := range refs {
+		if !name.EqualFold(n) {
+			continue
+		}
+		if _, err := parseManifestFile(name, ref.path, ref.root, runnerPreferences()); err == nil {
+			return name, nil
+		}
+	}
+	return model.Name{}, os.ErrNotExist
+}
+
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 	refs, err := namedManifestRefs(continueOnError)
 	if err != nil {

@@ -146,6 +146,9 @@ func TestV2ManifestPathEscapesHostPort(t *testing.T) {
 	if err := WriteManifestData(name, data); err != nil {
 		t.Fatal(err)
 	}
+	if got, err := FindName(name); err != nil || got.String() != name.String() {
+		t.Fatalf("FindName = %v, %v; want %v, nil", got, err, name)
+	}
 
 	manifestPath, err := V2PathForName(name)
 	if err != nil {
@@ -730,6 +733,9 @@ func TestPartialManifestListTracksPresentAndMissingChildren(t *testing.T) {
 	if err := WriteManifestData(name, parentData); err != nil {
 		t.Fatal(err)
 	}
+	if got, err := FindName(name); err != nil || got.String() != name.String() {
+		t.Fatalf("FindName = %v, %v; want %v, nil", got, err, name)
+	}
 	parentSum := sha256.Sum256(parentData)
 	parentDigest := fmt.Sprintf("sha256:%x", parentSum)
 
@@ -1051,6 +1057,9 @@ func TestParseNamedManifestRejectsUnsafeSymlinks(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "not a sha256 blob") {
 			t.Fatalf("err = %v, want not a sha256 blob", err)
 		}
+		if _, err := FindName(name); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("FindName error = %v, want os.ErrNotExist", err)
+		}
 	})
 
 	t.Run("blob basename outside blob store", func(t *testing.T) {
@@ -1070,6 +1079,9 @@ func TestParseNamedManifestRejectsUnsafeSymlinks(t *testing.T) {
 		_, err := ParseNamedManifest(name)
 		if err == nil || !strings.Contains(err.Error(), "does not match blob") {
 			t.Fatalf("err = %v, want does not match blob", err)
+		}
+		if _, err := FindName(name); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("FindName error = %v, want os.ErrNotExist", err)
 		}
 	})
 }
@@ -1135,6 +1147,62 @@ func TestManifestsV2ShadowsLegacy(t *testing.T) {
 	}
 	if m.MediaType != "v2" {
 		t.Fatalf("media type = %q, want %q", m.MediaType, "v2")
+	}
+}
+
+func TestFindName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		legacy string
+		v2     string
+		found  bool
+	}{
+		{name: "missing"},
+		{name: "legacy", legacy: `{}`, found: true},
+		{name: "v2", v2: `{}`, found: true},
+		{name: "v2 shadows corrupt legacy", legacy: `{`, v2: `{}`, found: true},
+		{name: "corrupt legacy", legacy: `{`},
+		{name: "corrupt v2 shadows legacy", legacy: `{}`, v2: `{`},
+		{
+			name: "manifest list", found: true,
+			v2: `{"mediaType":"application/vnd.ollama.manifest.list.v2+json","manifests":[{"runner":"llamacpp","config":{"digest":"sha256:abc"}}]}`,
+		},
+		{
+			name: "manifest list with missing child",
+			v2:   `{"mediaType":"application/vnd.ollama.manifest.list.v2+json","manifests":[{"runner":"llamacpp","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]}`,
+		},
+		{
+			name: "unsupported runner",
+			v2:   `{"mediaType":"application/vnd.ollama.manifest.list.v2+json","manifests":[{"runner":"unsupported","config":{"digest":"sha256:abc"}}]}`,
+		},
+		{
+			name: "nested manifest list",
+			v2:   `{"mediaType":"application/vnd.ollama.manifest.list.v2+json","manifests":[{"runner":"llamacpp","mediaType":"application/vnd.ollama.manifest.list.v2+json","manifests":[{"runner":"llamacpp"}]}]}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("MyOrg/MyModel:Q8")
+			if tc.legacy != "" {
+				if err := WriteLegacyManifestData(name, []byte(tc.legacy)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.v2 != "" {
+				digest := writeManifestBlobForTest(t, []byte(tc.v2))
+				if err := linkManifest(name, digest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := FindName(model.ParseName("myorg/mymodel:q8"))
+			if tc.found {
+				if err != nil || got.String() != name.String() {
+					t.Fatalf("FindName = %v, %v; want %v, nil", got, err, name)
+				}
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("FindName error = %v, want os.ErrNotExist", err)
+			}
+		})
 	}
 }
 

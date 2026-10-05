@@ -1445,6 +1445,14 @@ func getExistingName(n model.Name) (model.Name, error) {
 		return n, nil
 	}
 
+	// The usual request names an existing model. Avoid decoding every installed
+	// manifest just to resolve its spelling; partial matches below are for new names.
+	if name, err := manifest.FindName(n); err == nil {
+		return name, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return zero, err
+	}
+
 	existing, err := manifest.Manifests(true)
 	if err != nil {
 		return zero, err
