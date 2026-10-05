@@ -588,6 +588,34 @@ func (s *cacheSession) close() {
 	// PrepareSnapshots would otherwise overwrite, leaking them.
 	s.attachPrefillSnapshots()
 
+	// A speculative rollback may leave the selected recurrent state as a view
+	// of the whole per-token capture buffer. Copy only states that still need
+	// detaching at request close, after decoding has settled and before the
+	// trie can retain a snapshot of them. Evaluate as one batch while the
+	// source handles remain in scope.
+	mlx.Scoped(func() {
+		type prepared struct {
+			cache *cache.RecurrentCache
+			state *mlx.Array
+		}
+		var copies []prepared
+		var arrays []*mlx.Array
+		for _, kv := range s.caches {
+			if recurrent, ok := kv.(*cache.RecurrentCache); ok {
+				if state := recurrent.PrepareCompaction(); state != nil {
+					copies = append(copies, prepared{recurrent, state})
+					arrays = append(arrays, state)
+				}
+			}
+		}
+		if len(arrays) > 0 {
+			mlx.Eval(arrays...)
+			for _, copy := range copies {
+				copy.cache.CommitCompaction(copy.state)
+			}
+		}
+	})
+
 	offset := s.cache.minCacheOffset()
 	if offset <= 0 {
 		return
