@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -214,6 +215,68 @@ SF
 		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
 	}
 
+	location, ok := calls[0].Function.Arguments.Get("location")
+	if !ok || location != "SF" {
+		t.Fatalf("expected location %q, got %v", "SF", location)
+	}
+}
+
+func TestQwen35ParserToolCallEmittedInThinkingIsParsedWhenFollowedByPartialTag(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	tools := []api.Tool{
+		{
+			Function: api.ToolFunction{
+				Name: "get_weather",
+				Parameters: api.ToolFunctionParameters{
+					Properties: func() *api.ToolPropertiesMap {
+						props := api.NewToolPropertiesMap()
+						props.Set("location", api.ToolProperty{Type: api.PropertyType{"string"}})
+						return props
+					}(),
+				},
+			},
+		},
+	}
+
+	parser.Init(tools, nil, &api.ThinkValue{Value: true})
+
+	// "<" arriving on its own after <tool_call> overlaps the start of </think>,
+	// which must not flush the already complete <tool_call> out as thinking.
+	chunks := []string{
+		"Need weather lookup",
+		"<tool_call>",
+		"<",
+		"function=get_weather><parameter=location>\nSF\n</parameter></function></tool_call>",
+	}
+
+	var content, thinking strings.Builder
+	var calls []api.ToolCall
+	for i, chunk := range chunks {
+		c, th, tc, err := parser.Add(chunk, i == len(chunks)-1)
+		if err != nil {
+			t.Fatalf("parse failed on chunk %d: %v", i, err)
+		}
+		content.WriteString(c)
+		thinking.WriteString(th)
+		calls = append(calls, tc...)
+	}
+
+	if content.String() != "" {
+		t.Fatalf("expected empty content, got %q", content.String())
+	}
+	if thinking.String() != "Need weather lookup" {
+		t.Fatalf("expected thinking %q, got %q", "Need weather lookup", thinking.String())
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
 	location, ok := calls[0].Function.Arguments.Get("location")
 	if !ok || location != "SF" {
 		t.Fatalf("expected location %q, got %v", "SF", location)
