@@ -46,20 +46,15 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	if truncate {
 		// Start with all messages and remove from the front until it fits in context
 		for i := 0; i <= lastMsgIdx; i++ {
-			startIdx := i
-			if lastUserMsgIdx >= 0 && startIdx > lastUserMsgIdx {
-				startIdx = lastUserMsgIdx
-			}
-
 			// Collect system messages from the portion we're about to skip
 			system = make([]api.Message, 0)
-			for j := range startIdx {
+			for j := range i {
 				if msgs[j].Role == "system" {
 					system = append(system, msgs[j])
 				}
 			}
 
-			p, err := renderPrompt(m, append(system, msgs[startIdx:]...), tools, think)
+			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
 			if err != nil {
 				return "", nil, err
 			}
@@ -71,20 +66,15 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			ctxLen := len(s)
 			if m.ProjectorPaths != nil {
-				for _, msg := range msgs[startIdx:] {
+				for _, msg := range msgs[i:] {
 					ctxLen += imageNumTokens * len(msg.Images)
 				}
 			}
 
-			if ctxLen <= opts.NumCtx {
-				currMsgIdx = startIdx
-				break
-			}
-
-			// Must always include at least the last message; never drop the
-			// most recent user message even if the prompt still overflows.
-			if i == lastMsgIdx || startIdx == lastUserMsgIdx {
-				currMsgIdx = startIdx
+			// Stop once the candidate fits or reaches the preservation boundary.
+			// The retained messages may still exceed the context window.
+			if ctxLen <= opts.NumCtx || i == lastUserMsgIdx || i == lastMsgIdx {
+				currMsgIdx = i
 				break
 			}
 		}
