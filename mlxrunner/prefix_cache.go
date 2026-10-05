@@ -6,8 +6,8 @@
 // Invariants:
 //   - Only one path through the trie is "active" (backed by live MLX arrays)
 //     at a time. Switching paths pages in the new path from its snapshots.
-//   - Sliceable (KV) layers: every node holds a snapshot covering exactly its
-//     edge, so the layer's history is complete along any path from the root.
+//   - Sliceable (KV, hidden-output) snapshots cover their node's edge. Restoring
+//     a prefix requires continuous history from the root for these caches.
 //   - Whole-state (recurrent, rotating) layers: what a node holds is the
 //     state at its end offset. A node may hold none.
 //   - Whole-state is captured only while the live caches sit at that offset
@@ -23,8 +23,8 @@
 //     boundary or resume point lies strictly inside them.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
-//   - begin() always re-evaluates at least one token so the pipeline can seed
-//     generation, even on a full prefix match.
+//   - Generation re-evaluates at least one token to seed decoding. Scoring
+//     retains hidden outputs and may restore the complete prompt.
 
 package mlxrunner
 
@@ -39,6 +39,8 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/cache"
 )
+
+const prefillSnapshotInterval = 8192
 
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
 
@@ -59,9 +61,9 @@ type pendingSnapshot struct {
 	user   bool
 }
 
-// cacheSession manages caches for a single pipeline run.
-// Callers should append generated tokens to outputs and
-// defer close to save the cache state.
+// cacheSession manages caches for one generation or scoring run.
+// Generation appends generated tokens to outputs; both paths defer close
+// to save the evaluated state.
 type cacheSession struct {
 	cache     *prefixCache
 	inputs    []int32
@@ -95,6 +97,15 @@ func (c *prefixCache) ensureRoot() {
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
 func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
+	return c.beginAt(inputs, items, max(0, len(inputs)-1))
+}
+
+// Scoring retains backbone outputs, so an exact hit needs no decode seed.
+func (c *prefixCache) beginScore(inputs []int32, items []mediaItem) *cacheSession {
+	return c.beginAt(inputs, items, len(inputs))
+}
+
+func (c *prefixCache) beginAt(inputs []int32, items []mediaItem, maxReuse int) *cacheSession {
 	c.ensureRoot()
 
 	effInputs := effectiveKeyTokens(inputs, items)
@@ -102,10 +113,9 @@ func (c *prefixCache) begin(inputs []int32, items []mediaItem) *cacheSession {
 	matchPath, matched := findBestMatch(c.root, keys)
 	originalMatched := matched
 
-	// Always keep at least one token to re-evaluate so the
-	// pipeline can seed token generation from it.
-	if matched == len(inputs) && matched > 0 {
-		matchPath, matched = findBestMatch(c.root, keys[:matched-1])
+	// Generation leaves a decode seed; scoring can reuse the full row.
+	if matched > maxReuse {
+		matchPath, matched = findBestMatch(c.root, keys[:maxReuse])
 	}
 	// A match ending inside a non-causal media item resumes before it.
 	if item := insideAtomicItem(items, matched); item != nil {
@@ -312,7 +322,8 @@ pageIn:
 
 // schedulePrefillSnapshots schedules every cache to capture snapshots as the
 // forward pass crosses the given absolute token offsets, so a single full-size
-// prefill records interior states without the caller breaking the batch. A
+// prefill records interior states without the caller breaking the batch.
+// Recurrent caches split their internal recurrence at these boundaries. A
 // passed offset names a token prefix; the capture lands at the deepest
 // state that prefix alone determines (offset - draftLookahead), which is where
 // a prompt sharing exactly that prefix restores. An offset inside a non-causal
@@ -399,10 +410,9 @@ func (s *cacheSession) attachPrefillSnapshots() {
 		}
 	}
 
-	// Prefill leaves one token unprocessed for decode seeding, so an offset
-	// at or past the live cache position was never crossed by a write and has
-	// no captured state. Skip it rather than materialize a node whose edge
-	// claims tokens the cache never wrote. Closing its (nil) row is a no-op.
+	// Only attach offsets reached by a completed write. Generation prefill
+	// leaves a decode seed, scoring may evaluate the full prompt, and either
+	// path can stop early on cancellation.
 	reached := c.minCacheOffset()
 	stored := s.storedKeys()
 	for i, p := range pending {
@@ -537,6 +547,23 @@ func (c *prefixCache) freeAll() {
 			kv.Free()
 		}
 	}
+}
+
+func (c *prefixCache) close() {
+	if c == nil {
+		return
+	}
+	nodes := []*trieNode{c.root}
+	for len(nodes) > 0 {
+		n := nodes[len(nodes)-1]
+		nodes = nodes[:len(nodes)-1]
+		if n != nil {
+			nodes = append(nodes, n.children...)
+			n.setSnapshots(nil, nil)
+		}
+	}
+	c.freeAll()
+	c.root, c.activePath, c.pagedOutBytes = nil, nil, 0
 }
 
 func (c *prefixCache) minCacheOffset() int {

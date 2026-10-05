@@ -48,6 +48,8 @@ type Runner struct {
 	Requests      chan Request
 	Sampler       *sample.Sampler
 	cache         *prefixCache
+	scoreCache    *prefixCache
+	scoreHidden   *cache.HiddenCache
 	contextLength int
 	mlxThread     *mlxthread.Thread
 	// grammarEngine is the structured-output subsystem; nil when the grammar
@@ -151,6 +153,8 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 }
 
 func (r *Runner) Close() {
+	r.scoreCache.close()
+	r.scoreCache, r.scoreHidden = nil, nil
 	if r.grammarEngine != nil {
 		r.grammarEngine.close()
 		r.grammarEngine = nil

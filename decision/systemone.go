@@ -18,7 +18,9 @@ import (
 
 type compiledField struct {
 	Field
-	typ string
+	typ     string
+	options []string
+	order   []int // Model option index to original API option index, when different.
 }
 
 type Compiled struct {
@@ -27,14 +29,12 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
-// Compile validates the request and prepares candidate scoring for Nimble and Tev.
-func Compile(req Request) (*Compiled, error) {
-	return CompileWithEncoder(req, "")
-}
-
-// CompileWithEncoder validates the request and encodes it using the named input format.
-// An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
-func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
+func Compile(req Request, encoding string) (*Compiled, error) {
+	switch encoding {
+	case "", "tev1", "clef", "strands":
+	default:
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
+	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -44,28 +44,40 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 	if len(req.Videos) > 0 {
 		return nil, fmt.Errorf("video inputs are not supported")
 	}
-	switch encoding {
-	case "":
-		if len(req.Images) > 0 {
-			return nil, fmt.Errorf("this decision model does not support images")
+	if len(req.Images) != 0 && encoding != "clef" {
+		return nil, fmt.Errorf("image inputs are not supported by this decision model")
+	}
+	for i, image := range req.Images {
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d must not be empty", i)
 		}
-	case "clef":
-		c := &Compiled{}
+	}
+	var context string
+	var err error
+	if encoding == "clef" {
+		context, err = clefContent(req.State)
+	} else {
+		context, err = content(req.State)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: %w", err)
+	}
+	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
+		return nil, fmt.Errorf("state must not be empty")
+	}
+	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	if encoding == "strands" {
+		if err := encodeStrands(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "clef" {
 		if err := encodeClef(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil
-	default:
-		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
-	context, err := content(req.State)
-	if err != nil {
-		return nil, fmt.Errorf("state: %w", err)
-	}
-	if strings.TrimSpace(context) == "" {
-		return nil, fmt.Errorf("state must not be empty")
-	}
-	c := &Compiled{}
 	for name, q := range req.Questions.All() {
 		f, err := compileField(name, q)
 		if err != nil {
@@ -73,22 +85,15 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	data, err := json.Marshal(struct {
-		Context string          `json:"context"`
-		Schema  []compiledField `json:"schema"`
-	}{context, c.fields})
+	prompts, err := decisionPrompts(context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range c.fields {
-		name, err := json.Marshal(f.Name)
-		if err != nil {
-			return nil, err
-		}
+	for i, f := range c.fields {
 		c.messages = append(c.messages, []api.Message{
-			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
+			{Role: "user", Content: prompts[i]},
 		})
-		var row llm.ScoreRow
+		row := llm.ScoreRow{Question: &llm.ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
 		for _, choice := range f.Choices {
 			row.Candidates = append(row.Candidates, choice.Code)
 		}
@@ -166,6 +171,14 @@ func compileField(name string, q Question) (compiledField, error) {
 		}
 		add(false, no)
 		add(true, yes)
+		// Keep the decoder's established labels while retaining the richer
+		// descriptions used by encoder decision models.
+		f.options = []string{"false: no, the statement does not hold", "true: yes, the statement holds"}
+		for i, key := range []string{"false", "true"} {
+			if value, ok := criteria.Get(key); ok && *value != "" {
+				f.options[i] = key + ": " + *value
+			}
+		}
 	case "choice":
 		criteria := orderedmap.New[string, *string]()
 		if err := json.Unmarshal(q.Criteria, criteria); err != nil {
@@ -180,6 +193,11 @@ func compileField(name string, q Question) (compiledField, error) {
 				description = *value
 			}
 			add(key, description)
+			option := key
+			if value != nil && *value != "" {
+				option += ": " + *value
+			}
+			f.options = append(f.options, option)
 		}
 	case "score":
 		var criteria []*string
@@ -191,6 +209,7 @@ func compileField(name string, q Question) (compiledField, error) {
 				return f, fmt.Errorf("score descriptions must be strings")
 			}
 			add(strconv.Itoa(i), *description)
+			f.options = append(f.options, fmt.Sprintf("level %d: %s", i, *description))
 		}
 	default:
 		return f, fmt.Errorf("type must be choice, noul, or score")
@@ -202,7 +221,11 @@ func compileField(name string, q Question) (compiledField, error) {
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
-	response := Response{Model: model, Answers: &Answers{}, Usage: Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}}
+	response := Response{
+		Model: model, Answers: &Answers{},
+		Usage:                 Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens},
+		PromptEvalCachedCount: result.CachedTokens,
+	}
 	if len(result.Logits) != len(c.fields) {
 		return response, fmt.Errorf("scorer returned %d rows for %d questions", len(result.Logits), len(c.fields))
 	}
@@ -210,6 +233,13 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		logits := result.Logits[i]
 		if len(logits) != len(f.Choices) {
 			return response, fmt.Errorf("scorer returned the wrong number of candidates for %q", f.Name)
+		}
+		if len(f.order) > 0 {
+			ordered := make([]float32, len(logits))
+			for j, index := range f.order {
+				ordered[index] = logits[j]
+			}
+			logits = ordered
 		}
 		peak := slices.Max(logits)
 		p := make([]float64, len(logits))

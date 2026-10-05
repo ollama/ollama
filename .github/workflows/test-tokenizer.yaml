@@ -1,0 +1,41 @@
+name: test-tokenizer
+
+on:
+  pull_request:
+    paths:
+      - 'mlxrunner/tokenizer/**'
+      - '.github/workflows/test-tokenizer.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FETCH_TOKENIZERS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cache tokenizer data
+        uses: actions/cache@v4
+        with:
+          path: .cache/tokenizers
+          key: tokenizers-${{ hashFiles('mlxrunner/tokenizer/tokenizer_reference_test.go') }}
+          restore-keys: tokenizers-
+      - name: Test published tokenizers
+        run: |
+          set -euo pipefail
+          go test -race -count=1 -timeout=10m -v ./mlxrunner/tokenizer/... | tee "${RUNNER_TEMP}/tokenizer-test.log"
+          if grep -q -- '--- SKIP' "${RUNNER_TEMP}/tokenizer-test.log"; then
+            echo "Tokenizer CI must run every case without skips" >&2
+            exit 1
+          fi

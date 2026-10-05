@@ -849,9 +849,9 @@ components:
           $ref: "#/components/schemas/SystemOneContent"
         criteria:
           type: object
-          description: Option keys mapped to descriptions. A null description uses the key itself. Keys must not be blank; ties follow the model's option order.
+          description: Option keys mapped to descriptions, or null for a bare label. Keys must not be blank; ties follow the model's option order. The option limit depends on the model.
           minProperties: 2
-          maxProperties: 26
+          maxProperties: 255
           propertyNames:
             pattern: '\S'
           additionalProperties:
@@ -868,7 +868,7 @@ components:
           $ref: "#/components/schemas/SystemOneContent"
         criteria:
           type: object
-          description: Optional descriptions for the two outcomes. Omitted entries use No and Yes.
+          description: Optional descriptions for the two outcomes. Omitted entries use model-specific defaults.
           properties:
             "false":
               type: string
@@ -889,7 +889,7 @@ components:
           $ref: "#/components/schemas/SystemOneContent"
         criteria:
           type: array
-          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1.
+          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1. The maximum number of levels depends on the model.
           minItems: 2
           maxItems: 26
           items:
@@ -1811,6 +1811,24 @@ paths:
       responses:
         "200":
           description: Model successfully copied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: "success"
+        "400":
+          description: Model could not be copied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Source model not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /api/pull:
     post:
       summary: Pull a model
