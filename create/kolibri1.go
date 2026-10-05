@@ -25,3 +25,7 @@ func (kolibri1ImportTransform) quantizationType(name string, shape []int32, quan
 	}
 	return sensitiveType(true, shape, base)
 }
+
+// Kolibri's expert weights are small enough that NVFP4 block scales round to
+// zero without a global scale, which its runner applies.
+func (kolibri1ImportTransform) nvfp4GlobalScale() {}

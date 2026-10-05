@@ -88,7 +88,7 @@ func writeBlob(ctx context.Context, spec BlobSpec, src *sourceFiles, store BlobS
 			if err != nil {
 				return LayerInfo{}, fmt.Errorf("blob %s: tensor %s: %w", spec.Name, ts.Name, err)
 			}
-			items = append(items, quantizeItem{name: ts.Name, quantize: ts.Quantize, reader: ReaderWithContext(ctx, reader), decodeFP8: needsFP8Decode(ts.Transform)})
+			items = append(items, quantizeItem{name: ts.Name, quantize: ts.Quantize, reader: ReaderWithContext(ctx, reader), decodeFP8: needsFP8Decode(ts.Transform), globalScale: ts.GlobalScale})
 		} else {
 			td, err := applyByteTransform(ts, sources)
 			if err != nil {
