@@ -55,6 +55,15 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 			return nil, err
 		}
 		return c, nil
+	case "strands":
+		if len(req.Images) > 0 {
+			return nil, fmt.Errorf("this decision model does not support images")
+		}
+		c := &Compiled{}
+		if err := encodeStrands(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
