@@ -40,6 +40,9 @@ type LFM2Parser struct {
 	needsContentLeadingTrim  bool // trim leading whitespace after </think> tag
 	toolNames                map[string]struct{}
 	hasTools                 bool
+	// mayBeBareToolCall is true while the content so far could still be a bare
+	// tool call without <|tool_call_*|> wrappers, which is held back until done.
+	mayBeBareToolCall bool
 }
 
 func (p *LFM2Parser) HasToolSupport() bool {
@@ -92,6 +95,7 @@ func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue
 	p.toolNames = make(map[string]struct{}, len(tools))
 	p.callIndex = 0
 	p.hasTools = len(tools) > 0
+	p.mayBeBareToolCall = p.hasTools
 	for _, tool := range tools {
 		if tool.Function.Name != "" {
 			p.toolNames[tool.Function.Name] = struct{}{}
@@ -136,6 +140,12 @@ func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, 
 	}
 
 	events := p.parseEvents()
+
+	// Content held back as a possible bare tool call is complete on the final chunk.
+	if done && p.state == LFM2CollectingContent && p.buffer.Len() > 0 {
+		events = append(events, lfm2EventContent{content: p.buffer.String()})
+		p.buffer.Reset()
+	}
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -318,13 +328,19 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
 			p.state = LFM2CollectingToolCalls
+			p.mayBeBareToolCall = false
 
 			if len(contentBefore) > 0 {
 				events = append(events, lfm2EventContent{content: contentBefore})
 			}
 			return events, true
+		} else if p.mayBeBareToolCall && p.couldBeBareToolCall(bufStr) {
+			// Wait for the final chunk so the bare tool call fallback in Add sees
+			// the whole call instead of fragments already emitted as content.
+			return events, false
 		} else { // otherwise its content
 			p.buffer.Reset()
+			p.mayBeBareToolCall = false
 			if len(bufStr) > 0 {
 				events = append(events, lfm2EventContent{content: bufStr})
 			}
@@ -364,6 +380,23 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 	}
 
 	return events, false
+}
+
+// couldBeBareToolCall reports whether s could still be the start of a bare
+// tool call such as [get_weather(location="Paris")] for one of the tools.
+func (p *LFM2Parser) couldBeBareToolCall(s string) bool {
+	s = strings.TrimLeftFunc(s, unicode.IsSpace)
+	s = strings.TrimLeftFunc(strings.TrimPrefix(s, "["), unicode.IsSpace)
+	if s == "" {
+		return true
+	}
+	for name := range p.toolNames {
+		call := name + "("
+		if strings.HasPrefix(s, call) || strings.HasPrefix(call, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseToolCallsContent parses one or more Python-style tool calls.
