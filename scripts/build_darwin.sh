@@ -38,6 +38,11 @@ done
 shift $(( $OPTIND - 1 ))
 
 _build_darwin() {
+    BUILD_CPUS=$(getconf _NPROCESSORS_ONLN)
+    BUILD_JOBS=${OLLAMA_BUILD_PARALLEL:-$BUILD_CPUS}
+    BUILD_LOAD=${OLLAMA_BUILD_LOAD:-$BUILD_CPUS}
+    status "Build parallelism: $BUILD_JOBS, load limit: $BUILD_LOAD"
+
     SOURCE_BUILD=build/darwin-sources
     status "Preparing shared native sources"
     cmake -S . -B "$SOURCE_BUILD" -DOLLAMA_MLX_BACKENDS=metal_v3 -DOLLAMA_LLAMA_BACKENDS=
@@ -81,7 +86,7 @@ _build_darwin() {
             $MLX_EXTRA_ARGS
 
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" \
-            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel
+            cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel "$BUILD_JOBS" -- -l "$BUILD_LOAD"
     done
 }
 
@@ -110,7 +115,7 @@ _merge_darwin_payload() {
         [ -d "$AMD_VARIANT" ] || AMD_VARIANT=dist/darwin-amd64/lib/ollama
         mkdir -p "$DEST"
 
-        for LIB in libmlx.dylib libmlxc.dylib; do
+        for LIB in libmlx.dylib libmlxc.dylib libollama_xgrammar.dylib; do
             if [ -f "$AMD_VARIANT/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
                 lipo -create -output "$DEST/$LIB" "$AMD_VARIANT/$LIB" "$VARIANT$LIB"
             elif [ -f "$VARIANT$LIB" ]; then
@@ -123,7 +128,7 @@ _merge_darwin_payload() {
         for F in "$VARIANT"*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
             case "$(basename "$F")" in
-                libmlx.dylib|libmlxc.dylib) continue ;;
+                libmlx.dylib|libmlxc.dylib|libollama_xgrammar.dylib) continue ;;
             esac
             cp "$F" "$DEST/"
         done
@@ -166,6 +171,7 @@ _sign_darwin() {
     if [ -n "$APPLE_IDENTITY" ]; then
         for F in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize dist/darwin/lib/ollama/* dist/darwin/lib/ollama/mlx_metal_v*/*; do
             [ -f "$F" ] && [ ! -L "$F" ] || continue
+            case "$F" in *_LICENSE|*_NOTICE) continue ;; esac
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
 
@@ -250,7 +256,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib *_LICENSE *_NOTICE mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

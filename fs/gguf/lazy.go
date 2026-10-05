@@ -2,8 +2,8 @@ package gguf
 
 import (
 	"encoding/binary"
+	"fmt"
 	"iter"
-	"log/slog"
 )
 
 type lazy[T any] struct {
@@ -11,6 +11,7 @@ type lazy[T any] struct {
 	next   func() (T, bool)
 	stop   func()
 	values []T
+	err    error
 
 	// successFunc is called when all values have been successfully read.
 	successFunc func() error
@@ -18,8 +19,17 @@ type lazy[T any] struct {
 
 func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 	it := lazy[T]{}
-	if err := binary.Read(f.reader, binary.LittleEndian, &it.count); err != nil {
+	if f.Version == 1 {
+		var count uint32
+		if err := binary.Read(f.reader, f.byteOrder, &count); err != nil {
+			return nil, err
+		}
+		it.count = uint64(count)
+	} else if err := binary.Read(f.reader, f.byteOrder, &it.count); err != nil {
 		return nil, err
+	}
+	if it.count > uint64(maxInt()) {
+		return nil, fmt.Errorf("GGUF item count %d exceeds maximum %d", it.count, maxInt())
 	}
 
 	it.values = make([]T, 0)
@@ -27,7 +37,7 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 		for i := range it.count {
 			t, err := fn()
 			if err != nil {
-				slog.Error("error reading tensor", "index", i, "error", err)
+				it.err = fmt.Errorf("error reading GGUF item %d: %w", i, err)
 				return
 			}
 
@@ -38,41 +48,39 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 		}
 
 		if it.successFunc != nil {
-			it.successFunc()
+			if err := it.successFunc(); err != nil {
+				it.err = err
+				return
+			}
 		}
 	})
 
 	return &it, nil
 }
 
-func (g *lazy[T]) Values() iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, v := range g.All() {
-			if !yield(v) {
-				break
-			}
-		}
-	}
-}
-
 func (g *lazy[T]) All() iter.Seq2[int, T] {
 	return func(yield func(int, T) bool) {
-		for i := range int(g.count) {
-			if i < len(g.values) {
-				if !yield(i, g.values[i]) {
-					break
+		for i := range g.count {
+			n := int(i)
+			if n < len(g.values) {
+				if !yield(n, g.values[n]) {
+					return
 				}
 			} else {
 				t, ok := g.next()
 				if !ok {
-					break
+					return
 				}
 
-				if !yield(i, t) {
-					break
+				if !yield(n, t) {
+					return
 				}
 			}
 		}
+
+		// Resume once after the final yielded item so the producer can run its
+		// completion callback and publish any state derived from the section.
+		g.rest()
 	}
 }
 
@@ -86,4 +94,8 @@ func (g *lazy[T]) rest() (collected bool) {
 	}
 
 	return collected
+}
+
+func (g *lazy[T]) Err() error {
+	return g.err
 }

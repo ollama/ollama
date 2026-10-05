@@ -186,8 +186,19 @@ func TestFlashAttentionSupported(t *testing.T) {
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0}},
 		},
 		{
-			name: "cuda compute 6.2 unsupported",
+			name: "cuda compute 6.0 supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 0}},
+			want: true,
+		},
+		{
+			name: "cuda compute 6.1 supported",
+			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 1}},
+			want: true,
+		},
+		{
+			name: "cuda compute 6.2 supported",
 			gpus: []DeviceInfo{{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2}},
+			want: true,
 		},
 		{
 			name: "cuda compute 7.2 unsupported",
@@ -216,7 +227,7 @@ func TestFlashAttentionSupported(t *testing.T) {
 			name: "mixed cuda unsupported",
 			gpus: []DeviceInfo{
 				{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 8, ComputeMinor: 9},
-				{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 6, ComputeMinor: 2},
+				{DeviceID: DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},
 			},
 		},
 		{

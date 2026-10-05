@@ -5,9 +5,10 @@
 // still render prompts in Go and call /completion. Other GGUF chat models use
 // llama-server's chat_template handling through /v1/chat/completions.
 //
-// For structured output, JSON schemas are passed directly to llama-server via
-// its json_schema field (avoiding the CGO SchemaToGrammar dependency). Raw BNF
-// grammars are passed via the grammar field.
+// For structured output, a JSON schema is passed to llama-server via its
+// json_schema field and the "json" format as a builtin grammar via the grammar
+// field. A format that applies after a response's thinking is sent as a
+// grammar built around the GBNF llama-server itself derives from the schema.
 //
 // llama-server auto-detects GPU layers (-ngl), thread count (-t), and flash
 // attention (--flash-attn).
@@ -16,12 +17,14 @@ package llm
 import (
 	"bufio"
 	"bytes"
+	"container/list"
 	"context"
 	crand "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image/png"
 	"io"
 	"log/slog"
 	"math/rand"
@@ -39,11 +42,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/image/webp"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -75,6 +79,14 @@ ws ::= ([ \t\n] ws)?
 const (
 	DefaultEmbeddingNumBatch             = 2048
 	openEndedGenerationContextMultiplier = 10
+)
+
+const (
+	llamaArgFitTargetEnv = "LLAMA_ARG_FIT_TARGET"
+	bytesPerMiB          = 1 << 20
+
+	// mmprojOffloadHeadroom leaves 1 GiB for backend buffers beyond projector weights.
+	mmprojOffloadHeadroom = 1 << 30
 )
 
 // DefaultEmbeddingNumBatchForContext caps the embedding batch default to the
@@ -110,19 +122,21 @@ func boundedNumPredict(numPredict, numCtx int) int {
 // llamaServerRunner wraps an upstream llama-server process and implements the LlamaServer interface.
 // It communicates with llama-server over HTTP.
 type llamaServerRunner struct {
-	port             int
-	cmd              *exec.Cmd
-	done             chan struct{}
-	doneErr          error
-	client           *http.Client
-	memoryMu         sync.RWMutex
-	memTotal         uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU           uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
-	gpuLayers        uint64 // model layers loaded on GPU, parsed from llama-server logs
-	gpuLayerOverflow int    // number of GPU-selected layers partially overflowed to CPU
-	status           *StatusWriter
-	options          api.Options
-	modelPath        string
+	port               int
+	cmd                *exec.Cmd
+	done               chan struct{}
+	doneErr            error
+	client             *http.Client
+	memoryMu           sync.RWMutex
+	memTotal           uint64 // actual total buffer size parsed from llama-server logs (bytes)
+	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
+	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
+	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
+	status             *StatusWriter
+	options            api.Options
+	modelPath          string
 	// mediaMarker must match the LLAMA_MEDIA_MARKER value passed to llama-server.
 	// llama.cpp randomizes this by default; Ollama renders stable [img-N] markers
 	// and rewrites them before forwarding the request.
@@ -142,12 +156,13 @@ type llamaServerRunner struct {
 	// used to map DeviceIDs to device names for VRAMByGPU lookups.
 	gpus []ml.DeviceInfo
 
-	ggml          *ggml.GGML
+	metadata      *gguf.Model
 	totalLayers   uint64 // maximum offloadable model layers
 	loadStart     time.Time
 	loadActivity  atomic.Int64
 	loadTracking  atomic.Bool
 	rawEmbeddings bool
+	splitDirs     []string
 
 	sem *semaphore.Weighted
 
@@ -159,7 +174,9 @@ type llamaServerRunner struct {
 type llamaServerLaunchConfig struct {
 	modelPath            string
 	modelArch            string
+	draftType            string
 	projectors           []string
+	mmprojMemory         uint64
 	modelLayers          uint64
 	adapters             []string
 	opts                 api.Options
@@ -241,11 +258,11 @@ func (s *llamaServerRunner) completionPrompt(prompt, leadingBOS string) string {
 }
 
 func (s *llamaServerRunner) tokenizerAddsBOS() bool {
-	if s.ggml == nil {
+	if s.metadata == nil {
 		return false
 	}
 
-	kv := s.ggml.KV()
+	kv := s.metadata.KV()
 
 	if kv.String("tokenizer.ggml.pre") == "lfm2" {
 		return true
@@ -273,28 +290,47 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return nil, err
 	}
 
-	// llama-server rejects prompts that fill the entire slot context, while the
-	// old runner could accept exactly num_ctx prompt tokens. Keep one token of
-	// headroom so token-level truncation preserves old behavior as closely as
-	// llama-server allows.
-	limit := s.options.NumCtx - 1
-	if len(tokens) <= limit {
+	fullPromptLimit := s.options.NumCtx - 1
+	if len(tokens) <= fullPromptLimit {
 		return prompt, nil
+	}
+
+	if !s.launch.config.ContextShift {
+		return nil, api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "the prompt is longer than the context length currently available to the model; shorten the prompt, adjust the context length in settings, or use a model with a longer context length",
+		}
 	}
 
 	nKeep := req.Options.NumKeep
 	if nKeep < 0 {
 		nKeep = len(tokens)
 	}
-	nKeep = min(nKeep, limit)
+	if s.tokenizerAddsBOS() {
+		nKeep++
+	}
+	nKeep = min(nKeep, fullPromptLimit)
 
+	limit := contextShiftPromptLimit(s.options.NumCtx, nKeep)
 	discard := len(tokens) - limit
 	truncated := make([]int, 0, limit)
 	truncated = append(truncated, tokens[:nKeep]...)
 	truncated = append(truncated, tokens[nKeep+discard:]...)
 
-	slog.Warn("truncating input prompt", "limit", s.options.NumCtx, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
+	slog.Warn("truncating input prompt", "limit", limit, "prompt", len(tokens), "keep", nKeep, "new", len(truncated))
 	return truncated, nil
+}
+
+func contextShiftPromptLimit(numCtx, numKeep int) int {
+	if numCtx <= 1 {
+		return 0
+	}
+
+	numKeep = max(0, min(numKeep, numCtx-1))
+
+	// Match the old runners' first context shift: preserve num_keep, then free
+	// roughly half of the remaining context before generation needs the slot.
+	return numCtx - max((numCtx-numKeep)/2, 1)
 }
 
 func (s *llamaServerRunner) ContextLength() int {
@@ -346,19 +382,16 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	params = appendJinjaArgs(params, launch.config)
 
 	params = appendMMProjArgs(params, launch)
-	params = appendMTPDraftArgs(params, launch.config, launch.opts)
+	params = appendDraftArgs(params, launch.draftType, launch.config.DraftModelPath, launch.opts)
 
 	params = append(params, qwenVLServerArgs(launch.modelArch)...)
 
-	// LoRA adapters
 	for _, adapter := range launch.adapters {
+		slog.Warn("LoRA adapters are deprecated and will be removed in a future release", "adapter", adapter)
 		params = append(params, "--lora", adapter)
 	}
 
-	// UseMmap
-	if launch.opts.UseMMap != nil && !*launch.opts.UseMMap {
-		params = append(params, "--no-mmap")
-	}
+	params = appendLoadModeArgs(params, launch.opts, launch.gpus)
 
 	// KV cache type
 	if launch.kvCacheType != "" {
@@ -398,7 +431,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		cmd.Stderr = out
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
-	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvs)
+	SetupLlamaServerCommandEnv(cmd, exe, launch.gpuLibs, launch.extraEnvsForStart())
 
 	slog.Info("starting llama-server", "cmd", cmd)
 	slog.Debug("subprocess", "", filteredEnv(cmd.Env))
@@ -591,6 +624,23 @@ func appendFlashAttentionArgs(params []string, gpus []ml.DeviceInfo) []string {
 	}
 }
 
+// appendLoadModeArgs selects llama-server's single model loading mode. Direct I/O
+// skips the page cache on load for integrated CUDA/ROCm GPUs, which share system
+// memory with the CPU and would otherwise double-buffer weights.
+func appendLoadModeArgs(params []string, opts api.Options, gpus []ml.DeviceInfo) []string {
+	for _, g := range gpus {
+		if runtime.GOOS == "linux" && g.Integrated && (strings.EqualFold(g.Library, "CUDA") || strings.EqualFold(g.Library, "ROCm")) {
+			return append(params, "--load-mode", "dio")
+		}
+	}
+
+	if opts.UseMMap != nil && !*opts.UseMMap {
+		return append(params, "--load-mode", "none")
+	}
+
+	return params
+}
+
 func appendMainGPUArgs(params []string, opts api.Options) []string {
 	if opts.MainGPU == nil {
 		return params
@@ -598,8 +648,6 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
 }
-
-const limitedMMProjOffloadMemory = 10 << 30
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
 	if len(launch.projectors) == 0 {
@@ -616,13 +664,23 @@ func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string 
 }
 
 func (launch llamaServerLaunchConfig) mmprojOffloadDisabled() (bool, string) {
+	if launch.requiresMMProjGPUOffload() {
+		return false, ""
+	}
 	if launch.forceNoMMProjOffload {
 		return true, "startup-oom-retry"
 	}
-	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers)
+	return shouldDisableMMProjOffload(launch.opts, launch.gpus, launch.modelLayers, launch.mmprojMemory)
 }
 
-func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers uint64) (bool, string) {
+func (launch llamaServerLaunchConfig) requiresMMProjGPUOffload() bool {
+	// Gemma3n's MobileNetV5 projector silently produces corrupted image
+	// embeddings when it runs on the CPU backend, so keep it on the GPU
+	// whenever one is in play.
+	return launch.modelArch == "gemma3n" && launch.opts.NumGPU != 0 && len(launch.gpus) > 0
+}
+
+func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLayers, mmprojMemory uint64) (bool, string) {
 	if opts.NumGPU == 0 {
 		return true, "cpu-only"
 	}
@@ -630,20 +688,88 @@ func shouldDisableMMProjOffload(opts api.Options, gpus []ml.DeviceInfo, modelLay
 		return true, "partial-text-offload"
 	}
 
+	requiredMemory := mmprojMemory + mmprojOffloadHeadroom
+
 	for _, gpu := range gpus {
-		if gpu.Integrated && gpu.Library != "Metal" {
-			return true, "shared-memory-gpu"
-		}
 		memory := gpu.FreeMemory
 		if memory == 0 || (gpu.TotalMemory > 0 && gpu.TotalMemory < memory) {
 			memory = gpu.TotalMemory
 		}
-		if memory > 0 && memory <= limitedMMProjOffloadMemory {
+		if memory > 0 && memory < requiredMemory {
 			return true, "limited-vram"
 		}
 	}
 
 	return false, ""
+}
+
+func (launch llamaServerLaunchConfig) extraEnvsForStart() map[string]string {
+	pad, ok := launch.mmprojFitTargetMiB()
+	if !ok {
+		return launch.extraEnvs
+	}
+
+	if existing, ok := launch.extraEnvs[llamaArgFitTargetEnv]; ok {
+		existingTarget, err := strconv.ParseUint(existing, 10, 64)
+		if err != nil {
+			slog.Warn("invalid llama-server fit target", "env", llamaArgFitTargetEnv, "value", existing, "error", err)
+			return launch.extraEnvs
+		}
+
+		envs := cloneStringMap(launch.extraEnvs)
+		envs[llamaArgFitTargetEnv] = strconv.FormatUint(existingTarget+pad, 10)
+		return envs
+	}
+
+	if _, ok := os.LookupEnv(llamaArgFitTargetEnv); ok {
+		// Preserve an inherited user override. SetupLlamaServerCommandEnv
+		// will pass it through unless extraEnvs overrides it.
+		return launch.extraEnvs
+	}
+
+	envs := cloneStringMap(launch.extraEnvs)
+	envs[llamaArgFitTargetEnv] = strconv.FormatUint(pad, 10)
+	return envs
+}
+
+func (launch llamaServerLaunchConfig) mmprojFitTargetMiB() (uint64, bool) {
+	if len(launch.projectors) == 0 || launch.mmprojMemory == 0 {
+		return 0, false
+	}
+	if disable, _ := launch.mmprojOffloadDisabled(); disable {
+		return 0, false
+	}
+
+	requiredMemory := launch.mmprojMemory + mmprojOffloadHeadroom
+	return (requiredMemory + bytesPerMiB - 1) / bytesPerMiB, true
+}
+
+// mmprojMemoryRequirement is a stopgap until fit accounts for mmproj memory directly.
+func mmprojMemoryRequirement(modelPath string, f *gguf.Model, projectors []string) (uint64, error) {
+	if len(projectors) == 0 {
+		return 0, nil
+	}
+
+	if projectors[0] == modelPath {
+		if f == nil {
+			return 0, errors.New("read inline mmproj metadata: missing model metadata")
+		}
+		size := f.Tensors().Size("v.", "mm.", "a.")
+		if size == 0 {
+			return 0, errors.New("read inline mmproj metadata: no projector tensors found")
+		}
+		return size, nil
+	}
+
+	projector, err := LoadModel(projectors[0], 1024)
+	if err != nil {
+		return 0, fmt.Errorf("read mmproj metadata %q: %w", projectors[0], err)
+	}
+	size := projector.Tensors().Size()
+	if size == 0 {
+		return 0, fmt.Errorf("read mmproj metadata %q: no projector tensors found", projectors[0])
+	}
+	return size, nil
 }
 
 func appendJinjaArgs(params []string, config LlamaServerConfig) []string {
@@ -672,31 +798,49 @@ func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []s
 	return params
 }
 
-func appendMTPDraftArgs(params []string, config LlamaServerConfig, opts api.Options) []string {
-	if !config.EnableMTP && config.DraftModelPath == "" {
+const (
+	draftTypeMTP    = "draft-mtp"
+	draftTypeDFlash = "draft-dflash"
+)
+
+func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
+	if draftType == "" {
 		return params
 	}
 	if opts.DraftNumPredict <= 0 {
 		return params
 	}
 
-	params = append(params, "--spec-type", "draft-mtp")
+	params = append(params, "--spec-type", draftType)
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
-	params = append(params, "--spec-draft-backend-sampling")
-	if config.DraftModelPath != "" {
-		params = append(params, "--spec-draft-model", config.DraftModelPath)
+	if draftType == draftTypeMTP {
+		params = append(params, "--spec-draft-backend-sampling")
+	}
+	if draftModelPath != "" {
+		params = append(params, "--spec-draft-model", draftModelPath)
 	}
 	return params
 }
 
-func hasMTPDraft(f *ggml.GGML) bool {
+func externalDraftType(path string) (string, error) {
+	f, err := LoadModel(path, 1)
+	if err != nil {
+		return "", fmt.Errorf("load draft model metadata: %w", err)
+	}
+	if f.KV().Architecture() == "dflash" {
+		return draftTypeDFlash, nil
+	}
+	return draftTypeMTP, nil
+}
+
+func hasMTPDraft(f *gguf.Model) bool {
 	if f.KV().Uint("nextn_predict_layers") > 0 {
 		return true
 	}
 	return hasLegacyQwenMTPDraft(f.KV().Architecture(), f.Tensors().Items("mtp."))
 }
 
-func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
+func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
 	switch arch {
 	case "qwen35", "qwen35moe":
 		return len(tensors) > 0
@@ -709,7 +853,7 @@ func hasLegacyQwenMTPDraft(arch string, tensors []*ggml.Tensor) bool {
 func NewLlamaServerRunner(
 	gpus []ml.DeviceInfo,
 	modelPath string,
-	f *ggml.GGML,
+	f *gguf.Model,
 	adapters, projectors []string,
 	opts api.Options,
 	numParallel int,
@@ -718,7 +862,7 @@ func NewLlamaServerRunner(
 ) (LlamaServer, error) {
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
-	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", arch)]
+	isEmbedding := f.KV().Has("pooling_type")
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -749,9 +893,29 @@ func NewLlamaServerRunner(
 		compatClipArches[arch] {
 		projectors = []string{modelPath}
 	}
+	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
+	if err != nil {
+		return nil, err
+	}
 	if config.DraftModelPath == "" && hasMTPDraft(f) {
 		config.EnableMTP = true
 	}
+
+	draftType := ""
+	if config.EnableMTP {
+		draftType = draftTypeMTP
+	}
+	if config.DraftModelPath != "" {
+		draftType, err = externalDraftType(config.DraftModelPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	splitModel, err := materializeSplitModels(f.Files(), projectors, config)
+	if err != nil {
+		return nil, err
+	}
+	config.DraftModelPath = splitModel.draftModelPath
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
@@ -768,19 +932,21 @@ func NewLlamaServerRunner(
 	serverEnvs["LLAMA_MEDIA_MARKER"] = mediaMarker
 
 	launch := llamaServerLaunchConfig{
-		modelPath:   modelPath,
-		modelArch:   arch,
-		projectors:  slices.Clone(projectors),
-		modelLayers: f.KV().BlockCount() + 1,
-		adapters:    slices.Clone(adapters),
-		opts:        opts,
-		numParallel: numParallel,
-		kvCacheType: kvCacheType,
-		embedding:   isEmbedding,
-		config:      config,
-		gpus:        slices.Clone(gpus),
-		gpuLibs:     slices.Clone(gpuLibs),
-		extraEnvs:   cloneStringMap(serverEnvs),
+		modelPath:    splitModel.modelPath,
+		modelArch:    arch,
+		draftType:    draftType,
+		projectors:   slices.Clone(splitModel.projectors),
+		mmprojMemory: mmprojMemory,
+		modelLayers:  f.KV().BlockCount() + 1,
+		adapters:     slices.Clone(adapters),
+		opts:         opts,
+		numParallel:  numParallel,
+		kvCacheType:  kvCacheType,
+		embedding:    isEmbedding,
+		config:       config,
+		gpus:         slices.Clone(gpus),
+		gpuLibs:      slices.Clone(gpuLibs),
+		extraEnvs:    cloneStringMap(serverEnvs),
 	}
 
 	s := &llamaServerRunner{
@@ -788,11 +954,12 @@ func NewLlamaServerRunner(
 		status:           status,
 		options:          opts,
 		modelPath:        modelPath,
+		splitDirs:        splitModel.dirs,
 		mediaMarker:      mediaMarker,
 		vramByDevice:     make(map[string]uint64),
 		systemFreeAtLoad: make(map[string]uint64),
 		gpus:             gpus,
-		ggml:             f,
+		metadata:         f,
 		totalLayers:      f.KV().BlockCount() + 1,
 		rawEmbeddings:    legacyEmbeddingsWereRaw(f.KV()),
 		sem:              semaphore.NewWeighted(int64(numParallel)),
@@ -803,6 +970,7 @@ func NewLlamaServerRunner(
 	memWriter.runner = s
 
 	if err := s.startProcess(); err != nil {
+		_ = s.removeSplitDirs()
 		msg := s.lastErrMsg()
 		return nil, fmt.Errorf("error starting llama-server: %v %s", err, msg)
 	}
@@ -818,9 +986,9 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return dst
 }
 
-func legacyEmbeddingsWereRaw(kv ggml.KV) bool {
+func legacyEmbeddingsWereRaw(kv *gguf.Metadata) bool {
 	arch := kv.Architecture()
-	if _, ok := kv[fmt.Sprintf("%s.pooling_type", arch)]; !ok {
+	if !kv.Has("pooling_type") {
 		return false
 	}
 
@@ -897,6 +1065,9 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 			return nil, fmt.Errorf("llama-server startup failed after projector CPU offload retry: %w", err)
 		}
 	}
+	if err := s.removeSplitDirs(); err != nil {
+		slog.Debug("split GGUF alias cleanup deferred until runner shutdown", "error", err)
+	}
 
 	// Verify that buffer size parsing captured GPU allocations.
 	// If parsing failed (e.g., llama-server log format changed), warn so the
@@ -945,6 +1116,9 @@ func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
 	if err == nil || s.mmprojOffloadOOMRetried || !IsOutOfMemory(err) || len(s.launch.projectors) == 0 {
 		return false
 	}
+	if s.launch.requiresMMProjGPUOffload() {
+		return false
+	}
 	// llama-server --fit can select a text-layer placement that fits before
 	// mtmd/CLIP allocates the multimodal projector. Retry once with the
 	// projector on CPU so the scheduler can keep the text model placement.
@@ -958,6 +1132,8 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 
 	s.memTotal = 0
 	s.memGPU = 0
+	s.memModelFileBacked = 0
+	s.memCPUMappedModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -1248,6 +1424,86 @@ type llamaServerCompletionRequest struct {
 	JsonSchema      json.RawMessage `json:"json_schema,omitempty"`
 	NProbs          int             `json:"n_probs,omitempty"`
 	PreservedTokens []string        `json:"preserved_tokens,omitempty"`
+	TimingsPerToken bool            `json:"timings_per_token,omitempty"`
+}
+
+// schemaGrammars caches the grammars llama-server derives from JSON schemas,
+// most recently used first. The conversion depends only on the llama-server
+// build, which is fixed for the process, so entries are shared by every
+// runner and never expire.
+var schemaGrammars = struct {
+	sync.Mutex
+	entries map[string]*list.Element
+	order   list.List
+}{entries: map[string]*list.Element{}}
+
+const schemaGrammarsSize = 64
+
+type schemaGrammar struct {
+	schema, grammar string
+}
+
+// schemaGrammar converts a JSON schema to GBNF with llama-server's own
+// converter. An empty completion evaluates and generates nothing, but its
+// final response still reports the grammar the schema was converted to.
+func (s *llamaServerRunner) schemaGrammar(ctx context.Context, schema json.RawMessage) (string, error) {
+	key := string(schema)
+	schemaGrammars.Lock()
+	if e, ok := schemaGrammars.entries[key]; ok {
+		schemaGrammars.order.MoveToFront(e)
+		schemaGrammars.Unlock()
+		return e.Value.(*schemaGrammar).grammar, nil
+	}
+	schemaGrammars.Unlock()
+
+	body, err := json.Marshal(struct {
+		Prompt         [][]int         `json:"prompt"`
+		NPredict       int             `json:"n_predict"`
+		JsonSchema     json.RawMessage `json:"json_schema"`
+		ResponseFields []string        `json:"response_fields"`
+	}{Prompt: [][]int{{}}, JsonSchema: schema, ResponseFields: []string{"generation_settings/grammar"}})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal grammar request: %v", err)
+	}
+	endpoint := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
+	serverReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("error creating grammar request: %v", err)
+	}
+	serverReq.Header.Set("Content-Type", "application/json")
+	res, err := s.httpClient().Do(serverReq)
+	if err != nil {
+		return "", fmt.Errorf("llama-server grammar request failed: %v", err)
+	}
+	defer res.Body.Close()
+	resBody, err := io.ReadAll(res.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed reading llama-server grammar response: %w", err)
+	}
+	if res.StatusCode >= 400 {
+		return "", api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(resBody)}
+	}
+	var lsRes struct {
+		Grammar string `json:"generation_settings/grammar"`
+	}
+	if err := json.Unmarshal(resBody, &lsRes); err != nil {
+		return "", fmt.Errorf("error unmarshalling llama-server grammar response: %v", err)
+	}
+	if lsRes.Grammar == "" {
+		return "", errors.New("llama-server returned no grammar for the schema")
+	}
+
+	schemaGrammars.Lock()
+	defer schemaGrammars.Unlock()
+	if _, ok := schemaGrammars.entries[key]; !ok {
+		if schemaGrammars.order.Len() == schemaGrammarsSize {
+			oldest := schemaGrammars.order.Back()
+			delete(schemaGrammars.entries, oldest.Value.(*schemaGrammar).schema)
+			schemaGrammars.order.Remove(oldest)
+		}
+		schemaGrammars.entries[key] = schemaGrammars.order.PushFront(&schemaGrammar{schema: key, grammar: lsRes.Grammar})
+	}
+	return lsRes.Grammar, nil
 }
 
 func llamaServerPreservedTokens(parserTokens []string, toolCallTag string) []string {
@@ -1337,7 +1593,7 @@ type llamaServerChatResponse struct {
 }
 
 type llamaServerTimings struct {
-	CacheN    int     `json:"cache_n"`
+	CacheN    *int    `json:"cache_n"`
 	PromptN   int     `json:"prompt_n"`
 	PromptMS  float64 `json:"prompt_ms"`
 	PredictN  int     `json:"predicted_n"`
@@ -1345,7 +1601,10 @@ type llamaServerTimings struct {
 }
 
 func (t llamaServerTimings) promptEvalCount() int {
-	return t.CacheN + t.PromptN
+	if t.CacheN == nil {
+		return t.PromptN
+	}
+	return *t.CacheN + t.PromptN
 }
 
 type llamaServerApplyTemplateResponse struct {
@@ -1430,8 +1689,19 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
 		}
-	} else if req.Grammar != "" {
-		lsReq.Grammar = req.Grammar
+	}
+
+	// A format on a thinking response applies after the closing string, which
+	// only a grammar of our own can express, so a schema is converted first.
+	if len(req.ThinkingClose) > 0 && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
+		if lsReq.Grammar == "" {
+			grammar, err := s.schemaGrammar(ctx, lsReq.JsonSchema)
+			if err != nil {
+				return err
+			}
+			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
+		}
+		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
@@ -1442,7 +1712,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		for _, media := range req.Media {
 			marker := fmt.Sprintf("[img-%d]", media.ID)
 			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
-			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(media.Data))
+			data, err := llamaServerMediaBytes(media.Data)
+			if err != nil {
+				return err
+			}
+			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(data))
 		}
 		lsReq.Prompt = llamaServerMultimodalPrompt{
 			PromptString:   promptStr,
@@ -1529,17 +1803,16 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				lastToken = strings.TrimSpace(lsResp.Content)
 				tokenRepeat = 0
 			}
-			if tokenRepeat > 30 {
+			if tokenRepeat > 100 {
 				slog.Debug("prediction aborted, token repeat limit reached")
-				return ctx.Err()
+				return fmt.Errorf("prediction aborted, token repeat limit reached")
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
-				resp := CompletionResponse{
-					Content: lsResp.Content,
-				}
-				resp.Logprobs = convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0)
-				fn(resp)
+				fn(CompletionResponse{
+					Content:  lsResp.Content,
+					Logprobs: convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0),
+				})
 			}
 
 			if lsResp.Stop {
@@ -1549,13 +1822,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				}
 
 				finalResp = CompletionResponse{
-					Content:            lsResp.Content,
-					Done:               true,
-					DoneReason:         doneReason,
-					PromptEvalCount:    lsResp.Timings.promptEvalCount(),
-					PromptEvalDuration: time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
-					EvalCount:          lsResp.Timings.PredictN,
-					EvalDuration:       time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
+					Content:               lsResp.Content,
+					Done:                  true,
+					DoneReason:            doneReason,
+					PromptEvalCount:       lsResp.Timings.promptEvalCount(),
+					PromptEvalCachedCount: lsResp.Timings.CacheN,
+					PromptEvalDuration:    time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond)),
+					EvalCount:             lsResp.Timings.PredictN,
+					EvalDuration:          time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond)),
 				}
 				hasFinalResp = true
 			}
@@ -1852,6 +2126,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				resp.Done = true
 				resp.DoneReason = doneReason
 				resp.PromptEvalCount = lsResp.Timings.promptEvalCount()
+				resp.PromptEvalCachedCount = lsResp.Timings.CacheN
 				resp.PromptEvalDuration = time.Duration(lsResp.Timings.PromptMS * float64(time.Millisecond))
 				resp.EvalCount = lsResp.Timings.PredictN
 				resp.EvalDuration = time.Duration(lsResp.Timings.PredictMS * float64(time.Millisecond))
@@ -2065,34 +2340,58 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 		})
 	}
 	for _, media := range msg.Media {
-		parts = append(parts, llamaServerChatMediaPart(media))
+		part, err := llamaServerChatMediaPart(media)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
 	}
 	converted["content"] = parts
 	return converted, nil
 }
 
-func llamaServerChatMediaPart(media MediaData) map[string]any {
-	encoded := base64.StdEncoding.EncodeToString(media.Data)
+func llamaServerChatMediaPart(media MediaData) (map[string]any, error) {
 	if format, ok := AudioFormat(media.Data); ok {
 		return map[string]any{
 			"type": "input_audio",
 			"input_audio": map[string]any{
-				"data":   encoded,
+				"data":   base64.StdEncoding.EncodeToString(media.Data),
 				"format": format,
 			},
-		}
+		}, nil
 	}
 
-	mime := http.DetectContentType(media.Data)
+	data, err := llamaServerMediaBytes(media.Data)
+	if err != nil {
+		return nil, err
+	}
+	mime := http.DetectContentType(data)
 	if !strings.HasPrefix(mime, "image/") {
 		mime = "image/jpeg"
 	}
 	return map[string]any{
 		"type": "image_url",
 		"image_url": map[string]any{
-			"url": "data:" + mime + ";base64," + encoded,
+			"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data),
 		},
+	}, nil
+}
+
+func llamaServerMediaBytes(data []byte) ([]byte, error) {
+	if http.DetectContentType(data) != "image/webp" {
+		return data, nil
 	}
+
+	img, err := webp.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode WebP image: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, fmt.Errorf("encode WebP image as PNG: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func llamaServerChatToolCalls(tcs []api.ToolCall) ([]llamaServerChatToolCall, error) {
@@ -2377,7 +2676,7 @@ func (s *llamaServerRunner) Detokenize(ctx context.Context, tokens []int) (strin
 }
 
 func (s *llamaServerRunner) Close() error {
-	return s.stopProcess()
+	return errors.Join(s.stopProcess(), s.removeSplitDirs())
 }
 
 func (s *llamaServerRunner) stopProcess() error {
@@ -2447,6 +2746,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
 	memGPU := s.memGPU
+	memModelFileBacked := s.memModelFileBacked
+	memCPUMappedModel := s.memCPUMappedModel
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2454,6 +2755,19 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 
 	if memTotal > 0 {
 		total, vram = memTotal, memGPU
+		// With mmap, llama-server reports each CPU_Mapped model buffer as the
+		// file-offset span of its CPU-resident tensors. During partial offload
+		// that span covers nearly the whole file (the first and last tensors
+		// stay on CPU), re-counting weights already held in device buffers.
+		// Only buffers that mirror the on-disk file can overlap this way;
+		// repacked copies such as CPU_REPACK are separate real allocations and
+		// must be left intact. Weights cannot exceed the model file on disk, so
+		// trim that overlap from the mmap-backed (reclaimable page cache) portion.
+		if memCPUMappedModel > 0 {
+			if modelSize := modelFileSize(s.modelPath, s.metadata); modelSize > 0 && memModelFileBacked > modelSize {
+				total -= min(memCPUMappedModel, memModelFileBacked-modelSize)
+			}
+		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
 			total = vram
 		}
@@ -2461,8 +2775,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	}
 	// Fallback: use model file size as a rough proxy
 	slog.Debug("llama-server buffer sizes not available, falling back to file size estimate", "model", s.modelPath)
-	if info, err := os.Stat(s.modelPath); err == nil {
-		total = uint64(info.Size())
+	if modelSize := modelFileSize(s.modelPath, s.metadata); modelSize > 0 {
+		total = modelSize
 		vram = total
 	}
 	return total, vram
@@ -2471,11 +2785,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Uses model file size as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *ggml.GGML, numCtx int) uint64 {
-	var weights uint64
-	if info, err := os.Stat(modelPath); err == nil {
-		weights = uint64(info.Size())
-	}
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
+	weights := modelFileSize(modelPath, f)
 
 	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
 	layers := f.KV().BlockCount()
@@ -2612,11 +2923,25 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu uint64
+	var total, gpu, modelFileBacked, cpuMappedModel uint64
 	byDevice := make(map[string]uint64)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
+		if key.kind == "model" {
+			onGPU := isGPUBuffer(key.backend)
+			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
+			// Device copies and mmap views mirror the on-disk weights, so their
+			// spans can overlap and double-count on partial offload. Repacked or
+			// host-pinned CPU copies (e.g. CPU_REPACK) are separate real
+			// allocations that never overlap the file, so keep them out of the base.
+			if onGPU || mmapBacked {
+				modelFileBacked += buffer.bytes
+			}
+			if !onGPU && mmapBacked {
+				cpuMappedModel += buffer.bytes
+			}
+		}
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
 			byDevice[deviceName(key.backend)] += buffer.bytes
@@ -2625,6 +2950,8 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 
 	w.runner.memTotal = total
 	w.runner.memGPU = gpu
+	w.runner.memModelFileBacked = modelFileBacked
+	w.runner.memCPUMappedModel = cpuMappedModel
 	w.runner.vramByDevice = byDevice
 }
 

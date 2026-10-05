@@ -19,6 +19,11 @@ type Parser interface {
 	// PreservedTokens returns parser grammar tokens that must remain visible in
 	// llama-server detokenized output for this parser to recognize boundaries.
 	PreservedTokens() []string
+	// ThinkingClose returns the strings any of which ends the thinking the
+	// response begins with, or none when it starts in content. Answered after
+	// Init, which decides that from the think value, a prefill, and the
+	// parser's default.
+	ThinkingClose() []string
 	HasToolSupport() bool
 	HasThinkingSupport() bool
 }
@@ -54,6 +59,8 @@ func ParserForName(name string) Parser {
 		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3.5":
 		p = &Qwen35Parser{}
+	case "ornith":
+		p = &Qwen35Parser{}
 	case "qwen3-coder":
 		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
@@ -74,7 +81,7 @@ func ParserForName(name string) Parser {
 		return &Olmo3Parser{}
 	case "olmo3-think":
 		return &Olmo3ThinkParser{}
-	case "nemotron-3-nano":
+	case "nemotron-3-nano", "nemotron-3.5-nano":
 		return &Nemotron3NanoParser{}
 	case "functiongemma":
 		return &FunctionGemmaParser{}
@@ -92,6 +99,12 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: true}
 	case "laguna":
 		return &LagunaParser{}
+	case "poolside-v1":
+		return &LagunaV8Parser{}
+	case "cohere":
+		return &CohereParser{}
+	case "glimmer":
+		return &GlimmerParser{}
 	default:
 		return nil
 	}
@@ -109,6 +122,10 @@ func (p *PassthroughParser) Add(s string, done bool) (content string, thinking s
 }
 
 func (p *PassthroughParser) PreservedTokens() []string {
+	return nil
+}
+
+func (p *PassthroughParser) ThinkingClose() []string {
 	return nil
 }
 

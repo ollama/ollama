@@ -28,6 +28,8 @@ if ! command -v zstd >/dev/null 2>&1; then
     exit 1
 fi
 
+rm -rf dist/bin dist/lib dist/linux_amd64 dist/linux_arm64
+rm -f dist/ollama-linux-*.tar.zst
 mkdir -p dist
 
 docker buildx build \

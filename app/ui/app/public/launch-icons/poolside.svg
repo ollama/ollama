@@ -1,0 +1,11 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="poolside-gradient" x1="8" y1="5" x2="55" y2="59" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6c5cff"/>
+      <stop offset="1" stop-color="#3c2cff"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="13" fill="url(#poolside-gradient)"/>
+  <path d="M13 32c0-10.5 8.5-19 19-19 10.49 0 19 8.5 19 19s-8.51 19-19 19c-10.5 0-19-8.5-19-19Z" fill="none" stroke="#fff" stroke-width="4"/>
+  <path d="M16 24c8-4.1 17.1-.9 22.6 7.1 4.3-1.2 8.6.5 11 4.1M23.5 47.5 38 17.5" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="4"/>
+</svg>
