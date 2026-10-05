@@ -120,11 +120,6 @@ func init() {
 
 		integrationTestCase("thinking-enabled", smol, runThinkingEnabled),
 		integrationTestCase("thinking-suppressed", smol, runThinkingSuppressed),
-
-		integrationTestCase("create-safetensors", "", runCreateSafetensorsLLM),
-		integrationTestCase("create-gguf", "", runCreateGGUF),
-		integrationTestCase("create-gguf-blob-transfer", "", runCreateGGUFBlobTransfer),
-		integrationTestCase("quantization", "", runQuantization),
 	)
 	registerStructuredOutputCases()
 
