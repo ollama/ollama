@@ -11,7 +11,6 @@ import { highlighter } from "@/lib/highlighter";
 
 interface StreamingMarkdownContentProps {
   content: string;
-  isStreaming?: boolean;
   size?: "sm" | "md" | "lg";
   browserToolResult?: any; // TODO: proper type
 }
@@ -131,7 +130,7 @@ const CodeBlock = React.memo(
 );
 
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
-  React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
+  React.memo(({ content, size, browserToolResult }) => {
     // Build the remark plugins array - keep default GFM and Math, add citations
     const remarkPlugins = React.useMemo(() => {
       return [
@@ -209,13 +208,10 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           break-words
         `}
       >
-        <StreamingMarkdownErrorBoundary
-          content={content}
-          isStreaming={isStreaming}
-        >
+        <StreamingMarkdownErrorBoundary content={content}>
           <Streamdown
-            parseIncompleteMarkdown={isStreaming}
-            isAnimating={isStreaming}
+            parseIncompleteMarkdown={false}
+            isAnimating={false}
             rehypePlugins={safeRehypePlugins}
             remarkPlugins={remarkPlugins}
             controls={false}
@@ -295,18 +291,9 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
 interface StreamingMarkdownErrorBoundaryProps {
   content: string;
   children: React.ReactNode;
-  isStreaming: boolean;
 }
 
-// Sometimes remark will throw errors, particularly when rendering math. We add
-// this fallback to show the plain text content if there's an error, and then we
-// retry rendering the content if the content changes OR if we change our
-// streaming state (because we render things differently when in streaming mode
-// v. not, so for some cases we'll automatically recover once streaming is over)
-//
-// This should not be relied on for anything known to be broken (any known
-// errors should be fixed!), but it's necessary to not break the full UI because
-// of some bad markdown
+// Fall back to the saved text if Markdown fails, and retry when content changes.
 class StreamingMarkdownErrorBoundary extends React.Component<
   StreamingMarkdownErrorBoundaryProps,
   { hasError: boolean }
@@ -317,10 +304,7 @@ class StreamingMarkdownErrorBoundary extends React.Component<
   }
 
   componentDidUpdate(prevProps: StreamingMarkdownErrorBoundaryProps) {
-    if (
-      prevProps.isStreaming !== this.props.isStreaming ||
-      prevProps.content !== this.props.content
-    ) {
+    if (prevProps.content !== this.props.content) {
       this.setState({ hasError: false });
     }
   }

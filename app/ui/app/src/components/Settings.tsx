@@ -17,14 +17,13 @@ import {
 import {
   WifiIcon,
   FolderIcon,
-  BoltIcon,
-  WrenchIcon,
   CloudIcon,
   CogIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
+import { ChatBubbleOvalLeftIcon } from "@heroicons/react/24/outline";
 import { Settings as SettingsType } from "@/gotypes";
 import { isWindowsPlatform } from "@/lib/platform";
 import { settingsMutationScope } from "@/lib/settingsMutationScope";
@@ -35,11 +34,14 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useBlocker } from "@tanstack/react-router";
 import {
   getSettings,
+  getChats,
   type CloudStatusSource,
   type CloudStatusResponse,
   updateCloudSetting,
   updateSettings,
   getInferenceCompute,
+  exportAllChats,
+  type ExportProgress,
 } from "@/api";
 
 function AnimatedDots() {
@@ -141,6 +143,39 @@ export async function applySettingsDefaults({
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const { data: chats } = useQuery({
+    queryKey: ["history-chats"],
+    queryFn: getChats,
+    retry: false,
+    networkMode: "always",
+  });
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(
+    null,
+  );
+  const exportController = useRef<AbortController | null>(null);
+  const chatExport = useMutation({
+    mutationFn: async (controller: AbortController) => {
+      try {
+        return await exportAllChats(controller.signal, setExportProgress);
+      } catch (error) {
+        if (controller.signal.aborted) return null;
+        throw error;
+      }
+    },
+    // Paint the disabled button before the native save dialog opens.
+    onMutate: () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      }),
+    onSettled: () => {
+      exportController.current = null;
+      setIsExporting(false);
+    },
+    retry: false,
+    networkMode: "always",
+  });
+  useEffect(() => () => exportController.current?.abort(), []);
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
@@ -776,6 +811,104 @@ export default function Settings() {
             </div>
           </div>
 
+          <section
+            hidden={!chats?.length}
+            aria-label="Chat history"
+            className="space-y-3 rounded-xl bg-white p-4 dark:bg-neutral-800"
+          >
+            <Field>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-start space-x-3">
+                  <ChatBubbleOvalLeftIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                  <div>
+                    <Label>Chat history</Label>
+                    <Description>
+                      Save all chats and attachments in a ZIP file.
+                    </Description>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isExporting && (
+                    <Button
+                      type="button"
+                      plain
+                      onClick={() => exportController.current?.abort()}
+                    >
+                      Cancel
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    color="white"
+                    disabled={isExporting}
+                    aria-busy={isExporting || undefined}
+                    onClick={() => {
+                      if (exportController.current) return;
+                      const controller = new AbortController();
+                      exportController.current = controller;
+                      setExportProgress(null);
+                      setIsExporting(true);
+                      chatExport.mutate(controller);
+                    }}
+                  >
+                    {isExporting ? (
+                      <ArrowPathIcon
+                        data-slot="icon"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <ArrowDownTrayIcon data-slot="icon" />
+                    )}
+                    {isExporting ? "Exporting…" : "Export all chats"}
+                  </Button>
+                </div>
+              </div>
+            </Field>
+            {isExporting && (
+              <div className="space-y-1">
+                <div
+                  role="progressbar"
+                  aria-label="Chat export progress"
+                  aria-valuemin={0}
+                  aria-valuenow={exportProgress?.completed}
+                  aria-valuemax={exportProgress?.total ?? 1}
+                  className="relative h-1.5 overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700"
+                >
+                  <div
+                    className="absolute top-0 left-0 h-full rounded-full bg-neutral-700 dark:bg-neutral-500"
+                    style={{
+                      width: `${exportProgress?.total ? (exportProgress.completed / exportProgress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <p
+                  role="status"
+                  className="text-sm text-neutral-500 dark:text-neutral-400"
+                >
+                  {exportProgress
+                    ? `${exportProgress.completed} of ${exportProgress.total} chats exported`
+                    : "Preparing export…"}
+                </p>
+              </div>
+            )}
+            {chatExport.error && (
+              <p
+                role="alert"
+                className="text-sm text-red-600 dark:text-red-400"
+              >
+                {chatExport.error.message}
+              </p>
+            )}
+            {chatExport.data && !isExporting && (
+              <p
+                role="status"
+                className="text-sm text-neutral-500 dark:text-neutral-400"
+              >
+                Export complete.
+              </p>
+            )}
+          </section>
+
           {!isWindows && (
             <section
               aria-labelledby="apps-settings-heading"
@@ -802,50 +935,6 @@ export default function Settings() {
                 onDraftChange={setHasCodexDraftChanges}
               />
             </section>
-          )}
-
-          {/* Agent Mode */}
-          {window.OLLAMA_TOOLS && (
-            <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
-              <div className="space-y-4 p-4">
-                <Field>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start space-x-3">
-                      <BoltIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Enable Agent Mode</Label>
-                        <Description>
-                          Use multi-turn tools to fulfill user requests
-                        </Description>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={settings.Agent}
-                      onChange={(checked) => handleChange("Agent", checked)}
-                    />
-                  </div>
-                </Field>
-
-                {/* Tools Mode */}
-                <Field>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-start space-x-3">
-                      <WrenchIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                      <div>
-                        <Label>Enable Tools Mode</Label>
-                        <Description>
-                          Use single-turn tools to fulfill user requests
-                        </Description>
-                      </div>
-                    </div>
-                    <Switch
-                      checked={settings.Tools}
-                      onChange={(checked) => handleChange("Tools", checked)}
-                    />
-                  </div>
-                </Field>
-              </div>
-            </div>
           )}
 
           {/* Reset button */}

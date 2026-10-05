@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/internal/onboarding"
@@ -156,18 +157,12 @@ func TestStore(t *testing.T) {
 		}
 	})
 
-	t.Run("create and retrieve chat", func(t *testing.T) {
-		chat := NewChat("test-chat-1")
-		chat.Title = "Test Chat"
-
-		chat.Messages = append(chat.Messages, NewMessage("user", "Hello", nil))
-		chat.Messages = append(chat.Messages, NewMessage("assistant", "Hi there!", &MessageOptions{
-			Model: "llama4",
-		}))
-
-		if err := s.SetChat(*chat); err != nil {
-			t.Fatalf("failed to save chat: %v", err)
-		}
+	t.Run("retrieve saved chat", func(t *testing.T) {
+		chat := Chat{ID: "test-chat-1", Title: "Test Chat", CreatedAt: time.Now(), Messages: []Message{
+			{Role: "user", Content: "Hello", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+			{Role: "assistant", Content: "Hi there!", Model: "llama4", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		}}
+		seedChat(t, s.db, chat)
 
 		retrieved, err := s.Chat("test-chat-1")
 		if err != nil {
@@ -192,13 +187,9 @@ func TestStore(t *testing.T) {
 	})
 
 	t.Run("list chats", func(t *testing.T) {
-		chat2 := NewChat("test-chat-2")
-		chat2.Title = "Another Chat"
-		chat2.Messages = append(chat2.Messages, NewMessage("user", "Test", nil))
-
-		if err := s.SetChat(*chat2); err != nil {
-			t.Fatalf("failed to save chat: %v", err)
-		}
+		seedChat(t, s.db, Chat{ID: "test-chat-2", Title: "Another Chat", CreatedAt: time.Now(), Messages: []Message{
+			{Role: "user", Content: "Test", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		}})
 
 		chats, err := s.Chats()
 		if err != nil {

@@ -23,10 +23,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/auth"
+	"github.com/ollama/ollama/app/dialog"
+	"github.com/ollama/ollama/app/history"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
-	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/ui"
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
@@ -209,6 +210,7 @@ func main() {
 		}
 	}
 	appStore = st
+	defer st.Close()
 
 	// Enable CORS in development mode
 	if devMode {
@@ -232,10 +234,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-	// Initialize tools registry
-	toolRegistry := tools.NewRegistry()
-	slog.Info("initialized tools registry", "tool_count", len(toolRegistry.List()))
 
 	// ctx is the app-level context that will be used to stop the app
 	ctx, cancel := context.WithCancel(context.Background())
@@ -268,12 +266,42 @@ func main() {
 		},
 		Store:             st,
 		IntegrationModels: desktopModelSettingsHandler(),
-		ToolRegistry:      toolRegistry,
 		Dev:               devMode,
 		Logger:            slog.Default(),
 		Updater:           upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
+		},
+		ExportChat: func(chat store.Chat) (*history.Result, error) {
+			directory, err := wv.pickExportPath(dialog.Directory().Title("Export conversation to…").Browse)
+			if errors.Is(err, dialog.ErrCancelled) {
+				return nil, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			result, err := history.Export(chat, directory)
+			if err == nil {
+				revealHistoryExport(result, filepath.Join(result.Path, "conversation.md"))
+			}
+			return result, err
+		},
+		ExportAllChats: func(ctx context.Context, progress func(history.Progress) error) (*history.Result, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			path, err := wv.pickExportPath(dialog.File().Title("Export all chats").Filter("ZIP archive", "zip").SetStartFile("ollama-chats.zip").Save)
+			if errors.Is(err, dialog.ErrCancelled) {
+				return nil, nil
+			}
+			if err != nil {
+				return nil, err
+			}
+			result, err := history.ExportAll(ctx, st, path, progress)
+			if err == nil {
+				revealHistoryExport(result, result.Path)
+			}
+			return result, err
 		},
 	}
 
@@ -481,6 +509,24 @@ func handleConnectURLScheme() {
 	}
 
 	openInBrowser(connectURL)
+}
+
+// Reveal completed exports without opening attachments or extracting ZIPs.
+func revealHistoryExport(result *history.Result, path string) {
+	var err error
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("explorer.exe", "/select,"+path)
+		err = cmd.Start()
+		if err == nil {
+			go cmd.Wait()
+		}
+	} else {
+		err = exec.Command("open", "-R", path).Run()
+	}
+	if err != nil {
+		slog.Warn("failed to reveal chat export", "path", path, "error", err)
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Export saved, but the folder could not be opened. You can find it at: %s", result.Path))
+	}
 }
 
 // openInBrowser opens the specified URL in the default browser

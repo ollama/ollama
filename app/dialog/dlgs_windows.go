@@ -2,6 +2,7 @@ package dialog
 
 import (
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"syscall"
 	"unicode/utf16"
@@ -126,6 +127,10 @@ func (b *FileBuilder) loadMultiple() ([]string, error) {
 
 func (b *FileBuilder) save() (string, error) {
 	d := openfile(w32.OFN_OVERWRITEPROMPT|w32.OFN_NOCHANGEDIR, b)
+	if ext := filepath.Ext(b.StartFile); len(ext) > 1 {
+		// Let Windows add the extension before checking whether the file exists.
+		d.opf.DefExt, _ = syscall.UTF16PtrFromString(ext[1:])
+	}
 	if w32.GetSaveFileName(d.opf) {
 		return d.Filename(), nil
 	}

@@ -9,53 +9,22 @@ import React, { useState, useMemo, useRef } from "react";
 const Message = React.memo(
   ({
     message,
-    onEditMessage,
-    messageIndex,
-    isStreaming,
-    isFaded,
     browserToolResult,
     lastToolQuery,
   }: {
     message: MessageType;
-    onEditMessage?: (content: string, index: number) => void;
-    messageIndex?: number;
-    isStreaming: boolean;
-    isFaded?: boolean;
-    // TODO(drifkin): this type isn't right
     browserToolResult?: BrowserToolResult;
     lastToolQuery?: string;
-  }) => {
-    if (message.role === "user") {
-      return (
-        <UserMessage
-          message={message}
-          onEditMessage={onEditMessage}
-          messageIndex={messageIndex}
-          isFaded={isFaded}
-        />
-      );
-    } else {
-      return (
-        <OtherRoleMessage
-          message={message}
-          isStreaming={isStreaming}
-          isFaded={isFaded}
-          browserToolResult={browserToolResult}
-          lastToolQuery={lastToolQuery}
-        />
-      );
-    }
-  },
-  (prevProps, nextProps) => {
-    return (
-      prevProps.message === nextProps.message &&
-      prevProps.onEditMessage === nextProps.onEditMessage &&
-      prevProps.messageIndex === nextProps.messageIndex &&
-      prevProps.isStreaming === nextProps.isStreaming &&
-      prevProps.isFaded === nextProps.isFaded &&
-      prevProps.browserToolResult === nextProps.browserToolResult
-    );
-  },
+  }) =>
+    message.role === "user" ? (
+      <UserMessage message={message} />
+    ) : (
+      <OtherRoleMessage
+        message={message}
+        browserToolResult={browserToolResult}
+        lastToolQuery={lastToolQuery}
+      />
+    ),
 );
 
 export default Message;
@@ -387,19 +356,20 @@ function InlineSearchTerm({ term }: { term: string }) {
 }
 
 function cursorToPageText(
-  cursor: number,
+  cursor: number | undefined,
   browserToolResult: BrowserToolResult | undefined,
 ): string {
   if (browserToolResult) {
-    let page = browserToolResult.page_stack[cursor];
-    if (page) {
+    let page =
+      cursor === undefined ? undefined : browserToolResult.page_stack?.[cursor];
+    if (typeof page === "string" && page) {
       if (page.startsWith("search_results_")) {
         const searchTerm = page.replace(/^search_results_/, "");
         page = `Search results for "${searchTerm}"`;
       }
       return page;
     }
-    return page || "Unknown page";
+    return "Unknown page";
   }
 
   if (cursor === undefined) {
@@ -411,7 +381,7 @@ function cursorToPageText(
 }
 
 function cursorToPage(
-  cursor: number,
+  cursor: number | undefined,
   browserToolResult: BrowserToolResult | undefined,
 ) {
   const pageText = cursorToPageText(cursor, browserToolResult);
@@ -424,15 +394,26 @@ function cursorToPage(
 }
 
 // TODO(drifkin): pull out into another file
-function BrowserToolCallDisplay({
+function BrowserToolHistory({
   toolCall,
   browserToolResult,
 }: {
   toolCall: ToolCall;
   browserToolResult?: BrowserToolResult;
 }) {
-  const args = JSON.parse(toolCall.function.arguments);
-  if (toolCall.function.name === "browser.search") {
+  let args: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(toolCall.function.arguments);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      args = parsed;
+    }
+  } catch {
+    // Interrupted tool calls can contain partial JSON; show the saved text below.
+  }
+  if (
+    toolCall.function.name === "browser.search" &&
+    typeof args?.query === "string"
+  ) {
     const query = args.query;
     return (
       <div className="text-neutral-600 dark:text-neutral-400 relative mb-3 select-text">
@@ -449,7 +430,15 @@ function BrowserToolCallDisplay({
         </div>
       </div>
     );
-  } else if (toolCall.function.name === "browser.open") {
+  } else if (
+    toolCall.function.name === "browser.open" &&
+    args &&
+    (args.cursor === undefined || typeof args.cursor === "number") &&
+    (args.id === undefined ||
+      typeof args.id === "string" ||
+      typeof args.id === "number") &&
+    (args.loc === undefined || typeof args.loc === "number")
+  ) {
     const cursor = args.cursor;
     const id = args.id;
     const idAllNumeric = !isNaN(Number(id));
@@ -491,7 +480,11 @@ function BrowserToolCallDisplay({
         </div>
       );
     }
-  } else if (toolCall.function.name === "browser.find") {
+  } else if (
+    toolCall.function.name === "browser.find" &&
+    typeof args?.pattern === "string" &&
+    typeof args.cursor === "number"
+  ) {
     const cursor = args.cursor;
     const pattern = args.pattern;
 
@@ -529,8 +522,6 @@ function ToolCallDisplay({
   toolCall: ToolCall;
   browserToolResult?: BrowserToolResult;
 }) {
-  const [isCollapsed, setIsCollapsed] = React.useState(true);
-
   // frontend tool call display for web_search
   if (toolCall.function.name === "web_search") {
     let args: Record<string, unknown> | null = null;
@@ -636,163 +627,17 @@ function ToolCallDisplay({
     );
   }
 
-  if (toolCall.function.name.startsWith("browser.")) {
-    return (
-      <BrowserToolCallDisplay
-        toolCall={toolCall}
-        browserToolResult={browserToolResult}
-      />
-    );
-  }
-
-  let parsedArgs = null;
-  try {
-    parsedArgs = JSON.parse(toolCall.function.arguments);
-  } catch {
-    parsedArgs = toolCall.function.arguments;
-  }
-
-  // Create a compact preview of arguments as a string
-  const getArgsPreview = () => {
-    if (!parsedArgs || typeof parsedArgs !== "object") {
-      return parsedArgs ? String(parsedArgs) : "";
-    }
-
-    const argPairs = Object.entries(parsedArgs)
-      .map(([key, value]) => {
-        let displayValue;
-        if (typeof value === "string") {
-          displayValue = `"${value}"`;
-        } else if (typeof value === "object") {
-          displayValue = JSON.stringify(value);
-        } else {
-          displayValue = String(value);
-        }
-        return `${key}=${displayValue}`;
-      })
-      .join(", ");
-
-    return argPairs;
-  };
-
   return (
-    <div
-      className={`flex flex-col w-full ${!isCollapsed ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-600 dark:text-neutral-400"}
-         hover:text-neutral-800
-        dark:hover:text-neutral-200 transition-colors`}
-    >
-      <div
-        className="flex items-center cursor-pointer group/tool self-start relative"
-        onClick={() => setIsCollapsed(!isCollapsed)}
-      >
-        {/* Tool icon */}
-        <svg
-          className={`w-3 absolute left-0 top-1/2 -translate-y-1/2 transition-opacity ${
-            isCollapsed ? "opacity-100" : "opacity-0"
-          } group-hover/tool:opacity-0 fill-current will-change-opacity`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-        </svg>
-        {/* Arrow */}
-        <svg
-          className={`h-4 w-4 absolute transition-all ${
-            isCollapsed
-              ? "-rotate-90 opacity-0 group-hover/tool:opacity-100"
-              : "rotate-0 opacity-100"
-          } will-change-[opacity,transform]`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-
-        <h3 className="ml-6 font-mono text-sm">
-          <span className="font-semibold">{toolCall.function.name}</span>
-          {isCollapsed && parsedArgs && (
-            <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-              ({getArgsPreview()})
-            </span>
-          )}
-          <span className="text-neutral-500 dark:text-neutral-500 ml-2 text-xs">
-            {toolCall.type}
-          </span>
-        </h3>
-      </div>
-      <div
-        className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md
-          transition-[max-height,opacity] duration-300 ease-in-out ml-6 mt-2`}
-        style={{
-          maxHeight: isCollapsed ? "0px" : "40rem",
-          opacity: isCollapsed ? 0 : 1,
-        }}
-      >
-        <div className="transition-transform duration-300 opacity-75">
-          {parsedArgs && (
-            <div className="mb-4">
-              <div className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 mb-1">
-                Arguments:
-              </div>
-              <pre className="text-xs bg-neutral-100 dark:bg-neutral-800 p-2 rounded overflow-x-auto">
-                <code className="text-neutral-800 dark:text-neutral-200">
-                  {typeof parsedArgs === "object"
-                    ? JSON.stringify(parsedArgs, null, 2)
-                    : parsedArgs}
-                </code>
-              </pre>
-            </div>
-          )}
-
-          {toolCall.function.result && (
-            <div>
-              <div className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 mb-1">
-                Result:
-              </div>
-              <pre className="text-xs bg-neutral-100 dark:bg-neutral-800 p-2 rounded overflow-x-auto max-h-40">
-                <code className="text-neutral-800 dark:text-neutral-200">
-                  {typeof toolCall.function.result === "object"
-                    ? JSON.stringify(toolCall.function.result, null, 2)
-                    : toolCall.function.result}
-                </code>
-              </pre>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <BrowserToolHistory
+      toolCall={toolCall}
+      browserToolResult={browserToolResult}
+    />
   );
 }
 
-function UserMessage({
-  message,
-  onEditMessage,
-  messageIndex,
-  isFaded,
-}: {
-  message: MessageType;
-  onEditMessage?: (content: string, index: number) => void;
-  messageIndex?: number;
-  isFaded?: boolean;
-}) {
-  const handleEdit = () => {
-    if (onEditMessage && messageIndex !== undefined) {
-      onEditMessage(message.content, messageIndex);
-    }
-  };
-
+function UserMessage({ message }: { message: MessageType }) {
   return (
-    <div
-      className={`flex flex-col transition-opacity duration-300 ${isFaded ? "opacity-50" : "opacity-100"}`}
-    >
+    <div className="flex flex-col">
       {/* Show image attachments above the message background */}
       {message.attachments && message.attachments.length > 0 && (
         <div className="flex gap-2 mb-2 overflow-x-auto justify-end max-w-md self-end">
@@ -854,20 +699,6 @@ function UserMessage({
           <div className="message-content whitespace-pre-line break-words">
             {message.content}
           </div>
-
-          {/* Edit button */}
-          <button
-            type="button"
-            className={`edit-button absolute -bottom-5 right-1 text-xs
-                     ${
-                       isFaded
-                         ? "opacity-30"
-                         : "opacity-0 group-hover/message:opacity-100 text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200 cursor-pointer"
-                     }`}
-            onClick={isFaded ? undefined : handleEdit}
-          >
-            edit
-          </button>
         </div>
       </div>
     </div>
@@ -876,15 +707,10 @@ function UserMessage({
 
 function OtherRoleMessage({
   message,
-  isStreaming,
-  isFaded,
   browserToolResult,
   lastToolQuery,
 }: {
   message: MessageType;
-  previousMessage?: MessageType;
-  isStreaming: boolean;
-  isFaded?: boolean;
   // TODO(drifkin): this type isn't right
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
@@ -892,9 +718,7 @@ function OtherRoleMessage({
   const messageRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div
-      className={`flex mb-8 flex-col transition-opacity duration-300 space-y-4 ${isFaded ? "opacity-50" : "opacity-100"}`}
-    >
+    <div className="flex mb-8 flex-col space-y-4">
       <div className="flex-1 flex flex-col justify-start relative group max-w-none text-wrap break-words">
         {/* Thinking area */}
         {message.thinking && (
@@ -939,7 +763,6 @@ function OtherRoleMessage({
               ) : (
                 <StreamingMarkdownContent
                   content={message.content}
-                  isStreaming={isStreaming}
                   browserToolResult={browserToolResult as BrowserToolResult}
                 />
               )}
@@ -967,8 +790,7 @@ function OtherRoleMessage({
         />
       )}
 
-      {!isStreaming &&
-        message.role === "assistant" &&
+      {message.role === "assistant" &&
         message.content &&
         message.content.trim() &&
         (!message.tool_calls || message.tool_calls.length === 0) &&

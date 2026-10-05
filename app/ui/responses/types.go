@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/app/store"
-	"github.com/ollama/ollama/types/model"
 )
 
 type ChatInfo struct {
@@ -31,10 +30,6 @@ type Model struct {
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 }
 
-type ModelsResponse struct {
-	Models []Model `json:"models"`
-}
-
 type InferenceCompute struct {
 	Library string `json:"library"`
 	Variant string `json:"variant"`
@@ -49,56 +44,8 @@ type InferenceComputeResponse struct {
 	DefaultContextLength int                `json:"defaultContextLength"`
 }
 
-type ModelCapabilitiesResponse struct {
-	Capabilities []model.Capability `json:"capabilities"`
-}
-
-// ChatEvent is for regular chat messages and assistant interactions
-type ChatEvent struct {
-	EventName string `json:"eventName" ts_type:"\"chat\" | \"thinking\" | \"assistant_with_tools\" | \"tool_call\" | \"tool\" | \"tool_result\" | \"done\" | \"chat_created\""`
-
-	// Chat/Assistant message fields
-	Content           *string    `json:"content,omitempty"`
-	Thinking          *string    `json:"thinking,omitempty"`
-	ThinkingTimeStart *time.Time `json:"thinkingTimeStart,omitempty" ts_type:"Date | undefined" ts_transform:"__VALUE__ && new Date(__VALUE__)"`
-	ThinkingTimeEnd   *time.Time `json:"thinkingTimeEnd,omitempty" ts_type:"Date | undefined" ts_transform:"__VALUE__ && new Date(__VALUE__)"`
-
-	// Tool-related fields
-	ToolCalls      []store.ToolCall `json:"toolCalls,omitempty"`
-	ToolCall       *store.ToolCall  `json:"toolCall,omitempty"`
-	ToolName       *string          `json:"toolName,omitempty"`
-	ToolResult     *bool            `json:"toolResult,omitempty"`
-	ToolResultData any              `json:"toolResultData,omitempty"`
-
-	// Chat creation fields
-	ChatID *string `json:"chatId,omitempty"`
-
-	// Tool state field from the new code
-	ToolState any `json:"toolState,omitempty"`
-}
-
-// DownloadEvent is for model download progress
-type DownloadEvent struct {
-	EventName string `json:"eventName" ts_type:"\"download\""`
-	Total     int64  `json:"total" ts_type:"number"`
-	Completed int64  `json:"completed" ts_type:"number"`
-	Done      bool   `json:"done" ts_type:"boolean"`
-}
-
-// ErrorEvent is for error messages
-type ErrorEvent struct {
-	EventName string `json:"eventName" ts_type:"\"error\""`
-	Error     string `json:"error"`
-	Code      string `json:"code,omitempty"`    // Optional error code for different error types
-	Details   string `json:"details,omitempty"` // Optional additional details
-}
-
 type SettingsResponse struct {
 	Settings store.Settings `json:"settings"`
-}
-
-type HealthResponse struct {
-	Healthy bool `json:"healthy"`
 }
 
 type User struct {
@@ -112,29 +59,8 @@ type User struct {
 	Plan      string `json:"plan,omitempty"`
 }
 
-type Attachment struct {
-	Filename string `json:"filename"`
-	Data     string `json:"data,omitempty"` // omitempty = optional, no data = existing file reference
-}
-
-type ChatRequest struct {
-	Model       string       `json:"model"`
-	Prompt      string       `json:"prompt"`
-	Index       *int         `json:"index,omitempty"`
-	Attachments []Attachment `json:"attachments,omitempty"`
-	WebSearch   *bool        `json:"web_search,omitempty"`
-	FileTools   *bool        `json:"file_tools,omitempty"`
-	ForceUpdate bool         `json:"forceUpdate,omitempty"`
-	Think       any          `json:"think,omitempty"`
-}
-
 type Error struct {
 	Error string `json:"error"`
-}
-
-type ModelUpstreamResponse struct {
-	Stale bool   `json:"stale"`
-	Error string `json:"error,omitempty"`
 }
 
 // Serializable data for the browser state

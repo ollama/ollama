@@ -6,7 +6,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -49,44 +51,6 @@ type Message struct {
 	ThinkingTimeEnd   *time.Time       `json:"thinkingTimeEnd,omitempty" ts_type:"Date | undefined" ts_transform:"__VALUE__ && new Date(__VALUE__)"`
 }
 
-// MessageOptions contains optional parameters for creating a Message
-type MessageOptions struct {
-	Model             string
-	Attachments       []File
-	Stream            bool
-	Thinking          string
-	ToolCalls         []ToolCall
-	ToolCall          *ToolCall
-	ToolResult        *json.RawMessage
-	ThinkingTimeStart *time.Time
-	ThinkingTimeEnd   *time.Time
-}
-
-// NewMessage creates a new Message with the given options
-func NewMessage(role, content string, opts *MessageOptions) Message {
-	now := time.Now()
-	msg := Message{
-		Role:      role,
-		Content:   content,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if opts != nil {
-		msg.Model = opts.Model
-		msg.Attachments = opts.Attachments
-		msg.Stream = opts.Stream
-		msg.Thinking = opts.Thinking
-		msg.ToolCalls = opts.ToolCalls
-		msg.ToolCall = opts.ToolCall
-		msg.ToolResult = opts.ToolResult
-		msg.ThinkingTimeStart = opts.ThinkingTimeStart
-		msg.ThinkingTimeEnd = opts.ThinkingTimeEnd
-	}
-
-	return msg
-}
-
 type ToolCall struct {
 	Type     string       `json:"type"`
 	Function ToolFunction `json:"function"`
@@ -110,15 +74,6 @@ type Chat struct {
 	Title        string          `json:"title"`
 	CreatedAt    time.Time       `json:"created_at"`
 	BrowserState json.RawMessage `json:"browser_state,omitempty" ts_type:"BrowserStateData"`
-}
-
-// NewChat creates a new Chat with the ID, with CreatedAt timestamp initialized
-func NewChat(id string) *Chat {
-	return &Chat{
-		ID:        id,
-		Messages:  []Message{},
-		CreatedAt: time.Now(),
-	}
 }
 
 type Settings struct {
@@ -480,28 +435,15 @@ func (s *Store) Chats() ([]Chat, error) {
 }
 
 func (s *Store) Chat(id string) (*Chat, error) {
-	return s.ChatWithOptions(id, true)
-}
-
-func (s *Store) ChatWithOptions(id string, loadAttachmentData bool) (*Chat, error) {
 	if err := s.ensureDB(); err != nil {
 		return nil, err
 	}
 
-	chat, err := s.db.getChatWithOptions(id, loadAttachmentData)
-	if err != nil {
+	chat, err := s.db.getChat(id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: chat %s", not.Found, id)
 	}
-
-	return chat, nil
-}
-
-func (s *Store) SetChat(chat Chat) error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	return s.db.saveChat(chat)
+	return chat, err
 }
 
 func (s *Store) DeleteChat(id string) error {
@@ -514,8 +456,12 @@ func (s *Store) DeleteChat(id string) error {
 		return fmt.Errorf("%w: chat %s", not.Found, id)
 	}
 
-	// Also delete associated images
-	chatImgDir := filepath.Join(s.ImgDir(), id)
+	// Also delete images cached by older versions of the app.
+	dbPath := s.DBPath
+	if dbPath == "" {
+		dbPath = defaultDBPath
+	}
+	chatImgDir := filepath.Join(filepath.Dir(dbPath), "cache", "images", id)
 	if err := os.RemoveAll(chatImgDir); err != nil {
 		// Log error but don't fail the deletion
 		slog.Warn("failed to delete chat images", "chat_id", id, "error", err)
@@ -538,30 +484,6 @@ func (s *Store) SetWindowSize(width, height int) error {
 	}
 
 	return s.db.setWindowSize(width, height)
-}
-
-func (s *Store) UpdateLastMessage(chatID string, message Message) error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	return s.db.updateLastMessage(chatID, message)
-}
-
-func (s *Store) AppendMessage(chatID string, message Message) error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	return s.db.appendMessage(chatID, message)
-}
-
-func (s *Store) UpdateChatBrowserState(chatID string, state json.RawMessage) error {
-	if err := s.ensureDB(); err != nil {
-		return err
-	}
-
-	return s.db.updateChatBrowserState(chatID, state)
 }
 
 func (s *Store) User() (*User, error) {
