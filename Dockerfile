@@ -235,8 +235,8 @@ RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 RUN --mount=type=cache,target=/root/.ccache \
-    --mount=type=bind,from=local-mlx,target=/tmp/local-mlx \
-    --mount=type=bind,from=local-mlx-c,target=/tmp/local-mlx-c \
+    --mount=type=bind,from=local-mlx,target=/tmp/local-mlx,rw \
+    --mount=type=bind,from=local-mlx-c,target=/tmp/local-mlx-c,rw \
     if [ -f /tmp/local-mlx/CMakeLists.txt ]; then \
         export OLLAMA_MLX_SOURCE=/tmp/local-mlx; \
     fi \

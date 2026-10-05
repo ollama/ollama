@@ -146,14 +146,26 @@ if(OLLAMA_MLX_BACKENDS)
     file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" OLLAMA_MLX_C_GIT_TAG)
     string(STRIP "${OLLAMA_MLX_C_GIT_TAG}" OLLAMA_MLX_C_GIT_TAG)
 
+    # Apply carried MLX and MLX-C patches to fetched sources and local overrides.
+    find_package(Git REQUIRED)
+    set(OLLAMA_MLX_COMPAT_PATCH_COMMAND
+        ${CMAKE_COMMAND}
+            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx
+            -DPATCH_LABEL=mlx/compat/mlx
+            -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
+        CACHE INTERNAL "MLX carry patches")
+
+    set(_mlx_source_override FALSE)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_MLX AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using MLX source override: ${OLLAMA_MLX_SOURCE_DIR}")
+        set(_mlx_source_override TRUE)
     elseif(DEFINED ENV{OLLAMA_MLX_SOURCE})
         get_filename_component(OLLAMA_MLX_SOURCE_DIR
             "$ENV{OLLAMA_MLX_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local MLX source: ${OLLAMA_MLX_SOURCE_DIR}")
+        set(_mlx_source_override TRUE)
     else()
         set(OLLAMA_MLX_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/mlx-src")
         ExternalProject_Add(ollama-mlx-source
@@ -165,20 +177,27 @@ if(OLLAMA_MLX_BACKENDS)
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            USES_TERMINAL_DOWNLOAD TRUE)
+            PATCH_COMMAND ${OLLAMA_MLX_COMPAT_PATCH_COMMAND}
+            USES_TERMINAL_DOWNLOAD TRUE
+            USES_TERMINAL_PATCH TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-source)
     endif()
 
-    # Temporary MLX-C carry patch for gather_qmm global-scale support, carried
-    # until it merges upstream into ml-explore/mlx-c. Then bump MLX_C_VERSION
-    # and delete mlx/compat/.
-    find_package(Git REQUIRED)
+    if(_mlx_source_override)
+        add_custom_target(ollama-mlx-override-patch
+            COMMAND ${OLLAMA_MLX_COMPAT_PATCH_COMMAND}
+            WORKING_DIRECTORY ${OLLAMA_MLX_SOURCE_DIR}
+            COMMENT "Applying carried MLX patches to ${OLLAMA_MLX_SOURCE_DIR}"
+            VERBATIM)
+        list(APPEND _mlx_source_targets ollama-mlx-override-patch)
+    endif()
+
     set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
         ${CMAKE_COMMAND}
             -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx-c
             -DPATCH_LABEL=mlx/compat/mlx-c
             -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
-        CACHE INTERNAL "MLX-C carry patch")
+        CACHE INTERNAL "MLX-C carry patches")
 
     set(_mlx_c_source_override FALSE)
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
@@ -208,13 +227,13 @@ if(OLLAMA_MLX_BACKENDS)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
     if(_mlx_c_source_override)
-        # Source overrides bypass the ExternalProject patch step, so the carry
-        # patch has to be applied to the override checkout as well. The
+        # Source overrides bypass the ExternalProject patch step, so patches
+        # have to be applied to the override checkout as well. The
         # applier is idempotent, which keeps repeated builds safe.
         add_custom_target(ollama-mlx-c-override-patch
             COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
             WORKING_DIRECTORY ${OLLAMA_MLX_C_SOURCE_DIR}
-            COMMENT "Applying MLX-C compat patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
+            COMMENT "Applying carried MLX-C patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
             VERBATIM)
         list(APPEND _mlx_source_targets ollama-mlx-c-override-patch)
     endif()
