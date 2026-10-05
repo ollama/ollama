@@ -1657,8 +1657,13 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 // emitFunctionCallEvents emits function_call stream events for the given tool
 // calls, stores them for the final output, and advances the output index.
 func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	var events []ResponsesStreamEvent
 	converted := ToToolCalls(toolCalls)
+	if len(converted) == 0 {
+		return nil
+	}
+	// Close an open message before allocating indices for the tool items.
+	// This also records the message in the terminal output in stream order.
+	events := c.FinishMessageItem()
 	availableTools := responsesRequestTools(c.request)
 
 	for i, tc := range converted {
