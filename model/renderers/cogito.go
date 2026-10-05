@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type CogitoRenderer struct {
@@ -130,4 +131,12 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	}
 
 	return sb.String(), nil
+}
+
+func (r *CogitoRenderer) Thinking() *model.Thinking {
+	values := []any{false}
+	if r.isThinking {
+		values = append(values, true)
+	}
+	return &model.Thinking{Values: values, Default: false}
 }

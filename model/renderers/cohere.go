@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // CohereRenderer renders the Cohere North / Command A 2026 chat template
@@ -230,4 +231,8 @@ func (r *CohereRenderer) Render(messages []api.Message, tools []api.Tool, think 
 // api.ToolCall ID field may be empty for calls synthesized by ollama.
 func toolCallID(tc api.ToolCall) string {
 	return tc.ID
+}
+
+func (r *CohereRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, true}, Default: true}
 }

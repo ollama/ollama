@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "codex-app", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -56,11 +56,11 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "claude-desktop",
 		Runner:      &ClaudeDesktop{},
 		Aliases:     []string{"claude-app"},
-		Description: "Claude Desktop with Ollama Cloud",
 		Hidden:      true,
+		Description: "Use Ollama models in Claude Desktop",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				return claudeDesktopInstalled()
+				return ClaudeDesktopInstalled()
 			},
 			URL: "https://claude.com/download",
 		},
@@ -95,15 +95,15 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
-		Name:        "codex-app",
+		Name:        chatGPTIntegrationName,
 		Runner:      &CodexApp{},
-		Aliases:     []string{"codex-desktop", "codex-gui"},
-		Description: "An AI agent you can delegate real work to, by OpenAI",
+		Aliases:     []string{codexAppIntegrationName, "codex-desktop", "codex-gui"},
+		Description: "Use Ollama models in ChatGPT",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return codexAppInstalled()
 			},
-			URL: "https://developers.openai.com/codex/quickstart",
+			URL: "https://chatgpt.com/download",
 		},
 	},
 	{
@@ -121,6 +121,24 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			URL: "https://moonshotai.github.io/kimi-cli/en/guides/getting-started.html",
+		},
+	},
+	{
+		Name:        "muse",
+		Runner:      &Muse{},
+		Aliases:     []string{"muse-code"},
+		Description: "Meta's agentic coding CLI",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := findMuse()
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureMuseInstalled()
+				return err
+			},
+			Command: museInstallCommand,
 		},
 	},
 	{
@@ -146,6 +164,24 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://docs.factory.ai/cli/getting-started/quickstart",
+		},
+	},
+	{
+		Name:        deepSeekHarnessIntegrationName,
+		Runner:      &DeepSeekHarness{},
+		Aliases:     []string{"deepseek-harness"},
+		Description: "DeepSeek's open-source agent harness",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := deepSeekHarnessLookPath("dsh")
+				return err == nil
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureDeepSeekHarnessInstalled()
+				return err
+			},
+			URL:     "https://github.com/deepseek-ai/deepseek-harness",
+			Command: []string{"npm", "install", "-g", deepSeekHarnessNpmPackage},
 		},
 	},
 	{

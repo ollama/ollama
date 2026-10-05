@@ -21,15 +21,16 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/version"
 )
 
 const (
-	defaultCloudProxyBaseURL      = "https://ollama.com:443"
-	defaultCloudProxySigningHost  = "ollama.com"
-	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
-	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
-	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
+	defaultCloudProxyBaseURL       = "https://ollama.com:443"
+	defaultCloudProxySigningHost   = "ollama.com"
+	cloudProxyBaseURLEnv           = "OLLAMA_CLOUD_BASE_URL"
+	cloudWebSearchOrchestrationKey = "cloud_web_search_orchestration"
+	cloudProxyClientVersionHeader  = "X-Ollama-Client-Version"
 
 	// maxDecompressedBodySize limits the size of a decompressed request body
 	maxDecompressedBodySize = 20 << 20
@@ -120,14 +121,14 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 			return
 		}
 
-		// TEMP(drifkin): keep Anthropic web search requests on the local middleware
-		// path so WebSearchAnthropicWriter can orchestrate follow-up calls.
-		if c.Request.URL.Path == "/v1/messages" {
-			if hasAnthropicWebSearchTool(body) {
-				c.Set(legacyCloudAnthropicKey, true)
-				c.Next()
-				return
-			}
+		// Keep server-side web search on the local compatibility middleware path.
+		// The converted model requests use Ollama's /api/chat contract, including
+		// for cloud models; all other cloud compatibility traffic remains raw
+		// passthrough.
+		if hasWebSearchTool(c.Request.URL.Path, body) {
+			c.Set(cloudWebSearchOrchestrationKey, true)
+			c.Next()
+			return
 		}
 
 		proxyCloudRequest(c, normalizedBody, disabledOperation)
@@ -234,7 +235,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	// into WebSearchAnthropicWriter, but this proxy copy loop may coalesce
 	// multiple jsonl records into one Write.  WebSearchAnthropicWriter currently
 	// unmarshals one JSON value per Write.
-	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(legacyCloudAnthropicKey) {
+	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(cloudWebSearchOrchestrationKey) {
 		framedWriter = &jsonlFramingResponseWriter{ResponseWriter: c.Writer}
 		bodyWriter = framedWriter
 	}
@@ -324,8 +325,19 @@ func extractModelField(body []byte) (string, bool) {
 	return model, model != ""
 }
 
-func hasAnthropicWebSearchTool(body []byte) bool {
+func hasWebSearchTool(path string, body []byte) bool {
 	if len(body) == 0 {
+		return false
+	}
+
+	if path == "/v1/responses" {
+		var payload struct {
+			Tools []openai.ResponsesTool `json:"tools"`
+		}
+		return json.Unmarshal(body, &payload) == nil && openai.HasWebSearchTool(payload.Tools)
+	}
+
+	if path != "/v1/messages" {
 		return false
 	}
 

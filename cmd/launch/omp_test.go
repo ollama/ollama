@@ -58,8 +58,8 @@ func TestOMPIntegration(t *testing.T) {
 	o := &OMP{}
 
 	t.Run("String", func(t *testing.T) {
-		if got := o.String(); got != "OMP" {
-			t.Errorf("String() = %q, want %q", got, "OMP")
+		if got := o.String(); got != "Oh My Pi" {
+			t.Errorf("String() = %q, want %q", got, "Oh My Pi")
 		}
 	})
 

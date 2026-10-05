@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestClaudeIntegration(t *testing.T) {
@@ -320,6 +322,7 @@ func TestClaudeArgs(t *testing.T) {
 		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
 		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
 		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2", "--allowedTools", "Read,Write,Bash"}},
+		{"with channels", "llama3.2", []string{"--channels", "plugin:telegram@claude-plugins-official"}, []string{"--model", "llama3.2", "--channels", "plugin:telegram@claude-plugins-official"}},
 	}
 
 	for _, tt := range tests {
@@ -329,6 +332,98 @@ func TestClaudeArgs(t *testing.T) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClaudeEnvVars(t *testing.T) {
+	c := &Claude{}
+
+	envMap := func(envs []string) map[string]string {
+		m := make(map[string]string)
+		for _, e := range envs {
+			k, v, _ := strings.Cut(e, "=")
+			m[k] = v
+		}
+		return m
+	}
+
+	got := envMap(c.envVars("llama3.2"))
+	for key, want := range map[string]string{
+		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
+		"ANTHROPIC_API_KEY":                   "",
+		"ANTHROPIC_AUTH_TOKEN":                "ollama",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":   "off",
+		"DISABLE_ERROR_REPORTING":             "1",
+		"DISABLE_FEEDBACK_COMMAND":            "1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "llama3.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "llama3.2",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "llama3.2",
+		"CLAUDE_CODE_SUBAGENT_MODEL":          "llama3.2",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+
+	// Both variables disable Claude Code feature-flag evaluation, which keeps Channels unavailable.
+	for _, key := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%s must not be set by Ollama", key)
+		}
+	}
+}
+
+func TestClaudeRunAutoModeServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	for _, model := range []string{"llama3.2", "glm-5:cloud"} {
+		for _, tt := range []struct {
+			name  string
+			value string
+			unset bool
+			want  string
+		}{
+			{name: "default", unset: true, want: "0"},
+			{name: "disabled", value: "0", want: "0"},
+			{name: "enabled", value: "1", want: "1"},
+			{name: "empty", value: "", want: ""},
+		} {
+			t.Run(model+"/"+tt.name, func(t *testing.T) {
+				t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", tt.value)
+				if tt.unset {
+					if err := os.Unsetenv("CLAUDE_CODE_AUTO_MODE_SERVER"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				dir := t.TempDir()
+				output := filepath.Join(dir, "env-and-args")
+				t.Setenv("PATH", dir)
+				t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+				script := `#!/bin/sh
+printf '%s\n' "${CLAUDE_CODE_AUTO_MODE_SERVER-unset}" "$ANTHROPIC_DEFAULT_SONNET_MODEL" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+				if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+
+				if err := (&Claude{}).Run(model, nil, []string{"--permission-mode", "auto"}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := strings.Join([]string{tt.want, model, "--model", model, "--permission-mode", "auto", ""}, "\n")
+				if string(got) != want {
+					t.Fatalf("child environment and arguments = %q, want %q", got, want)
+				}
+			})
+		}
 	}
 }
 

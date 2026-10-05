@@ -103,6 +103,23 @@ func TestGemma4Parser(t *testing.T) {
 			},
 		},
 		{
+			name:  "tool_call_with_null_arg",
+			input: `<|tool_call>call:set_optional{value:null,nested:{value:null}}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "set_optional",
+						Arguments: testArgs(map[string]any{
+							"value": nil,
+							"nested": map[string]any{
+								"value": nil,
+							},
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:  "tool_call_with_nested_object",
 			input: `<|tool_call>call:process{config:{enabled:true,name:<|"|>test<|"|>}}<tool_call|>`,
 			expectedToolCalls: []api.ToolCall{
@@ -505,6 +522,26 @@ func TestGemma4Parser_Streaming(t *testing.T) {
 
 	if finalThinking.String() != "Let me think..." {
 		t.Errorf("expected thinking %q, got %q", "Let me think...", finalThinking.String())
+	}
+}
+
+func TestGemma4Parser_ToolResponseContinuationStartsInThinking(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, &api.Message{Role: "tool", Content: "go.mod\ngo.sum\n"}, &api.ThinkValue{Value: true})
+
+	content, thinking, toolCalls, err := parser.Add("The user asked for files.<channel|>go.mod and go.sum", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if diff := cmp.Diff("go.mod and go.sum", content); diff != "" {
+		t.Errorf("content mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff("The user asked for files.", thinking); diff != "" {
+		t.Errorf("thinking mismatch (-want +got):\n%s", diff)
+	}
+	if len(toolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %+v", toolCalls)
 	}
 }
 
