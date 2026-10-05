@@ -18,10 +18,11 @@ import (
 // Conv state shape: [B, convTail, convDim]
 // Delta state shape: [B, numVHeads, headVDim, headKDim]
 type RecurrentCache struct {
-	convState  *mlx.Array
-	deltaState *mlx.Array
-	scope      *mlx.Scope
-	offset     int
+	convState    *mlx.Array
+	deltaState   *mlx.Array
+	scope        *mlx.Scope
+	offset       int
+	needsCompact bool
 
 	convTail  int
 	convDim   int
@@ -41,7 +42,7 @@ type RecurrentCache struct {
 func (c *RecurrentCache) PrepareSnapshots(offsets []int) {
 	c.snapshots.prepare(c.offset, offsets)
 	// The current offset is a valid boundary right now, so capture it.
-	c.captureBoundary(c.offset, c.convState, c.deltaState)
+	c.captureBoundary(c.offset, c.convState, c.deltaState, c.needsCompact)
 }
 
 func (c *RecurrentCache) TakeSnapshots() []Snapshot { return c.snapshots.take() }
@@ -66,13 +67,13 @@ func (c *RecurrentCache) SnapshotSplits(forwardLen int) []int {
 // captureBoundary snapshots the boundary state (conv, delta) at reached if
 // reached is a scheduled offset — the live state at a forward boundary, or a
 // kernel segment state at an interior split.
-func (c *RecurrentCache) captureBoundary(reached int, conv, delta *mlx.Array) {
+func (c *RecurrentCache) captureBoundary(reached int, conv, delta *mlx.Array, mayShareBacking bool) {
 	c.snapshots.captureReached(reached, func(int) Snapshot {
 		// Nothing exists to page out yet; a zero-width capture is a nil entry.
 		if conv == nil && delta == nil {
 			return nil
 		}
-		return newRecurrentSnapshot(conv, delta, reached)
+		return newRecurrentSnapshot(conv, delta, reached, mayShareBacking)
 	})
 }
 
@@ -144,23 +145,27 @@ func (c *RecurrentCache) Put(b *batch.Batch, convStates, deltaStates []*mlx.Arra
 		panic(fmt.Sprintf("recurrent cache: %d interior splits but %d boundary states", len(splits), len(convStates)))
 	}
 
+	// Per-token capture returns views of one allocation holding every interior
+	// delta state. Sparse splits and the final state have separate outputs.
+	mayShareBacking := len(splits) > 1 && len(splits) == b.InputIDs.Dim(1)-1
 	// Leading entries are the interior split boundaries; capture each as a
 	// snapshot at its scheduled offset.
 	for i, s := range splits {
-		c.captureBoundary(start+s, convStates[i], deltaStates[i])
+		c.captureBoundary(start+s, convStates[i], deltaStates[i], mayShareBacking)
 	}
 
 	// The final entry is the forward-end state — the committed live state.
 	last := len(convStates) - 1
 	c.convState = c.setState(c.convState, convStates[last])
 	c.deltaState = c.setState(c.deltaState, deltaStates[last])
+	c.needsCompact = false
 	c.offset += int(b.SeqQueryLens[0])
-	c.captureBoundary(c.offset, c.convState, c.deltaState)
+	c.captureBoundary(c.offset, c.convState, c.deltaState, false)
 }
 
 func (c *RecurrentCache) State() []*mlx.Array {
 	state := []*mlx.Array{c.convState, c.deltaState}
-	// Captured snapshots own compact copies still needing eval; fold them into
+	// Captured snapshots own array handles still needing eval; fold them into
 	// the caller's batched State eval instead of an async eval per snapshot per
 	// layer. They drain at TakeSnapshots.
 	for _, s := range c.snapshots.captured {
@@ -172,30 +177,50 @@ func (c *RecurrentCache) State() []*mlx.Array {
 	return state
 }
 
+// PrepareCompaction returns nil unless the live delta state may share a
+// multi-state backing allocation. The caller must evaluate a returned copy
+// while the source remains in scope, then commit it. A normal Put replaces
+// the restored state with the kernel's final state and needs no copy.
+func (c *RecurrentCache) PrepareCompaction() *mlx.Array {
+	if !c.needsCompact {
+		return nil
+	}
+	// For an oversized per-token state buffer, Contiguous materializes the
+	// selected view instead of retaining that buffer.
+	return mlx.Contiguous(c.deltaState, false)
+}
+
+// CommitCompaction replaces the live state only after the copy has evaluated.
+func (c *RecurrentCache) CommitCompaction(compact *mlx.Array) {
+	c.deltaState = c.setState(c.deltaState, compact)
+	c.needsCompact = false
+}
+
 // recurrentSnapshot holds paged-out recurrent state. Self-contained —
 // does not depend on any parent state.
 type recurrentSnapshot struct {
 	convState, deltaState *mlx.Array
 	scope                 *mlx.Scope
 	offset                int
+	mayShareBacking       bool
 }
 
 func (s *recurrentSnapshot) Size() int { return s.convState.NumBytes() + s.deltaState.NumBytes() }
 func (s *recurrentSnapshot) Close()    { s.scope.Close() }
 
-// SetMaterializeHook is a no-op: recurrent snapshots own their compact copy from
-// construction.
+// SetMaterializeHook is a no-op: recurrent snapshots retain their source handles.
 func (s *recurrentSnapshot) SetMaterializeHook(func(int)) {}
 
-// newRecurrentSnapshot clones conv/delta into an owned snapshot at
-// offset. It does not schedule the eval — capture-path snapshots ride the
-// cache's State into the caller's batched eval.
-func newRecurrentSnapshot(conv, delta *mlx.Array, offset int) *recurrentSnapshot {
+// newRecurrentSnapshot retains shallow conv/delta handles at offset. It does
+// not schedule the eval — capture-path snapshots ride the cache's State into
+// the caller's batched eval.
+func newRecurrentSnapshot(conv, delta *mlx.Array, offset int, mayShareBacking bool) *recurrentSnapshot {
 	snap := &recurrentSnapshot{
-		convState:  conv.Clone(),
-		deltaState: delta.Clone(),
-		scope:      mlx.NewScope(),
-		offset:     offset,
+		convState:       conv.Clone(),
+		deltaState:      delta.Clone(),
+		scope:           mlx.NewScope(),
+		offset:          offset,
+		mayShareBacking: mayShareBacking,
 	}
 	snap.scope.Attach(snap.convState, snap.deltaState)
 	return snap
@@ -209,7 +234,7 @@ func (c *RecurrentCache) Snapshot(fromOffset int) Snapshot {
 
 	// Page-out snapshots go straight to the trie and never ride State, so
 	// schedule the eval here instead of through the batched State eval.
-	snap := newRecurrentSnapshot(c.convState, c.deltaState, c.offset)
+	snap := newRecurrentSnapshot(c.convState, c.deltaState, c.offset, c.needsCompact)
 	mlx.AsyncEval(snap.convState, snap.deltaState)
 	return snap
 }
@@ -235,6 +260,7 @@ func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
 		c.deltaState = c.setState(c.deltaState, snap.deltaState)
 	})
 	c.offset = snap.offset
+	c.needsCompact = snap.mayShareBacking
 
 	return true
 }
@@ -257,6 +283,7 @@ func (c *RecurrentCache) Free() {
 	c.scope.Close()
 	c.convState, c.deltaState = nil, nil
 	c.offset = 0
+	c.needsCompact = false
 	c.snapshots = pendingSnapshots{}
 }
 
