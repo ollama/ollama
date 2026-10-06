@@ -1,25 +1,30 @@
 ---
 title: Ollama documentation
 sidebarTitle: Welcome
+description: Learn what Ollama can do, choose cloud or local models, and find the right guide, integration, or API reference.
 ---
 
-Start building with open models.
+Build with open models in Ollama Cloud or on your own hardware.
 
-Follow the [quickstart](/quickstart), then choose a model, integration, or API.
+Follow the [quickstart](/quickstart), then choose the environment that matches your needs.
 
-## Models
+## Choose where models run
 
-Run models locally or use larger models in Ollama's cloud.
+Cloud and local models use the same Ollama tools and API shapes. The main difference is where inference runs.
 
 <CardGroup cols={2}>
-  <Card title="Browse models" icon="star" href="https://ollama.com/search">
-    Find models for chat, coding, vision, embeddings, and reasoning.
+  <Card title="Cloud" icon="cloud" href="/cloud">
+    Run larger models without managing local compute, either from Ollama or through the Cloud API.
   </Card>
 
-  <Card title="Cloud models" icon="cloud" href="/cloud">
-    Run larger models on Ollama's Cloud without the download.
+  <Card title="Local" icon="laptop" href="/local">
+    Install Ollama and run models on macOS, Windows, Linux, or Docker.
   </Card>
 </CardGroup>
+
+## What you can build
+
+Ollama supports [streaming](/capabilities/streaming), [tool calling](/capabilities/tool-calling), [structured outputs](/capabilities/structured-outputs), [vision](/capabilities/vision), [embeddings](/capabilities/embeddings), [thinking](/capabilities/thinking), and [web search](/capabilities/web-search).
 
 ## Next steps
 
@@ -30,8 +35,12 @@ Connect Ollama to an app, or build with the API.
     Connect Ollama to an app, editor, or agent.
   </Card>
 
-  <Card title="First API request" icon="code" href="/api/introduction">
-    Learn the local and cloud base URLs, then send a request with `curl`.
+  <Card title="API reference" icon="code" href="/api/introduction">
+    Compare local and cloud base URLs, then send your first request.
+  </Card>
+
+  <Card title="Browse models" icon="star" href="https://ollama.com/search">
+    Find models for chat, coding, vision, embeddings, and reasoning.
   </Card>
 
   <Card title="Python library" icon="python" href="https://github.com/ollama/ollama-python">
@@ -52,5 +61,13 @@ Connect Ollama to an app, or build with the API.
 
   <Card title="Reddit" icon="reddit" href="https://reddit.com/r/ollama">
     Join the Ollama subreddit.
+  </Card>
+
+  <Card title="X (Twitter)" icon="discord" href="https://twitter.com/ollama">
+    Join the Ollama X (Twitter).
+  </Card>
+
+  <Card title="Github" icon="discord" href="https://github.com/ollama/ollama">
+    Join the Ollama GitHub.
   </Card>
 </CardGroup>

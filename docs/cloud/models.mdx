@@ -1,0 +1,94 @@
+---
+title: Use Cloud models from Ollama
+sidebarTitle: Cloud models
+description: Run Ollama Cloud models from the CLI, the local Ollama API, or the official Python and JavaScript libraries.
+---
+
+Cloud models are automatically offloaded to Ollama Cloud while remaining available to local tools and integrations through Ollama.
+
+## Sign in
+
+Cloud models require an account on [ollama.com](https://ollama.com). Sign in or create an account from the CLI:
+
+```shell
+ollama signin
+```
+
+Browse supported models in the [cloud model library](https://ollama.com/search?c=cloud).
+
+## Run a Cloud model
+
+<Tabs>
+  <Tab title="CLI">
+
+```shell
+ollama run gpt-oss:120b-cloud
+```
+
+  </Tab>
+  <Tab title="Python">
+
+Pull the Cloud model, then install the [Ollama Python library](https://github.com/ollama/ollama-python):
+
+```shell
+ollama pull gpt-oss:120b-cloud
+pip install ollama
+```
+
+```python
+from ollama import Client
+
+client = Client()
+
+messages = [{"role": "user", "content": "Why is the sky blue?"}]
+
+for part in client.chat("gpt-oss:120b-cloud", messages=messages, stream=True):
+    print(part["message"]["content"], end="", flush=True)
+```
+
+  </Tab>
+  <Tab title="JavaScript">
+
+Pull the Cloud model, then install the [Ollama JavaScript library](https://github.com/ollama/ollama-js):
+
+```shell
+ollama pull gpt-oss:120b-cloud
+npm i ollama
+```
+
+```typescript
+import { Ollama } from "ollama";
+
+const ollama = new Ollama();
+const response = await ollama.chat({
+  model: "gpt-oss:120b-cloud",
+  messages: [{ role: "user", content: "Explain quantum computing" }],
+  stream: true,
+});
+
+for await (const part of response) {
+  process.stdout.write(part.message.content);
+}
+```
+
+  </Tab>
+  <Tab title="cURL">
+
+Pull the Cloud model, then call it through the local Ollama API:
+
+```shell
+ollama pull gpt-oss:120b-cloud
+```
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "gpt-oss:120b-cloud",
+  "messages": [{"role": "user", "content": "Why is the sky blue?"}],
+  "stream": false
+}'
+```
+
+  </Tab>
+</Tabs>
+
+To use Cloud without a local Ollama installation, call the [Cloud API directly](/cloud/api).

@@ -1,30 +1,43 @@
 ---
 title: Introduction
+description: Use the Ollama API locally or through Ollama Cloud with a shared request format.
 ---
 
 Use Ollama's API to run and interact with models.
 
 ## Get started
 
-Follow the [quickstart](/quickstart) to install Ollama and make your first request.
+Choose how the request reaches the model:
 
-## Base URL
+| Access path | Model runs on | Base URL | Authentication and model name |
+| --- | --- | --- | --- |
+| [Local model](/local) | Your hardware | `http://localhost:11434/api` | None by default; use the local model name |
+| [Cloud model through Ollama](/cloud/models) | Ollama Cloud | `http://localhost:11434/api` | Run `ollama signin`; use a model name ending in `:cloud` |
+| [Direct Cloud API](/cloud/api) | Ollama Cloud | `https://ollama.com/api` | Send an Ollama API key; use the Cloud API model name |
 
-After installation, Ollama's API is served by default at:
+Request bodies have the same shape for shared endpoints. The host, authentication, and model name depend on the access path.
+
+## Local API
+
+After you [install Ollama](/local), its API is served by default at:
 
 ```
 http://localhost:11434/api
 ```
 
-For running cloud models on [ollama.com](https://ollama.com), the same API is available with the following base URL:
+## Cloud API
+
+For direct access to models hosted on Ollama Cloud, use:
 
 ```
 https://ollama.com/api
 ```
 
+Cloud API requests require an API key. See [Cloud API authentication](/cloud/api#authentication).
+
 ## Example request
 
-Once Ollama is running, its API is automatically available and can be accessed via `curl`:
+Once Ollama is running locally, its API is automatically available and can be accessed with `curl`:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{

@@ -1,10 +1,27 @@
 ---
 title: Quickstart
+description: Choose Ollama Cloud or a local installation and run your first model.
 ---
 
-Install Ollama and get your first response.
+Get your first response from a cloud or local model. The Ollama CLI and API work with both.
 
-## 1. Download Ollama
+## Choose an environment
+
+<CardGroup cols={2}>
+  <Card title="Cloud" icon="cloud" href="/cloud">
+    Use larger models without providing your own GPU. Start from the Ollama CLI or call the Cloud API directly.
+  </Card>
+
+  <Card title="Local" icon="laptop" href="/local">
+    Run models on your own hardware. Start by installing Ollama for your operating system.
+  </Card>
+</CardGroup>
+
+## Run a model from the CLI
+
+This path works with local models and cloud models.
+
+### 1. Download Ollama
 
 Ollama runs on macOS, Windows, and Linux.
 
@@ -16,7 +33,7 @@ Ollama runs on macOS, Windows, and Linux.
   Download Ollama
 </a>
 
-## 2. Open the menu
+### 2. Open the menu
 
 Run `ollama` in your terminal to open the interactive menu:
 
@@ -29,7 +46,7 @@ From the menu you can:
 - **Run a model** - Start an interactive chat
 - **Launch tools** - [Claude Code](/integrations/claude-code), [OpenClaw](/integrations/openclaw), [VS Code](/integrations/vscode), and more
 
-## 3. Start a chat
+### 3. Start a chat
 
 Run a model to start your first chat.
 
@@ -37,9 +54,10 @@ Run a model to start your first chat.
 ollama run gemma4
 ```
 
-Cloud models work the same way:
+Or sign in and run a cloud model:
 
 ```shell
+ollama signin
 ollama run gemma4:cloud
 ```
 
@@ -57,4 +75,4 @@ To leave the chat, type:
 
 ## Next steps
 
-Use a model with an [integration](/integrations), make an [API request](/api/introduction), or browse more [models](https://ollama.com/search).
+Learn about [Cloud](/cloud) or [Local](/local), use a model with an [integration](/integrations), make an [API request](/api/introduction), or browse [models](https://ollama.com/search).

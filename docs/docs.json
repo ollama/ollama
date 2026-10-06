@@ -110,8 +110,7 @@
             "group": "Get started",
             "pages": [
               "index",
-              "quickstart",
-              "/cloud"
+              "quickstart"
             ]
           },
           {
@@ -127,19 +126,66 @@
             ]
           },
           {
-            "group": "More information",
+            "group": "Sample projects",
+            "pages": [
+              "/sample-projects/research-brief-agent"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Cloud",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "/cloud",
+              "/cloud/models",
+              "/cloud/api"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "/cloud/model-lifecycle",
+              "/cloud/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Local",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "/local",
+              "/macos",
+              "/linux",
+              "/windows",
+              "/docker"
+            ]
+          },
+          {
+            "group": "Run and configure",
             "pages": [
               "/cli",
-              "/modelfile",
-              "/context-length",
-              "/linux",
-              "/macos",
-              "/windows",
-              "/docker",
+              "/context-length"
+            ]
+          },
+          {
+            "group": "Customize models",
+            "pages": [
               "/import",
-              "/faq",
+              "/modelfile"
+            ]
+          },
+          {
+            "group": "Hardware and support",
+            "pages": [
               "/gpu",
-              "/troubleshooting"
+              "/troubleshooting",
+              "/faq"
             ]
           }
         ]

@@ -1,0 +1,306 @@
+---
+title: Build a research brief agent
+sidebarTitle: Research brief agent
+description: Build an Ollama Cloud agent that searches the web, reads primary sources, and produces a cited research brief.
+---
+
+Build an agent that researches a question and turns its findings into a cited decision brief. This is useful for market research, policy summaries, product comparisons, event planning, and other tasks where current sources matter.
+
+The project uses an Ollama Cloud model for reasoning and the Ollama web search and web fetch APIs for research. It runs entirely through Ollama Cloud, so you do not need a local model or GPU.
+
+## What you will build
+
+Given a question such as:
+
+> What have four-day workweek pilots since 2022 reported about employee wellbeing and business performance?
+
+the agent will:
+
+1. Turn the question into several focused searches.
+2. Search the web and choose promising results.
+3. Fetch source pages for more context.
+4. Compare claims across sources.
+5. Write a brief with links, caveats, and suggested follow-up questions.
+
+The example uses `gpt-oss:120b`, but you can choose another tool-capable model returned by the Cloud API.
+
+## Before you begin
+
+You need:
+
+- Python 3.10 or later
+- An [Ollama account](https://ollama.com)
+- An [Ollama API key](https://ollama.com/settings/keys)
+
+The API key gives the script access to both the Cloud model and the [web search tools](/capabilities/web-search). Treat it like a password and do not add it to source control.
+
+## 1. Set up the project
+
+Create a project directory and a Python virtual environment:
+
+<Tabs>
+  <Tab title="macOS and Linux">
+
+```shell
+mkdir research-brief-agent
+cd research-brief-agent
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+  </Tab>
+  <Tab title="Windows PowerShell">
+
+```powershell
+mkdir research-brief-agent
+cd research-brief-agent
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+  </Tab>
+</Tabs>
+
+Install the Ollama Python library:
+
+```shell
+pip install --upgrade ollama
+```
+
+Set your API key for the current terminal session:
+
+<Tabs>
+  <Tab title="macOS and Linux">
+
+```shell
+export OLLAMA_API_KEY=your_api_key
+```
+
+  </Tab>
+  <Tab title="Windows PowerShell">
+
+```powershell
+$env:OLLAMA_API_KEY="your_api_key"
+```
+
+  </Tab>
+</Tabs>
+
+<Note>
+  Environment variables set this way last only for the current terminal session. Use your operating system's secret manager for a persistent setup.
+</Note>
+
+## 2. Check Cloud access
+
+List the models available to your account:
+
+```shell
+curl https://ollama.com/api/tags \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+Look for `gpt-oss:120b` in the response. If it is not available, choose another Cloud model that supports tool calling and set its name with `OLLAMA_MODEL`:
+
+<Tabs>
+  <Tab title="macOS and Linux">
+
+```shell
+export OLLAMA_MODEL=your_model_name
+```
+
+  </Tab>
+  <Tab title="Windows PowerShell">
+
+```powershell
+$env:OLLAMA_MODEL="your_model_name"
+```
+
+  </Tab>
+</Tabs>
+
+## 3. Create the agent
+
+Save the following as `research_agent.py`:
+
+```python
+import os
+import sys
+
+from ollama import Client, web_fetch, web_search
+
+
+MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b")
+MAX_TOOL_ROUNDS = 8
+
+SYSTEM_PROMPT = """You are a careful research agent.
+
+Research the user's question before answering. Search broadly, then fetch the
+most useful pages. Prefer primary sources, original studies, official reports,
+and sources that clearly explain their methods.
+
+Your final answer must contain:
+1. An executive summary
+2. Key findings, including disagreements between sources
+3. Limitations and missing evidence
+4. Practical next steps
+5. A Sources section with Markdown links
+
+Attach a source link to every important factual claim. Never invent a citation.
+If the available evidence does not support a conclusion, say so explicitly.
+"""
+
+
+def run_tool(name: str, arguments: dict) -> str:
+    """Run one tool selected by the model and return text for the next turn."""
+    tools = {
+        "web_search": web_search,
+        "web_fetch": web_fetch,
+    }
+
+    tool = tools.get(name)
+    if tool is None:
+        return f"Unknown tool: {name}"
+
+    print(f"Tool: {name}({arguments})")
+    result = tool(**arguments)
+
+    # Large pages can crowd useful evidence out of the model's context.
+    return str(result)[:12000]
+
+
+def research(question: str) -> str:
+    api_key = os.environ.get("OLLAMA_API_KEY")
+    if not api_key:
+        raise RuntimeError("Set OLLAMA_API_KEY before running the agent.")
+
+    client = Client(
+        host="https://ollama.com",
+        headers={"Authorization": f"Bearer {api_key}"},
+    )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        response = client.chat(
+            model=MODEL,
+            messages=messages,
+            tools=[web_search, web_fetch],
+            think=True,
+        )
+        messages.append(response.message)
+
+        if not response.message.tool_calls:
+            return response.message.content
+
+        for call in response.message.tool_calls:
+            name = call.function.name
+            result = run_tool(name, call.function.arguments)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_name": name,
+                    "content": result,
+                }
+            )
+
+    # Force a final report if the model uses the full research budget.
+    messages.append(
+        {
+            "role": "user",
+            "content": "Stop researching and write the final cited brief now.",
+        }
+    )
+    response = client.chat(model=MODEL, messages=messages, think=True)
+    return response.message.content
+
+
+if __name__ == "__main__":
+    default_question = (
+        "What have four-day workweek pilots since 2022 reported about "
+        "employee wellbeing and business performance?"
+    )
+    question = " ".join(sys.argv[1:]) or default_question
+    print(research(question))
+```
+
+The model receives two tools as Python functions. Ollama converts those functions into tool definitions, the Cloud model decides when and how to call them, and the script returns each tool result to the model. The loop ends when the model produces a response without another tool call.
+
+`MAX_TOOL_ROUNDS` prevents an open-ended research loop. The final request removes the tools and asks for a report if the agent uses its entire tool budget.
+
+## 4. Run the project
+
+Run the agent with the example research question:
+
+```shell
+python research_agent.py
+```
+
+Or provide your own question:
+
+```shell
+python research_agent.py "What evidence supports later high school start times?"
+```
+
+During the run, the script prints each tool call. A typical trace looks like this:
+
+```text
+Tool: web_search({'query': 'four-day workweek pilot 2022 study results'})
+Tool: web_search({'query': 'four-day week trial company revenue retention report'})
+Tool: web_fetch({'url': 'https://example.org/report'})
+```
+
+Search queries and sources will vary between runs. That is expected: the model chooses its next action from the evidence it has already gathered.
+
+## 5. Review the result
+
+Expect a Markdown report with this general shape:
+
+```text
+# Research brief
+
+## Executive summary
+A concise answer to the research question.
+
+## Key findings
+Findings grouped by theme, with links attached to factual claims.
+
+## Limitations
+Gaps in the available evidence, methodology concerns, and conflicting results.
+
+## Practical next steps
+Actions or questions that follow from the evidence.
+
+## Sources
+A list of the pages used in the report.
+```
+
+The first run should produce a useful draft, not an unquestionable final answer. Check that links open, quoted numbers match their sources, and the report distinguishes published evidence from the model's interpretation.
+
+<Warning>
+  Web results can be incomplete, outdated, or wrong. Review the original sources before using the brief for medical, legal, financial, employment, or other high-impact decisions.
+</Warning>
+
+## What happens at each stage
+
+| Stage | What the Cloud model does | What you should expect |
+| --- | --- | --- |
+| Plan | Breaks the question into searchable claims | Several queries covering different aspects of the topic |
+| Search | Calls `web_search` and evaluates result snippets | A visible tool trace; some searches may be discarded |
+| Read | Calls `web_fetch` for promising pages | More detailed evidence from a smaller set of sources |
+| Compare | Looks for agreement, conflicts, and missing context | Findings that separate strong evidence from uncertainty |
+| Synthesize | Writes the requested report | A readable brief with citations, caveats, and next steps |
+
+## Improve the agent
+
+Try these changes after the basic project works:
+
+- Change `SYSTEM_PROMPT` to require a particular audience, length, or report format.
+- Ask the agent to prefer sources from specific domains or a date range.
+- Increase `MAX_TOOL_ROUNDS` for broader research, or decrease it for faster, more focused runs.
+- Save the final string to a Markdown file for sharing.
+- Add a human approval step before the agent fetches unfamiliar domains.
+
+See [Tool calling](/capabilities/tool-calling) for more agent-loop patterns and [Web search](/capabilities/web-search) for the complete search and fetch interfaces.

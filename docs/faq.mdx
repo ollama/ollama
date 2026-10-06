@@ -1,6 +1,10 @@
 ---
-title: FAQ
+title: Local FAQ
+sidebarTitle: FAQ
+description: Frequently asked questions about installing, configuring, and running Ollama locally.
 ---
+
+For questions about accounts, authentication, and hosted models, see the [Cloud FAQ](/cloud/faq).
 
 ## How can I upgrade Ollama?
 
@@ -155,10 +159,6 @@ Build and run this image:
 docker build -t ollama-with-ca .
 docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-with-ca
 ```
-
-## Does Ollama send my prompts and answers back to ollama.com?
-
-Ollama runs locally. We don't see your prompts or data when you run locally. When using cloud-hosted models, we process your prompts and responses to provide the service but do not store or log that content and never train on it. We collect basic account info and limited usage metadata to provide the service that does not include prompt or response content. We don't sell your data. You can delete your account anytime.
 
 ## How do I disable Ollama Cloud features?
 
@@ -317,10 +317,6 @@ Alternatively, you can change the amount of time all models are loaded into memo
 
 The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
-## How do I manage the maximum number of requests the Ollama server can queue?
-
-If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded. You can adjust how many requests may be queued by setting `OLLAMA_MAX_QUEUE`.
-
 ## How does Ollama handle concurrent requests?
 
 Ollama supports two levels of concurrent processing. If your system has sufficient available memory (system memory when using CPU inference, or VRAM for GPU inference) then multiple models can be loaded at the same time. For a given model, if there is sufficient available memory when the model is loaded, it is configured to allow parallel request processing.
@@ -367,40 +363,6 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task. Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
-
-## Where can I find my Ollama Public Key?
-
-Your **Ollama Public Key** is the public part of the key pair that lets your local Ollama instance talk to [ollama.com](https://ollama.com).
-
-You'll need it to:
-* Push models to Ollama
-* Pull private models from Ollama to your machine
-* Run models hosted in [Ollama Cloud](https://ollama.com/cloud)
-
-### How to Add the Key
-
-* **Sign-in via the Settings page** in the **Mac** and **Windows App**
-
-* **Sign‑in via CLI**
-
-```shell
-ollama signin
-```
-
-* **Manually copy & paste** the key on the **Ollama Keys** page:
-[https://ollama.com/settings/keys](https://ollama.com/settings/keys)
-
-### Where the Ollama Public Key lives
-
-| OS | Path to `id_ed25519.pub` |
-| :- | :- |
-| macOS 	| `~/.ollama/id_ed25519.pub`			|
-| Linux		| `/usr/share/ollama/.ollama/id_ed25519.pub`	|
-| Windows	| `C:\Users\<username>\.ollama\id_ed25519.pub`	|
-
-<Note>
-  Replace &lt;username&gt; with your actual Windows user name.
-</Note>
 
 ## How can I stop Ollama from starting when I login to my computer?
 
