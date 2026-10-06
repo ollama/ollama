@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func scenarioTestOptions(t *testing.T, m *mockRunner, spec string) flagOptions {
@@ -70,5 +72,33 @@ func TestSelectScenarios(t *testing.T) {
 	got, err := selectScenarios("branch,repeat")
 	if err != nil || len(got) != 2 || got[0].name != "branch" {
 		t.Errorf("got %v, %v", got, err)
+	}
+}
+
+func TestScenarioCancelStepRejectsFastFailure(t *testing.T) {
+	m := &mockRunner{failWith: "boom"}
+	fOpt := directTestOptions(t, modeBoth, m)
+	b, err := newRunnerBackend(fOpt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &scenarioRun{backend: b, fOpt: fOpt, timeout: 10 * time.Second}
+	_, err = s.step(stepSpec{name: "cancelled", prompt: "x", cancel: 10 * time.Second})
+	if err == nil || errors.Is(err, errVoid) || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v, want the runner's failure as a hard error", err)
+	}
+}
+
+func TestScenarioMediaSkipsTextOnlyModels(t *testing.T) {
+	m := &mockRunner{prefix: true, noMedia: true}
+	fOpt := scenarioTestOptions(t, m, "media")
+	var out strings.Builder
+	var err error
+	captureOutput(func() { err = benchmarkScenarios(fOpt, &out) })
+	if err != nil {
+		t.Fatalf("media on a text-only model failed: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "# SKIP scenario=media") {
+		t.Errorf("expected a SKIP line:\n%s", out.String())
 	}
 }

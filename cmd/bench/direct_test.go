@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
@@ -33,7 +35,11 @@ type mockRunner struct {
 	prefix    bool
 	coldLimit int64
 	evicted   int64
-	seen      []string
+
+	failWith    string // reject every completion with this 400 message
+	errorRecord string // stream an error record instead of a result
+	noMedia     bool   // refuse media the way a text-only model does
+	seen        []string
 }
 
 var mockImgTag = regexp.MustCompile(`\[img-(\d+)\]`)
@@ -86,6 +92,17 @@ func (m *mockRunner) start(t *testing.T) string {
 		var req wire.CompletionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		switch {
+		case m.failWith != "":
+			http.Error(w, m.failWith, http.StatusBadRequest)
+			return
+		case m.noMedia && len(req.Media) > 0:
+			http.Error(w, "this model does not support image input", http.StatusBadRequest)
+			return
+		case m.errorRecord != "":
+			json.NewEncoder(w).Encode(wire.CompletionResponse{Error: &api.StatusError{StatusCode: http.StatusInternalServerError, ErrorMessage: m.errorRecord}})
 			return
 		}
 		if len(req.Format) > 0 && string(req.Format) != "null" && !strings.Contains(string(req.Format), `"structural_tag"`) {
@@ -208,8 +225,8 @@ func TestBenchmarkDirect_PrefillModeUniquePrefillOnly(t *testing.T) {
 
 	seen := map[string]bool{}
 	for i, req := range m.requests {
-		if req.Options.NumPredict != 0 {
-			t.Errorf("request %d num_predict=%d, want 0", i, req.Options.NumPredict)
+		if req.Options.NumPredict != 0 || !req.PrefillOnly {
+			t.Errorf("request %d num_predict=%d prefill_only=%v, want 0 and true", i, req.Options.NumPredict, req.PrefillOnly)
 		}
 		if seen[req.Prompt] {
 			t.Errorf("request %d repeats an earlier prompt", i)
@@ -249,5 +266,55 @@ func TestBenchmarkDirect_RejectsUnknownMode(t *testing.T) {
 	fOpt := directTestOptions(t, "sideways", m)
 	if err := benchmarkDirect(fOpt, &strings.Builder{}); err == nil {
 		t.Fatal("expected an error for an unknown mode")
+	}
+}
+
+func TestRunnerBackendReturnsErrorRecord(t *testing.T) {
+	m := &mockRunner{errorRecord: "runner exploded"}
+	fOpt := directTestOptions(t, modeBoth, m)
+	b, err := newRunnerBackend(fOpt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = b.Complete(context.Background(), directParams(fOpt, modeBoth, "x"))
+	if err == nil || !strings.Contains(err.Error(), "runner exploded") {
+		t.Fatalf("err = %v, want the streamed error record", err)
+	}
+}
+
+func TestDirectModelUsesFirstOfList(t *testing.T) {
+	fOpt := createTestFlagOptions()
+	models := "first:tag,second:tag"
+	fOpt.models = &models
+	if got := directModel(fOpt); got != "first:tag" {
+		t.Errorf("directModel = %q, want first:tag", got)
+	}
+}
+
+func TestCheckFlagCombinations(t *testing.T) {
+	str := func(v string) *string { return &v }
+	boolean := func(v bool) *bool { return &v }
+	cases := []struct {
+		name   string
+		edit   func(*flagOptions)
+		openai bool
+		ok     bool
+	}{
+		{"defaults", func(*flagOptions) {}, false, true},
+		{"openai with runner", func(f *flagOptions) { f.runner = str("h:1") }, true, false},
+		{"openai with scenario", func(f *flagOptions) { f.scenario = str("repeat") }, true, false},
+		{"runner and spawn", func(f *flagOptions) { f.runner, f.spawn = str("h:1"), boolean(true) }, false, false},
+		{"mode without direct", func(f *flagOptions) { f.mode = str(modeDecode) }, false, false},
+		{"ignore-eos without direct", func(f *flagOptions) { f.ignoreEOS = boolean(true) }, false, false},
+		{"mode with runner", func(f *flagOptions) { f.runner, f.mode = str("h:1"), str(modePrefill) }, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := createTestFlagOptions()
+			tc.edit(&f)
+			if err := checkFlagCombinations(f, tc.openai); (err == nil) != tc.ok {
+				t.Errorf("err = %v, want ok=%v", err, tc.ok)
+			}
+		})
 	}
 }

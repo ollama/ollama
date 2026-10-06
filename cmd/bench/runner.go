@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,15 +26,18 @@ const (
 )
 
 // newDirectBackend builds the right direct backend for -runner/-spawn. -spawn
-// always launches an MLX runner. For -runner host:port it probes the endpoint
-// and auto-detects MLX runner vs llama-server.
+// launches a llama-server for a GGUF model and an MLX runner otherwise. For
+// -runner host:port it probes the endpoint and auto-detects which it is.
 func newDirectBackend(fOpt flagOptions) (benchBackend, error) {
+	if *fOpt.imageFile != "" {
+		fmt.Fprintf(os.Stderr, "WARNING: images are not supported in direct runner mode; ignoring -image\n")
+	}
 	if *fOpt.spawn {
 		// The spawn target is chosen from -model: a GGUF (a .gguf file path, or
 		// an ollama model name that resolves to a GGUF model) launches a
 		// llama-server; anything else is treated as an MLX model name and
 		// launches the MLX runner.
-		if ggufPath, ok := resolveGGUF(*fOpt.models); ok {
+		if ggufPath, ok := resolveGGUF(directModel(fOpt)); ok {
 			return newLlamaServerSpawn(fOpt, ggufPath)
 		}
 		return newRunnerBackend(fOpt)
@@ -112,7 +116,7 @@ type runnerBackend struct {
 	// before bench connected.
 	loadDuration time.Duration
 
-	cmd *exec.Cmd // non-nil when bench spawned the runner
+	proc *child // non-nil when bench spawned the runner
 }
 
 // runnerStatus mirrors the MLX runner's GET /v1/status response.
@@ -124,12 +128,9 @@ type runnerStatus struct {
 }
 
 func newRunnerBackend(fOpt flagOptions) (*runnerBackend, error) {
-	model := *fOpt.models
-	if strings.Contains(model, ",") {
+	model := directModel(fOpt)
+	if strings.Contains(*fOpt.models, ",") {
 		fmt.Fprintf(os.Stderr, "WARNING: direct runner mode serves a single model; using %q\n", model)
-	}
-	if *fOpt.imageFile != "" {
-		fmt.Fprintf(os.Stderr, "WARNING: images are not supported in direct runner mode; ignoring -image\n")
 	}
 
 	b := &runnerBackend{
@@ -176,12 +177,13 @@ func (b *runnerBackend) spawn(fOpt flagOptions) error {
 	cmd.Env = os.Environ()
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	proc, err := startChild(cmd)
+	if err != nil {
 		return fmt.Errorf("failed to spawn mlx runner: %w", err)
 	}
-	b.cmd = cmd
+	b.proc = proc
 	b.addr = fmt.Sprintf("127.0.0.1:%d", port)
-	fmt.Fprintf(os.Stderr, "bench: spawned mlx runner (pid %d) on %s\n", cmd.Process.Pid, b.addr)
+	fmt.Fprintf(os.Stderr, "bench: spawned mlx runner %s (pid %d) on %s\n", exe, cmd.Process.Pid, b.addr)
 	return nil
 }
 
@@ -235,7 +237,7 @@ func (b *runnerBackend) waitReady(timeout time.Duration) error {
 		if err == nil {
 			return nil
 		}
-		if b.cmd != nil && b.cmd.ProcessState != nil && b.cmd.ProcessState.Exited() {
+		if !b.proc.alive() {
 			return fmt.Errorf("runner exited before becoming ready")
 		}
 		if time.Now().After(deadline) {
@@ -268,13 +270,14 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 	opts.NumPredict = p.numPredict
 	opts.Temperature = float32(p.temperature)
 	creq := wire.CompletionRequest{
-		Prompt:    p.prompt,
-		IgnoreEOS: p.ignoreEOS,
-		Stats:     p.stats,
-		Media:     p.media,
-		Logprobs:  p.logprobs,
-		Format:    p.format,
-		Options:   opts,
+		Prompt:      p.prompt,
+		IgnoreEOS:   p.ignoreEOS,
+		PrefillOnly: p.prefillOnly,
+		Stats:       p.stats,
+		Media:       p.media,
+		Logprobs:    p.logprobs,
+		Format:      p.format,
+		Options:     opts,
 	}
 
 	body, err := json.Marshal(creq)
@@ -347,22 +350,11 @@ func (b *runnerBackend) Complete(ctx context.Context, p completionParams) (compl
 // Cleanup terminates the runner only if bench spawned it; an operator-managed
 // runner (reached via -runner) is left running.
 func (b *runnerBackend) Cleanup(timeout int) {
-	if b.cmd == nil || b.cmd.Process == nil {
+	if b.proc == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "bench: stopping spawned mlx runner (pid %d)\n", b.cmd.Process.Pid)
-	_ = b.cmd.Process.Signal(os.Interrupt)
-	done := make(chan struct{})
-	go func() {
-		_ = b.cmd.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(time.Duration(timeout) * time.Second):
-		_ = b.cmd.Process.Kill()
-	}
-	b.cmd = nil
+	fmt.Fprintf(os.Stderr, "bench: stopping spawned mlx runner (pid %d)\n", b.proc.cmd.Process.Pid)
+	b.proc.stop(time.Duration(timeout) * time.Second)
 }
 
 // freePort grabs an ephemeral port. There is a small TOCTOU window between the
@@ -377,18 +369,29 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// resolveOllama finds the ollama binary to spawn, preferring a development
+// build over an installed release: -ollama, then next to this executable, then
+// the working directory, then PATH.
 func resolveOllama(fOpt flagOptions) (string, error) {
 	if *fOpt.ollamaBin != "" {
 		return *fOpt.ollamaBin, nil
 	}
+	name := "ollama"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	var candidates []string
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), name))
+	}
+	candidates = append(candidates, name)
+	for _, cand := range candidates {
+		if info, err := os.Stat(cand); err == nil && !info.IsDir() {
+			return filepath.Abs(cand)
+		}
+	}
 	if p, err := exec.LookPath("ollama"); err == nil {
 		return p, nil
-	}
-	if exe, err := os.Executable(); err == nil {
-		cand := filepath.Join(filepath.Dir(exe), "ollama")
-		if _, err := os.Stat(cand); err == nil {
-			return cand, nil
-		}
 	}
 	return "", fmt.Errorf("could not locate the ollama binary; pass -ollama <path>")
 }

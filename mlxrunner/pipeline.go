@@ -75,10 +75,9 @@ func (r *Runner) Prepare(request *Request) (err error) {
 		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
 	}
 
-	// Cap generation to stay within the model's context length. A negative
-	// num_predict generates to the limit; zero is prefill-only.
+	// Cap generation to stay within the model's context length
 	maxGenerate := r.contextLength - len(tokens)
-	if request.Options.NumPredict < 0 {
+	if request.Options.NumPredict <= 0 {
 		request.Options.NumPredict = maxGenerate
 	} else {
 		request.Options.NumPredict = min(request.Options.NumPredict, maxGenerate)
@@ -124,7 +123,7 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 		return err
 	}
 
-	if request.Options.NumPredict == 0 {
+	if request.PrefillOnly {
 		cached := len(session.inputs) - len(session.remaining)
 		final := CompletionResponse{
 			Done:                  true,

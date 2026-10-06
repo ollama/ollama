@@ -23,7 +23,7 @@ Key flags:
 
 - `-mode prefill|decode|both` — isolate a single phase so a capture window
   contains one workload. `prefill` varies the prompt per epoch (cache miss) and
-  generates 0 tokens; `decode` holds the prompt fixed so the prefix cache hits
+  generates 0 tokens on the MLX runner, 1 on llama-server; `decode` holds the prompt fixed so the prefix cache hits
   and the window is pure decode; `both` is a normal mixed run.
 - `-ignore-eos` — disable stop tokens so generation runs exactly `-max-tokens`,
   making a capture attributable to a known number of decode passes.
@@ -81,8 +81,10 @@ System-wide capture is an alternative when attaching is awkward; it requires
 
 ## Notes
 
-- The runner serves one model and fixes context length at load; `-num-ctx` is
-  ignored in direct mode.
+- The MLX runner serves one model and fixes context length at load, so
+  `-num-ctx` is ignored for it; a spawned llama-server takes it as `-c`.
+- On Linux the markers need `libnvToolsExt`, which newer CUDA toolkits may not
+  ship; the runner logs a warning when `--profile` finds no markers.
 - Markers default off and are a near-no-op unless `--profile` is set, so they do
   not affect normal benchmarking.
 - ROCm is not a shipping target yet; the Linux marker path leaves a stub for a

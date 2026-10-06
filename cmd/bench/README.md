@@ -86,9 +86,12 @@ runner instead. Prompts are sent raw, without a chat template. See
 ./ollama-bench -model gemma4:e2b-nvfp4 -spawn -mode decode -prompt-tokens 2048 -max-tokens 128 -ignore-eos
 ```
 
-`-mode prefill` generates nothing and uses a new prompt per request. `-mode
-decode` reuses one prompt, so every timed request is a prefix-cache hit and
-measures decode alone.
+`-mode prefill` uses a new prompt per request and generates nothing on the MLX
+runner; llama-server has no prefill-only request, so it generates one token.
+`-mode decode` reuses one prompt, so every timed request is a prefix-cache hit
+and measures decode alone. A spawned llama-server runs with llama-server's own
+defaults plus `-c` from `-num-ctx`, not the settings `ollama serve` would
+launch it with.
 
 ### Prefix-Cache Scenarios
 
@@ -117,7 +120,8 @@ benchstat -col /step before.bench after.bench
 | interleave | two conversations alternating turns: every request switches path |
 | concurrent | two sequences submitted together, then again: each hits its own prefix |
 | short | prompts of one to eight tokens |
-| media | image prompts: hit and extend past an image, a different image in the same place, and an image at the very end; skipped for models without image input |
+| media | image prompts: hit and extend past an image, a different image in the same place, and an image at the very end; then an audio prompt for models that take audio; skipped for models without image input |
+| modes | a logprobs request, which parks speculative drafting, then plain, structured-output and plain requests over one conversation |
 
 `-prompt-tokens` sets the base prompt size, 4096 by default. Past about 17k
 tokens the HumanEval set runs out and seeded generated code fills the rest.
@@ -126,7 +130,7 @@ it dominates run time.
 
 Each step reports time to first token as `ns/op`, prefill and decode rates,
 prompt and cached tokens, and the runner's per-request stats: matched tokens,
-MLX peak, active, and prefix-cache snapshot bytes.
+MLX peak, active and buffer-cache bytes, and prefix-cache snapshot bytes.
 
 ### Advanced Example
 
@@ -156,7 +160,7 @@ MLX peak, active, and prefix-cache snapshot bytes.
 | -api-key	| API key for OpenAI endpoint (or OPENAI_API_KEY)	| ""		|
 | -runner	| Drive a runner directly at host:port	| ""		|
 | -spawn	| Spawn the runner for -model	| false		|
-| -ollama	| ollama binary used by -spawn	| PATH		|
+| -ollama	| ollama binary used by -spawn	| next to bench, ./ollama, PATH	|
 | -mode		| Direct runner mode: prefill, decode, both	| both		|
 | -ignore-eos	| Generate exactly -max-tokens (direct runners)	| false		|
 | -scenario	| Prefix-cache scenarios: all or a comma list	| ""		|

@@ -1,13 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -36,15 +32,6 @@ func isGGUFFile(path string) bool {
 	return true
 }
 
-// ollamaManifest is the subset of an ollama image manifest needed to locate the
-// model blob.
-type ollamaManifest struct {
-	Layers []struct {
-		MediaType string `json:"mediaType"`
-		Digest    string `json:"digest"`
-	} `json:"layers"`
-}
-
 // ggufBlobForModel resolves an ollama model name to its GGUF blob path when the
 // model is GGUF-based. A model is GGUF-based when its manifest carries a model
 // layer (application/vnd.ollama.image.model) whose blob has the GGUF magic;
@@ -54,19 +41,13 @@ func ggufBlobForModel(name string) (string, bool) {
 	if !n.IsValid() {
 		return "", false
 	}
-	models := envconfig.Models()
-	data, err := os.ReadFile(filepath.Join(models, "manifests", n.Filepath()))
+	m, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		return "", false
 	}
-	var m ollamaManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return "", false
-	}
 
-	// Detect projector/draft layers. bench's llama-server spawn only passes the
-	// model GGUF (--mmproj / draft model are not wired), so warn when a model
-	// carries them: vision/speculative profiling is not supported in spawn mode.
+	// bench's llama-server spawn passes only the model GGUF (--mmproj and draft
+	// models are not wired), so warn when a model carries them.
 	hasExtra := false
 	for _, l := range m.Layers {
 		if l.MediaType == "application/vnd.ollama.image.projector" || l.MediaType == manifest.MediaTypeImageDraft {
@@ -78,13 +59,14 @@ func ggufBlobForModel(name string) (string, bool) {
 		if l.MediaType != "application/vnd.ollama.image.model" {
 			continue
 		}
-		blob := filepath.Join(models, "blobs", strings.ReplaceAll(l.Digest, ":", "-"))
-		if isGGUFFile(blob) {
-			if hasExtra {
-				fmt.Fprintf(os.Stderr, "WARNING: %s has projector/draft layers that bench does not pass to llama-server; vision/speculative profiling is unsupported in -spawn mode\n", name)
-			}
-			return blob, true
+		blob, err := manifest.BlobsPath(l.Digest)
+		if err != nil || !isGGUFFile(blob) {
+			continue
 		}
+		if hasExtra {
+			fmt.Fprintf(os.Stderr, "WARNING: %s has projector/draft layers that bench does not pass to llama-server; vision/speculative profiling is unsupported in -spawn mode\n", name)
+		}
+		return blob, true
 	}
 	return "", false
 }

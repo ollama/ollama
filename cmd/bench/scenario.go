@@ -73,7 +73,6 @@ var (
 // promptSizer finds the word budget that lands a prompt near a token target and
 // remembers it across epochs; the nonce keeps each prompt distinct.
 type promptSizer struct {
-	mu    sync.Mutex
 	words map[int]int
 }
 
@@ -107,9 +106,7 @@ func (s *scenarioRun) variation() int {
 
 // prompt returns a new prompt of about target tokens and its exact size.
 func (s *scenarioRun) prompt(target int) (string, int, error) {
-	s.sizer.mu.Lock()
 	words, ok := s.sizer.words[target]
-	s.sizer.mu.Unlock()
 	if !ok {
 		words = max(smallestCodePromptWords(), int(float64(target)/tokensPerWordSeed))
 		for range 10 {
@@ -122,9 +119,7 @@ func (s *scenarioRun) prompt(target int) (string, int, error) {
 			}
 			words = max(1, words*target/n)
 		}
-		s.sizer.mu.Lock()
 		s.sizer.words[target] = words
-		s.sizer.mu.Unlock()
 	}
 	text := nonceHeader(promptNonce(nonceLetters)) + longCodeBody(words, s.variation())
 	n, err := s.count(text)
@@ -172,10 +167,14 @@ func (s *scenarioRun) step(spec stepSpec) (completionResult, error) {
 	res, err := s.backend.Complete(ctx, p)
 	cancel()
 	if spec.cancel > 0 {
-		if err == nil {
+		switch {
+		case err == nil:
 			return res, fmt.Errorf("step %s: finished before the %v cancel: %w", spec.name, spec.cancel, errVoid)
+		case errors.Is(err, context.DeadlineExceeded):
+			return res, nil
+		default:
+			return res, fmt.Errorf("step %s: %w", spec.name, err)
 		}
-		return res, nil
 	}
 	if err != nil {
 		return res, fmt.Errorf("step %s: %w", spec.name, err)
@@ -206,7 +205,7 @@ func (s *scenarioRun) emit(name string, res completionResult) {
 	fmt.Fprintf(&b, "BenchmarkCache/model=%s/scenario=%s/step=%s 1 %d ns/op", s.model, s.name, name, res.ttft.Nanoseconds())
 	fmt.Fprintf(&b, " %.2f prefill-tok/s %.2f decode-tok/s", rate(res.promptEvalCount-cached, res.promptEvalDuration), rate(res.evalCount, res.evalDuration))
 	fmt.Fprintf(&b, " %d prompt-tokens %d cached-tokens %d matched-tokens", res.promptEvalCount, cached, st.MatchedTokens)
-	fmt.Fprintf(&b, " %d peak-B %d active-B %d cold-B", st.PeakBytes, st.ActiveBytes, st.ColdBytes)
+	fmt.Fprintf(&b, " %d peak-B %d active-B %d buffer-cache-B %d cold-B", st.PeakBytes, st.ActiveBytes, st.CacheBytes, st.ColdBytes)
 	if st.DraftTokens > 0 {
 		fmt.Fprintf(&b, " %.3f draft-acceptance", float64(st.AcceptedDraft)/float64(st.DraftTokens))
 	}
@@ -283,7 +282,7 @@ func benchmarkScenarios(fOpt flagOptions, out io.Writer) error {
 		return fmt.Errorf("-scenario needs a runner that can tokenize; %s cannot", backend.Name())
 	}
 
-	model := *fOpt.models
+	model := directModel(fOpt)
 	timeout := time.Duration(*fOpt.timeout) * time.Second
 	target := cmp.Or(*fOpt.promptTokens, 4096)
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ollama/ollama/llm"
@@ -24,7 +25,8 @@ const (
 // completionParams is the backend-agnostic description of one completion call.
 type completionParams struct {
 	prompt      string
-	numPredict  int // -1 = generate to the context limit, 0 = prefill-only
+	numPredict  int // -1 = generate to the context limit; 0 with prefillOnly
+	prefillOnly bool
 	temperature float64
 	seed        int // -1 = random
 	ignoreEOS   bool
@@ -32,7 +34,6 @@ type completionParams struct {
 	media       []llm.MediaData
 	logprobs    bool
 	format      json.RawMessage
-	debug       bool
 }
 
 // completionResult carries the timing data every backend reports. Fields a
@@ -63,6 +64,12 @@ type benchBackend interface {
 	Cleanup(timeout int)
 }
 
+// directModel is the one model a direct runner serves: the first of -model.
+func directModel(f flagOptions) string {
+	model, _, _ := strings.Cut(*f.models, ",")
+	return model
+}
+
 func directParams(fOpt flagOptions, mode, prompt string) completionParams {
 	numPredict := -1
 	if *fOpt.maxTokens > 0 {
@@ -78,10 +85,10 @@ func directParams(fOpt flagOptions, mode, prompt string) completionParams {
 	return completionParams{
 		prompt:      prompt,
 		numPredict:  numPredict,
+		prefillOnly: mode == modePrefill,
 		temperature: *fOpt.temperature,
 		seed:        seed,
 		ignoreEOS:   *fOpt.ignoreEOS && mode != modePrefill,
-		debug:       *fOpt.debug,
 	}
 }
 
@@ -100,12 +107,11 @@ func benchmarkDirect(fOpt flagOptions, out io.Writer) error {
 
 	backend, err := newDirectBackend(fOpt)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		return err
 	}
 	defer backend.Cleanup(*fOpt.timeout)
 
-	model := *fOpt.models
+	model := directModel(fOpt)
 	timeout := time.Duration(*fOpt.timeout) * time.Second
 
 	var plan promptPlan
@@ -120,7 +126,6 @@ func benchmarkDirect(fOpt flagOptions, out io.Writer) error {
 			return res.promptEvalCount, err
 		}, model, fOpt)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			return err
 		}
 	}
@@ -202,13 +207,18 @@ func benchmarkDirect(fOpt flagOptions, out io.Writer) error {
 		if res.cachedPromptCount != nil {
 			cached = *res.cachedPromptCount
 		}
-		OutputMetrics(out, *fOpt.format, []Metrics{
-			{Model: model, Step: "prefill", Count: max(0, res.promptEvalCount-cached), CachedPromptCount: res.cachedPromptCount, Duration: res.promptEvalDuration},
-			{Model: model, Step: "generate", Count: res.evalCount, Duration: res.evalDuration},
-			{Model: model, Step: "ttft", Count: 1, Duration: res.ttft},
-			{Model: model, Step: "load", Count: 1, Duration: res.loadDuration},
-			{Model: model, Step: "total", Count: 1, Duration: res.totalDuration},
-		}, *fOpt.verbose)
+		metrics := []Metrics{{Model: model, Step: "prefill", Count: max(0, res.promptEvalCount-cached), CachedPromptCount: res.cachedPromptCount, Duration: res.promptEvalDuration}}
+		// A prefill-only request generates nothing, so it has no decode rate
+		// and no first token.
+		if mode != modePrefill {
+			metrics = append(metrics,
+				Metrics{Model: model, Step: "generate", Count: res.evalCount, Duration: res.evalDuration},
+				Metrics{Model: model, Step: "ttft", Count: 1, Duration: res.ttft})
+		}
+		metrics = append(metrics,
+			Metrics{Model: model, Step: "load", Count: 1, Duration: res.loadDuration},
+			Metrics{Model: model, Step: "total", Count: 1, Duration: res.totalDuration})
+		OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
 
 		if *fOpt.promptTokens > 0 && res.promptEvalCount != *fOpt.promptTokens {
 			offTargetCount++

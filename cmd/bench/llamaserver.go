@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,9 +18,12 @@ import (
 )
 
 // llamaServerBackend drives a llama-server directly over its native /completion
+// endpoint, streaming so time to first token is measured.
 type llamaServerBackend struct {
-	addr   string
-	model  string
+	addr  string
+	model string
+	// mode decides cache_prompt per request: llama-server reuses a prompt only
+	// when asked, while the MLX runner always does.
 	mode   string
 	client *http.Client
 	debug  bool
@@ -29,7 +33,7 @@ type llamaServerBackend struct {
 	// server (-runner).
 	loadDuration time.Duration
 
-	cmd *exec.Cmd // non-nil when bench spawned the llama-server
+	proc *child // non-nil when bench spawned the llama-server
 }
 
 // llamaServerReq is the subset of llama-server's /completion request bench uses.
@@ -62,9 +66,12 @@ type llamaServerChunk struct {
 }
 
 func newLlamaServerBackend(fOpt flagOptions) *llamaServerBackend {
+	if *fOpt.numCtx > 0 {
+		fmt.Fprintf(os.Stderr, "WARNING: -num-ctx is ignored for a running llama-server (context is fixed at its launch)\n")
+	}
 	return &llamaServerBackend{
 		addr:   *fOpt.runner,
-		model:  *fOpt.models,
+		model:  directModel(fOpt),
 		mode:   *fOpt.mode,
 		client: &http.Client{},
 		debug:  *fOpt.debug,
@@ -89,22 +96,23 @@ func newLlamaServerSpawn(fOpt flagOptions, ggufPath string) (*llamaServerBackend
 		args = append(args, "-c", strconv.Itoa(*fOpt.numCtx))
 	}
 	cmd := exec.Command(bin, args...)
-	cmd.Env = os.Environ()
+	llm.SetupLlamaServerCommandEnv(cmd, bin, nil, nil)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
+	proc, err := startChild(cmd)
+	if err != nil {
 		return nil, fmt.Errorf("failed to spawn llama-server: %w", err)
 	}
 
 	b := &llamaServerBackend{
 		addr:   fmt.Sprintf("127.0.0.1:%d", port),
-		model:  *fOpt.models,
+		model:  directModel(fOpt),
 		mode:   *fOpt.mode,
 		client: &http.Client{},
 		debug:  *fOpt.debug,
-		cmd:    cmd,
+		proc:   proc,
 	}
-	fmt.Fprintf(os.Stderr, "bench: spawned llama-server (pid %d) on %s for %s\n", cmd.Process.Pid, b.addr, ggufPath)
+	fmt.Fprintf(os.Stderr, "bench: spawned llama-server %s (pid %d) on %s for %s\n", bin, cmd.Process.Pid, b.addr, ggufPath)
 
 	if err := b.waitReady(time.Duration(*fOpt.timeout) * time.Second); err != nil {
 		b.Cleanup(*fOpt.timeout)
@@ -133,7 +141,7 @@ func (b *llamaServerBackend) waitReady(timeout time.Duration) error {
 		if httpOK(b.client, "http://"+b.addr+"/health") {
 			return nil
 		}
-		if b.cmd != nil && b.cmd.ProcessState != nil && b.cmd.ProcessState.Exited() {
+		if !b.proc.alive() {
 			return fmt.Errorf("llama-server exited before becoming ready")
 		}
 		if time.Now().After(deadline) {
@@ -145,16 +153,22 @@ func (b *llamaServerBackend) waitReady(timeout time.Duration) error {
 
 func (b *llamaServerBackend) Name() string { return "llama-server" }
 
+// ModelInfo reports only the label; llama-server's metadata is not mapped.
 func (b *llamaServerBackend) ModelInfo(ctx context.Context, fOpt flagOptions) ModelInfo {
-	// llama-server exposes /props with model metadata; for now we report just
-	// the label and let the values fall back to "unknown".
 	return ModelInfo{Name: b.model}
 }
 
 func (b *llamaServerBackend) Complete(ctx context.Context, p completionParams) (completionResult, error) {
+	numPredict := p.numPredict
+	if p.prefillOnly {
+		// llama-server has no prefill-only request: it treats n_predict 0 as
+		// unlimited and checks the limit only after sampling. One token is the
+		// closest it gets.
+		numPredict = 1
+	}
 	lreq := llamaServerReq{
 		Prompt:      p.prompt,
-		NPredict:    p.numPredict,
+		NPredict:    numPredict,
 		Stream:      true,
 		CachePrompt: b.mode == modeDecode,
 		IgnoreEOS:   p.ignoreEOS,
@@ -180,7 +194,8 @@ func (b *llamaServerBackend) Complete(ctx context.Context, p completionParams) (
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return completionResult{}, fmt.Errorf("llama-server status %d", resp.StatusCode)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return completionResult{}, fmt.Errorf("llama-server status %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 
 	var res completionResult
@@ -238,22 +253,11 @@ func (b *llamaServerBackend) Complete(ctx context.Context, p completionParams) (
 // Cleanup terminates the llama-server only if bench spawned it; an
 // operator-managed server (reached via -runner) is left running.
 func (b *llamaServerBackend) Cleanup(timeout int) {
-	if b.cmd == nil || b.cmd.Process == nil {
+	if b.proc == nil {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "bench: stopping spawned llama-server (pid %d)\n", b.cmd.Process.Pid)
-	_ = b.cmd.Process.Signal(os.Interrupt)
-	done := make(chan struct{})
-	go func() {
-		_ = b.cmd.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(time.Duration(timeout) * time.Second):
-		_ = b.cmd.Process.Kill()
-	}
-	b.cmd = nil
+	fmt.Fprintf(os.Stderr, "bench: stopping spawned llama-server (pid %d)\n", b.proc.cmd.Process.Pid)
+	b.proc.stop(time.Duration(timeout) * time.Second)
 }
 
 func msToDuration(ms float64) time.Duration {

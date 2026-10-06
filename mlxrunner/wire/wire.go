@@ -30,6 +30,10 @@ type CompletionRequest struct {
 	// sets it, so production behavior is unchanged.
 	IgnoreEOS bool
 
+	// PrefillOnly evaluates the prompt and returns without generating. Used by
+	// profiling drivers; the ollama server never sets it.
+	PrefillOnly bool
+
 	// Stats asks for Stats on the final response. Used by benchmark drivers;
 	// the ollama server never sets it.
 	Stats bool
@@ -48,7 +52,7 @@ type Stats struct {
 
 	// Runner.
 	ActiveBytes int64 // MLX active memory
-	PeakBytes   int64 // MLX peak memory since the runner last reset it
+	PeakBytes   int64 // MLX peak memory during this request
 	CacheBytes  int64 // MLX buffer cache
 	ColdBytes   int64 // prefix-cache snapshot storage
 	ColdLimit   int64 // bound the prefix cache evicts snapshot storage to

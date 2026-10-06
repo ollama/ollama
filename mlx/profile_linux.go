@@ -28,9 +28,9 @@ package mlx
 //     _markers_tried = 1;
 //
 //     // CUDA: NVTX (captured by Nsight Systems).
-//     void *h = dlopen("libnvToolsExt.so.1", RTLD_NOW | RTLD_GLOBAL);
+//     void *h = dlopen("libnvToolsExt.so.1", RTLD_NOW | RTLD_LOCAL);
 //     if (h == NULL) {
-//         h = dlopen("libnvToolsExt.so", RTLD_NOW | RTLD_GLOBAL);
+//         h = dlopen("libnvToolsExt.so", RTLD_NOW | RTLD_LOCAL);
 //     }
 //     if (h != NULL) {
 //         _range_push = (range_push_t)dlsym(h, "nvtxRangePushA");
@@ -62,6 +62,8 @@ package mlx
 import "C"
 
 import "unsafe"
+
+func profileMarkersAvailable() bool { return C.load_markers() == 1 }
 
 func profileRangePush(name string) {
 	cName := C.CString(name)

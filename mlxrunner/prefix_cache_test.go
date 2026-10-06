@@ -898,11 +898,15 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 		})
 
 		// Run eviction.
+		before, evictedBefore := pc.pagedOutBytes, pc.evictedBytes
 		pc.enforceEvictionPolicy()
 
 		// Memory should be within limits.
 		if pc.pagedOutBytes > maxPagedOutBytes {
 			t.Fatalf("pagedOutBytes = %d, want <= %d", pc.pagedOutBytes, maxPagedOutBytes)
+		}
+		if got, want := pc.evictedBytes-evictedBefore, before-pc.pagedOutBytes; got != want {
+			t.Errorf("evictedBytes grew by %d, want the %d bytes eviction freed", got, want)
 		}
 
 		// The branch point and the frontier survive.

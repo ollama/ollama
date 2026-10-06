@@ -593,6 +593,9 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 func BenchmarkModel(fOpt flagOptions) error {
 	models := strings.Split(*fOpt.models, ",")
 	useOpenAI := fOpt.openaiURL != nil && *fOpt.openaiURL != ""
+	if err := checkFlagCombinations(fOpt, useOpenAI); err != nil {
+		return err
+	}
 
 	var out io.Writer = os.Stdout
 	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
@@ -859,6 +862,22 @@ func BenchmarkModel(fOpt flagOptions) error {
 		unloadModel(client, model, *fOpt.timeout)
 	}
 
+	return nil
+}
+
+// checkFlagCombinations rejects flags that a target would otherwise ignore.
+func checkFlagCombinations(fOpt flagOptions, useOpenAI bool) error {
+	scenario := fOpt.scenario != nil && *fOpt.scenario != ""
+	runner := fOpt.runner != nil && *fOpt.runner != ""
+	spawn := fOpt.spawn != nil && *fOpt.spawn
+	switch {
+	case useOpenAI && (fOpt.direct() || scenario):
+		return errors.New("-openai cannot be combined with -runner, -spawn or -scenario")
+	case runner && spawn:
+		return errors.New("-runner and -spawn are mutually exclusive")
+	case !fOpt.direct() && ((fOpt.mode != nil && *fOpt.mode != modeBoth) || (fOpt.ignoreEOS != nil && *fOpt.ignoreEOS)):
+		return errors.New("-mode and -ignore-eos require -runner or -spawn")
+	}
 	return nil
 }
 
@@ -1282,7 +1301,7 @@ func main() {
 
 		runner:    flag.String("runner", "", "Drive a runner directly at host:port, bypassing ollama serve (auto-detects MLX runner vs llama-server)"),
 		spawn:     flag.Bool("spawn", false, "Spawn the runner: MLX runner for an MLX model, llama-server for a GGUF model or path"),
-		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: PATH or next to this executable)"),
+		ollamaBin: flag.String("ollama", "", "Path to the ollama binary for -spawn (default: next to this executable, then ./ollama, then PATH)"),
 		mode:      flag.String("mode", modeBoth, "Direct runner mode [prefill|decode|both]"),
 		ignoreEOS: flag.Bool("ignore-eos", false, "Disable stop tokens so generation runs exactly -max-tokens (direct runners only)"),
 		scenario:  flag.String("scenario", "", "Run prefix-cache scenarios instead of epochs: all or a comma list of "+strings.Join(scenarioNames(), ",")+" (direct runners only)"),
@@ -1319,7 +1338,7 @@ func main() {
 		return
 	}
 
-	if err := BenchmarkModel(fOpt); err != nil && *fOpt.scenario != "" {
+	if err := BenchmarkModel(fOpt); err != nil && (*fOpt.scenario != "" || fOpt.direct()) {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}

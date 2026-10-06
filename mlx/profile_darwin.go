@@ -31,7 +31,7 @@ package mlx
 //     if (_sp_top < (int)(sizeof(_sp_stack) / sizeof(_sp_stack[0]))) {
 //         _sp_stack[_sp_top++] = sid;
 //     }
-//     os_signpost_interval_begin(log, sid, "phase", "%s", name);
+//     os_signpost_interval_begin(log, sid, "phase", "%{public}s", name);
 // }
 //
 // static void ollama_signpost_end(void) {
@@ -45,6 +45,8 @@ package mlx
 import "C"
 
 import "unsafe"
+
+func profileMarkersAvailable() bool { return true }
 
 func profileRangePush(name string) {
 	cName := C.CString(name)
