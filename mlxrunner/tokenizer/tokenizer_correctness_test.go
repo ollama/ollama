@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -59,109 +60,71 @@ func TestSplitBySpecialTokensGreedyLongest(t *testing.T) {
 
 	tok, err := LoadFromBytes(data)
 	if err != nil {
-		t.Fatalf("failed to load tokenizer: %v", err)
+		t.Fatal(err)
 	}
-
-	input := "a<tag>xb"
-	want := []string{"a", "<tag>x", "b"}
-
-	got := tok.splitBySpecialTokens(input)
-	if len(got) != len(want) {
-		t.Fatalf("split length mismatch: got %v want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("split mismatch at %d: got %v want %v", i, got, want)
-		}
-	}
-}
-
-func TestSplitBySpecialTokensFallbackWithoutCache(t *testing.T) {
-	data := []byte(`{
-		"model": {
-			"type": "BPE",
-			"vocab": {"a": 0, "b": 1},
-			"merges": []
-		},
-		"added_tokens": [
-			{"id": 2, "content": "<tag>", "special": true},
-			{"id": 3, "content": "<tag>x", "special": true}
-		]
-	}`)
-
-	tok, err := LoadFromBytes(data)
-	if err != nil {
-		t.Fatalf("failed to load tokenizer: %v", err)
-	}
-
-	input := "a<tag>xb"
-	want := []string{"a", "<tag>x", "b"}
-
-	// Simulate construction outside loader path where cache is not set.
-	tok.sortedSpecialTokens = nil
-
-	got := tok.splitBySpecialTokens(input)
-	if len(got) != len(want) {
-		t.Fatalf("split length mismatch: got %v want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("split mismatch at %d: got %v want %v", i, got, want)
-		}
-	}
-}
-
-func TestAdjustWhitespaceBoundary(t *testing.T) {
-	tests := []struct {
-		name             string
-		part             string
-		boundary         int
-		spaceBeforePunct bool
-		want             int
+	for _, input := range []struct {
+		text string
+		want []encodeChunk
 	}{
-		{name: "letter", part: "  word", boundary: 2, want: 1},
-		{name: "punctuation without optional prefix", part: "  }", boundary: 2, want: 2},
-		{name: "punctuation with optional prefix", part: "  }", boundary: 2, spaceBeforePunct: true, want: 1},
-		{name: "tab before letter", part: "\tword", boundary: 1, want: 0},
-		{name: "tab before mark", part: "\t\u0301", boundary: 1, spaceBeforePunct: true, want: 1},
-		{name: "tab before punctuation", part: "\t}", boundary: 1, spaceBeforePunct: true, want: 1},
-		{name: "number", part: "  1", boundary: 2, want: 2},
-		{name: "newline", part: " \nword", boundary: 2, want: 2},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			curr := tokenMatch{end: tt.boundary}
-			next := tokenMatch{start: tt.boundary, end: len(tt.part)}
-
-			adjustWhitespaceBoundary(tt.part, &curr, &next, tt.spaceBeforePunct)
-
-			if curr.end != tt.want || next.start != tt.want {
-				t.Fatalf("boundary = (%d, %d), want (%d, %d)", curr.end, next.start, tt.want, tt.want)
-			}
-		})
+		{"a<tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
+		{"<tag>x<tag>", []encodeChunk{{text: "<tag>x", isSpecial: true}, {text: "<tag>", isSpecial: true}}},
+		{"a<tag><tag>xb", []encodeChunk{{text: "a"}, {text: "<tag>", isSpecial: true}, {text: "<tag>x", isSpecial: true}, {text: "b"}}},
+		{"a<tag", []encodeChunk{{text: "a<tag"}}},
+		{"<<tag>x", []encodeChunk{{text: "<"}, {text: "<tag>x", isSpecial: true}}},
+		{"<tag><ta", []encodeChunk{{text: "<tag>", isSpecial: true}, {text: "<ta"}}},
+		{strings.Repeat("a<tag>x", 800), slices.Repeat([]encodeChunk{{text: "a"}, {text: "<tag>x", isSpecial: true}}, 800)},
+		{"", nil},
+	} {
+		if got := tok.specialTokenMatcher.split(input.text); !slices.Equal(got, input.want) {
+			t.Errorf("split(%q) = %v, want %v", input.text, got, input.want)
+		}
 	}
 }
 
 func TestEncodeDeterministicAcrossGOMAXPROCS(t *testing.T) {
 	tok := benchmarkLoadMiniLlama(t)
 
-	input := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 640)
-
 	prev := runtime.GOMAXPROCS(0)
 	defer runtime.GOMAXPROCS(prev)
 
-	runtime.GOMAXPROCS(1)
-	seq := tok.Encode(input, false)
+	for _, tc := range []struct {
+		name, text string
+	}{
+		{"ASCII", strings.Repeat("The quick brown fox jumps over the lazy dog. ", 640)},
+		{"Unicode and special tokens", strings.Repeat("e\u0301日本😀<|end_of_text|>", 640)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime.GOMAXPROCS(1)
+			seq := tok.Encode(tc.text, false)
 
-	if prev < 2 {
-		runtime.GOMAXPROCS(2)
-	} else {
-		runtime.GOMAXPROCS(prev)
-	}
-	par := tok.Encode(input, false)
+			runtime.GOMAXPROCS(max(2, prev))
+			par := tok.Encode(tc.text, false)
 
-	if !equalIDs(seq, par) {
-		t.Fatalf("encode mismatch between sequential and parallel paths: seq=%d par=%d", len(seq), len(par))
+			if !equalIDs(seq, par) {
+				t.Fatalf("encode mismatch between sequential and parallel paths: seq=%d par=%d", len(seq), len(par))
+			}
+		})
 	}
+}
+
+func FuzzAddedTokenMatcher(f *testing.F) {
+	var matcher addedTokenMatcher
+	for _, token := range []string{"<tag>", "<tag>x", "éé", "\x00"} {
+		matcher.add(token, token)
+	}
+	for _, input := range []string{"", "plain", "a<tag>xb", "<tag>x<tag>", "<<tag", "aééa", "\xff<tag>\x00"} {
+		f.Add(input)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		remaining := input
+		for _, part := range matcher.split(input) {
+			if part.text == "" || !strings.HasPrefix(remaining, part.text) {
+				t.Fatalf("split(%q) changed or inserted text: %q", input, part.text)
+			}
+			remaining = remaining[len(part.text):]
+		}
+		if remaining != "" {
+			t.Fatalf("split(%q) dropped suffix %q", input, remaining)
+		}
+	})
 }

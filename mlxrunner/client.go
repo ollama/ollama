@@ -370,6 +370,13 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
+	// Keep Metal weights resident between requests until MLX fixes idle eviction.
+	if runtime.GOOS == "darwin" {
+		if _, ok := os.LookupEnv("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"); !ok {
+			setEnv(cmd, "MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", "1000")
+		}
+	}
+
 	// Set library path environment variable for MLX libraries
 	// Linux: LD_LIBRARY_PATH, Windows: PATH
 	var libPathEnvVar string

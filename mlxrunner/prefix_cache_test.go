@@ -813,6 +813,30 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 	})
 }
 
+func TestPrefixCacheClose(t *testing.T) {
+	forEachEnv(t, func(t *testing.T, env *testEnv) {
+		pc := env.pc
+		simulateRequest(t, pc, []int32{1, 2, 3, 4, 5}, []int32{6, 7}, 2)
+		simulateRequest(t, pc, []int32{1, 2, 8, 9, 10}, []int32{11, 12}, 2)
+		if len(env.tracker.all) == 0 {
+			t.Fatal("requests produced no snapshots")
+		}
+		pc.close()
+		if pc.root != nil || len(pc.activePath) != 0 || pc.pagedOutBytes != 0 {
+			t.Fatal("closed cache retains trie state")
+		}
+		for i, c := range pc.caches {
+			if c != nil && c.Offset() != 0 {
+				t.Fatalf("cache %d retains offset %d after close", i, c.Offset())
+			}
+		}
+		checkSnapshotLeaks(t, env.tracker, pc.root)
+		// Repeated teardown must not close snapshots twice.
+		pc.close()
+		checkSnapshotLeaks(t, env.tracker, pc.root)
+	})
+}
+
 // TestConversationResumption tests the most common pattern: user sends a message,
 // gets a response, then sends a follow-up. The follow-up should reuse the cached
 // prefix (system prompt + first turn + assistant response).
