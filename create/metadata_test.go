@@ -172,6 +172,12 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantRenderer: "poolside-v1",
 		},
 		{
+			name:         "ornith",
+			config:       `{"architectures":["OrnithForCausalLM"],"model_type":"ornith"}`,
+			wantParser:   "ornith",
+			wantRenderer: "ornith",
+		},
+		{
 			name:         "nemotron text",
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			wantParser:   "nemotron-3-nano",

@@ -160,7 +160,7 @@ func alwaysSupportsThinking(architectures []string, modelType string) bool {
 
 func isQwen35Family(s string) bool {
 	s = strings.ToLower(s)
-	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen3next")
+	return strings.Contains(s, "qwen3_5") || strings.Contains(s, "qwen35") || strings.Contains(s, "qwen3next")
 }
 
 func isQwen4Family(s string) bool {
@@ -244,6 +244,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 		return "deepseek3", nil
 	case strings.Contains(s, "gemma4"):
 		return "gemma4", nil
+	case strings.Contains(s, "ornith"):
+		return "ornith", nil
 	case isQwen4Family(s), isQwen35Family(s):
 		return "qwen3.5", nil
 	case strings.Contains(s, "qwen3"):
@@ -284,6 +286,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return "glm-4.7", nil
 	case strings.Contains(s, "deepseek"):
 		return "deepseek3", nil
+	case strings.Contains(s, "ornith"):
+		return "ornith", nil
 	case isQwen4Family(s):
 		return "qwen3.8", nil
 	case isQwen35Family(s):

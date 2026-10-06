@@ -782,6 +782,14 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 				m.HasChatTemplate = ggufChatTemplate != ""
 				modelHasPooling = md.Valid("pooling_type")
 				m.GenerationDefaults = generationDefaultsFromMetadata(md)
+				if m.Config.Renderer == "" || m.Config.Parser == "" {
+					arch := strings.ToLower(md.Architecture())
+					generalName := strings.ToLower(md.String("general.name"))
+					if arch == "ornith" || ((arch == "qwen35" || arch == "qwen35moe") && strings.Contains(generalName, "ornith")) {
+						m.Config.Renderer = cmp.Or(m.Config.Renderer, "ornith")
+						m.Config.Parser = cmp.Or(m.Config.Parser, "ornith")
+					}
+				}
 			}
 		case manifest.MediaTypeImageDraft:
 			if m.DraftPath == "" {
