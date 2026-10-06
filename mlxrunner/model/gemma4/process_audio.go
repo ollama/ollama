@@ -26,18 +26,25 @@ const (
 	audioChunkSeconds = 30
 )
 
-// audioChunk is one span of the clip: its encoder input rows — log-mel
+// AudioChunk is one span of the clip: its encoder input rows — log-mel
 // frames for the conformer, one raw waveform frame per soft token for the
 // unified embedder — and the soft-token count they reduce to.
-type audioChunk struct {
-	data      []float32 // [frames, len/frames]
-	frames    int
-	numTokens int
+type AudioChunk struct {
+	Data      []float32 // [frames, len/frames]
+	Frames    int
+	NumTokens int
 }
 
 // processAudio decodes an audio container into per-chunk log-mel features,
 // resampled to 16 kHz.
-func processAudio(data []byte) ([]audioChunk, error) {
+func processAudio(data []byte) ([]AudioChunk, error) {
+	return ProcessAudio(data)
+}
+
+// ProcessAudio decodes an audio container into per-chunk log-mel features,
+// resampled to 16 kHz. Clips longer than 30 s split into independent chunks
+// of at most 30 s, one soft-token run each.
+func ProcessAudio(data []byte) ([]AudioChunk, error) {
 	samples, rate, err := audio.Decode(data)
 	if err != nil {
 		return nil, err
@@ -49,14 +56,14 @@ func processAudio(data []byte) ([]audioChunk, error) {
 		return nil, errors.New("audio too short")
 	}
 
-	var chunks []audioChunk
+	var chunks []AudioChunk
 	for _, chunk := range audio.Split(samples, audioSampleRate, audioChunkSeconds) {
 		mel, frames := melSpectrogram(chunk)
 		tokens := frames
 		for range 2 {
 			tokens = (tokens-1)/2 + 1
 		}
-		chunks = append(chunks, audioChunk{data: mel, frames: frames, numTokens: tokens})
+		chunks = append(chunks, AudioChunk{Data: mel, Frames: frames, NumTokens: tokens})
 	}
 	return chunks, nil
 }

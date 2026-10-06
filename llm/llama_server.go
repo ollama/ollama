@@ -2547,7 +2547,10 @@ func normalizeEmbeddingError(statusCode int, body []byte) (int, string) {
 	}
 
 	if isEmbeddingInputLimitError(errMsg) || isEmbeddingInputLimitError(raw) {
-		return http.StatusBadRequest, "the input length exceeds the context length"
+		// 413 (Request Entity Too Large) distinguishes "input too long" from
+		// other 400s so the server's truncate-and-retry path can tell a real
+		// length problem apart from unrelated validation.
+		return http.StatusRequestEntityTooLarge, "the input length exceeds the context length"
 	}
 
 	return statusCode, errMsg

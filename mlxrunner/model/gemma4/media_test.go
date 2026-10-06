@@ -80,6 +80,12 @@ func TestParseMultimodalConfig(t *testing.T) {
 	if textOnly.VisionConfig != nil {
 		t.Fatal("text-only checkpoint grew a vision config")
 	}
+	if err := ValidateVisionSoftTokenBudget(280); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateVisionSoftTokenBudget(300); err == nil {
+		t.Fatal("budget 300 accepted")
+	}
 }
 
 func visionTestModel() *Model {
