@@ -11,7 +11,7 @@ diff --git a/mlx/backend/metal/resident.cpp b/mlx/backend/metal/resident.cpp
  #include <cstdio>
  #include <sstream>
  #include <stdexcept>
-@@ -42,10 +43,38 @@
+@@ -43,10 +44,38 @@
        }
        throw std::runtime_error(msg.str());
      }
@@ -52,12 +52,12 @@ diff --git a/mlx/backend/metal/resident.cpp b/mlx/backend/metal/resident.cpp
 +  }
 +}
  
- bool ResidencySets::add_set_locked(NS::Error** error_out) {
+ bool ResidencySets::add_set_locked(std::string* error_out) {
    NS::SharedPtr<MTL::ResidencySet> set;
 diff --git a/mlx/backend/metal/resident.h b/mlx/backend/metal/resident.h
 --- a/mlx/backend/metal/resident.h
 +++ b/mlx/backend/metal/resident.h
-@@ -1,10 +1,12 @@
+@@ -1,11 +1,13 @@
 -// Copyright © 2024 Apple Inc.
 +// Copyright © 2024-2026 Apple Inc.
  
@@ -67,11 +67,12 @@ diff --git a/mlx/backend/metal/resident.h b/mlx/backend/metal/resident.h
 +#include <condition_variable>
  #include <cstdint>
  #include <mutex>
+ #include <string>
 +#include <thread>
  #include <unordered_map>
  #include <vector>
  
-@@ -118,6 +120,9 @@
+@@ -119,6 +121,9 @@
    // taking the lock.
    std::atomic<uint64_t> num_sets_{0};
    mutable std::mutex mtx_;
