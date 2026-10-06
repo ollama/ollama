@@ -13,6 +13,9 @@ import {
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const SIGN_IN_ERROR_MESSAGE =
+  "Couldn’t sign in. Try again or use Ollama locally.";
+
 export const Route = createFileRoute("/onboarding")({
   beforeLoad: async ({ context }) => {
     // Let developers review onboarding without resetting their local app data.
@@ -100,9 +103,7 @@ function OnboardingRoute() {
         if (authAttempt !== authAttemptRef.current) return;
         console.error("Failed to start sign in:", error);
         setIsAwaitingAuth(false);
-        setSignInError(
-          "Unable to start sign in. Try again, or choose “Use Ollama locally” to skip for now.",
-        );
+        setSignInError(SIGN_IN_ERROR_MESSAGE);
       }
     },
     [fetchConnectUrl, isAuthenticated],
@@ -130,9 +131,7 @@ function OnboardingRoute() {
       if (settled || authAttempt !== authAttemptRef.current) return;
       settled = true;
       setIsAwaitingAuth(false);
-      setSignInError(
-        "Connection is taking longer than expected. Please try again.",
-      );
+      setSignInError(SIGN_IN_ERROR_MESSAGE);
     };
 
     const checkConnection = async () => {
