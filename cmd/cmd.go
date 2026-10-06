@@ -1710,6 +1710,11 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PullHandler(cmd *cobra.Command, args []string) error {
+	updateFlag, _ := cmd.Flags().GetBool("update")
+	if updateFlag || (len(args) > 0 && args[0] == "update") {
+		return UpdatePullHandler(cmd, args)
+	}
+
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
@@ -2318,6 +2323,10 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	if serverVersion != version.Version {
 		fmt.Printf("Warning: client version is %s\n", version.Version)
 	}
+
+	if checkUpdate, _ := cmd.Flags().GetBool("check-update"); checkUpdate {
+		_ = UpdateCheckHandler(cmd, nil)
+	}
 }
 
 func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
@@ -2521,6 +2530,11 @@ func NewCLI() *cobra.Command {
 			DisableDefaultCmd: true,
 		},
 		Run: func(cmd *cobra.Command, args []string) {
+			if checkUpdate, _ := cmd.Flags().GetBool("check-update"); checkUpdate {
+				_ = UpdateCheckHandler(cmd, args)
+				return
+			}
+
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
 				return
@@ -2537,6 +2551,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().Bool("check-update", false, "Check if an Ollama update is available")
 	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
 	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 
@@ -2608,14 +2623,32 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PullHandler,
+		Use:   "pull MODEL",
+		Short: "Pull a model from a registry",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if update, _ := cmd.Flags().GetBool("update"); update {
+				return nil
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if update, _ := cmd.Flags().GetBool("update"); update || (len(args) > 0 && args[0] == "update") {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: PullHandler,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("update", false, "Pull the latest Ollama update instead of a model")
+	pullCmd.Flags().BoolP("force", "f", false, "Pull update even if already up to date")
+	pullCmd.Flags().BoolP("install", "i", false, "Install the update after downloading")
+	pullCmd.Flags().StringP("dir", "d", "", "Directory to download the update to")
+	pullCmd.Flags().String("url", "", "Custom URL for downloading updates")
+	pullCmd.Flags().BoolP("yes", "y", false, "Automatically answer yes to prompts")
+	pullCmd.Flags().Bool("rc", false, "Pull release candidate (RC) versions")
+	pullCmd.Flags().Bool("prerelease", false, "Alias for --rc")
 	pullCmd.Flags().String("runner", "", "Runner to use for manifest list selection (mlx, ggml, llamacpp)")
 	pullCmd.Flags().MarkHidden("runner")
 
@@ -2719,6 +2752,8 @@ func NewCLI() *cobra.Command {
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
 
+	updateCmd := NewUpdateCmd()
+
 	for _, cmd := range []*cobra.Command{
 		createCmd,
 		showCmd,
@@ -2731,6 +2766,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		updateCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -2780,6 +2816,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		updateCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
