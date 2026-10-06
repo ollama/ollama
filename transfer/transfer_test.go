@@ -478,6 +478,78 @@ type errWriter struct{ err error }
 
 func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
 
+// Directory and file creation failures are local. They must surface on the
+// first attempt instead of being ignored or retried as network errors.
+func TestDownloadLocalCreateFailureNotRetried(t *testing.T) {
+	payload := []byte("blob-bytes")
+	sum := sha256.Sum256(payload)
+	digest := fmt.Sprintf("sha256:%x", sum)
+
+	tests := []struct {
+		name   string
+		setup  func(t *testing.T) string
+		wantOp string
+	}{
+		{
+			name: "parent path is a file",
+			setup: func(t *testing.T) string {
+				root := t.TempDir()
+				parent := filepath.Join(root, "not-a-dir")
+				if err := os.WriteFile(parent, []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(parent, "blobs")
+			},
+			wantOp: "mkdir",
+		},
+		{
+			name: "blob temp path is a directory",
+			setup: func(t *testing.T) string {
+				dir := t.TempDir()
+				// Non-empty so the retry cleanup cannot remove it and succeed later.
+				tmp := filepath.Join(dir, digestToPath(digest)+".tmp")
+				if err := os.Mkdir(tmp, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(tmp, "keep"), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return dir
+			},
+			wantOp: "open",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var hits atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(payload)
+			}))
+			t.Cleanup(server.Close)
+
+			err := Download(context.Background(), DownloadOptions{
+				Blobs:   []Blob{{Digest: digest, Size: int64(len(payload))}},
+				BaseURL: server.URL,
+				DestDir: tt.setup(t),
+			})
+			if err == nil || errors.Is(err, errMaxRetriesExceeded) {
+				t.Fatalf("Download error = %v, want a local create error without retry", err)
+			}
+			var pe *os.PathError
+			if !errors.As(err, &pe) || pe.Op != tt.wantOp {
+				t.Fatalf("Download error = %v, want *os.PathError op %q", err, tt.wantOp)
+			}
+			// resolve + one body GET. Retrying would hit the server again.
+			if got := hits.Load(); got != 2 {
+				t.Fatalf("server hits = %d, want 2 (one attempt)", got)
+			}
+		})
+	}
+}
+
 func TestUpload(t *testing.T) {
 	// Create test blobs
 	clientDir := t.TempDir()

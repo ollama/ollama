@@ -26,8 +26,8 @@ var (
 	errSlow    = errors.New("download too slow")
 )
 
-// destError is a write to the blob destination. It is not a transient
-// network failure, so the download is not retried.
+// destError is a local failure creating or writing the blob destination.
+// It is not a transient network failure, so the download is not retried.
 type destError struct{ err error }
 
 func (e *destError) Error() string { return e.err.Error() }
@@ -219,8 +219,8 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			return err
 		case isDestWriteError(err):
-			// Disk full and other local write failures will not succeed on retry,
-			// and a later network error would hide them.
+			// Creating the destination or writing the blob will not succeed on
+			// retry, and a later network error would hide the local failure.
 			return err
 		case errors.Is(err, errStalled):
 			if stallRetries++; stallRetries >= maxTransientRetries {
@@ -312,7 +312,9 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
-	os.MkdirAll(filepath.Dir(dest), 0o755)
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return 0, &destError{err: err}
+	}
 
 	h := sha256.New()
 
@@ -341,7 +343,7 @@ func (d *downloader) save(ctx context.Context, cancel context.CancelCauseFunc, b
 	if existingSize == 0 {
 		f, err = os.Create(tmp)
 		if err != nil {
-			return 0, err
+			return 0, &destError{err: err}
 		}
 		setSparse(f)
 	}
