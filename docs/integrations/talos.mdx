@@ -57,7 +57,7 @@ curl -fsSL https://talos-agent.ch/install.sh | bash
 
 The installer puts Talos under `~/talos` (override with `TALOS_PREFIX`) and provides `bin/talos` inside that directory. It also creates a `talos` symlink in `~/.local/bin` (override with `TALOS_BIN_DIR`) if no command already exists there. Add that directory to your PATH, or use `~/talos/bin/talos` directly.
 
-Talos 0.20.0-beta.2 requires macOS 14 or newer on native Apple Silicon. Its pinned ONNX Runtime package has no Intel macOS wheel, so an Intel or Rosetta Python cannot install this beta.
+Talos 0.20.0-beta.4 requires macOS 14 or newer on native Apple Silicon. Its pinned ONNX Runtime package has no Intel macOS wheel, so an Intel or Rosetta Python cannot install this beta.
 
 Ollama first uses a `talos` command on PATH, then checks the installation's `bin/talos`. Older installations with only `.venv/bin/python` are also supported. Launching preserves your current working directory, including relative workspace and secrets paths.
 
