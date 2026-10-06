@@ -1651,7 +1651,7 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	return c.emitFunctionCallEvents(toolCalls)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
@@ -1661,9 +1661,10 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	if len(converted) == 0 {
 		return nil
 	}
-	// Close an open message before allocating indices for the tool items.
-	// This also records the message in the terminal output in stream order.
-	events := c.FinishMessageItem()
+	// Close open reasoning and text before allocating indices for tool items.
+	// This also records the completed items in the terminal output in stream order.
+	events := c.finishReasoning()
+	events = append(events, c.FinishMessageItem()...)
 	availableTools := responsesRequestTools(c.request)
 
 	for i, tc := range converted {
