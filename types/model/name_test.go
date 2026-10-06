@@ -159,6 +159,9 @@ var testCases = map[string]bool{ // name -> valid
 
 	"h/nn/mm:t": true, // bare minimum part sizes
 
+	// alphanumeric range boundaries
+	"Zz9/Zz9/Zz9:Zz9": true,
+
 	// unqualified
 	"m":     false,
 	"n/m:":  false,
