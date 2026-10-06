@@ -36,6 +36,11 @@ const (
 	RunnerGGML     = "ggml"
 	RunnerLlamaCPP = "llamacpp"
 
+	// RunnerAuto selects the platform default, and additionally asks show to
+	// check whether the registry has since published a variant this host
+	// prefers over the local one.
+	RunnerAuto = "auto"
+
 	FormatSafetensors = "safetensors"
 	FormatGGUF        = "gguf"
 )
@@ -840,6 +845,11 @@ func selectManifestReferenceWithPreferences(manifests []Manifest, preferences []
 	return nil, fmt.Errorf("%w for runners: %s", ErrNoCompatibleManifest, strings.Join(preferences, ", "))
 }
 
+// PreferredRunner returns the runner this host selects first.
+func PreferredRunner() string {
+	return runnerPreferences()[0]
+}
+
 func runnerPreferences() []string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return []string{RunnerMLX, RunnerLlamaCPP, RunnerGGML}
@@ -849,12 +859,21 @@ func runnerPreferences() []string {
 }
 
 func runnerPreferencesFor(runner string) []string {
-	runner = canonicalRunner(runner)
-	if runner == "" {
+	if IsDefaultRunner(runner) {
 		return runnerPreferences()
 	}
 
-	return []string{runner}
+	return []string{canonicalRunner(runner)}
+}
+
+// IsDefaultRunner reports whether runner asks for the platform default rather
+// than naming one.
+func IsDefaultRunner(runner string) bool {
+	switch canonicalRunner(runner) {
+	case "", RunnerAuto:
+		return true
+	}
+	return false
 }
 
 func canonicalRunner(runner string) string {

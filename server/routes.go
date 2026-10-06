@@ -216,6 +216,8 @@ func normalizeRunner(runner string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(runner)) {
 	case "":
 		return "", nil
+	case manifest.RunnerAuto:
+		return manifest.RunnerAuto, nil
 	case manifest.RunnerMLX, "mlxrunner":
 		return manifest.RunnerMLX, nil
 	case manifest.RunnerGGML:
@@ -1670,6 +1672,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	m, err := GetModelForRunner(name.String(), req.Runner)
 	if err != nil {
 		return nil, err
+	}
+
+	// Not found, so the caller's existing pull path fetches the better variant.
+	if runnerUpgradeAvailable(context.Background(), name, req.Runner, m) {
+		return nil, fmt.Errorf("%w: a preferred runner is available", os.ErrNotExist)
 	}
 
 	if m.Config.RemoteHost != "" {
