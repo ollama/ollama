@@ -1457,18 +1457,7 @@ func getExistingName(n model.Name) (model.Name, error) {
 	if err != nil {
 		return zero, err
 	}
-	// First pass: look for a full case-insensitive match across all four
-	// parts. If found, return the on-disk canonical name directly.
-	for e := range existing {
-		if strings.EqualFold(e.Host, n.Host) &&
-			strings.EqualFold(e.Namespace, n.Namespace) &&
-			strings.EqualFold(e.Model, n.Model) &&
-			strings.EqualFold(e.Tag, n.Tag) {
-			return e, nil
-		}
-	}
-
-	// Second pass: find the single manifest with the longest consecutive
+	// Find the single manifest with the longest consecutive
 	// case-insensitive prefix match (host -> namespace -> model) and copy
 	// only the matching prefix parts from that manifest. The tag is left
 	// as-is so that an unrelated manifest with a matching tag cannot
