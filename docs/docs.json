@@ -97,6 +97,14 @@
       "destination": "/integrations/openclaw"
     },
     {
+      "source": "/integrations/codex-app",
+      "destination": "/integrations/chatgpt"
+    },
+    {
+      "source": "/integrations/codex-app.mdx",
+      "destination": "/integrations/chatgpt"
+    },
+    {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
     },
@@ -115,6 +123,10 @@
     {
       "source": "/capabilities/structured-outputs",
       "destination": "/guide/capabilities/structured-outputs"
+    },
+    {
+      "source": "/capabilities/decision",
+      "destination": "/guide/capabilities/decision"
     },
     {
       "source": "/capabilities/vision",
@@ -207,6 +219,7 @@
               "/guide/capabilities/streaming",
               "/guide/capabilities/thinking",
               "/guide/capabilities/structured-outputs",
+              "/guide/capabilities/decision",
               "/guide/capabilities/vision",
               "/guide/capabilities/embeddings",
               "/guide/capabilities/tool-calling",
@@ -291,6 +304,7 @@
             "group": "Assistants",
             "expanded": true,
             "pages": [
+              "/integrations/claude-desktop",
               "/integrations/openclaw",
               "/integrations/hermes",
               "/integrations/hermes-desktop"
@@ -304,8 +318,8 @@
               "/integrations/opencode",
               "/integrations/deepseek-harness",
               "/integrations/cline-cli",
-              "/integrations/codex-app",
               "/integrations/codex",
+              "/integrations/chatgpt",
               "/integrations/copilot-cli",
               "/integrations/droid",
               "/integrations/goose",
@@ -374,6 +388,7 @@
               "POST /api/generate",
               "POST /api/chat",
               "POST /api/embed",
+              "POST /v1/systemone",
               "GET /api/tags",
               "GET /api/ps",
               "POST /api/show",

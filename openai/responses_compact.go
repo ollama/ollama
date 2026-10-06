@@ -1,0 +1,984 @@
+package openai
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/ollama/ollama/api"
+)
+
+const (
+	OllamaCompactionPayloadType    = "ollama_compaction"
+	OllamaCompactionPayloadVersion = 1
+	CreateSummaryToolName          = "create_summary"
+	compactionSummaryToolName      = "ollama_compaction_summary"
+	compactionOmissionNotice       = "Compaction warning: %d older transcript items were omitted before summarization because the model's context limit was exceeded."
+)
+
+// ResponsesCompactionTrigger is the terminal input item sent by current Codex
+// clients when they request remote compaction through POST /v1/responses.
+type ResponsesCompactionTrigger struct {
+	Type string `json:"type"`
+}
+
+func (ResponsesCompactionTrigger) responsesInputItem() {}
+
+// ResponsesCompactionItem is the opaque continuation item understood by Codex.
+// Ollama stores a versioned JSON payload in EncryptedContent; the payload is not
+// encrypted and must be consumed by Ollama before another model request.
+type ResponsesCompactionItem struct {
+	Type             string `json:"type"`
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+func (ResponsesCompactionItem) responsesInputItem() {}
+
+// OllamaCompactionPayload is Ollama's stateless continuation format.
+type OllamaCompactionPayload struct {
+	Type     string        `json:"type"`
+	Version  int           `json:"version"`
+	Summary  string        `json:"summary"`
+	Retained []api.Message `json:"retained"`
+	// StandaloneNames preserves Responses identities by retained-message index.
+	// Qualified native names alone cannot distinguish every namespace/member pair.
+	StandaloneNames map[int]compactionFunctionName `json:"standalone_names,omitempty"`
+}
+
+type compactionFunctionName struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// CompactionTranscriptItem is one ordered input item shown to the compaction
+// model. Ref is request-local and is the only value the model may select.
+type CompactionTranscriptItem struct {
+	Ref            string                  `json:"ref"`
+	Type           string                  `json:"type"`
+	Message        api.Message             `json:"message"`
+	StandaloneName *compactionFunctionName `json:"standalone_name,omitempty"`
+}
+
+type compactionToolMetadata struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+type compactionTranscriptItemWire struct {
+	Ref            string                  `json:"ref"`
+	Type           string                  `json:"type"`
+	Message        api.Message             `json:"message"`
+	StandaloneName *compactionFunctionName `json:"standalone_name,omitempty"`
+	ImageCount     int                     `json:"image_count,omitempty"`
+}
+
+type compactionToolGroup struct {
+	CallRef   string
+	ResultRef string
+}
+
+// ResponsesCompactionPlan contains the validated, ordered state required to
+// make and verify a compaction-model request.
+type ResponsesCompactionPlan struct {
+	Model  string
+	Stream bool
+
+	items        []CompactionTranscriptItem
+	tools        []compactionToolMetadata
+	groups       []compactionToolGroup
+	forcedRefs   map[string]struct{}
+	omittedItems int
+}
+
+// ResponsesCompactionResult is the validated result of a compaction-model call.
+type ResponsesCompactionResult struct {
+	Item  ResponsesCompactionItem
+	Usage *ResponsesUsage
+}
+
+type summarySelection struct {
+	Summary       string   `json:"summary"`
+	RetainItemIDs []string `json:"retain_item_ids"`
+}
+
+type rawResponsesRequest struct {
+	Model  string                     `json:"model"`
+	Input  json.RawMessage            `json:"input"`
+	Stream *bool                      `json:"stream,omitempty"`
+	Tools  []ResponsesTool            `json:"tools,omitempty"`
+	Fields map[string]json.RawMessage `json:"-"`
+}
+
+// PrepareTriggeredCompaction recognizes the Codex v2 terminal trigger. It
+// returns requested=false without changing ordinary Responses requests.
+func PrepareTriggeredCompaction(body []byte) (*ResponsesCompactionPlan, bool, error) {
+	req, items, err := decodeRawResponsesRequest(body)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(items) == 0 || rawInputItemType(items[len(items)-1]) != "compaction_trigger" {
+		return nil, false, nil
+	}
+	if req.Stream == nil || !*req.Stream {
+		return nil, true, errors.New("compaction_trigger requires stream=true")
+	}
+	for _, item := range items[:len(items)-1] {
+		if rawInputItemType(item) == "compaction_trigger" {
+			return nil, true, errors.New("compaction_trigger must be the final and only compaction trigger")
+		}
+	}
+
+	items, _, err = expandOllamaCompactionItems(items[:len(items)-1])
+	if err != nil {
+		return nil, true, err
+	}
+	plan, err := newResponsesCompactionPlan(req, items)
+	return plan, true, err
+}
+
+// PrepareStandaloneCompaction validates a POST /v1/responses/compact body.
+func PrepareStandaloneCompaction(body []byte) (*ResponsesCompactionPlan, error) {
+	req, items, err := decodeRawResponsesRequest(body)
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if rawInputItemType(item) == "compaction_trigger" {
+			return nil, errors.New("compaction_trigger is only valid on POST /v1/responses")
+		}
+	}
+	items, _, err = expandOllamaCompactionItems(items)
+	if err != nil {
+		return nil, err
+	}
+	return newResponsesCompactionPlan(req, items)
+}
+
+// ExpandResponsesCompactionInput replaces the newest Ollama compaction item
+// with its summary and retained messages. Items on either side of the
+// compaction item remain in their original order.
+func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
+	req, items, err := decodeRawResponsesRequest(body)
+	if err != nil {
+		return nil, false, err
+	}
+	items, changed, err := expandOllamaCompactionItems(items)
+	if err != nil || !changed {
+		return body, changed, err
+	}
+
+	input, err := json.Marshal(items)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Fields["input"] = input
+	rewritten, err := json.Marshal(req.Fields)
+	return rewritten, true, err
+}
+
+func decodeRawResponsesRequest(body []byte) (rawResponsesRequest, []json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return rawResponsesRequest{}, nil, fmt.Errorf("invalid Responses request: %w", err)
+	}
+
+	var req rawResponsesRequest
+	if raw, ok := fields["model"]; !ok || json.Unmarshal(raw, &req.Model) != nil || strings.TrimSpace(req.Model) == "" {
+		return rawResponsesRequest{}, nil, errors.New("model is required")
+	}
+	req.Model = strings.TrimSpace(req.Model)
+	req.Fields = fields
+	req.Input = fields["input"]
+	if raw := fields["stream"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &req.Stream); err != nil {
+			return rawResponsesRequest{}, nil, fmt.Errorf("invalid stream value: %w", err)
+		}
+	}
+	if raw := fields["tools"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &req.Tools); err != nil {
+			return rawResponsesRequest{}, nil, fmt.Errorf("invalid tools: %w", err)
+		}
+	}
+
+	items, err := decodeRawResponsesInput(req.Input)
+	if err != nil {
+		return rawResponsesRequest{}, nil, err
+	}
+	return req, items, nil
+}
+
+func decodeRawResponsesInput(input json.RawMessage) ([]json.RawMessage, error) {
+	if len(input) == 0 || bytes.Equal(bytes.TrimSpace(input), []byte("null")) {
+		return nil, errors.New("input is required")
+	}
+
+	var text string
+	if err := json.Unmarshal(input, &text); err == nil {
+		item, err := json.Marshal(map[string]any{
+			"type": "message", "role": "user", "content": text,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return []json.RawMessage{item}, nil
+	}
+
+	var items []json.RawMessage
+	if err := json.Unmarshal(input, &items); err != nil {
+		return nil, fmt.Errorf("input must be a string or array: %w", err)
+	}
+	if items == nil {
+		return nil, errors.New("input must be a string or array")
+	}
+	return items, nil
+}
+
+func rawInputItemType(item json.RawMessage) string {
+	var header struct {
+		Type string `json:"type"`
+		Role string `json:"role"`
+	}
+	if json.Unmarshal(item, &header) != nil {
+		return ""
+	}
+	if header.Type == "" && header.Role != "" {
+		return "message"
+	}
+	return header.Type
+}
+
+func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bool, error) {
+	boundary := -1
+	for i := range items {
+		if rawInputItemType(items[i]) == "compaction" {
+			boundary = i
+		}
+	}
+	if boundary < 0 {
+		return items, false, nil
+	}
+
+	payload, err := decodeOllamaCompactionItem(items[boundary])
+	if err != nil {
+		return nil, false, err
+	}
+	expanded, err := payloadToResponsesItems(payload)
+	if err != nil {
+		return nil, false, err
+	}
+	rewritten := make([]json.RawMessage, 0, len(items)-1+len(expanded))
+	rewritten = append(rewritten, items[:boundary]...)
+	rewritten = append(rewritten, expanded...)
+	rewritten = append(rewritten, items[boundary+1:]...)
+	return rewritten, true, nil
+}
+
+func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, error) {
+	var wire ResponsesCompactionItem
+	if err := json.Unmarshal(item, &wire); err != nil {
+		return OllamaCompactionPayload{}, fmt.Errorf("invalid compaction item: %w", err)
+	}
+	if wire.Type != "compaction" || wire.EncryptedContent == "" {
+		return OllamaCompactionPayload{}, errors.New("invalid compaction item")
+	}
+
+	var payload OllamaCompactionPayload
+	decoder := json.NewDecoder(strings.NewReader(wire.EncryptedContent))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return OllamaCompactionPayload{}, errors.New("unsupported compaction item: encrypted_content is not an Ollama payload")
+	}
+	if payload.Type != OllamaCompactionPayloadType || payload.Version != OllamaCompactionPayloadVersion {
+		return OllamaCompactionPayload{}, fmt.Errorf("unsupported Ollama compaction payload type or version")
+	}
+	if strings.TrimSpace(payload.Summary) == "" {
+		return OllamaCompactionPayload{}, errors.New("Ollama compaction payload has an empty summary")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return OllamaCompactionPayload{}, errors.New("unsupported compaction item: encrypted_content contains more than one JSON value")
+	}
+	return payload, nil
+}
+
+func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage, error) {
+	for index, name := range payload.StandaloneNames {
+		if index < 0 || index >= len(payload.Retained) {
+			return nil, fmt.Errorf("standalone name refers to invalid retained-message index %d", index)
+		}
+		message := payload.Retained[index]
+		if message.Role != "tool" || message.ToolCallID != "" || strings.TrimSpace(name.Name) == "" || qualifyNamespaceToolName(name.Namespace, name.Name) != message.ToolName {
+			return nil, fmt.Errorf("standalone name does not match retained message %d", index)
+		}
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256(b)
+	callID := "call_ollama_compaction_" + hex.EncodeToString(hash[:6])
+	args, _ := json.Marshal(map[string]any{"version": payload.Version})
+
+	items := make([]json.RawMessage, 0, 2+len(payload.Retained))
+	call, err := json.Marshal(map[string]any{
+		"type": "function_call", "call_id": callID, "name": compactionSummaryToolName, "arguments": string(args),
+	})
+	if err != nil {
+		return nil, err
+	}
+	result, err := json.Marshal(map[string]any{
+		"type": "function_call_output", "call_id": callID, "output": payload.Summary,
+	})
+	if err != nil {
+		return nil, err
+	}
+	items = append(items, call, result)
+	for i, message := range payload.Retained {
+		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
+		if err != nil {
+			return nil, fmt.Errorf("invalid retained message: %w", err)
+		}
+		items = append(items, converted...)
+	}
+	return items, nil
+}
+
+func messageToResponsesItems(message api.Message, standaloneName compactionFunctionName) ([]json.RawMessage, error) {
+	var values []any
+	if message.Thinking != "" {
+		values = append(values, map[string]any{
+			"type":    "reasoning",
+			"summary": []map[string]string{{"type": "summary_text", "text": message.Thinking}},
+		})
+	}
+	if message.Role == "tool" {
+		if message.ToolCallID == "" {
+			if strings.TrimSpace(standaloneName.Name) == "" {
+				return nil, errors.New("retained tool message is missing tool_call_id or standalone name")
+			}
+			output, err := responsesContentValue(message.Content, message.Images)
+			if err != nil {
+				return nil, err
+			}
+			value := map[string]any{"type": "function_call_output", "name": standaloneName.Name, "output": output}
+			if standaloneName.Namespace != "" {
+				value["namespace"] = standaloneName.Namespace
+			}
+			values = append(values, value)
+		} else if message.ToolName == "tool_search" {
+			if len(message.Images) > 0 {
+				return nil, errors.New("retained tool search output cannot contain images")
+			}
+			var tools []json.RawMessage
+			if err := json.Unmarshal([]byte(message.Content), &tools); err != nil {
+				return nil, fmt.Errorf("retained tool search output is invalid: %w", err)
+			}
+			values = append(values, map[string]any{
+				"type": "tool_search_output", "call_id": message.ToolCallID,
+				"execution": "client", "status": "completed", "tools": tools,
+			})
+		} else {
+			output, err := responsesContentValue(message.Content, message.Images)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, map[string]any{
+				"type": "function_call_output", "call_id": message.ToolCallID, "output": output,
+			})
+		}
+	} else if message.Content != "" || len(message.Images) > 0 || len(message.ToolCalls) == 0 {
+		content, err := responsesContentValue(message.Content, message.Images)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, map[string]any{
+			"type": "message", "role": message.Role, "content": content,
+		})
+	}
+	for _, call := range message.ToolCalls {
+		if call.ID == "" || call.Function.Name == "" {
+			return nil, errors.New("retained function call is missing call_id or name")
+		}
+		if call.Function.Name == "tool_search" {
+			values = append(values, map[string]any{
+				"type": "tool_search_call", "call_id": call.ID,
+				"execution": "client", "status": "completed", "arguments": call.Function.Arguments,
+			})
+		} else {
+			arguments, err := json.Marshal(call.Function.Arguments)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, map[string]any{
+				"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": string(arguments),
+			})
+		}
+	}
+
+	items := make([]json.RawMessage, 0, len(values))
+	for _, value := range values {
+		item, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func responsesContentValue(text string, images []api.ImageData) (any, error) {
+	if len(images) == 0 {
+		return text, nil
+	}
+
+	content := make([]any, 0, len(images)+1)
+	if text != "" {
+		content = append(content, map[string]any{"type": "input_text", "text": text})
+	}
+	for _, image := range images {
+		block, err := responsesImageContent(image)
+		if err != nil {
+			return nil, err
+		}
+		content = append(content, block)
+	}
+	return content, nil
+}
+
+func responsesImageContent(image api.ImageData) (map[string]any, error) {
+	if len(image) == 0 {
+		return nil, errors.New("retained image is empty")
+	}
+	mimeType := http.DetectContentType(image)
+	switch mimeType {
+	case "image/jpeg", "image/png", "image/webp":
+	default:
+		return nil, fmt.Errorf("retained image has unsupported content type %q", mimeType)
+	}
+	return map[string]any{
+		"type": "input_image", "detail": "auto",
+		"image_url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image),
+	}, nil
+}
+
+func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMessage) (*ResponsesCompactionPlan, error) {
+	if len(rawItems) == 0 {
+		return nil, errors.New("compaction input is empty")
+	}
+
+	items := make([]CompactionTranscriptItem, 0, len(rawItems))
+	for i, raw := range rawItems {
+		item, err := unmarshalResponsesInputItem(raw)
+		if err != nil {
+			return nil, fmt.Errorf("input[%d]: %w", i, err)
+		}
+		message, kind, err := compactionMessage(item)
+		if err != nil {
+			return nil, fmt.Errorf("input[%d]: %w", i, err)
+		}
+		entry := CompactionTranscriptItem{
+			Ref: fmt.Sprintf("item_%06d", i+1), Type: kind, Message: message,
+		}
+		if output, ok := item.(ResponsesFunctionCallOutput); ok && output.CallID == "" {
+			entry.StandaloneName = &compactionFunctionName{Name: output.Name, Namespace: output.Namespace}
+		}
+		items = append(items, entry)
+	}
+
+	groups, forced, err := analyzeCompactionToolState(items)
+	if err != nil {
+		return nil, err
+	}
+	stream := req.Stream != nil && *req.Stream
+	return &ResponsesCompactionPlan{
+		Model: req.Model, Stream: stream, items: items, tools: collectCompactionToolMetadata(req.Tools), groups: groups, forcedRefs: forced,
+	}, nil
+}
+
+func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
+	switch value := item.(type) {
+	case ResponsesInputMessage:
+		if err := validateCompactionContent(value.Content); err != nil {
+			return api.Message{}, "", err
+		}
+		message, err := convertInputMessage(value)
+		return message, "message", err
+	case ResponsesFunctionCall:
+		var arguments api.ToolCallFunctionArguments
+		if value.Arguments != "" {
+			if err := json.Unmarshal([]byte(value.Arguments), &arguments); err != nil {
+				return api.Message{}, "", fmt.Errorf("invalid function arguments: %w", err)
+			}
+		}
+		name := qualifyNamespaceToolName(value.Namespace, value.Name)
+		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: value.CallID, Function: api.ToolCallFunction{Name: name, Arguments: arguments},
+		}}}, "function_call", nil
+	case ResponsesFunctionCallOutput:
+		content := value.Output
+		var images []api.ImageData
+		if len(value.OutputItems) > 0 {
+			if err := validateCompactionContent(value.OutputItems); err != nil {
+				return api.Message{}, "", err
+			}
+			var err error
+			content, images, err = convertResponsesContent(value.OutputItems)
+			if err != nil {
+				return api.Message{}, "", err
+			}
+		}
+		message := api.Message{Role: "tool", Content: content, Images: images, ToolCallID: value.CallID}
+		if value.CallID == "" {
+			message.ToolName = qualifyNamespaceToolName(value.Namespace, value.Name)
+		}
+		return message, "function_call_output", nil
+	case ResponsesToolSearchCall:
+		return api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{
+			ID: value.CallID, Function: api.ToolCallFunction{Name: "tool_search", Arguments: value.Arguments},
+		}}}, "function_call", nil
+	case ResponsesToolSearchOutput:
+		tools, err := json.Marshal(value.Tools)
+		if err != nil {
+			return api.Message{}, "", fmt.Errorf("invalid tool search output: %w", err)
+		}
+		return api.Message{
+			Role: "tool", Content: string(tools), ToolName: "tool_search", ToolCallID: value.CallID,
+		}, "function_call_output", nil
+	case ResponsesWebSearchCall:
+		content := "Web search completed."
+		if value.Action != nil && strings.TrimSpace(value.Action.Query) != "" {
+			content = "Web search: " + value.Action.Query
+		}
+		return api.Message{Role: "assistant", Content: content}, "web_search_call", nil
+	case ResponsesReasoningInput:
+		var summary strings.Builder
+		for _, part := range value.Summary {
+			summary.WriteString(part.Text)
+		}
+		thinking := summary.String()
+		if thinking == "" && value.EncryptedContent != "" {
+			thinking = "[opaque reasoning state omitted during Ollama compaction]"
+		}
+		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
+	case ResponsesAgentMessageInput:
+		content, _, err := convertResponsesContent(value.Content)
+		if err != nil {
+			return api.Message{}, "", err
+		}
+		return api.Message{
+			Role:    "user",
+			Content: agentMessageContent(value.Author, value.Recipient, content),
+		}, "message", nil
+	case ResponsesCompactionItem, ResponsesCompactionTrigger:
+		return api.Message{}, "", errors.New("unexpected compaction control item")
+	default:
+		return api.Message{}, "", fmt.Errorf("unsupported compaction input type %T", item)
+	}
+}
+
+func validateCompactionContent(contents []ResponsesContent) error {
+	for _, content := range contents {
+		image, ok := content.(ResponsesImageContent)
+		if !ok {
+			continue
+		}
+		if image.FileID != "" {
+			return errors.New("file_id image inputs are not supported by Ollama compaction")
+		}
+		if image.ImageURL == "" {
+			return errors.New("compaction image input is missing image_url")
+		}
+	}
+	return nil
+}
+
+func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {
+	type pendingGroup struct {
+		callIndex   int
+		resultIndex int
+		group       compactionToolGroup
+	}
+	byCallID := make(map[string]*pendingGroup)
+	ignoredCallIDs := make(map[string]struct{})
+	forced := make(map[string]struct{})
+	var ordered []*pendingGroup
+
+	for i, item := range items {
+		switch item.Type {
+		case "function_call":
+			call := item.Message.ToolCalls[0]
+			if call.ID == "" {
+				return nil, nil, fmt.Errorf("%s: function call is missing call_id", item.Ref)
+			}
+			if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
+				ignoredCallIDs[call.ID] = struct{}{}
+				continue
+			}
+			if _, exists := byCallID[call.ID]; exists {
+				return nil, nil, fmt.Errorf("%s: duplicate function call_id %q", item.Ref, call.ID)
+			}
+			group := &pendingGroup{callIndex: i, resultIndex: -1, group: compactionToolGroup{CallRef: item.Ref}}
+			byCallID[call.ID] = group
+			ordered = append(ordered, group)
+		case "function_call_output":
+			callID := item.Message.ToolCallID
+			if callID == "" && item.StandaloneName != nil {
+				// Standalone outputs can carry the task instructions. Retain them
+				// without inventing a call or relying on the summary to repeat them.
+				forced[item.Ref] = struct{}{}
+				continue
+			}
+			if _, ignored := ignoredCallIDs[callID]; ignored {
+				continue
+			}
+			group := byCallID[callID]
+			if group == nil {
+				return nil, nil, fmt.Errorf("%s: function output has no matching call %q", item.Ref, callID)
+			}
+			if group.resultIndex >= 0 {
+				return nil, nil, fmt.Errorf("%s: duplicate function output for call %q", item.Ref, callID)
+			}
+			group.resultIndex = i
+			group.group.ResultRef = item.Ref
+		}
+	}
+
+	groups := make([]compactionToolGroup, 0, len(ordered))
+	for _, candidate := range ordered {
+		groups = append(groups, candidate.group)
+		active := candidate.resultIndex < 0
+		if !active {
+			active = true
+			for _, item := range items[candidate.resultIndex+1:] {
+				if item.Type == "reasoning" || item.Type == "function_call" || (item.Type == "message" && item.Message.Role == "assistant") {
+					active = false
+					break
+				}
+			}
+		}
+		if active {
+			forced[candidate.group.CallRef] = struct{}{}
+			if candidate.group.ResultRef != "" {
+				forced[candidate.group.ResultRef] = struct{}{}
+			}
+		}
+	}
+	return groups, forced, nil
+}
+
+func collectCompactionToolMetadata(tools []ResponsesTool) []compactionToolMetadata {
+	var metadata []compactionToolMetadata
+	var add func(prefix string, tools []ResponsesTool)
+	add = func(prefix string, tools []ResponsesTool) {
+		for _, tool := range tools {
+			name := strings.TrimSpace(tool.Name)
+			if name == "" && (tool.Type == "tool_search" || tool.Type == "web_search") {
+				name = tool.Type
+			}
+			name = qualifyNamespaceToolName(prefix, name)
+			if tool.Type == "namespace" {
+				add(name, tool.Tools)
+				continue
+			}
+			if name == "" {
+				continue
+			}
+			description := ""
+			if tool.Description != nil {
+				description = *tool.Description
+			}
+			metadata = append(metadata, compactionToolMetadata{Name: name, Description: description})
+		}
+	}
+	add("", tools)
+	return metadata
+}
+
+// TrimForContextLimit removes the oldest removable items, targeting 20% of
+// serialized transcript text. This is a fallback estimate, not a token budget.
+// User and instruction messages, prior summaries, the latest item, and active
+// tool state are preserved. Completed tool calls and results are removed together.
+// It returns the number of removed items, or zero when no progress is possible.
+func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
+	if len(p.items) == 0 {
+		return 0
+	}
+
+	sizes := make(map[string]int, len(p.items))
+	var total int
+	for _, item := range p.items {
+		message := item.Message
+		message.Images = nil
+		metadata, err := json.Marshal(compactionTranscriptItemWire{
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(item.Message.Images),
+		})
+		if err != nil {
+			return 0
+		}
+		sizes[item.Ref] = len(metadata)
+		total += len(metadata)
+	}
+
+	protected := make(map[string]bool, len(p.forcedRefs)+1)
+	for ref := range p.forcedRefs {
+		protected[ref] = true
+	}
+	protected[p.items[len(p.items)-1].Ref] = true
+	peers := make(map[string]string, len(p.groups)*2)
+	for _, group := range p.groups {
+		if group.ResultRef != "" {
+			peers[group.CallRef] = group.ResultRef
+			peers[group.ResultRef] = group.CallRef
+		}
+	}
+
+	removed := make(map[string]bool)
+	var removedBytes int
+	for _, item := range p.items {
+		if removedBytes >= (total+4)/5 {
+			break
+		}
+		if protected[item.Ref] || removed[item.Ref] {
+			continue
+		}
+		peer := peers[item.Ref]
+		if item.Type == "function_call" || item.Type == "function_call_output" {
+			// Prior summary pairs are intentionally absent from p.groups.
+			if peer == "" || protected[peer] {
+				continue
+			}
+		} else if item.Message.Role != "assistant" {
+			continue
+		}
+		removed[item.Ref] = true
+		removedBytes += sizes[item.Ref]
+		if peer != "" {
+			removed[peer] = true
+			removedBytes += sizes[peer]
+		}
+	}
+	if len(removed) == 0 {
+		return 0
+	}
+	p.items = slices.DeleteFunc(p.items, func(item CompactionTranscriptItem) bool { return removed[item.Ref] })
+	p.groups = slices.DeleteFunc(p.groups, func(group compactionToolGroup) bool { return removed[group.CallRef] })
+	p.omittedItems += len(removed)
+	return len(removed)
+}
+
+// SummaryRequest returns an ordinary non-streaming Responses request. A repair
+// request includes the validation error from the first model response.
+func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, error) {
+	// TODO(compaction): enforce the 40% retained-context target after the
+	// selected model's prompt renderer and token budget are available here.
+	transcript, err := p.summaryTranscriptMessages()
+	if err != nil {
+		return nil, err
+	}
+	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. After optional tool metadata, each following user message is one ordered transcript item: its JSON input_text describes the source item, and its input_image blocks belong to that item. Use retain_item_ids for exact source items, including images, that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
+	if p.omittedItems > 0 {
+		prompt += " " + fmt.Sprintf(compactionOmissionNotice, p.omittedItems)
+	}
+	if repairError != "" {
+		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
+	}
+
+	description := "Return the compact summary and the exact input item references that must remain verbatim."
+	strict := true
+	input := []any{map[string]any{"type": "message", "role": "system", "content": prompt}}
+	input = append(input, transcript...)
+	request := map[string]any{
+		"model": p.Model,
+		"input": input,
+		"tools": []ResponsesTool{{
+			Type: "function", Name: CreateSummaryToolName, Description: &description, Strict: &strict,
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"summary":         map[string]any{"type": "string"},
+					"retain_item_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				},
+				"required":             []string{"summary", "retain_item_ids"},
+				"additionalProperties": false,
+			},
+		}},
+		"tool_choice":         map[string]any{"type": "function", "name": CreateSummaryToolName},
+		"parallel_tool_calls": false,
+		"store":               false,
+		"stream":              false,
+	}
+	return json.Marshal(request)
+}
+
+func (p *ResponsesCompactionPlan) summaryTranscriptMessages() ([]any, error) {
+	messages := make([]any, 0, len(p.items)+1)
+	if len(p.tools) > 0 {
+		metadata, err := json.Marshal(struct {
+			Tools []compactionToolMetadata `json:"tools"`
+		}{Tools: p.tools})
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, map[string]any{"type": "message", "role": "user", "content": string(metadata)})
+	}
+
+	for _, item := range p.items {
+		message := item.Message
+		images := message.Images
+		message.Images = nil
+		metadata, err := json.Marshal(compactionTranscriptItemWire{
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(images),
+		})
+		if err != nil {
+			return nil, err
+		}
+		content := []any{map[string]any{"type": "input_text", "text": string(metadata)}}
+		for _, image := range images {
+			block, err := responsesImageContent(image)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", item.Ref, err)
+			}
+			content = append(content, block)
+		}
+		messages = append(messages, map[string]any{"type": "message", "role": "user", "content": content})
+	}
+	return messages, nil
+}
+
+// Complete validates create_summary and builds the stateless continuation.
+func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResult, error) {
+	var response ResponsesResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return ResponsesCompactionResult{}, fmt.Errorf("invalid summary response: %w", err)
+	}
+
+	var calls []ResponsesOutputItem
+	for _, item := range response.Output {
+		if item.Type == "function_call" && item.Name == CreateSummaryToolName {
+			calls = append(calls, item)
+		}
+	}
+	if len(calls) != 1 {
+		return ResponsesCompactionResult{}, fmt.Errorf("expected one %s call, got %d", CreateSummaryToolName, len(calls))
+	}
+
+	arguments, ok := calls[0].Arguments.(string)
+	if !ok {
+		return ResponsesCompactionResult{}, fmt.Errorf("invalid %s arguments: expected a JSON string", CreateSummaryToolName)
+	}
+	var selection summarySelection
+	if err := json.Unmarshal([]byte(arguments), &selection); err != nil {
+		return ResponsesCompactionResult{}, fmt.Errorf("invalid %s arguments: %w", CreateSummaryToolName, err)
+	}
+	selection.Summary = strings.TrimSpace(selection.Summary)
+	if selection.Summary == "" {
+		return ResponsesCompactionResult{}, errors.New("create_summary returned an empty summary")
+	}
+
+	known := make(map[string]struct{}, len(p.items))
+	for _, item := range p.items {
+		known[item.Ref] = struct{}{}
+	}
+	selected := make(map[string]struct{}, len(selection.RetainItemIDs)+len(p.forcedRefs))
+	for _, ref := range selection.RetainItemIDs {
+		if _, ok := known[ref]; !ok {
+			return ResponsesCompactionResult{}, fmt.Errorf("create_summary selected unknown item %q", ref)
+		}
+		if _, duplicate := selected[ref]; duplicate {
+			return ResponsesCompactionResult{}, fmt.Errorf("create_summary selected duplicate item %q", ref)
+		}
+		selected[ref] = struct{}{}
+	}
+	for ref := range p.forcedRefs {
+		selected[ref] = struct{}{}
+	}
+	for _, group := range p.groups {
+		_, callSelected := selected[group.CallRef]
+		_, resultSelected := selected[group.ResultRef]
+		if callSelected || resultSelected {
+			selected[group.CallRef] = struct{}{}
+			if group.ResultRef != "" {
+				selected[group.ResultRef] = struct{}{}
+			}
+		}
+	}
+
+	retained := make([]api.Message, 0, len(selected))
+	var standaloneNames map[int]compactionFunctionName
+	for _, item := range p.items {
+		if _, ok := selected[item.Ref]; ok {
+			if item.StandaloneName != nil {
+				if standaloneNames == nil {
+					standaloneNames = make(map[int]compactionFunctionName)
+				}
+				standaloneNames[len(retained)] = *item.StandaloneName
+			}
+			retained = append(retained, item.Message)
+		}
+	}
+	payload := OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: selection.Summary, Retained: retained,
+		StandaloneNames: standaloneNames,
+	}
+	if p.omittedItems > 0 {
+		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return ResponsesCompactionResult{}, err
+	}
+	return ResponsesCompactionResult{
+		Item: ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(payloadJSON)}, Usage: response.Usage,
+	}, nil
+}
+
+// ResponsesCompactedResponse is returned by POST /v1/responses/compact.
+type ResponsesCompactedResponse struct {
+	ID        string                    `json:"id"`
+	Object    string                    `json:"object"`
+	CreatedAt int64                     `json:"created_at"`
+	Output    []ResponsesCompactionItem `json:"output"`
+	Usage     *ResponsesUsage           `json:"usage"`
+}
+
+// NewResponsesCompactedResponse builds the standalone compact response.
+func NewResponsesCompactedResponse(id string, result ResponsesCompactionResult) ResponsesCompactedResponse {
+	return ResponsesCompactedResponse{
+		ID: id, Object: "response.compaction", CreatedAt: time.Now().Unix(), Output: []ResponsesCompactionItem{result.Item}, Usage: result.Usage,
+	}
+}
+
+// NewResponsesCompactionStreamEvents builds the Codex v2 stream. Codex uses
+// output_item.done and requires exactly one compaction item before completed.
+func NewResponsesCompactionStreamEvents(id, model string, result ResponsesCompactionResult) []ResponsesStreamEvent {
+	converter := NewResponsesStreamConverter(id, "", model, ResponsesRequest{Model: model})
+	created := converter.buildResponseObject("in_progress", []any{}, nil)
+	completedUsage := map[string]any(nil)
+	if result.Usage != nil {
+		completedUsage = map[string]any{
+			"input_tokens":          result.Usage.InputTokens,
+			"output_tokens":         result.Usage.OutputTokens,
+			"total_tokens":          result.Usage.TotalTokens,
+			"input_tokens_details":  result.Usage.InputTokensDetails,
+			"output_tokens_details": result.Usage.OutputTokensDetails,
+		}
+	}
+	completed := converter.buildResponseObject("completed", []any{result.Item}, completedUsage)
+	completed["completed_at"] = time.Now().Unix()
+
+	return []ResponsesStreamEvent{
+		converter.newEvent("response.created", map[string]any{"response": created}),
+		converter.newEvent("response.in_progress", map[string]any{"response": created}),
+		converter.newEvent("response.output_item.added", map[string]any{"output_index": 0, "item": result.Item}),
+		converter.newEvent("response.output_item.done", map[string]any{"output_index": 0, "item": result.Item}),
+		converter.newEvent("response.completed", map[string]any{"response": completed}),
+	}
+}

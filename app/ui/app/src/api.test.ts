@@ -7,8 +7,46 @@ vi.mock("./lib/ollama-client", () => ({
 import {
   fetchConnectUrl,
   getClaudeDesktopAvailableModels,
+  getClaudeDesktopModelsSettings,
+  getCodexDesktopModelsSettings,
   getIntegrationStatuses,
 } from "./api";
+
+describe("desktop model settings", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("requests summaries and catalogs through the configured API server", async () => {
+    const response = { settings: { selected: ["saved-model"] } };
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify(response)));
+    vi.stubGlobal("fetch", fetch);
+    await expect(getCodexDesktopModelsSettings(false)).resolves.toEqual(
+      response,
+    );
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:3001/api/v1/integrations/chatgpt/models?catalog=false",
+      { signal: undefined },
+    );
+    fetch.mockResolvedValue(new Response(JSON.stringify({ installed: true })));
+    const controller = new AbortController();
+    await expect(
+      getClaudeDesktopModelsSettings(true, controller.signal),
+    ).resolves.toEqual({ installed: true });
+    expect(fetch).toHaveBeenLastCalledWith(
+      "http://127.0.0.1:3001/api/v1/integrations/claude-desktop/models?catalog=true",
+      { signal: controller.signal },
+    );
+  });
+
+  it("rejects failed discovery responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("timed out", { status: 504 })),
+    );
+    await expect(getCodexDesktopModelsSettings(true)).rejects.toThrow("504");
+  });
+});
 
 describe("fetchConnectUrl", () => {
   afterEach(() => {
@@ -126,16 +164,43 @@ describe("getClaudeDesktopAvailableModels", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("does not use the global cloud model list", async () => {
+  it("loads the account cloud list in parallel when Cloud is available", async () => {
     listModels.mockResolvedValue({
       models: [{ name: "qwen3:8b", digest: "local" }],
     });
-    const fetch = vi.fn().mockRejectedValue(new Error("offline"));
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          models: [
+            { name: "glm-5.2", digest: "cloud" },
+            { name: "gemma4:31b-cloud", digest: "legacy-cloud" },
+            { name: "qwen3:8b", digest: "cloud-duplicate" },
+          ],
+        }),
+      ),
+    );
     vi.stubGlobal("fetch", fetch);
 
-    const models = await getClaudeDesktopAvailableModels();
+    const models = await getClaudeDesktopAvailableModels(true);
+
+    expect(models.map((model) => model.model)).toEqual([
+      "qwen3:8b",
+      "glm-5.2:cloud",
+      "gemma4:31b-cloud",
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:3001/api/v1/models/cloud",
+    );
+  });
+
+  it("keeps local models when the account cloud list fails", async () => {
+    listModels.mockResolvedValue({
+      models: [{ name: "qwen3:8b", digest: "local" }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    const models = await getClaudeDesktopAvailableModels(true);
 
     expect(models.map((model) => model.model)).toEqual(["qwen3:8b"]);
-    expect(fetch).not.toHaveBeenCalled();
   });
 });

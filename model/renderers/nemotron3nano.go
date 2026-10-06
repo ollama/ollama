@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Nemotron3NanoRenderer struct {
@@ -486,4 +487,12 @@ func (r *Nemotron3NanoRenderer) pythonJSON(v any) string {
 		}
 		return r.pythonJSON(generic)
 	}
+}
+
+func (r *Nemotron3NanoRenderer) Thinking() *model.Thinking {
+	values := []any{false, true}
+	if r.v35 {
+		values = append(values, "medium")
+	}
+	return &model.Thinking{Values: values, Default: true}
 }

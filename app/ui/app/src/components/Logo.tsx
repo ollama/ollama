@@ -18,7 +18,7 @@ export default function Logo({
           viewBox="0 0 3400 3400"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
-          className="select-none"
+          className={showBackground ? "select-none" : "select-none dark:invert"}
         >
           {showBackground && (
             <circle cx="1700" cy="1700" r="1700" fill="white" />

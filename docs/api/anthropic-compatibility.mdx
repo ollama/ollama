@@ -2,9 +2,42 @@
 title: Anthropic compatibility
 ---
 
-Ollama provides compatibility with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) to help connect existing applications to Ollama, including tools like Claude Code.
+Connect Anthropic clients and tools such as Claude Code to Ollama. Ollama supports a subset of the [Anthropic Messages API](https://platform.claude.com/docs/en/api/http/messages/create).
 
-## Usage
+## Direct cloud access
+
+Set your [API key](https://ollama.com/settings/keys) in `OLLAMA_API_KEY`. No Ollama installation required.
+
+```shell
+export OLLAMA_API_KEY="your_api_key"
+```
+
+Send a request with bearer authentication:
+
+```shell
+curl https://ollama.com/v1/messages \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gemma4:31b",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in one sentence."
+      }
+    ]
+  }'
+```
+
+Read text blocks from `content`. The cloud endpoint requires `Authorization: Bearer`; it does not accept `x-api-key` alone.
+
+Compatible models support messages, streaming, and function calling. Tool-choice controls, deferred tools, and hosted web search are not fully supported.
+
+## Local server usage
+
+These examples connect to your local Ollama server. Use `ollama` as the placeholder API key. To use cloud models through this server, [sign in to Ollama](/api/authentication#signing-in).
 
 ### Environment variables
 
@@ -234,55 +267,7 @@ curl -X POST http://localhost:11434/v1/messages \
 
 ## Using with Claude Code
 
-[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend. 
-
-### Recommended models
-
-For coding use cases, models like `glm-4.7`, `minimax-m2.1`, and `qwen3-coder` are recommended.
-
-Download a model before use:
-
-```shell
-ollama pull qwen3-coder
-```
-> Note: Qwen 3 coder is a 30B parameter model requiring at least 24GB of VRAM to run smoothly. More is required for longer context lengths. 
-
-```shell
-ollama pull glm-4.7:cloud
-```
-
-### Quick setup
-
-```shell
-ollama launch claude
-```
-
-This will prompt you to select a model, configure Claude Code automatically, and launch it. To configure without launching:
-
-```shell
-ollama launch claude --config
-```
-
-### Manual setup
-
-Set the environment variables and run Claude Code:
-
-```shell
-ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 claude --model qwen3-coder
-```
-
-Or set the environment variables in your shell profile:
-
-```shell
-export ANTHROPIC_AUTH_TOKEN=ollama
-export ANTHROPIC_BASE_URL=http://localhost:11434
-```
-
-Then run Claude Code with any Ollama model:
-
-```shell
-claude --model qwen3-coder
-```
+See the [Claude Code guide](/integrations/claude-code) for Ollama Launch and [direct cloud setup](/integrations/claude-code#connect-directly-to-ollama-cloud).
 
 ## Endpoints
 
@@ -318,6 +303,8 @@ claude --model qwen3-coder
 - [x] `stop_sequences`
 - [x] `tools`
 - [x] `thinking`
+- [x] `output_config`
+  - [x] `effort` (model-defined names)
 - [ ] `tool_choice`
 - [ ] `metadata`
 
@@ -342,6 +329,8 @@ claude --model qwen3-coder
 - [x] `ping`
 - [x] `error`
 
+Use `/api/show` to discover a model's supported thinking values and default. `thinking.type: "enabled"` and `"disabled"` act as explicit on/off controls. When a model uses its metadata to resolve named levels, supported `output_config.effort` names are applied exactly and unsupported names resolve to the model default. Models without metadata keep the existing compatibility behavior, which trims and lowercases effort names and maps `"xhigh"` to `"high"`.
+
 ## Models
 
 Ollama supports both local and cloud models.
@@ -360,12 +349,9 @@ Recommended local models:
 
 ### Cloud models
 
-Cloud models are available immediately without pulling:
+Browse the [cloud model catalog](https://ollama.com/search?c=cloud). Through a signed-in Ollama server, use a cloud name such as `gemma4:cloud` without a separate pull. For direct cloud requests, use the hosted identifier, such as `gemma4:31b`.
 
-- `glm-4.7:cloud` - High-performance cloud model
-- `minimax-m2.1:cloud` - Fast cloud model
-
-### Default model names
+### Default model names on a local server
 
 For tooling that relies on default Anthropic model names such as `claude-3-5-sonnet`, use `ollama cp` to copy an existing model name:
 
@@ -394,8 +380,8 @@ curl http://localhost:11434/v1/messages \
 
 ### Behavior differences
 
-- API key is accepted but not validated
-- `anthropic-version` header is accepted but not used
+- The local server does not validate API keys. Direct cloud inference requires a valid bearer token.
+- The hosted endpoint rejects `anthropic-version` values older than `2023-06-01`. Use `2023-06-01` in requests.
 - Token counts are approximations based on the underlying model's tokenizer
 
 ### Not supported

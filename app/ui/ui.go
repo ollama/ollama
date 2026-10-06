@@ -114,6 +114,7 @@ type Server struct {
 	Updater              *updater.Updater
 	UpdateAvailableFunc  func()
 	IntegrationInstalled func(string) bool
+	IntegrationModels    http.Handler
 	ListCloudModels      func(context.Context) (*api.ListResponse, error)
 }
 
@@ -297,6 +298,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 	mux.Handle("GET /api/v1/models/cloud", handle(s.getCloudModels))
 	mux.Handle("GET /api/v1/integrations", handle(s.getIntegrationStatuses))
+	if s.IntegrationModels != nil {
+		mux.Handle("GET /api/v1/integrations/{integration}/models", handle(func(w http.ResponseWriter, r *http.Request) error {
+			s.IntegrationModels.ServeHTTP(w, r)
+			return nil
+		}))
+	}
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -339,7 +346,7 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 	claudeDesktopInstalled := isInstalled("claude-desktop")
 	statuses = append(statuses, integrationStatus{
 		ID:          "claude-desktop",
-		Name:        "Claude",
+		Name:        "Claude Code (Desktop)",
 		Description: "Use Ollama models in Claude Desktop",
 		Installed:   &claudeDesktopInstalled,
 		Action:      "connect",
@@ -350,7 +357,7 @@ func (s *Server) getIntegrationStatuses(w http.ResponseWriter, _ *http.Request) 
 		byName[info.Name] = info
 	}
 	seen := map[string]bool{"chatgpt": true}
-	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "droid", "pi", "cline"}
+	launcherMenuOrder := []string{"claude", "codex", "openclaw", "opencode", "hermes", "hermes-desktop", "droid", "pi", "cline"}
 	orderedInfos := make([]launch.IntegrationInfo, 0, len(infos))
 	for _, name := range launcherMenuOrder {
 		if info, ok := byName[name]; ok {
@@ -554,6 +561,9 @@ func (s *Server) checkModelUpstream(ctx context.Context, modelName string, timeo
 	if err != nil {
 		return "", 0, err
 	}
+	// Opt into manifest lists so the registry reports the digest of what
+	// pullModelManifest stores locally rather than a legacy fallback child.
+	req.Header.Set("Accept", strings.Join([]string{manifest.MediaTypeManifestList, manifest.MediaTypeManifest}, ", "))
 
 	httpClient := s.httpClient()
 	httpClient.Timeout = timeout
@@ -1561,6 +1571,12 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := s.Store.SetSettings(settings); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
+	saved, err := s.Store.Settings()
+	if err != nil {
+		return fmt.Errorf("failed to load saved settings: %w", err)
+	}
+	settings.OnboardingVersion = saved.OnboardingVersion
+	settings.CodexDesktopUsed = saved.CodexDesktopUsed
 
 	// Handle auto-update toggle changes
 	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {

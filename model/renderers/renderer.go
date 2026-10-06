@@ -4,9 +4,11 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Renderer interface {
+	Thinking() *model.Thinking
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
 	LeadingBOS() string
 }
@@ -66,7 +68,7 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
-	case "qwen3.5":
+	case "qwen3.5", "tev1":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3.8":

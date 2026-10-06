@@ -22,10 +22,19 @@ interface ClaudeDesktopStatus {
   startFailed: boolean;
   portConflict: boolean;
   gatewayPort?: number;
+  routedRequests?: number;
   error?: string;
+  autoMode?: boolean;
   modelSource?: "user" | "endpoint" | "fallback";
   maxModels?: number;
   models?: ClaudeDesktopModelStatus[];
+  mappings?: ClaudeDesktopMappingStatus[];
+}
+
+interface ClaudeDesktopMappingStatus {
+  routeId: string;
+  routeName: string;
+  model?: string;
 }
 
 interface ClaudeDesktopModelStatus {
@@ -34,6 +43,7 @@ interface ClaudeDesktopModelStatus {
   description?: string;
   cloud?: boolean;
   selected: boolean;
+  autoMode?: boolean;
   availability?: "unknown" | "available" | "unavailable";
   reason?:
     | "cloud_off"
@@ -47,9 +57,65 @@ interface ClaudeDesktopModelStatus {
 interface ClaudeDesktopActionResult {
   status: ClaudeDesktopStatus;
   error?: string;
+  mappingsApplied?: boolean;
+  restartConfirmationRequired?: boolean;
+}
+
+interface CodexDesktopStatus {
+  used?: boolean;
+  supported: boolean;
+  installed: boolean;
+  connected: boolean;
+  running: boolean;
+  model?: string;
+  models?: string[];
+  maxModels?: number;
+  requests?: number;
+}
+
+interface CodexDesktopActionResult {
+  status: CodexDesktopStatus;
+  error?: string;
+  restartConfirmationRequired?: boolean;
+}
+
+interface CodexDesktopModelsSettings {
+  supported: boolean;
+  installed: boolean;
+  connected: boolean;
+  running: boolean;
+  usesDefaults: boolean;
+  selected: string[];
+  available: string[];
+  models?: CodexDesktopModelStatus[];
+  maxModels: number;
+}
+
+interface CodexDesktopModelStatus {
+  name: string;
+  displayName: string;
+  description?: string;
+  recommended?: boolean;
+  selected: boolean;
+  availability?: "unknown" | "available" | "unavailable";
+  reason?:
+    | "cloud_off"
+    | "sign_in_required"
+    | "upgrade_required"
+    | "verification_unavailable"
+    | "model_not_installed";
+  requiredPlan?: string;
+}
+
+interface CodexDesktopModelsSettingsResult {
+  settings: CodexDesktopModelsSettings;
+  error?: string;
+  warning?: string;
+  restartConfirmationRequired?: boolean;
 }
 
 type ClaudeDesktopInstallResult = "opened" | "cancelled" | "failed";
+type CodexDesktopInstallResult = "opened" | "cancelled" | "failed";
 
 interface WebviewAPI {
   selectFile: () => Promise<ImageData | null>;
@@ -64,17 +130,40 @@ declare global {
     drag?: () => void;
     doubleClick?: () => void;
     activateOllama?: () => void;
-    getClaudeDesktopStatus?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopConnectionSummary?: () => Promise<ClaudeDesktopStatus>;
+    getClaudeDesktopRequestCount?: () => Promise<number>;
     setClaudeDesktopConnected?: (
       enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     prepareClaudeDesktopConnection?: () => Promise<ClaudeDesktopActionResult>;
     openClaudeDesktop?: () => Promise<string>;
+    markCodexDesktopIntegrationUsed?: () => Promise<string>;
+    getCodexDesktopStatus?: () => Promise<CodexDesktopStatus>;
+    getCodexDesktopRequestCount?: () => Promise<number>;
+    setCodexDesktopConnected?: (
+      enabled: boolean,
+      restartConfirmed: boolean,
+    ) => Promise<CodexDesktopActionResult>;
+    installCodexDesktop?: () => Promise<CodexDesktopInstallResult>;
+    applyCodexDesktopModels?: (
+      models: string[],
+      restartConfirmed: boolean,
+    ) => Promise<CodexDesktopModelsSettingsResult>;
+    resetCodexDesktopModels?: () => Promise<CodexDesktopModelsSettingsResult>;
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
-    restartClaudeDesktop?: (
-      models: string[],
+    applyClaudeDesktopMappings?: (
+      mappings: Record<string, string>,
+      restartConfirmed: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    resetClaudeDesktopMappings?: (
+      restartConfirmed: boolean,
+    ) => Promise<ClaudeDesktopActionResult>;
+    setClaudeDesktopAutoMode?: (
+      enabled: boolean,
+      restartConfirmed: boolean,
     ) => Promise<ClaudeDesktopActionResult>;
     setOnboardingWindow?: (enabled: boolean) => void;
     menu: (items: MenuItem[]) => Promise<string | null>;
@@ -103,8 +192,15 @@ declare global {
 export type {
   ClaudeDesktopActionResult,
   ClaudeDesktopInstallResult,
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
+  CodexDesktopActionResult,
+  CodexDesktopInstallResult,
+  CodexDesktopModelsSettings,
+  CodexDesktopModelStatus,
+  CodexDesktopModelsSettingsResult,
+  CodexDesktopStatus,
   ContextMenuItem,
   ContextMenuResult,
   ImageData,

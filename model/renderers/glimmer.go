@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -118,7 +119,7 @@ func glimmerJSON(v any) (string, error) {
 	if err := encoder.Encode(v); err != nil {
 		return "", err
 	}
-	return string(addJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
+	return string(AddJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
 }
 
 func writeGlimmerToolDefinitions(sb *strings.Builder, tools []api.Tool) error {
@@ -365,4 +366,8 @@ func (r *GlimmerRenderer) Render(messages []api.Message, tools []api.Tool, think
 	sb.WriteString(glimmerStart)
 	sb.WriteString("assistant")
 	return sb.String(), nil
+}
+
+func (r *GlimmerRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, "low", "medium", "high", "max"}, Default: "high"}
 }

@@ -13,7 +13,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
-#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -29,20 +28,17 @@ using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
 
 namespace {
 
-#ifdef OLLAMA_COMPAT_MTMD_BUILD
-void ollama_compat_log(const char * format, ...) {
-    std::va_list args;
-    va_start(args, format);
-    std::vfprintf(stderr, format, args);
-    va_end(args);
-}
-
-#define OLLAMA_COMPAT_LOG_INFO(...)  do { ollama_compat_log(__VA_ARGS__); } while (0)
-#define OLLAMA_COMPAT_LOG_ERROR(...) ollama_compat_log(__VA_ARGS__)
-#else
 #define OLLAMA_COMPAT_LOG_INFO(...)  do { LLAMA_LOG_INFO(__VA_ARGS__); } while (0)
 #define OLLAMA_COMPAT_LOG_ERROR(...) LLAMA_LOG_ERROR(__VA_ARGS__)
-#endif
+
+// Every handler's detection log line starts with "detected Ollama-format".
+// That prefix is load-bearing: integration/migration_test.go
+// (hasCompatPatchEvidence) greps server logs for it to prove whether a load
+// went through this compatibility layer. Keep it when adding handlers.
+//
+// The detect_ollama_* checks also mirror the Go-side NeedsMigration methods
+// in compatmigrate/ (one migrator per family); keep the two in sync so lazy
+// migration converts exactly the files this layer would patch.
 
 double elapsed_ms(std::chrono::steady_clock::time_point start) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -217,20 +213,17 @@ constexpr const char * kGemma3ChatTemplate = R"jinja({{ bos_token }}{% if messag
 
 // An Ollama-format gemma3 file declares arch="gemma3" AND exhibits at
 // least one converter quirk. Different converter versions produced
-// different quirks (4B/12B/27B have embedded vision + mm KVs; 1B uses
+// different quirks (4B/12B/27B have embedded vision tensors; 1B uses
 // non-standard rope key names; all of them omit layer_norm_rms_epsilon).
 bool detect_ollama_gemma3(const gguf_context * meta, const ggml_context * ctx) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     if (std::strcmp(gguf_get_val_str(meta, arch_kid), "gemma3") != 0) return false;
 
-    return has_key(meta, "gemma3.mm.tokens_per_image")
-        || any_tensor_with_prefix(ctx, "v.")
+    return any_tensor_with_prefix(ctx, "v.")
         || any_tensor_with_prefix(ctx, "mm.")
         || has_key(meta, "gemma3.rope.global.freq_base")
         || has_key(meta, "gemma3.rope.local.freq_base")
-        || has_key(meta, "tokenizer.ggml.add_padding_token")
-        || has_key(meta, "tokenizer.ggml.add_unknown_token")
         || !has_key(meta, "gemma3.attention.layer_norm_rms_epsilon");
 }
 
@@ -509,7 +502,7 @@ void handle_snowflake_arctic_embed2(gguf_context * meta) {
     }
 
     gguf_set_arr_data(meta, key, GGUF_TYPE_UINT8, decoded.data(), decoded.size());
-    OLLAMA_COMPAT_LOG_INFO("%s: converted tokenizer precompiled charsmap to byte array\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format snowflake-arctic-embed2 GGUF; converted tokenizer precompiled charsmap to byte array\n", __func__);
 }
 
 // =========================================================================
@@ -914,12 +907,10 @@ bool detect_ollama_qwen35moe(const gguf_context * meta, const ggml_context * ctx
 
     // Published-model markers. llama.cpp-converted qwen35moe files have none
     // of these: vision KVs live in a separate mmproj, MTP tensors are dropped,
-    // head_count_kv is a scalar, and the extra rope / ssm / feed_forward KVs
-    // are either absent or stored differently.
+    // head_count_kv is a scalar, and the extra rope / ssm KVs are absent.
     return has_key(meta, "qwen35moe.vision.block_count")
         || has_key(meta, "qwen35moe.image_token_id")
         || has_key(meta, "qwen35moe.ssm.v_head_reordered")
-        || has_key(meta, "qwen35moe.feed_forward_length")
         || has_key(meta, "qwen35moe.rope.mrope_interleaved")
         || any_tensor_with_prefix(ctx, "mtp.")
         || any_tensor_with_prefix(ctx, "v.");
@@ -970,7 +961,7 @@ bool detect_ollama_qwen3next(const gguf_context * meta) {
 
 void handle_qwen3next(gguf_context * meta, ggml_context * ctx) {
     if (!detect_ollama_qwen3next(meta)) return;
-    OLLAMA_COMPAT_LOG_INFO("%s: detected qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format qwen3next GGUF with ssm_dt tensors; applying compatibility fixes\n", __func__);
     collapse_u32_array_to_max(meta, "qwen3next.attention.head_count_kv", 0);
     rename_qwen_ssm_dt_bias_tensors(meta, ctx);
 }
@@ -1334,7 +1325,7 @@ bool detect_ollama_llama3_metadata_gap(const gguf_context * meta) {
 void handle_llama3_metadata(gguf_context * meta) {
     if (!detect_ollama_llama3_metadata_gap(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected Llama 3 tokenizer metadata gap; applying compatibility fixes\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format llama GGUF with Llama 3 tokenizer metadata gap; applying compatibility fixes\n", __func__);
 
     if (string_kv_missing_or_default(meta, "tokenizer.ggml.pre")) {
         gguf_set_val_str(meta, "tokenizer.ggml.pre", "llama-bpe");
@@ -2782,6 +2773,10 @@ void handle_llama4_clip(gguf_context * meta, ggml_context * ctx) {
     for (const auto & [from, to] : kLlama4ClipRenames) {
         rename_tensors_containing(meta, ctx, from, to);
     }
+
+    // Keep the live mmproj path aligned with converted llama.cpp projectors.
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+    promote_tensor_to_f32(meta, ctx, "v.position_embd.weight");
 }
 
 // =========================================================================
@@ -3226,7 +3221,7 @@ bool needs_default_llava_projector_type(const gguf_context * meta) {
 void handle_missing_llava_projector_type(gguf_context * meta) {
     if (!needs_default_llava_projector_type(meta)) return;
 
-    OLLAMA_COMPAT_LOG_INFO("%s: detected LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
+    OLLAMA_COMPAT_LOG_INFO("%s: detected Ollama-format LLaVA/BakLLaVA projector without projector type; defaulting to mlp\n", __func__);
     gguf_set_val_str(meta, "clip.projector_type", "mlp");
 }
 
@@ -3246,6 +3241,12 @@ bool translate_metadata(const llama_model_loader * ml,
     {
         std::lock_guard<std::mutex> lk(g_loader_path_mutex);
         g_loader_paths[ml] = fname ? fname : "";
+    }
+    // Clef's joint head is consumed by the server after backbone evaluation.
+    const int decision_key = gguf_find_key(meta, (arch_name + ".decision.type").c_str());
+    if (decision_key >= 0 && gguf_get_kv_type(meta, decision_key) == GGUF_TYPE_STRING &&
+            std::strcmp(gguf_get_val_str(meta, decision_key), "clef") == 0) {
+        add_skip_prefix(ml, "clef.");
     }
     // embeddinggemma must run before gemma3: it switches arch_name to
     // "gemma-embedding", which is what later checks (and the loader's KV
@@ -3436,6 +3437,71 @@ bool maybe_load_text_tensor(const llama_model_loader * ml,
     LoadOp op;
     if (!take_load_op(ggml_get_name(cur), op)) return false;
     return load_tensor_with_op(cur, path.c_str(), buft, op);
+}
+
+// Slab-read cache slot (maybe_load_text_tensor_range). Holds AT MOST ONE
+// materialized tensor per loader: quantize reads a tensor's slabs
+// contiguously, so the previous entry is evicted when the next tensor's
+// first range arrives. This keeps peak memory at one op tensor at a time —
+// the same profile as the whole-tensor read this hook replaced. Growing a
+// per-tensor map instead would accumulate every layer's output for per-layer
+// ops (gemma4 MoE gate/up, qwen3.5 norm-shift) — most of the model in RAM by
+// the end of a quantize run.
+std::mutex g_text_range_mutex;
+std::unordered_map<const llama_model_loader *,
+                   std::pair<std::string, std::vector<uint8_t>>>
+    g_text_range_cache;
+
+const void * maybe_load_text_tensor_range(const llama_model_loader * ml,
+                                          ggml_tensor * cur,
+                                          size_t offs,
+                                          size_t size,
+                                          void * buf) {
+    if (compat_disabled()) return nullptr;
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lk(g_loader_path_mutex);
+        auto it = g_loader_paths.find(ml);
+        if (it == g_loader_paths.end() || it->second.empty()) return nullptr;
+        path = it->second;
+    }
+
+    std::lock_guard<std::mutex> lk(g_text_range_mutex);
+    auto & slot = g_text_range_cache[ml];
+    auto cached = slot.first == ggml_get_name(cur) ? &slot.second : nullptr;
+    if (!cached) {
+        LoadOp op;
+        if (!take_load_op(ggml_get_name(cur), op)) return nullptr;
+
+        const auto start = std::chrono::steady_clock::now();
+        std::vector<uint8_t> full(ggml_nbytes(cur));
+        if (!op.apply(path.c_str(), full.data(), full.size())) {
+            OLLAMA_COMPAT_LOG_ERROR("%s: %s failed for %s after %.3f ms\n",
+                                    __func__, op.description, ggml_get_name(cur), elapsed_ms(start));
+            return nullptr;
+        }
+
+        const size_t dst_size = full.size();
+        slot = {std::string(ggml_get_name(cur)), std::move(full)};
+        cached = &slot.second;
+        const double ms = elapsed_ms(start);
+        const TransformTiming total = record_transform_timing(dst_size, ms);
+        OLLAMA_COMPAT_LOG_INFO("compat tensor transform: op=%s tensor=%s bytes=%zu duration_ms=%.3f total_ops=%llu total_bytes=%zu total_ms=%.3f\n",
+                               op.description, ggml_get_name(cur), dst_size, ms,
+                               (unsigned long long) total.count, total.bytes, total.ms);
+    }
+
+    if (offs + size > cached->size()) {
+        OLLAMA_COMPAT_LOG_ERROR("%s: range %zu+%zu out of bounds for %s (%zu bytes)\n",
+                                __func__, offs, size, ggml_get_name(cur), cached->size());
+        return nullptr;
+    }
+
+    const void * out = buf ? buf : cached->data() + offs;
+    if (buf) {
+        std::memcpy(buf, cached->data() + offs, size);
+    }
+    return out;
 }
 
 int maybe_clip_mmproj_embd(const char * projector_type, int projection_dim) {
