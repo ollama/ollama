@@ -841,6 +841,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 // SystemOneHandler compiles typed questions, scores their allowed answers, and
 // returns probabilities. Callers must select weights trained for the prompt format.
 func (s *Server) SystemOneHandler(c *gin.Context) {
+	checkpointStart := time.Now()
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
@@ -903,6 +904,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+	checkpointLoaded := time.Now()
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
@@ -938,6 +940,8 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	response.TotalDuration = time.Since(checkpointStart)
+	response.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 	c.JSON(http.StatusOK, response)
 }
 
