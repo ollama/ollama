@@ -230,6 +230,27 @@ func anyOfTool() []api.Tool {
 	}}
 }
 
+// A tool whose parameter names collide with JSON Schema keywords. These are
+// parameter names, not schema keywords, so the declaration has to carry them.
+func schemaKeywordNamedParamsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "create_ticket",
+			Description: "Create ticket",
+			Parameters: api.ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"description"},
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"description": {Type: api.PropertyType{"string"}, Description: "What is wrong"},
+					"type":        {Type: api.PropertyType{"string"}, Description: "Ticket type"},
+					"title":       {Type: api.PropertyType{"string"}, Description: "Short title"},
+				}),
+			},
+		},
+	}}
+}
+
 func arrayObjectItemsTool() []api.Tool {
 	return []api.Tool{{
 		Type: "function",
@@ -1761,6 +1782,19 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 			},
 			tools: bashSmallTool(),
 			think: thinkTrue(),
+		},
+		{
+			// Parameter names that collide with JSON Schema keywords. The
+			// reference template filters those keywords at one call site only,
+			// the OBJECT fallback where the map is the schema itself; a top-level
+			// properties map holds parameter names and is never filtered. These
+			// were dropped from the declaration while still being listed under
+			// required, so the model was asked for parameters it could not see.
+			name: "params_named_like_schema_keywords",
+			messages: []api.Message{
+				{Role: "user", Content: "File a ticket"},
+			},
+			tools: schemaKeywordNamedParamsTool(),
 		},
 		{
 			name: "array_items_object_with_required",
