@@ -102,7 +102,9 @@ function OnboardingRoute() {
         if (authAttempt !== authAttemptRef.current) return;
         console.error("Failed to start sign in:", error);
         setIsAwaitingAuth(false);
-        setSignInError("Unable to start sign in. Please try again.");
+        setSignInError(
+          "Unable to start sign in. Try again, or choose “Use Ollama locally” to skip for now.",
+        );
       }
     },
     [fetchConnectUrl, isAuthenticated],
