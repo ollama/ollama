@@ -1278,8 +1278,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, terr
 		}
 		if !ok {
-			// Nothing to truncate (e.g. the text fits but media expansion
-			// overflowed the runner): the original 413 stands.
+			// Nothing to truncate. For plain text that means the runner
+			// rejected input the server-side limit accepted (e.g. a
+			// physical-batch clamp), so keep the truncation-family error the
+			// API contract encodes. For media items the overflow came from
+			// media expansion past the text the truncator sees, so the
+			// runner's 413 is the honest error.
+			if len(item.media) == 0 {
+				return nil, 0, fmt.Errorf("input exceeds maximum context length and cannot be truncated further")
+			}
 			return nil, 0, err
 		}
 
