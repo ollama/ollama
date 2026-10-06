@@ -82,16 +82,8 @@ interface ScreenProps {
 
 interface WelcomeScreenProps extends ScreenProps {
   isAuthenticated: boolean;
-  isCompleting?: boolean;
-  completionError?: string | null;
-  onRetryCompletion?: () => void;
   onLocal: () => void;
   onSignUp: () => void;
-}
-
-interface RunOllamaScreenProps {
-  completionError: string | null;
-  onRetryCompletion: () => void;
 }
 
 interface ConnectAppsScreenProps {
@@ -165,17 +157,7 @@ const OLLAMA_FEATURES = [
   },
 ];
 
-export function IntroScreen({
-  completionError = null,
-  onContinue,
-  onRetryCompletion,
-  isCompleting = false,
-}: {
-  completionError?: string | null;
-  isCompleting?: boolean;
-  onContinue: () => void;
-  onRetryCompletion?: () => void;
-}) {
+export function IntroScreen({ onContinue }: { onContinue: () => void }) {
   return (
     <main className="light-only flex h-screen w-full flex-col overflow-hidden bg-white text-neutral-950">
       <TitleBar />
@@ -220,21 +202,9 @@ export function IntroScreen({
             type="button"
             className="mt-8 flex h-11 w-full max-w-[240px] cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onContinue}
-            disabled={isCompleting}
-            aria-busy={isCompleting || undefined}
           >
             Continue
           </button>
-          <InlineError message={completionError} />
-          {completionError && onRetryCompletion && (
-            <button
-              type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-              onClick={onRetryCompletion}
-            >
-              Try again
-            </button>
-          )}
         </div>
       </section>
     </main>
@@ -260,13 +230,10 @@ function InlineError({
 export function WelcomeScreen({
   isAuthenticated,
   isSigningIn,
-  isCompleting = false,
   signInError,
-  completionError = null,
   onSignIn,
   onSignUp,
   onLocal,
-  onRetryCompletion,
 }: WelcomeScreenProps) {
   return (
     <main className="light-only flex min-h-screen w-full flex-col bg-white text-neutral-950">
@@ -288,43 +255,26 @@ export function WelcomeScreen({
             type="button"
             className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full bg-neutral-900 px-5 font-sans text-sm font-normal text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:cursor-wait disabled:opacity-70"
             onClick={onSignUp}
-            disabled={isSigningIn || isCompleting}
-            aria-busy={isSigningIn || isCompleting}
+            disabled={isSigningIn}
+            aria-busy={isSigningIn}
           >
-            {isCompleting
-              ? "Finishing setup…"
-              : isSigningIn
-                ? "Finish in your browser…"
-                : "Sign up"}
+            {isSigningIn ? "Finish in your browser…" : "Sign up"}
           </button>
           <button
             type="button"
             className="mt-2 cursor-pointer rounded-md px-3 py-2 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
             onClick={onLocal}
-            disabled={isCompleting}
           >
             Use Ollama locally
           </button>
-          <InlineError message={signInError ?? completionError} />
-          {completionError && onRetryCompletion && (
-            <button
-              type="button"
-              className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-              onClick={onRetryCompletion}
-            >
-              Try again
-            </button>
-          )}
+          <InlineError message={signInError} />
         </div>
       </OnboardingCard>
     </main>
   );
 }
 
-export function RunOllamaScreen({
-  completionError,
-  onRetryCompletion,
-}: RunOllamaScreenProps) {
+export function RunOllamaScreen() {
   return (
     <main className="light-only flex min-h-screen w-full flex-col bg-white text-neutral-950">
       <TitleBar />
@@ -349,17 +299,6 @@ export function RunOllamaScreen({
         <p className="mt-3 max-w-sm text-[13px] leading-5 text-neutral-400">
           Run this command in your terminal to get started.
         </p>
-
-        <InlineError message={completionError} />
-        {completionError && (
-          <button
-            type="button"
-            className="mt-2 cursor-pointer rounded-md px-3 py-1 text-sm font-normal text-neutral-600 underline decoration-neutral-300 underline-offset-4 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500"
-            onClick={onRetryCompletion}
-          >
-            Try again
-          </button>
-        )}
       </OnboardingCard>
     </main>
   );
@@ -1201,32 +1140,23 @@ export function ConnectAppsScreen({
 }
 
 interface OnboardingProps extends ScreenProps {
-  completionError: string | null;
   isComplete?: boolean;
   isAuthenticated: boolean;
-  onComplete: () => Promise<boolean>;
-  onRetryCompletion: () => void;
+  onComplete: () => void;
   onSignUp: () => void;
   onUseLocal: () => void;
 }
 
 export default function Onboarding(props: OnboardingProps) {
   const [step, setStep] = useState<OnboardingStep>("intro");
-  const [isCompleting, setIsCompleting] = useState(false);
-  const completingRef = useRef(false);
-  const authenticationCompletionStarted = useRef(false);
+  const completionStarted = useRef(false);
   const { onComplete } = props;
 
-  const complete = useCallback(async () => {
-    if (completingRef.current) return;
-    completingRef.current = true;
-    setIsCompleting(true);
-    if (await onComplete()) {
-      setStep("run");
-    } else {
-      completingRef.current = false;
-      setIsCompleting(false);
-    }
+  const complete = useCallback(() => {
+    if (completionStarted.current) return;
+    completionStarted.current = true;
+    setStep("run");
+    onComplete();
   }, [onComplete]);
 
   useEffect(() => {
@@ -1235,39 +1165,20 @@ export default function Onboarding(props: OnboardingProps) {
   }, []);
 
   useEffect(() => {
-    if (!props.isAuthenticated) {
-      authenticationCompletionStarted.current = false;
-      return;
+    if (props.isAuthenticated && !props.isComplete && step === "welcome") {
+      complete();
     }
-    if (
-      props.isComplete ||
-      step !== "welcome" ||
-      authenticationCompletionStarted.current
-    )
-      return;
-    // A failed save waits for an explicit retry, even if query updates replace
-    // the callback. StrictMode must not start a second completion either.
-    authenticationCompletionStarted.current = true;
-    void complete();
   }, [step, props.isAuthenticated, props.isComplete, complete]);
 
   if (props.isComplete || step === "run") {
-    return (
-      <RunOllamaScreen
-        completionError={props.completionError}
-        onRetryCompletion={props.onRetryCompletion}
-      />
-    );
+    return <RunOllamaScreen />;
   }
 
   if (step === "intro") {
     return (
       <IntroScreen
-        completionError={props.completionError}
-        isCompleting={isCompleting}
-        onRetryCompletion={() => void complete()}
         onContinue={() => {
-          if (props.isAuthenticated) void complete();
+          if (props.isAuthenticated) complete();
           else setStep("welcome");
         }}
       />
@@ -1277,12 +1188,11 @@ export default function Onboarding(props: OnboardingProps) {
   return (
     <WelcomeScreen
       {...props}
-      isCompleting={isCompleting}
-      onRetryCompletion={() => void complete()}
       onLocal={() => {
-        if (completingRef.current) return;
-        props.onUseLocal();
+        if (completionStarted.current) return;
+        completionStarted.current = true;
         setStep("run");
+        props.onUseLocal();
       }}
     />
   );

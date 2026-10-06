@@ -433,11 +433,9 @@ describe("Onboarding", () => {
         isAuthenticated
         isSigningIn={false}
         signInError={null}
-        completionError={null}
-        onComplete={vi.fn().mockResolvedValue(true)}
+        onComplete={vi.fn()}
         onSignIn={vi.fn()}
         onSignUp={vi.fn()}
-        onRetryCompletion={vi.fn()}
         onUseLocal={vi.fn()}
       />,
     );
@@ -457,8 +455,6 @@ describe("Onboarding", () => {
   it("shows initial Claude recovery guidance without error styling", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
           supported: true,
           used: true,
@@ -494,8 +490,6 @@ describe("Onboarding", () => {
   it("keeps Claude model management off the Connect Apps page", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
           supported: true,
           used: true,
@@ -543,8 +537,6 @@ describe("Onboarding", () => {
   it("uses branded icons for the remaining launcher integrations", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "cline",
@@ -629,9 +621,7 @@ describe("Onboarding", () => {
   });
 
   it("shows only the local command on the final page", () => {
-    const html = renderToStaticMarkup(
-      <RunOllamaScreen completionError={null} onRetryCompletion={vi.fn()} />,
-    );
+    const html = renderToStaticMarkup(<RunOllamaScreen />);
 
     expect(html).toContain("Run Ollama");
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
@@ -655,20 +645,6 @@ describe("Onboarding", () => {
 
     expect(html).toContain("Finish in your browser…");
     expect(html).not.toContain("Waiting for sign in…");
-  });
-
-  it("shows a retryable error when onboarding completion cannot be saved", () => {
-    const onRetryCompletion = vi.fn();
-    const html = renderToStaticMarkup(
-      <RunOllamaScreen
-        completionError="Unable to save setup. Please try again."
-        onRetryCompletion={onRetryCompletion}
-      />,
-    );
-
-    expect(html).toContain("Unable to save setup. Please try again.");
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Try again");
   });
 });
 
@@ -701,16 +677,14 @@ function appsIntegrations(claudeInstalled: boolean): IntegrationStatuses {
   ];
 }
 
-function onboardingProps(onComplete: () => Promise<boolean>) {
+function onboardingProps(onComplete: () => void) {
   return {
     isAuthenticated: true,
     isSigningIn: false,
     signInError: null,
-    completionError: null,
     onComplete,
     onSignIn: vi.fn(),
     onSignUp: vi.fn(),
-    onRetryCompletion: vi.fn(),
     onUseLocal: vi.fn(),
   };
 }

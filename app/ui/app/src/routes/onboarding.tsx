@@ -46,36 +46,34 @@ function OnboardingRoute() {
   const { fetchConnectUrl, refetchUser, isAuthenticated } = useUser();
   const [isAwaitingAuth, setIsAwaitingAuth] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
-  const [completionError, setCompletionError] = useState<string | null>(null);
   const authAttemptRef = useRef(0);
   const isPreview =
     import.meta.env.DEV &&
     new URLSearchParams(window.location.search).get("preview") === "1";
 
-  const completeOnboarding = useCallback(async (): Promise<boolean> => {
-    setCompletionError(null);
+  const completeOnboarding = useCallback(async () => {
+    // Remember completion in the background, with one retry for transient errors.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (!settingsData) {
+          throw new Error("Settings are not loaded");
+        }
 
-    try {
-      if (!settingsData) {
-        throw new Error("Settings are not loaded");
+        await setSettings({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        });
+        return;
+      } catch (error) {
+        if (attempt === 1) {
+          console.error("Failed to save onboarding state:", error);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-
-      await setSettings({
-        OnboardingVersion: CURRENT_ONBOARDING_VERSION,
-      });
-      return true;
-    } catch (error) {
-      console.error("Failed to save onboarding state:", error);
-      setCompletionError("Unable to save setup. Please try again.");
-      return false;
     }
   }, [setSettings, settingsData]);
 
   const finishSetup = useCallback(() => {
-    void completeOnboarding();
-  }, [completeOnboarding]);
-
-  const retryCompletion = useCallback(() => {
     void completeOnboarding();
   }, [completeOnboarding]);
 
@@ -183,7 +181,6 @@ function OnboardingRoute() {
 
   return (
     <Onboarding
-      completionError={completionError}
       isComplete={
         !isPreview &&
         (settingsData?.OnboardingVersion ?? 0) >= CURRENT_ONBOARDING_VERSION
@@ -191,10 +188,9 @@ function OnboardingRoute() {
       isAuthenticated={isAuthenticated}
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
-      onComplete={completeOnboarding}
+      onComplete={finishSetup}
       onSignIn={signIn}
       onSignUp={signUp}
-      onRetryCompletion={retryCompletion}
       onUseLocal={useLocal}
     />
   );
