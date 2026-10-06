@@ -457,6 +457,27 @@ func TestDownloadDigestMismatch(t *testing.T) {
 	}
 }
 
+// A destination that cannot accept bytes must fail the copy. Ignoring the
+// write error lets the downloader treat the blob as complete.
+func TestCopyReturnsDestinationWriteError(t *testing.T) {
+	errFull := errors.New("no space left on device")
+	d := &downloader{
+		progress:     newProgressTracker(4, func(int64, int64) {}),
+		stallTimeout: time.Hour,
+	}
+	n, err := d.copy(context.Background(), func(error) {}, errWriter{err: errFull}, strings.NewReader("blob"), sha256.New())
+	if !errors.Is(err, errFull) {
+		t.Fatalf("copy error = %v, want no space left", err)
+	}
+	if n != 0 {
+		t.Fatalf("copy counted %d bytes after a failed write", n)
+	}
+}
+
+type errWriter struct{ err error }
+
+func (w errWriter) Write([]byte) (int, error) { return 0, w.err }
+
 func TestUpload(t *testing.T) {
 	// Create test blobs
 	clientDir := t.TempDir()
