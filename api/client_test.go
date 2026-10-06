@@ -34,6 +34,13 @@ func TestClientFromEnvironment(t *testing.T) {
 		"scheme, hostname, and port": {value: "https://example.com:1234", expect: "https://example.com:1234"},
 		"trailing slash":             {value: "example.com/", expect: "http://example.com:11434"},
 		"trailing slash port":        {value: "example.com:1234/", expect: "http://example.com:1234"},
+		// A client cannot connect to an unspecified bind address: on Windows it
+		// fails outright, and where it does resolve it may reach a different
+		// server than the one OLLAMA_HOST was meant to select.
+		"unspecified ipv4":        {value: "0.0.0.0", expect: "http://127.0.0.1:11434"},
+		"unspecified ipv4 + port": {value: "0.0.0.0:8200", expect: "http://127.0.0.1:8200"},
+		"unspecified ipv6":        {value: "[::]", expect: "http://[::1]:11434"},
+		"unspecified ipv6 + port": {value: "[::]:8200", expect: "http://[::1]:8200"},
 	}
 
 	for k, v := range testCases {
