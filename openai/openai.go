@@ -716,6 +716,15 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
+			// a tool message with null content is an empty tool result, like
+			// content: []. keep it when it says which call it answers
+			if strings.ToLower(msg.Role) == "tool" && content == nil && msg.ToolCalls == nil {
+				if toolName != "" || msg.ToolCallID != "" {
+					messages = append(messages, api.Message{Role: msg.Role, ToolName: toolName, ToolCallID: msg.ToolCallID})
+				}
+				continue
+			}
+
 			// content is only optional if tool calls are present
 			if msg.ToolCalls == nil {
 				return nil, fmt.Errorf("invalid message content type: %T", content)

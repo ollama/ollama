@@ -1312,3 +1312,41 @@ func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }
+
+func TestFromChatRequest_ToolMessageNullContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"notify","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":null},
+		{"role":"tool","content":null}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// the null result keeps the call it answers; the one with neither a
+	// call id nor a name is skipped
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "notify" || tool.Content != "" {
+		t.Errorf("expected empty tool message for call_1/notify, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
+func TestFromChatRequest_NullContentStillRejected(t *testing.T) {
+	// only tool results may be null; a user message with no content and no
+	// tool calls is still invalid
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[{"role":"user","content":null}]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FromChatRequest(req); err == nil {
+		t.Fatal("expected an error for null user content")
+	}
+}
