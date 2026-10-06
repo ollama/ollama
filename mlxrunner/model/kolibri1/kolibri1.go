@@ -245,12 +245,58 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
-	if m.HeadDType == "float32" {
-		// Cast before projection so logits are never rounded through BF16,
-		// including when the head uses packed quantized weights.
-		x = x.AsType(mlx.DTypeFloat32)
+	if m.HeadDType != "float32" {
+		return m.LMHead.Forward(x)
 	}
-	return m.LMHead.Forward(x)
+	// Logits are never rounded through BF16. A dense head is read at its
+	// stored width; quantized heads take float32 activations.
+	if l, ok := m.LMHead.(*nn.Linear); ok && l.Bias == nil {
+		return matmulF32(x, l.Weight)
+	}
+	return m.LMHead.Forward(x.AsType(mlx.DTypeFloat32))
+}
+
+// gemvF32 computes x @ wᵀ for a few rows of x, reading w at its stored width
+// and accumulating and writing float32. Each simdgroup computes one output.
+//
+// TODO(mlx): drop this once MLX's matmul can output float32 from BF16 inputs.
+// Today it promotes w to a float32 copy first.
+var gemvF32 = mlx.NewMetalKernel("kolibri1_gemv_f32", []string{"x", "w"}, `
+uint lane = thread_position_in_threadgroup.x;
+uint row = threadgroup_position_in_grid.y * 8 + thread_position_in_threadgroup.y;
+size_t m = threadgroup_position_in_grid.z;
+if (row >= uint(N)) {
+  return;
+}
+float acc = 0.0f;
+for (uint k = lane * 8; k < uint(K); k += 256) {
+  for (uint j = 0; j < 8; ++j) {
+    acc += static_cast<float>(x[m * K + k + j]) * static_cast<float>(w[size_t(row) * K + k + j]);
+  }
+}
+acc = simd_sum(acc);
+if (lane == 0) {
+  out[m * N + row] = acc;
+}
+`, func(in []*mlx.Array) *mlx.Array { return promotedMatmul(in[0], in[1]) })
+
+// matmulF32 returns x @ wᵀ in float32 for w [N, K].
+func matmulF32(x, w *mlx.Array) *mlx.Array {
+	n, k := w.Dim(0), w.Dim(1)
+	rows := x.Size() / k
+	if rows > 16 || k%8 != 0 {
+		return promotedMatmul(x, w)
+	}
+	shape := make([]int32, 0, x.NumDims())
+	for _, d := range x.Dims()[:x.NumDims()-1] {
+		shape = append(shape, int32(d))
+	}
+	shape = append(shape, int32(n))
+	return gemvF32.Run([]*mlx.Array{x, w}, map[string]int{"K": k, "N": n}, [3]int{32, (n + 7) / 8 * 8, rows}, [3]int{32, 8, 1}, shape, mlx.DTypeFloat32)
+}
+
+func promotedMatmul(x, w *mlx.Array) *mlx.Array {
+	return mlx.Matmul(x.AsType(mlx.DTypeFloat32), mlx.Transpose(w.AsType(mlx.DTypeFloat32), 1, 0))
 }
 
 func (m *Model) MaxContextLength() int {
