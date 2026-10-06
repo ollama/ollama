@@ -47,7 +47,6 @@ func loadMoE(tensors map[string]*mlx.Array, linears model.LinearFactory, prefix 
 	if m.Router.NumDims() != 2 || m.Router.Dim(0) != int(cfg.NumExperts) || m.Router.Dim(1) != int(cfg.HiddenSize) || m.ExpertBias.Size() != int(cfg.NumExperts) {
 		return nil, fmt.Errorf("invalid router shape")
 	}
-	m.Router = m.Router.AsType(mlx.DTypeFloat32)
 	m.ExpertBias = m.ExpertBias.AsType(mlx.DTypeFloat32)
 	var err error
 	for _, p := range []struct {
@@ -107,7 +106,7 @@ func (e *ExpertLinear) Forward(x, indices *mlx.Array, sorted bool) *mlx.Array {
 }
 
 func (m *MoE) route(x *mlx.Array, cfg *Config) (indices, scores *mlx.Array) {
-	logits := mlx.Matmul(x.AsType(mlx.DTypeFloat32), mlx.Transpose(m.Router, 1, 0))
+	logits := matmulF32(x, m.Router)
 	indices = mlx.Argpartition(mlx.Neg(mlx.Add(logits, m.ExpertBias)), int(cfg.NumExpertsPerTok)-1, -1)
 	indices = indices.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, int(cfg.NumExpertsPerTok)))
 	scores = mlx.Sigmoid(mlx.TakeAlongAxis(logits, indices, -1))
