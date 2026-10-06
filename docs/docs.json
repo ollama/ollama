@@ -70,7 +70,7 @@
     },
     {
       "source": "/gpu.mdx",
-      "destination": "/gpu"
+      "destination": "/local/gpu"
     },
     {
       "source": "/integrations/vscode.mdx",
@@ -78,7 +78,7 @@
     },
     {
       "source": "/troubleshooting.mdx",
-      "destination": "/troubleshooting"
+      "destination": "/local/troubleshooting"
     },
     {
       "source": "/openai",
@@ -99,6 +99,94 @@
     {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
+    },
+    {
+      "source": "/quickstart",
+      "destination": "/guide/quickstart"
+    },
+    {
+      "source": "/capabilities/streaming",
+      "destination": "/guide/capabilities/streaming"
+    },
+    {
+      "source": "/capabilities/thinking",
+      "destination": "/guide/capabilities/thinking"
+    },
+    {
+      "source": "/capabilities/structured-outputs",
+      "destination": "/guide/capabilities/structured-outputs"
+    },
+    {
+      "source": "/capabilities/vision",
+      "destination": "/guide/capabilities/vision"
+    },
+    {
+      "source": "/capabilities/embeddings",
+      "destination": "/guide/capabilities/embeddings"
+    },
+    {
+      "source": "/capabilities/tool-calling",
+      "destination": "/guide/capabilities/tool-calling"
+    },
+    {
+      "source": "/capabilities/web-search",
+      "destination": "/guide/capabilities/web-search"
+    },
+    {
+      "source": "/sample-projects/research-brief-agent",
+      "destination": "/guide/sample-projects/research-report-agent"
+    },
+    {
+      "source": "/guide/sample-projects/research-brief-agent",
+      "destination": "/guide/sample-projects/research-report-agent"
+    },
+    {
+      "source": "/cli",
+      "destination": "/local/cli"
+    },
+    {
+      "source": "/context-length",
+      "destination": "/local/context-length"
+    },
+    {
+      "source": "/macos",
+      "destination": "/local/macos"
+    },
+    {
+      "source": "/linux",
+      "destination": "/local/linux"
+    },
+    {
+      "source": "/windows",
+      "destination": "/local/windows"
+    },
+    {
+      "source": "/docker",
+      "destination": "/local/docker"
+    },
+    {
+      "source": "/import",
+      "destination": "/local/import"
+    },
+    {
+      "source": "/modelfile",
+      "destination": "/local/modelfile"
+    },
+    {
+      "source": "/gpu",
+      "destination": "/local/gpu"
+    },
+    {
+      "source": "/troubleshooting",
+      "destination": "/local/troubleshooting"
+    },
+    {
+      "source": "/faq",
+      "destination": "/local/faq"
+    },
+    {
+      "source": "/template",
+      "destination": "/local/template"
     }
   ],
   "navigation": {
@@ -110,45 +198,25 @@
             "group": "Get started",
             "pages": [
               "index",
-              "quickstart"
+              "/guide/quickstart"
             ]
           },
           {
             "group": "Capabilities",
             "pages": [
-              "/capabilities/streaming",
-              "/capabilities/thinking",
-              "/capabilities/structured-outputs",
-              "/capabilities/vision",
-              "/capabilities/embeddings",
-              "/capabilities/tool-calling",
-              "/capabilities/web-search"
+              "/guide/capabilities/streaming",
+              "/guide/capabilities/thinking",
+              "/guide/capabilities/structured-outputs",
+              "/guide/capabilities/vision",
+              "/guide/capabilities/embeddings",
+              "/guide/capabilities/tool-calling",
+              "/guide/capabilities/web-search"
             ]
           },
           {
             "group": "Sample projects",
             "pages": [
-              "/sample-projects/research-brief-agent"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Cloud",
-        "groups": [
-          {
-            "group": "Get started",
-            "pages": [
-              "/cloud",
-              "/cloud/models",
-              "/cloud/api"
-            ]
-          },
-          {
-            "group": "Operations",
-            "pages": [
-              "/cloud/model-lifecycle",
-              "/cloud/faq"
+              "/guide/sample-projects/research-report-agent"
             ]
           }
         ]
@@ -159,33 +227,53 @@
           {
             "group": "Get started",
             "pages": [
-              "/local",
-              "/macos",
-              "/linux",
-              "/windows",
-              "/docker"
+              "/local/index",
+              "/local/macos",
+              "/local/linux",
+              "/local/windows",
+              "/local/docker"
             ]
           },
           {
             "group": "Run and configure",
             "pages": [
-              "/cli",
-              "/context-length"
+              "/local/cli",
+              "/local/context-length"
             ]
           },
           {
             "group": "Customize models",
             "pages": [
-              "/import",
-              "/modelfile"
+              "/local/import",
+              "/local/modelfile"
             ]
           },
           {
             "group": "Hardware and support",
             "pages": [
-              "/gpu",
-              "/troubleshooting",
-              "/faq"
+              "/local/gpu",
+              "/local/troubleshooting",
+              "/local/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Cloud",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "/cloud/index",
+              "/cloud/models",
+              "/cloud/api"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "/cloud/model-lifecycle",
+              "/cloud/faq"
             ]
           }
         ]

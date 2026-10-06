@@ -11,19 +11,19 @@ Run models on your own hardware with Ollama. Local inference keeps model executi
 Choose the installation guide for your environment.
 
 <CardGroup cols={2}>
-  <Card title="macOS" icon="apple" href="/macos">
+  <Card title="macOS" icon="apple" href="/local/macos">
     Install the Ollama app on Apple silicon or Intel hardware.
   </Card>
 
-  <Card title="Windows" icon="windows" href="/windows">
+  <Card title="Windows" icon="windows" href="/local/windows">
     Install the native Windows application.
   </Card>
 
-  <Card title="Linux" icon="linux" href="/linux">
+  <Card title="Linux" icon="linux" href="/local/linux">
     Install Ollama with the install script or a manual package.
   </Card>
 
-  <Card title="Docker" icon="docker" href="/docker">
+  <Card title="Docker" icon="docker" href="/local/docker">
     Run Ollama in a container with CPU or GPU acceleration.
   </Card>
 </CardGroup>
@@ -48,10 +48,10 @@ curl http://localhost:11434/api/chat -d '{
 
 ## Configure your environment
 
-- Use the [CLI reference](/cli) to run, download, copy, and remove models.
-- Adjust the [context length](/context-length) for agents and other long-context workloads.
-- Review [hardware support](/gpu) for GPU compatibility and acceleration.
-- [Import a model](/import) or create a customized model with a [Modelfile](/modelfile).
-- Use [local-only mode](/faq#how-do-i-disable-ollama-cloud-features) to disable Ollama Cloud features.
+- Use the [CLI reference](/local/cli) to run, download, copy, and remove models.
+- Adjust the [context length](/local/context-length) for agents and other long-context workloads.
+- Review [hardware support](/local/gpu) for GPU compatibility and acceleration.
+- [Import a model](/local/import) or create a customized model with a [Modelfile](/local/modelfile).
+- Use [local-only mode](/local/faq#how-do-i-disable-ollama-cloud-features) to disable Ollama Cloud features.
 
-For failures, start with [Troubleshooting](/troubleshooting).
+For failures, start with [Troubleshooting](/local/troubleshooting).
