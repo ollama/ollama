@@ -34,6 +34,72 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+func TestGetExistingName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, name := range []string{"MyOrg/MyModel:Q4", "OtherOrg/OtherModel:Q8", "DefaultModel:latest", "localhost:12345/MyOrg/MyModel:Q4"} {
+		if err := manifest.WriteManifestData(model.ParseName(name), []byte(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ input, want string }{
+		{"MyOrg/MyModel:Q4", "MyOrg/MyModel:Q4"},
+		{"MYORG/MYMODEL:q4", "MyOrg/MyModel:Q4"},
+		{"myorg/mymodel:q8", "MyOrg/MyModel:q8"},
+		{"myorg/newmodel:q8", "MyOrg/newmodel:q8"},
+		{"neworg/newmodel:q8", "neworg/newmodel:q8"},
+		{"defaultmodel", "DefaultModel:latest"},
+		{"registry.ollama.ai/myorg/mymodel:q4", "MyOrg/MyModel:Q4"},
+		{"ollama.com/myorg/mymodel:q4", "ollama.com/myorg/mymodel:q4"},
+		{"registry.ollama.com/myorg/mymodel:q4", "registry.ollama.com/myorg/mymodel:q4"},
+		{"LOCALHOST:12345/myorg/mymodel:q4", "localhost:12345/MyOrg/MyModel:Q4"},
+		{"sha256-" + strings.Repeat("a", 64), "sha256-" + strings.Repeat("a", 64)},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := getExistingName(model.ParseName(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := model.ParseName(tc.want); got.String() != want.String() {
+				t.Errorf("getExistingName = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func BenchmarkGetExistingName(b *testing.B) {
+	// Tensor manifests are large; lookup should only decode the requested model.
+	layers := make([]manifest.Layer, 512)
+	for i := range layers {
+		layers[i] = manifest.Layer{
+			MediaType: manifest.MediaTypeImageTensor,
+			Digest:    fmt.Sprintf("sha256:%064x", i),
+			Size:      1024,
+		}
+	}
+	data, err := json.Marshal(manifest.Manifest{SchemaVersion: 2, Layers: layers})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, models := range []int{1, 10, 100} {
+		b.Run(fmt.Sprintf("models=%d", models), func(b *testing.B) {
+			b.Setenv("OLLAMA_MODELS", b.TempDir())
+			for i := range models {
+				name := model.ParseName(fmt.Sprintf("Test/Model%d:Latest", i))
+				if err := manifest.WriteManifestData(name, data); err != nil {
+					b.Fatal(err)
+				}
+			}
+			name := model.ParseName("test/model0:latest")
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := getExistingName(name); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -200,7 +200,7 @@ func TestScoreValidation(t *testing.T) {
 	}
 }
 
-func TestScoreHandlerClearsScratchCache(t *testing.T) {
+func TestScoreHandlerScratchCache(t *testing.T) {
 	worker := mlxtest.Worker(t)
 	if err := worker.Do(context.Background(), func() error {
 		if !mlx.GPUIsAvailable() {
@@ -211,11 +211,19 @@ func TestScoreHandlerClearsScratchCache(t *testing.T) {
 	}); err != nil {
 		t.Skipf("MLX GPU not available: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := worker.Do(context.Background(), func() error {
+			mlx.ClearCache()
+			return nil
+		}); err != nil {
+			t.Error(err)
+		}
+	})
 	r := &Runner{Tokenizer: newTestTokenizer(t, []int32{7}), contextLength: 512, mlxThread: worker}
 	defer worker.Do(context.Background(), func() error { r.Close(); return nil })
 	for _, n := range []int{16, 128, 512, 16} {
 		for _, cancelled := range []bool{false, true} {
-			// Model prior requests leaving differently sized scratch buffers.
+			// Start with reusable scratch from an earlier request.
 			// These CPU-filled arrays are freed synchronously into MLX's cache.
 			const scratchBytes = 4 << 20
 			if err := worker.Do(context.Background(), func() error {
@@ -250,14 +258,17 @@ func TestScoreHandlerClearsScratchCache(t *testing.T) {
 				t.Fatalf("tokens=%d cancelled=%t: status %d: %s", n, cancelled, response.Code, response.Body)
 			}
 			memory, err := mlxthread.Call(context.Background(), worker, func() (int, error) {
-				return mlx.CacheMemory(), nil
+				memory := mlx.CacheMemory()
+				if !cancelled && mlx.MetalIsAvailable() && memory == 0 {
+					return 0, errors.New("successful scoring discarded all reusable scratch buffers")
+				}
+				return memory, nil
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			// The injected scratch buffer must be cleared. Active allocations
-			// belong to live model caches or other tests on the shared worker.
-			if memory >= scratchBytes {
+			// Successful requests may reuse scratch; cancelled requests release it.
+			if memory > scoreScratchLimit || (cancelled && memory >= scratchBytes) {
 				t.Fatalf("tokens=%d cancelled=%t: retained %d scratch bytes", n, cancelled, memory)
 			}
 		}

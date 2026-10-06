@@ -22,6 +22,10 @@ type scoreRow struct {
 	candidates []int32
 }
 
+// Retain enough scratch space for short decision requests without keeping the
+// temporary working set of a large prompt resident between requests.
+const scoreScratchLimit = 512 << 20
+
 // Models may project just the requested vocabulary rows at higher precision.
 type candidateUnembedder interface {
 	UnembedCandidates(hidden, candidates *mlx.Array) *mlx.Array
@@ -34,8 +38,22 @@ func (r *Runner) scoreHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	result, err := mlxthread.Call(req.Context(), r.mlxThread, func() (llm.ScoreResponse, error) {
-		defer mlx.ClearCache()
-		return r.score(req.Context(), input)
+		if !mlx.MetalIsAvailable() {
+			defer mlx.ClearCache()
+			return r.score(req.Context(), input)
+		}
+		keepScratch := false
+		defer func() {
+			// Keep small reusable buffers, but release large working sets while idle.
+			if !keepScratch || mlx.CacheMemory() > scoreScratchLimit {
+				mlx.ClearCache()
+			}
+		}()
+		result, err := r.score(req.Context(), input)
+		// Eval waits for results, but completion handlers can still free buffers.
+		mlx.DefaultStream().Synchronize()
+		keepScratch = err == nil
+		return result, err
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
