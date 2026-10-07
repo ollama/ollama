@@ -416,9 +416,9 @@ func ReferencedBlobDigestsForName(n model.Name) ([]string, error) {
 	return referencedBlobDigestsForData(digest, data)
 }
 
-// RetainedBlobDigests returns the complete set of blob digests reachable from
+// retainedBlobDigestsLocked returns the complete set of blob digests reachable from
 // all named manifest objects in the local store.
-func RetainedBlobDigests() (map[string]struct{}, error) {
+func retainedBlobDigestsLocked() (map[string]struct{}, error) {
 	refs, err := namedManifestRefs(true)
 	if err != nil {
 		return nil, err
@@ -426,7 +426,7 @@ func RetainedBlobDigests() (map[string]struct{}, error) {
 
 	retained := make(map[string]struct{})
 	for n, ref := range refs {
-		data, _, digest, err := readVerifiedManifest(ref.path, ref.root)
+		data, _, digest, err := readVerifiedManifestLocked(ref.path, ref.root)
 		if err != nil {
 			slog.Warn("bad manifest", "name", n, "error", err)
 			continue
@@ -592,7 +592,7 @@ func RemoveUnreferencedBlobs(candidates ...string) ([]string, error) {
 }
 
 func removeUnreferencedBlobs(candidates ...string) ([]string, error) {
-	inUse, err := RetainedBlobDigests()
+	inUse, err := retainedBlobDigestsLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -1248,6 +1248,11 @@ func linkManifest(name model.Name, digest string) error {
 		return err
 	}
 
+	// Avoid symlinks on windows
+	if runtime.GOOS == "windows" {
+		return copyManifestFile(blobPath, manifestPath)
+	}
+
 	if rel, err := filepath.Rel(filepath.Dir(manifestPath), blobPath); err == nil {
 		tempName, err := tempManifestPath(filepath.Dir(manifestPath))
 		if err != nil {
@@ -1373,6 +1378,12 @@ func replaceManifestPath(tempName, dst string) error {
 // Regular-file manifests are treated as legacy/copy fallback manifests and are
 // opened without mutating the local store.
 func OpenVerifiedManifest(path, root string) (*os.File, string, error) {
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+	return openVerifiedManifestLocked(path, root)
+}
+
+func openVerifiedManifestLocked(path, root string) (*os.File, string, error) {
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, "", err
@@ -1403,7 +1414,11 @@ func OpenVerifiedManifest(path, root string) (*os.File, string, error) {
 			return nil, "", fmt.Errorf("manifest symlink target %q does not match blob %q", target, blobPath)
 		}
 
-		f, err := os.Open(path)
+		readPath := path
+		if runtime.GOOS == "windows" {
+			readPath = blobPath
+		}
+		f, err := os.Open(readPath)
 		if err != nil {
 			return nil, "", err
 		}
@@ -1414,6 +1429,13 @@ func OpenVerifiedManifest(path, root string) (*os.File, string, error) {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			f.Close()
 			return nil, "", err
+		}
+
+		if runtime.GOOS == "windows" {
+			// Replace symlink with copy on windows
+			if err := copyManifestFile(blobPath, path); err != nil {
+				slog.Warn("could not replace manifest symlink", "path", path, "error", err)
+			}
 		}
 
 		return f, digest, nil
@@ -1496,7 +1518,13 @@ func readManifestPath(path, root string) ([]byte, error) {
 }
 
 func readVerifiedManifest(path, root string) ([]byte, os.FileInfo, string, error) {
-	f, digest, err := OpenVerifiedManifest(path, root)
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+	return readVerifiedManifestLocked(path, root)
+}
+
+func readVerifiedManifestLocked(path, root string) ([]byte, os.FileInfo, string, error) {
+	f, digest, err := openVerifiedManifestLocked(path, root)
 	if err != nil {
 		return nil, nil, "", err
 	}
