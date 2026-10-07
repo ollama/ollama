@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/ml"
 )
 
@@ -141,6 +142,7 @@ func refineLinuxROCmDevices(devices []ml.DeviceInfo) []ml.DeviceInfo {
 		return devices
 	}
 	applyLinuxROCmRefinement(devices, "/sys")
+	refineIntegratedROCmVRAM(devices, "/sys")
 	return devices
 }
 
@@ -247,6 +249,73 @@ func applyROCmLinuxSysfsDevice(device *ml.DeviceInfo, sysfsDevice rocmLinuxSysfs
 	}
 	if sysfsDevice.known {
 		device.Integrated = sysfsDevice.integrated
+	}
+}
+
+// refineIntegratedROCmVRAM corrects the free-memory estimate for AMD
+// integrated GPUs (APUs such as the Radeon 8060S / Ryzen AI Max+ 395).
+//
+// On APUs the HIP runtime's hipMemGetInfo reports system RAM figures
+// because GPU memory is carved from main memory.  llama-server passes
+// that "free" value through, so the device log shows system-RAM
+// available (e.g. 17 GiB) instead of actual VRAM available
+// (total_vram - vram_used, e.g. 71 GiB on a 96 GiB allocation).
+//
+// The DRM sysfs attributes mem_info_vram_total / mem_info_vram_used
+// report the BIOS-allocated VRAM and the kernel's current usage, which
+// is the correct basis for scheduling decisions.  We only override when
+// the sysfs total matches the device total (confirming same GPU) and
+// the device is already classified as integrated.
+func refineIntegratedROCmVRAM(devices []ml.DeviceInfo, sysfsRoot string) {
+	cards, err := filepath.Glob(filepath.Join(sysfsRoot, "class", "drm", "card[0-9]*", "device", "mem_info_vram_total"))
+	if err != nil || len(cards) == 0 {
+		return
+	}
+
+	type vramInfo struct {
+		total uint64
+		used  uint64
+	}
+	var vramDevices []vramInfo
+	for _, totalPath := range cards {
+		totalStr, err := os.ReadFile(totalPath)
+		if err != nil {
+			continue
+		}
+		total, err := strconv.ParseUint(strings.TrimSpace(string(totalStr)), 10, 64)
+		if err != nil || total == 0 {
+			continue
+		}
+		usedPath := filepath.Join(filepath.Dir(totalPath), "mem_info_vram_used")
+		usedStr, err := os.ReadFile(usedPath)
+		if err != nil {
+			continue
+		}
+		used, err := strconv.ParseUint(strings.TrimSpace(string(usedStr)), 10, 64)
+		if err != nil {
+			used = 0
+		}
+		vramDevices = append(vramDevices, vramInfo{total: total, used: used})
+	}
+
+	for i := range devices {
+		dev := &devices[i]
+		if dev.Library != "ROCm" || !dev.Integrated {
+			continue
+		}
+		for _, vram := range vramDevices {
+			if ml.SimilarDeviceMemory(vram.total, dev.TotalMemory) {
+				if vram.total > vram.used {
+					dev.FreeMemory = vram.total - vram.used
+					slog.Debug("refined iGPU VRAM from sysfs",
+						"device", dev.Name,
+						"total", format.HumanBytes2(vram.total),
+						"used", format.HumanBytes2(vram.used),
+						"free", format.HumanBytes2(dev.FreeMemory))
+				}
+				break
+			}
+		}
 	}
 }
 
