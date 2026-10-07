@@ -60,6 +60,37 @@ func convertedLegacyShadowName(digest string) (model.Name, error) {
 	return name, nil
 }
 
+// IsConvertedLegacyShadowName reports whether name is the rollback tag
+// writeConvertedLegacyShadow writes for a converted child digest. A model
+// someone created under llamacpp with any other tag does not match.
+func IsConvertedLegacyShadowName(name model.Name) bool {
+	if !isSHA256Hex(name.Tag) {
+		return false
+	}
+	want, err := convertedLegacyShadowName(name.Tag)
+	if err != nil {
+		return false
+	}
+	return name.EqualFold(want)
+}
+
+const sha256HexLen = 64
+
+func isSHA256Hex(s string) bool {
+	if len(s) != sha256HexLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // removeConvertedChildBlobs removes the blobs written for a converted child
 // that will not be referenced by a manifest list: its config and layer blobs
 // plus, when already written, the child manifest blob itself. Blobs shared
