@@ -1,0 +1,397 @@
+---
+title: Build a research report agent
+sidebarTitle: Research report agent
+description: Build an Ollama Cloud agent that searches the web, reads primary sources, and produces a cited research report.
+---
+
+Use agents for market research, policy summaries, product comparisons, event planning, and other tasks that depend on current web sources.
+
+This project uses an Ollama Cloud model for reasoning and Ollama's web search and web fetch APIs for research. Inference runs in Ollama Cloud, so you do not need to download the 120B model weights or use a local GPU. Your local Ollama installation sends requests to the Cloud model.
+
+## What you will build
+
+Given a question such as:
+
+> What have four-day workweek pilots since 2022 reported about employee wellbeing and business performance?
+
+The agent:
+
+1. Turns the question into several focused searches.
+2. Searches the web and chooses promising results.
+3. Fetches source pages for more context.
+4. Compares claims across sources.
+5. Writes a report with links, caveats, and suggested follow-up questions.
+
+The tutorial uses `gpt-oss:120b-cloud` throughout.
+
+## Before you begin
+
+You need:
+
+- Python 3.10 or later
+- [Ollama installed](https://ollama.com/download)
+- An [Ollama account](https://ollama.com)
+- An [Ollama API key](https://ollama.com/settings/keys)
+
+Signing in gives your local Ollama installation access to the Cloud model. The API key gives the script access to the [web search tools](/capabilities/web-search). Treat the key like a password and never add it to source control.
+
+## 1. Set up the project
+
+Create a project directory and a Python virtual environment:
+
+<Tabs>
+  <Tab title="macOS and Linux">
+
+```shell
+mkdir research-report-agent
+cd research-report-agent
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+  </Tab>
+  <Tab title="Windows PowerShell">
+
+```powershell
+mkdir research-report-agent
+cd research-report-agent
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+  </Tab>
+</Tabs>
+
+Install the Ollama Python library:
+
+```shell
+pip install --upgrade ollama
+```
+
+Set your API key for the current terminal session:
+
+<Tabs>
+  <Tab title="macOS and Linux">
+
+```shell
+export OLLAMA_API_KEY=your_api_key
+```
+
+  </Tab>
+  <Tab title="Windows PowerShell">
+
+```powershell
+$env:OLLAMA_API_KEY="your_api_key"
+```
+
+  </Tab>
+</Tabs>
+
+<Note>
+  These environment variables last only for the current terminal session. For a persistent setup, use your operating system's secret manager.
+</Note>
+
+## 2. Pull and test the Cloud model
+
+Sign in to your Ollama account:
+
+```shell
+ollama signin
+```
+
+Pull `gpt-oss:120b-cloud`:
+
+```shell
+ollama pull gpt-oss:120b-cloud
+```
+
+This downloads the Cloud model configuration, not the 120B model weights. Ollama runs the model in the cloud when you use it.
+
+Send a test prompt to confirm the model is ready:
+
+```shell
+ollama run gpt-oss:120b-cloud "Reply with exactly: Cloud model ready"
+```
+
+You should receive:
+
+```text
+Cloud model ready
+```
+
+The research agent uses the same model through the Ollama Python library.
+
+## 3. Create the agent
+
+Save the following as `research_agent.py`:
+
+```python
+import os
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from ollama import Client, RequestError, ResponseError, web_fetch, web_search
+
+
+# The ":cloud" suffix tells Ollama to run this model in Ollama Cloud
+# The "120b" tells Ollama what quantization level to use
+MODEL = "gpt-oss:120b-cloud"
+MAX_TOOL_ROUNDS = 8
+MAX_SOURCE_CHARS = 12000
+
+DEFAULT_QUESTION = (
+    "What have four-day workweek pilots since 2022 reported about "
+    "employee wellbeing and business performance?"
+)
+
+# These are the only tools the model is allowed to call
+TOOLS = {
+    "web_search": web_search,
+    "web_fetch": web_fetch,
+}
+
+SYSTEM_PROMPT = """You are a careful research agent.
+
+Research the user's question before answering. Search broadly, then fetch the
+most useful pages. Prefer primary sources, original studies, official reports,
+and sources that clearly explain their methods.
+Only call web_fetch with an exact URL returned by web_search. Never guess or
+construct a source URL.
+
+Your final answer must contain:
+1. An executive summary
+2. Key findings, including disagreements between sources
+3. Limitations and missing evidence
+4. Practical next steps
+5. A Sources section with Markdown links
+
+Attach a source link to every important factual claim. Never invent a citation.
+If the available evidence does not support a conclusion, say so explicitly.
+"""
+
+FINAL_REPORT_PROMPT = """Using the research above, write the complete cited
+report now. Return only the Markdown report and do not call more tools."""
+
+
+def run_tool(name: str, arguments: dict) -> str:
+    """Run a tool requested by the model and return its result as text."""
+    tool = TOOLS.get(name)
+    if tool is None:
+        return f"Unknown tool: {name}"
+
+    print(f"Tool: {name}({arguments})", flush=True)
+
+    try:
+        result = tool(**arguments)
+    except ResponseError as error:
+        # A page may have moved or may reject automated access. Returning the
+        # error lets the model search for another source instead of crashing
+        message = (
+            f"{name} failed with HTTP {error.status_code}: {error.error}. "
+            "Do not cite this result. Try another search result or URL."
+        )
+        print(f"Tool error: {message}", flush=True)
+        return message
+    except RequestError as error:
+        message = (
+            f"{name} could not reach the service: {error}. "
+            "Try the request again or use another source."
+        )
+        print(f"Tool error: {message}", flush=True)
+        return message
+
+    # Limit long pages so one source does not fill the model's context window
+    return str(result)[:MAX_SOURCE_CHARS]
+
+
+def create_final_report(client: Client, messages: list) -> str:
+    """Ask the model for the final report, retrying once if it is empty."""
+    final_messages = messages + [
+        {"role": "user", "content": FINAL_REPORT_PROMPT}
+    ]
+
+    for _ in range(2):
+        # Omitting tools prevents the model from doing more research here
+        response = client.chat(
+            model=MODEL,
+            messages=final_messages,
+            think=False,
+        )
+        report = response.message.content or ""
+        if report.strip():
+            return report
+
+        # Keep the empty response in the conversation, then ask once more
+        final_messages += [
+            response.message,
+            {
+                "role": "user",
+                "content": "Your response was empty. Write the Markdown report now.",
+            },
+        ]
+
+    raise RuntimeError("The Cloud model returned an empty report twice.")
+
+
+def research(question: str) -> str:
+    """Research a question and return a non-empty Markdown report."""
+    # The web search and fetch APIs use this key automatically
+    if not os.environ.get("OLLAMA_API_KEY"):
+        raise RuntimeError("Set OLLAMA_API_KEY before running the agent.")
+
+    # Client() connects to the local Ollama app. Ollama routes the :cloud model
+    # to Ollama Cloud because you signed in during setup
+    client = Client()
+
+    # messages stores the complete conversation, including tool results
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": question},
+    ]
+
+    for _ in range(MAX_TOOL_ROUNDS):
+        response = client.chat(
+            model=MODEL,
+            messages=messages,
+            tools=list(TOOLS.values()),
+            think=True,
+        )
+        messages.append(response.message)
+
+        tool_calls = response.message.tool_calls or []
+        if not tool_calls:
+            # The model may return the finished report during the tool loop
+            report = response.message.content or ""
+            if report.strip():
+                return report
+            break
+
+        # Run every requested tool and send each result back to the model
+        for call in tool_calls:
+            name = call.function.name
+            result = run_tool(name, call.function.arguments)
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_name": name,
+                    "content": result,
+                }
+            )
+
+    # This also runs when the agent reaches MAX_TOOL_ROUNDS
+    return create_final_report(client, messages)
+
+
+def save_report(report: str) -> None:
+    """Save the report in a reusable output directory beside this script."""
+    output_dir = Path(__file__).resolve().parent / "output"
+    output_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_path = output_dir / f"Research report {timestamp}.md"
+    output_path.write_text(report, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    # Text after the script name (research_agent.py) becomes the research question. If no
+    # text is provided, the tutorial's default question is used
+    question = " ".join(sys.argv[1:]) or DEFAULT_QUESTION
+    report = research(question)
+
+    # Never print or save a blank report
+    if not report.strip():
+        raise RuntimeError("The research agent returned an empty report.")
+
+    print(report, flush=True)
+    save_report(report)
+```
+
+The model receives the functions in `TOOLS`, decides when to call them, and uses the results in later turns. When research ends, the script accepts a non-empty report or runs `create_final_report` without tools.
+
+Search results can point to pages that moved, reject automated access, or no longer exist. The error handlers return these failures to the model as tool results, allowing the agent to find another source without stopping the program.
+
+`MAX_TOOL_ROUNDS` limits the research loop. `create_final_report` disables thinking output and retries once if the model returns empty content. If both attempts are empty, the script raises an error instead of creating an empty file.
+
+## 4. Run the project
+
+Run the agent with the example research question:
+
+```shell
+python research_agent.py
+```
+
+Or provide your own question:
+
+```shell
+python research_agent.py "What evidence supports later high school start times?"
+```
+
+The script prints each tool call as it runs. A typical trace looks like this:
+
+```text
+Tool: web_search({'query': 'four-day workweek pilot 2022 study results'})
+Tool: web_search({'query': 'four-day week trial company revenue retention report'})
+Tool: web_fetch({'url': 'https://example.org/report'})
+Tool error: web_fetch failed with HTTP 404: not found. Do not cite this result. Try another search result or URL.
+```
+
+Search queries, sources, and occasional fetch errors vary between runs. The model chooses each next action from the evidence it has gathered. After a failed fetch, it should search again or select another source instead of returning a Python traceback.
+
+## 5. Review the result
+
+The first run creates an `output` directory next to `research_agent.py`. Later runs reuse it. Each report is saved as a timestamped Markdown file, for example:
+
+```text
+output/Research report 2026-10-06_15-45-12.md
+```
+
+The script prints the complete Markdown report to the terminal before saving it. It treats empty output as an error and does not create a blank report file.
+
+The `./output/` folder contains a Markdown report with this structure:
+
+```text
+# Research report
+
+## Executive summary
+A concise answer to the research question.
+
+## Key findings
+Findings grouped by theme, with links attached to factual claims.
+
+## Limitations
+Gaps in the available evidence, methodology concerns, and conflicting results.
+
+## Practical next steps
+Actions or questions that follow from the evidence.
+
+## Sources
+A list of the pages used in the report.
+```
+
+The first run produces a useful draft, not a final authority. Check that links open, quoted numbers match their sources, and the report separates published evidence from the model's interpretation.
+
+<Warning>
+  Web results can be incomplete, outdated, or wrong. Review the original sources before using the report for medical, legal, financial, employment, or other high-impact decisions.
+</Warning>
+
+## What happens at each stage
+
+| Stage | What the Cloud model does | What you should expect |
+| --- | --- | --- |
+| Plan | Breaks the question into searchable claims | Several queries covering different aspects of the topic |
+| Search | Calls `web_search` and evaluates result snippets | A visible tool trace; some searches may be discarded |
+| Read | Calls `web_fetch` for promising pages | More detailed evidence from a smaller set of sources |
+| Compare | Looks for agreement, conflicts, and missing context | Findings that separate strong evidence from uncertainty |
+| Synthesize | Writes the requested report | A readable report with citations, caveats, and next steps |
+
+## Improve the agent
+
+Try these changes after the basic project works:
+
+- Change `SYSTEM_PROMPT` to require a particular audience, length, or report format.
+- Ask the agent to prefer sources from specific domains or a date range.
+- Increase `MAX_TOOL_ROUNDS` for broader research, or decrease it for faster, more focused runs.
+- Add a human approval step before the agent fetches unfamiliar domains.
+
+See [Tool calling](/capabilities/tool-calling) for more agent-loop patterns and [Web search](/capabilities/web-search) for the complete search and fetch interfaces.
