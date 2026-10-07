@@ -1701,7 +1701,7 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
 		}
-		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
+		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar, req.ThinkingCloseWhitespace...)
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process

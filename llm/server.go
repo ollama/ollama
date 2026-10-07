@@ -216,6 +216,9 @@ type CompletionRequest struct {
 	// response begins with, which Format leaves free; none when the response
 	// starts in content.
 	ThinkingClose []string
+	// ThinkingCloseWhitespace identifies substrings after which optional
+	// whitespace may occur in ThinkingClose. Empty keeps literal matching.
+	ThinkingCloseWhitespace []string
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
