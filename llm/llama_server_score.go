@@ -60,8 +60,8 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 	rows := make([]scoreRowTokens, len(input.Rows))
 	parseSpecial, ordinary := true, false
 	for i, row := range input.Rows {
-		if len(row.Candidates) < 1 || len(row.Candidates) > 26 {
-			return badRequest("prompt %d requires 1–26 candidates", i)
+		if len(row.Candidates) < 1 || len(row.Candidates) > MaxScoreCandidates {
+			return badRequest("prompt %d requires 1–%d candidates", i, MaxScoreCandidates)
 		}
 		tokens, err := s.tokenize(ctx, row.Prompt, false, &parseSpecial)
 		if err != nil {

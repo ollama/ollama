@@ -36,6 +36,10 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 	if len(input.Fields) > 0 {
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
+	// Helm scores yes before no.
+	if len(input.Rows) > 0 && input.Rows[0].Question != nil && strings.HasPrefix(input.Rows[0].Question.Options[0], "Yes") {
+		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123, OutputTokens: 2}, r.err
+	}
 	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
@@ -88,6 +92,8 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-tev1", config, []manifest.Layer{params})
 	config.Renderer = "strands"
 	createSafetensorsTestModel(t, "safetensors-strands", config, []manifest.Layer{params})
+	config.Renderer = "helm"
+	createSafetensorsTestModel(t, "safetensors-helm", config, []manifest.Layer{params})
 	config.Renderer = "clef"
 	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision", "vision"}
@@ -103,6 +109,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
+		{"gguf-helm", "qwen35", "helm", "", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
 		{"go-template", "qwen35", "", "Model-specific scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
 		{"no-system", "qwen35", "qwen3.5", "", "", 1024, false},
@@ -204,6 +211,10 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Tev1 GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Tev1 too many candidates", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
 		{"Tev1 empty description", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
+		{"Helm safetensors", `{"model":"safetensors-helm","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Helm GGUF", `{"model":"gguf-helm","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Helm too many candidates", `{"model":"gguf-helm","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 10) + `]}}}`, nil, 400, 0, false},
+		{"Helm image", `{"model":"gguf-helm","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["aW1hZ2U="]}`, nil, 400, 0, false},
 		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
@@ -303,6 +314,9 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if ref.model.Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
 					t.Fatalf("Tev1 did not receive its per-question prompt: %q", prompt)
+				}
+				if ref.model.Config.Renderer == "helm" && !strings.Contains(prompt, "Answer the multiple-choice question using the supplied context."+" Choose exactly one of the provided options. Reply with only its code, with no leading whitespace, explanation, or punctuation.\n"+`{"context": "x", "question": "q", "options": [{"code": "A", "text": "Yes: The answer is yes"}, {"code": "B", "text": "No: The answer is no"}]}`) {
+					t.Fatalf("Helm did not receive its training prompt: %q", prompt)
 				}
 				wantContext := 1024
 				if !ref.model.isGGUF() {

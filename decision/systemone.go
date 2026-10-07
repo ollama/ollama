@@ -31,7 +31,7 @@ type Compiled struct {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands":
+	case "", "tev1", "clef", "strands", "helm":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -74,6 +74,12 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	}
 	if encoding == "clef" {
 		if err := encodeClef(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "helm" {
+		if err := encodeHelm(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil

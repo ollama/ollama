@@ -94,8 +94,8 @@ func (r *Runner) score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRe
 		if len(tokens) == 0 || len(tokens) > input.MaxTokens {
 			return badRequest("prompt %d has %d tokens; expected 1–%d (input is never truncated)", i, len(tokens), input.MaxTokens)
 		}
-		if len(row.Candidates) < 1 || len(row.Candidates) > 26 {
-			return badRequest("prompt %d requires 1–26 candidates", i)
+		if len(row.Candidates) < 1 || len(row.Candidates) > llm.MaxScoreCandidates {
+			return badRequest("prompt %d requires 1–%d candidates", i, llm.MaxScoreCandidates)
 		}
 		rows[i].tokens = tokens
 		result.InputTokens += len(tokens)
