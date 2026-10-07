@@ -10,8 +10,11 @@ import {
   onboardingConnectUrl,
   type OnboardingAuthMode,
 } from "@/lib/onboarding";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+const SIGN_IN_ERROR_MESSAGE =
+  "Couldn’t sign in. Try again or use Ollama locally.";
 
 export const Route = createFileRoute("/onboarding")({
   beforeLoad: async ({ context }) => {
@@ -42,62 +45,38 @@ export const Route = createFileRoute("/onboarding")({
 });
 
 function OnboardingRoute() {
-  const navigate = useNavigate();
   const { settingsData, setSettings } = useSettings({ refetchInterval: 2000 });
   const { fetchConnectUrl, refetchUser, isAuthenticated } = useUser();
   const [isAwaitingAuth, setIsAwaitingAuth] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
-  const [completionError, setCompletionError] = useState<string | null>(null);
   const authAttemptRef = useRef(0);
-  const completedHereRef = useRef(false);
+  const isPreview =
+    import.meta.env.DEV &&
+    new URLSearchParams(window.location.search).get("preview") === "1";
 
-  // The CLI can complete welcome while this window is open. Leave onboarding
-  // when its shared state changes, while preserving this window's own finish flow.
-  useEffect(() => {
-    const isPreview =
-      import.meta.env.DEV &&
-      new URLSearchParams(window.location.search).get("preview") === "1";
-    if (
-      !isPreview &&
-      !completedHereRef.current &&
-      (settingsData?.OnboardingVersion ?? 0) >= CURRENT_ONBOARDING_VERSION
-    ) {
-      void navigate({ to: "/" });
-    }
-  }, [navigate, settingsData?.OnboardingVersion]);
+  const completeOnboarding = useCallback(async () => {
+    // Remember completion in the background, with one retry for transient errors.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (!settingsData) {
+          throw new Error("Settings are not loaded");
+        }
 
-  const completeOnboarding = useCallback(async (): Promise<boolean> => {
-    setCompletionError(null);
-
-    try {
-      if (!settingsData) {
-        throw new Error("Settings are not loaded");
+        await setSettings({
+          OnboardingVersion: CURRENT_ONBOARDING_VERSION,
+        });
+        return;
+      } catch (error) {
+        if (attempt === 1) {
+          console.error("Failed to save onboarding state:", error);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-
-      completedHereRef.current = true;
-      await setSettings({
-        OnboardingVersion: CURRENT_ONBOARDING_VERSION,
-      });
-      return true;
-    } catch (error) {
-      completedHereRef.current = false;
-      console.error("Failed to save onboarding state:", error);
-      setCompletionError("Unable to save setup. Please try again.");
-      return false;
     }
   }, [setSettings, settingsData]);
 
   const finishSetup = useCallback(() => {
-    void completeOnboarding();
-  }, [completeOnboarding]);
-
-  const openApps = useCallback(async (): Promise<boolean> => {
-    if (!(await completeOnboarding())) return false;
-    await navigate({ to: "/connect" });
-    return true;
-  }, [completeOnboarding, navigate]);
-
-  const retryCompletion = useCallback(() => {
     void completeOnboarding();
   }, [completeOnboarding]);
 
@@ -124,7 +103,7 @@ function OnboardingRoute() {
         if (authAttempt !== authAttemptRef.current) return;
         console.error("Failed to start sign in:", error);
         setIsAwaitingAuth(false);
-        setSignInError("Unable to start sign in. Please try again.");
+        setSignInError(SIGN_IN_ERROR_MESSAGE);
       }
     },
     [fetchConnectUrl, isAuthenticated],
@@ -152,9 +131,7 @@ function OnboardingRoute() {
       if (settled || authAttempt !== authAttemptRef.current) return;
       settled = true;
       setIsAwaitingAuth(false);
-      setSignInError(
-        "Connection is taking longer than expected. Please try again.",
-      );
+      setSignInError(SIGN_IN_ERROR_MESSAGE);
     };
 
     const checkConnection = async () => {
@@ -203,14 +180,16 @@ function OnboardingRoute() {
 
   return (
     <Onboarding
-      completionError={completionError}
+      isComplete={
+        !isPreview &&
+        (settingsData?.OnboardingVersion ?? 0) >= CURRENT_ONBOARDING_VERSION
+      }
       isAuthenticated={isAuthenticated}
       isSigningIn={isAwaitingAuth}
       signInError={signInError}
-      onOpenApps={openApps}
+      onComplete={finishSetup}
       onSignIn={signIn}
       onSignUp={signUp}
-      onRetryCompletion={retryCompletion}
       onUseLocal={useLocal}
     />
   );

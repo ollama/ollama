@@ -1,12 +1,12 @@
 import { StrictMode, type ComponentType } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "@/api";
 import { Settings } from "@/gotypes";
 import { CURRENT_ONBOARDING_VERSION } from "@/lib/onboarding";
 import { Route } from "@/routes/onboarding";
-import { WelcomeScreen } from "./Onboarding";
+import { RunOllamaScreen, WelcomeScreen } from "./Onboarding";
 
 const mocks = vi.hoisted(() => ({ navigate: vi.fn(), authenticated: true }));
 vi.mock("@tanstack/react-router", async (importOriginal) =>
@@ -26,7 +26,12 @@ vi.mock("@/hooks/useUser", () => ({
   }),
 }));
 
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   mocks.navigate.mockReset();
@@ -34,8 +39,8 @@ afterEach(() => {
 });
 
 // Use the real settings mutation: query notifications replace callbacks and
-// must not automatically retry a failed handoff after authentication.
-async function renderOnboarding(authenticated: boolean) {
+// must not start another completion or an unbounded retry after authentication.
+async function renderOnboarding(authenticated: boolean, onboardingVersion = 0) {
   mocks.authenticated = authenticated;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("navigator", { platform: "MacIntel" });
@@ -44,7 +49,9 @@ async function renderOnboarding(authenticated: boolean) {
     location: { search: "" },
     setOnboardingWindow: vi.fn(),
   });
-  let settingsResponse = { settings: new Settings({ OnboardingVersion: 0 }) };
+  let settingsResponse = {
+    settings: new Settings({ OnboardingVersion: onboardingVersion }),
+  };
   vi.spyOn(api, "getSettings").mockImplementation(async () => settingsResponse);
   const client = new QueryClient({
     defaultOptions: {
@@ -65,20 +72,16 @@ async function renderOnboarding(authenticated: boolean) {
   await act(async () => {
     renderer = create(element());
   });
-  const primaryAction = () =>
-    renderer.root.find(
-      (node) => node.type === "button" && "aria-busy" in node.props,
-    );
   return {
-    get primaryAction() {
-      return primaryAction();
-    },
     get root() {
       return renderer.root;
     },
     async continue() {
       await act(async () => {
-        const button = primaryAction();
+        const button = renderer.root.find(
+          (node) =>
+            node.type === "button" && node.props.children === "Continue",
+        );
         button.props.onClick();
         button.props.onClick();
       });
@@ -89,6 +92,13 @@ async function renderOnboarding(authenticated: boolean) {
         renderer.update(element());
       });
     },
+    async useLocal() {
+      await act(async () => {
+        const onLocal = renderer.root.findByType(WelcomeScreen).props.onLocal;
+        onLocal();
+        onLocal();
+      });
+    },
     async receiveCompletion() {
       settingsResponse = {
         settings: new Settings({
@@ -97,7 +107,7 @@ async function renderOnboarding(authenticated: boolean) {
       };
       await act(async () => {
         client.setQueryData(["settings"], { ...settingsResponse });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await vi.advanceTimersByTimeAsync(0);
       });
     },
     async unmount() {
@@ -107,20 +117,49 @@ async function renderOnboarding(authenticated: boolean) {
   };
 }
 
-async function flushQueryNotifications() {
+async function advanceTime(milliseconds = 0) {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(milliseconds);
   });
 }
 
+const completionPaths = ["already signed in", "sign in", "local use"] as const;
+
+async function finishOnboarding(path: (typeof completionPaths)[number]) {
+  const onboarding = await renderOnboarding(path === "already signed in");
+  await onboarding.continue();
+  if (path === "sign in") await onboarding.authenticate();
+  if (path === "local use") await onboarding.useLocal();
+  return onboarding;
+}
+
 describe("Onboarding completion", () => {
-  it("leaves onboarding when CLI completion arrives", async () => {
+  it.each([true, false])(
+    "renders completed setup on Run Ollama without saving again (signed in: %s)",
+    async (authenticated) => {
+      const save = vi.spyOn(api, "updateSettings");
+      const onboarding = await renderOnboarding(
+        authenticated,
+        CURRENT_ONBOARDING_VERSION,
+      );
+      try {
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        expect(save).not.toHaveBeenCalled();
+        expect(mocks.navigate).not.toHaveBeenCalled();
+      } finally {
+        await onboarding.unmount();
+      }
+    },
+  );
+
+  it("shows Run Ollama without saving again when CLI completion arrives", async () => {
     const save = vi.spyOn(api, "updateSettings");
     const onboarding = await renderOnboarding(true);
     try {
       expect(mocks.navigate).not.toHaveBeenCalled();
       await onboarding.receiveCompletion();
-      expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/" });
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
       expect(save).not.toHaveBeenCalled();
     } finally {
       await onboarding.unmount();
@@ -145,14 +184,15 @@ describe("Onboarding completion", () => {
       );
       await onboarding.receiveCompletion();
       expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
     } finally {
       await onboarding.unmount();
     }
   });
 
-  it.each([true, false])(
-    "saves once before opening Apps directly (already signed in: %s)",
-    async (authenticated) => {
+  it.each(completionPaths)(
+    "shows Run Ollama while saving in the background (%s)",
+    async (path) => {
       let resolveSave!: (value: { settings: Settings }) => void;
       const save = vi.spyOn(api, "updateSettings").mockImplementation(
         () =>
@@ -160,17 +200,9 @@ describe("Onboarding completion", () => {
             resolveSave = resolve;
           }),
       );
-      const onboarding = await renderOnboarding(authenticated);
+      const onboarding = await finishOnboarding(path);
       try {
-        expect(save).not.toHaveBeenCalled();
-        expect(mocks.navigate).not.toHaveBeenCalled();
-        await onboarding.continue();
-        if (!authenticated) {
-          expect(save).not.toHaveBeenCalled();
-          expect(onboarding.root.findByType(WelcomeScreen)).toBeTruthy();
-          await onboarding.authenticate();
-        }
-        await flushQueryNotifications();
+        await advanceTime();
         expect(save).toHaveBeenCalledOnce();
         expect(save).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -178,50 +210,78 @@ describe("Onboarding completion", () => {
           }),
         );
         expect(mocks.navigate).not.toHaveBeenCalled();
-        expect(onboarding.primaryAction.props.disabled).toBe(true);
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
         await act(async () => {
           resolveSave({ settings: save.mock.calls[0][0] });
         });
-        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
-          to: "/connect",
-        });
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        await onboarding.receiveCompletion();
+        expect(save).toHaveBeenCalledOnce();
+        expect(mocks.navigate).not.toHaveBeenCalled();
       } finally {
         await onboarding.unmount();
       }
     },
   );
 
-  it.each([true, false])(
-    "keeps the current screen and waits for an explicit save retry (already signed in: %s)",
-    async (authenticated) => {
+  it.each(completionPaths)(
+    "quietly retries a failed save once while keeping Run Ollama visible (%s)",
+    async (path) => {
       const save = vi
         .spyOn(api, "updateSettings")
-        .mockRejectedValueOnce(new Error("disk full"))
+        .mockRejectedValueOnce(new Error("connection interrupted"))
         .mockImplementation(async (settings) => ({ settings }));
       vi.spyOn(console, "error").mockImplementation(() => {});
-      const onboarding = await renderOnboarding(authenticated);
+      const onboarding = await finishOnboarding(path);
       try {
-        await onboarding.continue();
-        if (!authenticated) await onboarding.authenticate();
-        await flushQueryNotifications();
-        await flushQueryNotifications();
+        await advanceTime(999);
         expect(save).toHaveBeenCalledOnce();
         expect(mocks.navigate).not.toHaveBeenCalled();
-        expect(onboarding.primaryAction.props.disabled).toBe(false);
-        expect(onboarding.root.findByProps({ role: "alert" })).toBeTruthy();
-        await act(async () => {
-          onboarding.root
-            .find(
-              (node) =>
-                node.type === "button" && node.props.children === "Try again",
-            )
-            .props.onClick();
-        });
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        expect(onboarding.root.findAllByProps({ role: "alert" })).toHaveLength(
+          0,
+        );
+        await advanceTime(1);
         expect(save).toHaveBeenCalledTimes(2);
         expect(save.mock.calls[1][0]).toEqual(save.mock.calls[0][0]);
-        expect(mocks.navigate).toHaveBeenCalledExactlyOnceWith({
-          to: "/connect",
-        });
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        await onboarding.receiveCompletion();
+        await advanceTime(5000);
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(mocks.navigate).not.toHaveBeenCalled();
+      } finally {
+        await onboarding.unmount();
+      }
+    },
+  );
+
+  it.each(completionPaths)(
+    "logs a persistent save failure without blocking or repeatedly retrying (%s)",
+    async (path) => {
+      const error = new Error("disk full");
+      const save = vi.spyOn(api, "updateSettings").mockRejectedValue(error);
+      const log = vi.spyOn(console, "error").mockImplementation(() => {});
+      const onboarding = await finishOnboarding(path);
+      try {
+        await advanceTime(1000);
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(log).toHaveBeenCalledWith(
+          "Failed to save onboarding state:",
+          error,
+        );
+        await advanceTime(5000);
+        expect(save).toHaveBeenCalledTimes(2);
+        expect(onboarding.root.findByType(RunOllamaScreen)).toBeTruthy();
+        expect(onboarding.root.findAllByProps({ role: "alert" })).toHaveLength(
+          0,
+        );
+        expect(
+          onboarding.root.findAll(
+            (node) =>
+              node.type === "button" && node.props.children === "Try again",
+          ),
+        ).toHaveLength(0);
+        expect(mocks.navigate).not.toHaveBeenCalled();
       } finally {
         await onboarding.unmount();
       }

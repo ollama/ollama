@@ -179,13 +179,13 @@ func (m welcomeModel) View() string {
 func (m welcomeModel) introView() string {
 	var s strings.Builder
 	s.WriteString(selectorTitleStyle.Render("Welcome to Ollama!"))
-	s.WriteString("\n\nRun open models with your coding agents so you can spend less\nwhile keeping your data private.\n\n")
-	s.WriteString(selectorTitleStyle.Render("Connect your apps"))
-	s.WriteString("\nPower your existing coding apps with open models\n\n")
+	s.WriteString("\n\nRun open models on your computer or in the cloud.\n\n")
+	s.WriteString(selectorTitleStyle.Render("Build with the Ollama API"))
+	s.WriteString("\nAdd open models to your own applications.\n\n")
 	s.WriteString(selectorTitleStyle.Render("Easily switch models"))
-	s.WriteString("\nSwap between frontier models in one click.\n\n")
+	s.WriteString("\nChoose the right model for each task.\n\n")
 	s.WriteString(selectorTitleStyle.Render("Your data stays yours"))
-	s.WriteString("\nYour prompt data is never logged or trained on.\n\n")
+	s.WriteString("\nYour data is never trained on.\n\n")
 	if m.checking {
 		s.WriteString(selectorDescStyle.Render("Checking your account…"))
 	} else {

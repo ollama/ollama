@@ -79,18 +79,16 @@ describe("Onboarding", () => {
     );
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).not.toMatch(/alt="Ollama waving" class="[^"]*dark:/);
-    expect(html).toContain(
-      "Run open models with your coding agents so you can spend less while keeping your data private.",
-    );
-    expect(html.indexOf("Connect your apps")).toBeLessThan(
+    expect(html).toContain("Run open models on your computer or in the cloud.");
+    expect(html.indexOf("Build with the Ollama API")).toBeLessThan(
       html.indexOf("Easily switch models"),
     );
     expect(html.indexOf("Easily switch models")).toBeLessThan(
       html.indexOf("Your data stays yours"),
     );
-    expect(html).toContain("Power your existing coding apps with open models");
-    expect(html).toContain("Swap between frontier models in one click.");
-    expect(html).toContain("Your prompt data is never logged or trained on.");
+    expect(html).toContain("Add open models to your own applications.");
+    expect(html).toContain("Choose the right model for each task.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).toContain("Continue");
     expect(html).not.toContain("Skip");
   });
@@ -435,11 +433,9 @@ describe("Onboarding", () => {
         isAuthenticated
         isSigningIn={false}
         signInError={null}
-        completionError={null}
-        onOpenApps={vi.fn().mockResolvedValue(true)}
+        onComplete={vi.fn()}
         onSignIn={vi.fn()}
         onSignUp={vi.fn()}
-        onRetryCompletion={vi.fn()}
         onUseLocal={vi.fn()}
       />,
     );
@@ -459,8 +455,6 @@ describe("Onboarding", () => {
   it("shows initial Claude recovery guidance without error styling", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
           supported: true,
           used: true,
@@ -496,8 +490,6 @@ describe("Onboarding", () => {
   it("keeps Claude model management off the Connect Apps page", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialClaudeStatus={{
           supported: true,
           used: true,
@@ -545,8 +537,6 @@ describe("Onboarding", () => {
   it("uses branded icons for the remaining launcher integrations", () => {
     const html = renderToStaticMarkup(
       <ConnectAppsScreen
-        completionError={null}
-        onRetryCompletion={vi.fn()}
         initialIntegrations={[
           {
             id: "cline",
@@ -601,11 +591,11 @@ describe("Onboarding", () => {
     expect(html).toContain("Create an account");
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
     expect(html).toContain(
-      "Create your account for access to faster, larger open models.",
+      "Run larger models in the cloud without downloading them.",
     );
-    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).toContain("Sign up");
-    expect(html).toContain("No thanks, I&#x27;ll use Ollama locally");
+    expect(html).toContain("Use Ollama locally");
     expect(html).toContain("Sign in");
     expect(html).not.toContain("Skip");
   });
@@ -624,16 +614,14 @@ describe("Onboarding", () => {
 
     expect(html).toContain("Create an account");
     expect(html).toContain(
-      "Create your account for access to faster, larger open models.",
+      "Run larger models in the cloud without downloading them.",
     );
-    expect(html).toContain("Your data is never logged or trained on.");
+    expect(html).toContain("Your data is never trained on.");
     expect(html).not.toContain(">Sign in<");
   });
 
   it("shows only the local command on the final page", () => {
-    const html = renderToStaticMarkup(
-      <RunOllamaScreen completionError={null} onRetryCompletion={vi.fn()} />,
-    );
+    const html = renderToStaticMarkup(<RunOllamaScreen />);
 
     expect(html).toContain("Run Ollama");
     expect(html).toMatch(/<main class="light-only [^"]*bg-white/);
@@ -657,20 +645,6 @@ describe("Onboarding", () => {
 
     expect(html).toContain("Finish in your browser…");
     expect(html).not.toContain("Waiting for sign in…");
-  });
-
-  it("shows a retryable error when onboarding completion cannot be saved", () => {
-    const onRetryCompletion = vi.fn();
-    const html = renderToStaticMarkup(
-      <RunOllamaScreen
-        completionError="Unable to save setup. Please try again."
-        onRetryCompletion={onRetryCompletion}
-      />,
-    );
-
-    expect(html).toContain("Unable to save setup. Please try again.");
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Try again");
   });
 });
 
@@ -703,16 +677,14 @@ function appsIntegrations(claudeInstalled: boolean): IntegrationStatuses {
   ];
 }
 
-function onboardingProps(onOpenApps: () => Promise<boolean>) {
+function onboardingProps(onComplete: () => void) {
   return {
     isAuthenticated: true,
     isSigningIn: false,
     signInError: null,
-    completionError: null,
-    onOpenApps,
+    onComplete,
     onSignIn: vi.fn(),
     onSignUp: vi.fn(),
-    onRetryCompletion: vi.fn(),
     onUseLocal: vi.fn(),
   };
 }
@@ -743,8 +715,8 @@ function stubOnboardingWindow(platform = "darwin") {
   });
 }
 
-describe("Onboarding handoff", () => {
-  it("preserves local setup without opening Apps", async () => {
+describe("Onboarding completion", () => {
+  it("finishes local setup on Run Ollama", async () => {
     stubOnboardingWindow();
     const props = { ...onboardingProps(vi.fn()), isAuthenticated: false };
     let renderer: ReactTestRenderer | undefined;
@@ -755,13 +727,13 @@ describe("Onboarding handoff", () => {
       await act(async () => {
         renderer!.root.findByType(IntroScreen).props.onContinue();
       });
-      expect(props.onOpenApps).not.toHaveBeenCalled();
+      expect(props.onComplete).not.toHaveBeenCalled();
       await act(async () => {
         renderer!.root.findByType(WelcomeScreen).props.onLocal();
       });
       expect(renderer!.root.findByType(RunOllamaScreen)).toBeTruthy();
       expect(props.onUseLocal).toHaveBeenCalledOnce();
-      expect(props.onOpenApps).not.toHaveBeenCalled();
+      expect(props.onComplete).not.toHaveBeenCalled();
     } finally {
       if (renderer) act(() => renderer?.unmount());
       vi.unstubAllGlobals();
