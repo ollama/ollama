@@ -138,7 +138,9 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 
 func cloudModelPathPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		modelName := strings.TrimSpace(c.Param("model"))
+		// The retrieve route is a wildcard ("/v1/models/*model") so IDs may
+		// contain slashes; gin includes the leading separator in the param.
+		modelName := strings.TrimSpace(strings.TrimPrefix(c.Param("model"), "/"))
 		if modelName == "" {
 			c.Next()
 			return
