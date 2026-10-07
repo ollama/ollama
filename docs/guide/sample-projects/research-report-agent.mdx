@@ -17,7 +17,7 @@ Given a question such as:
 The agent:
 
 1. Turns the question into several focused searches.
-2. Searches the web and choose promising results.
+2. Searches the web and chooses promising results.
 3. Fetches source pages for more context.
 4. Compares claims across sources.
 5. Writes a report with links, caveats, and suggested follow-up questions.
@@ -392,7 +392,6 @@ Try these changes after the basic project works:
 - Change `SYSTEM_PROMPT` to require a particular audience, length, or report format.
 - Ask the agent to prefer sources from specific domains or a date range.
 - Increase `MAX_TOOL_ROUNDS` for broader research, or decrease it for faster, more focused runs.
-- Save the final string to a Markdown file for sharing.
 - Add a human approval step before the agent fetches unfamiliar domains.
 
 See [Tool calling](/capabilities/tool-calling) for more agent-loop patterns and [Web search](/capabilities/web-search) for the complete search and fetch interfaces.
