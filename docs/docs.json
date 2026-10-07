@@ -145,14 +145,6 @@
       "destination": "/capabilities/web-search"
     },
     {
-      "source": "/sample-projects/research-brief-agent",
-      "destination": "/guide/sample-projects/research-report-agent"
-    },
-    {
-      "source": "/guide/sample-projects/research-brief-agent",
-      "destination": "/guide/sample-projects/research-report-agent"
-    },
-    {
       "source": "/local/cli",
       "destination": "/cli"
     },
@@ -225,11 +217,41 @@
               "/capabilities/tool-calling",
               "/capabilities/web-search"
             ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "/openapi.yaml",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "/api/introduction",
+              "/api/authentication",
+              "/api/streaming",
+              "/api/usage",
+              "/api/errors",
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
+            ]
           },
           {
-            "group": "Sample projects",
+            "group": "Endpoints",
             "pages": [
-              "/guide/sample-projects/research-report-agent"
+              "POST /api/generate",
+              "POST /api/chat",
+              "POST /api/embed",
+              "POST /v1/systemone",
+              "GET /api/tags",
+              "GET /api/ps",
+              "POST /api/show",
+              "POST /api/create",
+              "POST /api/copy",
+              "POST /api/pull",
+              "POST /api/push",
+              "DELETE /api/delete",
+              "GET /api/version"
             ]
           }
         ]
@@ -362,42 +384,6 @@
             "group": "Assistant Sandboxing",
             "pages": [
               "/integrations/nemoclaw"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API Reference",
-        "openapi": "/openapi.yaml",
-        "groups": [
-          {
-            "group": "API Reference",
-            "pages": [
-              "/api/introduction",
-              "/api/authentication",
-              "/api/streaming",
-              "/api/usage",
-              "/api/errors",
-              "/api/openai-compatibility",
-              "/api/anthropic-compatibility"
-            ]
-          },
-          {
-            "group": "Endpoints",
-            "pages": [
-              "POST /api/generate",
-              "POST /api/chat",
-              "POST /api/embed",
-              "POST /v1/systemone",
-              "GET /api/tags",
-              "GET /api/ps",
-              "POST /api/show",
-              "POST /api/create",
-              "POST /api/copy",
-              "POST /api/pull",
-              "POST /api/push",
-              "DELETE /api/delete",
-              "GET /api/version"
             ]
           }
         ]
