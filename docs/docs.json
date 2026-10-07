@@ -70,7 +70,7 @@
     },
     {
       "source": "/gpu.mdx",
-      "destination": "/local/gpu"
+      "destination": "/gpu"
     },
     {
       "source": "/integrations/vscode.mdx",
@@ -78,7 +78,7 @@
     },
     {
       "source": "/troubleshooting.mdx",
-      "destination": "/local/troubleshooting"
+      "destination": "/troubleshooting"
     },
     {
       "source": "/openai",
@@ -109,40 +109,40 @@
       "destination": "/integrations/pool"
     },
     {
-      "source": "/quickstart",
-      "destination": "/guide/quickstart"
+      "source": "/guide/quickstart",
+      "destination": "/quickstart"
     },
     {
-      "source": "/capabilities/streaming",
-      "destination": "/guide/capabilities/streaming"
+      "source": "/guide/capabilities/streaming",
+      "destination": "/capabilities/streaming"
     },
     {
-      "source": "/capabilities/thinking",
-      "destination": "/guide/capabilities/thinking"
+      "source": "/guide/capabilities/thinking",
+      "destination": "/capabilities/thinking"
     },
     {
-      "source": "/capabilities/structured-outputs",
-      "destination": "/guide/capabilities/structured-outputs"
+      "source": "/guide/capabilities/structured-outputs",
+      "destination": "/capabilities/structured-outputs"
     },
     {
-      "source": "/capabilities/decision",
-      "destination": "/guide/capabilities/decision"
+      "source": "/guide/capabilities/decision",
+      "destination": "/capabilities/decision"
     },
     {
-      "source": "/capabilities/vision",
-      "destination": "/guide/capabilities/vision"
+      "source": "/guide/capabilities/vision",
+      "destination": "/capabilities/vision"
     },
     {
-      "source": "/capabilities/embeddings",
-      "destination": "/guide/capabilities/embeddings"
+      "source": "/guide/capabilities/embeddings",
+      "destination": "/capabilities/embeddings"
     },
     {
-      "source": "/capabilities/tool-calling",
-      "destination": "/guide/capabilities/tool-calling"
+      "source": "/guide/capabilities/tool-calling",
+      "destination": "/capabilities/tool-calling"
     },
     {
-      "source": "/capabilities/web-search",
-      "destination": "/guide/capabilities/web-search"
+      "source": "/guide/capabilities/web-search",
+      "destination": "/capabilities/web-search"
     },
     {
       "source": "/sample-projects/research-brief-agent",
@@ -153,52 +153,52 @@
       "destination": "/guide/sample-projects/research-report-agent"
     },
     {
-      "source": "/cli",
-      "destination": "/local/cli"
+      "source": "/local/cli",
+      "destination": "/cli"
     },
     {
-      "source": "/context-length",
-      "destination": "/local/context-length"
+      "source": "/local/context-length",
+      "destination": "/context-length"
     },
     {
-      "source": "/macos",
-      "destination": "/local/macos"
+      "source": "/local/macos",
+      "destination": "/macos"
     },
     {
-      "source": "/linux",
-      "destination": "/local/linux"
+      "source": "/local/linux",
+      "destination": "/linux"
     },
     {
-      "source": "/windows",
-      "destination": "/local/windows"
+      "source": "/local/windows",
+      "destination": "/windows"
     },
     {
-      "source": "/docker",
-      "destination": "/local/docker"
+      "source": "/local/docker",
+      "destination": "/docker"
     },
     {
-      "source": "/import",
-      "destination": "/local/import"
+      "source": "/local/import",
+      "destination": "/import"
     },
     {
-      "source": "/modelfile",
-      "destination": "/local/modelfile"
+      "source": "/local/modelfile",
+      "destination": "/modelfile"
     },
     {
-      "source": "/gpu",
-      "destination": "/local/gpu"
+      "source": "/local/gpu",
+      "destination": "/gpu"
     },
     {
-      "source": "/troubleshooting",
-      "destination": "/local/troubleshooting"
+      "source": "/local/troubleshooting",
+      "destination": "/troubleshooting"
     },
     {
-      "source": "/faq",
-      "destination": "/local/faq"
+      "source": "/local/faq",
+      "destination": "/faq"
     },
     {
-      "source": "/template",
-      "destination": "/local/template"
+      "source": "/local/template",
+      "destination": "/template"
     }
   ],
   "navigation": {
@@ -210,20 +210,20 @@
             "group": "Get started",
             "pages": [
               "index",
-              "/guide/quickstart"
+              "quickstart"
             ]
           },
           {
             "group": "Capabilities",
             "pages": [
-              "/guide/capabilities/streaming",
-              "/guide/capabilities/thinking",
-              "/guide/capabilities/structured-outputs",
-              "/guide/capabilities/decision",
-              "/guide/capabilities/vision",
-              "/guide/capabilities/embeddings",
-              "/guide/capabilities/tool-calling",
-              "/guide/capabilities/web-search"
+              "/capabilities/streaming",
+              "/capabilities/thinking",
+              "/capabilities/structured-outputs",
+              "/capabilities/decision",
+              "/capabilities/vision",
+              "/capabilities/embeddings",
+              "/capabilities/tool-calling",
+              "/capabilities/web-search"
             ]
           },
           {
@@ -241,32 +241,32 @@
             "group": "Get started",
             "pages": [
               "/local/index",
-              "/local/macos",
-              "/local/linux",
-              "/local/windows",
-              "/local/docker"
+              "/macos",
+              "/linux",
+              "/windows",
+              "/docker"
             ]
           },
           {
             "group": "Run and configure",
             "pages": [
-              "/local/cli",
-              "/local/context-length"
+              "/cli",
+              "/context-length"
             ]
           },
           {
             "group": "Customize models",
             "pages": [
-              "/local/import",
-              "/local/modelfile"
+              "/import",
+              "/modelfile"
             ]
           },
           {
             "group": "Hardware and support",
             "pages": [
-              "/local/gpu",
-              "/local/troubleshooting",
-              "/local/faq"
+              "/gpu",
+              "/troubleshooting",
+              "/faq"
             ]
           }
         ]
@@ -277,7 +277,7 @@
           {
             "group": "Get started",
             "pages": [
-              "/cloud/index",
+              "/cloud",
               "/cloud/models",
               "/cloud/api"
             ]

@@ -4,7 +4,7 @@ sidebarTitle: FAQ
 description: Frequently asked questions about Ollama Cloud accounts, authentication, privacy, and requests.
 ---
 
-For questions about installation, hardware, and the local Ollama server, see the [Local FAQ](/local/faq).
+For questions about installation, hardware, and the local Ollama server, see the [Local FAQ](/faq).
 
 ## Does Ollama send my prompts and answers back to ollama.com?
 
@@ -12,7 +12,7 @@ Ollama runs locally. We don't see your prompts or data when you run local models
 
 When you use Cloud models, Ollama processes your prompts and responses to provide the service but does not store or log that content and never trains on it. Ollama collects basic account information and limited usage metadata that does not include prompt or response content. Ollama does not sell your data, and you can delete your account at any time.
 
-To prevent a local Ollama installation from using Cloud models and web search, enable [local-only mode](/local/faq#how-do-i-disable-ollama-cloud-features).
+To prevent a local Ollama installation from using Cloud models and web search, enable [local-only mode](/faq#how-do-i-disable-ollama-cloud-features).
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
@@ -24,7 +24,7 @@ Set `OLLAMA_MAX_QUEUE` before starting the local server to change the maximum nu
 OLLAMA_MAX_QUEUE=1024 ollama serve
 ```
 
-See [How do I configure Ollama server?](/local/faq#how-do-i-configure-ollama-server) for operating-system-specific instructions for setting environment variables.
+See [How do I configure Ollama server?](/faq#how-do-i-configure-ollama-server) for operating-system-specific instructions for setting environment variables.
 
 ## What is the difference between an API key and my Ollama Public Key?
 
