@@ -4,9 +4,9 @@ sidebarTitle: Research report agent
 description: Build an Ollama Cloud agent that searches the web, reads primary sources, and produces a cited research report.
 ---
 
-Build an agent that researches a question and turns its findings into a cited decision report. This is useful for market research, policy summaries, product comparisons, event planning, and other tasks where current sources matter.
+Use agents for market research, policy summaries, product comparisons, event planning, and other tasks that depend on current web sources.
 
-The project uses an Ollama Cloud model for reasoning and the Ollama web search and web fetch APIs for research. Inference runs in Ollama Cloud, so you do not need to download the 120B model weights or provide a local GPU. Your local Ollama installation sends requests to the Cloud model.
+This project uses an Ollama Cloud model for reasoning and Ollama's web search and web fetch APIs for research. Inference runs in Ollama Cloud, so you do not need to download the 120B model weights or use a local GPU. Your local Ollama installation sends requests to the Cloud model.
 
 ## What you will build
 
@@ -14,13 +14,13 @@ Given a question such as:
 
 > What have four-day workweek pilots since 2022 reported about employee wellbeing and business performance?
 
-the agent will:
+The agent:
 
-1. Turn the question into several focused searches.
-2. Search the web and choose promising results.
-3. Fetch source pages for more context.
-4. Compare claims across sources.
-5. Write a report with links, caveats, and suggested follow-up questions.
+1. Turns the question into several focused searches.
+2. Searches the web and choose promising results.
+3. Fetches source pages for more context.
+4. Compares claims across sources.
+5. Writes a report with links, caveats, and suggested follow-up questions.
 
 The tutorial uses `gpt-oss:120b-cloud` throughout.
 
@@ -28,12 +28,12 @@ The tutorial uses `gpt-oss:120b-cloud` throughout.
 
 You need:
 
-- [Ollama installed](https://ollama.com/download)
 - Python 3.10 or later
+- [Ollama installed](https://ollama.com/download)
 - An [Ollama account](https://ollama.com)
 - An [Ollama API key](https://ollama.com/settings/keys)
 
-Signing in to Ollama gives your local installation access to the Cloud model. The API key gives the script access to the [web search tools](/capabilities/web-search). Treat the API key like a password and do not add it to source control.
+Signing in gives your local Ollama installation access to the Cloud model. The API key gives the script access to the [web search tools](/capabilities/web-search). Treat the key like a password and never add it to source control.
 
 ## 1. Set up the project
 
@@ -88,7 +88,7 @@ $env:OLLAMA_API_KEY="your_api_key"
 </Tabs>
 
 <Note>
-  Environment variables set this way last only for the current terminal session. Use your operating system's secret manager for a persistent setup.
+  These environment variables last only for the current terminal session. For a persistent setup, use your operating system's secret manager.
 </Note>
 
 ## 2. Pull and test the Cloud model
@@ -105,9 +105,9 @@ Pull `gpt-oss:120b-cloud`:
 ollama pull gpt-oss:120b-cloud
 ```
 
-This downloads the Cloud model configuration, not the 120B model weights. The model runs on Ollama's infrastructure when you use it.
+This downloads the Cloud model configuration, not the 120B model weights. Ollama runs the model in the cloud when you use it.
 
-Send a test prompt to confirm that the model is ready:
+Send a test prompt to confirm the model is ready:
 
 ```shell
 ollama run gpt-oss:120b-cloud "Reply with exactly: Cloud model ready"
@@ -119,7 +119,7 @@ You should receive:
 Cloud model ready
 ```
 
-The research agent will use this same model through the Ollama Python library.
+The research agent uses the same model through the Ollama Python library.
 
 ## 3. Create the agent
 
@@ -307,11 +307,11 @@ if __name__ == "__main__":
     save_report(report)
 ```
 
-The model receives the functions in `TOOLS`, decides when to call them, and uses their results in later turns. When research ends, the script accepts a non-empty report or runs `create_final_report` without tools.
+The model receives the functions in `TOOLS`, decides when to call them, and uses the results in later turns. When research ends, the script accepts a non-empty report or runs `create_final_report` without tools.
 
-Search results sometimes point to pages that have moved, reject automated access, or no longer exist. The error handlers return those failures to the model as tool results so it can search for another source instead of stopping the program.
+Search results can point to pages that moved, reject automated access, or no longer exist. The error handlers return these failures to the model as tool results, allowing the agent to find another source without stopping the program.
 
-`MAX_TOOL_ROUNDS` prevents an open-ended research loop. `create_final_report` disables thinking output and retries once if the model returns empty content. The script raises an error instead of creating an empty file if both attempts are empty.
+`MAX_TOOL_ROUNDS` limits the research loop. `create_final_report` disables thinking output and retries once if the model returns empty content. If both attempts are empty, the script raises an error instead of creating an empty file.
 
 ## 4. Run the project
 
@@ -327,7 +327,7 @@ Or provide your own question:
 python research_agent.py "What evidence supports later high school start times?"
 ```
 
-During the run, the script prints each tool call. A typical trace looks like this:
+The script prints each tool call as it runs. A typical trace looks like this:
 
 ```text
 Tool: web_search({'query': 'four-day workweek pilot 2022 study results'})
@@ -336,19 +336,19 @@ Tool: web_fetch({'url': 'https://example.org/report'})
 Tool error: web_fetch failed with HTTP 404: not found. Do not cite this result. Try another search result or URL.
 ```
 
-Search queries, sources, and occasional fetch errors will vary between runs. That is expected: the model chooses its next action from the evidence it has already gathered. A failed fetch should be followed by another search or source selection rather than a Python traceback.
+Search queries, sources, and occasional fetch errors vary between runs. The model chooses each next action from the evidence it has gathered. After a failed fetch, it should search again or select another source instead of returning a Python traceback.
 
 ## 5. Review the result
 
-The first run creates an `output` directory next to `research_agent.py`. Later runs reuse the same directory. Each report is saved as a timestamped Markdown file, for example:
+The first run creates an `output` directory next to `research_agent.py`. Later runs reuse it. Each report is saved as a timestamped Markdown file, for example:
 
 ```text
 output/Research report 2026-10-06_15-45-12.md
 ```
 
-The complete Markdown report is printed to the terminal before it is saved. Empty output is treated as an error, so the script will not create a blank report file.
+The script prints the complete Markdown report to the terminal before saving it. It treats empty output as an error and does not create a blank report file.
 
-Expect a Markdown report with this general shape in the `./output/` folder:
+The `./output/` folder contains a Markdown report with this structure:
 
 ```text
 # Research report
@@ -369,7 +369,7 @@ Actions or questions that follow from the evidence.
 A list of the pages used in the report.
 ```
 
-The first run should produce a useful draft, not an unquestionable final answer. Check that links open, quoted numbers match their sources, and the report distinguishes published evidence from the model's interpretation.
+The first run produces a useful draft, not a final authority. Check that links open, quoted numbers match their sources, and the report separates published evidence from the model's interpretation.
 
 <Warning>
   Web results can be incomplete, outdated, or wrong. Review the original sources before using the report for medical, legal, financial, employment, or other high-impact decisions.
