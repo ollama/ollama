@@ -238,7 +238,7 @@ console.log(response.message.content);
 - [any-llm](https://github.com/mozilla-ai/any-llm) - Unified LLM interface by Mozilla
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp) - .NET SDK
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) - Rust LangChain ([example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs))
-- [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) - Java agent framework ([example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama))
+- [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) - Java agent framework ([example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-chat/agents-flex-chat-ollama))
 - [Elixir LangChain](https://github.com/brainlid/langchain) - Elixir LangChain
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs) - Rust SDK
 - [LangChain for .NET](https://github.com/tryAGI/LangChain) - .NET LangChain ([example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs))
@@ -248,7 +248,7 @@ console.log(response.message.content);
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j) - Java SDK
 - [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel) - Laravel integration
 - [Ollama for Swift](https://github.com/mattt/ollama-swift) - Swift SDK
-- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama) - Data framework for LLM apps
+- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://developers.llamaindex.ai/typescript/framework/modules/models/llms/ollama/) - Data framework for LLM apps
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md) - AI pipeline framework
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama) - Google AI framework
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp) - C++ SDK
@@ -260,7 +260,7 @@ console.log(response.message.content);
 
 ### Frameworks & Agents
 
-- [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
+- [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
 - [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
 - [Cheshire Cat](https://github.com/cheshire-cat-ai/core) - AI assistant framework
@@ -284,7 +284,7 @@ console.log(response.message.content);
 ### Bots & Messaging
 
 - [LangBot](https://github.com/RockChinQ/LangBot) - Multi-platform messaging bots with agents and RAG
-- [AstrBot](https://github.com/Soulter/AstrBot/) - Multi-platform chatbot with RAG and plugins
+- [AstrBot](https://github.com/AstrBotDevs/AstrBot/) - Multi-platform chatbot with RAG and plugins
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) - TypeScript Discord bot
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram) - Telegram bot
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) - Telegram bot for roleplay
@@ -332,7 +332,7 @@ console.log(response.message.content);
 ### Database & Embeddings
 
 - [pgai](https://github.com/timescale/pgai) - PostgreSQL as a vector database ([guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md))
-- [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) - Connect Ollama with 200+ data platforms
+- [MindsDB](https://docs.mindsdb.com/integrations/ai-engines/ollama) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
 
@@ -351,6 +351,6 @@ console.log(response.message.content);
 - [Homebrew](https://formulae.brew.sh/formula/ollama)
 - [Nix package](https://search.nixos.org/packages?show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
-- [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
+- [Gentoo](https://github.com/gentoo/gentoo/tree/master/sci-ml/ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
