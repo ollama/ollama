@@ -6,10 +6,14 @@
 #include "gguf.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
-#include <fstream>
 #include <map>
 #include <stdexcept>
+
+#if !defined(_WIN32)
+#include <sys/types.h>
+#endif
 
 namespace {
 struct matrix {
@@ -109,7 +113,7 @@ float cosine(const matrix &a, int ar, const matrix &b, int br, double eps = 1e-8
 } // namespace
 
 struct clef_head::impl {
-    std::ifstream file;
+    FILE *file = nullptr;
     gguf_context *meta = nullptr;
     ggml_context *tensors = nullptr;
     std::map<std::string, matrix> weights;
@@ -117,10 +121,10 @@ struct clef_head::impl {
     int output_index;
     ggml_tensor *output;
 
-    explicit impl(const std::string &path) : file(path, std::ios::binary) {
+    explicit impl(const std::string &path) : file(ggml_fopen(path.c_str(), "rb")) {
         try {
             meta = gguf_init_from_file(path.c_str(), {true, &tensors});
-            require(meta && tensors && file.good(), "Clef: cannot open model");
+            require(meta && tensors && file, "Clef: cannot open model");
             const int arch_key = gguf_find_key(meta, "general.architecture");
             require(arch_key >= 0 && gguf_get_kv_type(meta, arch_key) == GGUF_TYPE_STRING,
                     "Clef: missing architecture");
@@ -160,17 +164,26 @@ struct clef_head::impl {
                 ggml_free(tensors);
             if (meta)
                 gguf_free(meta);
+            if (file)
+                std::fclose(file);
             throw;
         }
     }
     ~impl() {
         ggml_free(tensors);
         gguf_free(meta);
+        std::fclose(file);
     }
     void read(int index, size_t offset, void *data, size_t bytes) {
-        file.seekg(gguf_get_data_offset(meta) + gguf_get_tensor_offset(meta, index) + offset);
-        file.read(static_cast<char *>(data), bytes);
-        require(file.good(), "Clef: truncated tensor data");
+        // The head can sit past 2 GiB, where iostream seeks truncate on some
+        // Windows C++ runtimes, so seek with an explicit 64-bit offset.
+        const size_t position = gguf_get_data_offset(meta) + gguf_get_tensor_offset(meta, index) + offset;
+#if defined(_WIN32)
+        const int seek_rc = _fseeki64(file, static_cast<__int64>(position), SEEK_SET);
+#else
+        const int seek_rc = fseeko(file, static_cast<off_t>(position), SEEK_SET);
+#endif
+        require(seek_rc == 0 && std::fread(data, 1, bytes, file) == bytes, "Clef: truncated tensor data");
     }
     const matrix &w(const std::string &key) { return weights.at(key); }
     matrix norm(const matrix &x, const std::string &key) {
