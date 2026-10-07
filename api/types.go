@@ -123,6 +123,11 @@ type GenerateRequest struct {
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
 
+	// LogRequest writes the full request and streaming response to a file in
+	// OLLAMA_REQUEST_LOG_DIR for debugging. Nil = use OLLAMA_REQUEST_LOG_ENABLED env var,
+	// true/false = explicit per-request override.
+	LogRequest *bool `json:"log_request,omitempty"`
+
 	// Logprobs specifies whether to return log probabilities of the output tokens.
 	Logprobs bool `json:"logprobs,omitempty"`
 
@@ -174,6 +179,11 @@ type ChatRequest struct {
 	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
 	// template instead of calling the model.
 	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
+
+	// LogRequest writes the full request and streaming response to a file in
+	// OLLAMA_REQUEST_LOG_DIR for debugging. Nil = use OLLAMA_REQUEST_LOG_ENABLED env var,
+	// true/false = explicit per-request override.
+	LogRequest *bool `json:"log_request,omitempty"`
 
 	// Logprobs specifies whether to return log probabilities of the output tokens.
 	Logprobs bool `json:"logprobs,omitempty"`
