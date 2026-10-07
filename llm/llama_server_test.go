@@ -3938,3 +3938,76 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		t.Errorf("json format converted a schema, %d conversions", got)
 	}
 }
+
+// A runner connection that drops mid-event must surface the transport error,
+// not a JSON error for the truncated tail bufio.Scanner hands back on a read
+// error (issue #18840).
+func TestLlamaServerCompletionTruncatedStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Content-Length", "1000")
+		fmt.Fprintln(w, `data: {"content":"hello","stop":false}`)
+		fmt.Fprint(w, "\n"+`data: {"content":"","stop":tr`)
+		w.(http.Flusher).Flush()
+		conn, _, _ := w.(http.Hijacker).Hijack()
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var port int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &port)
+	runner := &llamaServerRunner{
+		port:    port,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{Prompt: "p", Options: &opts}, func(CompletionResponse) {})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if strings.Contains(err.Error(), "unmarshalling") {
+		t.Fatalf("transport error masked as JSON error: %v", err)
+	}
+	t.Logf("got: %v", err)
+}
+
+// Empty "data:" keep-alive lines must be ignored, not parsed as JSON.
+func TestLlamaServerCompletionEmptyDataLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"content\":\"hi\",\"stop\":false}\r\n\r\ndata: \r\n\r\ndata:\n\ndata: {\"content\":\"\",\"stop\":true}\n\n")
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var port int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &port)
+	runner := &llamaServerRunner{
+		port:    port,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	var got string
+	err := runner.Completion(t.Context(), CompletionRequest{Prompt: "p", Options: &opts}, func(cr CompletionResponse) { got += cr.Content })
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "hi" {
+		t.Fatalf("got %q", got)
+	}
+}

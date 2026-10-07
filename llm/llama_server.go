@@ -1763,7 +1763,8 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	// Parse SSE stream from llama-server. Delay the final Done callback until
 	// after the response body is closed because routes may tokenize from that
 	// callback to build the final Generate context.
-	scanner := bufio.NewScanner(res.Body)
+	body := &llamaServerStreamReader{r: res.Body}
+	scanner := bufio.NewScanner(body)
 	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
 	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
@@ -1785,14 +1786,14 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				continue
 			}
 
-			evt, ok := bytes.CutPrefix(line, []byte("data: "))
+			evt, ok := llamaServerSSEPayload(line)
 			if !ok {
-				evt = line
+				continue
 			}
 
 			var lsResp llamaServerCompletionResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
-				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
+				return s.streamDecodeError("response", body, evt, err)
 			}
 
 			// Token repeat detection
@@ -1875,6 +1876,57 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	}
 
 	return nil
+}
+
+// llamaServerStreamReader records the first read error from the runner's
+// response body. bufio.Scanner treats any read error as EOF and hands back the
+// partially received line as a final token, so without this a dropped
+// connection surfaces as a misleading JSON error ("unexpected end of JSON
+// input") instead of the real transport failure.
+type llamaServerStreamReader struct {
+	r   io.Reader
+	err error
+}
+
+func (l *llamaServerStreamReader) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	if err != nil && l.err == nil {
+		l.err = err
+	}
+	return n, err
+}
+
+// llamaServerSSEPayload extracts the JSON payload from one SSE line. It
+// returns false for lines that carry no payload: blank lines, comments, and
+// keep-alive "data:" lines with nothing after them.
+func llamaServerSSEPayload(line []byte) ([]byte, bool) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 || line[0] == ':' {
+		return nil, false
+	}
+	evt, ok := bytes.CutPrefix(line, []byte("data:"))
+	if !ok {
+		return line, true
+	}
+	evt = bytes.TrimSpace(evt)
+	return evt, len(evt) > 0
+}
+
+// streamDecodeError explains why a stream event could not be decoded. When the
+// body read failed, the event is a truncated fragment and the read failure is
+// the real cause, so that is what gets reported.
+func (s *llamaServerRunner) streamDecodeError(label string, body *llamaServerStreamReader, evt []byte, err error) error {
+	switch {
+	case body.err != nil && !errors.Is(body.err, io.EOF):
+		slog.Error("llama-server connection lost mid-stream", "error", body.err, "partial_event_bytes", len(evt))
+		if msg := s.lastErrMsg(); msg != "" {
+			return fmt.Errorf("an error was encountered while running the model: %s", msg)
+		}
+		return fmt.Errorf("llama-server connection lost before the %s was complete: %w", label, body.err)
+	default:
+		slog.Debug("llama-server sent an undecodable event", "event", string(evt))
+		return fmt.Errorf("error unmarshalling llama-server %s: %v (event: %.200q)", label, err, evt)
+	}
 }
 
 func llamaServerStreamLimitError(label string, err error) error {
@@ -2054,7 +2106,8 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(bodyBytes)}
 	}
 
-	scanner := bufio.NewScanner(res.Body)
+	body := &llamaServerStreamReader{r: res.Body}
+	scanner := bufio.NewScanner(body)
 	buf := make([]byte, 0, llamaServerStreamInitialBufferSize)
 	scanner.Buffer(buf, llamaServerStreamMaxBufferSize)
 
@@ -2075,9 +2128,9 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 				continue
 			}
 
-			evt, ok := bytes.CutPrefix(line, []byte("data: "))
+			evt, ok := llamaServerSSEPayload(line)
 			if !ok {
-				evt = line
+				continue
 			}
 			if bytes.Equal(evt, []byte("[DONE]")) {
 				continue
@@ -2085,7 +2138,7 @@ func (s *llamaServerRunner) Chat(ctx context.Context, req ChatRequest, fn func(C
 
 			var lsResp llamaServerChatResponse
 			if err := json.Unmarshal(evt, &lsResp); err != nil {
-				return fmt.Errorf("error unmarshalling llama-server chat response: %v", err)
+				return s.streamDecodeError("chat response", body, evt, err)
 			}
 			if lsResp.Error != nil {
 				return fmt.Errorf("llama-server chat error: %v", lsResp.Error)
