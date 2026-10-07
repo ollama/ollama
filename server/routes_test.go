@@ -741,6 +741,37 @@ func TestRoutes(t *testing.T) {
 			},
 		},
 		{
+			Name: "openai retrieve model handler with slashes in ID",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "myhost/mynamespace/slash-model:code")
+			},
+			Method: http.MethodGet,
+			Path:   "/v1/models/myhost/mynamespace/slash-model:code",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("expected status code 200, got %d", resp.StatusCode)
+				}
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "application/json" {
+					t.Errorf("expected content type application/json, got %s", contentType)
+				}
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
+				if err != nil {
+					t.Fatalf("failed to unmarshal response body: %v", err)
+				}
+
+				if m.Id != "myhost/mynamespace/slash-model:code" || m.OwnedBy != "mynamespace" {
+					t.Errorf("expected model 'myhost/mynamespace/slash-model:code' owned by 'mynamespace', got %v", m)
+				}
+			},
+		},
+		{
 			Name:   "Method Not Allowed",
 			Method: http.MethodGet,
 			Path:   "/api/show",
