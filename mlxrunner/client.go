@@ -2,7 +2,9 @@ package mlxrunner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,18 +35,19 @@ import (
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
-	port              int
-	modelName         string
-	contextLength     atomic.Int64
-	softContextLength int // recommended limit to avoid poor performance
-	memory            atomic.Uint64
-	done              chan struct{}
-	doneErr           error // valid after done is closed
-	client            *http.Client
-	status            *llm.StatusWriter
-	mu                sync.Mutex
-	cmd               *exec.Cmd
-	closed            bool
+	port                int
+	modelName           string
+	contextLength       atomic.Int64
+	softContextLength   int // recommended limit to avoid poor performance
+	memory              atomic.Uint64
+	embeddingDimensions atomic.Value // []int
+	done                chan struct{}
+	doneErr             error // valid after done is closed
+	client              *http.Client
+	status              *llm.StatusWriter
+	mu                  sync.Mutex
+	cmd                 *exec.Cmd
+	closed              bool
 }
 
 var ErrRuntimeUnavailable = errors.New("MLX runtime is not available")
@@ -292,12 +295,90 @@ func (c *Client) reportedContextLength(modelContextLength int) int {
 
 // Detokenize implements llm.LlamaServer.
 func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	return "", errors.New("not supported")
+	ids32 := make([]int32, len(tokens))
+	for i, t := range tokens {
+		ids32[i] = int32(t)
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(ids32); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://127.0.0.1:%d/v1/detokenize", c.port), &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: strings.TrimSpace(string(body)),
+		}
+	}
+
+	var s string
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", err
+	}
+	return s, nil
 }
 
 // Embedding implements llm.LlamaServer.
 func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return nil, 0, errors.New("not supported")
+	return c.embed(ctx, embedWireRequest{Content: input})
+}
+
+// EmbedWithMedia embeds a single text input with media blobs alongside.
+func (c *Client) EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+	if len(media) == 0 {
+		return c.Embedding(ctx, input)
+	}
+	wire := embedWireRequest{Content: input, Media: make([]string, len(media))}
+	for i, blob := range media {
+		wire.Media[i] = base64.StdEncoding.EncodeToString(blob)
+	}
+	return c.embed(ctx, wire)
+}
+
+func (c *Client) embed(ctx context.Context, wire embedWireRequest) ([]float32, int, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(wire); err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST",
+		fmt.Sprintf("http://127.0.0.1:%d/v1/embeddings", c.port), &buf)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, api.StatusError{
+			StatusCode:   resp.StatusCode,
+			ErrorMessage: strings.TrimSpace(string(body)),
+		}
+	}
+
+	var er embedWireResponse
+	if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
+		return nil, 0, err
+	}
+	return er.Embedding, er.PromptEvalCount, nil
 }
 
 // GetDeviceInfos implements llm.LlamaServer.
@@ -369,6 +450,13 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	// Spawn subprocess: ollama runner --model <name> --port <port>
 	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
+
+	// Keep Metal weights resident between requests until MLX fixes idle eviction.
+	if runtime.GOOS == "darwin" {
+		if _, ok := os.LookupEnv("MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS"); !ok {
+			setEnv(cmd, "MLX_METAL_RESIDENCY_REFRESH_INTERVAL_MS", "1000")
+		}
+	}
 
 	// Set library path environment variable for MLX libraries
 	// Linux: LD_LIBRARY_PATH, Windows: PATH
@@ -473,6 +561,20 @@ type statusResponse struct {
 	Progress      int
 	ContextLength int
 	Memory        uint64
+
+	// EmbeddingDimensions lists the model's trained matryoshka truncation
+	// sizes, when it declares any.
+	EmbeddingDimensions []int
+}
+
+// EmbeddingDimensions returns the runner's declared matryoshka set, cached
+// from the last successful status response. Empty when the runner doesn't
+// advertise one.
+func (c *Client) EmbeddingDimensions() []int {
+	if v := c.embeddingDimensions.Load(); v != nil {
+		return v.([]int)
+	}
+	return nil
 }
 
 // Ping implements llm.LlamaServer.
@@ -498,6 +600,7 @@ func (c *Client) Ping(ctx context.Context) error {
 
 	c.contextLength.Store(int64(c.reportedContextLength(status.ContextLength)))
 	c.memory.Store(status.Memory)
+	c.embeddingDimensions.Store(status.EmbeddingDimensions)
 
 	return nil
 }

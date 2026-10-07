@@ -86,15 +86,15 @@ func TestProcessAudioTokenCounts(t *testing.T) {
 			}
 			for i, c := range chunks {
 				if tt.frames[i] < 0 {
-					if c.frames <= 0 || c.frames > 2999 || c.numTokens > 750 {
-						t.Errorf("chunk %d: frames %d tokens %d exceed one 30 s chunk", i, c.frames, c.numTokens)
+					if c.Frames <= 0 || c.Frames > 2999 || c.NumTokens > 750 {
+						t.Errorf("chunk %d: frames %d tokens %d exceed one 30 s chunk", i, c.Frames, c.NumTokens)
 					}
-				} else if c.frames != tt.frames[i] || c.numTokens != tt.tokens[i] {
+				} else if c.Frames != tt.frames[i] || c.NumTokens != tt.tokens[i] {
 					t.Errorf("chunk %d: frames %d tokens %d, want %d %d",
-						i, c.frames, c.numTokens, tt.frames[i], tt.tokens[i])
+						i, c.Frames, c.NumTokens, tt.frames[i], tt.tokens[i])
 				}
-				if len(c.data) != c.frames*audioMelBins {
-					t.Errorf("chunk %d: %d mel values for %d frames", i, len(c.data), c.frames)
+				if len(c.Data) != c.Frames*audioMelBins {
+					t.Errorf("chunk %d: %d mel values for %d frames", i, len(c.Data), c.Frames)
 				}
 			}
 		})

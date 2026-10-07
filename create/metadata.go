@@ -44,13 +44,14 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		return model.ConfigV2{}, err
 	}
 
-	return model.ConfigV2{
+	config := model.ConfigV2{
 		ModelFormat:        "safetensors",
 		Parser:             parserName,
 		Renderer:           rendererName,
 		Capabilities:       capabilities,
 		GenerationDefaults: generationDefaults,
-	}, nil
+	}
+	return config, nil
 }
 
 func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {
@@ -97,6 +98,16 @@ func readChatTemplateStrict(modelDir string) (string, error) {
 }
 
 func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
+	if cfg.Architecture() == "ClefForDecision" {
+		capabilities := []string{"decision"}
+		if cfg.VisionConfig != nil {
+			capabilities = append(capabilities, "vision")
+		}
+		return capabilities
+	}
+	if cfg.Architecture() == "LayaForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" {
+		return []string{"decision"}
+	}
 	capabilities := []string{"completion"}
 
 	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)
@@ -207,6 +218,9 @@ func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 }
 
 func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate string) (string, error) {
+	if cfg.Architecture() == "ClefForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" {
+		return "", nil
+	}
 	for _, id := range sourceConfigIdentifiers(cfg) {
 		name, err := parserNameForIdentifier(modelDir, id, chatTemplate)
 		if err != nil || name != "" {
@@ -255,6 +269,10 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "strandsdeciderfordecision":
+		return "strands", nil
+	case s == "cleffordecision":
+		return "clef", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):

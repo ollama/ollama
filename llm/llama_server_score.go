@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -35,7 +36,7 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 	badRequest := func(format string, args ...any) (ScoreResponse, error) {
 		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf(format, args...)}
 	}
-	if len(input.Rows) < 1 || len(input.Rows) > 64 {
+	if len(input.Segments) == 0 && len(input.Fields) == 0 && (len(input.Rows) < 1 || len(input.Rows) > 64) {
 		return badRequest("scoring requires 1–64 prompts")
 	}
 	if input.MaxTokens < 1 || input.MaxTokens > s.ContextLength() {
@@ -50,6 +51,10 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 		return result, err
 	} else if status != ServerStatusReady {
 		return result, fmt.Errorf("unexpected server status: %s", status)
+	}
+
+	if len(input.Segments) > 0 || len(input.Fields) > 0 {
+		return s.scoreFields(ctx, input)
 	}
 
 	rows := make([]scoreRowTokens, len(input.Rows))
@@ -159,8 +164,8 @@ func (s *llamaServerRunner) primeSharedPrefix(ctx context.Context, rows []scoreR
 		return 0, nil
 	}
 	tokens := first[:shared+scoreCheckpointOffset]
-	output, err := s.scoreCompletion(ctx, scoreCompletionRequest{Prompt: tokens, CachePrompt: true, NPredict: 0})
-	if err != nil {
+	var output scoreCompletionResponse
+	if err := s.scoreRequest(ctx, "/completion", scoreCompletionRequest{Prompt: tokens, CachePrompt: true, NPredict: 0}, &output); err != nil {
 		return 0, err
 	}
 	if output.Truncated || output.TokensEvaluated != len(tokens) {
@@ -212,8 +217,8 @@ func (s *llamaServerRunner) scoreRow(ctx context.Context, row scoreRowTokens) ([
 		for _, id := range row.candidates {
 			req.LogitBias = append(req.LogitBias, [2]float64{float64(id), bias})
 		}
-		output, err := s.scoreCompletion(ctx, req)
-		if err != nil {
+		var output scoreCompletionResponse
+		if err := s.scoreRequest(ctx, "/completion", req, &output); err != nil {
 			return nil, 0, err
 		}
 		if output.Truncated || output.TokensEvaluated != len(row.tokens) || output.TokensPredicted != 1 || len(output.Probabilities) != 1 || len(output.Probabilities[0].TopProbs) == 0 {
@@ -245,37 +250,121 @@ func (s *llamaServerRunner) scoreRow(ctx context.Context, row scoreRowTokens) ([
 	return nil, 0, fmt.Errorf("scoring candidates were outranked by other tokens")
 }
 
-func (s *llamaServerRunner) scoreCompletion(ctx context.Context, input scoreCompletionRequest) (scoreCompletionResponse, error) {
-	var output scoreCompletionResponse
+func (s *llamaServerRunner) scoreRequest(ctx context.Context, path string, input, output any) error {
 	data, err := json.Marshal(input)
 	if err != nil {
-		return output, err
+		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/completion", s.port), bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d%s", s.port, path), bytes.NewReader(data))
 	if err != nil {
-		return output, err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	res, err := s.httpClient().Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return output, ctx.Err()
+			return ctx.Err()
 		}
 		if msg := s.lastErrMsg(); msg != "" {
-			return output, fmt.Errorf("scoring failed: %s: %w", msg, err)
+			return fmt.Errorf("scoring failed: %s: %w", msg, err)
 		}
-		return output, err
+		return err
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return output, err
+		return err
 	}
 	if res.StatusCode != http.StatusOK {
-		return output, api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(body)}
+		return api.StatusError{StatusCode: res.StatusCode, ErrorMessage: s.statusErrorMessage(body)}
 	}
-	if err := json.Unmarshal(body, &output); err != nil {
-		return output, fmt.Errorf("invalid scoring response: %w", err)
+	if err := json.Unmarshal(body, output); err != nil {
+		return fmt.Errorf("invalid scoring response: %w", err)
 	}
-	return output, nil
+	return nil
+}
+
+func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest) (ScoreResponse, error) {
+	bad := func(message string) (ScoreResponse, error) {
+		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: message}
+	}
+	if len(input.Fields) < 1 || len(input.Fields) > 64 || len(input.Segments) == 0 {
+		return bad("invalid decision scoring request")
+	}
+	var err error
+	// Do not concatenate before tokenizing: BPE may merge across the reference
+	// encoder's segment boundaries, changing both embeddings and span offsets.
+	var tokens []int
+	offsets := []int{0}
+	cache := map[string][]int{}
+	special := true
+	for _, segment := range input.Segments {
+		ids, ok := cache[segment]
+		if !ok {
+			ids, err = s.tokenize(ctx, segment, false, &special)
+			if err != nil {
+				return ScoreResponse{}, err
+			}
+			cache[segment] = ids
+		}
+		tokens = append(tokens, ids...)
+		offsets = append(offsets, len(tokens))
+		if len(tokens) > input.MaxTokens {
+			return bad("decision prompt exceeds the model context (input is never truncated)")
+		}
+	}
+	if len(tokens) == 0 {
+		return bad("decision prompt must not be empty")
+	}
+	fields := make([]ScoreField, len(input.Fields))
+	for i, f := range input.Fields {
+		if f.Type < 0 || f.Type > 2 || len(f.Options) < 2 || len(f.Options) > 26 {
+			return bad("invalid decision field")
+		}
+		// Map the question and its options from segment indexes to token offsets.
+		spans := append([][2]int{f.Question}, f.Options...)
+		for j, span := range spans {
+			start, end := span[0], span[1]
+			if start < 0 || start >= end || end >= len(offsets) || offsets[start] == offsets[end] {
+				return bad("invalid decision token span")
+			}
+			spans[j] = [2]int{offsets[start], offsets[end]}
+		}
+		fields[i] = ScoreField{Type: f.Type, Question: spans[0], Options: spans[1:]}
+	}
+	var images []api.ImageData
+	for _, image := range input.Images {
+		data, err := llamaServerMediaBytes(image)
+		if err != nil {
+			return bad(err.Error())
+		}
+		if !strings.HasPrefix(http.DetectContentType(data), "image/") {
+			return bad("invalid decision image")
+		}
+		images = append(images, data)
+	}
+	imagePosition := 0
+	if len(images) > 0 {
+		if input.ImagePosition < 0 || input.ImagePosition >= len(offsets) {
+			return bad("invalid image position")
+		}
+		imagePosition = offsets[input.ImagePosition]
+	}
+	request := struct {
+		Images        []api.ImageData `json:"images,omitempty"`
+		ImagePosition int             `json:"image_position"`
+		Input         []int           `json:"input"`
+		Fields        []ScoreField    `json:"score_fields"`
+	}{images, imagePosition, tokens, fields}
+	var result []struct {
+		Logits [][]float32 `json:"logits"`
+		Tokens int         `json:"tokens_evaluated"`
+	}
+	if err := s.scoreRequest(ctx, "/embedding", request, &result); err != nil {
+		return ScoreResponse{}, err
+	}
+	if len(result) != 1 || result[0].Tokens > input.MaxTokens || (len(images) == 0 && result[0].Tokens != len(tokens)) || (len(images) > 0 && result[0].Tokens <= len(tokens)) || len(result[0].Logits) != len(fields) {
+		return ScoreResponse{}, fmt.Errorf("decision runner did not score the complete request")
+	}
+	return ScoreResponse{Logits: result[0].Logits, InputTokens: result[0].Tokens}, nil
 }

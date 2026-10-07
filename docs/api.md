@@ -1197,6 +1197,7 @@ If you are creating a model from a safetensors directory or from GGUF files, you
 - `system`: (optional) a string containing the system prompt for the model
 - `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
+- `capabilities`: (optional) capabilities to add without removing inherited or inferred capabilities, such as `["decision"]` for compatible decision models
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `quantize`: (optional) quantize safetensors model weights for MLX during import
 
@@ -1493,6 +1494,12 @@ curl http://localhost:11434/api/copy -d '{
 
 Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't exist.
 
+```json
+{
+  "status": "success"
+}
+```
+
 ## Delete a Model
 
 ```
@@ -1667,7 +1674,7 @@ Generate embeddings from a model
 ### Parameters
 
 - `model`: name of model to generate embeddings from
-- `input`: text or list of text to generate embeddings for
+- `input`: text or list of text to generate embeddings for. To embed media (images or audio) alongside text on models that accept multimodal embeddings, each entry may instead be an object with any of `text` (string), `image` (base64-encoded bytes), `audio` (base64-encoded bytes). In a list, entries can mix plain strings and such objects; each object owns its own media. `video` is not currently accepted.
 
 Advanced parameters:
 
@@ -1729,6 +1736,28 @@ curl http://localhost:11434/api/embed -d '{
     ]
   ]
 }
+```
+
+#### Request (With image)
+
+```shell
+curl http://localhost:11434/api/embed -d '{
+  "model": "embeddinggemma2",
+  "input": {"text": "a cat sitting on a windowsill", "image": "iVBORw0KGgo..."}
+}'
+```
+
+#### Request (Batched, mixed modalities)
+
+```shell
+curl http://localhost:11434/api/embed -d '{
+  "model": "embeddinggemma2",
+  "input": [
+    "a plain text query",
+    {"image": "iVBORw0KGgo..."},
+    {"audio": "UklGRiQAAABXQVZF..."}
+  ]
+}'
 ```
 
 ## List Running Models

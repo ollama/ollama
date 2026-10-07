@@ -12,10 +12,12 @@ import (
 type Questions = orderedmap.Map[string, Question]
 
 type Request struct {
-	Model     string          `json:"model"`
-	State     json.RawMessage `json:"state"`
-	Questions *Questions      `json:"questions"`
-	KeepAlive *api.Duration   `json:"keep_alive,omitempty"`
+	Model     string            `json:"model"`
+	State     json.RawMessage   `json:"state"`
+	Images    []api.ImageData   `json:"images,omitempty"`
+	Videos    []json.RawMessage `json:"videos,omitempty"`
+	Questions *Questions        `json:"questions"`
+	KeepAlive *api.Duration     `json:"keep_alive,omitempty"`
 }
 
 type Question struct {
@@ -28,7 +30,7 @@ type Question struct {
 type Choice struct {
 	Code        string `json:"code"`
 	Value       any    `json:"value"`
-	Description string `json:"description"`
+	Description any    `json:"description"`
 }
 
 // Field is a question's schema as presented to the model.
@@ -41,13 +43,14 @@ type Field struct {
 type (
 	Answers       = orderedmap.Map[string, any]
 	Probabilities = orderedmap.Map[string, float64]
-	Legend        = orderedmap.Map[string, string]
+	Legend        = orderedmap.Map[string, any]
 )
 
 type Response struct {
-	Model   string   `json:"model"`
-	Answers *Answers `json:"answers"`
-	Usage   Usage    `json:"usage"`
+	Model                 string   `json:"model"`
+	Answers               *Answers `json:"answers"`
+	Usage                 Usage    `json:"usage"`
+	PromptEvalCachedCount *int     `json:"prompt_eval_cached_count,omitempty"`
 }
 
 type Usage struct {
