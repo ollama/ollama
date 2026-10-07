@@ -1017,6 +1017,135 @@ components:
               type: integer
               minimum: 0
               description: Tokens generated internally for scoring, including prefix preparation and retries. May exceed the question count; not the length of the JSON response.
+    UsageMetrics:
+      type: object
+      required: [request_count]
+      properties:
+        request_count:
+          type: integer
+          minimum: 0
+          description: Number of recorded requests.
+        usage_usd:
+          type: number
+          description: Total value of the requests in USD, including usage covered by your plan and usage paid from purchased credits.
+        input_tokens:
+          type: integer
+          description: Recorded input tokens, including cached input tokens.
+        cached_input_tokens:
+          type: integer
+          description: Recorded input tokens read from cache, already included in input_tokens.
+        output_tokens:
+          type: integer
+          description: Recorded output tokens.
+    UsageBucket:
+      allOf:
+        - $ref: "#/components/schemas/UsageMetrics"
+        - type: object
+          required: [from, until]
+          properties:
+            from:
+              type: string
+              format: date-time
+              description: Start of the bucket in UTC, inclusive.
+            until:
+              type: string
+              format: date-time
+              description: End of the bucket in UTC, exclusive.
+            partial:
+              type: boolean
+              description: Present and true for the current hour or day, which is still in progress.
+    UsageResponse:
+      type: object
+      required: [range, scope, granularity, from, until, totals, buckets]
+      properties:
+        range:
+          type: string
+          enum: [24h, 7d, 30d]
+          description: Selected time range.
+        scope:
+          type: string
+          enum: [self, team]
+          description: Selected usage scope.
+        granularity:
+          type: string
+          enum: [hour, day]
+          description: "Set automatically: hour for 24h, day for 7d and 30d."
+        from:
+          type: string
+          format: date-time
+          description: Start of the range in UTC, inclusive.
+        until:
+          type: string
+          format: date-time
+          description: End of the range in UTC, exclusive.
+        totals:
+          $ref: "#/components/schemas/UsageMetrics"
+          description: Usage across the entire range.
+        buckets:
+          type: array
+          description: Usage in chronological order, including buckets with no recorded requests.
+          items:
+            $ref: "#/components/schemas/UsageBucket"
+    IncludedBalance:
+      title: Included credits
+      type: object
+      required: [balance_usd, allowance_usd, period]
+      properties:
+        balance_usd:
+          type: number
+          description: Remaining included credits in USD.
+        allowance_usd:
+          type: number
+          description: Included credits available for the full period in USD.
+        period:
+          type: object
+          required: [from, until]
+          properties:
+            from:
+              type: string
+              format: date-time
+              description: Start of the included period in UTC, inclusive.
+            until:
+              type: string
+              format: date-time
+              description: End of the included period in UTC, exclusive.
+    LegacyBalanceLimit:
+      type: object
+      required: [remaining_percent, resets_at]
+      properties:
+        remaining_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Percentage of the limit remaining.
+        resets_at:
+          type: string
+          format: date-time
+          description: Next reset time in UTC.
+    LegacyIncludedBalance:
+      title: Legacy plan limits
+      type: object
+      required: [session, weekly]
+      properties:
+        session:
+          $ref: "#/components/schemas/LegacyBalanceLimit"
+        weekly:
+          $ref: "#/components/schemas/LegacyBalanceLimit"
+    BalanceResponse:
+      type: object
+      required: [included, purchased]
+      properties:
+        included:
+          oneOf:
+            - $ref: "#/components/schemas/IncludedBalance"
+            - $ref: "#/components/schemas/LegacyIncludedBalance"
+        purchased:
+          type: object
+          required: [balance_usd]
+          properties:
+            balance_usd:
+              type: number
+              description: Remaining unexpired purchased credits in USD.
     ErrorResponse:
       type: object
       properties:
@@ -1034,7 +1163,7 @@ paths:
         href: /api/systemone
         metadata:
           title: System One
-          sidebarTitle: System One
+          sidebarTitle: /v1/systemone
         content: |
           <Note>
           Currently available locally in Ollama.
@@ -1133,6 +1262,8 @@ paths:
       description: Generates a response for the provided prompt
       operationId: generate
       x-mint:
+        metadata:
+          sidebarTitle: /api/generate
         href: /api/generate
       x-codeSamples:
         - lang: bash
@@ -1254,6 +1385,8 @@ paths:
       description: Generate the next chat message in a conversation between a user and an assistant.
       operationId: chat
       x-mint:
+        metadata:
+          sidebarTitle: /api/chat
         href: /api/chat
       x-codeSamples:
         - lang: bash
@@ -1412,6 +1545,8 @@ paths:
       description: Creates vector embeddings representing the input text
       operationId: embed
       x-mint:
+        metadata:
+          sidebarTitle: /api/embed
         href: /api/embed
       x-codeSamples:
         - lang: bash
@@ -1487,6 +1622,8 @@ paths:
       description: Fetch a list of models and their details
       operationId: list
       x-mint:
+        metadata:
+          sidebarTitle: /api/tags
         href: /api/tags
       x-codeSamples:
         - lang: bash
@@ -1520,6 +1657,8 @@ paths:
       description: Retrieve a list of models that are currently running
       operationId: ps
       x-mint:
+        metadata:
+          sidebarTitle: /api/ps
         href: /api/ps
       x-codeSamples:
         - lang: bash
@@ -1554,6 +1693,9 @@ paths:
     post:
       summary: Show model details
       operationId: show
+      x-mint:
+        metadata:
+          sidebarTitle: /api/show
       x-codeSamples:
         - lang: bash
           label: Default
@@ -1678,6 +1820,8 @@ paths:
       summary: Create a model
       operationId: create
       x-mint:
+        metadata:
+          sidebarTitle: /api/create
         href: /api/create
       x-codeSamples:
         - lang: bash
@@ -1790,6 +1934,8 @@ paths:
       summary: Copy a model
       operationId: copy
       x-mint:
+        metadata:
+          sidebarTitle: /api/copy
         href: /api/copy
       x-codeSamples:
         - lang: bash
@@ -1834,6 +1980,8 @@ paths:
       summary: Pull a model
       operationId: pull
       x-mint:
+        metadata:
+          sidebarTitle: /api/pull
         href: /api/pull
       x-codeSamples:
         - lang: bash
@@ -1876,6 +2024,8 @@ paths:
       summary: Push a model
       operationId: push
       x-mint:
+        metadata:
+          sidebarTitle: /api/push
         href: /api/push
       x-codeSamples:
         - lang: bash
@@ -1918,6 +2068,8 @@ paths:
       summary: Delete a model
       operationId: delete
       x-mint:
+        metadata:
+          sidebarTitle: /api/delete
         href: /api/delete
       x-codeSamples:
         - lang: bash
@@ -1942,6 +2094,9 @@ paths:
       summary: Get version
       description: Retrieve the version of the Ollama
       operationId: version
+      x-mint:
+        metadata:
+          sidebarTitle: /api/version
       x-codeSamples:
         - lang: bash
           label: Default
@@ -1956,3 +2111,124 @@ paths:
                 $ref: "#/components/schemas/VersionResponse"
               example:
                 version: "0.12.6"
+  /api/usage:
+    get:
+      summary: Cloud usage
+      description: Usage statistics for cloud inference, web search, and web fetch.
+      operationId: usage
+      servers:
+        - url: https://ollama.com
+          description: Ollama Cloud
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: range
+          in: query
+          description: Completed UTC hours or days to include, plus the current partial hour or day.
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 7d
+        - name: scope
+          in: query
+          description: Your requests, or your team's requests. Team scope requires being a team admin.
+          schema:
+            type: string
+            enum: [self, team]
+            default: self
+      responses:
+        "200":
+          description: Usage for the selected range and scope.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageResponse"
+        "400":
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account suspended or team scope requested without team admin access.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+                minimum: 1
+        "503":
+          description: Usage reporting is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/balance:
+    get:
+      summary: Balance
+      description: Check your remaining usage credits.
+      operationId: balance
+      servers:
+        - url: https://ollama.com
+          description: Ollama Cloud
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current included and purchased balances.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceResponse"
+        "400":
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Account suspended.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Too many requests.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+                minimum: 1
+        "503":
+          description: Balance reporting is temporarily unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
