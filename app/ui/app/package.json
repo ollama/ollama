@@ -13,6 +13,7 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "test": "vitest",
+    "test:browser": "vitest run --mode browser",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage"
   },
@@ -52,6 +53,7 @@
     "@types/node": "^24.7.2",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
+    "@types/react-test-renderer": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.1",
     "@vitest/browser": "^3.2.4",
     "@vitest/coverage-v8": "^3.2.4",
@@ -65,6 +67,7 @@
     "playwright": "^1.53.2",
     "postcss-preset-env": "^10.2.4",
     "react-markdown": "^10.1.0",
+    "react-test-renderer": "19.1.0",
     "remark": "^15.0.1",
     "remark-gfm": "^4.0.1",
     "remark-stringify": "^11.0.0",

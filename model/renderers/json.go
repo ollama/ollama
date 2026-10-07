@@ -10,7 +10,12 @@ func marshalWithSpaces(v any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return AddJSONSpaces(b), nil
+}
 
+// AddJSONSpaces adds Python-style separator spaces to compact JSON without
+// changing string values or escaping.
+func AddJSONSpaces(b []byte) []byte {
 	out := make([]byte, 0, len(b)+len(b)/8)
 	inStr, esc := false, false
 	for _, c := range b {
@@ -41,5 +46,5 @@ func marshalWithSpaces(v any) ([]byte, error) {
 			out = append(out, c)
 		}
 	}
-	return out, nil
+	return out
 }

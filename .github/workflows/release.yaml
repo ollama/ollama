@@ -77,6 +77,8 @@ jobs:
             MLX_VERSION
             MLX_C_VERSION
       - run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64 "-DOLLAMA_GO_LICENSE_TARGETS=darwin/amd64;darwin/arm64"
+          cmake --build build/go-license --target ollama-go-license
           ./scripts/build_darwin.sh
       - name: Log build results
         run: |
@@ -93,6 +95,7 @@ jobs:
   windows-depends:
     needs: setup-environment
     strategy:
+      fail-fast: false
       matrix:
         os: [windows]
         arch: [amd64]
@@ -168,6 +171,11 @@ jobs:
               - '"cufft_dev"'
               - '"nvrtc"'
               - '"nvrtc_dev"'
+              - '"cusolver"'
+              - '"cusolver_dev"'
+              - '"cusparse"'
+              - '"cusparse_dev"'
+              - '"nvjitlink"'
               - '"crt"'
               - '"nvvm"'
               - '"nvptxcompiler"'
@@ -214,8 +222,18 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+                break
+              } catch {
+                if ($attempt -eq 3) { throw }
+                Write-Host "CUDA installer download attempt $attempt failed: $($_.Exception.Message); retrying in 15s"
+                Start-Sleep -Seconds 15
+              }
+            }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
           }
@@ -435,6 +453,16 @@ jobs:
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
+      - name: Collect Go licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= \
+              "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/windows-${arch}" \
+              "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
+            cmake --build build/go-license --target ollama-go-license
+          done
       - run: |
           ./scripts/build_windows.ps1 deps sign installer zip
       - name: Log contents after build
@@ -450,6 +478,7 @@ jobs:
 
   linux-depends:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -531,6 +560,7 @@ jobs:
   # and just assembles, runs the Go build, pushes the final image, and extracts release bundles.
   docker-build-push:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -653,6 +683,7 @@ jobs:
               lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
               lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/*_LICENSE|lib/ollama/*_NOTICE) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
@@ -681,6 +712,7 @@ jobs:
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
     strategy:
+      fail-fast: false
       matrix:
         suffix: ['', '-rocm']
     runs-on: linux
@@ -717,6 +749,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     needs: [darwin-build, windows-app, docker-build-push]
+    concurrency:
+      group: release-publish
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: write
     env:
@@ -752,28 +788,59 @@ jobs:
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist
-      - name: Create or update Release for tag
+      - name: Publish release artifacts
+        shell: bash
         run: |
-          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::Attempt $attempt failed; retrying in $((attempt * 15))s: $*"
+                sleep "$((attempt * 15))"
+              fi
+            done
+            echo "::error::Failed after 3 attempts: $*"
+            return 1
+          }
+
+          delete_assets() {
+            local assets asset
+            # Re-list on each attempt: a failed DELETE may still have removed the asset.
+            assets=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/$1/assets" --jq '.[].url') || return 1
+            while IFS= read -r asset; do
+              [ -z "$asset" ] && continue
+              gh api --method DELETE "$asset" || return 1
+            done <<< "$assets"
+          }
+
+          RELEASE_VERSION="${GITHUB_REF_NAME%%-*}"
           echo "Looking for existing release for ${RELEASE_VERSION}"
-          OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
+          OLD_TAG=$(gh release ls --json name,tagName | jq -r --arg version "$RELEASE_VERSION" '.[] | select(.name == $version) | .tagName')
           if [ -n "$OLD_TAG" ]; then
+            RELEASE_ID=$(gh release view "$OLD_TAG" --json databaseId --jq .databaseId)
+            echo "Deleting old assets from ${OLD_TAG}"
+            retry delete_assets "$RELEASE_ID"
             echo "Updating release ${RELEASE_VERSION} to point to new tag ${GITHUB_REF_NAME}"
-            gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
+            gh release edit "$OLD_TAG" --tag "$GITHUB_REF_NAME"
           else
             echo "Creating new release ${RELEASE_VERSION} pointing to tag ${GITHUB_REF_NAME}"
-            gh release create ${GITHUB_REF_NAME} \
-              --title ${RELEASE_VERSION} \
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$RELEASE_VERSION" \
               --draft \
               --generate-notes \
               --prerelease
           fi
-      - name: Upload release artifacts
-        run: |
+
+          shopt -s nullglob
           pids=()
           for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
+            # Publish the checksum manifest only after every payload has succeeded.
+            [ "$payload" = dist/sha256sum.txt ] && continue
             echo "Uploading $payload"
-            gh release upload ${GITHUB_REF_NAME} $payload --clobber &
+            retry gh release upload "$GITHUB_REF_NAME" "$payload" --clobber &
             pids+=($!)
             sleep 1
           done
@@ -789,4 +856,5 @@ jobs:
             echo "One or more uploads failed"
             exit 1
           fi
+          retry gh release upload "$GITHUB_REF_NAME" dist/sha256sum.txt --clobber
           echo "done"

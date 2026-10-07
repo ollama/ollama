@@ -19,8 +19,10 @@ const (
 
 // lagunaToolJSON is the get_weather tool as serialized into <available_tools>,
 // matching lagunaWeatherTool().
-const lagunaToolJSON = `{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City"}}}}}`
-const lagunaMathToolJSON = `{"type": "function", "function": {"name": "add", "description": "Add numbers", "parameters": {"type": "object", "required": ["a", "b"], "properties": {"a": {"type": "number", "description": "First number"}, "b": {"type": "number", "description": "Second number"}}}}}`
+const (
+	lagunaToolJSON     = `{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City"}}}}}`
+	lagunaMathToolJSON = `{"type": "function", "function": {"name": "add", "description": "Add numbers", "parameters": {"type": "object", "required": ["a", "b"], "properties": {"a": {"type": "number", "description": "First number"}, "b": {"type": "number", "description": "Second number"}}}}}`
+)
 
 // TestLagunaRendererReferenceFlowCoverage checks the renderer against byte-for-byte
 // expected output from the Laguna v2 chat template. VERIFY_JINJA2=1 also verifies

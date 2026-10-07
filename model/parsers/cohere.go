@@ -54,6 +54,13 @@ func (p *CohereParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *CohereParser) ThinkingClose() []string {
+	if p.state == cohereCollectingThinking {
+		return []string{cohereEndThinking}
+	}
+	return nil
+}
+
 func (p *CohereParser) PreservedTokens() []string {
 	return []string{
 		"<|START_THINKING|>", cohereEndThinking,

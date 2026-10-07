@@ -21,6 +21,9 @@
 #   2. A small ordered patch set that adds call-sites in llama.cpp loaders.
 
 set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
+get_filename_component(_ollama_patch_applier
+    "${_compat_dir}/../../cmake/apply-git-patches.cmake"
+    ABSOLUTE)
 
 # Expose a single variable the main CMakeLists passes into FetchContent's
 # PATCH_COMMAND. The patch is applied via a small CMake script so the step
@@ -34,7 +37,8 @@ set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     ${CMAKE_COMMAND}
         -DPATCH_DIR=${_compat_dir}
-        -P ${_compat_dir}/apply-patch.cmake
+        -DPATCH_LABEL=llama/compat
+        -P ${_ollama_patch_applier}
     CACHE INTERNAL "llama.cpp compat patch command for FetchContent")
 
 # Where the compat source files live, so the main CMakeLists can wire them
