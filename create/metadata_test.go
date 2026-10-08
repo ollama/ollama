@@ -209,6 +209,49 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config: `{"architectures":["LlamaForCausalLM"]}`,
 		},
 		{
+			name:         "granite thinking dense",
+			config:       `{"architectures":["GraniteForCausalLM"]}`,
+			chatTemplate: `{%- if content is string -%}{%- set content = c.split('</think>')[-1] -%}{%- endif -%}{%- if add_generation_prompt %}{%- if enable_thinking %}{{- '<|im_start|>assistant\n<think>\n' }}{%- endif %}{%- endif %}`,
+			standalone:   true,
+			wantParser:   "granite-thinking",
+			wantRenderer: "granite-thinking",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:         "granite thinking moe",
+			config:       `{"architectures":["GraniteMoeForCausalLM"]}`,
+			chatTemplate: `{%- if content is string -%}{%- set content = c.split('</think>')[-1] -%}{%- endif -%}{%- if add_generation_prompt %}{%- if enable_thinking %}{{- '<|im_start|>assistant\n<think>\n' }}{%- endif %}{%- endif %}`,
+			standalone:   true,
+			wantParser:   "granite-thinking",
+			wantRenderer: "granite-thinking",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			// Granite 4.1 shares the "GraniteForCausalLM" architecture but
+			// uses a different, non-thinking template (no <think> at all) —
+			// this must NOT be routed to the granite-thinking parser/renderer.
+			name:         "granite 4.1 non-thinking template",
+			config:       `{"architectures":["GraniteForCausalLM"]}`,
+			chatTemplate: `{%- if tools %}<tools>{{ tools }}</tools>{%- endif %}{{- '<|start_of_role|>assistant<|end_of_role|>' }}`,
+			standalone:   true,
+			wantParser:   "",
+			wantRenderer: "",
+		},
+		{
+			// Granite 3.2/3.3 also support thinking, but with the older
+			// <|start_of_role|> template: <think>/<response> only appear as
+			// literal text inside a system-prompt instruction telling the
+			// model how to format its own output, not as real template
+			// control-flow markers, and there is no ChatML <|im_start|>. This
+			// must not be routed to granite-thinking either.
+			name:         "granite 3.3 old-style thinking template",
+			config:       `{"architectures":["GraniteForCausalLM"]}`,
+			chatTemplate: `{%- elif thinking %}{%- set system_message = system_message + "Write your thoughts between <think></think> and write your response between <response></response> for each user query." %}{%- endif %}{{- '<|start_of_role|>' + message['role'] + '<|end_of_role|>' + message['content'] + '<|end_of_text|>' }}`,
+			standalone:   true,
+			wantParser:   "",
+			wantRenderer: "",
+		},
+		{
 			name:         "nested llm config",
 			config:       `{"model_type":"nemotron_h_omni","llm_config":{"model_type":"nemotron_h"}}`,
 			wantParser:   "nemotron-3-nano",
