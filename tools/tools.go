@@ -388,17 +388,12 @@ func (p *Parser) done() bool {
 	return false
 }
 
-// Content returns any remaining content that
-// should be sent to the user. This should be the empty string
-// string unless the tag is { or [ and a tool call was not found
+// Content returns any remaining content that should be sent to the user when
+// no tool call was parsed.
 func (p *Parser) Content() string {
 	if p.n > 0 {
 		return ""
 	}
 
-	if p.tag == "{" || p.tag == "[" {
-		return string(p.buffer)
-	}
-
-	return ""
+	return string(p.buffer)
 }
