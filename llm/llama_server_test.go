@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -3824,6 +3825,343 @@ func fakeRunningCmd() *exec.Cmd {
 	// pass *testing.T here without changing all call sites. The OS will
 	// SIGKILL children when the test process exits.
 	return cmd
+}
+
+// devaiQwen35Log is the memory-relevant part of a real llama-server load:
+// smtek/Swift-Qwen3.8-27B at num_ctx=131072 on an RTX 4000 Ada, 54 of 66 layers
+// offloaded. The model carries an MTP draft context, so every context-scoped
+// buffer is reported twice under an identical component/backend/kind — which is
+// what used to make the second report overwrite the first.
+//
+// The trailing sched_reserve pair is verbatim too: llama.cpp reports the draft
+// context's compute buffers a second time within the same context, and those
+// must NOT add up.
+var devaiQwen35Log = []string{
+	"load_tensors:   CPU_Mapped model buffer size =  3889.53 MiB\n",
+	"load_tensors:        CUDA0 model buffer size = 13289.38 MiB\n",
+	"llama_context: constructing llama_context\n",
+	"llama_context: n_ctx                 = 131072\n",
+	"llama_context:  CUDA_Host  output buffer size =     0.95 MiB\n",
+	"llama_kv_cache:        CPU KV buffer size =   816.00 MiB\n",
+	"llama_kv_cache:      CUDA0 KV buffer size =  3536.00 MiB\n",
+	"llama_memory_recurrent:        CPU RS buffer size =   112.22 MiB\n",
+	"llama_memory_recurrent:      CUDA0 RS buffer size =   486.28 MiB\n",
+	"sched_reserve:      CUDA0 compute buffer size =  1047.73 MiB\n",
+	"sched_reserve:  CUDA_Host compute buffer size =   218.74 MiB\n",
+	"common_speculative_init_result: creating MTP draft context against the target model\n",
+	"llama_context: constructing llama_context\n",
+	"llama_context: n_ctx                 = 131072\n",
+	"llama_context:  CUDA_Host  output buffer size =     0.95 MiB\n",
+	"llama_kv_cache:      CUDA0 KV buffer size =   512.00 MiB\n",
+	"sched_reserve:      CUDA0 compute buffer size =   196.02 MiB\n",
+	"sched_reserve:  CUDA_Host compute buffer size =   148.02 MiB\n",
+	"sched_reserve:      CUDA0 compute buffer size =   196.02 MiB\n",
+	"sched_reserve:  CUDA_Host compute buffer size =   148.02 MiB\n",
+}
+
+// TestMemoryParsingWriterSecondContext guards the accounting for models that
+// build more than one llama_context.
+//
+// Before buffers were keyed by context epoch, the draft context's smaller KV and
+// compute buffers replaced the target context's under the same key, and ollama
+// reported 14483 MiB where 19067 MiB were on the card — a 4583 MiB shortfall
+// that misled both placement and eviction. llama.cpp's own fit pass reports
+// "19067 MiB used" for this very load, which is the figure checked here.
+func TestMemoryParsingWriterSecondContext(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	// 13289.38 model + 3536.00 KV + 486.28 RS + 1047.73 compute   (target)
+	//         +  512.00 KV            +  196.02 compute           (draft)
+	const wantCUDA0MiB = 13289.38 + 3536.00 + 486.28 + 1047.73 + 512.00 + 196.02
+
+	for _, chunked := range []bool{false, true} {
+		name := "line by line"
+		if chunked {
+			name = "whole log in one write"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+			// stderr is not line-buffered, so a single write can carry a context
+			// marker sitting between two buffer lines. Both framings must land on
+			// the same totals.
+			if chunked {
+				w.Write([]byte(strings.Join(devaiQwen35Log, "")))
+			} else {
+				for _, line := range devaiQwen35Log {
+					w.Write([]byte(line))
+				}
+			}
+
+			got := float64(runner.vramByDevice["CUDA0"]) / MiB
+			if math.Abs(got-wantCUDA0MiB) > 1 {
+				t.Errorf("CUDA0 VRAM = %.2f MiB, want %.2f MiB (shortfall %.2f)",
+					got, wantCUDA0MiB, wantCUDA0MiB-got)
+			}
+
+			// The repeated draft compute buffers must not be counted twice.
+			if got > wantCUDA0MiB+196 {
+				t.Errorf("CUDA0 VRAM = %.2f MiB — repeated sched_reserve counted twice", got)
+			}
+
+			// Host-side buffers stay out of per-device VRAM.
+			for dev := range runner.vramByDevice {
+				if !isGPUBuffer(dev) {
+					t.Errorf("non-GPU buffer %q found in vramByDevice", dev)
+				}
+			}
+		})
+	}
+}
+
+// TestMemoryParsingWriterMMProjBuffer covers the projector weight buffer, which
+// upstream llama.cpp allocates at clip.cpp:3608 and then never announces —
+// unlike every other weight buffer. llama/compat/006 adds the line; this test
+// pins both halves of what it has to do here.
+//
+// Measured on devai 2026-10-03, qwen35moe with an inline mmproj: the card
+// reported 19300 MiB for the ollama PID while our five parsed buffers summed to
+// 18089.1 MiB. ~995 MiB of that gap is the projector, counted by nobody. The
+// pre-fix OOM asked for exactly 1043725952 bytes = 995.375 MiB, which is where
+// the number in this test comes from.
+//
+// The kind is "mmproj", not "model", and that distinction carries weight:
+// memModelFileBacked exists to let MemorySize() subtract the mmap double-count
+// between a device copy and the on-disk file. The projector is a separate file
+// and never overlaps the main model's mmap span, so folding it in would
+// subtract VRAM that is genuinely allocated.
+func TestMemoryParsingWriterMMProjBuffer(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	for _, line := range []string{
+		"load_tensors:        CUDA0 model buffer size = 16663.07 MiB\n",
+		// The new line, verbatim in the format patch 003 emits. __func__ is
+		// clip_model_loader::load_tensors, the buffer name comes from
+		// ggml_backend_buffer_name, and the parenthesised figure is the
+		// ggml_nbytes sum that clip_get_mem_usage() reports.
+		"load_tensors:        CUDA0 mmproj buffer size =   995.38 MiB (tensor data 852.50 MiB)\n",
+		"llama_context: constructing llama_context\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =  1360.00 MiB\n",
+		"reserve_compute_meta: CUDA0 compute buffer size =   248.10 MiB\n",
+	} {
+		w.Write([]byte(line))
+	}
+
+	const wantCUDA0 = 16663.07 + 995.38 + 1360.00 + 248.10
+	if got := float64(runner.vramByDevice["CUDA0"]) / MiB; math.Abs(got-wantCUDA0) > 1 {
+		t.Errorf("CUDA0 VRAM = %.2f MiB, want %.2f MiB", got, wantCUDA0)
+	}
+
+	// The trailing "(tensor data ...)" must not be mistaken for a buffer of its
+	// own, and must not displace the real figure.
+	if got := float64(runner.memTotal) / MiB; math.Abs(got-wantCUDA0) > 1 {
+		t.Errorf("total = %.2f MiB, want %.2f MiB", got, wantCUDA0)
+	}
+
+	// Only the model buffer is file-backed. 17658.45 would mean the projector
+	// was folded in and its bytes become eligible for the mmap subtraction.
+	if got := float64(runner.memModelFileBacked) / MiB; math.Abs(got-16663.07) > 1 {
+		t.Errorf("memModelFileBacked = %.2f MiB, want 16663.07 MiB (projector must not count as model)", got)
+	}
+}
+
+// TestMemoryParsingWriterTwoKVCaches covers several KV caches inside a single
+// context. gemma3 builds two (llama_kv_cache_iswa): a non-SWA cache over the
+// full-attention layers and an SWA cache over the sliding-window ones. Both
+// report from the same allocation loop under an identical component, backend,
+// kind and epoch, so the second silently replaced the first.
+//
+// Verbatim from X-Ray 2026-10-03, gemma3:12b at num_ctx 4096: size_vram
+// reported 8262.2 MiB where 8398.23 MiB were allocated — the 136.00 MiB non-SWA
+// cache had been overwritten by the 255.00 MiB SWA cache.
+func TestMemoryParsingWriterTwoKVCaches(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	lines := []string{
+		"load_tensors:   CPU_Mapped model buffer size =   787.50 MiB\n",
+		"load_tensors:        CUDA0 model buffer size =  6952.32 MiB\n",
+		"llama_context: constructing llama_context\n",
+		"llama_context:  CUDA_Host  output buffer size =     1.00 MiB\n",
+		"llama_kv_cache_iswa: creating non-SWA KV cache, size = 4096 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   136.00 MiB\n",
+		"llama_kv_cache_iswa: creating     SWA KV cache, size = 1536 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   255.00 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   119.05 MiB\n",
+		"sched_reserve:  CUDA_Host compute buffer size =    21.05 MiB\n",
+		"load_tensors:        CUDA0 mmproj buffer size =   814.61 MiB (tensor data 814.60 MiB)\n",
+		"reserve_compute_meta:      CUDA0 compute buffer size =   121.25 MiB\n",
+		"reserve_compute_meta:        CPU compute buffer size =     9.19 MiB\n",
+	}
+
+	// 6952.32 model + 136.00 KV + 255.00 KV + 119.05 compute + 814.61 mmproj
+	// + 121.25 clip compute. nvidia-smi read 8546 MiB for the process, leaving
+	// 147.77 MiB of CUDA context — in line with the 148-215 MiB seen elsewhere.
+	const wantCUDA0 = 6952.32 + 136.00 + 255.00 + 119.05 + 814.61 + 121.25
+
+	// Both framings must agree: stderr is not line-buffered, so a cache
+	// announcement and the buffer line it belongs to can arrive in one write.
+	for _, chunked := range []bool{false, true} {
+		name := "line by line"
+		if chunked {
+			name = "whole log in one write"
+		}
+
+		t.Run(name, func(t *testing.T) {
+			runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+			if chunked {
+				w.Write([]byte(strings.Join(lines, "")))
+			} else {
+				for _, line := range lines {
+					w.Write([]byte(line))
+				}
+			}
+
+			got := float64(runner.vramByDevice["CUDA0"]) / MiB
+			if math.Abs(got-wantCUDA0) > 1 {
+				t.Errorf("CUDA0 VRAM = %.2f MiB, want %.2f MiB (shortfall %.2f)",
+					got, wantCUDA0, wantCUDA0-got)
+			}
+		})
+	}
+}
+
+// TestMemoryParsingWriterKVCacheResetsPerAttempt pins the counterpart: a
+// repeated load attempt must replace the previous attempt's caches, not add to
+// them. llama.cpp releases whose fit probe loads the model for real replay the
+// whole sequence from load_tensors onwards, and so does the mmproj CPU-offload
+// restart. Counting caches without resetting on a new attempt would double
+// every KV buffer.
+func TestMemoryParsingWriterKVCacheResetsPerAttempt(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	// No context marker between the attempts: the probe reuses the same
+	// context, exactly as the rc21 log above does. The marker only appears once,
+	// before the first attempt.
+	for _, line := range []string{
+		"llama_context: constructing llama_context\n",
+		// Probe attempt: two caches, then thrown away.
+		"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+		"llama_kv_cache_iswa: creating non-SWA KV cache, size = 4096 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   100.00 MiB\n",
+		"llama_kv_cache_iswa: creating     SWA KV cache, size = 1536 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   200.00 MiB\n",
+		// Real load, same context: both caches report again, larger.
+		"load_tensors:        CUDA0 model buffer size =  1100.00 MiB\n",
+		"llama_kv_cache_iswa: creating non-SWA KV cache, size = 4096 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   110.00 MiB\n",
+		"llama_kv_cache_iswa: creating     SWA KV cache, size = 1536 cells\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   220.00 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   330.00 MiB\n",
+	} {
+		w.Write([]byte(line))
+	}
+
+	const want = 1100.00 + 110.00 + 220.00 + 330.00
+	got := float64(runner.vramByDevice["CUDA0"]) / MiB
+	if math.Abs(got-want) > 1 {
+		t.Errorf("CUDA0 VRAM = %.2f MiB, want %.2f MiB (probe attempt counted twice would give %.2f)",
+			got, want, want+300)
+	}
+}
+
+// TestMemoryParsingWriterFitProbeStillReplaces checks that the epoch key did not
+// reintroduce double counting for the repeated reports llama.cpp emits within a
+// single context.
+func TestMemoryParsingWriterFitProbeStillReplaces(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	runner := &llamaServerRunner{vramByDevice: make(map[string]uint64)}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	for _, line := range []string{
+		"load_tensors:        CUDA0 model buffer size =  1000.00 MiB\n",
+		"llama_context: constructing llama_context\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =   500.00 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   300.00 MiB\n",
+		// Same context reporting again, with the value it settled on.
+		"sched_reserve:      CUDA0 compute buffer size =   250.00 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   250.00 MiB\n",
+	} {
+		w.Write([]byte(line))
+	}
+
+	if got, want := float64(runner.vramByDevice["CUDA0"])/MiB, 1000.0+500.0+250.0; math.Abs(got-want) > 1 {
+		t.Errorf("CUDA0 VRAM = %.2f MiB, want %.2f MiB", got, want)
+	}
+}
+
+// TestMemoryParsingWriterRestartReplaces guards the projector OOM retry.
+//
+// qwen3.6:35b-Q4_K_M carries an mmproj. On a 20 GB card at num_ctx=131072 the
+// first llama-server died with "cudaMalloc failed: out of memory" while
+// allocating the projector, and ollama restarted it with --no-mmproj-offload
+// (retryWithMMProjCPUOffload). Both processes report buffers through the same
+// writer.
+//
+// Keying buffers by context epoch made the restarted process open fresh epochs
+// instead of overwriting the dead one's keys, so the two runs summed: ollama
+// reported 38181 MiB of VRAM on a card that only has 20475. Only the surviving
+// run may count.
+func TestMemoryParsingWriterRestartReplaces(t *testing.T) {
+	const MiB = 1024 * 1024
+
+	// Verbatim from the devai load. Run 1 died; its projector made the model
+	// buffer larger, which is why the two runs differ at all.
+	run1 := []string{
+		"load_tensors:        CUDA0 model buffer size = 17803.63 MiB\n",
+		"llama_context: constructing llama_context\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =  1360.00 MiB\n",
+		"llama_memory_recurrent:      CUDA0 RS buffer size =    60.72 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   436.53 MiB\n",
+	}
+	run2 := []string{
+		"load_tensors:        CUDA0 model buffer size = 16663.07 MiB\n",
+		"llama_context: constructing llama_context\n",
+		"llama_kv_cache:      CUDA0 KV buffer size =  1360.00 MiB\n",
+		"llama_memory_recurrent:      CUDA0 RS buffer size =    60.72 MiB\n",
+		"sched_reserve:      CUDA0 compute buffer size =   436.53 MiB\n",
+	}
+	const wantRun2 = 16663.07 + 1360.00 + 60.72 + 436.53 // 18520.32 MiB
+
+	runner := &llamaServerRunner{
+		vramByDevice:     make(map[string]uint64),
+		systemFreeAtLoad: make(map[string]uint64),
+	}
+	runner.output = &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+	for _, line := range run1 {
+		runner.output.Write([]byte(line))
+	}
+	if got := float64(runner.vramByDevice["CUDA0"]) / MiB; math.Abs(got-19660.88) > 1 {
+		t.Fatalf("after run 1: CUDA0 = %.2f MiB, want 19660.88 MiB", got)
+	}
+
+	runner.resetLoadAccounting()
+
+	if got := runner.vramByDevice["CUDA0"]; got != 0 {
+		t.Errorf("after reset: CUDA0 = %d, want 0", got)
+	}
+	if got := len(runner.output.buffers); got != 0 {
+		t.Errorf("after reset: %d buffers retained, want 0", got)
+	}
+
+	for _, line := range run2 {
+		runner.output.Write([]byte(line))
+	}
+
+	if got := float64(runner.vramByDevice["CUDA0"]) / MiB; math.Abs(got-wantRun2) > 1 {
+		t.Errorf("after restart: CUDA0 = %.2f MiB, want %.2f MiB (sum of both runs would be 38181.20)", got, wantRun2)
+	}
 }
 
 // TestLlamaServerCompletionThinkingFormat checks that a format on a thinking

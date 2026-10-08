@@ -1136,6 +1136,17 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memCPUMappedModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
+
+	// Drop the dead process's buffers. The restarted llama-server reports its
+	// own, and because each process starts a fresh context epoch they would
+	// otherwise accumulate on top of each other rather than replace — on a
+	// projector OOM retry that doubles the reported VRAM. The writer's state is
+	// guarded by memoryMu, which is held here.
+	if s.output != nil {
+		clear(s.output.buffers)
+		s.output.epoch = 0
+		s.output.kvCache = 0
+	}
 	for k := range s.vramByDevice {
 		delete(s.vramByDevice, k)
 	}
@@ -2786,22 +2797,44 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 }
 
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
+// Uses the model file size as a proxy for the weights plus the computed KV cache.
+//
+// The scheduler leans on this in four places (see server/sched.go): to evict
+// other models before a load, to lower num_ctx when a model looks too large, and
+// twice to decide whether to disable mmap. An overestimate therefore costs real
+// context window, so the KV term is computed rather than guessed:
+//
+//   - only blocks that actually hold a cache are counted, which for hybrid
+//     models like qwen35 is 16 of 65 rather than all of them
+//   - the configured cache type decides bytes per element, so OLLAMA_KV_CACHE_TYPE
+//     is no longer ignored
+//   - head dimensions come from attention.key_length/value_length, which differ
+//     from embedding_length/head_count on models that scale them independently
+//   - a draft context, if the model has one, is counted as the separate
+//     allocation it is
+//   - sliding-window blocks are capped at their window rather than the whole
+//     context, which for gemma3 is 40 of 48 blocks
+//
+// Compute and recurrent-state buffers stay out: they follow batch size and graph
+// topology and cannot be derived honestly from metadata. That leaves the estimate
+// low by a few hundred MiB, which is the safer direction — llama.cpp's own fit
+// pass measures the remainder at load time with real test allocations and places
+// layers accordingly.
+//
+// numCtx is expected to already include the parallel slot multiplier, as
+// effectiveLlamaServerContext computes it; numParallel is needed separately
+// because a sliding-window cache is capped per stream and only then multiplied
+// by the slot count. numBatch is llama-server's micro-batch, which adds headroom
+// to every sliding-window cache.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel, numBatch int) uint64 {
 	weights := modelFileSize(modelPath, f)
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+	slots := max(numParallel, 1)
+	contextPerSeq := uint64(numCtx) / uint64(slots)
+
+	kvCacheType := strings.ToLower(envconfig.KvCacheType())
+	kvCache := f.KV().KVCacheSize(contextPerSeq, slots, uint64(max(numBatch, 0)), kvCacheType)
+	kvCache += f.KV().DraftKVCacheSize(contextPerSeq, slots)
 
 	return weights + kvCache
 }
@@ -2818,16 +2851,33 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	CUDA_Host compute buffer size =   268.05 MiB
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
+//	CUDA0 mmproj buffer size =   995.38 MiB (tensor data 852.50 MiB)
 type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+	// epoch counts the llama_context instances seen so far. Buffers reported by
+	// different contexts are separate allocations and must both be counted; see
+	// contextStartRegex.
+	epoch int
+	// kvCache counts the KV caches announced within the current context; see
+	// kvCacheStartRegex. Reset by a new context and by a new load attempt.
+	kvCache int
 }
 
 type memoryBufferKey struct {
 	component string
 	backend   string
 	kind      string
+	// epoch distinguishes buffers belonging to different llama_context
+	// instances. Without it a model with a second context (e.g. an MTP draft
+	// context) overwrites the target context's buffers under an identical key.
+	epoch int
+	// cache distinguishes several KV caches living in one context. llama.cpp
+	// announces each one before allocating it (kvCacheStartRegex); without this
+	// field the second cache's buffer overwrites the first under an otherwise
+	// identical key.
+	cache int
 }
 
 type memoryBuffer struct {
@@ -2843,7 +2893,51 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+// "state" covers the DSV4 cache, "LoRA" the adapter buffers; both report in
+// the same format and were previously dropped on the floor.
+//
+// "mmproj" is the projector weight buffer. Stock llama.cpp allocates it without
+// reporting it at all, so it was invisible here — measured on devai, ~995 MiB
+// of a 19300 MiB card went uncounted. llama/compat/006 adds the line; the kind
+// is deliberately not "model" because these weights come from a separate file
+// and never overlap the main model's mmap-backed span.
+var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS|state|LoRA|mmproj)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+
+// contextStartRegex matches the line llama.cpp prints when it builds a
+// llama_context. Each context allocates its own KV, compute and output buffers
+// and reports them under component/backend/kind names identical to the previous
+// context's — a model with a draft context (MTP speculative decoding) reports
+// everything twice. Keying buffers by context epoch keeps both.
+//
+// The fit probe does not emit buffer size lines at all (it reports through
+// common_memory_breakdown_print), so no probe values are counted here. Repeated
+// reports within one context — sched_reserve does this — share an epoch and
+// still replace, which is what we want.
+var contextStartRegex = regexp.MustCompile(`llama_context:\s+constructing llama_context`)
+
+// kvCacheStartRegex matches the line llama.cpp prints before it builds a KV
+// cache. One context can hold several: gemma3 builds a non-SWA and an SWA cache
+// (llama_kv_cache_iswa), DeepSeek builds a main and an indexer cache. Each
+// reports its buffer from the same allocation loop (llama-kv-cache.cpp:291)
+// under an identical component, backend, kind and epoch, so without a per-cache
+// counter the later one silently replaces the earlier.
+//
+// Measured on X-Ray 2026-10-03, gemma3:12b: the SWA cache's 255.00 MiB
+// overwrote the non-SWA cache's 136.00 MiB; size_vram reported 8262.2 MiB where
+// 8398.23 were on the card.
+//
+// The counter is reset by every model buffer line, not only by a new context.
+// A repeated load attempt — the fit probe in llama.cpp releases that loaded the
+// model for real, and the mmproj CPU-offload restart — replays the whole
+// sequence starting at load_tensors, and its caches must replace the previous
+// attempt's rather than add to them.
+//
+// RS buffers deliberately keep replacing: llama_memory_recurrent prints no such
+// announcement, so there is nothing to count, and no evidence that one context
+// ever builds more than one recurrent memory.
+// All ten wordings llama.cpp uses ("main", "indexer", "non-SWA", "    SWA",
+// "DSV4 CSA compressed", ...) are covered by the permissive middle.
+var kvCacheStartRegex = regexp.MustCompile(`creating\s+.*KV cache`)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
@@ -2906,19 +3000,54 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
-				backendName := string(match[2])
-				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
+			// Walk markers and buffer lines together in the order they appear. A
+			// single write can carry both, with a marker sitting between two
+			// buffer lines — handling the two separately would file the earlier
+			// buffer under the later epoch and lose it again.
+			ctxMarkers := contextStartRegex.FindAllIndex(b, -1)
+			kvMarkers := kvCacheStartRegex.FindAllIndex(b, -1)
+			for _, loc := range bufferSizeRegex.FindAllSubmatchIndex(b, -1) {
+				for len(ctxMarkers) > 0 && ctxMarkers[0][0] < loc[0] {
+					w.epoch++
+					w.kvCache = 0
+					ctxMarkers = ctxMarkers[1:]
+				}
+				for len(kvMarkers) > 0 && kvMarkers[0][0] < loc[0] {
+					w.kvCache++
+					kvMarkers = kvMarkers[1:]
+				}
+				group := func(n int) string { return string(b[loc[2*n]:loc[2*n+1]]) }
+				if mib, err := strconv.ParseFloat(group(4), 64); err == nil {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
-					w.buffers[memoryBufferKey{
-						component: string(match[1]),
-						backend:   backendName,
-						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+					kind := group(3)
+					// A model buffer line starts a fresh load attempt: the fit
+					// probe and the mmproj CPU-offload restart replay the whole
+					// sequence, and their caches replace rather than add.
+					if kind == "model" {
+						w.kvCache = 0
+					}
+					key := memoryBufferKey{
+						component: group(1),
+						backend:   group(2),
+						kind:      kind,
+						epoch:     w.epoch,
+					}
+					if kind == "KV" {
+						key.cache = w.kvCache
+					}
+					w.buffers[key] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
 					w.updateRunnerMemoryLocked()
 				}
+			}
+			for len(kvMarkers) > 0 {
+				w.kvCache++
+				kvMarkers = kvMarkers[1:]
+			}
+			if len(ctxMarkers) > 0 {
+				w.epoch += len(ctxMarkers)
+				w.kvCache = 0
 			}
 		}()
 	}
