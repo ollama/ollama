@@ -329,6 +329,7 @@ console.log(response.message.content);
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) - Open source LLM observability
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) - AI observability and evaluation for agents
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) - Open source LLM observability
+- [runtape](https://github.com/RehanMohammed985/runtape) - Find which part of the context caused an agent's bad decision, and check fixes against it
 
 ### Database & Embeddings
 
