@@ -430,6 +430,9 @@ printf '%s\n' "${CLAUDE_CODE_AUTO_MODE_SERVER-unset}" "$ANTHROPIC_DEFAULT_SONNET
 func TestClaudeModelEnvVars(t *testing.T) {
 	c := &Claude{}
 
+	windowKeys := []string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"}
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
+
 	envMap := func(envs []string) map[string]string {
 		m := make(map[string]string)
 		for _, e := range envs {
@@ -453,8 +456,10 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "llama3.2" {
 			t.Errorf("SUBAGENT = %q, want llama3.2", got["CLAUDE_CODE_SUBAGENT_MODEL"])
 		}
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty for local models", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset for local models", key, v)
+			}
 		}
 	})
 
@@ -472,22 +477,45 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "" {
 			t.Errorf("SUBAGENT = %q, want empty", got["CLAUDE_CODE_SUBAGENT_MODEL"])
 		}
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset", key, v)
+			}
 		}
 	})
 
-	t.Run("sets auto compact window for known cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("glm-5:cloud"))
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "202752" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 202752", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+	t.Run("sets context and auto compact windows for known cloud models", func(t *testing.T) {
+		for model, want := range map[string]string{
+			"glm-5:cloud":     "202752",
+			"kimi-k2.6:cloud": "262144",
+		} {
+			got := envMap(c.modelEnvVars(model))
+			for _, key := range windowKeys {
+				if got[key] != want {
+					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
+				}
+			}
 		}
 	})
 
-	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
+	t.Run("keeps the user's auto compact window but not their context window", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
+		t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "150000")
+		got := envMap(c.modelEnvVars("kimi-k2.6:cloud"))
+		if v, ok := got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; ok {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want left to the user's setting", v)
+		}
+		if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "262144" {
+			t.Errorf("MAX_CONTEXT_TOKENS = %q, want 262144", got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
+		}
+	})
+
+	t.Run("does not set windows for unknown cloud models", func(t *testing.T) {
 		got := envMap(c.modelEnvVars("unknown-model:cloud"))
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset", key, v)
+			}
 		}
 	})
 }
