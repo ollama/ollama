@@ -199,6 +199,56 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("infers thinking capability from [THINK] tags in chat template", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{% if think %}[THINK]{{ reasoning }}[/THINK]{% endif %}",
+		}, nil)
+		writeTestModelManifest(t, "chat-template-mistral-thinking", digest, "{{ range .Messages }}{{ .Content }}{{ end }}")
+
+		m, err := GetModelForRunner("chat-template-mistral-thinking", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+		if got := m.CheckCapabilities(model.CapabilityThinking); got != nil {
+			t.Fatalf("expected thinking capability derived from [THINK] chat template tags, got %v", got)
+		}
+	})
+
+	t.Run("does not infer thinking capability without [THINK] tags in chat template", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":    "llama",
+			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
+		}, nil)
+		writeTestModelManifest(t, "chat-template-no-mistral-thinking", digest, "{{ range .Messages }}{{ .Content }}{{ end }}")
+
+		m, err := GetModelForRunner("chat-template-no-mistral-thinking", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+		if got := m.CheckCapabilities(model.CapabilityThinking); got == nil {
+			t.Fatal("expected no thinking capability for a chat template without [THINK]/[/THINK]")
+		}
+	})
+
 	t.Run("prefers chat template with stronger tool round trip", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")

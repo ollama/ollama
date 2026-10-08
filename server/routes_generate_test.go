@@ -780,6 +780,104 @@ func TestGenerateHandlerChatTemplateRoute(t *testing.T) {
 	})
 }
 
+// TestGenerateThinkingTagsFromChatTemplateFallback is a regression guard for
+// the handler wiring that splits [THINK]/[/THINK] reasoning for models whose
+// Go template yields no thinking tags: the tags are recovered from the raw
+// (jinja) tokenizer.chat_template GGUF metadata via thinking.TemplateTags,
+// installed as a tag parser, and passed to the runner as PreservedTokens.
+// Removing any of those links must fail this test.
+func TestGenerateThinkingTagsFromChatTemplateFallback(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+	gin.SetMode(gin.TestMode)
+
+	newMinistralFixture := func(t *testing.T, name, chatTemplate string, caps []string) (*mockRunner, *Server) {
+		t.Helper()
+		mock := &mockRunner{
+			CompletionResponse: llm.CompletionResponse{
+				Content:            "[THINK]careful monologue[/THINK]final answer",
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: time.Millisecond,
+				EvalCount:          1,
+				EvalDuration:       time.Millisecond,
+			},
+		}
+		s := newServerWithMockRunner(t, mock)
+		// Go template with no thinking tags, mirroring the 142-byte fallback
+		// template HF GGUF imports carry.
+		createMinimalGGUFModel(t, s, name,
+			gguftest.KV{"tokenizer.chat_template": chatTemplate},
+			"{{ range .Messages }}{{ .Content }}{{ end }}",
+			map[string]any{"capabilities": caps},
+		)
+		return mock, s
+	}
+
+	t.Run("ministral reasoning tags from gguf chat template", func(t *testing.T) {
+		mock, s := newMinistralFixture(t, "ministral-template-thinking",
+			"{{ messages[0]['content'] }}{% if think %}[THINK]{{ reasoning }}[/THINK]{% endif %}",
+			[]string{"completion", "thinking"})
+
+		stream := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "ministral-template-thinking",
+			Prompt: "hello",
+			Stream: &stream, // Think unset: defaults to true via the thinking capability
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Response != "final answer" {
+			t.Errorf("response = %q, want %q", resp.Response, "final answer")
+		}
+		if resp.Thinking != "careful monologue" {
+			t.Errorf("thinking = %q, want %q", resp.Thinking, "careful monologue")
+		}
+		for _, token := range []string{"[THINK]", "[/THINK]"} {
+			if !slices.Contains(mock.CompletionRequest.PreservedTokens, token) {
+				t.Errorf("PreservedTokens = %#v, want it to contain %q", mock.CompletionRequest.PreservedTokens, token)
+			}
+		}
+	})
+
+	t.Run("no thinking tags anywhere is unchanged", func(t *testing.T) {
+		mock, s := newMinistralFixture(t, "ministral-no-thinking-tags",
+			"{{ messages[0]['content'] }}",
+			[]string{"completion"})
+
+		stream := false
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "ministral-no-thinking-tags",
+			Prompt: "hello",
+			Stream: &stream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Response != "[THINK]careful monologue[/THINK]final answer" {
+			t.Errorf("response = %q, want the unsplit runner output", resp.Response)
+		}
+		if resp.Thinking != "" {
+			t.Errorf("thinking = %q, want none", resp.Thinking)
+		}
+		if len(mock.CompletionRequest.PreservedTokens) != 0 {
+			t.Errorf("PreservedTokens = %#v, want none", mock.CompletionRequest.PreservedTokens)
+		}
+	})
+}
+
 func TestGenerateChatRemote(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
