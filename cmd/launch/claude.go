@@ -69,7 +69,6 @@ func (c *Claude) envVars(model string) []string {
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
-		// Claude.ai connectors require a subscription login, which Ollama's auth token overrides.
 		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off",
