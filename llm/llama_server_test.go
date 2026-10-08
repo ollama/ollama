@@ -253,6 +253,141 @@ func TestLlamaServerCompletionSSEParsing(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionRawIncludesEOSTokens(t *testing.T) {
+	detokenizeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/detokenize":
+			detokenizeCalls++
+			var body struct {
+				Tokens []int `json:"tokens"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("detokenize body: %v", err)
+				return
+			}
+			if len(body.Tokens) != 1 || body.Tokens[0] != 2 {
+				t.Errorf("detokenize tokens = %#v, want [2]", body.Tokens)
+			}
+			fmt.Fprint(w, `{"content":"<|eot_id|>"}`)
+		case "/completion":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"Hello","stop":false,"tokens":[1],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+			// llama-server leaves special EOS tokens as empty content with a token id
+			fmt.Fprintln(w, `data: {"content":"","stop":false,"tokens":[2],"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":2,"predicted_ms":2}}`)
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":2,"predicted_ms":2}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	var responses []CompletionResponse
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test",
+		Options: &opts,
+		Raw:     true,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if detokenizeCalls != 1 {
+		t.Fatalf("detokenize calls = %d, want 1", detokenizeCalls)
+	}
+	if len(responses) != 3 {
+		t.Fatalf("got %d responses, want 3", len(responses))
+	}
+	if responses[0].Content != "Hello" {
+		t.Errorf("response[0].Content = %q, want %q", responses[0].Content, "Hello")
+	}
+	if responses[1].Content != "<|eot_id|>" {
+		t.Errorf("response[1].Content = %q, want %q", responses[1].Content, "<|eot_id|>")
+	}
+	if !responses[2].Done || responses[2].DoneReason != DoneReasonStop {
+		t.Errorf("final response = %#v, want done stop", responses[2])
+	}
+}
+
+func TestLlamaServerCompletionNonRawOmitsEOSTokens(t *testing.T) {
+	detokenizeCalls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/detokenize":
+			detokenizeCalls++
+			fmt.Fprint(w, `{"content":"<|eot_id|>"}`)
+		case "/completion":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"content":"Hello","stop":false,"tokens":[1]}`)
+			fmt.Fprintln(w, `data: {"content":"","stop":false,"tokens":[2]}`)
+			fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":2,"predicted_ms":2}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	opts := api.DefaultOptions()
+	var responses []CompletionResponse
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test",
+		Options: &opts,
+		Raw:     false,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if detokenizeCalls != 0 {
+		t.Fatalf("detokenize calls = %d, want 0", detokenizeCalls)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("got %d responses, want 2 (content + final)", len(responses))
+	}
+	if responses[0].Content != "Hello" {
+		t.Errorf("response[0].Content = %q, want %q", responses[0].Content, "Hello")
+	}
+	if !responses[1].Done {
+		t.Error("response[1] should be done")
+	}
+	for i, r := range responses {
+		if strings.Contains(r.Content, "<|eot_id|>") {
+			t.Errorf("response[%d] unexpectedly contains EOS token: %q", i, r.Content)
+		}
+	}
+}
+
 func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

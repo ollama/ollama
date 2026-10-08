@@ -1560,6 +1560,7 @@ type llamaServerMultimodalPrompt struct {
 // llamaServerCompletionResponse is the response format from llama-server's /completion endpoint.
 type llamaServerCompletionResponse struct {
 	Content                 string                 `json:"content"`
+	Tokens                  []int                  `json:"tokens"`
 	Stop                    bool                   `json:"stop"`
 	StopType                string                 `json:"stop_type"`
 	Timings                 llamaServerTimings     `json:"timings"`
@@ -1808,9 +1809,18 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("prediction aborted, token repeat limit reached")
 			}
 
-			if lsResp.Content != "" && !lsResp.Stop {
+			content := lsResp.Content
+			// llama-server omits special/control tokens (EOS/EOM/EOT, etc.) from
+			// content unless --special is set. In raw mode, recover their text via
+			// detokenize so callers see the stop tokens in the response.
+			if req.Raw && content == "" && !lsResp.Stop && len(lsResp.Tokens) > 0 {
+				if text, err := s.Detokenize(ctx, lsResp.Tokens); err == nil {
+					content = text
+				}
+			}
+			if content != "" && !lsResp.Stop {
 				fn(CompletionResponse{
-					Content:  lsResp.Content,
+					Content:  content,
 					Logprobs: convertLogprobs(lsResp.CompletionProbabilities, req.TopLogprobs > 0),
 				})
 			}

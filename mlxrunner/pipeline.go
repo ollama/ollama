@@ -312,7 +312,14 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				if r.Tokenizer.IsEOS(id) {
 					final.DoneReason = 0
 					done = true
-					stream = i
+					// Non-raw mode omits the EOS token from streamed content.
+					// Raw mode includes it so callers see EOS/EOM/EOT text.
+					if request.Raw {
+						generated++
+						stream = i + 1
+					} else {
+						stream = i
+					}
 					continue
 				}
 				generated++

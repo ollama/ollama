@@ -120,6 +120,8 @@ type CompletionRequest struct {
 	Options     api.Options
 	Logprobs    bool
 	TopLogprobs int
+	// Raw includes EOS/EOM/EOT (and other end-of-sequence) tokens in response content.
+	Raw bool
 }
 
 type CompletionResponse struct {
@@ -201,6 +203,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		Format:      requestGrammar(req),
 		Logprobs:    req.Logprobs,
 		TopLogprobs: req.TopLogprobs,
+		Raw:         req.Raw,
 	}
 	if req.Options != nil {
 		creq.Options = *req.Options

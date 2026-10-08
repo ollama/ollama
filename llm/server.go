@@ -210,6 +210,10 @@ type CompletionRequest struct {
 	// starts in content.
 	ThinkingClose []string
 
+	// Raw requests the end-of-sequence / special stop tokens (EOS, EOM, EOT,
+	// etc.) be included in streamed content. Non-raw mode keeps them omitted.
+	Raw bool
+
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
 
