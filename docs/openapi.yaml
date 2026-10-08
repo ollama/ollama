@@ -446,6 +446,21 @@ components:
         status:
           type: string
           description: Current status message
+    MultimodalEmbedInput:
+      type: object
+      description: An embedding input containing text, an image, or audio. Media inputs require a model that supports the corresponding modality.
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: Text to embed, optionally alongside media
+        image:
+          type: string
+          description: Base64-encoded image data
+        audio:
+          type: string
+          description: Base64-encoded audio data
     EmbedRequest:
       type: object
       required: [model, input]
@@ -456,10 +471,13 @@ components:
         input:
           oneOf:
             - type: string
+            - $ref: "#/components/schemas/MultimodalEmbedInput"
             - type: array
               items:
-                type: string
-          description: Text or array of texts to generate embeddings for
+                oneOf:
+                  - type: string
+                  - $ref: "#/components/schemas/MultimodalEmbedInput"
+          description: Text, a multimodal input object, or an array mixing both. Each object contains its own media.
         truncate:
           type: boolean
           default: true
@@ -1542,7 +1560,7 @@ paths:
   /api/embed:
     post:
       summary: Generate embeddings
-      description: Creates vector embeddings representing the input text
+      description: Creates vector embeddings representing the input text, images, or audio
       operationId: embed
       x-mint:
         metadata:
@@ -1593,7 +1611,7 @@ paths:
               input: "Generate embeddings for this text"
       responses:
         "200":
-          description: Vector embeddings for the input text
+          description: Vector embeddings for the inputs
           content:
             application/json:
               schema:
