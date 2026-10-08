@@ -214,6 +214,15 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3-nano",
 		},
+		{
+			// MiniCPM5 identifies as a generic llama architecture; it is
+			// detected from its XML tool-call chat template instead.
+			name:         "minicpm5",
+			config:       `{"architectures":["LlamaForCausalLM"],"model_type":"llama"}`,
+			chatTemplate: `{{- '\n<function name=\"function-name\"><param name=\"param-name\">param-value</param></function>\n' }}`,
+			wantParser:   "minicpm5",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -257,6 +266,7 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 		{parser: "poolside-v1", want: []string{"completion", "tools", "thinking"}},
 		{parser: "functiongemma", want: []string{"completion", "tools"}},
 		{parser: "glimmer", want: []string{"completion", "tools", "thinking"}},
+		{parser: "minicpm5", want: []string{"completion", "tools", "thinking"}},
 	} {
 		t.Run(tt.parser, func(t *testing.T) {
 			dir := t.TempDir()
