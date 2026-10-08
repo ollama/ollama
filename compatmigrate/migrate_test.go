@@ -1445,3 +1445,26 @@ func TestEnsureLocalCompatibilityMigrationRepairsDanglingV2Entry(t *testing.T) {
 		t.Fatalf("expected repaired llamacpp child to resolve: %v", err)
 	}
 }
+
+func TestIsConvertedLegacyShadowName(t *testing.T) {
+	hex := strings.Repeat("ab", 32)
+	if !IsConvertedLegacyShadowName(model.ParseName("llamacpp:" + hex)) {
+		t.Fatal("expected synthetic shadow name to match")
+	}
+	if !IsConvertedLegacyShadowName(model.ParseName("LLAMACPP:" + strings.ToUpper(hex))) {
+		t.Fatal("expected case-insensitive shadow name to match")
+	}
+
+	for _, name := range []string{
+		"llamacpp:latest",
+		"llamacpp:" + hex[:63],
+		"llamacpp:" + strings.Repeat("ag", 32),
+		"user/llamacpp:" + hex,
+		"example.com/library/llamacpp:" + hex,
+		"other:" + hex,
+	} {
+		if IsConvertedLegacyShadowName(model.ParseName(name)) {
+			t.Fatalf("name %q matched a conversion shadow", name)
+		}
+	}
+}

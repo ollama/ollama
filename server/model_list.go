@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -18,11 +19,20 @@ import (
 
 // listModels builds /api/tags from the manifests and the per-blob metadata
 // files, extracting for any blob that has none yet. Manifest lists contribute
-// one row per child runner.
+// one row per child runner. A local compat migration also writes a rollback
+// tag named llamacpp:<digest>; that tag is hidden when the converted child is
+// already listed under the real model, and the pre-migration ggml child of
+// that pair is hidden so the model is listed once.
 func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 	manifests, err := manifest.Manifests(true)
 	if err != nil {
 		return nil, err
+	}
+
+	shadows := legacyConversionShadows(manifests)
+	shadowDigests := make(map[string]struct{}, len(shadows))
+	for _, digest := range shadows {
+		shadowDigests[digest] = struct{}{}
 	}
 
 	models := make([]api.ListModelResponse, 0, len(manifests))
@@ -32,8 +42,31 @@ func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 				return nil, err
 			}
 		}
+		if _, ok := shadows[name]; ok {
+			continue
+		}
 
 		rows, err := describeModelRows(name, mf)
+		if err != nil {
+			slog.Warn("failed to describe model", "model", name.String(), "error", err)
+			continue
+		}
+		models = append(models, omitMigratedGGMLDuplicate(rows, shadowDigests)...)
+	}
+
+	// A shadow whose digest is not already listed is the only name pointing at
+	// those blobs. Keep it so the model can still be seen and removed.
+	for name, digest := range shadows {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if digestListed(models, digest) {
+			continue
+		}
+
+		rows, err := describeModelRows(name, manifests[name])
 		if err != nil {
 			slog.Warn("failed to describe model", "model", name.String(), "error", err)
 			continue
@@ -43,6 +76,77 @@ func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 
 	sortListModelResponses(models)
 	return models, nil
+}
+
+// legacyConversionShadows returns rollback tags written by local compat
+// migration. The tag has to be the synthetic llamacpp:<64-hex> name and the
+// manifest bytes have to hash to that tag. A model created under a similar
+// name is left out.
+func legacyConversionShadows(manifests map[model.Name]*manifest.Manifest) map[model.Name]string {
+	shadows := make(map[model.Name]string)
+	for name, mf := range manifests {
+		digest := conversionShadowDigest(name, mf)
+		if digest == "" {
+			continue
+		}
+		shadows[name] = digest
+	}
+	return shadows
+}
+
+func conversionShadowDigest(name model.Name, mf *manifest.Manifest) string {
+	if mf == nil || !compatmigrate.IsConvertedLegacyShadowName(name) {
+		return ""
+	}
+	digest := strings.ToLower(strings.TrimPrefix(mf.Digest(), "sha256:"))
+	if !strings.EqualFold(digest, name.Tag) {
+		return ""
+	}
+	return digest
+}
+
+// omitMigratedGGMLDuplicate drops the pre-migration ggml child when this
+// name's rows include exactly one converted llamacpp child (the digest the
+// rollback tag names) and exactly one ggml child. That pair is one model.
+// Other runners, and any list with more than one ggml child, stay as they are.
+func omitMigratedGGMLDuplicate(rows []api.ListModelResponse, shadowDigests map[string]struct{}) []api.ListModelResponse {
+	if len(rows) < 2 || len(shadowDigests) == 0 {
+		return rows
+	}
+
+	migrated := 0
+	ggmlIndexes := make([]int, 0, 1)
+	for i, row := range rows {
+		if _, ok := shadowDigests[strings.ToLower(row.Digest)]; ok {
+			migrated++
+			continue
+		}
+		if row.Details.Runner == manifest.RunnerGGML {
+			ggmlIndexes = append(ggmlIndexes, i)
+		}
+	}
+	if migrated != 1 || len(ggmlIndexes) != 1 {
+		return rows
+	}
+
+	drop := ggmlIndexes[0]
+	kept := make([]api.ListModelResponse, 0, len(rows)-1)
+	for i, row := range rows {
+		if i == drop {
+			continue
+		}
+		kept = append(kept, row)
+	}
+	return kept
+}
+
+func digestListed(models []api.ListModelResponse, digest string) bool {
+	for _, row := range models {
+		if manifest.SameDigest(row.Digest, digest) {
+			return true
+		}
+	}
+	return false
 }
 
 // describeModelRows describes one named manifest for /api/tags. A manifest
