@@ -1247,6 +1247,23 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		})
 	}
 
+	if chatResponse.Message.Content != "" || len(chatResponse.Message.ToolCalls) == 0 {
+		output = append(output, ResponsesOutputItem{
+			ID:     itemID,
+			Type:   "message",
+			Status: "completed",
+			Role:   "assistant",
+			Content: []ResponsesOutputContent{
+				{
+					Type:        "output_text",
+					Text:        chatResponse.Message.Content,
+					Annotations: []any{},
+					Logprobs:    []any{},
+				},
+			},
+		})
+	}
+
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
 		availableTools := responsesRequestTools(request)
@@ -1273,21 +1290,6 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 				Arguments: tc.Function.Arguments,
 			})
 		}
-	} else {
-		output = append(output, ResponsesOutputItem{
-			ID:     itemID,
-			Type:   "message",
-			Status: "completed",
-			Role:   "assistant",
-			Content: []ResponsesOutputContent{
-				{
-					Type:        "output_text",
-					Text:        chatResponse.Message.Content,
-					Annotations: []any{},
-					Logprobs:    []any{},
-				},
-			},
-		})
 	}
 
 	var instructions *string
@@ -1397,7 +1399,6 @@ type ResponsesStreamConverter struct {
 	outputIndex     int
 	contentIndex    int
 	contentStarted  bool
-	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
 
@@ -1453,15 +1454,14 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 		events = append(events, c.processThinking(r.Message.Thinking)...)
 	}
 
+	// Handle text content before any accompanying tool calls.
+	if r.Message.Content != "" {
+		events = append(events, c.processTextContent(r.Message.Content)...)
+	}
+
 	// Handle tool calls
 	if hasToolCalls {
 		events = append(events, c.processToolCalls(r.Message.ToolCalls)...)
-		c.toolCallsSent = true
-	}
-
-	// Handle text content (only if no tool calls)
-	if !hasToolCalls && !c.toolCallsSent && r.Message.Content != "" {
-		events = append(events, c.processTextContent(r.Message.Content)...)
 	}
 
 	// Done - emit closing events
@@ -1651,7 +1651,9 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	events := c.finishReasoning()
+	events = append(events, c.FinishMessageItem()...)
+	return append(events, c.emitFunctionCallEvents(toolCalls)...)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
@@ -1858,9 +1860,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 }
 
 // EmitFunctionCallItems emits function_call events for client-provided tool
-// calls that accompanied a web_search call (mixed responses). Unlike
-// processToolCalls, this does not set toolCallsSent, so subsequent text
-// content can still be processed.
+// calls that accompanied a web_search call (mixed responses).
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
 	return c.emitFunctionCallEvents(toolCalls)
 }
@@ -1944,7 +1944,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 	events = append(events, c.finishReasoning()...)
 
 	// Emit text completion events if we had text content
-	if !c.toolCallsSent && c.contentStarted {
+	if c.contentStarted {
 		// response.output_text.done
 		events = append(events, c.newEvent("response.output_text.done", map[string]any{
 			"item_id":       c.itemID,
