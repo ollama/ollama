@@ -728,7 +728,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkTagParser *thinkingparser.Parser
-	if builtinParser == nil {
+	if builtinParser == nil || !builtinParser.HasThinkingSupport() {
 		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkTagParser = &thinkingparser.Parser{
@@ -797,6 +797,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.Thinking = thinking
 				if cr.Done && len(toolCalls) > 0 {
 					res.ToolCalls = toolCalls
+				}
+				if thinkTagParser != nil {
+					tagThinking, tagContent := thinkTagParser.AddContent(content)
+					res.Response = tagContent
+					res.Thinking += tagThinking
 				}
 			} else if thinkTagParser != nil {
 				thinking, content := thinkTagParser.AddContent(cr.Content)
