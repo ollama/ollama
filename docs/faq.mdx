@@ -294,6 +294,8 @@ By default models are kept in memory for 5 minutes before being unloaded. This a
 ollama stop llama3.2
 ```
 
+To stop all loaded models at once, use `ollama stop --all`.
+
 If you're using the API, use the `keep_alive` parameter with the `/api/generate` and `/api/chat` endpoints to set the amount of time that a model stays in memory. The `keep_alive` parameter can be set to:
 
 - a duration string (such as "10m" or "24h")
