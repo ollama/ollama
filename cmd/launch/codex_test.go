@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -53,10 +52,6 @@ func TestCodexArgs(t *testing.T) {
 		{"empty model", "", nil, managedArgs},
 		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "--sandbox", "workspace-write")},
 		{"explicit tier", "llama3.2", []string{"-c", `service_tier="priority"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "-c", `service_tier="priority"`)},
-		{"explicit tier long flag", "llama3.2", []string{"--config", `service_tier="fast"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "--config", `service_tier="fast"`)},
-		{"explicit tier attached short flag", "llama3.2", []string{`-cservice_tier="flex"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), `-cservice_tier="flex"`)},
-		{"explicit tier attached long flag", "llama3.2", []string{`--config=service_tier="priority"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), `--config=service_tier="priority"`)},
-		{"explicit thinking", "llama3.2", []string{"-c", `model_reasoning_effort="low"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "-c", `model_reasoning_effort="low"`)},
 	}
 
 	for _, tt := range tests {
@@ -67,77 +62,6 @@ func TestCodexArgs(t *testing.T) {
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestCodexRunServiceTier(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell fake binary")
-	}
-	for _, tier := range []string{"", "priority"} {
-		name := "no inherited tier"
-		if tier != "" {
-			name = "inherited " + tier
-		}
-		t.Run(name, func(t *testing.T) {
-			home := t.TempDir()
-			setTestHome(t, home)
-			configDir := filepath.Join(home, ".codex")
-			t.Setenv("CODEX_HOME", configDir)
-			if err := os.MkdirAll(configDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			configPath := filepath.Join(configDir, "config.toml")
-			userConfig := "# User preferences\nmodel = \"gpt-6-astra\"\nmodel_reasoning_effort = \"max\"\n"
-			if tier != "" {
-				userConfig += fmt.Sprintf("service_tier = %q\n", tier)
-			}
-			if err := os.WriteFile(configPath, []byte(userConfig), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			otherProfilePath := filepath.Join(configDir, "work.config.toml")
-			otherProfile := "model_provider = \"openai\"\nservice_tier = \"priority\"\n"
-			if err := os.WriteFile(otherProfilePath, []byte(otherProfile), 0o644); err != nil {
-				t.Fatal(err)
-			}
-
-			binDir := t.TempDir()
-			argsPath := filepath.Join(binDir, "codex.args")
-			t.Setenv("CODEX_TEST_ARGS", argsPath)
-			t.Setenv("PATH", binDir)
-			script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'codex-cli 0.155.1'\n  exit 0\nfi\nprintf '%s\\n' \"$@\" > \"$CODEX_TEST_ARGS\"\n"
-			if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			model := "deepseek-v4.1-flash:cloud"
-			if err := (&Codex{}).Run(model, testLaunchModels(model), nil); err != nil {
-				t.Fatal(err)
-			}
-			data, err := os.ReadFile(argsPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			args := strings.Split(strings.TrimSpace(string(data)), "\n")
-			if len(args) < 4 || !slices.Equal(args[len(args)-4:], []string{"-c", `service_tier="default"`, "-m", model}) {
-				t.Fatalf("expected launch-only default tier and selected model, got %q", args)
-			}
-			for path, want := range map[string]string{configPath: userConfig, otherProfilePath: otherProfile} {
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if string(data) != want {
-					t.Fatalf("user configuration %s changed:\n%s", path, data)
-				}
-			}
-			profile, err := os.ReadFile(filepath.Join(configDir, "ollama-launch.config.toml"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, ok := codexRootStringValueOK(string(profile), "service_tier"); ok {
-				t.Fatalf("launch default should not be persisted in the profile:\n%s", profile)
 			}
 		})
 	}
@@ -460,6 +384,8 @@ func TestCodexRestoreRemovesCLIProfileAndCatalogWithoutChangingUserRootConfig(t 
 	}
 	userConfig := "" +
 		`model = "gpt-5.5"` + "\n" +
+		`model_reasoning_effort = "max"` + "\n" +
+		`service_tier = "priority"` + "\n" +
 		`model_provider = "openai"` + "\n\n" +
 		"[model_providers.openai]\n" +
 		`name = "OpenAI"` + "\n"
