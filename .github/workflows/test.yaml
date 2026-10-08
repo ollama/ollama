@@ -131,15 +131,19 @@ jobs:
           $sudo apt-get update
           # Add LunarG Vulkan SDK apt repo for Ubuntu 22.04
           if [ "${{ matrix.preset }}" = "Vulkan" ]; then
-            $sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates software-properties-common
-            wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg
+            $sudo apt-get install -y --no-install-recommends curl gnupg ca-certificates software-properties-common
+            curl --retry 3 -fsSL https://packages.lunarg.com/lunarg-signing-key-pub.asc -o "$RUNNER_TEMP/lunarg.asc"
+            $sudo gpg --dearmor -o /usr/share/keyrings/lunarg-archive-keyring.gpg "$RUNNER_TEMP/lunarg.asc"
+            rm "$RUNNER_TEMP/lunarg.asc"
             # Use signed-by to bind the repo to the installed keyring to avoid NO_PUBKEY
             echo "deb [signed-by=/usr/share/keyrings/lunarg-archive-keyring.gpg]  https://packages.lunarg.com/vulkan/1.4.313 jammy main" | $sudo tee /etc/apt/sources.list.d/lunarg-vulkan-1.4.313-jammy.list > /dev/null
             $sudo apt-get update
           fi
           $sudo apt-get install -y cmake ccache curl git ${{ matrix.extra-packages }}
           # Use a current CMake for upstream llama.cpp and Vulkan dependency discovery.
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz | $sudo tar xz -C /usr/local --strip-components 1
+          curl --retry 3 -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz -o "$RUNNER_TEMP/cmake.tar.gz"
+          $sudo tar xzf "$RUNNER_TEMP/cmake.tar.gz" -C /usr/local --strip-components 1
+          rm "$RUNNER_TEMP/cmake.tar.gz"
           # Export VULKAN_SDK if provided by LunarG package (defensive)
           if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
             echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
@@ -151,7 +155,9 @@ jobs:
         run: |
           [ -n "${{ matrix.container }}" ] || sudo=sudo
           GO_VERSION=$(awk '/^go / { print $2 }' go.mod)
-          curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | $sudo tar xz -C /usr/local
+          curl --retry 3 -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" -o "$RUNNER_TEMP/go.tar.gz"
+          $sudo tar xzf "$RUNNER_TEMP/go.tar.gz" -C /usr/local
+          rm "$RUNNER_TEMP/go.tar.gz"
           echo "/usr/local/go/bin" >> $GITHUB_PATH
       - uses: actions/cache@v4
         with:
@@ -262,9 +268,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
@@ -274,8 +281,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
@@ -290,8 +298,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
@@ -307,11 +316,13 @@ jobs:
           $ErrorActionPreference = "Stop"
           $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip"
+            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip" -MaximumRetryCount 3 -RetryIntervalSec 2
             Expand-Archive -Path cudnn.zip -DestinationPath cudnn-extracted
+            Remove-Item cudnn.zip
             $cudnnDir = (Get-ChildItem -Path cudnn-extracted -Directory)[0].FullName
             New-Item -ItemType Directory -Force -Path $cudnnRoot
             Copy-Item -Path "$cudnnDir\*" -Destination "$cudnnRoot\" -Recurse
+            Remove-Item cudnn-extracted -Recurse
           }
 
           echo "CUDNN_ROOT_DIR=$cudnnRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
