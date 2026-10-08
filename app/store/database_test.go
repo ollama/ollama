@@ -598,3 +598,30 @@ func TestCodexDesktopUsedMigration(t *testing.T) {
 		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
 	}
 }
+
+func TestUpdateChannelMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "update-channel.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN update_channel;
+		UPDATE settings SET schema_version = 19;
+	`); err != nil {
+		t.Fatalf("seed v19 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migrate v19 to v20: %v", err)
+	}
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.UpdateChannel != UpdateChannelStable {
+		t.Fatalf("migrated update channel = %q, want %q", settings.UpdateChannel, UpdateChannelStable)
+	}
+}
