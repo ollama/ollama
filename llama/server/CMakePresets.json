@@ -36,6 +36,7 @@
       "toolchainFile": "${sourceDir}/../../cmake/windows-arm64-llvm-mingw.cmake",
       "cacheVariables": {
         "GGML_CPU_ALL_VARIANTS": "OFF",
+        "GGML_CPU_ARM_ARCH": "armv8.2-a+dotprod",
         "OLLAMA_RUNNER_DIR": "",
         "OLLAMA_WINDOWS_RUNTIME_ARCH": "arm64"
       }
