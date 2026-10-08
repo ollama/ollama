@@ -9,7 +9,6 @@ import (
 
 type nemotron3Migrator struct{}
 
-// Mirrors detect_ollama_nemotron_h_omni in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (nemotron3Migrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "nemotron_h_omni" {
 		return false

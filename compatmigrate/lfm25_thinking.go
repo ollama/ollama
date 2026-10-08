@@ -7,7 +7,6 @@ import (
 
 type lfm25ThinkingMigrator struct{}
 
-// Mirrors detect_ollama_lfm2 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (lfm25ThinkingMigrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "lfm2" &&
 		sourceTensorExists(src, "output_norm.weight") &&

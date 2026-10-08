@@ -7,7 +7,6 @@ import (
 
 type llama4Migrator struct{}
 
-// Mirrors detect_ollama_llama4 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (llama4Migrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "llama4" {
 		return false

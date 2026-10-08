@@ -91,11 +91,13 @@ func (src *SourceModel) Close() error {
 	var err error
 	if src.GGUF != nil {
 		err = src.GGUF.Close()
+		src.GGUF = nil
 	}
 	if src.ProjectorGGUF != nil {
 		if closeErr := src.ProjectorGGUF.Close(); err == nil {
 			err = closeErr
 		}
+		src.ProjectorGGUF = nil
 	}
 	return err
 }
@@ -201,7 +203,9 @@ func copyAncillaryLayers(src *SourceModel) ([]manifest.Layer, error) {
 		case manifest.MediaTypeImageModel,
 			manifest.MediaTypeImageProjector,
 			manifest.MediaTypeImageAdapter,
-			manifest.MediaTypeImageEmbed:
+			manifest.MediaTypeImageEmbed,
+			manifest.MediaTypeManifest,
+			manifest.MediaTypeManifestList:
 			continue
 		}
 
