@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -250,7 +251,7 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "prepare Codex Full Access tools for Ollama: "+err.Error())
 			return
 		}
-	} else {
+	} else if isJSONContentType(r.Header.Get("Content-Type")) {
 		requestBody, requestBodyNormalized, err = normalizeNativeRequestBody(decodedBody)
 		if err != nil {
 			h.logActivity(started, r.Method, suffix, model, route, http.StatusBadRequest, "request_error")
@@ -261,6 +262,8 @@ func (h *CodexDesktop) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !requestBodyNormalized {
 			requestBody = rawBody
 		}
+	} else {
+		requestBody = rawBody
 	}
 	h.lastRoute.Store(routeSnapshot{Model: model, Route: route})
 
@@ -689,4 +692,19 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// isJSONContentType reports whether the request body should be treated as JSON.
+// A missing Content-Type keeps the historical JSON path used by Codex clients
+// that omit the header. Explicit non-JSON types are forwarded unchanged.
+func isJSONContentType(contentType string) bool {
+	mediaType := strings.TrimSpace(contentType)
+	if mediaType == "" {
+		return true
+	}
+	parsed, _, err := mime.ParseMediaType(mediaType)
+	if err != nil {
+		return false
+	}
+	return parsed == "application/json" || strings.HasSuffix(parsed, "+json")
 }
