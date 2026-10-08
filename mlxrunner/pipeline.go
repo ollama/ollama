@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/model"
 	sampler "github.com/ollama/ollama/mlxrunner/sample"
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
+	"github.com/ollama/ollama/mlxrunner/wire"
 )
 
 func prefillChunkSize() int {
@@ -122,6 +123,26 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 		return err
 	}
 
+	if request.PrefillOnly {
+		cached := len(session.inputs) - len(session.remaining)
+		final := CompletionResponse{
+			Done:                  true,
+			DoneReason:            1,
+			PromptEvalCount:       len(request.Tokens),
+			PromptEvalCachedCount: &cached,
+			PromptEvalDuration:    promptEval,
+		}
+		if request.Stats {
+			final.Stats = r.requestStats(session, nil)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case request.Responses <- final:
+			return nil
+		}
+	}
+
 	// Register the sampler after prefill completes.
 	r.Sampler.Add(pipelineSlot, request.SamplerOpts, inputs)
 	defer r.Sampler.Remove(pipelineSlot)
@@ -130,6 +151,9 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 	if err != nil {
 		return err
 	}
+
+	mlx.ProfileRangePush("decode")
+	defer mlx.ProfileRangePop()
 
 	var d decoder
 	if spec != nil {
@@ -145,6 +169,9 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 // seed from, and schedules the prompt's periodic snapshots. It returns the
 // seed token, the resume position, and the prompt-evaluation duration.
 func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, media *requestMedia) (*mlx.Array, int, time.Duration, error) {
+	mlx.ProfileRangePush("prefill")
+	defer mlx.ProfileRangePop()
+
 	start := time.Now()
 	inputs := session.inputs
 	tokens := session.remaining
@@ -308,7 +335,7 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 				if done {
 					continue
 				}
-				if r.Tokenizer.IsEOS(id) {
+				if !request.IgnoreEOS && r.Tokenizer.IsEOS(id) {
 					final.DoneReason = 0
 					done = true
 					stream = i
@@ -349,12 +376,31 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 
 	final.EvalCount = generated
 	final.EvalDuration = time.Since(now)
+	if request.Stats {
+		final.Stats = r.requestStats(session, d)
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case request.Responses <- final:
 		return nil
 	}
+}
+
+func (r *Runner) requestStats(session *cacheSession, d decoder) *wire.Stats {
+	s := &wire.Stats{
+		MatchedTokens: session.matched,
+		ActiveBytes:   int64(mlx.ActiveMemory()),
+		PeakBytes:     int64(mlx.PeakMemory()),
+		CacheBytes:    int64(mlx.CacheMemory()),
+		ColdBytes:     r.cache.pagedOutBytes,
+		ColdLimit:     maxPagedOutBytes,
+		ColdEvicted:   r.cache.evictedBytes,
+	}
+	if sd, ok := d.(interface{ draftCounts() (int, int) }); ok {
+		s.DraftTokens, s.AcceptedDraft = sd.draftCounts()
+	}
+	return s
 }
 
 // pipelinedDecoder decodes one token per row per call, one call ahead of
