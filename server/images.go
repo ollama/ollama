@@ -1379,10 +1379,41 @@ func checkPullRequires(requires, clientVersion string) error {
 	}
 	// Prerelease builds must be able to test models targeting their release.
 	currentVersion, _, _ := strings.Cut(semver.Canonical("v"+clientVersion), "-")
+	if !semver.IsValid(currentVersion) && !hasReleaseCore(clientVersion) {
+		// Builds stamped from a clone without tags (e.g. a fork) carry a
+		// bare commit SHA instead of a release version. There is no
+		// release to compare against, so skip the check like the 0.0.0
+		// dev version above rather than treating the build as older
+		// than every release.
+		slog.Debug("skipping requires check: client version has no release version", "version", clientVersion)
+		return nil
+	}
 	if semver.Compare(requires, currentVersion) > 0 {
 		return fmt.Errorf("model requires ollama version %s or newer (current version is v%s)", requires, clientVersion)
 	}
 	return nil
+}
+
+// hasReleaseCore reports whether a version string begins with a numeric
+// major.minor.patch release core, e.g. "0.40.0" in "0.40.0-rc0". A bare
+// commit SHA stamped by git describe on a clone without tags has none.
+func hasReleaseCore(v string) bool {
+	core, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func pullSelectedManifest(ctx context.Context, n model.Name, parent *manifest.Manifest, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) (*manifest.Manifest, string, error) {
