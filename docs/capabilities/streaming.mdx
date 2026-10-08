@@ -2,7 +2,7 @@
 title: Streaming
 ---
 
-Streaming allows you to render text as it is produced by the model. 
+Streaming allows you to render text as it is produced by the model.
 
 Streaming is enabled by default through the REST API, but disabled by default in the SDKs.
 
@@ -39,7 +39,7 @@ To enable streaming in the SDKs, set the `stream` parameter to `True`.
           in_thinking = True
           print('Thinking:\n', end='', flush=True)
         print(chunk.message.thinking, end='', flush=True)
-        # accumulate the partial thinking 
+        # accumulate the partial thinking
         thinking += chunk.message.thinking
       elif chunk.message.content:
         if in_thinking:
