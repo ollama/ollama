@@ -77,15 +77,9 @@ func TestGatewayRoutesClaudeProtocolToOllama(t *testing.T) {
 			if err := json.Unmarshal(body, &catalog); err != nil {
 				t.Fatal(err)
 			}
-			var rawCatalog struct {
-				Data []map[string]json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal(body, &rawCatalog); err != nil {
-				t.Fatal(err)
-			}
-			for _, model := range rawCatalog.Data {
-				if _, ok := model["max_input_tokens"]; ok {
-					t.Fatalf("gateway model should not advertise context size: %s", body)
+			for _, model := range catalog.Data {
+				if model.MaxInputTokens <= 0 {
+					t.Fatalf("gateway model %q should advertise context size: %s", model.ID, body)
 				}
 			}
 			gotIDs := make([]string, len(catalog.Data))
@@ -1884,4 +1878,107 @@ func requestModel(t *testing.T, r *http.Request) string {
 		t.Fatal(err)
 	}
 	return payload.Model
+}
+
+func TestGatewayRoutesLongContextModelVariant(t *testing.T) {
+	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
+		{Model: "glm-5.3-flash:cloud", MaxOutputTokens: 1_048_576, ContextLength: 1_048_576, RequiredPlan: "free"},
+	})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr: "127.0.0.1:0",
+		OllamaURL:  "http://127.0.0.1:11434",
+		Model:      models[0].OllamaModel,
+		Models:     models,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, admitted := p.modelSnapshot()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://127.0.0.1/v1/messages",
+		strings.NewReader(`{"model":"claude-fable-5[1m]","messages":[]}`),
+	)
+	if err := p.routeModel(request, admitted); err != nil {
+		t.Fatalf("1M model variant was rejected: %v", err)
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Model != models[0].OllamaModel {
+		t.Fatalf("routed model = %q, want %q", payload.Model, models[0].OllamaModel)
+	}
+}
+
+func TestGatewayCatalogResolvesMissingContextLength(t *testing.T) {
+	var lookups atomic.Int32
+	models := SelectClaudeDesktopModels(nil, []string{"local-a"})
+	models[0].gateway.MaxInputTokens = 0
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr:      "127.0.0.1:0",
+		OllamaURL:       "http://127.0.0.1:11434",
+		Model:           models[0].OllamaModel,
+		Models:          models,
+		ListLocalModels: func(context.Context) ([]string, error) { return []string{"local-a"}, nil },
+		ResolveContextLength: func(_ context.Context, model string) int {
+			lookups.Add(1)
+			if model != "local-a" {
+				t.Errorf("resolved context length for %q, want the routed model", model)
+			}
+			return 1_048_576
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, configured := p.modelSnapshot()
+	for range 2 {
+		recorder := httptest.NewRecorder()
+		p.serveModels(recorder, context.Background(), configured)
+		var catalog struct {
+			Data []gatewayModel `json:"data"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &catalog); err != nil {
+			t.Fatal(err)
+		}
+		if len(catalog.Data) != 1 {
+			t.Fatalf("catalog = %d models, want 1", len(catalog.Data))
+		}
+		if catalog.Data[0].MaxInputTokens != 1_048_576 {
+			t.Fatalf("resolved context size = %+v, want 1048576", catalog.Data[0])
+		}
+	}
+	if got := lookups.Load(); got != 1 {
+		t.Fatalf("resolver was called %d times, want one lookup per model", got)
+	}
+}
+
+func TestGatewayCatalogRetriesFailedContextLength(t *testing.T) {
+	var lookups atomic.Int32
+	models := SelectClaudeDesktopModels(nil, []string{"local-a"})
+	p, err := NewClaudeDesktop(ClaudeDesktopConfig{
+		ListenAddr:      "127.0.0.1:0",
+		OllamaURL:       "http://127.0.0.1:11434",
+		Model:           models[0].OllamaModel,
+		Models:          models,
+		ListLocalModels: func(context.Context) ([]string, error) { return []string{"local-a"}, nil },
+		ResolveContextLength: func(context.Context, string) int {
+			lookups.Add(1)
+			return 0
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, configured := p.modelSnapshot()
+	for range 2 {
+		p.serveModels(httptest.NewRecorder(), context.Background(), configured)
+	}
+	if got := lookups.Load(); got != 2 {
+		t.Fatalf("resolver was called %d times, want a retry after a failed lookup", got)
+	}
 }
