@@ -1376,6 +1376,89 @@ func TestGetModelfileName(t *testing.T) {
 	}
 }
 
+func TestReadCreateModelfile(t *testing.T) {
+	t.Run("implicit missing Modelfile falls back to FROM .", func(t *testing.T) {
+		t.Chdir(t.TempDir()) // ensure no Modelfile exists in the working directory
+
+		cmd := &cobra.Command{Use: "test"}
+		cmd.Flags().String("file", "", "path to Modelfile")
+
+		mf, filename, err := readCreateModelfile(cmd)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if filename != "" {
+			t.Errorf("expected empty filename, got %q", filename)
+		}
+		if len(mf.Commands) == 0 {
+			t.Fatal("expected at least one command")
+		}
+		if mf.Commands[0].Name != "model" || mf.Commands[0].Args != "." {
+			t.Errorf("expected FROM ., got %v", mf.Commands[0])
+		}
+	})
+
+	t.Run("explicit missing Modelfile returns error", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		missing := filepath.Join(t.TempDir(), "does-not-exist")
+		t.Logf("missing path=%q", missing)
+		cmd := &cobra.Command{Use: "test"}
+		cmd.Flags().String("file", "", "path to Modelfile")
+		if err := cmd.Flags().Set("file", missing); err != nil {
+			t.Fatal(err)
+		}
+
+		mf, filename, err := readCreateModelfile(cmd)
+
+		t.Logf("changed=%v filename=%q err=%v mf=%+v",
+			cmd.Flags().Changed("file"), filename, err, mf)
+
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("expected os.ErrNotExist, got %v", err)
+		}
+		if mf != nil {
+			t.Errorf("expected nil Modelfile, got %v", mf)
+		}
+		if filename != "" {
+			t.Errorf("expected empty filename, got %q", filename)
+		}
+	})
+
+	t.Run("explicit existing Modelfile is read", func(t *testing.T) {
+		t.Chdir(t.TempDir())
+
+		content := "FROM llama3\n"
+		path := filepath.Join(t.TempDir(), "Modelfile")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := &cobra.Command{Use: "test"}
+		cmd.Flags().String("file", "", "path to Modelfile")
+		if err := cmd.Flags().Set("file", path); err != nil {
+			t.Fatal(err)
+		}
+
+		mf, filename, err := readCreateModelfile(cmd)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if filename != path {
+			t.Errorf("expected filename %q, got %q", path, filename)
+		}
+		if len(mf.Commands) == 0 {
+			t.Fatal("expected at least one command")
+		}
+		if mf.Commands[0].Name != "model" || mf.Commands[0].Args != "llama3" {
+			t.Errorf("expected FROM llama3, got %v", mf.Commands[0])
+		}
+	})
+}
+
 func TestPushHandler(t *testing.T) {
 	tests := []struct {
 		name           string

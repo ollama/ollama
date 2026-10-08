@@ -219,8 +219,13 @@ func resolveCreateDraftDir(ref, filename string) (string, error) {
 
 func readCreateModelfile(cmd *cobra.Command) (*parser.Modelfile, string, error) {
 	var reader io.Reader
+
+	isExplicit := cmd.Flags().Changed("file")
+
 	filename, err := getModelfileName(cmd)
-	if errors.Is(err, os.ErrNotExist) || filename == "" {
+	if isExplicit && err != nil {
+		return nil, "", err
+	} else if filename == "" {
 		reader = strings.NewReader("FROM .\n")
 	} else if err != nil {
 		return nil, "", err
