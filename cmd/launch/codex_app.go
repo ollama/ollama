@@ -884,10 +884,10 @@ func codexAppRestoreFailure(configPath string, err error) error {
 
 func codexAppSupported() error {
 	switch codexAppGOOS {
-	case "darwin", "windows":
+	case "darwin", "windows", "linux":
 		return nil
 	default:
-		return fmt.Errorf("ChatGPT launch is only supported on macOS and Windows")
+		return fmt.Errorf("ChatGPT launch is only supported on macOS, Windows, and Linux")
 	}
 }
 
@@ -1567,6 +1567,8 @@ func defaultCodexAppCodexExecutable() (string, error) {
 				filepath.Join(appDir, "resources", "codex.exe"),
 				filepath.Join(appDir, "Resources", "codex.exe"),
 			)
+		case "linux":
+			candidates = append(candidates, filepath.Join(filepath.Dir(appPath), "resources", "codex"))
 		}
 	}
 	for _, candidate := range candidates {
@@ -1637,6 +1639,8 @@ func codexAppAppPath() string {
 		candidates = codexAppDarwinAppCandidates()
 	case "windows":
 		candidates = codexAppWindowsAppCandidates()
+	case "linux":
+		candidates = codexAppLinuxAppCandidates()
 	default:
 		return ""
 	}
@@ -1645,7 +1649,7 @@ func codexAppAppPath() string {
 			if codexAppGOOS == "darwin" && !info.IsDir() {
 				continue
 			}
-			if codexAppGOOS == "windows" && info.IsDir() {
+			if (codexAppGOOS == "windows" || codexAppGOOS == "linux") && info.IsDir() {
 				continue
 			}
 			return candidate
@@ -1663,6 +1667,13 @@ func codexAppDarwinAppCandidates() []string {
 		)
 	}
 	return candidates
+}
+
+func codexAppLinuxAppCandidates() []string {
+	return []string{
+		"/usr/lib/chatgpt/ChatGPT",
+		"/usr/lib64/chatgpt/ChatGPT",
+	}
 }
 
 func codexAppWindowsAppCandidates() []string {
@@ -2102,6 +2113,15 @@ func defaultCodexAppOpenApp(args []string) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
+	case "linux":
+		path := codexAppAppPath()
+		if path == "" {
+			return fmt.Errorf("ChatGPT was not found; install it from https://chatgpt.com/download, then re-run 'ollama launch chatgpt'")
+		}
+		cmd := exec.Command(path)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Start()
 	default:
 		return codexAppSupported()
 	}
@@ -2130,6 +2150,11 @@ func defaultCodexAppOpenAppPath(path string) error {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		return cmd.Run()
+	case "linux":
+		cmd := exec.Command(path)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Start()
 	default:
 		return codexAppSupported()
 	}
@@ -2140,6 +2165,20 @@ func defaultCodexAppOpenStartAppID(appID string) error {
 }
 
 func defaultCodexAppQuitApp() error {
+	if codexAppGOOS == "linux" {
+		for _, pid := range codexAppMatchingProcessIDs() {
+			process, err := os.FindProcess(pid)
+			if err != nil {
+				return err
+			}
+			if err := process.Signal(syscall.SIGTERM); err != nil {
+				if !errors.Is(err, syscall.ESRCH) && !errors.Is(err, os.ErrProcessDone) {
+					return fmt.Errorf("send SIGTERM to ChatGPT process %d: %w", pid, err)
+				}
+			}
+		}
+		return nil
+	}
 	if codexAppGOOS == "windows" {
 		script := `Get-Process ChatGPT,Codex -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object { [void]$_.CloseMainWindow() }`
 		return exec.Command("powershell.exe", "-NoProfile", "-Command", script).Run()
@@ -2163,6 +2202,8 @@ func defaultCodexAppIsRunning() bool {
 		if err := exec.Command("pgrep", "-a", "-x", "ChatGPT|Codex").Run(); err == nil {
 			return true
 		}
+		return len(codexAppMatchingProcessIDs()) > 0
+	case "linux":
 		return len(codexAppMatchingProcessIDs()) > 0
 	default:
 		return false
@@ -2251,11 +2292,28 @@ func defaultCodexAppCanOpenBundleID() bool {
 }
 
 func codexAppProcessMatches(command string) bool {
-	if (strings.Contains(command, `\Codex.exe`) || strings.Contains(command, `\ChatGPT.exe`)) && strings.Contains(command, " --type=") {
+	if strings.Contains(command, " --type=") &&
+		(strings.Contains(command, `\Codex.exe`) || strings.Contains(command, `\ChatGPT.exe`) || strings.Contains(command, "/chatgpt/ChatGPT")) {
 		return false
+	}
+	if codexAppGOOS == "linux" && codexAppLinuxProcessMatches(command) {
+		return true
 	}
 	for _, pattern := range codexAppProcessPatterns() {
 		if strings.Contains(command, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexAppLinuxProcessMatches(command string) bool {
+	for _, appPath := range codexAppLinuxAppCandidates() {
+		if strings.Contains(command, appPath) && !strings.Contains(command, " --type=") {
+			return true
+		}
+		bundledCodex := filepath.Join(filepath.Dir(appPath), "resources", "codex")
+		if strings.Contains(command, bundledCodex) && strings.Contains(command, "app-server") {
 			return true
 		}
 	}
@@ -2268,6 +2326,8 @@ func codexAppProcessPatterns() []string {
 		"ChatGPT.app/Contents/Resources/codex app-server",
 		"Codex.app/Contents/MacOS/Codex",
 		"Codex.app/Contents/Resources/codex app-server",
+		"/usr/lib/chatgpt/ChatGPT",
+		"/usr/lib64/chatgpt/ChatGPT",
 		`\ChatGPT.exe`,
 		`resources\chatgpt.exe app-server`,
 		`resources\chatgpt.exe" app-server`,
