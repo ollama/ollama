@@ -6,7 +6,6 @@ import (
 
 type qwen3NextMigrator struct{}
 
-// Mirrors detect_ollama_qwen3next in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (qwen3NextMigrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "qwen3next" {
 		return false

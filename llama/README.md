@@ -4,8 +4,8 @@
 
 `LLAMA_CPP_VERSION` pins Ollama's llama.cpp source. An update can change more
 than compilation: it can affect model loading, GPU discovery, scheduler inputs,
-runtime logs, streaming, and compatibility patches. Validate the upstream diff,
-the patched source Ollama actually builds, and the affected local paths.
+runtime logs, streaming, and on-disk conversion. Validate the upstream diff,
+the source Ollama actually builds, and the affected local paths.
 
 ### Workflow
 
@@ -17,12 +17,10 @@ through Ollama's normal build path:
 cmake -S llama/server --preset cpu
 ```
 
-This configure step fetches the pinned source and applies `llama/compat/`
-patches. Confirm the resulting checkout, usually
+This configure step fetches the pinned, unpatched source. Confirm the checkout, usually
 `build/llama-server-cpu/_deps/llama_cpp-src`, resolves to the intended new ref.
 Do not trust an old or dirty `_deps/` checkout as validation.
-This is only a source and patch-application check; it is not runtime
-validation.
+This is only a source check; it is not runtime validation.
 
 Review the upstream diff using Git refs from the llama.cpp checkout:
 
@@ -30,8 +28,6 @@ Review the upstream diff using Git refs from the llama.cpp checkout:
 git diff <old-ref> <new-ref> -- <path>
 git show <new-ref>:<path>
 ```
-
-Avoid treating patched working-tree files as pristine upstream source.
 
 For build prerequisites, platform notes, and backend selection, see the
 [developer guide](../docs/development.md).
@@ -56,25 +52,20 @@ For build prerequisites, platform notes, and backend selection, see the
 - Model and conversion surfaces: new architectures, tensor names, GGUF
   metadata, tokenizer behavior, speculative/MTP paths, sampler defaults, and
   server capabilities that may require updates under `model/`,
-  `create/`, `llm/`, or `llama/compat/`. A model load alone is not enough;
+  `create/`, `llm/`, or `compatmigrate/`. A model load alone is not enough;
   affected paths should run a real request and assert the expected result.
 
-### Compatibility patches
+### Native Build
 
-Patches under `llama/compat/` are applied during configure. If a patch
-insertion point moved, regenerate the patch against a fresh checkout of the new
-ref rather than editing an already-patched `_deps/` tree.
-
-If compatibility sources, model patches, `llama/server/CMakeLists.txt`, or
-`cmake/local.cmake` changed, build the CPU target:
+After changes to `llama/server/CMakeLists.txt` or `cmake/local.cmake`, build the CPU target:
 
 ```sh
 cmake --build build/llama-server-cpu --target llama-server --parallel 12
 ```
 
 Configure-only validation can miss missing sources, template instantiation
-problems, and link errors. Also check whether upstream now supports a locally
-patched model natively; if it does, the local patch may need removal or rebase.
+problems, and link errors. Legacy models are converted by `compatmigrate`
+before loading; validate those conversions against the new upstream version.
 
 ### Local checks
 

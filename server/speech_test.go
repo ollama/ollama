@@ -161,6 +161,7 @@ func TestSpeechScheduleErrors(t *testing.T) {
 		{fmt.Errorf("model %w", errRequired), 400, "model is required"},
 		{errCapabilities, 400, errCapabilities.Error()},
 		{manifest.ErrNoCompatibleManifest, 400, manifest.ErrNoCompatibleManifest.Error()},
+		{manifest.ErrManifestChanged, 409, manifest.ErrManifestChanged.Error()},
 		{context.Canceled, 499, "request canceled"},
 		{ErrMaxQueue, 503, ErrMaxQueue.Error()},
 		{os.ErrNotExist, 404, `model "phonon" not found, try pulling it first`},

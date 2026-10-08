@@ -10,7 +10,6 @@ import (
 
 type mistralPixtralMigrator struct{}
 
-// Mirrors detect_ollama_mistral3 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (mistralPixtralMigrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "mistral3" {
 		return false

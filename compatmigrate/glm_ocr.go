@@ -9,7 +9,6 @@ import (
 
 type glmOCRMigrator struct{}
 
-// Mirrors detect_ollama_glmocr in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (glmOCRMigrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "glmocr"
 }
