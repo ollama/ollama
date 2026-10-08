@@ -3,7 +3,7 @@
 ### Getting started
 
 * [Quickstart](https://docs.ollama.com/quickstart)
-* [Ollama Cloud](https://docs.ollama.com/cloud)
+* [Ollama's cloud](https://docs.ollama.com/cloud)
 * [Run Ollama locally](https://docs.ollama.com/local)
 * [Examples](./examples.md)
 

@@ -2118,7 +2118,7 @@ paths:
       operationId: usage
       servers:
         - url: https://ollama.com
-          description: Ollama Cloud
+          description: Ollama's cloud
       security:
         - bearerAuth: []
       parameters:
@@ -2186,7 +2186,7 @@ paths:
       operationId: balance
       servers:
         - url: https://ollama.com
-          description: Ollama Cloud
+          description: Ollama's cloud
       security:
         - bearerAuth: []
       responses:

@@ -1,21 +1,15 @@
 ---
 title: Introduction
-description: Use the Ollama API locally or through Ollama Cloud with a shared request format.
+description: Use the Ollama API locally or with Ollama's cloud models.
 ---
 
-Use Ollama's API to build applications with cloud or local models.
+Use Ollama's API to build applications with local or cloud models.
 
 ## Get started
 
-Choose how the request reaches the model:
+Call cloud models with an [API key](https://ollama.com/settings/keys). No Ollama installation required. Start with the [API quickstart](/quickstart#build-an-application).
 
-| Access path | Model runs on | Base URL | Authentication and model name |
-| --- | --- | --- | --- |
-| [Local model](/local) | Your hardware | `http://localhost:11434/api` | None by default; use the local model name |
-| [Cloud model through Ollama](/cloud/models) | Ollama Cloud | `http://localhost:11434/api` | Run `ollama signin`; use a model name ending in `:cloud` |
-| [Direct Cloud API](/cloud/api) | Ollama Cloud | `https://ollama.com/api` | Send an Ollama API key; use the Cloud API model name |
-
-Request bodies have the same shape for shared endpoints. The host, authentication, and model name depend on the access path.
+To run models on your computer, [install Ollama and run a local model](/quickstart#run-a-model-locally).
 
 ## Base URLs
 
@@ -29,7 +23,7 @@ The Anthropic client appends `/v1/messages` to its base URL.
 
 Cloud requests need an API key. Local requests do not. To use cloud models through your local server, [sign in to Ollama](/api/authentication#signing-in).
 
-Creating or deleting models requires a local Ollama server. [System One](/capabilities/decision) also requires a local server and is not yet available on Ollama Cloud. For supported API features, see [OpenAI compatibility](/api/openai-compatibility) and [Anthropic compatibility](/api/anthropic-compatibility).
+Creating or deleting models requires a local Ollama server. [System One](/capabilities/decision) also requires a local server and is not yet available on cloud. For supported API features, see [OpenAI compatibility](/api/openai-compatibility) and [Anthropic compatibility](/api/anthropic-compatibility).
 
 ## Ollama API example
 
