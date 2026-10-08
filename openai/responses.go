@@ -474,7 +474,7 @@ type ResponsesReasoning struct {
 }
 
 type ResponsesTextFormat struct {
-	Type   string          `json:"type"`             // "text", "json_schema"
+	Type   string          `json:"type"`             // "text", "json_object", "json_schema"
 	Name   string          `json:"name,omitempty"`   // for json_schema
 	Schema json.RawMessage `json:"schema,omitempty"` // for json_schema
 	Strict *bool           `json:"strict,omitempty"` // for json_schema
@@ -803,6 +803,8 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 	var format json.RawMessage
 	if r.Text != nil && r.Text.Format != nil {
 		switch r.Text.Format.Type {
+		case "json_object":
+			format = json.RawMessage(`"json"`)
 		case "json_schema":
 			if r.Text.Format.Schema != nil {
 				format = r.Text.Format.Schema
