@@ -349,6 +349,10 @@ var (
 			source: gatedDeltaMetalSource,
 			header: gatedDeltaMetalHeader + "#define GDN_STORE_INTERIOR(index, value)\n",
 		},
+		cuda: gpuSource{
+			source: gatedDeltaCUDASource,
+			header: gatedDeltaCUDAHeader + "#define GDN_STORE_INTERIOR(index, value)\n",
+		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs
 			y, end, _ := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], false)
@@ -362,6 +366,10 @@ var (
 		metal: gpuSource{
 			source: gatedDeltaMetalSource,
 			header: gatedDeltaMetalHeader + "#define GDN_STORE_INTERIOR(index, value) state_seq[index] = value\n",
+		},
+		cuda: gpuSource{
+			source: gatedDeltaCUDASource,
+			header: gatedDeltaCUDAHeader + "#define GDN_STORE_INTERIOR(index, value) state_seq[index] = value\n",
 		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs
@@ -549,6 +557,148 @@ for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
 }
 `
 
+// The CUDA translation of gatedDeltaMetalSource. Metal's threadgroup caches
+// become per-warp registers: every warp normalizes the same q/k row and
+// broadcasts the gates over its own lanes, so the step needs no shared
+// memory and no barriers.
+const gatedDeltaCUDASource = `
+constexpr int SIMDGroups = 4;
+constexpr int ValuesPerSIMD = DvTile / SIMDGroups;
+constexpr int StatePerLane = Dk / 32;
+constexpr int QDim = Hk * Dk;
+
+int lane = static_cast<int>(threadIdx.x);
+int simd_idx = static_cast<int>(threadIdx.y);
+int n = static_cast<int>(blockIdx.z);
+int b_idx = n / Hv;
+int hv_idx = n % Hv;
+int hk_idx = hv_idx / (Hv / Hk);
+int value_tile = static_cast<int>(blockIdx.y);
+int grid_z = static_cast<int>(gridDim.z * blockDim.z);
+
+float state[ValuesPerSIMD][StatePerLane];
+for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+  int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+  int state_offset = (n * Dv + dv_idx) * Dk;
+#pragma unroll
+  for (int i = 0; i < StatePerLane; ++i) {
+    int d = StatePerLane * lane + i;
+    state[value_iter][i] = state_in[state_offset + d];
+  }
+}
+
+for (int t = 0; t < SeqT; ++t) {
+  auto token = packed + (b_idx * SeqT + t) * PackedDim;
+
+  InT q_row[StatePerLane];
+  InT k_row[StatePerLane];
+  {
+    float q_values[StatePerLane];
+    float k_values[StatePerLane];
+    float q_squares = 0.0f;
+    float k_squares = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      int d = StatePerLane * lane + i;
+      float q_value = static_cast<float>(token[hk_idx * Dk + d]);
+      float k_value = static_cast<float>(token[QDim + hk_idx * Dk + d]);
+      q_values[i] = q_value;
+      k_values[i] = k_value;
+      q_squares += q_value * q_value;
+      k_squares += k_value * k_value;
+    }
+    q_squares = gdn_simd_sum(q_squares);
+    k_squares = gdn_simd_sum(k_squares);
+    float q_inv_rms = rsqrtf(q_squares / float(Dk) + 1.0e-6f);
+    float k_inv_rms = rsqrtf(k_squares / float(Dk) + 1.0e-6f);
+    InT q_scale = static_cast<InT>(qk_scale[0]);
+    InT k_scale = static_cast<InT>(qk_scale[1]);
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      InT q_norm = static_cast<InT>(q_values[i] * q_inv_rms);
+      InT k_norm = static_cast<InT>(k_values[i] * k_inv_rms);
+      q_row[i] = static_cast<InT>(q_norm * q_scale);
+      k_row[i] = static_cast<InT>(k_norm * k_scale);
+    }
+  }
+
+  // Metal rounds both gates to InT through threadgroup memory, so round
+  // here too rather than carrying float precision forward.
+  float decay = 0.0f;
+  float beta_gate = 0.0f;
+  if (lane == 0) {
+    int ba_row = (b_idx * SeqT + t) * 2 * Hv;
+    InT gate_input = static_cast<InT>(ba[ba_row + Hv + hv_idx] + dt_bias[hv_idx]);
+    InT softplus = LogAddExp{}(gate_input, static_cast<InT>(0));
+    decay = static_cast<float>(static_cast<InT>(
+        Exp{}(-static_cast<float>(softplus) * a_exp[hv_idx])));
+    beta_gate = static_cast<float>(Sigmoid{}(ba[ba_row + hv_idx]));
+  }
+  decay = __shfl_sync(0xffffffff, decay, 0);
+  beta_gate = __shfl_sync(0xffffffff, beta_gate, 0);
+
+  for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+    int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+    float projection = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      state[value_iter][i] *= decay;
+      projection += state[value_iter][i] * static_cast<float>(k_row[i]);
+    }
+    projection = gdn_simd_sum(projection);
+
+    float v_value = static_cast<float>(token[2 * QDim + hv_idx * Dv + dv_idx]);
+    float delta = (v_value - projection) * beta_gate;
+
+    float out = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      state[value_iter][i] += static_cast<float>(k_row[i]) * delta;
+      out += state[value_iter][i] * static_cast<float>(q_row[i]);
+    }
+    out = gdn_simd_sum(out);
+    if (lane == 0) {
+      y[((b_idx * SeqT + t) * Hv + hv_idx) * Dv + dv_idx] = static_cast<InT>(out);
+    }
+
+    if (t + 1 < SeqT) {
+      int seq_offset = ((t * grid_z + n) * Dv + dv_idx) * Dk;
+#pragma unroll
+      for (int i = 0; i < StatePerLane; ++i) {
+        int d = StatePerLane * lane + i;
+        GDN_STORE_INTERIOR(seq_offset + d, state[value_iter][i]);
+      }
+    }
+  }
+}
+
+for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+  int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+  int state_offset = (n * Dv + dv_idx) * Dk;
+#pragma unroll
+  for (int i = 0; i < StatePerLane; ++i) {
+    int d = StatePerLane * lane + i;
+    state_out[state_offset + d] = state[value_iter][i];
+  }
+}
+`
+
+// MLX's own ops, so the gates match the graph path this is pinned against.
+// Both headers are embedded for the runtime JIT. gdn_simd_sum is Metal's
+// simd_sum: a full-warp reduction every lane can read.
+const gatedDeltaCUDAHeader = `
+#include "mlx/backend/cuda/device/binary_ops.cuh"
+#include "mlx/backend/cuda/device/unary_ops.cuh"
+
+__device__ inline float gdn_simd_sum(float v) {
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    v += __shfl_down_sync(0xffffffff, v, offset);
+  }
+  return __shfl_sync(0xffffffff, v, 0);
+}
+`
+
+// TODO: call MLX's Sigmoid/LogAddExp like CUDA does to DRY this out.
 const gatedDeltaMetalHeader = `
 template <typename T>
 T gdn_sigmoid(T x) {

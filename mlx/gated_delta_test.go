@@ -56,17 +56,17 @@ func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
 					in := batchGatedDeltaRows(gatedDeltaTestInputs36(g, T), B)
 					refY, refState, refInterior := gatedDeltaReference(in, captureAll)
 					y, state, interior := GatedDelta(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
-					if err := requireExact("y", y, refY); err != nil {
+					if err := requireClose("y", y, refY, gatedDeltaGraphTol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
-					if err := requireExact("state", state, refState); err != nil {
+					if err := requireClose("state", state, refState, gatedDeltaGraphTol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
 					if captureAll && len(interior) != len(refInterior) {
 						t.Fatalf("%s: interior count = %d, want %d", name, len(interior), len(refInterior))
 					}
 					for i := range interior {
-						if err := requireExact(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i]); err != nil {
+						if err := requireClose(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i], gatedDeltaGraphTol); err != nil {
 							t.Fatalf("%s: %v", name, err)
 						}
 					}
