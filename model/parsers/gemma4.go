@@ -419,11 +419,18 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 
 	var args api.ToolCallFunctionArguments
 	if err := json.Unmarshal([]byte(jsonStr), &args); err != nil {
-		repairedArgs, repairErr := repairGemma4ToolCallArgs(argsStr, toolName, tools)
-		if repairErr != nil {
-			return api.ToolCall{}, errors.Join(err, repairErr)
+		// A complete object followed by model noise is still a usable tool call.
+		// Decode the JSON value rather than scanning for braces, which may also
+		// occur inside quoted string arguments.
+		if repairedArgs, ok := gemma4ArgsBeforeTrailingNoise(jsonStr); ok {
+			args = repairedArgs
+		} else {
+			repairedArgs, repairErr := repairGemma4ToolCallArgs(argsStr, toolName, tools)
+			if repairErr != nil {
+				return api.ToolCall{}, errors.Join(err, repairErr)
+			}
+			args = repairedArgs
 		}
-		args = repairedArgs
 	}
 
 	return api.ToolCall{
@@ -432,6 +439,29 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 			Arguments: args,
 		},
 	}, nil
+}
+
+// gemma4ArgsBeforeTrailingNoise accepts a complete JSON object followed by
+// non-JSON tokens. It does not guess where braces inside strings end.
+func gemma4ArgsBeforeTrailingNoise(jsonStr string) (api.ToolCallFunctionArguments, bool) {
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	var args api.ToolCallFunctionArguments
+	if !strings.HasPrefix(strings.TrimSpace(jsonStr), "{") {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	if err := decoder.Decode(&args); err != nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	suffix := strings.TrimSpace(jsonStr[decoder.InputOffset():])
+	if suffix == "" {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	// A second valid JSON value is structured output, not stray model tokens.
+	var extra any
+	if json.NewDecoder(strings.NewReader(suffix)).Decode(&extra) == nil {
+		return api.ToolCallFunctionArguments{}, false
+	}
+	return args, true
 }
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
