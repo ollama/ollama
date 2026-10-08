@@ -3,9 +3,10 @@
 // children.
 //
 // This exists to bridge the llama-server transition without forcing users to
-// re-pull large models they already have on disk. The first load can still use
-// the temporary llama.cpp compatibility patch, while a best-effort background
-// migration materializes a clean llamacpp child for later loads.
+// re-pull large models they already have on disk. Loads wait for a shared
+// conversion before starting the runner. Canceling a load does not cancel the
+// conversion. Successful conversion replaces the legacy child and reclaims
+// its unreferenced blobs.
 //
 // Once manifest-list publishing has been live for enough releases and stale
 // legacy-only local stores are no longer a practical concern, this code should
@@ -13,12 +14,13 @@
 package compatmigrate
 
 import (
-	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -96,7 +98,7 @@ var migratorsByArchitecture = map[string][]Migrator{
 	"nemotron_h_moe":  {nemotronHMoeMigrator{}},
 	"nemotron_h_omni": {nemotron3Migrator{}},
 	"olmo3":           {olmo3Migrator{}},
-	"qwen35":          {qwen35Migrator{}},
+	"qwen35":          {clefMigrator{}, nimbleMigrator{}, qwen35Migrator{}},
 	"qwen35moe":       {qwen35Migrator{}},
 	"qwen3next":       {qwen3NextMigrator{}},
 	"qwen25vl":        {qwen25VLMigrator{}},
@@ -119,37 +121,50 @@ func SetMigratorsForTesting(migrators map[string][]Migrator) func() {
 	}
 }
 
-func StartLocalCompatibilityMigration(name model.Name) bool {
-	if !name.IsFullyQualified() {
-		return false
+type localMigration struct {
+	done   chan struct{}
+	digest string
+	err    error
+}
+
+// WaitLocalCompatibilityMigration lets a load wait for conversion without
+// cancelling shared conversion work when one client disconnects. A nonempty
+// result identifies the replacement for the selected manifest, not another
+// platform's preferred child.
+func WaitLocalCompatibilityMigration(ctx context.Context, name model.Name, selectedDigest string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if !hasCompatibilityMigrators() {
-		return false
+		return "", nil
+	}
+	if !name.IsFullyQualified() {
+		return "", model.Unqualified(name)
 	}
 
-	key := name.String()
-	if _, loaded := migrationInFlight.LoadOrStore(key, struct{}{}); loaded {
-		return false
+	key := name.String() + ":" + selectedDigest
+	migration := &localMigration{done: make(chan struct{})}
+	if existing, loaded := migrationInFlight.LoadOrStore(key, migration); loaded {
+		migration = existing.(*localMigration)
+	} else {
+		go func() {
+			defer migrationInFlight.Delete(key)
+			migration.digest, migration.err = ensureLocalCompatibilityMigration(name, selectedDigest)
+			if migration.err != nil {
+				slog.Warn("local compatibility migration failed", "model", name.DisplayShortest(), "error", migration.err)
+			}
+			close(migration.done)
+		}()
 	}
-
-	go func() {
-		defer migrationInFlight.Delete(key)
-
-		migrated, err := EnsureLocalCompatibilityMigration(name)
-		switch {
-		case err != nil:
-			slog.Warn("local compatibility migration failed",
-				"model", name.DisplayShortest(),
-				"error", err,
-			)
-		case migrated:
-			slog.Debug("local compatibility migration completed",
-				"model", name.DisplayShortest(),
-			)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-migration.done:
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-	}()
-
-	return true
+		return migration.digest, migration.err
+	}
 }
 
 func hasCompatibilityMigrators() bool {
@@ -161,83 +176,77 @@ func hasCompatibilityMigrators() bool {
 	return false
 }
 
-func EnsureLocalCompatibilityMigration(name model.Name) (bool, error) {
+func ensureLocalCompatibilityMigration(name model.Name, selectedDigest string) (string, error) {
 	if !name.IsFullyQualified() {
-		return false, model.Unqualified(name)
+		return "", model.Unqualified(name)
 	}
 
-	unlock := lockCompatibilityMigration(name)
+	unlock := lockCompatibilityMigration(name.String())
 	defer unlock()
 
+	if !manifest.IsDigestReferenceName(name) {
+		if digest, err := retireConvertedModel(name, selectedDigest); err != nil || digest != "" {
+			return digest, err
+		}
+	}
 	data, err := manifest.ReadManifestData(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	} else if err != nil {
-		return false, err
+	if err != nil {
+		return "", err
 	}
 
 	var parent manifest.Manifest
 	if err := json.Unmarshal(data, &parent); err != nil {
-		return false, err
+		return "", err
 	}
 
-	source, refs, done, err := migrationSourceFromManifest(&parent)
-	if err != nil || done || source == nil {
-		return done, err
-	}
-
-	if mediaType, ok := unsupportedSourceLayer(source); ok {
-		// copyAncillaryLayers cannot carry these layers into the converted
-		// child, and the converted child is preferred at load time — migrating
-		// would silently change model behavior (e.g. run a LoRA model without
-		// its adapter).
-		slog.Info("skipping local compatibility migration for unsupported source layer",
-			"model", name.DisplayShortest(),
-			"media_type", mediaType,
-		)
-		return false, nil
+	source, index, err := migrationSourceFromManifest(&parent, data, selectedDigest)
+	if err != nil {
+		return "", err
 	}
 
 	src, err := loadSourceModelFromManifest(name, source)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
+		return "", err
 	}
 	defer src.Close()
 
 	migrator := compatibilityMigratorForSource(src)
 	if migrator == nil {
-		return false, nil
+		return "", nil
 	}
+	if manifest.IsDigestReferenceName(name) {
+		return "", errors.New("this GGUF requires conversion; use a model tag instead of its original digest")
+	}
+	if mediaType, ok := unsupportedSourceLayer(source); ok {
+		return "", fmt.Errorf("cannot convert legacy GGUF with %s layer; re-pull a compatible model", mediaType)
+	}
+
+	// Aliases can share a source blob. Keep their output installation and
+	// aborted-output cleanup from racing with another conversion of that blob.
+	unlockSource := lockCompatibilityMigration(src.GGUFPath)
+	defer unlockSource()
 
 	convertedRef, err := migrateToManifestReference(migrator, src)
 	if err != nil {
-		if errors.Is(err, errUnsupportedFamily) || errors.Is(err, errInsufficientSpace) {
-			slog.Info("skipping local compatibility migration",
-				"model", name.DisplayShortest(),
-				"reason", err,
-			)
-			return false, nil
-		}
-		return false, err
+		return "", err
 	}
 
-	// The conversion can take minutes on a large model. If the named manifest
-	// was removed or replaced while it ran (ollama rm / pull / create), writing
-	// now would resurrect or revert it. The per-name lock is held for this
-	// whole function, so re-checking the raw manifest data closes the race.
-	if current, readErr := manifest.ReadManifestData(name); readErr != nil || !bytes.Equal(current, data) {
-		slog.Info("discarding local compatibility migration; model changed during conversion",
-			"model", name.DisplayShortest(),
-		)
+	// Windows cannot reclaim source files while the converter holds them open.
+	if err := src.Close(); err != nil {
 		removeConvertedReference(convertedRef)
-		return false, nil
+		return "", err
 	}
-
-	refs = append(refs, convertedRef)
-	return writeCompatibilityManifestList(name, source, refs)
+	if index < 0 {
+		parent = manifest.Manifest{SchemaVersion: 2, MediaType: manifest.MediaTypeManifestList, Manifests: []manifest.Manifest{convertedRef}}
+	} else {
+		parent.Manifests[index] = convertedRef
+	}
+	if err := replaceConvertedModel(name, data, &parent); err != nil {
+		removeConvertedReference(convertedRef)
+		return "", err
+	}
+	slog.Info("completed local compat GGUF migration", "model", name.DisplayShortest())
+	return convertedRef.BlobDigest(), nil
 }
 
 // unsupportedSourceLayer reports a source layer type the conversion would
@@ -252,82 +261,41 @@ func unsupportedSourceLayer(source *manifest.Manifest) (string, bool) {
 	return "", false
 }
 
-func lockCompatibilityMigration(name model.Name) func() {
-	value, _ := migrationLocks.LoadOrStore(name.String(), &sync.Mutex{})
+func lockCompatibilityMigration(key string) func() {
+	value, _ := migrationLocks.LoadOrStore(key, &sync.Mutex{})
 	mu := value.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
 }
 
-func migrationSourceFromManifest(parent *manifest.Manifest) (*manifest.Manifest, []manifest.Manifest, bool, error) {
+func migrationSourceFromManifest(parent *manifest.Manifest, data []byte, selectedDigest string) (*manifest.Manifest, int, error) {
 	if parent.MediaType != manifest.MediaTypeManifestList {
-		child := *parent
-		if err := manifest.FillMetadata(&child); err != nil {
-			return nil, nil, false, err
+		if selectedDigest != "" && !manifest.SameDigest(selectedDigest, fmt.Sprintf("sha256:%x", sha256.Sum256(data))) {
+			return nil, -1, manifest.ErrManifestChanged
 		}
-		if isRunnerFormat(&child, manifest.RunnerLlamaCPP, manifest.FormatGGUF) && manifestBlobsExist(&child) {
-			return nil, nil, true, nil
-		}
-		if !isRunnerFormat(&child, manifest.RunnerGGML, manifest.FormatGGUF) {
-			return nil, nil, false, nil
-		}
-		ref, err := manifestReferenceForChild(&child)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		return &child, []manifest.Manifest{ref}, false, nil
+		return parent, -1, nil
 	}
-
-	refs := make([]manifest.Manifest, 0, len(parent.Manifests)+1)
-	var source *manifest.Manifest
-	for _, child := range parent.Manifests {
-		if child.MediaType == manifest.MediaTypeManifestList {
-			return nil, nil, false, errors.New("nested manifest lists are not supported")
+	for i, child := range parent.Manifests {
+		if selectedDigest == "" && child.Format != manifest.FormatGGUF {
+			continue
 		}
-
+		digest, err := manifest.ChildManifestDigest(child)
+		if err != nil {
+			return nil, -1, err
+		}
+		if selectedDigest != "" && !manifest.SameDigest(digest, selectedDigest) {
+			continue
+		}
 		resolved, err := resolveChildManifest(child)
 		if err != nil {
-			if isRunnerFormat(&child, manifest.RunnerLlamaCPP, manifest.FormatGGUF) {
-				if !errors.Is(err, os.ErrNotExist) {
-					return nil, nil, false, err
-				}
-				// Drop llamacpp children whose blobs are gone so the
-				// migration regenerates them.
-				continue
-			}
-			// Preserve foreign-runner children verbatim; their blobs may
-			// legitimately live elsewhere (e.g. not pulled for this platform).
-			slog.Warn("keeping unresolvable manifest child during migration scan",
-				"runner", child.Runner,
-				"digest", child.Digest,
-				"error", err,
-			)
-			refs = append(refs, child)
+			return nil, -1, err
+		}
+		if selectedDigest == "" && resolved.Format != manifest.FormatGGUF {
 			continue
 		}
-
-		if isRunnerFormat(resolved, manifest.RunnerLlamaCPP, manifest.FormatGGUF) && manifestBlobsExist(resolved) {
-			return nil, nil, true, nil
-		}
-		if isRunnerFormat(resolved, manifest.RunnerLlamaCPP, manifest.FormatGGUF) {
-			// Broken llamacpp child (manifest resolves but blobs are missing):
-			// drop it so this migration writes a fresh replacement.
-			continue
-		}
-
-		// The first GGML child with complete blobs is the conversion source.
-		if source == nil && isRunnerFormat(resolved, manifest.RunnerGGML, manifest.FormatGGUF) && manifestBlobsExist(resolved) {
-			sourceCopy := *resolved
-			source = &sourceCopy
-		}
-
-		ref, err := manifestReferenceForChild(resolved)
-		if err != nil {
-			return nil, nil, false, err
-		}
-		refs = append(refs, ref)
+		return resolved, i, nil
 	}
-	return source, refs, false, nil
+	return nil, -1, manifest.ErrManifestChanged
 }
 
 // RunnerForManifest reports the runner a GGUF manifest should carry: ggml when
@@ -398,7 +366,7 @@ func migrateToManifestReference(migrator Migrator, src *SourceModel) (_ manifest
 		return manifest.Manifest{}, err
 	}
 	if available < required {
-		slog.Info("skipping local compat migration due to disk headroom",
+		slog.Warn("cannot convert legacy model due to disk headroom",
 			"model", src.Source.DisplayShortest(),
 			"available_bytes", available,
 			"required_bytes", required,
@@ -444,11 +412,14 @@ func migrateToManifestReference(migrator Migrator, src *SourceModel) (_ manifest
 	if err != nil {
 		return manifest.Manifest{}, err
 	}
-	if err = writeConvertedLegacyShadow(childDigest, data); err != nil {
+	runner, err := RunnerForManifest(src.Source, child)
+	if err != nil {
 		return manifest.Manifest{}, err
 	}
-
-	slog.Info("completed local compat GGUF migration",
+	if runner != manifest.RunnerLlamaCPP {
+		return manifest.Manifest{}, errors.New("converted GGUF still requires compatibility migration")
+	}
+	slog.Debug("wrote converted GGUF",
 		"model", src.Source.DisplayShortest(),
 		"duration", time.Since(start),
 	)

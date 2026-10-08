@@ -112,7 +112,6 @@ if(NOT OLLAMA_HAVE_LLAMA_SERVER)
 else()
     file(READ "${CMAKE_SOURCE_DIR}/LLAMA_CPP_VERSION" OLLAMA_LLAMA_CPP_GIT_TAG)
     string(STRIP "${OLLAMA_LLAMA_CPP_GIT_TAG}" OLLAMA_LLAMA_CPP_GIT_TAG)
-    include(${CMAKE_SOURCE_DIR}/llama/compat/compat.cmake)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" STREQUAL "")
         get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
@@ -133,7 +132,6 @@ else()
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
             USES_TERMINAL_DOWNLOAD TRUE
             USES_TERMINAL_PATCH TRUE)
     endif()
@@ -449,7 +447,6 @@ function(ollama_add_llama_server_build name)
         -DOLLAMA_LIB_DIR:STRING=${OLLAMA_LIB_DIR}
         -DOLLAMA_RUNNER_DIR=${ARG_RUNNER_DIR}
         -DFETCHCONTENT_SOURCE_DIR_LLAMA_CPP=${OLLAMA_LLAMA_CPP_SOURCE_DIR}
-        -DOLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH=ON
         -DGGML_NATIVE=OFF
         -DGGML_OPENMP=OFF
         ${ARG_CMAKE_ARGS}
@@ -507,7 +504,7 @@ function(ollama_add_llama_server_build name)
         DEPENDS ollama-llama-cpp-source
         LIST_SEPARATOR |
         # ExternalProject cannot reliably infer when nested FetchContent
-        # sources, compat patches, or forwarded GGML/LLAMA cache settings need
+        # sources or forwarded GGML/LLAMA cache settings need
         # a rebuild. Always entering the sub-build keeps direct `cmake --build`
         # iteration correct; the nested generator still performs incremental
         # compilation.

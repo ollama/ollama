@@ -12,42 +12,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func writeCompatibilityManifestList(name model.Name, source *manifest.Manifest, manifests []manifest.Manifest) (bool, error) {
-	// Write the list first so the source anchor can reference its document blob.
-	parentDigest, err := manifest.WriteManifestListPreserveLegacy(name, manifests)
-	if err != nil {
-		return false, err
-	}
-
-	if source != nil {
-		// TODO: remove this downgrade anchor once rollback to pre-manifest-list
-		// Ollama versions is no longer supported.
-		manifestDigests := []string{parentDigest}
-		for _, child := range manifests {
-			digest, err := manifest.ChildManifestDigest(child)
-			if err != nil {
-				return false, err
-			}
-			manifestDigests = append(manifestDigests, digest)
-		}
-		if err := manifest.WriteLegacyAnchor(name, source, manifestDigests...); err != nil {
-			return false, err
-		}
-	}
-
-	return true, nil
-}
-
-func writeConvertedLegacyShadow(digest string, data []byte) error {
-	// TODO: remove this shadow tag once rollback to pre-manifest-list Ollama
-	// versions is no longer supported.
-	name, err := convertedLegacyShadowName(digest)
-	if err != nil {
-		return err
-	}
-	return manifest.WriteLegacyManifestData(name, data)
-}
-
 func convertedLegacyShadowName(digest string) (model.Name, error) {
 	hex := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(digest)), "sha256:")
 	if hex == "" {
@@ -86,19 +50,11 @@ func removeConvertedChildBlobs(child *manifest.Manifest, manifestDigest string) 
 	}
 }
 
-// removeConvertedReference undoes a completed conversion whose manifest list
-// was never written: it drops the legacy shadow tag first (the shadow retains
-// the converted blobs) and then the blobs only the converted child references.
+// removeConvertedReference discards output that could not be installed.
 func removeConvertedReference(ref manifest.Manifest) {
 	digest := ref.BlobDigest()
 	if digest == "" {
 		return
-	}
-
-	if shadow, err := convertedLegacyShadowName(digest); err == nil {
-		if _, err := manifest.RemoveNamed(shadow); err != nil && !errors.Is(err, os.ErrNotExist) {
-			slog.Warn("could not remove converted manifest shadow", "digest", digest, "error", err)
-		}
 	}
 
 	child := &manifest.Manifest{}
@@ -134,18 +90,6 @@ func resolveChildManifest(child manifest.Manifest) (*manifest.Manifest, error) {
 	return resolved, nil
 }
 
-func manifestReferenceForChild(child *manifest.Manifest) (manifest.Manifest, error) {
-	data, err := json.Marshal(child)
-	if err != nil {
-		return manifest.Manifest{}, err
-	}
-	digest, err := manifest.WriteManifestBlob(data)
-	if err != nil {
-		return manifest.Manifest{}, err
-	}
-	return manifest.NewManifestReference(digest, child.Runner, child.Format)
-}
-
 func manifestBlobsExist(m *manifest.Manifest) bool {
 	if m == nil {
 		return false
@@ -175,12 +119,4 @@ func blobExists(digest string) bool {
 	}
 	_, err = os.Stat(path)
 	return err == nil
-}
-
-func isRunnerFormat(m *manifest.Manifest, runner, format string) bool {
-	if m == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(m.Runner), runner) &&
-		strings.EqualFold(strings.TrimSpace(m.Format), format)
 }

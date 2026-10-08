@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/internal/orderedmap"
-	"github.com/ollama/ollama/llm"
 )
 
 // encodeClef preserves the reference encoder's JSON and segment boundaries,
@@ -21,7 +20,7 @@ func encodeClef(req Request, c *Compiled) error {
 	if err != nil {
 		return fmt.Errorf("state: %w", err)
 	}
-	input := llm.ScoreRequest{Images: req.Images, ImagePosition: 1}
+	input := ScoreRequest{Images: req.Images, ImagePosition: 1}
 	add := func(text string) [2]int {
 		n := len(input.Segments)
 		input.Segments = append(input.Segments, text)
@@ -36,7 +35,7 @@ func encodeClef(req Request, c *Compiled) error {
 			return fmt.Errorf("question %q: %w", name, err)
 		}
 		add(fmt.Sprintf("\nFIELD %d\nID: %s\nTYPE: %s\nINSTRUCTION: ", len(c.fields)+1, name, q.Type))
-		field := llm.ScoreField{Question: add(f.Description)}
+		field := ScoreField{Question: add(f.Description)}
 		switch q.Type {
 		case "choice":
 			field.Type = 1

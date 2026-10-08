@@ -248,23 +248,36 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	model, err = modelForLoad(ctx, model)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	return s.scheduleRunnerForModel(ctx, model, caps, requestOpts, keepAlive, shift)
 }
 
-// scheduleRunnerForModel retains the request's resolved model, including its selected
-// manifest-list child, without repeating model lookup and metadata loading.
-func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
+// Conversion must precede both scheduling and selection of prompt renderers/parsers.
+// Read-only operations deliberately do not call this.
+func modelForLoad(ctx context.Context, m *Model) (*Model, error) {
 	selectedName := model.ParseName(m.Name)
-	if !manifest.IsDigestReferenceName(selectedName) {
-		runner := m.Runner
-		if runner == "" && m.isGGUF() {
-			runner = manifest.RunnerGGML
+	if m.isGGUF() {
+		digest, err := compatmigrate.WaitLocalCompatibilityMigration(ctx, selectedName, m.ManifestDigest)
+		if err != nil {
+			return nil, fmt.Errorf("convert model: %w", err)
 		}
-		if runner == manifest.RunnerGGML {
-			compatmigrate.StartLocalCompatibilityMigration(selectedName)
+		if digest != "" {
+			converted, err := GetModel(strings.Replace(digest, ":", "-", 1))
+			if err != nil {
+				return nil, err
+			}
+			converted.Name, converted.ShortName = m.Name, m.ShortName
+			m = converted
 		}
 	}
+	return m, nil
+}
 
+// scheduleRunnerForModel retains the request's converted model and selected child.
+func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
 	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(m.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
@@ -508,6 +521,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	m, err = modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	thinking := m.genericThinking()
 	if thinking == nil {
 		if err := api.ValidateLegacyThinking(req.Think); err != nil {
@@ -558,7 +576,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -896,8 +914,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// SystemOneHandler compiles typed questions, scores their allowed answers, and
-// returns probabilities. Callers must select weights trained for the prompt format.
+// SystemOneHandler uses native llama.cpp decisions where supported. MLX and
+// Tev1 GGUF runners receive compiled prompts and score the allowed answers.
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
@@ -952,44 +970,38 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+	if len(req.Videos) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "video inputs are not supported"})
+		return
+	}
+	m, err = modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	encoding := m.metadata.String("decision.type")
 	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands") {
 		encoding = m.Config.Renderer
 	}
-	compiled, err := decision.Compile(req, encoding)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
+	var compiled *decision.Compiled
+	native := m.isGGUF() && m.metadata.String("decision.type") != ""
+	if !native {
+		compiled, err = decision.Compile(req, encoding)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 	}
 	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {
 		caps = append(caps, model.CapabilityVision)
 	}
-	r, _, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
+	r, m, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	scorer, ok := r.(llm.Scorer)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
-		return
-	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) {
-		if m.System != "" {
-			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
-		}
-		think := &api.ThinkValue{Value: false}
-		if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
-			return r.ApplyChatTemplate(c.Request.Context(), llm.ChatRequest{Messages: messages, Think: think})
-		}
-		return renderPrompt(m, messages, nil, think)
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	compiled.Request.MaxTokens = r.ContextLength()
-	result, err := scorer.Score(c.Request.Context(), compiled.Request)
+	response, err := runSystemOne(c.Request.Context(), r, m, req, compiled)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		status := http.StatusInternalServerError
@@ -1000,12 +1012,39 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	response, err := compiled.Answer(req.Model, result)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
 	c.JSON(http.StatusOK, response)
+}
+
+func runSystemOne(ctx context.Context, r llm.LlamaServer, m *Model, req decision.Request, compiled *decision.Compiled) (decision.Response, error) {
+	if compiled == nil {
+		native, ok := r.(llm.DecisionRunner)
+		if !ok {
+			return decision.Response{}, fmt.Errorf("runner does not support native System One")
+		}
+		return native.SystemOne(ctx, req)
+	}
+	scorer, ok := r.(llm.Scorer)
+	if !ok {
+		return decision.Response{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "runner does not support System One scoring"}
+	}
+	if err := compiled.Render(func(messages []api.Message) (string, error) {
+		if m.System != "" {
+			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
+		}
+		think := &api.ThinkValue{Value: false}
+		if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
+			return r.ApplyChatTemplate(ctx, llm.ChatRequest{Messages: messages, Think: think})
+		}
+		return renderPrompt(m, messages, nil, think)
+	}); err != nil {
+		return decision.Response{}, err
+	}
+	compiled.Request.MaxTokens = r.ContextLength()
+	result, err := scorer.Score(ctx, compiled.Request)
+	if err != nil {
+		return decision.Response{}, err
+	}
+	return compiled.Answer(req.Model, result)
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
@@ -3102,6 +3141,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	m, err = modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	thinking := m.genericThinking()
 	if thinking == nil {
 		if err := api.ValidateLegacyThinking(req.Think); err != nil {
@@ -3137,7 +3181,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
@@ -3541,6 +3585,8 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, manifest.ErrNoCompatibleManifest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, manifest.ErrManifestChanged):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
 		c.JSON(499, gin.H{"error": "request canceled"})
 	case errors.Is(err, ErrMaxQueue):

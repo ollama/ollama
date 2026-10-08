@@ -90,6 +90,83 @@ func writeManifestBlobForTest(t *testing.T, data []byte) string {
 	return digest
 }
 
+func TestReplaceManifestMissingOutput(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("conversion:latest")
+	foreign, err := NewManifestReference("sha256:"+strings.Repeat("f", 64), RunnerMLX, FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := createManifestListData(t, foreign)
+	if err := WriteManifestData(name, before); err != nil {
+		t.Fatal(err)
+	}
+	child := Manifest{SchemaVersion: 2, MediaType: MediaTypeManifest, Layers: []Layer{
+		{MediaType: MediaTypeImageModel, Digest: "sha256:" + strings.Repeat("a", 64)},
+	}}
+	data, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := NewManifestReference(writeManifestBlobForTest(t, data), RunnerLlamaCPP, FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplaceManifestData(name, before, createManifestListData(t, foreign, ref)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("install missing conversion output: %v", err)
+	}
+	got, err := ReadManifestData(name)
+	if err != nil || !bytes.Equal(got, before) {
+		t.Fatalf("failed conversion changed tag: %s, %v", got, err)
+	}
+}
+
+func TestReplaceManifestData(t *testing.T) {
+	for _, action := range []string{"unchanged", "replaced", "removed"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("conversion:latest")
+			before := []byte(`{"schemaVersion":2}`)
+			after := []byte(`{"schemaVersion":2,"runner":"llamacpp"}`)
+			other := []byte(`{"schemaVersion":2,"runner":"mlx"}`)
+			if err := WriteManifestData(name, before); err != nil {
+				t.Fatal(err)
+			}
+			switch action {
+			case "replaced":
+				if err := WriteManifestData(name, other); err != nil {
+					t.Fatal(err)
+				}
+			case "removed":
+				if _, err := RemoveNamed(name); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := ReplaceManifestData(name, before, after)
+			if action == "unchanged" && err != nil {
+				t.Fatal(err)
+			}
+			if action != "unchanged" && !errors.Is(err, ErrManifestChanged) {
+				t.Fatalf("replace after %s: %v", action, err)
+			}
+			got, err := ReadManifestData(name)
+			if action == "removed" {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("deleted tag resurrected: %s, %v", got, err)
+				}
+				return
+			}
+			want := after
+			if action == "replaced" {
+				want = other
+			}
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("tag = %s, %v; want %s", got, err, want)
+			}
+		})
+	}
+}
+
 func TestWriteManifestStoresManifestAsBlob(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -186,6 +263,12 @@ func TestReadManifestSymlink(t *testing.T) {
 				}
 				if got, err := os.Readlink(path); err != nil || got != target {
 					t.Fatalf("invalid manifest link changed: target = %q, error = %v", got, err)
+				}
+				if removed, err := RemoveUnreferencedBlobs(digest); err == nil || len(removed) != 0 {
+					t.Fatalf("prune must stop on an unreadable manifest: removed = %v, error = %v", removed, err)
+				}
+				if _, err := os.Stat(blobPath); err != nil {
+					t.Fatalf("prune removed unverified data: %v", err)
 				}
 				return
 			}

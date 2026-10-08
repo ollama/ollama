@@ -400,7 +400,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendFlashAttentionArgs(params, launch.gpus)
 
-	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
+	params = appendBatchArgs(params, launch)
 
 	// GPU layer offloading — only pass if user explicitly set it (non-default).
 	// Default behavior: let llama-server auto-detect via -ngl auto.
@@ -581,10 +581,15 @@ func appendLlamaServerLogArgs(params []string) []string {
 	)
 }
 
-func appendBatchArgs(params []string, opts api.Options, embedding bool, numParallel int) []string {
-	if embedding {
+func appendBatchArgs(params []string, launch llamaServerLaunchConfig) []string {
+	opts := launch.opts
+	if launch.modelArch == "clef" {
+		// Clef's decision head requires the whole prompt in one physical batch.
+		opts.NumBatch = opts.NumCtx
+	}
+	if launch.embedding {
 		params = append(params, "--embedding")
-		if batchSize := embeddingBatchSize(opts, numParallel); batchSize > 0 {
+		if batchSize := embeddingBatchSize(opts, launch.numParallel); batchSize > 0 {
 			params = append(params, "-b", strconv.Itoa(batchSize), "-ub", strconv.Itoa(batchSize))
 		}
 		return params
@@ -834,19 +839,7 @@ func externalDraftType(path string) (string, error) {
 }
 
 func hasMTPDraft(f *gguf.Model) bool {
-	if f.KV().Uint("nextn_predict_layers") > 0 {
-		return true
-	}
-	return hasLegacyQwenMTPDraft(f.KV().Architecture(), f.Tensors().Items("mtp."))
-}
-
-func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {
-	switch arch {
-	case "qwen35", "qwen35moe":
-		return len(tensors) > 0
-	default:
-		return false
-	}
+	return f.KV().Uint("nextn_predict_layers") > 0
 }
 
 // NewLlamaServerRunner creates a new llama-server runner that wraps the upstream llama-server binary.
@@ -860,39 +853,15 @@ func NewLlamaServerRunner(
 	kvCacheType string,
 	config LlamaServerConfig,
 ) (LlamaServer, error) {
+	// Named loads convert before scheduling. Never load the private head layout
+	// through the native Qwen backbone if a caller bypasses that migration.
+	if f.KV().Architecture() == "qwen35" && f.KV().String("decision.type") == "clef" {
+		return nil, errors.New("legacy Clef GGUF requires compatibility migration before loading")
+	}
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
 
-	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
-	// the main model file rather than in a separate projector layer. When
-	// the arch has a llama/compat clip handler, we can point --mmproj at
-	// the same file and the in-process shim translates the two views.
-	//
-	// If we auto-enable --mmproj for an arch whose clip handler doesn't
-	// exist yet, upstream's clip loader sees un-translated Ollama tensors
-	// and aborts model load. So gate on an explicit allowlist that mirrors
-	// the compat layer's clip-side coverage in llama/compat/.
-	compatClipArches := map[string]bool{
-		"gemma3":          true,
-		"gemma4":          true,
-		"qwen35":          true,
-		"qwen35moe":       true,
-		"qwen25vl":        true,
-		"qwen3vl":         true,
-		"qwen3vlmoe":      true,
-		"mistral3":        true,
-		"deepseekocr":     true,
-		"glmocr":          true,
-		"llama4":          true,
-		"nemotron_h_omni": true,
-		// Add entries as llama/compat grows clip handlers.
-	}
-	if len(projectors) == 0 &&
-		len(f.Tensors().Items("v.")) > 0 &&
-		compatClipArches[arch] {
-		projectors = []string{modelPath}
-	}
 	mmprojMemory, err := mmprojMemoryRequirement(modelPath, f, projectors)
 	if err != nil {
 		return nil, err

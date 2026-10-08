@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/ollama/ollama/api"
 )
@@ -31,12 +30,17 @@ type scoreRowTokens struct {
 	tokens, candidates []int
 }
 
+// Score retains the candidate-logit path for Tev1 until llama.cpp supports its
+// native System One format. Models with native decision metadata use SystemOne.
 func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (ScoreResponse, error) {
 	var result ScoreResponse
 	badRequest := func(format string, args ...any) (ScoreResponse, error) {
 		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf(format, args...)}
 	}
-	if len(input.Segments) == 0 && len(input.Fields) == 0 && (len(input.Rows) < 1 || len(input.Rows) > 64) {
+	if len(input.Segments) > 0 || len(input.Fields) > 0 {
+		return badRequest("joint decision models require the native System One endpoint")
+	}
+	if len(input.Rows) < 1 || len(input.Rows) > 64 {
 		return badRequest("scoring requires 1–64 prompts")
 	}
 	if input.MaxTokens < 1 || input.MaxTokens > s.ContextLength() {
@@ -51,10 +55,6 @@ func (s *llamaServerRunner) Score(ctx context.Context, input ScoreRequest) (Scor
 		return result, err
 	} else if status != ServerStatusReady {
 		return result, fmt.Errorf("unexpected server status: %s", status)
-	}
-
-	if len(input.Segments) > 0 || len(input.Fields) > 0 {
-		return s.scoreFields(ctx, input)
 	}
 
 	rows := make([]scoreRowTokens, len(input.Rows))
@@ -124,7 +124,7 @@ const scoreCheckpointOffset = 4
 // tokens every row shares, so each row evaluates only its own last few tokens
 // instead of its whole prompt.
 //
-// Rows share the rendered context and schema and differ only near the end.
+// Rows can share a rendered context prefix before their questions differ.
 // llama-server usually reuses a cached prefix by trimming its cache, but it
 // cannot trim the state of recurrent layers, as in hybrid models like Qwen 3.5,
 // or of sliding-window layers. Such models can only resume from a checkpoint,
@@ -137,7 +137,6 @@ const scoreCheckpointOffset = 4
 // checkpoint exactly at the end of the shared tokens. The pinned server still
 // generates one token with n_predict 0; it is discarded but counted in usage.
 // The first row continues from the primer; later rows restore the checkpoint.
-// With 8 questions, scoring is about 3x faster.
 //
 // Priming only changes speed: if llama-server stops saving that checkpoint,
 // rows are evaluated from the start and scores stay the same. It can be
@@ -282,89 +281,4 @@ func (s *llamaServerRunner) scoreRequest(ctx context.Context, path string, input
 		return fmt.Errorf("invalid scoring response: %w", err)
 	}
 	return nil
-}
-
-func (s *llamaServerRunner) scoreFields(ctx context.Context, input ScoreRequest) (ScoreResponse, error) {
-	bad := func(message string) (ScoreResponse, error) {
-		return ScoreResponse{}, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: message}
-	}
-	if len(input.Fields) < 1 || len(input.Fields) > 64 || len(input.Segments) == 0 {
-		return bad("invalid decision scoring request")
-	}
-	var err error
-	// Do not concatenate before tokenizing: BPE may merge across the reference
-	// encoder's segment boundaries, changing both embeddings and span offsets.
-	var tokens []int
-	offsets := []int{0}
-	cache := map[string][]int{}
-	special := true
-	for _, segment := range input.Segments {
-		ids, ok := cache[segment]
-		if !ok {
-			ids, err = s.tokenize(ctx, segment, false, &special)
-			if err != nil {
-				return ScoreResponse{}, err
-			}
-			cache[segment] = ids
-		}
-		tokens = append(tokens, ids...)
-		offsets = append(offsets, len(tokens))
-		if len(tokens) > input.MaxTokens {
-			return bad("decision prompt exceeds the model context (input is never truncated)")
-		}
-	}
-	if len(tokens) == 0 {
-		return bad("decision prompt must not be empty")
-	}
-	fields := make([]ScoreField, len(input.Fields))
-	for i, f := range input.Fields {
-		if f.Type < 0 || f.Type > 2 || len(f.Options) < 2 || len(f.Options) > 26 {
-			return bad("invalid decision field")
-		}
-		// Map the question and its options from segment indexes to token offsets.
-		spans := append([][2]int{f.Question}, f.Options...)
-		for j, span := range spans {
-			start, end := span[0], span[1]
-			if start < 0 || start >= end || end >= len(offsets) || offsets[start] == offsets[end] {
-				return bad("invalid decision token span")
-			}
-			spans[j] = [2]int{offsets[start], offsets[end]}
-		}
-		fields[i] = ScoreField{Type: f.Type, Question: spans[0], Options: spans[1:]}
-	}
-	var images []api.ImageData
-	for _, image := range input.Images {
-		data, err := llamaServerMediaBytes(image)
-		if err != nil {
-			return bad(err.Error())
-		}
-		if !strings.HasPrefix(http.DetectContentType(data), "image/") {
-			return bad("invalid decision image")
-		}
-		images = append(images, data)
-	}
-	imagePosition := 0
-	if len(images) > 0 {
-		if input.ImagePosition < 0 || input.ImagePosition >= len(offsets) {
-			return bad("invalid image position")
-		}
-		imagePosition = offsets[input.ImagePosition]
-	}
-	request := struct {
-		Images        []api.ImageData `json:"images,omitempty"`
-		ImagePosition int             `json:"image_position"`
-		Input         []int           `json:"input"`
-		Fields        []ScoreField    `json:"score_fields"`
-	}{images, imagePosition, tokens, fields}
-	var result []struct {
-		Logits [][]float32 `json:"logits"`
-		Tokens int         `json:"tokens_evaluated"`
-	}
-	if err := s.scoreRequest(ctx, "/embedding", request, &result); err != nil {
-		return ScoreResponse{}, err
-	}
-	if len(result) != 1 || result[0].Tokens > input.MaxTokens || (len(images) == 0 && result[0].Tokens != len(tokens)) || (len(images) > 0 && result[0].Tokens <= len(tokens)) || len(result[0].Logits) != len(fields) {
-		return ScoreResponse{}, fmt.Errorf("decision runner did not score the complete request")
-	}
-	return ScoreResponse{Logits: result[0].Logits, InputTokens: result[0].Tokens}, nil
 }

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
 )
 
 func testRequest(t *testing.T) Request {
@@ -133,7 +132,7 @@ func TestAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	cached := 450
-	result, err := c.Answer("nimble", llm.ScoreResponse{
+	result, err := c.Answer("nimble", ScoreResponse{
 		Logits: [][]float32{{0, 0}, {-1000, 1000}, {1000, 1000, 1000}}, InputTokens: 900,
 		CachedTokens: &cached,
 	})
@@ -160,7 +159,7 @@ func TestAnswers(t *testing.T) {
 		t.Fatalf("cached tokens = %v, want %d", result.PromptEvalCachedCount, cached)
 	}
 	for _, logits := range [][][]float32{nil, {{1}, {1, 2}, {1, 2, 3}}, {{float32(math.NaN()), 0}, {0, 1}, {1, 2, 3}}} {
-		if _, err := c.Answer("nimble", llm.ScoreResponse{Logits: logits}); err == nil {
+		if _, err := c.Answer("nimble", ScoreResponse{Logits: logits}); err == nil {
 			t.Errorf("accepted malformed runner result: %v", logits)
 		}
 	}
@@ -173,11 +172,11 @@ func TestAnswerLogprobs(t *testing.T) {
 	}
 	logits := [][]float32{{0, 2}, {0, -2}, {0, 2, 4}}
 	logprobs := [][]float32{{-10, -8}, {-10, -12}, {-10, -8, -6}}
-	want, err := c.Answer("nimble", llm.ScoreResponse{Logits: logits, InputTokens: 123})
+	want, err := c.Answer("nimble", ScoreResponse{Logits: logits, InputTokens: 123})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.Answer("nimble", llm.ScoreResponse{Logits: logprobs, InputTokens: 123, OutputTokens: 7})
+	got, err := c.Answer("nimble", ScoreResponse{Logits: logprobs, InputTokens: 123, OutputTokens: 7})
 	if err != nil {
 		t.Fatal(err)
 	}

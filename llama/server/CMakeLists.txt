@@ -122,45 +122,6 @@ if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
     message(STATUS "Using local llama.cpp source: ${_src}")
 endif()
 
-# Ollama-compat shim: overlays the fetched llama.cpp source with a small
-# in-memory translation layer for existing published model blobs.
-# See llama/compat/README.md for details.
-#
-# The patch runs for fetched sources and explicit FetchContent source
-# overrides, unless the caller prepared the source already. If
-# OLLAMA_LLAMA_CPP_SOURCE is set, leave the developer's tree alone so they can
-# apply the patch by hand while iterating on the compat layer.
-set(_ollama_compat_patch_cmd "")
-include(${CMAKE_CURRENT_SOURCE_DIR}/../compat/compat.cmake)
-option(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH
-    "Skip llama.cpp compat patch application because the source is already prepared"
-    OFF)
-set(_ollama_link_compat_sources OFF)
-if(OLLAMA_LLAMA_CPP_SKIP_COMPAT_PATCH)
-    set(_ollama_link_compat_sources ON)
-elseif(NOT DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
-    set(_ollama_link_compat_sources ON)
-    if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP STREQUAL "")
-        get_filename_component(_llama_cpp_source_override
-            "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE)
-        message(STATUS
-            "Applying Ollama llama.cpp compat patch to source override: "
-            "${_llama_cpp_source_override}")
-        execute_process(
-            COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND}
-            WORKING_DIRECTORY "${_llama_cpp_source_override}"
-            RESULT_VARIABLE _ollama_compat_patch_result
-        )
-        if(NOT _ollama_compat_patch_result EQUAL 0)
-            message(FATAL_ERROR
-                "Failed to apply Ollama llama.cpp compat patch to "
-                "${_llama_cpp_source_override}")
-        endif()
-    else()
-        set(_ollama_compat_patch_cmd PATCH_COMMAND ${OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND})
-    endif()
-endif()
-
 # Configure llama.cpp build options BEFORE FetchContent_MakeAvailable.
 # When included via FetchContent, llama.cpp sets LLAMA_STANDALONE=OFF
 # so all optional builds default to OFF. We explicitly enable what we need.
@@ -183,11 +144,8 @@ FetchContent_Declare(
     GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
     GIT_TAG ${LLAMA_CPP_GIT_TAG}
     GIT_SHALLOW TRUE
-    ${_ollama_compat_patch_cmd}
 )
 FetchContent_MakeAvailable(llama_cpp)
-target_sources(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef/clef.cpp)
-target_include_directories(server-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../clef)
 
 if(NOT COMMAND license_add_file)
     message(FATAL_ERROR "llama.cpp license registry (cmake/license.cmake) not found; check the llama.cpp update")
@@ -267,35 +225,6 @@ endif()
 file(WRITE "${CMAKE_BINARY_DIR}/ollama-vendor-licenses/LLAMA_CPP_VENDORS_LICENSE" "${_reg_text}")
 unset(_reg_text)
 unset(_llama_cpp_root)
-
-# Link the Ollama-compat source files into the fetched llama target.
-# Kept separate from the hook patch so our .cpp/.h stay
-# on-disk in llama/compat/ rather than being copied into _deps/.
-if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR AND TARGET llama)
-    file(GLOB _compat_sources CONFIGURE_DEPENDS
-        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
-    target_sources(llama PRIVATE ${_compat_sources})
-    set_source_files_properties(${_compat_sources}
-        TARGET_DIRECTORY llama
-        PROPERTIES SKIP_UNITY_BUILD_INCLUSION ON)
-    target_include_directories(llama PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
-    if(TARGET mtmd)
-        target_include_directories(mtmd PRIVATE ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
-    endif()
-endif()
-
-# Link temporary architecture sources (llama/compat/models/*.cpp) into the
-# llama target only (not the mtmd projector lib).
-if(_ollama_link_compat_sources AND DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
-    file(GLOB _ollama_model_sources CONFIGURE_DEPENDS
-        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models/*.cpp)
-    if(_ollama_model_sources AND TARGET llama)
-        target_sources(llama PRIVATE ${_ollama_model_sources})
-        target_include_directories(llama PRIVATE
-            ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/models
-            ${llama_cpp_SOURCE_DIR}/src)
-    endif()
-endif()
 
 # Find GPU toolkits for runtime dependency bundling.
 # The llama.cpp build finds these internally, but we need the
