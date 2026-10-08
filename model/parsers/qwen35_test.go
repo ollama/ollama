@@ -513,3 +513,50 @@ func TestQwen35ParserThinkingTruncatedWithoutCloseTag(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen35ParserFlushesToolParserOnEmptyFinalChunk(t *testing.T) {
+	// The server usually ends a stream with an empty chunk that only carries
+	// done. That chunk must flush text the tool call parser is still holding,
+	// the same way passing done with the last text does.
+	tests := []struct {
+		name        string
+		think       bool
+		chunks      []string
+		wantContent string
+	}{
+		{
+			name:        "truncated tool call",
+			think:       true,
+			chunks:      []string{"Plan</think>Before", "<tool_call><function=get_weather>"},
+			wantContent: "Before<tool_call><function=get_weather>",
+		},
+		{
+			name:        "trailing partial tool call tag",
+			think:       false,
+			chunks:      []string{"Compare a <"},
+			wantContent: "Compare a <",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName("qwen3.5")
+			parser.Init(nil, nil, &api.ThinkValue{Value: tt.think})
+
+			var content string
+			var calls int
+			for _, chunk := range append(tt.chunks, "") {
+				c, _, tc, err := parser.Add(chunk, chunk == "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				content += c
+				calls += len(tc)
+			}
+
+			if content != tt.wantContent || calls != 0 {
+				t.Fatalf("content=%q calls=%d; want content=%q calls=0", content, calls, tt.wantContent)
+			}
+		})
+	}
+}
