@@ -431,6 +431,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	c := &Claude{}
 
 	windowKeys := []string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"}
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
 
 	envMap := func(envs []string) map[string]string {
 		m := make(map[string]string)
@@ -494,6 +495,18 @@ func TestClaudeModelEnvVars(t *testing.T) {
 					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
 				}
 			}
+		}
+	})
+
+	t.Run("keeps the user's auto compact window but not their context window", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
+		t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "150000")
+		got := envMap(c.modelEnvVars("kimi-k2.6:cloud"))
+		if v, ok := got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; ok {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want left to the user's setting", v)
+		}
+		if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "262144" {
+			t.Errorf("MAX_CONTEXT_TOKENS = %q, want 262144", got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
 		}
 	})
 
