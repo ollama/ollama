@@ -23,8 +23,7 @@ import (
 // safetensors-backed models.
 const SafetensorsMinOllamaVersion = "0.19.0"
 
-// IsSafetensorsLLMModel checks if a model is a safetensors LLM model
-// (has completion capability, not image generation).
+// IsSafetensorsLLMModel checks for a safetensors completion or decision model.
 func IsSafetensorsLLMModel(modelName string) bool {
 	name := model.ParseName(modelName)
 	if !name.IsValid() {
@@ -44,15 +43,18 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	if err := json.NewDecoder(f).Decode(&config); err != nil {
 		return false
 	}
-	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
+	return config.ModelFormat == "safetensors" && (slices.Contains(config.Capabilities, "completion") || slices.Contains(config.Capabilities, "decision"))
 }
 
-// IsSafetensorsModelDir checks if the directory contains a standard safetensors model
-// by looking for config.json and at least one .safetensors file.
+// IsSafetensorsModelDir checks for a supported model config and safetensors weights.
 func IsSafetensorsModelDir(dir string) bool {
-	// Must have config.json
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
-		return false
+		if !os.IsNotExist(err) {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, "rl_agent_config.json")); err != nil {
+			return false
+		}
 	}
 
 	// Must have at least one .safetensors file
@@ -322,6 +324,9 @@ type sourceModelConfig struct {
 func readSourceModelConfig(modelDir string) (sourceModelConfig, json.RawMessage, error) {
 	configPath := filepath.Join(modelDir, "config.json")
 	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return readLayaConfig(modelDir)
+	}
 	if err != nil {
 		return sourceModelConfig{}, nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -418,6 +423,8 @@ func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) 
 type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
+	"StrandsDeciderForDecision":             newQwen35DecisionImportTransform,
+	"ClefForDecision":                       newQwen35DecisionImportTransform,
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
 	"Qwen3_5ForConditionalGeneration":       newQwen35ImportTransform,
 	"Qwen3NextForCausalLM":                  newQwen35ImportTransform,
@@ -442,6 +449,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
+	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

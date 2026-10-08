@@ -41,10 +41,11 @@ type modelConfig struct {
 	} `json:"text_config"`
 }
 
-// getSafetensorsLLMInfo extracts model information from safetensors LLM models.
-// It reads the config.json layer and returns a map compatible with GGML's KV format.
-func getSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+// getSafetensorsLLMInfoForRunner extracts model information from the safetensors
+// LLM manifest selected for runner. It reads the config.json layer and returns a
+// map compatible with GGML's KV format.
+func getSafetensorsLLMInfoForRunner(name model.Name, runner string) (map[string]any, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
@@ -80,13 +81,17 @@ func getSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
 func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map[string]any {
 	// Determine architecture
 	arch := config.ModelType
-	if arch == "" && len(config.Architectures) > 0 {
-		// Convert HuggingFace architecture name to Ollama format
-		// e.g., "Gemma3ForCausalLM" -> "gemma3"
+	if len(config.Architectures) > 0 {
 		hfArch := config.Architectures[0]
-		arch = strings.ToLower(hfArch)
-		arch = strings.TrimSuffix(arch, "forcausallm")
-		arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+		if decisionArch, ok := strings.CutSuffix(hfArch, "ForDecision"); ok {
+			// model_type can describe only the backbone, omitting the decision head.
+			arch = strings.ToLower(decisionArch)
+		} else if arch == "" {
+			// Convert HuggingFace architecture names, e.g. "Gemma3ForCausalLM" to "gemma3".
+			arch = strings.ToLower(hfArch)
+			arch = strings.TrimSuffix(arch, "forcausallm")
+			arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+		}
 	}
 
 	// Use text_config values if they exist (for multimodal models)
@@ -210,10 +215,11 @@ func getParameterCountFromManifest(mf *manifest.Manifest) (int64, error) {
 	return total, nil
 }
 
-// getSafetensorsTensorInfo extracts tensor information from safetensors model layers.
-// Each tensor is stored as a minimal safetensors file with an 88-byte header containing metadata.
-func getSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+// getSafetensorsTensorInfoForRunner extracts tensor information from the safetensors
+// model layers selected for runner. Each tensor is stored as a minimal safetensors
+// file with an 88-byte header containing metadata.
+func getSafetensorsTensorInfoForRunner(name model.Name, runner string) ([]api.Tensor, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
@@ -303,11 +309,12 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 	return tensors, nil
 }
 
-// getSafetensorsDtype returns the quantization type for a safetensors model.
-// Reads tensor headers and reports the lowest-precision quantized weight type.
-// Falls back to torch_dtype from config.json if no quant metadata exists.
-func getSafetensorsDtype(name model.Name) (string, error) {
-	mf, err := manifest.ParseNamedManifest(name)
+// getSafetensorsDtypeForRunner returns the quantization type for the safetensors
+// manifest selected for runner. Reads tensor headers and reports the
+// lowest-precision quantized weight type. Falls back to torch_dtype from
+// config.json if no quant metadata exists.
+func getSafetensorsDtypeForRunner(name model.Name, runner string) (string, error) {
+	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}

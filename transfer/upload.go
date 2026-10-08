@@ -186,8 +186,11 @@ func upload(ctx context.Context, opts UploadOptions) error {
 	}
 
 	if len(opts.Manifest) > 0 && opts.ManifestRef != "" && opts.Repository != "" {
+		if opts.ManifestMediaType == "" {
+			return errors.New("manifest push requires a manifest media type")
+		}
 		logutil.Trace("pushing manifest", "repo", opts.Repository, "ref", opts.ManifestRef, "size", len(opts.Manifest))
-		if err := u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest); err != nil {
+		if err := u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest, opts.ManifestMediaType); err != nil {
 			logutil.Trace("manifest push failed", "error", err)
 			return err
 		}
@@ -779,10 +782,10 @@ func computePartsWithLimits(totalSize int64, nParts int, minPart, maxPart int64)
 	return parts
 }
 
-func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest []byte) error {
+func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest []byte, mediaType string) error {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, fmt.Sprintf("%s/v2/%s/manifests/%s", u.baseURL, repo, ref), bytes.NewReader(manifest))
-		req.Header.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+		req.Header.Set("Content-Type", mediaType)
 		req.Header.Set("User-Agent", u.userAgent)
 		prev := u.authToken()
 		if prev != "" {

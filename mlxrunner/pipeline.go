@@ -154,9 +154,8 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 	// Request periodic snapshots during prefill and near the end of the
 	// prompt so that long prompts can be partially restored and
 	// thinking/generation can be retried without full reprocessing.
-	const snapshotInterval = 8192
 	var snapshotOffsets []int
-	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+	for offset := prefillSnapshotInterval; offset < len(inputs); offset += prefillSnapshotInterval {
 		snapshotOffsets = append(snapshotOffsets, offset)
 	}
 

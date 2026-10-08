@@ -547,6 +547,14 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	cfg.FullRopeDims = int(cfg.HeadDim) // default: full rotation
 	cfg.FullRopeBase = 1000000
 
+	for lt, rp := range cfg.RopeParameters {
+		switch rp.RopeType {
+		case "", "default", "proportional":
+		default:
+			return TextConfig{}, fmt.Errorf("unsupported rope_type %q for %s", rp.RopeType, lt)
+		}
+	}
+
 	if rp := cfg.RopeParameters; rp != nil {
 		if sp := rp["sliding_attention"]; sp != nil && sp.RopeTheta > 0 {
 			cfg.SlidingRopeBase = sp.RopeTheta

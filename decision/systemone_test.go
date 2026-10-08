@@ -31,7 +31,7 @@ func testRequest(t *testing.T) Request {
 
 func TestCompile(t *testing.T) {
 	req := testRequest(t)
-	compiled, err := Compile(req)
+	compiled, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestCompile(t *testing.T) {
 }
 
 func TestCompileUnsupportedEncoding(t *testing.T) {
-	if _, err := CompileWithEncoder(testRequest(t), "unknown"); err == nil {
+	if _, err := Compile(testRequest(t), "unknown"); err == nil {
 		t.Fatal("accepted unsupported decision encoding")
 	}
 }
@@ -99,7 +99,7 @@ func TestCompileUnsupportedEncoding(t *testing.T) {
 func TestStructuredStateFrames(t *testing.T) {
 	req := testRequest(t)
 	req.State = json.RawMessage(`{"frames":["first","second"],"position":7}`)
-	compiled, err := Compile(req)
+	compiled, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,14 +109,14 @@ func TestStructuredStateFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range compiled.Request.Rows {
-		if !strings.Contains(row.Prompt, `"context":"{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
+		if !strings.Contains(row.Prompt, `"context": "{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
 	}
 }
 
 func TestRenderError(t *testing.T) {
-	compiled, err := Compile(testRequest(t))
+	compiled, err := Compile(testRequest(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +128,14 @@ func TestRenderError(t *testing.T) {
 
 func TestAnswers(t *testing.T) {
 	req := testRequest(t)
-	c, err := Compile(req)
+	c, err := Compile(req, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	cached := 450
 	result, err := c.Answer("nimble", llm.ScoreResponse{
 		Logits: [][]float32{{0, 0}, {-1000, 1000}, {1000, 1000, 1000}}, InputTokens: 900,
+		CachedTokens: &cached,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -154,6 +156,9 @@ func TestAnswers(t *testing.T) {
 	if result.Usage.InputTokens != 900 || result.Usage.OutputTokens != 0 {
 		t.Fatalf("bad direct-scoring usage: %+v", result.Usage)
 	}
+	if result.PromptEvalCachedCount == nil || *result.PromptEvalCachedCount != cached {
+		t.Fatalf("cached tokens = %v, want %d", result.PromptEvalCachedCount, cached)
+	}
 	for _, logits := range [][][]float32{nil, {{1}, {1, 2}, {1, 2, 3}}, {{float32(math.NaN()), 0}, {0, 1}, {1, 2, 3}}} {
 		if _, err := c.Answer("nimble", llm.ScoreResponse{Logits: logits}); err == nil {
 			t.Errorf("accepted malformed runner result: %v", logits)
@@ -162,7 +167,7 @@ func TestAnswers(t *testing.T) {
 }
 
 func TestAnswerLogprobs(t *testing.T) {
-	c, err := Compile(testRequest(t))
+	c, err := Compile(testRequest(t), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +209,7 @@ func TestInvalidRequests(t *testing.T) {
 			if err := json.Unmarshal([]byte(data), &req); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Compile(req); err == nil {
+			if _, err := Compile(req, ""); err == nil {
 				t.Fatal("accepted invalid request")
 			}
 		})
@@ -214,7 +219,7 @@ func TestInvalidRequests(t *testing.T) {
 	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
 	req.Questions.Set("urgency", q)
 	for _, encoding := range []string{"", "clef"} {
-		if _, err := CompileWithEncoder(req, encoding); err == nil {
+		if _, err := Compile(req, encoding); err == nil {
 			t.Fatalf("encoding %q accepted 27 candidates", encoding)
 		}
 	}
@@ -234,6 +239,26 @@ func TestContent(t *testing.T) {
 	for _, input := range []string{"", "null", "true", "42", `"unterminated`, `{"x":}`, `[1,]`} {
 		if _, err := content(json.RawMessage(input)); err == nil {
 			t.Errorf("accepted invalid content %q", input)
+		}
+	}
+}
+
+func TestEncoderOptions(t *testing.T) {
+	for _, tc := range []struct {
+		typ, criteria string
+		want          []string
+	}{
+		{"choice", `{"z":null,"a":"","b":"described"}`, []string{"z", "a", "b: described"}},
+		{"score", `["low","high"]`, []string{"level 0: low", "level 1: high"}},
+		{"noul", `{}`, []string{"false: no, the statement does not hold", "true: yes, the statement holds"}},
+		{"noul", `{"true":"present","false":"absent"}`, []string{"false: absent", "true: present"}},
+	} {
+		f, err := compileField("answer", Question{Type: tc.typ, Instructions: json.RawMessage(`"Question?"`), Criteria: json.RawMessage(tc.criteria)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(tc.want, f.options) {
+			t.Errorf("%s options = %v, want %v", tc.typ, f.options, tc.want)
 		}
 	}
 }
