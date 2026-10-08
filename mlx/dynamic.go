@@ -15,33 +15,34 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
 var (
-	initError      error
 	initLoadError  string
 	initLoadedPath string
 )
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
 func CheckInit() error {
+	err := loadDynamicLibrary()
 	if initLoadedPath != "" {
 		slog.Debug("MLX dynamic library loaded", "path", initLoadedPath)
 	}
-	if initError != nil && initLoadError != "" {
+	if err != nil && initLoadError != "" {
 		slog.Error(initLoadError)
 	}
-	return initError
+	return err
 }
 
 // LoadedLibraryPath returns the MLX dynamic library path selected by this package.
 func LoadedLibraryPath() (string, error) {
+	if err := loadDynamicLibrary(); err != nil {
+		return "", err
+	}
 	if initLoadedPath != "" {
 		return initLoadedPath, nil
-	}
-	if initError != nil {
-		return "", initError
 	}
 	return "", fmt.Errorf("MLX dynamic library not loaded")
 }
@@ -187,11 +188,11 @@ func prependLibraryPath(dir string) {
 	}
 }
 
-func init() {
+var loadDynamicLibrary = sync.OnceValue(func() error {
 	switch runtime.GOOS {
 	case "darwin", "linux", "windows":
 	default:
-		return
+		return nil
 	}
 
 	// OLLAMA_LLM_LIBRARY overrides variant selection (e.g., "mlx_metal_v3").
@@ -204,12 +205,13 @@ func init() {
 
 	found := findMLXLibrary(forcedVariant)
 	if !found {
-		initError = fmt.Errorf("failed to load MLX dynamic library (searched: %v)", libOllamaRoots())
-		return
+		return fmt.Errorf("failed to load MLX dynamic library (searched: %v)", libOllamaRoots())
 	}
 
 	prependLibraryPath(filepath.Dir(initLoadedPath))
-}
+	installCaptureHandler()
+	return nil
+})
 
 func findMLXLibrary(forcedVariant string) bool {
 	for _, root := range libOllamaRoots() {
