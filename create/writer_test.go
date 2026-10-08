@@ -1,6 +1,7 @@
 package create
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -97,6 +98,8 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 		st.NewTensorDataFromBytes("linear.weight_packed", "U8", []int32{16, 8}, make([]byte, 16*8)),
 		st.NewTensorDataFromBytes("linear.weight_scale", "F8_E4M3", []int32{16, 1}, make([]byte, 16)),
 		st.NewTensorDataFromBytes("linear.weight_global_scale", "F32", []int32{}, f32le(4.0)),
+		st.NewTensorDataFromBytes("linear.input_global_scale", "F32", []int32{}, f32le(8.0)),
+		st.NewTensorDataFromBytes("linear.input_scale", "F32", []int32{}, f32le(2.0)),
 		st.NewTensorDataFromBytes("norm.weight", "BF16", []int32{16}, make([]byte, 32)),
 	})
 
@@ -134,6 +137,22 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	if got := math.Float32frombits(binary.LittleEndian.Uint32(gs)); got != 0.25 {
 		t.Errorf("global_scale = %v, want 0.25 (reciprocal of 4.0)", got)
 	}
+	for name, want := range map[string]float32{
+		"linear.weight.input_global_scale": 0.125,
+		"linear.weight.input_scale":        2.0,
+	} {
+		scale, ok := hdr[name]
+		if !ok || scale.Dtype != "F32" || len(scale.Shape) != 0 {
+			t.Fatalf("%s = %+v ok=%v, want scalar F32 companion", name, scale, ok)
+		}
+		raw := readPackedTensorRaw(t, fused, name)
+		if got := math.Float32frombits(binary.LittleEndian.Uint32(raw)); got != want {
+			t.Errorf("%s = %v, want %v", name, got, want)
+		}
+	}
+	if got := store.names(); !slices.Equal(got, []string{"linear.weight", "norm.weight"}) {
+		t.Errorf("blob names = %v, want only fused weight and norm", got)
+	}
 
 	// the scale companion is folded in, not its own blob.
 	if _, leaked := store.blobs["linear.weight_scale"]; leaked {
@@ -147,6 +166,125 @@ func TestWriteBlobsCompressedNVFP4(t *testing.T) {
 	}
 	if nh := blobHeader(t, norm)["norm.weight"]; nh.Dtype != "BF16" || !slices.Equal(nh.Shape, []int32{16}) {
 		t.Errorf("norm = %+v, want BF16 [16]", nh)
+	}
+}
+
+func TestWriteBlobsModelOptActivationScale(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("linear.weight", "U8", []int32{16, 8}, make([]byte, 16*8)),
+		st.NewTensorDataFromBytes("linear.weight_scale", "F8_E4M3", []int32{16, 1}, make([]byte, 16)),
+		st.NewTensorDataFromBytes("linear.weight_scale_2", "F32", []int32{}, f32le(4.0)),
+		st.NewTensorDataFromBytes("linear.input_scale", "F32", []int32{}, f32le(8.0)),
+		st.NewTensorDataFromBytes("attention.k_scale", "F32", []int32{}, f32le(0.25)),
+		st.NewTensorDataFromBytes("attention.v_scale", "F32", []int32{}, f32le(0.5)),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatalf("ReadInventory() error = %v", err)
+	}
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	store := newCaptureStore()
+	if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+		t.Fatalf("WriteBlobs() error = %v", err)
+	}
+
+	fused := store.blobs["linear.weight"]
+	hdr := blobHeader(t, fused)
+	if scale, ok := hdr["linear.weight.input_scale"]; !ok || scale.Dtype != "F32" {
+		t.Errorf("input_scale = %+v ok=%v, want F32 companion", scale, ok)
+	}
+	raw := readPackedTensorRaw(t, fused, "linear.weight.input_scale")
+	if got := math.Float32frombits(binary.LittleEndian.Uint32(raw)); got != 8.0 {
+		t.Errorf("input_scale = %v, want 8.0 (stored as-is)", got)
+	}
+	if _, ok := store.blobs["linear.input_scale"]; ok {
+		t.Error("input_scale should be stored beside its weight")
+	}
+	for name, want := range map[string]float32{
+		"attention.k_scale": 0.25,
+		"attention.v_scale": 0.5,
+	} {
+		raw := readPackedTensorRaw(t, store.blobs[name], name)
+		if got := math.Float32frombits(binary.LittleEndian.Uint32(raw)); got != want {
+			t.Errorf("%s = %v, want %v (stored as-is)", name, got, want)
+		}
+	}
+}
+
+func TestWriteBlobsNVFP4ExpertScaleBanks(t *testing.T) {
+	for _, tc := range []struct {
+		name, weight, global, input string
+		wantGlobal, wantInput       []float32
+	}{
+		{"modelopt", ".weight", ".weight_scale_2", ".input_scale", []float32{2, 4}, []float32{8, 16}},
+		{"compressed-tensors", ".weight_packed", ".weight_global_scale", ".input_global_scale", []float32{0.5, 0.25}, []float32{0.125, 0.0625}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+			createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+				st.NewTensorDataFromBytes("experts"+tc.weight, "U32", []int32{2, 16, 2}, make([]byte, 2*16*2*4)),
+				st.NewTensorDataFromBytes("experts.weight_scale", "U8", []int32{2, 16, 1}, make([]byte, 2*16)),
+				st.NewTensorDataFromBytes("experts"+tc.global, "F32", []int32{2}, append(f32le(2.0), f32le(4.0)...)),
+				st.NewTensorDataFromBytes("experts"+tc.input, "F32", []int32{2}, append(f32le(8.0), f32le(16.0)...)),
+			})
+
+			inv, err := ReadInventory(dir)
+			if err != nil {
+				t.Fatalf("ReadInventory() error = %v", err)
+			}
+			specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatalf("Plan() error = %v", err)
+			}
+			store := newCaptureStore()
+			if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+				t.Fatalf("WriteBlobs() error = %v", err)
+			}
+
+			hdr := blobHeader(t, store.blobs["experts.weight"])
+			for _, name := range []string{"experts.weight.global_scale", "experts.weight" + tc.input} {
+				if scale, ok := hdr[name]; !ok || scale.Dtype != "F32" || !slices.Equal(scale.Shape, []int32{2}) {
+					t.Errorf("%s = %+v ok=%v, want F32 [2]", name, scale, ok)
+				}
+			}
+			for name, want := range map[string][]byte{
+				"experts.weight.global_scale": encodeFloat32s(tc.wantGlobal...),
+				"experts.weight" + tc.input:   encodeFloat32s(tc.wantInput...),
+			} {
+				if got := readPackedTensorRaw(t, store.blobs["experts.weight"], name); !bytes.Equal(got, want) {
+					t.Errorf("%s bytes = %v, want %v", name, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteBlobsRejectsNonF32ModelOptActivationScale(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("linear.weight", "U8", []int32{16, 8}, make([]byte, 16*8)),
+		st.NewTensorDataFromBytes("linear.weight_scale", "F8_E4M3", []int32{16, 1}, make([]byte, 16)),
+		st.NewTensorDataFromBytes("linear.input_scale", "BF16", []int32{}, make([]byte, 2)),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatalf("ReadInventory() error = %v", err)
+	}
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if _, err := WriteBlobs(context.Background(), specs, dir, newCaptureStore()); err == nil {
+		t.Fatal("WriteBlobs() error = nil, want non-F32 activation-scale failure")
 	}
 }
 

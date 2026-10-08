@@ -40,11 +40,17 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		}
 		return validateScalarFloat32TensorData(sources[0], ts.Name)
 
+	case TransformF32:
+		if len(sources) != 1 {
+			return nil, fmt.Errorf("transform f32 expects 1 source, got %d", len(sources))
+		}
+		return validateFloat32TensorData(sources[0], ts.Name)
+
 	case TransformReciprocalF32:
 		if len(sources) != 1 {
 			return nil, fmt.Errorf("transform reciprocal_f32 expects 1 source, got %d", len(sources))
 		}
-		return invertScalarFloat32TensorData(sources[0], ts.Name)
+		return invertFloat32TensorData(sources[0], ts.Name)
 
 	case TransformStackExperts:
 		return stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)

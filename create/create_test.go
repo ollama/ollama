@@ -63,12 +63,21 @@ func TestValidateScalarFloat32TensorDataRejectsShapeOverflow(t *testing.T) {
 	}
 }
 
-func TestInvertScalarFloat32TensorDataRejectsNonF32(t *testing.T) {
+func TestInvertFloat32TensorDataRejectsNonF32(t *testing.T) {
 	td := st.NewTensorDataFromBytes("linear.weight_global_scale", "BF16", []int32{}, []byte{0, 0})
 
-	_, err := invertScalarFloat32TensorData(td, "linear.weight.global_scale")
+	_, err := invertFloat32TensorData(td, "linear.weight.global_scale")
 	if err == nil || !strings.Contains(err.Error(), "expected F32 tensor") {
-		t.Fatalf("invertScalarFloat32TensorData error = %v, want dtype failure", err)
+		t.Fatalf("invertFloat32TensorData error = %v, want dtype failure", err)
+	}
+}
+
+func TestInvertFloat32TensorDataRejectsInvalidScales(t *testing.T) {
+	for _, value := range []float32{0, -1, float32(math.NaN()), float32(math.Inf(1)), math.SmallestNonzeroFloat32} {
+		td := st.NewTensorDataFromBytes("experts.weight_global_scale", "F32", []int32{2}, encodeFloat32s(2, value))
+		if _, err := invertFloat32TensorData(td, "experts.weight.global_scale"); err == nil {
+			t.Errorf("inverting scale bank [2, %v] succeeded, want invalid-scale error", value)
+		}
 	}
 }
 

@@ -6,7 +6,9 @@ import "github.com/ollama/ollama/mlx"
 // ModelOpt's own name, reached when a checkpoint skips import.
 var globalScaleSuffixes = []string{".global_scale", "_scale_2"}
 
-// These scale the activations, never the weight, but are freed alongside it.
+// These scale activations, never weights. ReadGlobalScale reports them among
+// the companion keys without using them to construct a weight-only operation;
+// quantized-activation paths must opt in to reading them separately.
 var activationScaleSuffixes = []string{".input_global_scale", ".input_scale"}
 
 // ReadGlobalScale returns a weight's NVFP4 global scale in MLX's

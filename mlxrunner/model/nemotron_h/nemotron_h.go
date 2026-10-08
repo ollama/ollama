@@ -199,13 +199,17 @@ func parseConfig(data []byte) (Config, error) {
 	if cfg.HybridOverridePattern == "" && len(cfg.LayersBlockType) > 0 {
 		pattern := make([]byte, len(cfg.LayersBlockType))
 		for i, layerType := range cfg.LayersBlockType {
+			// linear_attention and full_attention are legacy aliases retained
+			// for models published before the upstream names were supported.
 			switch layerType {
-			case "linear_attention":
+			case "mamba", "linear_attention":
 				pattern[i] = 'M'
-			case "full_attention":
+			case "attention", "full_attention":
 				pattern[i] = '*'
 			case "moe":
 				pattern[i] = 'E'
+			case "mlp":
+				pattern[i] = '-'
 			default:
 				return Config{}, fmt.Errorf("unsupported layers_block_type %q at layer %d", layerType, i)
 			}
@@ -1219,6 +1223,14 @@ func (m *Mamba2) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32
 	return out
 }
 
+var mambaGate = mlx.Compile2("NemotronMambaGate", func(y, gate *mlx.Array) *mlx.Array {
+	return mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+}, mlx.Shapeless())
+
+var mambaNormScale = mlx.Compile2("NemotronMambaNormScale", func(y, weight *mlx.Array) *mlx.Array {
+	return mlx.Mul(y.AsType(weight.DType()), weight)
+}, mlx.Shapeless())
+
 // gatedGroupRMSNorm computes RMSNorm(y * SiLU(gate), groups) * weight. The
 // weight varies across groups while the norm reduces within one, so it is a
 // separate multiply rather than the norm's own weight argument.
@@ -1228,9 +1240,9 @@ func gatedGroupRMSNorm(y, gate, weight *mlx.Array, cfg *Config, dtype mlx.DType)
 	B, L := int32(dims[0]), int32(dims[1])
 	groupSize := inner / cfg.NGroups
 
-	y = mlx.Mul(y, mlx.SiLU(gate.AsType(y.DType())))
+	y = mambaGate(y, gate)
 	y = mlx.RMSNormFn(mlx.Reshape(y, B, L, cfg.NGroups, groupSize), nil, cfg.LayerNormEpsilon)
-	y = mlx.Mul(y, mlx.Reshape(weight.AsType(y.DType()), 1, 1, cfg.NGroups, groupSize))
+	y = mambaNormScale(y, mlx.Reshape(weight.AsType(y.DType()), 1, 1, cfg.NGroups, groupSize))
 	return mlx.Reshape(y, B, L, inner).AsType(dtype)
 }
 

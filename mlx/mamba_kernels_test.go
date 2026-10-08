@@ -24,6 +24,48 @@ func TestMamba2ScanMatchesReference(t *testing.T) {
 	})
 }
 
+func TestMamba2ScanSoftplusExtremes(t *testing.T) {
+	for _, size := range []int{31, 32} { // graph fallback and Metal kernel
+		t.Run(fmt.Sprintf("state=%d", size), func(t *testing.T) {
+			withMLXThread(t, func(t *mlxthreadtest.T) {
+				if size == 32 {
+					requireMamba2Metal(t)
+				}
+				// With zero decay coefficient and initial state, unit B/C/x and no
+				// skip connection, every state element is softplus(dt + bias).
+				for _, raw := range []float32{-100, -20, 0, 20, 100} {
+					in := mamba2TestInputs{
+						hidden: onesTest(DTypeFloat32, 1, 1, 1, 1),
+						bState: onesTest(DTypeFloat32, 1, 1, 1, size),
+						cState: onesTest(DTypeFloat32, 1, 1, 1, size),
+						dt:     FromValues([]float32{raw - 1}, 1, 1, 1),
+						state:  Zeros(DTypeFloat32, 1, 1, 1, size),
+						a:      Zeros(DTypeFloat32, 1),
+						d:      Zeros(DTypeFloat32, 1),
+						dtBias: onesTest(DTypeFloat32, 1),
+					}
+					y, state, _ := Mamba2Scan(in.hidden, in.bState, in.cState, in.dt, in.state, in.a, in.d, in.dtBias, nil, false)
+					Eval(y, state)
+					softplus := math.Max(float64(raw), 0) + math.Log1p(math.Exp(-math.Abs(float64(raw))))
+					for name, output := range map[string]*Array{"output": y, "state": state} {
+						want := softplus
+						if name == "output" {
+							want *= float64(size)
+						}
+						for i, value := range output.Floats() {
+							got := float64(value)
+							if math.IsNaN(got) || math.IsInf(got, 0) || math.Abs(got-want) > max(1e-37, math.Abs(want)*1e-5) {
+								t.Errorf("S=%d dt=%g %s[%d]=%g, want %g", size, raw, name, i, got, want)
+								break
+							}
+						}
+					}
+				}
+			})
+		})
+	}
+}
+
 // Every interior state must match, not just one boundary.
 func TestMamba2ScanCaptureAllMatchesPerTokenReference(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
@@ -204,7 +246,7 @@ func appendArrayCloseError(failures []error, name string, got, want *Array, tol 
 		return append(failures, fmt.Errorf("%s length = %d, want %d", name, len(gotF), len(wantF)))
 	}
 	for i := range gotF {
-		if math.Abs(float64(gotF[i]-wantF[i])) > tol {
+		if math.IsNaN(float64(gotF[i])) || math.IsInf(float64(gotF[i]), 0) || math.Abs(float64(gotF[i]-wantF[i])) > tol {
 			return append(failures, fmt.Errorf("%s[%d] = %v, want %v", name, i, gotF[i], wantF[i]))
 		}
 	}
@@ -232,7 +274,7 @@ func mamba2ScanReference(hidden, bState, cState, dt, state, a, d, dtBias *Array)
 		bt := sliceTimeForTest(bState, t).AsType(DTypeFloat32)
 		ct := sliceTimeForTest(cState, t).AsType(DTypeFloat32)
 		dtt := Add(sliceTimeForTest(dt, t).AsType(DTypeFloat32), dtBias)
-		dtt = Log(AddScalar(Exp(dtt), 1))
+		dtt = Softplus(dtt)
 		dA := Exp(Mul(Reshape(dtt, B, H, 1, 1), a))
 		dB := Mul(Reshape(dtt, B, H, 1), bt)
 		state = Add(Mul(state, dA), Mul(ExpandDims(xt, -1), ExpandDims(dB, 2)))
