@@ -29,8 +29,10 @@ import (
 	"github.com/ollama/ollama/auth"
 )
 
+const defaultUpdateCheckURLBase = "https://ollama.com/api/update"
+
 var (
-	UpdateCheckURLBase      = "https://ollama.com/api/update"
+	UpdateCheckURLBase      = defaultUpdateCheckURLBase
 	UpdateDownloaded        = false
 	UpdateCheckInterval     = 60 * 60 * time.Second
 	UpdateCheckInitialDelay = 3 * time.Second // 30 * time.Second
@@ -53,7 +55,7 @@ type UpdateResponse struct {
 func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	var updateResp UpdateResponse
 
-	requestURL, err := url.Parse(UpdateCheckURLBase)
+	requestURL, err := url.Parse(updateCheckURLBase())
 	if err != nil {
 		return false, updateResp
 	}
@@ -127,15 +129,19 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 		slog.Warn(fmt.Sprintf("malformed response checking for update: %s", err))
 		return false, updateResp
 	}
-	// Extract the version string from the URL in the github release artifact path
-	updateResp.UpdateVersion = path.Base(path.Dir(updateResp.UpdateURL))
 
 	slog.Info("New update available at " + updateResp.UpdateURL)
 	return true, updateResp
 }
 
+func configuredUpdateCheckURLBase() string {
+	if UpdateCheckURLBase == "" {
+		return defaultUpdateCheckURLBase
+	}
+	return UpdateCheckURLBase
+}
+
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
-	// Create a cancellable context for this download
 	downloadCtx, cancel := context.WithCancel(ctx)
 	u.cancelDownloadLock.Lock()
 	u.cancelDownload = cancel
@@ -146,9 +152,13 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		u.cancelDownloadLock.Unlock()
 		cancel()
 	}()
+	return u.downloadNewRelease(downloadCtx, updateResp)
+}
 
+// downloadSingleFileRelease downloads a single staged update bundle.
+func (u *Updater) downloadSingleFileRelease(ctx context.Context, updateResp UpdateResponse) error {
 	// Do a head first to check etag info
-	req, err := http.NewRequestWithContext(downloadCtx, http.MethodHead, updateResp.UpdateURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
 		return err
 	}
@@ -156,7 +166,7 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	// In case of slow downloads, continue the update check in the background.
 	// Drain the goroutine before returning: it reads package-level knobs
 	// (e.g. UpdateCheckInterval), which callers may mutate once we return.
-	bgctx, bgcancel := context.WithCancel(downloadCtx)
+	bgctx, bgcancel := context.WithCancel(ctx)
 	var bgwg sync.WaitGroup
 	bgwg.Go(func() {
 		for {
