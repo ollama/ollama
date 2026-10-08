@@ -598,3 +598,33 @@ func TestCodexDesktopUsedMigration(t *testing.T) {
 		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
 	}
 }
+
+func TestSpeechSettingsMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "speech-settings.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN speech_voice;
+		ALTER TABLE settings DROP COLUMN speech_rate;
+		ALTER TABLE settings DROP COLUMN speech_volume;
+		ALTER TABLE settings DROP COLUMN speech_auto_read;
+		UPDATE settings SET schema_version = 19;
+	`); err != nil {
+		t.Fatalf("failed to seed v19 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v19 to v21 failed: %v", err)
+	}
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read migrated settings: %v", err)
+	}
+	if settings.SpeechVoice != "" || settings.SpeechRate != 1 || settings.SpeechVolume != 1 || settings.SpeechAutoRead {
+		t.Fatalf("unexpected migrated speech defaults: %+v", settings)
+	}
+}
