@@ -40,14 +40,6 @@ docker buildx build \
         -f Dockerfile \
         .
 
-# Run deduplication for each platform output directory
-if echo $PLATFORM | grep "," > /dev/null ; then
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_amd64"
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_arm64"
-elif echo $PLATFORM | grep "amd64\|arm64" > /dev/null ; then
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist"
-fi
-
 # buildx behavior changes for single vs. multiplatform
 echo "Compressing linux tar bundles..."
 if echo $PLATFORM | grep "," > /dev/null ; then
