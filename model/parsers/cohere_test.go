@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -134,6 +135,21 @@ func TestCohereParseEndOfTurnWithoutEndText(t *testing.T) {
 	}
 }
 
+func TestCohereParseActionAfterEndOfTurn(t *testing.T) {
+	p := &CohereParser{}
+	p.Init(nil, nil, nil)
+
+	content, thinking, calls := cohereAddAll(t, p, []string{
+		`t<|END_THINKING|><|START_TEXT|>hi<|END_OF_TURN_TOKEN|><|START_ACTION|>[{"tool_call_id":"1","tool_name":"get_weather","parameters":{"city":"SF"}}]<|END_ACTION|><|END_OF_TURN_TOKEN|>`,
+	})
+	if thinking != "t" || content != "hi" {
+		t.Fatalf("thinking = %q, content = %q", thinking, content)
+	}
+	if len(calls) != 1 || calls[0].Function.Name != "get_weather" {
+		t.Fatalf("calls = %v, want get_weather", calls)
+	}
+}
+
 func TestCohereParsePrefillContinuation(t *testing.T) {
 	p := &CohereParser{}
 	last := &api.Message{Role: "assistant", Content: "partial"}
@@ -155,6 +171,9 @@ func TestCohereParserRegistered(t *testing.T) {
 	}
 	if !p.HasToolSupport() || !p.HasThinkingSupport() {
 		t.Error("cohere parser should support tools and thinking")
+	}
+	if !slices.Contains(p.PreservedTokens(), cohereEndOfTurn) {
+		t.Errorf("preserved tokens = %q, want %q", p.PreservedTokens(), cohereEndOfTurn)
 	}
 }
 
