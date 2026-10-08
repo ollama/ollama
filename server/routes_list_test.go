@@ -235,7 +235,7 @@ func writeManifestListFixture(t *testing.T, name string, children ...manifestLis
 	return manifests
 }
 
-func TestListIncludesManifestListChildrenAsSeparateRows(t *testing.T) {
+func TestListShowsPreferredManifestListChild(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -281,6 +281,10 @@ func TestListIncludesManifestListChildrenAsSeparateRows(t *testing.T) {
 		manifestListFixtureChild{name: "test-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
 	)
 	ggufManifest, mlxManifest := children[0], children[1]
+	selected, err := manifest.ParseNamedManifest(model.ParseName("test-list"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	parentPath, err := manifest.ResolvePathForName(model.ParseName("test-list"))
 	if err != nil {
 		t.Fatal(err)
@@ -309,8 +313,11 @@ func TestListIncludesManifestListChildrenAsSeparateRows(t *testing.T) {
 			listed = append(listed, resp.Models[i])
 		}
 	}
-	if len(listed) != 2 {
-		t.Fatalf("test-list:latest rows = %d, want 2: %+v", len(listed), listed)
+	if len(listed) != 1 {
+		t.Fatalf("test-list:latest rows = %d, want 1: %+v", len(listed), listed)
+	}
+	if listed[0].Digest != selected.SelectedDigest() {
+		t.Fatalf("listed digest = %s, want selected digest %s", listed[0].Digest, selected.SelectedDigest())
 	}
 
 	wantSizes := map[string]int64{
@@ -335,10 +342,6 @@ func TestListIncludesManifestListChildrenAsSeparateRows(t *testing.T) {
 		if row.Details.Runner != wantRunners[row.Digest] {
 			t.Fatalf("runner for %s = %q, want %q", row.Digest, row.Details.Runner, wantRunners[row.Digest])
 		}
-		delete(wantSizes, row.Digest)
-	}
-	if len(wantSizes) != 0 {
-		t.Fatalf("missing list rows for digests: %+v", wantSizes)
 	}
 }
 
