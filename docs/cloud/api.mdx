@@ -1,0 +1,97 @@
+---
+title: Cloud API
+description: Authenticate and call Ollama's cloud API directly at https://ollama.com/api.
+---
+
+Call Cloud models directly through `https://ollama.com/api`. In this mode, `ollama.com` is the Ollama host and a local Ollama installation is not required.
+
+## Authentication
+
+Create an [API key](https://ollama.com/settings/keys), then set it as an environment variable:
+
+```shell
+export OLLAMA_API_KEY=your_api_key
+```
+
+Send the key as a bearer token in the `Authorization` header with every request.
+
+## List models
+
+```shell
+curl https://ollama.com/api/tags \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+## Generate a response
+
+<Tabs>
+  <Tab title="cURL">
+
+```shell
+curl https://ollama.com/api/chat \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -d '{
+    "model": "gpt-oss:120b",
+    "messages": [{"role": "user", "content": "Why is the sky blue?"}],
+    "stream": false
+  }'
+```
+
+  </Tab>
+  <Tab title="Python">
+
+Install the [Ollama Python library](https://github.com/ollama/ollama-python):
+
+```shell
+pip install ollama
+```
+
+```python
+import os
+from ollama import Client
+
+client = Client(
+    host="https://ollama.com",
+    headers={"Authorization": "Bearer " + os.environ["OLLAMA_API_KEY"]},
+)
+
+messages = [{"role": "user", "content": "Why is the sky blue?"}]
+
+for part in client.chat("gpt-oss:120b", messages=messages, stream=True):
+    print(part["message"]["content"], end="", flush=True)
+```
+
+  </Tab>
+  <Tab title="JavaScript">
+
+Install the [Ollama JavaScript library](https://github.com/ollama/ollama-js):
+
+```shell
+npm i ollama
+```
+
+```typescript
+import { Ollama } from "ollama";
+
+const ollama = new Ollama({
+  host: "https://ollama.com",
+  headers: {
+    Authorization: "Bearer " + process.env.OLLAMA_API_KEY,
+  },
+});
+
+const response = await ollama.chat({
+  model: "gpt-oss:120b",
+  messages: [{ role: "user", content: "Explain quantum computing" }],
+  stream: true,
+});
+
+for await (const part of response) {
+  process.stdout.write(part.message.content);
+}
+```
+
+  </Tab>
+</Tabs>
+
+For endpoint schemas and response fields, use the [API Reference](/api/introduction).

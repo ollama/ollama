@@ -1,0 +1,57 @@
+---
+title: Run Ollama locally
+sidebarTitle: Overview
+description: Install, configure, and run Ollama models on your own macOS, Windows, Linux, or Docker environment.
+---
+
+Run models on your own hardware with Ollama. Local inference keeps model execution on the machine or infrastructure you control and does not require an Ollama account.
+
+## Install Ollama
+
+Choose the installation guide for your environment.
+
+<CardGroup cols={2}>
+  <Card title="macOS" icon="apple" href="/macos">
+    Install the Ollama app on Apple silicon or Intel hardware.
+  </Card>
+
+  <Card title="Windows" icon="windows" href="/windows">
+    Install the native Windows application.
+  </Card>
+
+  <Card title="Linux" icon="linux" href="/linux">
+    Install Ollama with the install script or a manual package.
+  </Card>
+
+  <Card title="Docker" icon="docker" href="/docker">
+    Run Ollama in a container with CPU or GPU acceleration.
+  </Card>
+</CardGroup>
+
+## Run a local model
+
+After installation, start a model from the terminal:
+
+```shell
+ollama run gemma4
+```
+
+Ollama also serves its local API at `http://localhost:11434/api` by default.
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma4",
+  "messages": [{"role": "user", "content": "Why is the sky blue?"}],
+  "stream": false
+}'
+```
+
+## Configure your environment
+
+- Use the [CLI reference](/cli) to run, download, copy, and remove models.
+- Adjust the [context length](/context-length) for agents and other long-context workloads.
+- Review [hardware support](/gpu) for GPU compatibility and acceleration.
+- [Import a model](/import) or create a customized model with a [Modelfile](/modelfile).
+- Use [local-only mode](/faq#how-do-i-disable-ollama-cloud-features) to disable Ollama's cloud features.
+
+For failures, start with [Troubleshooting](/troubleshooting).

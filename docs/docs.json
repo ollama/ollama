@@ -107,6 +107,90 @@
     {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
+    },
+    {
+      "source": "/guide/quickstart",
+      "destination": "/quickstart"
+    },
+    {
+      "source": "/guide/capabilities/streaming",
+      "destination": "/capabilities/streaming"
+    },
+    {
+      "source": "/guide/capabilities/thinking",
+      "destination": "/capabilities/thinking"
+    },
+    {
+      "source": "/guide/capabilities/structured-outputs",
+      "destination": "/capabilities/structured-outputs"
+    },
+    {
+      "source": "/guide/capabilities/decision",
+      "destination": "/capabilities/decision"
+    },
+    {
+      "source": "/guide/capabilities/vision",
+      "destination": "/capabilities/vision"
+    },
+    {
+      "source": "/guide/capabilities/embeddings",
+      "destination": "/capabilities/embeddings"
+    },
+    {
+      "source": "/guide/capabilities/tool-calling",
+      "destination": "/capabilities/tool-calling"
+    },
+    {
+      "source": "/guide/capabilities/web-search",
+      "destination": "/capabilities/web-search"
+    },
+    {
+      "source": "/local/cli",
+      "destination": "/cli"
+    },
+    {
+      "source": "/local/context-length",
+      "destination": "/context-length"
+    },
+    {
+      "source": "/local/macos",
+      "destination": "/macos"
+    },
+    {
+      "source": "/local/linux",
+      "destination": "/linux"
+    },
+    {
+      "source": "/local/windows",
+      "destination": "/windows"
+    },
+    {
+      "source": "/local/docker",
+      "destination": "/docker"
+    },
+    {
+      "source": "/local/import",
+      "destination": "/import"
+    },
+    {
+      "source": "/local/modelfile",
+      "destination": "/modelfile"
+    },
+    {
+      "source": "/local/gpu",
+      "destination": "/gpu"
+    },
+    {
+      "source": "/local/troubleshooting",
+      "destination": "/troubleshooting"
+    },
+    {
+      "source": "/local/faq",
+      "destination": "/faq"
+    },
+    {
+      "source": "/local/template",
+      "destination": "/template"
     }
   ],
   "navigation": {
@@ -118,8 +202,7 @@
             "group": "Get started",
             "pages": [
               "index",
-              "quickstart",
-              "/cloud"
+              "quickstart"
             ]
           },
           {
@@ -134,21 +217,98 @@
               "/capabilities/tool-calling",
               "/capabilities/web-search"
             ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "/openapi.yaml",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "/api/introduction",
+              "/api/authentication",
+              "/api/streaming",
+              "/api/usage",
+              "/api/errors",
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
+            ]
           },
           {
-            "group": "More information",
+            "group": "Endpoints",
+            "pages": [
+              "POST /api/generate",
+              "POST /api/chat",
+              "POST /api/embed",
+              "POST /v1/systemone",
+              "GET /api/tags",
+              "GET /api/ps",
+              "POST /api/show",
+              "POST /api/create",
+              "POST /api/copy",
+              "POST /api/pull",
+              "POST /api/push",
+              "DELETE /api/delete",
+              "GET /api/version"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Local",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "/local/index",
+              "/macos",
+              "/linux",
+              "/windows",
+              "/docker"
+            ]
+          },
+          {
+            "group": "Run and configure",
             "pages": [
               "/cli",
-              "/modelfile",
-              "/context-length",
-              "/linux",
-              "/macos",
-              "/windows",
-              "/docker",
+              "/context-length"
+            ]
+          },
+          {
+            "group": "Customize models",
+            "pages": [
               "/import",
-              "/faq",
+              "/modelfile"
+            ]
+          },
+          {
+            "group": "Hardware and support",
+            "pages": [
               "/gpu",
-              "/troubleshooting"
+              "/troubleshooting",
+              "/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Cloud",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "/cloud",
+              "/cloud/models",
+              "/cloud/api"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "/cloud/model-lifecycle",
+              "/cloud/faq"
             ]
           }
         ]
@@ -224,44 +384,6 @@
             "group": "Assistant Sandboxing",
             "pages": [
               "/integrations/nemoclaw"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API Reference",
-        "openapi": "/openapi.yaml",
-        "groups": [
-          {
-            "group": "API Reference",
-            "pages": [
-              "/api/introduction",
-              "/api/authentication",
-              "/api/streaming",
-              "/api/usage",
-              "/api/errors",
-              "/api/openai-compatibility",
-              "/api/anthropic-compatibility"
-            ]
-          },
-          {
-            "group": "Endpoints",
-            "pages": [
-              "POST /api/generate",
-              "POST /api/chat",
-              "POST /api/embed",
-              "POST /v1/systemone",
-              "GET /api/tags",
-              "GET /api/ps",
-              "POST /api/show",
-              "POST /api/create",
-              "POST /api/copy",
-              "POST /api/pull",
-              "POST /api/push",
-              "DELETE /api/delete",
-              "GET /api/version",
-              "/api/cloud-usage",
-              "/api/balance"
             ]
           }
         ]
