@@ -1855,13 +1855,13 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Should be normalized to 400 for the embed handler's truncation retry
+	// Should be normalized to 413 for the embed handler's truncation retry
 	var statusErr api.StatusError
 	if !errors.As(err, &statusErr) {
 		t.Fatalf("expected api.StatusError, got %T: %v", err, err)
 	}
-	if statusErr.StatusCode != 400 {
-		t.Errorf("status code = %d, want 400", statusErr.StatusCode)
+	if statusErr.StatusCode != 413 {
+		t.Errorf("status code = %d, want 413", statusErr.StatusCode)
 	}
 }
 
@@ -2703,21 +2703,21 @@ func TestNormalizeEmbeddingError(t *testing.T) {
 			name:       "physical batch size",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":500,"message":"input (103 tokens) is too large to process. increase the physical batch size (current batch size: 30)"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "context length string error",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"input length exceeds the context length"}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "available context",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"request (302 tokens) exceeds the available context size (256 tokens), try increasing it"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{

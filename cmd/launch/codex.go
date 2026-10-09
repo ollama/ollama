@@ -44,6 +44,7 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
 		args = append(args, "-c", override)
 	}
+	args = append(args, "-c", `service_tier="default"`)
 	if model != "" {
 		args = append(args, "-m", model)
 	}

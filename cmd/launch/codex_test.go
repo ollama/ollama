@@ -39,6 +39,7 @@ func TestCodexArgs(t *testing.T) {
 		"-c", fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
 		"-c", fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
 		"-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath),
+		"-c", `service_tier="default"`,
 	}
 
 	tests := []struct {
@@ -50,6 +51,7 @@ func TestCodexArgs(t *testing.T) {
 		{"with model", "llama3.2", nil, append(slices.Clone(managedArgs), "-m", "llama3.2")},
 		{"empty model", "", nil, managedArgs},
 		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "--sandbox", "workspace-write")},
+		{"explicit tier", "llama3.2", []string{"-c", `service_tier="priority"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "-c", `service_tier="priority"`)},
 	}
 
 	for _, tt := range tests {
@@ -382,6 +384,8 @@ func TestCodexRestoreRemovesCLIProfileAndCatalogWithoutChangingUserRootConfig(t 
 	}
 	userConfig := "" +
 		`model = "gpt-5.5"` + "\n" +
+		`model_reasoning_effort = "max"` + "\n" +
+		`service_tier = "priority"` + "\n" +
 		`model_provider = "openai"` + "\n\n" +
 		"[model_providers.openai]\n" +
 		`name = "OpenAI"` + "\n"

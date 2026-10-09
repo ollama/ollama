@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -107,6 +108,15 @@ func TestWriteManifestStoresManifestAsBlob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if runtime.GOOS == "windows" {
+		info, err := os.Lstat(manifestPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Fatalf("Windows manifest mode = %v, want regular file", info.Mode())
+		}
+	}
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +145,85 @@ func TestWriteManifestStoresManifestAsBlob(t *testing.T) {
 	}
 	if got := m.BlobDigest(); got != digest {
 		t.Fatalf("blob digest = %q, want %q", got, digest)
+	}
+}
+
+func TestReadManifestSymlink(t *testing.T) {
+	for _, action := range []string{"read", "parse", "prune", "corrupt"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("example")
+			data := createManifestListData(t,
+				createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerGGML),
+				createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerLlamaCPP),
+			)
+			digest := writeManifestBlobForTest(t, data)
+			blobPath, err := BlobsPath(digest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path, err := V2PathForName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			target, err := filepath.Rel(filepath.Dir(path), blobPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, path); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+
+			if action == "corrupt" {
+				if err := os.WriteFile(blobPath, []byte("corrupt"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := ReadManifestData(name); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
+					t.Fatalf("ReadManifestData error = %v, want digest mismatch", err)
+				}
+				if got, err := os.Readlink(path); err != nil || got != target {
+					t.Fatalf("invalid manifest link changed: target = %q, error = %v", got, err)
+				}
+				return
+			}
+
+			switch action {
+			case "parse":
+				if _, err := ParseNamedManifest(name); err != nil {
+					t.Fatal(err)
+				}
+			case "prune":
+				if removed, err := RemoveUnreferencedBlobs(digest); err != nil || len(removed) != 0 {
+					t.Fatalf("pruning linked manifest: removed = %v, error = %v", removed, err)
+				}
+			default:
+				got, err := ReadManifestData(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(got, data) {
+					t.Fatal("repair changed the manifest list")
+				}
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if runtime.GOOS == "windows" {
+				if !info.Mode().IsRegular() {
+					t.Fatalf("repaired manifest mode = %v, want regular file", info.Mode())
+				}
+			} else if got, err := os.Readlink(path); err != nil || got != target {
+				t.Fatalf("manifest link changed: target = %q, error = %v", got, err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("repaired file differs from manifest list: %v", err)
+			}
+		})
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	_ "github.com/ollama/ollama/mlxrunner/model/cohere2_moe"
 	_ "github.com/ollama/ollama/mlxrunner/model/dflash"
 	_ "github.com/ollama/ollama/mlxrunner/model/gemma4"
+	_ "github.com/ollama/ollama/mlxrunner/model/gemma4embedding"
 	_ "github.com/ollama/ollama/mlxrunner/model/glimmer"
 	_ "github.com/ollama/ollama/mlxrunner/model/glm4_moe_lite"
 	_ "github.com/ollama/ollama/mlxrunner/model/laguna"

@@ -1674,7 +1674,7 @@ Generate embeddings from a model
 ### Parameters
 
 - `model`: name of model to generate embeddings from
-- `input`: text or list of text to generate embeddings for
+- `input`: text or list of text to generate embeddings for. To embed media (images or audio) alongside text on models that accept multimodal embeddings, each entry may instead be an object with any of `text` (string), `image` (base64-encoded bytes), `audio` (base64-encoded bytes). In a list, entries can mix plain strings and such objects; each object owns its own media. `video` is not currently accepted.
 
 Advanced parameters:
 
@@ -1736,6 +1736,28 @@ curl http://localhost:11434/api/embed -d '{
     ]
   ]
 }
+```
+
+#### Request (With image)
+
+```shell
+curl http://localhost:11434/api/embed -d '{
+  "model": "embeddinggemma2",
+  "input": {"text": "a cat sitting on a windowsill", "image": "iVBORw0KGgo..."}
+}'
+```
+
+#### Request (Batched, mixed modalities)
+
+```shell
+curl http://localhost:11434/api/embed -d '{
+  "model": "embeddinggemma2",
+  "input": [
+    "a plain text query",
+    {"image": "iVBORw0KGgo..."},
+    {"audio": "UklGRiQAAABXQVZF..."}
+  ]
+}'
 ```
 
 ## List Running Models

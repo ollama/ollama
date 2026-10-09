@@ -178,7 +178,11 @@ func (c *Claude) modelEnvVars(model string) []string {
 
 	if isCloudModelName(model) {
 		if l, ok := lookupCloudModelLimit(model); ok {
-			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
+			window := strconv.Itoa(l.Context)
+			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+window)
+			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" {
+				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+window)
+			}
 		}
 	}
 

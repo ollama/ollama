@@ -609,7 +609,12 @@ type EmbedRequest struct {
 	// Runner selects a runner variant from a manifest list.
 	Runner string `json:"runner,omitempty"`
 
-	// Input is the input to embed.
+	// Input is the input to embed. Three shapes are accepted:
+	//   - a string, or a []string — one text entry per item
+	//   - a map with any of "text", "image", "audio" — one multimodal item
+	//     (image/audio values are base64-encoded blobs)
+	//   - a list mixing strings and those maps — a batch where each item
+	//     owns its own media
 	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
