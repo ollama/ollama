@@ -286,7 +286,7 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return prompt, nil
 	}
 
-	tokens, err := s.tokenize(ctx, prompt, true, nil)
+	tokens, err := s.tokenize(ctx, prompt, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2630,15 +2630,13 @@ func isEmbeddingInputLimitError(errMsg string) bool {
 		strings.Contains(msg, "exceeds the available context")
 }
 
-func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecial bool, parseSpecial *bool) ([]int, error) {
+func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecial bool) ([]int, error) {
 	req := struct {
-		Content      any   `json:"content"`
-		AddSpecial   bool  `json:"add_special,omitempty"`
-		ParseSpecial *bool `json:"parse_special,omitempty"`
+		Content    any  `json:"content"`
+		AddSpecial bool `json:"add_special,omitempty"`
 	}{
-		Content:      content,
-		AddSpecial:   addSpecial,
-		ParseSpecial: parseSpecial,
+		Content:    content,
+		AddSpecial: addSpecial,
 	}
 
 	data, err := json.Marshal(req)
@@ -2679,7 +2677,7 @@ func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecia
 
 // Tokenize calls llama-server's /tokenize endpoint.
 func (s *llamaServerRunner) Tokenize(ctx context.Context, content string) ([]int, error) {
-	return s.tokenize(ctx, content, false, nil)
+	return s.tokenize(ctx, content, false)
 }
 
 // Detokenize calls llama-server's /detokenize endpoint.

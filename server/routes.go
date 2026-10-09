@@ -902,11 +902,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// SystemOneHandler compiles typed questions, scores their allowed answers, and
-// returns probabilities. Callers must select weights trained for the prompt format.
-// systemOneNative hands a request for a decision model llama.cpp supports to
-// its runner, which builds the model's own prompt and answers it.
+// systemOneNative hands a request for a GGUF decision model to llama-server,
+// which builds the model's own prompt and answers it.
 func (s *Server) systemOneNative(c *gin.Context, m *Model, req decision.Request, body []byte) {
+	if m.metadata.String("decision.type") == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
+		return
+	}
 	if len(req.Videos) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "video inputs are not supported"})
 		return
@@ -953,6 +955,10 @@ func (s *Server) systemOneNative(c *gin.Context, m *Model, req decision.Request,
 	}{req.Model, answers, usage})
 }
 
+// SystemOneHandler answers typed questions with probabilities. llama.cpp
+// prompts GGUF decision models; for MLX models, questions are compiled and
+// their allowed answers scored. Callers must select weights trained for the
+// prompt format.
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
@@ -1007,12 +1013,12 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if m.metadata.String("decision.type") != "" {
+	if m.isGGUF() {
 		s.systemOneNative(c, m, req, body)
 		return
 	}
-	encoding := m.metadata.String("decision.type")
-	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands") {
+	var encoding string
+	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" {
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
@@ -1038,11 +1044,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		if m.System != "" {
 			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
 		}
-		think := &api.ThinkValue{Value: false}
-		if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
-			return r.ApplyChatTemplate(c.Request.Context(), llm.ChatRequest{Messages: messages, Think: think})
-		}
-		return renderPrompt(m, messages, nil, think)
+		return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
