@@ -79,15 +79,26 @@ func open(path string, maxArraySize int) (_ *File, err error) {
 
 	switch {
 	case bytes.Equal(f.Magic[:], []byte("GGUF")):
-		f.byteOrder = binary.LittleEndian
+		var version uint32
+		if err := binary.Read(f.reader, binary.LittleEndian, &version); err != nil {
+			return nil, err
+		}
+		// In a Big-Endian GGUF starting with ASCII "GGUF", version 3 is encoded as 0x00000003,
+		// which binary.LittleEndian reads as 0x03000000 (50331648).
+		if version > 0x0000FFFF && (version&0x0000FFFF) == 0 {
+			f.byteOrder = binary.BigEndian
+			f.Version = (version >> 24) | ((version >> 8) & 0x0000FF00) | ((version << 8) & 0x00FF0000) | (version << 24)
+		} else {
+			f.byteOrder = binary.LittleEndian
+			f.Version = version
+		}
 	case bytes.Equal(f.Magic[:], []byte("FUGG")):
 		f.byteOrder = binary.BigEndian
+		if err := binary.Read(f.reader, f.byteOrder, &f.Version); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("%w file type %v", ErrUnsupported, f.Magic)
-	}
-
-	if err := binary.Read(f.reader, f.byteOrder, &f.Version); err != nil {
-		return nil, err
 	}
 
 	if f.Version < 1 {
