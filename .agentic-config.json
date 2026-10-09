@@ -1,0 +1,164 @@
+{
+  "metadata": {
+    "project_name": "ollama",
+    "description": "A Go project with npm/Node.js",
+    "generated_by": "Braxis",
+    "generated_at": "2026-10-08T23:36:40.899432",
+    "schema_version": "1.0"
+  },
+  "project": {
+    "languages": [
+      "go",
+      "c",
+      "javascript",
+      "typescript",
+      "cpp",
+      "sql",
+      "python"
+    ],
+    "primary_language": "go",
+    "build_system": "npm/Node.js",
+    "architecture": "single-package",
+    "is_monorepo": false,
+    "monorepo_type": null,
+    "subsystems": []
+  },
+  "ai_readiness": {
+    "overall_score": 93,
+    "tier": "Agent-Optimized",
+    "dimensions": {
+      "architecture": {
+        "score": 20,
+        "reason": "Code organization and modularity"
+      },
+      "testing": {
+        "score": 15,
+        "reason": "398 test files found"
+      },
+      "dependencies": {
+        "score": 12,
+        "reason": "Dependency management and version pinning"
+      },
+      "conventions": {
+        "score": 8,
+        "reason": "Consistency in naming and patterns"
+      },
+      "entry_points": {
+        "score": 10,
+        "reason": "9 critical files identified"
+      },
+      "security": {
+        "score": 10,
+        "reason": "Input validation and error handling"
+      },
+      "build": {
+        "score": 10,
+        "reason": "Build system clarity and configuration"
+      },
+      "documentation": {
+        "score": 8,
+        "reason": "README and code documentation"
+      }
+    }
+  },
+  "development": {
+    "setup_command": "npm install",
+    "test_command": "npm test",
+    "lint_command": "npm run lint",
+    "format_command": "npm run format",
+    "dev_server_command": null,
+    "prerequisites": {
+      "language_version": "N/A",
+      "package_manager": "npm",
+      "key_tools": [
+        "Go testing"
+      ]
+    }
+  },
+  "architecture": {
+    "pattern": "single-package project",
+    "main_entry": "main.go, main.tsx, main.go",
+    "key_modules": [
+      {
+        "name": "main",
+        "path": "main.go",
+        "purpose": "Source module"
+      },
+      {
+        "name": "main",
+        "path": "app/ui/app/src/main.tsx",
+        "purpose": "Source module"
+      },
+      {
+        "name": "main",
+        "path": "docs/tools/extract-examples/main.go",
+        "purpose": "Source module"
+      },
+      {
+        "name": "main",
+        "path": "api/examples/chat/main.go",
+        "purpose": "Source module"
+      },
+      {
+        "name": "main",
+        "path": "api/examples/pull-progress/main.go",
+        "purpose": "Source module"
+      }
+    ],
+    "layers": [
+      "CLI interface (if applicable)",
+      "Business logic",
+      "Utilities and helpers"
+    ]
+  },
+  "mcp_servers": [],
+  "core_principles": [
+    "Modularity - Code organized by functionality",
+    "Testability - Comprehensive test coverage",
+    "Clarity - Code easy for AI agents to understand",
+    "Consistency - Uniform patterns throughout"
+  ],
+  "contribution_criteria": {
+    "what_we_want": [
+      "Bug fixes with test coverage",
+      "Code quality improvements",
+      "Test coverage increases",
+      "Documentation improvements",
+      "Performance optimizations"
+    ],
+    "what_we_dont_want": [
+      "New dependencies without justification",
+      "Code that reduces test coverage",
+      "Inconsistent naming or style",
+      "Dead code or commented code"
+    ]
+  },
+  "contribution_boundaries": {
+    "project_scale": "large",
+    "suggestion": "This large project should define clear contribution boundaries. Consider LlamaIndex model: 'no new X' policy."
+  },
+  "commands": {
+    "setup": {
+      "command": "npm install",
+      "description": "Install dependencies and set up development environment"
+    },
+    "test": {
+      "command": "npm test",
+      "description": "Run all tests"
+    },
+    "lint": {
+      "command": "npm run lint",
+      "description": "Check code style and quality"
+    },
+    "format": {
+      "command": "npm run format",
+      "description": "Format code to project standards"
+    }
+  },
+  "testing": {
+    "framework": "Go testing",
+    "total_tests": 398,
+    "pass_rate": 100,
+    "run_command": "npm test"
+  }
+}
