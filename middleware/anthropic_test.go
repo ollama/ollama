@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -653,53 +654,6 @@ func TestHasWebSearchTool(t *testing.T) {
 	}
 }
 
-func TestExtractQueryFromToolCall(t *testing.T) {
-	tests := []struct {
-		name     string
-		tc       *api.ToolCall
-		expected string
-	}{
-		{
-			name: "valid query",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      "web_search",
-					Arguments: makeArgs("query", "test search"),
-				},
-			},
-			expected: "test search",
-		},
-		{
-			name: "empty arguments",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "web_search",
-				},
-			},
-			expected: "",
-		},
-		{
-			name: "no query key",
-			tc: &api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      "web_search",
-					Arguments: makeArgs("other", "value"),
-				},
-			},
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractQueryFromToolCall(tt.tc)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
-	}
-}
-
 // makeArgs is a test helper that creates ToolCallFunctionArguments
 func makeArgs(key string, value any) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
@@ -1208,7 +1162,7 @@ func TestWebSearchStreamResponse(t *testing.T) {
 				Type:  "server_tool_use",
 				ID:    "srvtoolu_test123",
 				Name:  "web_search",
-				Input: map[string]any{"query": "test query"},
+				Input: queryArgs("test query"),
 			},
 			{
 				Type:      "web_search_tool_result",
@@ -1413,12 +1367,8 @@ func TestWebSearchSendError_NonStreaming(t *testing.T) {
 		t.Errorf("expected name 'web_search', got %q", result.Content[0].Name)
 	}
 	// Verify input contains the query
-	inputMap, ok := result.Content[0].Input.(map[string]any)
-	if !ok {
-		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
-	}
-	if inputMap["query"] != "test query" {
-		t.Errorf("expected query 'test query', got %v", inputMap["query"])
+	if q, ok := result.Content[0].Input.Get("query"); !ok || q != "test query" {
+		t.Errorf("expected query 'test query', got %v", q)
 	}
 
 	// Block 1: web_search_tool_result with error
@@ -1561,12 +1511,8 @@ func TestWebSearchSendError_EmptyQuery(t *testing.T) {
 	}
 
 	// Verify the input has empty query
-	inputMap, ok := result.Content[0].Input.(map[string]any)
-	if !ok {
-		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
-	}
-	if inputMap["query"] != "" {
-		t.Errorf("expected empty query, got %v", inputMap["query"])
+	if q, ok := result.Content[0].Input.Get("query"); !ok || q != "" {
+		t.Errorf("expected empty query, got %v", q)
 	}
 }
 
@@ -2172,7 +2118,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 			Message:    api.Message{Role: "assistant", Content: "After search."},
 			Done:       true,
 			DoneReason: "stop",
-			Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 7},
+			Metrics:    api.Metrics{PromptEvalCount: 20, PromptEvalCachedCount: testIntPtr(5), EvalCount: 7},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -2200,7 +2146,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Model:   "test-model",
 				Message: api.Message{Role: "assistant", Content: "Preface "},
 				Done:    false,
-				Metrics: api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+				Metrics: api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: testIntPtr(4), EvalCount: 4},
 			},
 			{
 				Model: "test-model",
@@ -2224,7 +2170,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 				Message:    api.Message{Role: "assistant"},
 				Done:       true,
 				DoneReason: "stop",
-				Metrics:    api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+				Metrics:    api.Metrics{PromptEvalCount: 12, PromptEvalCachedCount: testIntPtr(4), EvalCount: 4},
 			},
 		}
 		c.Writer.WriteHeader(http.StatusOK)
@@ -2267,8 +2213,11 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 	if !found {
 		t.Fatal("expected message_delta event")
 	}
-	if messageDelta.Usage.InputTokens != 32 {
-		t.Fatalf("expected aggregated input tokens 32 (12 passthrough + 20 followup), got %d", messageDelta.Usage.InputTokens)
+	if messageDelta.Usage.InputTokens != 23 {
+		t.Fatalf("expected 23 uncached input tokens, got %d", messageDelta.Usage.InputTokens)
+	}
+	if got := messageDelta.Usage.CacheReadInputTokens; got == nil || *got != 9 {
+		t.Fatalf("expected 9 cached input tokens, got %v", got)
 	}
 	if messageDelta.Usage.OutputTokens != 11 {
 		t.Fatalf("expected aggregated output tokens 11 (4 passthrough + 7 followup), got %d", messageDelta.Usage.OutputTokens)
@@ -2640,112 +2589,129 @@ func TestWebSearchMultiIterationLoop(t *testing.T) {
 }
 
 func TestWebSearchLoopMaxLimit(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	enableCloudForTest(t)
+	for _, test := range []struct {
+		name      string
+		maxUses   int
+		wantCalls int
+	}{
+		{name: "default", wantCalls: 10},
+		{name: "stricter caller limit", maxUses: 2, wantCalls: 2},
+		{name: "caller cannot raise cap", maxUses: 20, wantCalls: 10},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			enableCloudForTest(t)
 
-	followupCall := 0
-	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		followupCall++
-		resp := api.ChatResponse{
-			Model: "test-model",
-			Message: api.Message{
-				Role: "assistant",
-				ToolCalls: []api.ToolCall{
-					{
-						ID: "call_ws_loop_limit",
-						Function: api.ToolCallFunction{
-							Name:      "web_search",
-							Arguments: makeArgs("query", "loop query next"),
+			followupCall := 0
+			followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				followupCall++
+				resp := api.ChatResponse{
+					Model: "test-model",
+					Message: api.Message{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "call_ws_loop_limit",
+								Function: api.ToolCallFunction{
+									Name:      "web_search",
+									Arguments: makeArgs("query", "loop query next"),
+								},
+							},
 						},
 					},
-				},
-			},
-			Done:       true,
-			DoneReason: "stop",
-			Metrics:    api.Metrics{PromptEvalCount: 7, EvalCount: 2},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer followupServer.Close()
-	t.Setenv("OLLAMA_HOST", followupServer.URL)
+					Done:       true,
+					DoneReason: "stop",
+					Metrics:    api.Metrics{PromptEvalCount: 7, EvalCount: 2},
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer followupServer.Close()
+			t.Setenv("OLLAMA_HOST", followupServer.URL)
 
-	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := anthropic.OllamaWebSearchResponse{
-			Results: []anthropic.OllamaWebSearchResult{
-				{Title: "Result", URL: "https://example.com", Content: "content"},
-			},
-		}
-		_ = json.NewEncoder(w).Encode(resp)
-	}))
-	defer searchServer.Close()
-	originalEndpoint := anthropic.WebSearchEndpoint
-	anthropic.WebSearchEndpoint = searchServer.URL
-	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+			searchCalls := 0
+			searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				searchCalls++
+				resp := anthropic.OllamaWebSearchResponse{
+					Results: []anthropic.OllamaWebSearchResult{
+						{Title: "Result", URL: "https://example.com", Content: "content"},
+					},
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer searchServer.Close()
+			originalEndpoint := anthropic.WebSearchEndpoint
+			anthropic.WebSearchEndpoint = searchServer.URL
+			defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
 
-	router := gin.New()
-	router.Use(AnthropicMessagesMiddleware())
-	router.POST("/v1/messages", func(c *gin.Context) {
-		resp := api.ChatResponse{
-			Model: "test-model",
-			Message: api.Message{
-				Role: "assistant",
-				ToolCalls: []api.ToolCall{
-					{
-						ID: "call_ws_initial",
-						Function: api.ToolCallFunction{
-							Name:      "web_search",
-							Arguments: makeArgs("query", "loop query 1"),
+			router := gin.New()
+			router.Use(AnthropicMessagesMiddleware())
+			router.POST("/v1/messages", func(c *gin.Context) {
+				resp := api.ChatResponse{
+					Model: "test-model",
+					Message: api.Message{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "call_ws_initial",
+								Function: api.ToolCallFunction{
+									Name:      "web_search",
+									Arguments: makeArgs("query", "loop query 1"),
+								},
+							},
 						},
 					},
-				},
-			},
-			Done:       true,
-			DoneReason: "stop",
-			Metrics:    api.Metrics{PromptEvalCount: 5, EvalCount: 1},
-		}
-		data, _ := json.Marshal(resp)
-		c.Writer.WriteHeader(http.StatusOK)
-		_, _ = c.Writer.Write(data)
-	})
+					Done:       true,
+					DoneReason: "stop",
+					Metrics:    api.Metrics{PromptEvalCount: 5, EvalCount: 1},
+				}
+				data, _ := json.Marshal(resp)
+				c.Writer.WriteHeader(http.StatusOK)
+				_, _ = c.Writer.Write(data)
+			})
 
-	body := `{
+			body := fmt.Sprintf(`{
 		"model":"test-model:cloud",
 		"max_tokens":100,
 		"messages":[{"role":"user","content":"keep searching"}],
-		"tools":[{"type":"web_search_20250305","name":"web_search"}]
-	}`
-	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+		"tools":[{"type":"web_search_20250305","name":"web_search","max_uses":%d}]
+	}`, test.maxUses)
+			req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
 
-	resp := httptest.NewRecorder()
-	router.ServeHTTP(resp, req)
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
 
-	if resp.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
-	}
-	if followupCall != 3 {
-		t.Fatalf("expected 3 followup calls before max loop error, got %d", followupCall)
-	}
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+			if searchCalls != test.wantCalls {
+				t.Fatalf("searches = %d, want %d", searchCalls, test.wantCalls)
+			}
+			if followupCall != test.wantCalls {
+				t.Fatalf("expected %d followup calls before max loop error, got %d", test.wantCalls, followupCall)
+			}
 
-	var result anthropic.MessagesResponse
-	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
-		t.Fatalf("unmarshal error: %v", err)
-	}
+			var result anthropic.MessagesResponse
+			if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+				t.Fatalf("unmarshal error: %v", err)
+			}
 
-	last := result.Content[len(result.Content)-1]
-	if last.Type != "web_search_tool_result" {
-		t.Fatalf("expected last block web_search_tool_result, got %q", last.Type)
-	}
-	contentJSON, _ := json.Marshal(last.Content)
-	var errContent anthropic.WebSearchToolResultError
-	if err := json.Unmarshal(contentJSON, &errContent); err != nil {
-		t.Fatalf("failed to parse web search error content: %v", err)
-	}
-	if errContent.ErrorCode != "max_uses_exceeded" {
-		t.Fatalf("expected max_uses_exceeded error, got %q", errContent.ErrorCode)
-	}
-	if result.StopReason != "end_turn" {
-		t.Fatalf("expected end_turn, got %q", result.StopReason)
+			last := result.Content[len(result.Content)-1]
+			if last.Type != "web_search_tool_result" {
+				t.Fatalf("expected last block web_search_tool_result, got %q", last.Type)
+			}
+			contentJSON, _ := json.Marshal(last.Content)
+			var errContent anthropic.WebSearchToolResultError
+			if err := json.Unmarshal(contentJSON, &errContent); err != nil {
+				t.Fatalf("failed to parse web search error content: %v", err)
+			}
+			if errContent.ErrorCode != "max_uses_exceeded" {
+				t.Fatalf("expected max_uses_exceeded error, got %q", errContent.ErrorCode)
+			}
+			if result.StopReason != "end_turn" {
+				t.Fatalf("expected end_turn, got %q", result.StopReason)
+			}
+		})
 	}
 }
 

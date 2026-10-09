@@ -79,7 +79,7 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			t.Cleanup(func() { cloudProxyBaseURL = original })
 
 			s := &Server{}
-			router, err := s.GenerateRoutes(nil)
+			router, err := s.GenerateRoutes()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -111,8 +111,8 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			if !bytes.Contains([]byte(capture.body), []byte(tt.assertBody)) {
 				t.Fatalf("expected upstream body to contain %q, got %q", tt.assertBody, capture.body)
 			}
-			if got := capture.header.Get("Authorization"); got != "Bearer should-forward" {
-				t.Fatalf("expected forwarded Authorization header, got %q", got)
+			if got := capture.header.Get("Authorization"); got != "" {
+				t.Fatalf("expected Authorization header to be stripped, got %q", got)
 			}
 			if got := capture.header.Get("X-Test-Header"); got != "web-experimental" {
 				t.Fatalf("expected forwarded X-Test-Header=web-experimental, got %q", got)
@@ -124,12 +124,58 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 	}
 }
 
+func TestExperimentalWebEndpointPreservesUpstreamRateLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("unexpected forwarded Authorization header: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}`))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/experimental/web_search", bytes.NewBufferString(`{"query":"hello"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer codex-credential")
+
+	resp, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429 (%s)", resp.StatusCode, body)
+	}
+	if string(body) != `{"error":"rate limit exceeded"}` {
+		t.Fatalf("body = %s", body)
+	}
+}
+
 func TestExperimentalWebEndpointsMissingBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +219,7 @@ func TestExperimentalWebEndpointsCloudDisabled(t *testing.T) {
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +295,7 @@ func TestExperimentalWebEndpointSigningFailureReturnsUnauthorized(t *testing.T) 
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +349,7 @@ func TestExperimentalWebEndpointSigningFailureWithoutSigninURL(t *testing.T) {
 	})
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(nil)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatal(err)
 	}

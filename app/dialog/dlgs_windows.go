@@ -143,13 +143,13 @@ func utf16ptr(utf16 []uint16) *uint16 {
 
 func utf16slice(ptr *uint16) []uint16 { //nolint:unused
 	hdr := reflect.SliceHeader{Data: uintptr(unsafe.Pointer(ptr)), Len: 1, Cap: 1}
-	slice := *((*[]uint16)(unsafe.Pointer(&hdr))) //nolint:govet
+	slice := *(*[]uint16)(unsafe.Pointer(&hdr)) //nolint:govet
 	i := 0
 	for slice[len(slice)-1] != 0 {
 		i++
 	}
 	hdr.Len = i
-	slice = *((*[]uint16)(unsafe.Pointer(&hdr))) //nolint:govet
+	slice = *(*[]uint16)(unsafe.Pointer(&hdr)) //nolint:govet
 	return slice
 }
 

@@ -135,6 +135,127 @@ func TestMigrationV13ToV14ContextLength(t *testing.T) {
 	}
 }
 
+func TestMigrationV15ToV16LastHomeViewMigratesToChat(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN last_home_view;
+		UPDATE settings SET schema_version = 15;
+	`); err != nil {
+		t.Fatalf("failed to seed v15 settings row: %v", err)
+	}
+
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v15 to v16 failed: %v", err)
+	}
+
+	var lastHomeView string
+	if err := db.conn.QueryRow("SELECT last_home_view FROM settings").Scan(&lastHomeView); err != nil {
+		t.Fatalf("failed to read last_home_view: %v", err)
+	}
+
+	if lastHomeView != "chat" {
+		t.Fatalf("expected last_home_view to migrate to chat, got %q", lastHomeView)
+	}
+
+	version, err := db.getSchemaVersion()
+	if err != nil {
+		t.Fatalf("failed to get schema version: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("expected schema version %d, got %d", currentSchemaVersion, version)
+	}
+}
+
+func TestOnboardingVersionDefaultsAndMigration(t *testing.T) {
+	t.Run("fresh installs need onboarding", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "fresh.db")
+		db, err := newDatabase(dbPath)
+		if err != nil {
+			t.Fatalf("failed to create database: %v", err)
+		}
+		defer db.Close()
+
+		settings, err := db.getSettings()
+		if err != nil {
+			t.Fatalf("failed to read settings: %v", err)
+		}
+		if settings.OnboardingVersion != 0 {
+			t.Fatalf("expected fresh install onboarding version 0, got %d", settings.OnboardingVersion)
+		}
+	})
+
+	t.Run("existing installs skip onboarding", func(t *testing.T) {
+		dbPath := filepath.Join(t.TempDir(), "existing.db")
+		db, err := newDatabase(dbPath)
+		if err != nil {
+			t.Fatalf("failed to create database: %v", err)
+		}
+		defer db.Close()
+
+		if _, err := db.conn.Exec(`
+			ALTER TABLE settings DROP COLUMN onboarding_version;
+			UPDATE settings SET schema_version = 16;
+		`); err != nil {
+			t.Fatalf("failed to seed v16 settings row: %v", err)
+		}
+
+		if err := db.migrate(); err != nil {
+			t.Fatalf("migration from v16 to v17 failed: %v", err)
+		}
+
+		settings, err := db.getSettings()
+		if err != nil {
+			t.Fatalf("failed to read settings: %v", err)
+		}
+		if settings.OnboardingVersion != 1 {
+			t.Fatalf("expected existing install onboarding version 1, got %d", settings.OnboardingVersion)
+		}
+	})
+}
+
+func TestClaudeDesktopUsedDefaultsAndMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "claude-history.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read settings: %v", err)
+	}
+	if settings.ClaudeDesktopUsed {
+		t.Fatal("expected fresh installs to have no Claude Desktop history")
+	}
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN claude_desktop_used;
+		UPDATE settings SET schema_version = 17;
+	`); err != nil {
+		t.Fatalf("failed to seed v17 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v17 to v18 failed: %v", err)
+	}
+
+	settings, err = db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read migrated settings: %v", err)
+	}
+	if settings.ClaudeDesktopUsed {
+		t.Fatal("expected existing installs to start with no inferred Claude Desktop history")
+	}
+}
+
 func TestChatDeletionWithCascade(t *testing.T) {
 	t.Run("chat deletion cascades to related messages", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -441,4 +562,39 @@ func loadV2Schema(t *testing.T, dbPath string) *database {
 	}
 
 	return &database{conn: conn}
+}
+
+func TestCodexDesktopUsedMigration(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "codex-intro.db")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+	defer db.Close()
+
+	settings, err := db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read settings: %v", err)
+	}
+	if settings.CodexDesktopUsed {
+		t.Fatal("expected fresh installs to have no ChatGPT intro acknowledgment")
+	}
+
+	if _, err := db.conn.Exec(`
+		ALTER TABLE settings DROP COLUMN codex_desktop_used;
+		UPDATE settings SET schema_version = 18;
+	`); err != nil {
+		t.Fatalf("failed to seed v18 settings row: %v", err)
+	}
+	if err := db.migrate(); err != nil {
+		t.Fatalf("migration from v18 to v19 failed: %v", err)
+	}
+
+	settings, err = db.getSettings()
+	if err != nil {
+		t.Fatalf("failed to read migrated settings: %v", err)
+	}
+	if settings.CodexDesktopUsed {
+		t.Fatal("expected existing installs to start with no inferred ChatGPT intro acknowledgment")
+	}
 }

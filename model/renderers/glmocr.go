@@ -6,22 +6,23 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type GlmOcrRenderer struct {
 	useImgTags bool
 }
 
+func (r *GlmOcrRenderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *GlmOcrRenderer) renderContent(message api.Message, imageOffset int) (string, int) {
-	var sb strings.Builder
-	for range message.Images {
-		if r.useImgTags {
-			sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset))
-			imageOffset++
-		}
+	if r.useImgTags {
+		return renderContentWithImageTags(message.Content, len(message.Images), imageOffset)
 	}
-	sb.WriteString(message.Content)
-	return sb.String(), imageOffset
+
+	return message.Content, imageOffset
 }
 
 func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
@@ -85,8 +86,10 @@ func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			if i == 0 || messages[i-1].Role != "tool" {
 				sb.WriteString("<|observation|>")
 			}
+			content, nextOffset := r.renderContent(message, imageOffset)
+			imageOffset = nextOffset
 			sb.WriteString("\n<tool_response>\n")
-			sb.WriteString(message.Content)
+			sb.WriteString(content)
 			sb.WriteString("\n</tool_response>\n")
 		case "system":
 			sb.WriteString("<|system|>\n")
@@ -123,4 +126,8 @@ func renderGlmOcrToolArguments(args api.ToolCallFunctionArguments) string {
 	}
 
 	return sb.String()
+}
+
+func (r *GlmOcrRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }

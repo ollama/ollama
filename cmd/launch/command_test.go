@@ -58,6 +58,12 @@ func TestLaunchCmd(t *testing.T) {
 		if cmd.Long == "" {
 			t.Error("Long description should not be empty")
 		}
+		if !strings.Contains(cmd.Long, "hermes") {
+			t.Error("Long description should mention hermes")
+		}
+		if !strings.Contains(cmd.Long, "kimi") {
+			t.Error("Long description should mention kimi")
+		}
 	})
 
 	t.Run("flags exist", func(t *testing.T) {
@@ -66,6 +72,9 @@ func TestLaunchCmd(t *testing.T) {
 		}
 		if cmd.Flags().Lookup("config") == nil {
 			t.Error("--config flag should exist")
+		}
+		if cmd.Flags().Lookup("restore") == nil {
+			t.Error("--restore flag should exist")
 		}
 		if cmd.Flags().Lookup("yes") == nil {
 			t.Error("--yes flag should exist")
@@ -201,7 +210,76 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 			t.Error("TUI callback should NOT be called when flags or extra args are provided without an integration")
 		}
 	})
+
+	t.Run("--restore flag without integration returns error", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--restore"})
+		err := cmd.Execute()
+
+		if err == nil {
+			t.Fatal("expected --restore without an integration to fail")
+		}
+		if !strings.Contains(err.Error(), "require an integration name") {
+			t.Fatalf("expected integration-name guidance, got %v", err)
+		}
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --restore is provided without an integration")
+		}
+	})
 }
+
+func TestLaunchCmdClaudeDesktopRequiresRestore(t *testing.T) {
+	for _, name := range []string{"claude-desktop", "claude-app"} {
+		heartbeatCalled := false
+		cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error {
+			heartbeatCalled = true
+			return nil
+		}, func(cmd *cobra.Command) {})
+		cmd.SetArgs([]string{name})
+
+		err := cmd.Execute()
+		if err == nil || !strings.Contains(err.Error(), "can only be restored from the command line") {
+			t.Fatalf("expected %s launch to require --restore, got %v", name, err)
+		}
+		if heartbeatCalled {
+			t.Fatalf("expected %s to fail before checking the Ollama server heartbeat", name)
+		}
+	}
+}
+
+func TestLaunchCmdClaudeDesktopRestoreRemainsAvailable(t *testing.T) {
+	runner := &commandRestorableRunner{}
+	restore := OverrideIntegration("claude-desktop", runner)
+	defer restore()
+
+	heartbeatCalled := false
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error {
+		heartbeatCalled = true
+		return nil
+	}, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"claude-desktop", "--restore"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected Claude Desktop restore command to succeed, got %v", err)
+	}
+	if !runner.restored {
+		t.Fatal("expected Claude Desktop restore command to run restore")
+	}
+	if heartbeatCalled {
+		t.Fatal("expected Claude Desktop restore to skip the Ollama server heartbeat")
+	}
+}
+
+type commandRestorableRunner struct {
+	launcherRestorableRunner
+}
+
+func (r *commandRestorableRunner) SkipRestoreInstallCheck() bool { return true }
 
 func TestLaunchCmdNilHeartbeat(t *testing.T) {
 	cmd := LaunchCmd(nil, nil)
@@ -226,7 +304,7 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 		case "/api/status":
 			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		case "/api/show":
-			fmt.Fprintf(w, `{"model":"llama3.2"}`)
+			fmt.Fprintf(w, `{"model":"sample-model"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -239,7 +317,7 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	defer restore()
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
-	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	cmd.SetArgs([]string{"stubeditor", "--model", "sample-model"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("launch command failed: %v", err)
 	}
@@ -248,14 +326,14 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reload integration config: %v", err)
 	}
-	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+	if diff := cmp.Diff([]string{"sample-model"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+	if diff := cmp.Diff([][]string{{"sample-model"}}, stub.edited); diff != "" {
 		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
 	}
-	if stub.ranModel != "llama3.2" {
-		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
+	if stub.ranModel != "sample-model" {
+		t.Fatalf("expected launch to run with sample-model, got %q", stub.ranModel)
 	}
 }
 
@@ -267,10 +345,12 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/status":
 			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"}]}`)
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -287,10 +367,10 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 
 	var selectorCalls int
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		selectorCalls++
 		gotCurrent = current
-		return "llama3.2", nil
+		return "sample-model", nil
 	}
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
@@ -307,7 +387,7 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	if gotCurrent != "" {
 		t.Fatalf("expected disabled override to be cleared before selection, got current %q", gotCurrent)
 	}
-	if stub.ranModel != "llama3.2" {
+	if stub.ranModel != "sample-model" {
 		t.Fatalf("expected launch to run with replacement local model, got %q", stub.ranModel)
 	}
 	if !strings.Contains(stderr, "Warning: ignoring --model glm-5:cloud because cloud is disabled") {
@@ -318,8 +398,43 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reload integration config: %v", err)
 	}
-	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+	if diff := cmp.Diff([]string{"sample-model"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmdAutodiscoveryDefaultLaunchDoesNotForceConfigure(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	runner := &launcherManagedAutodiscoveryRunner{
+		autodiscoveryConfigured: true,
+	}
+	restore := OverrideIntegration("stubauto", runner)
+	defer restore()
+
+	if err := config.SaveIntegration("stubauto", []string{"Ollama Cloud"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubauto"); err != nil {
+		t.Fatalf("failed to mark integration onboarded: %v", err)
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {
+		t.Fatal("TUI callback should not run for direct integration launch")
+	})
+	cmd.SetArgs([]string{"stubauto"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	if runner.autodiscoveryConfigures != 0 {
+		t.Fatalf("expected default autodiscovery launch to reuse existing config, got %d configures", runner.autodiscoveryConfigures)
+	}
+	if runner.ranModel != "Ollama Cloud" {
+		t.Fatalf("expected launch to run autodiscovery label, got %q", runner.ranModel)
 	}
 }
 
@@ -332,7 +447,7 @@ func TestLaunchCmdYes_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -347,22 +462,22 @@ func TestLaunchCmdYes_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt with --yes: %q", prompt)
 		return false, nil
 	}
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
-	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2", "--yes"})
+	cmd.SetArgs([]string{"stubeditor", "--model", "sample-model", "--yes"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("launch command with --yes failed: %v", err)
 	}
 
-	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+	if diff := cmp.Diff([][]string{{"sample-model"}}, stub.edited); diff != "" {
 		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
 	}
-	if stub.ranModel != "llama3.2" {
-		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
+	if stub.ranModel != "sample-model" {
+		t.Fatalf("expected launch to run with sample-model, got %q", stub.ranModel)
 	}
 }
 
@@ -393,7 +508,7 @@ func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
 	restore := OverrideIntegration("stubapp", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt with --yes in headless autopull path: %q", prompt)
 		return false, nil
 	}
@@ -412,7 +527,7 @@ func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
 	}
 }
 
-func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T) {
+func TestLaunchCmdHeadlessWithoutYes_AllowsConfiguredLaunch(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -421,7 +536,7 @@ func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		case "/api/status":
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
@@ -436,25 +551,22 @@ func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T)
 	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt in headless non-yes mode: %q", prompt)
 		return false, nil
 	}
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
-	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	cmd.SetArgs([]string{"stubeditor", "--model", "sample-model"})
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected launch command to fail without --yes in headless mode")
+	if err != nil {
+		t.Fatalf("expected launch command to succeed without --yes when an explicit model is provided, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "re-run with --yes") {
-		t.Fatalf("expected actionable --yes guidance, got %v", err)
+	if diff := compareStringSlices(stub.edited, [][]string{{"sample-model"}}); diff != "" {
+		t.Fatalf("unexpected editor writes (-want +got):\n%s", diff)
 	}
-	if len(stub.edited) != 0 {
-		t.Fatalf("expected no editor writes when confirmation is blocked, got %v", stub.edited)
-	}
-	if stub.ranModel != "" {
-		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
+	if stub.ranModel != "sample-model" {
+		t.Fatalf("expected launch to run configured model, got %q", stub.ranModel)
 	}
 }
 
@@ -462,14 +574,16 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 
-	if err := config.SaveIntegration("stubapp", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("stubapp", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed saved config: %v", err)
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/experimental/model-recommendations":
+			fmt.Fprint(w, `{"recommendations":[]}`)
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"qwen3:8b"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"qwen3:8b"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3:8b"}`)
 		default:
@@ -487,7 +601,7 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	defer func() { DefaultSingleSelector = oldSelector }()
 
 	var gotCurrent string
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		gotCurrent = current
 		return "qwen3:8b", nil
 	}
@@ -498,8 +612,8 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 		t.Fatalf("launch command failed: %v", err)
 	}
 
-	if gotCurrent != "llama3.2" {
-		t.Fatalf("expected selector current model to be saved model llama3.2, got %q", gotCurrent)
+	if gotCurrent != "sample-model" {
+		t.Fatalf("expected selector current model to be saved model sample-model, got %q", gotCurrent)
 	}
 	if stub.ranModel != "qwen3:8b" {
 		t.Fatalf("expected launch to run selected model qwen3:8b, got %q", stub.ranModel)
@@ -520,14 +634,14 @@ func TestLaunchCmdHeadlessYes_IntegrationRequiresModelEvenWhenSaved(t *testing.T
 	withLauncherHooks(t)
 	withInteractiveSession(t, false)
 
-	if err := config.SaveIntegration("stubapp", []string{"llama3.2"}); err != nil {
+	if err := config.SaveIntegration("stubapp", []string{"sample-model"}); err != nil {
 		t.Fatalf("failed to seed saved config: %v", err)
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/show":
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
+			fmt.Fprint(w, `{"model":"sample-model"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -541,7 +655,7 @@ func TestLaunchCmdHeadlessYes_IntegrationRequiresModelEvenWhenSaved(t *testing.T
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes saved-model launch")
 		return "", nil
 	}
@@ -578,7 +692,7 @@ func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testin
 
 	oldSelector := DefaultSingleSelector
 	defer func() { DefaultSingleSelector = oldSelector }()
-	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []SelectionItem, current string) (string, error) {
 		t.Fatal("selector should not be called for headless --yes without saved model")
 		return "", nil
 	}

@@ -70,11 +70,15 @@ docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 114
 
 ## Vulkan Support
 
-Vulkan is bundled into the `ollama/ollama` image.  
+Vulkan is bundled into the `ollama/ollama` image and is enabled by default when
+the container can access the GPU devices.
 
 ```shell
-docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_VULKAN=1 --name ollama ollama/ollama
+docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
+
+Use `OLLAMA_VULKAN=0` to disable Vulkan, or `GGML_VK_VISIBLE_DEVICES=<ids>` to
+select specific Vulkan devices.
 
 
 ## Run model locally
@@ -88,4 +92,3 @@ docker exec -it ollama ollama run llama3.2
 ## Try different models
 
 More models can be found on the [Ollama library](https://ollama.com/library).
-

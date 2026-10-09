@@ -10,47 +10,67 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
-	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/convert"
+	"github.com/ollama/ollama/compatmigrate"
+	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	ofs "github.com/ollama/ollama/fs"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
-	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/mlx/quant"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 )
 
 var (
-	errNoFilesProvided         = errors.New("no files provided to convert")
-	errOnlyOneAdapterSupported = errors.New("only one adapter is currently supported")
-	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
-	errUnknownType             = errors.New("unknown type")
-	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
-	errFilePath                = errors.New("file path must be relative")
+	errNoFilesProvided        = errors.New("no files provided to convert")
+	errAdaptersUnsupported    = errors.New("LoRA adapters are no longer supported")
+	errOnlyGGUFSupported      = errors.New("supplied file was not in GGUF format")
+	errUnknownType            = errors.New("unknown type")
+	errNeitherFromOrFiles     = errors.New("neither 'from' or 'files' was specified")
+	errFilePath               = errors.New("file path must be relative")
+	errRemoteDraftUnsupported = errors.New("DRAFT cannot be used with remote models")
+	errSafetensorsFrom        = errors.New("safetensors imports do not support FROM model overlays")
+	errInvalidSplitGGUF       = errors.New("invalid split GGUF")
+	errMixedModelTypes        = errors.New("mixed model file types")
+	errInvalidCreateInfo      = errors.New("invalid create info")
+	errTypicalPDeprecated     = errors.New("typical_p is deprecated and cannot be set as a model parameter; pass it as a request option instead")
 )
 
+const (
+	maxSafetensorsMetadataSize = 64 << 20
+	maxCreateFiles             = 1024
+)
+
+type manifestListRequestError struct {
+	err error
+}
+
+func (e manifestListRequestError) Error() string {
+	return e.err.Error()
+}
+
+func newManifestListRequestError(format string, args ...any) error {
+	return manifestListRequestError{err: fmt.Errorf(format, args...)}
+}
+
 func (s *Server) CreateHandler(c *gin.Context) {
-	config := &model.ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-		RootFS: model.RootFS{
-			Type: "layers",
-		},
-	}
+	config := new(model.ConfigV2)
 
 	var r api.CreateRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -61,26 +81,40 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
+	if r.Parameters["typical_p"] != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errTypicalPDeprecated.Error()})
+		return
+	}
+
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 	config.Requires = r.Requires
-
-	for v, digest := range r.Files {
-		if !fs.ValidPath(v) {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
-			return
-		}
-		if digest == "" {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
+	for _, capability := range r.Capabilities {
+		if !model.Capability(capability).IsValid() {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown capability: %q", capability)})
 			return
 		}
 	}
 
-	for _, digest := range r.Adapters {
-		if digest == "" {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
-			return
-		}
+	if err := validateCreateFiles(r.Files); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := validateCreateFiles(r.DraftFiles); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(r.Adapters) > 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errAdaptersUnsupported.Error()})
+		return
+	}
+	if _, err := create.LicenseStrings(r.License); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if r.DraftQuantize != "" && len(r.DraftFiles) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "--draft-quantize requires a DRAFT model"})
+		return
 	}
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
@@ -95,16 +129,84 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
+	fileType, err := detectModelTypeFromFiles(r.Files)
+	if err != nil {
+		// Mixed types and blobs the client never uploaded are request errors;
+		// anything else is the server failing to read its own blob store.
+		status := http.StatusInternalServerError
+		if errors.Is(err, errMixedModelTypes) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, manifest.ErrInvalidDigestFormat) {
+			status = http.StatusBadRequest
+		}
+		c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	if err := validateCreateOptions(r, fileType); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	reqCtx := c.Request.Context()
 	ch := make(chan any)
 	go func() {
+		send := func(resp any) bool {
+			select {
+			case ch <- resp:
+				return true
+			case <-reqCtx.Done():
+				return false
+			}
+		}
 		defer close(ch)
+		defer recoverCreatePanic(send)
+
 		fn := func(resp api.ProgressResponse) {
-			ch <- resp
+			send(resp)
 		}
 
-		oldManifest, _ := manifest.ParseNamedManifest(name)
+		oldManifestDigests, _ := manifest.ReferencedBlobDigestsForName(name)
 
-		var baseLayers []*layerGGML
+		if len(r.List) > 0 {
+			if err := createManifestList(r, name, fn); err != nil {
+				status := http.StatusInternalServerError
+				var requestErr manifestListRequestError
+				if errors.As(err, &requestErr) {
+					status = http.StatusBadRequest
+				}
+				send(gin.H{"error": err.Error(), "status": status})
+				return
+			}
+
+			if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+				removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+				removeGGUFMetadata(removed...)
+				if err != nil {
+					send(gin.H{"error": err.Error()})
+					return
+				}
+			}
+
+			send(api.ProgressResponse{Status: "success"})
+			return
+		}
+
+		if fileType == "safetensors" {
+			if err := createSafetensorsModel(reqCtx, r, name, fn); err != nil {
+				send(createSafetensorsErrorResponse(err))
+				return
+			}
+			if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+				removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+				removeGGUFMetadata(removed...)
+				if err != nil {
+					send(gin.H{"error": err.Error()})
+					return
+				}
+			}
+			send(api.ProgressResponse{Status: "success"})
+			return
+		}
+
+		var baseLayers []*modelLayer
 		var err error
 		var remote bool
 
@@ -112,7 +214,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			slog.Debug("create model from model name", "from", r.From)
 			fromRef, err := parseAndValidateModelRef(r.From)
 			if err != nil {
-				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
+				send(gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest})
 				return
 			}
 
@@ -125,7 +227,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			if remoteHost != "" {
 				ru, err := remoteURL(remoteHost)
 				if err != nil {
-					ch <- gin.H{"error": "bad remote", "status": http.StatusBadRequest}
+					send(gin.H{"error": "bad remote", "status": http.StatusBadRequest})
 					return
 				}
 
@@ -136,136 +238,92 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ctx, cancel := context.WithCancel(c.Request.Context())
 				defer cancel()
 
-				baseLayers, err = parseFromModel(ctx, fromName, fn)
+				var baseConfig model.ConfigV2
+				baseLayers, baseConfig, err = parseFromModel(ctx, fromName, fn)
 				if err != nil {
-					ch <- gin.H{"error": err.Error()}
+					send(gin.H{"error": err.Error()})
+					return
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
-					mf, mErr := manifest.ParseNamedManifest(fromName)
-					if mErr == nil && mf.Config.Digest != "" {
-						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
-						if pErr == nil {
-							if cfgFile, fErr := os.Open(configPath); fErr == nil {
-								var baseConfig model.ConfigV2
-								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
-									if config.Renderer == "" {
-										config.Renderer = baseConfig.Renderer
-									}
-									if config.Parser == "" {
-										config.Parser = baseConfig.Parser
-									}
-									if config.Requires == "" {
-										config.Requires = baseConfig.Requires
-									}
-								}
-								cfgFile.Close()
-							}
-						}
-					}
+				requestConfig := *config
+				*config = baseConfig
+				if requestConfig.Renderer != "" {
+					config.Renderer = requestConfig.Renderer
+				}
+				if requestConfig.Parser != "" {
+					config.Parser = requestConfig.Parser
+				}
+				if requestConfig.Requires != "" {
+					config.Requires = requestConfig.Requires
 				}
 			}
 		} else if r.Files != nil {
-			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
+			baseLayers, err = convertModelFromFiles(reqCtx, r.Files, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errInvalidSplitGGUF, errMixedModelTypes, errAdaptersUnsupported} {
 					if errors.Is(err, badReq) {
-						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 						return
 					}
 				}
-				ch <- gin.H{"error": err.Error()}
+				send(gin.H{"error": err.Error()})
 				return
 			}
 		} else {
-			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
+			send(gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest})
 			return
 		}
 
-		var adapterLayers []*layerGGML
-		if !remote && r.Adapters != nil {
-			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
+		if remote && len(r.DraftFiles) > 0 {
+			send(gin.H{"error": errRemoteDraftUnsupported.Error(), "status": http.StatusBadRequest})
+			return
+		}
+
+		var draftLayers []*modelLayer
+		if !remote && r.DraftFiles != nil {
+			draftLayers, err = convertDraftModelFromFiles(reqCtx, r.DraftFiles, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errFilePath, errInvalidSplitGGUF, errMixedModelTypes, errAdaptersUnsupported} {
 					if errors.Is(err, badReq) {
-						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 						return
 					}
 				}
-				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 				return
 			}
 		}
 
-		if len(adapterLayers) > 0 {
-			baseLayers = append(baseLayers, adapterLayers...)
+		if len(draftLayers) > 0 {
+			baseLayers = append(baseLayers, draftLayers...)
 		}
 
 		// Info is not currently exposed by Modelfiles, but allows overriding various
-		// config values
-		if r.Info != nil {
-			caps, ok := r.Info["capabilities"]
-			if ok {
-				switch tcaps := caps.(type) {
-				case []any:
-					caps := make([]string, len(tcaps))
-					for i, c := range tcaps {
-						str, ok := c.(string)
-						if !ok {
-							continue
-						}
-						caps[i] = str
-					}
-					config.Capabilities = append(config.Capabilities, caps...)
-				}
-			}
-
-			strFromInfo := func(k string) string {
-				v, ok := r.Info[k]
-				if ok {
-					val := v.(string)
-					return val
-				}
-				return ""
-			}
-
-			vFromInfo := func(k string) float64 {
-				v, ok := r.Info[k]
-				if ok {
-					val := v.(float64)
-					return val
-				}
-				return 0
-			}
-
-			config.ModelFamily = strFromInfo("model_family")
-			if config.ModelFamily != "" {
-				config.ModelFamilies = []string{config.ModelFamily}
-			}
-
-			config.BaseName = strFromInfo("base_name")
-			config.FileType = strFromInfo("quantization_level")
-			config.ModelType = strFromInfo("parameter_size")
-			config.ContextLen = int(vFromInfo("context_length"))
-			config.EmbedLen = int(vFromInfo("embedding_length"))
+		// config values.
+		if err := applyCreateInfo(config, r.Info); err != nil {
+			send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
+			return
 		}
+		config.AddCapabilities(r.Capabilities...)
 
-		if err := createModel(r, name, baseLayers, config, fn); err != nil {
-			if errors.Is(err, errBadTemplate) {
-				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+		if err := createModel(reqCtx, r, name, baseLayers, config, fn); err != nil {
+			if errors.Is(err, create.ErrBadTemplate) || errors.Is(err, create.ErrInvalidRequires) || errors.Is(err, create.ErrInvalidLicense) || errors.Is(err, errInvalidSplitGGUF) {
+				send(gin.H{"error": err.Error(), "status": http.StatusBadRequest})
 				return
 			}
-			ch <- gin.H{"error": err.Error()}
+			send(gin.H{"error": err.Error()})
 			return
 		}
 
-		if !envconfig.NoPrune() && oldManifest != nil {
-			if err := oldManifest.RemoveLayers(); err != nil {
-				ch <- gin.H{"error": err.Error()}
+		if !envconfig.NoPrune() && len(oldManifestDigests) > 0 {
+			removed, err := manifest.RemoveUnreferencedBlobs(oldManifestDigests...)
+			removeGGUFMetadata(removed...)
+			if err != nil {
+				send(gin.H{"error": err.Error()})
+				return
 			}
 		}
-
-		ch <- api.ProgressResponse{Status: "success"}
+		send(api.ProgressResponse{Status: "success"})
 	}()
 
 	if r.Stream != nil && !*r.Stream {
@@ -274,6 +332,282 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func recoverCreatePanic(send func(any) bool) {
+	if r := recover(); r != nil {
+		slog.Error("panic in create background goroutine", "panic", r, "stack", string(debug.Stack()))
+		send(gin.H{"error": "internal server error"})
+	}
+}
+
+// createSafetensorsModel imports uploaded raw safetensors source files by
+// staging them as a normal model directory and running the shared create
+// pipeline on the server.
+func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) error {
+	if len(r.Files) == 0 {
+		return errNoFilesProvided
+	}
+	if r.From != "" {
+		return errSafetensorsFrom
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Validate Info before staging or writing blobs. writeSafetensorsManifest
+	// applies the same overrides to the inferred model config at commit time.
+	if err := applyCreateInfo(new(model.ConfigV2), r.Info); err != nil {
+		return fmt.Errorf("%w: %v", errInvalidCreateInfo, err)
+	}
+
+	modelDir, cleanup, err := stageSafetensorsSourceFiles(ctx, r.Files)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	progressFn := func(status string) {
+		fn(api.ProgressResponse{Status: status})
+	}
+	store := create.ManifestBlobStore{}
+
+	var draftDir string
+	var draftCleanup func()
+	if len(r.DraftFiles) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		draftDir, draftCleanup, err = stageSafetensorsSourceFiles(ctx, r.DraftFiles)
+		if err != nil {
+			return err
+		}
+		defer draftCleanup()
+	}
+
+	return create.Create(ctx, name.String(), modelDir, create.PipelineOptions{
+		Quantize:      cmp.Or(r.Quantize, r.Quantization),
+		Parser:        r.Parser,
+		Renderer:      r.Renderer,
+		Requires:      r.Requires,
+		DraftDir:      draftDir,
+		DraftQuantize: r.DraftQuantize,
+	}, store, writeSafetensorsManifest(r, draftDir, fn), progressFn)
+}
+
+func createSafetensorsErrorResponse(err error) gin.H {
+	if errors.Is(err, mlxrunner.ErrRuntimeUnavailable) {
+		slog.Warn("MLX runtime unavailable during safetensors create", "error", err)
+		return gin.H{"error": mlxrunner.ErrRuntimeUnavailable.Error(), "status": http.StatusServiceUnavailable}
+	}
+
+	status := http.StatusInternalServerError
+	for _, badReq := range []error{errNoFilesProvided, errFilePath, errSafetensorsFrom, errInvalidCreateInfo, manifest.ErrInvalidDigestFormat, create.ErrBadTemplate, create.ErrInvalidRequires, create.ErrInvalidLicense, create.ErrUnsupportedMLXArchitecture, os.ErrNotExist} {
+		if errors.Is(err, badReq) {
+			status = http.StatusBadRequest
+			break
+		}
+	}
+	return gin.H{"error": err.Error(), "status": status}
+}
+
+func writeSafetensorsManifest(r api.CreateRequest, draftDir string, fn func(resp api.ProgressResponse)) create.ManifestWriter {
+	next := create.NewSafetensorsManifestWriter(create.SafetensorsManifestOptions{
+		MinVersion:          create.SafetensorsMinOllamaVersion,
+		DraftDir:            draftDir,
+		Template:            r.Template,
+		System:              r.System,
+		License:             r.License,
+		Parameters:          r.Parameters,
+		Messages:            r.Messages,
+		Capabilities:        r.Capabilities,
+		BeforeWriteManifest: func() { fn(api.ProgressResponse{Status: "writing manifest"}) },
+	})
+	return func(ctx context.Context, modelName string, info create.ManifestInfo) error {
+		if len(info.ModelConfig.Capabilities) == 0 {
+			info.ModelConfig.Capabilities = []string{"completion"}
+		}
+		if err := applyCreateInfo(&info.ModelConfig, r.Info); err != nil {
+			return fmt.Errorf("%w: %v", errInvalidCreateInfo, err)
+		}
+		return next(ctx, modelName, info)
+	}
+}
+
+func stageSafetensorsSourceFiles(ctx context.Context, files map[string]string) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "ollama-create-safetensors-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() {
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Warn("failed to remove staged safetensors source", "dir", dir, "error", err)
+		}
+	}
+
+	for filePath, digest := range files {
+		if err := ctx.Err(); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		if err := validateCreateFilePath(filePath); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		blobPath, err := manifest.BlobsPath(digest)
+		if err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("invalid digest for %s: %w", filePath, err)
+		}
+		info, err := os.Stat(blobPath)
+		if err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("blob not found for %s (digest %s): %w", filePath, digest, err)
+		}
+		if !info.Mode().IsRegular() {
+			cleanup()
+			return "", nil, fmt.Errorf("blob for %s is not a regular file", filePath)
+		}
+		if isSafetensorsMetadataFile(filePath) && info.Size() > maxSafetensorsMetadataSize {
+			cleanup()
+			return "", nil, fmt.Errorf("metadata file %s is %d bytes, exceeds maximum %d", filePath, info.Size(), maxSafetensorsMetadataSize)
+		}
+
+		dst := filepath.Join(dir, filepath.FromSlash(filePath))
+		if err := linkOrCopyFile(ctx, blobPath, dst); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("stage %s: %w", filePath, err)
+		}
+	}
+	return dir, cleanup, nil
+}
+
+func isSafetensorsMetadataFile(filePath string) bool {
+	switch path.Base(filePath) {
+	case "config.json", "rl_agent_config.json", "joint_head_config.json", "generation_config.json", "model.safetensors.index.json", "tokenizer_config.json", "chat_template.jinja":
+		return true
+	default:
+		return false
+	}
+}
+
+func linkOrCopyFile(ctx context.Context, src, dst string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	if err := os.Symlink(src, dst); err == nil {
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, create.ReaderWithContext(ctx, in))
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
+}
+
+func applyCreateInfo(config *model.ConfigV2, info map[string]any) error {
+	if info == nil {
+		return nil
+	}
+	if caps, ok := info["capabilities"]; ok {
+		parsed, err := capabilitiesFromInfo(caps)
+		if err != nil {
+			return err
+		}
+		config.Capabilities = parsed
+	}
+
+	setStringFromInfo := func(k string, dst *string) error {
+		v, ok := info[k]
+		if !ok {
+			return nil
+		}
+		val, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("info field %q must be a string", k)
+		}
+		*dst = val
+		return nil
+	}
+	setIntFromInfo := func(k string, dst *int) error {
+		v, ok := info[k]
+		if !ok {
+			return nil
+		}
+		val, ok := v.(float64)
+		if !ok {
+			return fmt.Errorf("info field %q must be a number", k)
+		}
+		if val < 0 || math.Trunc(val) != val || val > float64(maxCreateInfoInt()) {
+			return fmt.Errorf("info field %q must be a non-negative integer", k)
+		}
+		*dst = int(val)
+		return nil
+	}
+
+	if err := setStringFromInfo("model_family", &config.ModelFamily); err != nil {
+		return err
+	}
+	if _, ok := info["model_family"]; ok {
+		config.ModelFamilies = nil
+		if config.ModelFamily != "" {
+			config.ModelFamilies = []string{config.ModelFamily}
+		}
+	}
+	if err := setStringFromInfo("base_name", &config.BaseName); err != nil {
+		return err
+	}
+	if err := setStringFromInfo("quantization_level", &config.FileType); err != nil {
+		return err
+	}
+	if err := setStringFromInfo("parameter_size", &config.ModelType); err != nil {
+		return err
+	}
+	if err := setIntFromInfo("context_length", &config.ContextLen); err != nil {
+		return err
+	}
+	if err := setIntFromInfo("embedding_length", &config.EmbedLen); err != nil {
+		return err
+	}
+	return nil
+}
+
+func capabilitiesFromInfo(v any) ([]string, error) {
+	switch caps := v.(type) {
+	case []string:
+		return append([]string(nil), caps...), nil
+	case []any:
+		out := make([]string, len(caps))
+		for i, c := range caps {
+			str, ok := c.(string)
+			if !ok {
+				return nil, fmt.Errorf("info field %q element %d must be a string", "capabilities", i)
+			}
+			out[i] = str
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("info field %q must be an array of strings", "capabilities")
+	}
 }
 
 func remoteURL(raw string) (string, error) {
@@ -321,31 +655,56 @@ func remoteURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	switch detectModelTypeFromFiles(files) {
+func convertModelFromFiles(ctx context.Context, files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	return convertModelFromFilesWithMediaType(ctx, files, "", true, fn)
+}
+
+func convertDraftModelFromFiles(ctx context.Context, files map[string]string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	return convertModelFromFilesWithMediaType(ctx, files, manifest.MediaTypeImageDraft, false, fn)
+}
+
+func convertModelFromFilesWithMediaType(ctx context.Context, files map[string]string, mediaType string, detectTemplate bool, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	modelType, err := detectModelTypeFromFiles(files)
+	if err != nil {
+		return nil, err
+	}
+	switch modelType {
 	case "safetensors":
-		layers, err := convertFromSafetensors(files, baseLayers, isAdapter, fn)
-		if err != nil {
-			slog.Error("error converting from safetensors", "error", err)
-			return nil, err
-		}
-		return layers, nil
+		return nil, errOnlyGGUFSupported
 	case "gguf":
 		if len(files) == 0 {
 			return nil, errNoFilesProvided
-		} else if len(files) > 1 && isAdapter {
-			return nil, errOnlyOneAdapterSupported
 		}
 
-		var digest string
-		var allLayers []*layerGGML
-		for _, v := range files {
-			digest = v
-			layers, err := ggufLayers(digest, fn)
+		filePaths := make([]string, 0, len(files))
+		for filePath := range files {
+			filePaths = append(filePaths, filePath)
+		}
+		slices.Sort(filePaths)
+
+		splitCollector := newSplitGGUFCollector()
+		for _, filePath := range filePaths {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			layers, err := ggufLayersWithMediaType(files[filePath], filePath, mediaType, fn)
 			if err != nil {
 				return nil, err
 			}
-			allLayers = append(allLayers, layers...)
+			for _, layer := range layers {
+				if err := splitCollector.Add(layer); err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		allLayers, err := splitCollector.Layers()
+		if err != nil {
+			return nil, err
+		}
+
+		if detectTemplate {
+			return detectChatTemplate(allLayers)
 		}
 		return allLayers, nil
 	default:
@@ -353,217 +712,207 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 	}
 }
 
-func detectModelTypeFromFiles(files map[string]string) string {
-	for fn := range files {
-		if strings.HasSuffix(fn, ".safetensors") {
-			return "safetensors"
-		} else if strings.HasSuffix(fn, ".gguf") {
-			return "gguf"
-		} else {
-			// try to see if we can find a gguf file even without the file extension
-			blobPath, err := manifest.BlobsPath(files[fn])
-			if err != nil {
-				slog.Error("error getting blobs path", "file", fn)
-				return ""
-			}
-
-			f, err := os.Open(blobPath)
-			if err != nil {
-				slog.Error("error reading file", "error", err)
-				return ""
-			}
-			defer f.Close()
-
-			buf := make([]byte, 4)
-			_, err = f.Read(buf)
-			if err != nil {
-				slog.Error("error reading file", "error", err)
-				return ""
-			}
-
-			ct := ggml.DetectContentType(buf)
-			if ct == "gguf" {
-				return "gguf"
-			}
+func validateCreateFiles(files map[string]string) error {
+	if len(files) > maxCreateFiles {
+		return fmt.Errorf("too many files: %d exceeds maximum %d", len(files), maxCreateFiles)
+	}
+	for filePath, digest := range files {
+		if err := validateCreateFilePath(filePath); err != nil {
+			return err
+		}
+		if digest == "" {
+			return manifest.ErrInvalidDigestFormat
+		}
+		if _, err := manifest.BlobsPath(digest); err != nil {
+			return fmt.Errorf("invalid digest for %s: %w", filePath, err)
 		}
 	}
-
-	return ""
+	return nil
 }
 
-func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
-	if err != nil {
-		return nil, err
+func validateCreateFilePath(filePath string) error {
+	if filePath == "." || !fs.ValidPath(filePath) || strings.ContainsAny(filePath, `\:`) {
+		return fmt.Errorf("%w: %s", errFilePath, filePath)
 	}
-	defer os.RemoveAll(tmpDir)
-	// Set up a root to validate paths
-	root, err := os.OpenRoot(tmpDir)
-	if err != nil {
-		return nil, err
+	return nil
+}
+
+func validateCreateOptions(r api.CreateRequest, modelType string) error {
+	quantize := cmp.Or(r.Quantize, r.Quantization)
+	if modelType == "gguf" || (modelType == "" && r.From != "") {
+		if quantize != "" {
+			return fmt.Errorf("create-time quantization is only supported for safetensors imports; quantize GGUF models with llama.cpp tools before importing")
+		}
+		if r.DraftQuantize != "" {
+			return fmt.Errorf("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models with llama.cpp tools before importing")
+		}
+		return nil
 	}
-	defer root.Close()
 
-	for fp, digest := range files {
-		if !fs.ValidPath(fp) {
-			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
-		}
-		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			// Path is likely outside the root
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
-		}
+	if quantize != "" && quant.Canonical(quantize) == "" {
+		return fmt.Errorf("unsupported quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", quantize)
+	}
+	if r.DraftQuantize != "" && quant.Canonical(r.DraftQuantize) == "" {
+		return fmt.Errorf("unsupported draft quantize type %q: supported types are int4, int8, nvfp4, mxfp4, mxfp8", r.DraftQuantize)
+	}
+	return nil
+}
 
-		blobPath, err := manifest.BlobsPath(digest)
+func maxCreateInfoInt() int {
+	return int(^uint(0) >> 1)
+}
+
+func detectModelTypeFromFiles(files map[string]string) (string, error) {
+	filePaths := make([]string, 0, len(files))
+	for filePath := range files {
+		filePaths = append(filePaths, filePath)
+	}
+	slices.Sort(filePaths)
+
+	var modelType string
+	for _, filePath := range filePaths {
+		t, err := detectModelTypeFromFile(filePath, files[filePath])
 		if err != nil {
-			return nil, err
+			return "", err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
-			return nil, err
+		if t == "" {
+			continue
 		}
-	}
-
-	t, err := os.CreateTemp(tmpDir, "fp16")
-	if err != nil {
-		return nil, err
-	}
-	defer t.Close()
-
-	var mediaType string
-	if !isAdapter {
-		fn(api.ProgressResponse{Status: "converting model"})
-		mediaType = "application/vnd.ollama.image.model"
-		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
-			return nil, err
+		if modelType != "" && modelType != t {
+			return "", fmt.Errorf("%w: found both %s and %s inputs", errMixedModelTypes, modelType, t)
 		}
-	} else {
-		kv, err := kvFromLayers(baseLayers)
-		if err != nil {
-			return nil, err
-		}
-		fn(api.ProgressResponse{Status: "converting adapter"})
-		mediaType = "application/vnd.ollama.image.adapter"
-		if err := convert.ConvertAdapter(os.DirFS(tmpDir), t, kv); err != nil {
-			return nil, err
-		}
+		modelType = t
 	}
 
-	if _, err := t.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-
-	layer, err := manifest.NewLayer(t, mediaType)
-	if err != nil {
-		return nil, err
-	}
-
-	bin, err := layer.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer bin.Close()
-
-	f, err := ggml.Decode(bin, -1)
-	if err != nil {
-		return nil, err
-	}
-	layers := []*layerGGML{{layer, f}}
-
-	if !isAdapter {
-		return detectChatTemplate(layers)
-	}
-	return layers, nil
+	return modelType, nil
 }
 
-func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
-	for _, l := range baseLayers {
-		if l.GGML != nil {
-			return l.KV(), nil
-		}
+func detectModelTypeFromFile(filePath, digest string) (string, error) {
+	if strings.HasSuffix(filePath, ".safetensors") {
+		return "safetensors", nil
 	}
-	return ggml.KV{}, fmt.Errorf("no base model was found")
+	if strings.HasSuffix(filePath, ".gguf") {
+		return "gguf", nil
+	}
+
+	// Try to detect GGUF files even when the source name has no extension.
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		return "", fmt.Errorf("blob path for %s: %w", filePath, err)
+	}
+
+	f, err := os.Open(blobPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("blob not found for %s (digest %s): %w", filePath, digest, err)
+	} else if err != nil {
+		return "", fmt.Errorf("read %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return "", fmt.Errorf("read %s: %w", filePath, err)
+		}
+		return "", nil
+	}
+	if bytes.Equal(buf, []byte("GGUF")) || bytes.Equal(buf, []byte("FUGG")) {
+		return "gguf", nil
+	}
+	return "", nil
 }
 
-func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
+func createModel(ctx context.Context, r api.CreateRequest, name model.Name, baseLayers []*modelLayer, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if quantize := cmp.Or(r.Quantize, r.Quantization); quantize != "" {
+		return fmt.Errorf("create-time quantization is only supported for safetensors imports; quantize GGUF models with llama.cpp tools before importing")
+	}
+	if r.DraftQuantize != "" {
+		return fmt.Errorf("draft quantization during create is only supported for safetensors imports; quantize GGUF draft models with llama.cpp tools before importing")
+	}
+
 	var layers []manifest.Layer
+	hasSplitGGUF := false
 	for _, layer := range baseLayers {
-		if layer.GGML != nil {
-			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
-			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
-				want, err := ggml.ParseFileType(quantType)
+		if len(layer.splitLayers) > 0 {
+			hasSplitGGUF = true
+			layers = append(layers, layer.splitLayers...)
+		} else {
+			layers = append(layers, layer.Layer)
+		}
+
+		if layer.GGUF != nil {
+			switch layer.MediaType {
+			case "application/vnd.ollama.image.model", manifest.MediaTypeImageDraft:
+				rewritten, changed, err := compatmigrate.RewriteLlama3MetadataLayer(layer.Layer)
 				if err != nil {
 					return err
 				}
+				if changed {
+					layer.Layer = rewritten
+				}
+			}
 
-				ft := layer.GGML.KV().FileType()
-				if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
-					return errors.New("quantization is only supported for F16 and F32 models")
-				} else if ft != want {
-					layer, err = quantizeLayer(layer, quantType, fn)
-					if err != nil {
-						return err
+			switch layer.MediaType {
+			case "application/vnd.ollama.image.model":
+				config.ModelFormat = cmp.Or(config.ModelFormat, "gguf")
+				config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGUF.Architecture())
+				config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.parameterCount))
+				config.FileType = cmp.Or(config.FileType, layer.GGUF.FileType().String())
+				architecture := layer.GGUF.Architecture()
+				if !slices.Contains(config.ModelFamilies, architecture) {
+					config.ModelFamilies = append(config.ModelFamilies, architecture)
+				}
+
+				// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
+				if config.Renderer == "" || config.Parser == "" {
+					arch := layer.GGUF.Architecture()
+					switch arch {
+					case "gemma4":
+						config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
+						config.Parser = cmp.Or(config.Parser, "gemma4")
+						if _, ok := r.Parameters["stop"]; !ok {
+							if r.Parameters == nil {
+								r.Parameters = make(map[string]any)
+							}
+							r.Parameters["stop"] = []string{"<turn|>"}
+						}
+					case "laguna":
+						config.Renderer = cmp.Or(config.Renderer, "laguna")
+						config.Parser = cmp.Or(config.Parser, "laguna")
+					case "nemotron_h", "nemotron_h_moe", "nemotron_h_omni":
+						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
+						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
 					}
 				}
-			}
-			config.ModelFormat = cmp.Or(config.ModelFormat, layer.GGML.Name())
-			config.ModelFamily = cmp.Or(config.ModelFamily, layer.GGML.KV().Architecture())
-			config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
-			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
-			config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
-		}
-		layers = append(layers, layer.Layer)
-	}
-
-	if r.Template != "" {
-		layers, err = setTemplate(layers, r.Template)
-		if err != nil {
-			return err
-		}
-	}
-
-	if r.System != "" {
-		layers, err = setSystem(layers, r.System)
-		if err != nil {
-			return err
-		}
-	}
-
-	if r.License != nil {
-		switch l := r.License.(type) {
-		case string:
-			if l != "" {
-				layers, err = setLicense(layers, l)
-				if err != nil {
-					return err
+			case manifest.MediaTypeImageDraft:
+				config.Draft = &model.Draft{
+					ModelFormat:  "gguf",
+					Architecture: layer.GGUF.Architecture(),
 				}
 			}
-		case any:
-			var licenses []string
-			b, _ := json.Marshal(l) // re-marshal to JSON
-			if err := json.Unmarshal(b, &licenses); err != nil {
-				return err
-			}
-			for _, v := range licenses {
-				layers, err = setLicense(layers, v)
-				if err != nil {
-					return err
-				}
-			}
-		default:
-			return fmt.Errorf("unknown license type: %T", l)
+		}
+	}
+	if hasSplitGGUF {
+		if config.Requires == "" {
+			config.Requires = splitGGUFMinOllamaVersion
 		}
 	}
 
-	layers, err = setParameters(layers, r.Parameters)
+	layers, err = create.ApplyModelfileLayers(layers, create.ModelfileLayerOptions{
+		Template:   r.Template,
+		System:     r.System,
+		License:    r.License,
+		Parameters: r.Parameters,
+		Messages:   r.Messages,
+	})
 	if err != nil {
 		return err
 	}
 
-	layers, err = setMessages(layers, r.Messages)
-	if err != nil {
-		return err
-	}
-
-	configLayer, err := createConfigLayer(layers, *config)
+	configLayer, err := createConfigLayer(*config)
 	if err != nil {
 		return err
 	}
@@ -575,67 +924,165 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+	runner, format := manifest.MetadataForConfig(*config)
+	if format == manifest.FormatGGUF {
+		// On failure the conservative ggml default stands: it flags the model
+		// for inspection rather than failing the create.
+		if detected, err := compatmigrate.RunnerForManifest(name, &manifest.Manifest{Config: *configLayer, Layers: layers}); err != nil {
+			slog.Warn("couldn't detect runner for created model", "model", name.DisplayShortest(), "error", err)
+		} else {
+			runner = detected
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := manifest.WriteManifestWithMetadata(name, *configLayer, layers, runner, format); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {
-	ft := layer.GGML.KV().FileType()
-	var doneBytes atomic.Uint64
-	totalBytes := uint64(layer.Size) - layer.GGML.Tensors().Offset
-	fnWrap := func(n uint64) {
-		done := doneBytes.Add(n)
-		progress := float32(done) / float32(totalBytes)
-		fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType), Digest: "0000000000000000000", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
-	}
-	ftype, err := ggml.ParseFileType(quantizeType)
-	if err != nil {
-		return nil, err
+func createManifestList(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) error {
+	if err := validateCreateManifestListRequest(r); err != nil {
+		return err
 	}
 
-	blob, err := manifest.BlobsPath(layer.Digest)
-	if err != nil {
-		return nil, err
-	}
-	fp, err := os.Open(blob)
-	if err != nil {
-		return nil, err
-	}
-	defer fp.Close()
+	manifests := make([]manifest.Manifest, 0, len(r.List))
+	signatures := make([]manifestListChildSignature, 0, len(r.List))
+	seenDigests := make(map[string]string)
+	seenRunners := make(map[string]string)
+	var anchorChild *manifest.Manifest
+	for _, ref := range r.List {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return newManifestListRequestError("manifest list contains an empty model")
+		}
 
-	temp, err := os.CreateTemp(filepath.Dir(blob), quantizeType)
-	if err != nil {
-		return nil, err
-	}
-	defer temp.Close()
-	defer os.Remove(temp.Name())
+		fn(api.ProgressResponse{Status: fmt.Sprintf("reading manifest %s", ref)})
 
-	if err := quantize(fp, temp, layer.GGML, ftype, fnWrap); err != nil {
-		return nil, err
-	}
-	temp.Seek(0, io.SeekStart)
-	fn(api.ProgressResponse{Status: "verifying conversion"})
-	newLayer, err := manifest.NewLayer(temp, layer.MediaType)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := temp.Seek(0, io.SeekStart); err != nil {
-		return nil, err
+		modelRef, err := parseAndValidateModelRef(ref)
+		if err != nil {
+			return err
+		}
+		if modelRef.Source == modelSourceCloud {
+			return newManifestListRequestError("manifest list entries must be local models: %s", ref)
+		}
+
+		childName, err := getExistingName(modelRef.Name)
+		if err != nil {
+			return err
+		}
+
+		data, err := manifest.ReadManifestData(childName)
+		if err != nil {
+			return fmt.Errorf("read manifest %s: %w", ref, err)
+		}
+
+		var child manifest.Manifest
+		if err := json.Unmarshal(data, &child); err != nil {
+			return err
+		}
+		if child.MediaType == manifest.MediaTypeManifestList {
+			return newManifestListRequestError("manifest list entry %s is already a manifest list", ref)
+		}
+
+		if err := manifest.FillMetadata(&child); err != nil {
+			return fmt.Errorf("manifest list entry %s: %w", ref, err)
+		}
+		if child.Format == manifest.FormatGGUF {
+			// On failure the conservative ggml default stands: it flags the
+			// model for inspection rather than failing the create.
+			if runner, err := compatmigrate.RunnerForManifest(childName, &child); err != nil {
+				slog.Warn("couldn't detect runner for manifest list entry", "entry", ref, "error", err)
+			} else {
+				child.Runner = runner
+			}
+		}
+
+		signature, err := newManifestListChildSignature(ref, childName, &child)
+		if err != nil {
+			return err
+		}
+		signatures = append(signatures, signature)
+
+		childData, err := json.Marshal(child)
+		if err != nil {
+			return err
+		}
+		childDigest, err := manifest.WriteManifestBlob(childData)
+		if err != nil {
+			return err
+		}
+
+		if previous, ok := seenDigests[childDigest]; ok {
+			return newManifestListRequestError("manifest list entries %s and %s resolve to the same manifest", previous, ref)
+		}
+		runner := strings.ToLower(strings.TrimSpace(child.Runner))
+		if previous, ok := seenRunners[runner]; ok {
+			return newManifestListRequestError("manifest list entries %s and %s use the same runner %q", previous, ref, child.Runner)
+		}
+		seenDigests[childDigest] = ref
+		seenRunners[runner] = ref
+
+		childRef, err := manifest.NewManifestReference(childDigest, child.Runner, child.Format)
+		if err != nil {
+			return err
+		}
+
+		// The downgrade anchor describes the child a pre-manifest-list daemon
+		// would load itself: the GGML child when one is listed, else the first.
+		if anchorChild == nil || (anchorChild.Runner != manifest.RunnerGGML && child.Runner == manifest.RunnerGGML) {
+			childCopy := child
+			anchorChild = &childCopy
+		}
+
+		manifests = append(manifests, childRef)
 	}
 
-	f, err := ggml.Decode(temp, 1024)
+	warnManifestListDrift(signatures, fn)
+
+	fn(api.ProgressResponse{Status: "writing manifest list"})
+	parentDigest, err := manifest.WriteManifestList(name, manifests)
 	if err != nil {
-		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
-		return nil, err
+		return err
 	}
-	return &layerGGML{newLayer, f}, nil
+
+	// Extra layers reference the manifest blobs so a downgrade's garbage
+	// collector cannot delete them.
+	manifestDigests := []string{parentDigest}
+	for _, childRef := range manifests {
+		digest, err := manifest.ChildManifestDigest(childRef)
+		if err != nil {
+			return err
+		}
+		manifestDigests = append(manifestDigests, digest)
+	}
+	return manifest.WriteLegacyAnchor(name, anchorChild, manifestDigests...)
 }
 
-func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	var layers []*layerGGML
+func validateCreateManifestListRequest(r api.CreateRequest) error {
+	if len(r.List) == 0 {
+		return newManifestListRequestError("manifest list must contain at least one model")
+	}
+
+	switch {
+	case r.From != "", r.RemoteHost != "", len(r.Files) > 0, len(r.DraftFiles) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Template != "", r.System != "", r.License != nil, len(r.Parameters) > 0, len(r.Messages) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Renderer != "", r.Parser != "", r.Requires != "", len(r.Info) > 0, len(r.Capabilities) > 0:
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	case r.Quantize != "", r.Quantization != "", r.DraftQuantize != "":
+		return newManifestListRequestError("manifest list creation cannot be combined with model creation options")
+	default:
+		return nil
+	}
+}
+
+func ggufLayersWithMediaType(digest, sourceName, mediaType string, fn func(resp api.ProgressResponse)) ([]*modelLayer, error) {
+	var layers []*modelLayer
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
 	blobPath, err := manifest.BlobsPath(digest)
@@ -643,222 +1090,202 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		return nil, err
 	}
 
-	blob, err := os.Open(blobPath)
-	if err != nil {
-		return nil, err
-	}
-	defer blob.Close()
-
-	sr := io.NewSectionReader(blob, 0, 512)
-	contentType, err := detectContentType(sr)
+	metadata, err := gguf.ReadFileMetadata(blobPath, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	if contentType != "gguf" {
-		slog.Error(fmt.Sprintf("unsupported content type: %s", contentType))
-		return nil, errOnlyGGUFSupported
+	if metadata.Kind() == "adapter" {
+		return nil, fmt.Errorf("%w: %s is a LoRA adapter", errAdaptersUnsupported, sourceName)
+	}
+	if mediaType == "" {
+		mediaType = "application/vnd.ollama.image.model"
+		if isProjectorGGUF(metadata) {
+			mediaType = "application/vnd.ollama.image.projector"
+		}
 	}
 
-	f, err := ggml.Decode(blob, -1)
-	if err != nil {
-		return nil, err
-	}
-
-	mediatype := "application/vnd.ollama.image.model"
-	if f.KV().Kind() == "adapter" {
-		mediatype = "application/vnd.ollama.image.adapter"
-	} else if (f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0) || f.KV().Kind() == "projector" {
-		// if a model has vision.block_count but not block_count, it is a standalone vision model
-		mediatype = "application/vnd.ollama.image.projector"
-	}
-
-	layer, err := manifest.NewLayerFromLayer(digest, mediatype, blob.Name())
+	layer, err := manifest.NewLayerFromLayer(digest, mediaType, sourceName)
 	if err != nil {
 		slog.Debug("could not create new layer from layer", "error", err)
 		return nil, err
 	}
 
-	layers = append(layers, &layerGGML{layer, f})
-
-	return detectChatTemplate(layers)
-}
-
-func removeLayer(layers []manifest.Layer, mediatype string) []manifest.Layer {
-	return slices.DeleteFunc(layers, func(layer manifest.Layer) bool {
-		if layer.MediaType != mediatype {
-			return false
-		}
-
-		if err := layer.Remove(); err != nil {
-			slog.Warn("couldn't remove blob", "digest", layer.Digest, "error", err)
-			return true
-		}
-
-		return true
+	layers = append(layers, &modelLayer{
+		Layer:          layer,
+		GGUF:           metadata,
+		parameterCount: metadata.ParameterCount(),
+		splitFile:      sourceName,
 	})
-}
 
-func setTemplate(layers []manifest.Layer, t string) ([]manifest.Layer, error) {
-	layers = removeLayer(layers, "application/vnd.ollama.image.template")
-	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
-	}
-	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
-	}
-
-	blob := strings.NewReader(t)
-	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.template")
-	if err != nil {
-		return nil, err
-	}
-
-	layers = append(layers, layer)
 	return layers, nil
 }
 
-func setSystem(layers []manifest.Layer, s string) ([]manifest.Layer, error) {
-	layers = removeLayer(layers, "application/vnd.ollama.image.system")
-	if s != "" {
-		blob := strings.NewReader(s)
-		layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.system")
-		if err != nil {
-			return nil, err
-		}
-		layers = append(layers, layer)
+func isProjectorGGUF(metadata *gguf.Metadata) bool {
+	switch metadata.Kind() {
+	case "projector", "mmproj":
+		return true
 	}
-	return layers, nil
+
+	// If a model has vision.block_count but not block_count, it is a standalone vision model.
+	if metadata.BlockCount() == 0 && metadata.Uint("vision.block_count") > 0 {
+		return true
+	}
+
+	return metadata.Architecture() == "clip" && metadata.BlockCount() == 0 &&
+		(metadata.Bool("has_vision_encoder") || metadata.Bool("has_audio_encoder"))
 }
 
-func setLicense(layers []manifest.Layer, l string) ([]manifest.Layer, error) {
-	blob := strings.NewReader(l)
-	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.license")
-	if err != nil {
-		return nil, err
-	}
-	layers = append(layers, layer)
-	return layers, nil
-}
-
-func setParameters(layers []manifest.Layer, p map[string]any) ([]manifest.Layer, error) {
-	if p == nil {
-		p = make(map[string]any)
-	}
-	for _, layer := range layers {
-		if layer.MediaType != "application/vnd.ollama.image.params" {
-			continue
-		}
-
-		digestPath, err := manifest.BlobsPath(layer.Digest)
-		if err != nil {
-			return nil, err
-		}
-
-		fn, err := os.Open(digestPath)
-		if err != nil {
-			return nil, err
-		}
-		defer fn.Close()
-
-		var existing map[string]any
-		if err := json.NewDecoder(fn).Decode(&existing); err != nil {
-			return nil, err
-		}
-
-		for k, v := range existing {
-			if _, exists := p[k]; exists {
-				continue
-			}
-			p[k] = v
-		}
-	}
-
-	if len(p) == 0 {
-		return layers, nil
-	}
-
-	layers = removeLayer(layers, "application/vnd.ollama.image.params")
-
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(p); err != nil {
-		return nil, err
-	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
-	if err != nil {
-		return nil, err
-	}
-	layers = append(layers, layer)
-	return layers, nil
-}
-
-func setMessages(layers []manifest.Layer, m []api.Message) ([]manifest.Layer, error) {
-	// this leaves the old messages intact if no new messages were specified
-	// which may not be the correct behaviour
-	if len(m) == 0 {
-		return layers, nil
-	}
-
-	fmt.Printf("removing old messages\n")
-	layers = removeLayer(layers, "application/vnd.ollama.image.messages")
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(m); err != nil {
-		return nil, err
-	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.messages")
-	if err != nil {
-		return nil, err
-	}
-	layers = append(layers, layer)
-	return layers, nil
-}
-
-func createConfigLayer(layers []manifest.Layer, config model.ConfigV2) (*manifest.Layer, error) {
-	digests := make([]string, len(layers))
-	for i, layer := range layers {
-		digests[i] = layer.Digest
-	}
-	config.RootFS.DiffIDs = digests
-
+func createConfigLayer(config model.ConfigV2) (*manifest.Layer, error) {
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return nil, err
 	}
-	layer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	layer, err := manifest.NewLayer(&b, manifest.MediaTypeImageConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &layer, nil
 }
 
-func createLink(src, dst string) error {
-	// make any subdirs for dst
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-
-	_ = os.Remove(dst)
-	if err := os.Symlink(src, dst); err != nil {
-		if err := copyFile(src, dst); err != nil {
-			return err
-		}
-	}
-	return nil
+// manifestListChildSignature holds the fields compared across manifest list
+// entries so accidental drift across runner variants is visible at creation
+// time. Runner and format are expected to differ; these fields describe the
+// model itself.
+type manifestListChildSignature struct {
+	ref       string
+	config    model.ConfigV2
+	caps      []model.Capability
+	capsKnown bool
 }
 
-func copyFile(src, dst string) error {
-	srcFile, err := os.Open(src)
+func newManifestListChildSignature(ref string, name model.Name, child *manifest.Manifest) (manifestListChildSignature, error) {
+	config, err := readModelListConfig(child)
 	if err != nil {
-		return err
+		return manifestListChildSignature{}, fmt.Errorf("read config for manifest list entry %s: %w", ref, err)
 	}
-	defer srcFile.Close()
 
-	dstFile, err := os.Create(dst)
+	caps, capsKnown := manifestListChildCapabilities(name)
+	return manifestListChildSignature{ref: ref, config: config, caps: caps, capsKnown: capsKnown}, nil
+}
+
+// manifestListChildCapabilities renders the same capability list show and
+// /api/tags report, so drift warnings match what users see. A child that
+// cannot be loaded leaves capabilities unknown rather than failing the
+// combine.
+func manifestListChildCapabilities(name model.Name) ([]model.Capability, bool) {
+	m, err := GetModel(name.String())
 	if err != nil {
-		return err
+		slog.Warn("could not load model to check capabilities", "model", name.String(), "error", err)
+		return nil, false
 	}
-	defer dstFile.Close()
+	return m.Capabilities(), true
+}
 
-	_, err = io.Copy(dstFile, srcFile)
-	return err
+// warnManifestListDrift warns when manifest list entries disagree on fields
+// that describe the same model. Unset fields never count as drift: legacy
+// manifests often carry them only in their model files. Differences are
+// warnings, not errors, because runner pairs legitimately vary in what they
+// support.
+func warnManifestListDrift(signatures []manifestListChildSignature, fn func(resp api.ProgressResponse)) {
+	if len(signatures) < 2 {
+		return
+	}
+
+	base := signatures[0]
+	for _, child := range signatures[1:] {
+		warnDrift(fn, "model family", base, child,
+			base.config.ModelFamily, child.config.ModelFamily)
+		warnDrift(fn, "model families", base, child,
+			joinNonEmpty(base.config.ModelFamilies), joinNonEmpty(child.config.ModelFamilies))
+		warnDrift(fn, "parameter size", base, child,
+			base.config.ModelType, child.config.ModelType)
+		warnDrift(fn, "context length", base, child,
+			nonZeroInt(base.config.ContextLen), nonZeroInt(child.config.ContextLen))
+		warnDrift(fn, "embedding length", base, child,
+			nonZeroInt(base.config.EmbedLen), nonZeroInt(child.config.EmbedLen))
+		warnDrift(fn, "parser", base, child,
+			base.config.Parser, child.config.Parser)
+		warnDrift(fn, "renderer", base, child,
+			base.config.Renderer, child.config.Renderer)
+		warnDriftDtype(fn, base, child)
+		warnDriftCapabilities(fn, base, child)
+	}
+}
+
+func joinNonEmpty(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.Join(values, ",")
+}
+
+func nonZeroInt(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+func warnDrift(fn func(resp api.ProgressResponse), field string, base, child manifestListChildSignature, baseValue, childValue string) {
+	if baseValue == "" || childValue == "" || baseValue == childValue {
+		return
+	}
+	warning := fmt.Sprintf("warning: manifest list entries differ in %s: %s=%s, %s=%s", field, base.ref, baseValue, child.ref, childValue)
+	fn(api.ProgressResponse{Status: warning})
+	slog.Warn("manifest list entries differ", "field", field,
+		base.ref, baseValue, child.ref, childValue)
+}
+
+func warnDriftDtype(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	baseClass, childClass := dtypeClass(base.config.FileType), dtypeClass(child.config.FileType)
+	if baseClass == "" || childClass == "" || baseClass == childClass {
+		return
+	}
+	warnDrift(fn, "quantization class", base, child,
+		fmt.Sprintf("%s (%s)", base.config.FileType, baseClass),
+		fmt.Sprintf("%s (%s)", child.config.FileType, childClass))
+}
+
+func warnDriftCapabilities(fn func(resp api.ProgressResponse), base, child manifestListChildSignature) {
+	if !base.capsKnown || !child.capsKnown {
+		return
+	}
+	baseCaps, childCaps := capabilitiesValue(base.caps), capabilitiesValue(child.caps)
+	if baseCaps == childCaps {
+		return
+	}
+	warnDrift(fn, "capabilities", base, child, baseCaps, childCaps)
+}
+
+func capabilitiesValue(caps []model.Capability) string {
+	names := make([]string, len(caps))
+	for i, c := range caps {
+		names[i] = c.String()
+	}
+	slices.Sort(names)
+	return "[" + strings.Join(names, " ") + "]"
+}
+
+// dtypeClass maps a model file type to a coarse precision class so
+// runner-native spellings of the same precision compare equal: Q4_K_M and
+// nvfp4 are both 4-bit, and bf16 and F16 are both unquantized.
+func dtypeClass(fileType string) string {
+	switch strings.ToLower(fileType) {
+	case "":
+		return ""
+	case "q4_0", "q4_1", "q4_k_m", "q4_k_s", "iq4_xs", "iq4_nl",
+		"4bit", "mxfp4", "nvfp4":
+		return "4-bit"
+	case "q5_0", "q5_1", "q5_k_m", "q5_k_s", "5bit":
+		return "5-bit"
+	case "q6_k", "6bit":
+		return "6-bit"
+	case "q8_0", "q8_1", "iq8", "8bit", "mxfp8":
+		return "8-bit"
+	case "f16", "bf16", "f32", "fp16", "unquantized":
+		return "unquantized"
+	default:
+		return strings.ToLower(fileType)
+	}
 }

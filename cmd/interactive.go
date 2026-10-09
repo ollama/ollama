@@ -47,7 +47,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, .webp images, or .wav audio files.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -214,16 +214,28 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			origOpts := opts.Copy()
 
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
+			opts.LoadedMessages = nil
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model, Runner: opts.Runner})
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
 					opts = origOpts.Copy()
 					continue
 				}
+				return err
+			}
+			applyShowResponseToRunOptions(&opts, info)
+			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
+			if err != nil {
 				return err
 			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -311,7 +323,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.Think = &thinkValue
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}
 					if maybeLevel != "" {
 						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
@@ -322,7 +334,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.Think = &api.ThinkValue{Value: false}
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}
 					fmt.Println("Set 'nothink' mode.")
 				case "format":
@@ -402,6 +414,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 				req := &api.ShowRequest{
 					Name:    opts.Model,
+					Runner:  opts.Runner,
 					System:  opts.System,
 					Options: opts.Options,
 				}
@@ -561,8 +574,10 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		req.Parameters = opts.Options
 	}
 
-	if len(opts.Messages) > 0 {
-		req.Messages = opts.Messages
+	messages := slices.Clone(opts.LoadedMessages)
+	messages = append(messages, opts.Messages...)
+	if len(messages) > 0 {
+		req.Messages = messages
 	}
 
 	return req
@@ -592,7 +607,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|wav)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -608,10 +623,16 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
+			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
 			return "", imgs, err
 		}
-		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		ext := strings.ToLower(filepath.Ext(nfp))
+		switch ext {
+		case ".wav":
+			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+		default:
+			fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
@@ -633,9 +654,12 @@ func editInExternalEditor(content string) (string, error) {
 	}
 
 	// Check that the editor binary exists
-	name := strings.Fields(editor)[0]
-	if _, err := exec.LookPath(name); err != nil {
-		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	args := strings.Fields(editor)
+	if len(args) == 0 {
+		return "", fmt.Errorf("no editor configured, set OLLAMA_EDITOR to the path of your preferred editor")
+	}
+	if _, err := exec.LookPath(args[0]); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", args[0])
 	}
 
 	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
@@ -652,7 +676,6 @@ func editInExternalEditor(content string) (string, error) {
 	}
 	tmpFile.Close()
 
-	args := strings.Fields(editor)
 	args = append(args, tmpFile.Name())
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin
@@ -685,9 +708,9 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp", "audio/wave"}
 	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid image type: %s", contentType)
+		return nil, fmt.Errorf("invalid file type: %s", contentType)
 	}
 
 	info, err := file.Stat()
@@ -695,8 +718,7 @@ func getImageData(filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Check if the file size exceeds 100MB
-	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
+	var maxSize int64 = 100 * 1024 * 1024 // 100MB
 	if info.Size() > maxSize {
 		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}

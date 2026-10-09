@@ -2,6 +2,7 @@ package updater
 
 import (
 	"archive/zip"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -146,6 +147,46 @@ func TestDoUpgrade(t *testing.T) {
 	}
 }
 
+func TestDoUpgradeRejectsInvalidBundlePath(t *testing.T) {
+	tmpDir := t.TempDir()
+	BundlePath = filepath.Join(tmpDir, "Ollama.app")
+	appBackupDir = filepath.Join(tmpDir, "backup")
+	UpdateStageDir = filepath.Join(tmpDir, "updates")
+	UpgradeMarkerFile = filepath.Join(tmpDir, "upgraded")
+	bundle := filepath.Join(UpdateStageDir, "foo", "ollama-darwin.zip")
+	invalidTarget := filepath.Join(tmpDir, "invalid-entry")
+
+	if err := os.MkdirAll(filepath.Join(BundlePath, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal("failed to create empty dirs")
+	}
+	if err := os.WriteFile(filepath.Join(BundlePath, "Contents", "MacOS", "Ollama"), []byte("old app"), 0o755); err != nil {
+		t.Fatal("failed to create old app")
+	}
+	if err := os.MkdirAll(filepath.Dir(bundle), 0o755); err != nil {
+		t.Fatal("failed to create empty dirs")
+	}
+	if err := zipCreationHelper(bundle, []testPayload{{
+		Name: "Ollama.app/../invalid-entry",
+		Body: []byte("payload"),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DoUpgrade(false); err == nil {
+		t.Fatal("expected failure with invalid bundle path")
+	} else if !strings.Contains(err.Error(), "bundle contains invalid path") {
+		t.Fatalf("unexpected error with invalid bundle path: %s", err)
+	}
+	if _, err := os.Stat(invalidTarget); err == nil {
+		t.Fatalf("invalid bundle path wrote %s", invalidTarget)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unexpected stat error for %s: %s", invalidTarget, err)
+	}
+	if _, err := os.Stat(filepath.Join(BundlePath, "Contents", "MacOS", "Ollama")); err != nil {
+		t.Fatalf("old app was not restored: %s", err)
+	}
+}
+
 func TestDoUpgradeAtStartup(t *testing.T) {
 	tmpDir := t.TempDir()
 	BundlePath = filepath.Join(tmpDir, "Ollama.app")
@@ -203,7 +244,7 @@ func TestVerifyDownloadFailures(t *testing.T) {
 		in       []testPayload
 		expected string
 	}{
-		{"breakout", []testPayload{
+		{"invalid symlink target", []testPayload{
 			{
 				Name: "Ollama.app/",
 				Body: []byte{},
@@ -212,15 +253,34 @@ func TestVerifyDownloadFailures(t *testing.T) {
 				Body: []byte("cli payload here"),
 			}, {
 				Name: "Ollama.app/Contents/MacOS/Ollama",
-				Body: []byte("../../../../breakout"),
+				Body: []byte("../../../../invalid-target"),
 				Mode: os.ModeSymlink,
 			},
-		}, "bundle contains link outside"},
+		}, "bundle contains invalid symlink"},
+		{"invalid archive symlink target", []testPayload{
+			{
+				Name: "Ollama.app/Contents/MacOS/Ollama",
+				Body: []byte("../../../invalid-target"),
+				Mode: os.ModeSymlink,
+			},
+		}, "bundle contains invalid symlink"},
 		{"absolute", []testPayload{{
 			Name: "Ollama.app/Contents/MacOS/Ollama",
 			Body: []byte("/etc/foo"),
 			Mode: os.ModeSymlink,
 		}}, "bundle contains absolute"},
+		{"invalid relative file", []testPayload{{
+			Name: "Ollama.app/../invalid-entry",
+			Body: []byte("payload"),
+		}}, "bundle contains invalid path"},
+		{"invalid relative directory", []testPayload{{
+			Name: "Ollama.app/../invalid-entry/",
+			Body: []byte{},
+		}}, "bundle contains invalid path"},
+		{"absolute file", []testPayload{{
+			Name: filepath.Join(tmpDir, "invalid-entry"),
+			Body: []byte("payload"),
+		}}, "bundle contains invalid path"},
 		{"missing", []testPayload{{
 			Name: "Ollama.app/Contents/MacOS/Ollama",
 			Body: []byte("../nothere"),
@@ -241,6 +301,11 @@ func TestVerifyDownloadFailures(t *testing.T) {
 			err := VerifyDownload()
 			if err == nil || !strings.Contains(err.Error(), tt.expected) {
 				t.Fatalf("expected \"%s\" got %s", tt.expected, err)
+			}
+			if _, err := os.Stat(filepath.Join(tmpDir, "invalid-entry")); err == nil {
+				t.Fatal("invalid bundle path wrote unexpected file")
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unexpected stat error for invalid file: %s", err)
 			}
 		})
 	}

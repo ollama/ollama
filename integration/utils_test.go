@@ -31,264 +31,17 @@ import (
 )
 
 var (
-	smol   = "llama3.2:1b"
-	stream = false
-
 	// testModel is set via OLLAMA_TEST_MODEL env var. When set, all tests
 	// that loop over model lists will test only this model, and smol is
 	// also overridden to use it.
-	testModel string
+	testModel = os.Getenv("OLLAMA_TEST_MODEL")
+
+	smol   = defaultTestModel("llama3.2:1b")
+	stream = false
 )
 
 var (
 	started = time.Now()
-
-	// Note: add newer models at the top of the list to test them first
-	ollamaEngineChatModels = []string{
-		"lfm2.5-thinking",
-		"ministral-3",
-		"qwen3-coder:30b",
-		"gpt-oss:20b",
-		"gemma3n:e2b",
-		"mistral-small3.2:latest",
-		"deepseek-r1:1.5b",
-		"llama3.2-vision:latest",
-		"qwen2.5-coder:latest",
-		"qwen2.5vl:3b",
-		"qwen3:0.6b", // dense
-		"qwen3:1.7b", // dense
-		"qwen3:30b",  // MOE
-		"gemma3:1b",
-		"llama3.1:latest",
-		"llama3.2:latest",
-		"gemma2:latest",
-		"minicpm-v:latest",    // arch=qwen2
-		"granite-code:latest", // arch=llama
-	}
-	llamaRunnerChatModels = []string{
-		"mistral:latest",
-		"falcon3:latest",
-		"granite3-moe:latest",
-		"command-r:latest",
-		"nemotron-mini:latest",
-		"phi3.5:latest",
-		"solar-pro:latest",
-		"internlm2:latest",
-		"codellama:latest", // arch=llama
-		"phi3:latest",
-		"falcon2:latest",
-		"gemma:latest",
-		"llama2:latest",
-		"nous-hermes:latest",
-		"orca-mini:latest",
-		"qwen:latest",
-		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
-		"falcon:latest",
-	}
-
-	// Some library models are quite large - ensure large VRAM and sufficient disk space
-	// before running scenarios based on this set
-	libraryChatModels = []string{
-		"alfred",
-		"athene-v2",
-		"aya-expanse",
-		"aya",
-		"bakllava",
-		"bespoke-minicheck",
-		"codebooga",
-		"codegeex4",
-		"codegemma",
-		"codellama",
-		"codeqwen",
-		"codestral",
-		"codeup",
-		"cogito",
-		"command-a",
-		"command-r-plus",
-		"command-r",
-		"command-r7b-arabic",
-		"command-r7b",
-		"dbrx",
-		"deepcoder",
-		"deepscaler",
-		"deepseek-coder-v2",
-		"deepseek-coder",
-		"deepseek-llm",
-		"deepseek-r1",
-		// "deepseek-v2.5", // requires 155 GB VRAM
-		"deepseek-v2",
-		// "deepseek-v3", // requires 482 GB VRAM
-		"devstral",
-		"dolphin-llama3",
-		"dolphin-mistral",
-		"dolphin-mixtral",
-		"dolphin-phi",
-		"dolphin3",
-		"dolphincoder",
-		"duckdb-nsql",
-		"everythinglm",
-		"exaone-deep",
-		"exaone3.5",
-		"falcon",
-		"falcon2",
-		"falcon3",
-		"firefunction-v2",
-		"gemma",
-		"gemma2",
-		"gemma3",
-		"gemma3n",
-		"glm4",
-		"goliath",
-		"gpt-oss:20b",
-		"granite-code",
-		"granite3-dense",
-		"granite3-guardian",
-		"granite3-moe",
-		"granite3.1-dense",
-		"granite3.1-moe",
-		"granite3.2-vision",
-		"granite3.2",
-		"granite3.3",
-		"hermes3",
-		"internlm2",
-		"lfm2.5-thinking",
-		"llama-guard3",
-		"llama-pro",
-		"llama2-chinese",
-		"llama2-uncensored",
-		"llama2",
-		"llama3-chatqa",
-		"llama3-gradient",
-		"llama3-groq-tool-use",
-		"llama3.1",
-		"llama3.2-vision",
-		"llama3.2",
-		"llama3.3",
-		"llama3",
-		"llama4",
-		"llava-llama3",
-		"llava-phi3",
-		"llava",
-		"magicoder",
-		"magistral",
-		"marco-o1",
-		"mathstral",
-		"meditron",
-		"medllama2",
-		"megadolphin",
-		"minicpm-v",
-		"ministral-3",
-		"mistral-large",
-		"mistral-nemo",
-		"mistral-openorca",
-		"mistral-small",
-		"mistral-small3.1",
-		"mistral-small3.2",
-		"mistral",
-		"mistrallite",
-		"mixtral",
-		"moondream",
-		"nemotron-mini",
-		"nemotron",
-		"neural-chat",
-		"nexusraven",
-		"notus",
-		"nous-hermes",
-		"nous-hermes2-mixtral",
-		"nous-hermes2",
-		"nuextract",
-		"olmo2",
-		"open-orca-platypus2",
-		"openchat",
-		"opencoder",
-		"openhermes",
-		"openthinker",
-		"orca-mini",
-		"orca2",
-		// "phi", // unreliable
-		"phi3.5",
-		"phi3",
-		"phi4-mini-reasoning",
-		"phi4-mini",
-		"phi4-reasoning",
-		"phi4",
-		"phind-codellama",
-		"qwen",
-		"qwen2-math",
-		"qwen2.5-coder",
-		"qwen2.5",
-		"qwen2.5vl",
-		"qwen2",
-		"qwen3:0.6b", // dense
-		"qwen3:30b",  // MOE
-		"qwq",
-		"r1-1776",
-		"reader-lm",
-		"reflection",
-		"sailor2",
-		"samantha-mistral",
-		"shieldgemma",
-		"smallthinker",
-		"smollm",
-		"smollm2",
-		"solar-pro",
-		"solar",
-		"sqlcoder",
-		"stable-beluga",
-		"stable-code",
-		"stablelm-zephyr",
-		"stablelm2",
-		"starcoder",
-		"starcoder2",
-		"starling-lm",
-		"tinydolphin",
-		"tinyllama",
-		"tulu3",
-		"vicuna",
-		"wizard-math",
-		"wizard-vicuna-uncensored",
-		"wizard-vicuna",
-		"wizardcoder",
-		"wizardlm-uncensored",
-		"wizardlm2",
-		"xwinlm",
-		"yarn-llama2",
-		"yarn-mistral",
-		"yi-coder",
-		"yi",
-		"zephyr",
-	}
-	libraryEmbedModels = []string{
-		"qwen3-embedding",
-		"embeddinggemma",
-		"nomic-embed-text",
-		"all-minilm",
-		"bge-large",
-		"bge-m3",
-		"granite-embedding",
-		"mxbai-embed-large",
-		"paraphrase-multilingual",
-		"snowflake-arctic-embed",
-		"snowflake-arctic-embed2",
-	}
-	libraryToolsModels = []string{
-		"lfm2.5-thinking",
-		"qwen3-vl",
-		"gpt-oss:20b",
-		"gpt-oss:120b",
-		"qwen3",
-		"llama3.1",
-		"llama3.2",
-		"mistral",
-		"qwen2.5",
-		"qwen2",
-		"ministral-3",
-		"mistral-nemo",
-		"mistral-small",
-		"mixtral:8x22b",
-		"qwq",
-		"granite3.3",
-	}
 
 	blueSkyPrompt   = "why is the sky blue? Be brief but factual in your reply"
 	blueSkyExpected = []string{"rayleigh", "scatter", "atmosphere", "nitrogen", "oxygen", "wavelength", "interact"}
@@ -309,11 +62,16 @@ func init() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
 
-	testModel = os.Getenv("OLLAMA_TEST_MODEL")
 	if testModel != "" {
 		slog.Info("test model override", "model", testModel)
-		smol = testModel
 	}
+}
+
+func defaultTestModel(model string) string {
+	if testModel != "" {
+		return testModel
+	}
+	return model
 }
 
 // testModels returns the override model as a single-element slice when
@@ -326,13 +84,23 @@ func testModels(defaults []string) []string {
 }
 
 // requireCapability skips the test if the model does not advertise the
-// given capability. It queries the server via Show and caches nothing —
-// call it once per subtest. For local-only models where Show may not
-// return capabilities (e.g. models created via ollama create), this is
-// a best-effort check.
+// given capability. If the model is missing locally, it first goes through
+// the normal pull-if-missing path so tests still behave correctly on cold
+// hosts. For local-only models where Show may not return capabilities
+// (e.g. models created via ollama create), this is a best-effort check.
 func requireCapability(ctx context.Context, t *testing.T, client *api.Client, modelName string, cap model.Capability) {
 	t.Helper()
+
 	resp, err := client.Show(ctx, &api.ShowRequest{Name: modelName})
+	var statusError api.StatusError
+	if errors.As(err, &statusError) && statusError.StatusCode == http.StatusNotFound {
+		if err := PullIfMissing(ctx, client, modelName); err != nil {
+			t.Skipf("model %s not available: %v", modelName, err)
+		}
+
+		resp, err = client.Show(ctx, &api.ShowRequest{Name: modelName})
+	}
+
 	if err != nil {
 		t.Fatalf("failed to show model %s: %v", modelName, err)
 	}
@@ -401,6 +169,31 @@ func GetTestEndpoint() (*api.Client, string) {
 			Host:   net.JoinHostPort(host, port),
 		},
 		http.DefaultClient), fmt.Sprintf("%s:%s", host, port)
+}
+
+func skipIfRemote(t *testing.T) {
+	t.Helper()
+
+	ollamaHost := os.Getenv("OLLAMA_HOST")
+	if ollamaHost == "" {
+		return
+	}
+	if !strings.Contains(ollamaHost, "://") {
+		ollamaHost = "http://" + ollamaHost
+	}
+	u, err := url.Parse(ollamaHost)
+	if err != nil {
+		t.Skipf("skipping local-server test with unparseable OLLAMA_HOST=%q", os.Getenv("OLLAMA_HOST"))
+	}
+
+	host := u.Hostname()
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return
+	}
+	t.Skipf("skipping local-server test with remote OLLAMA_HOST=%q", os.Getenv("OLLAMA_HOST"))
 }
 
 // Server lifecycle management
@@ -485,10 +278,15 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 60 * time.Second // This includes checksum verification, which can take a while on larger models, and slower systems
+	var maxTotal int64
+	stallDuration := pullStallDuration(maxTotal)
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
+		if resp.Total > maxTotal {
+			maxTotal = resp.Total
+			stallDuration = pullStallDuration(maxTotal)
+		}
 		if !stallTimer.Reset(stallDuration) {
 			return errors.New("stall was detected, aborting status reporting")
 		}
@@ -508,10 +306,22 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	select {
 	case <-stallTimer.C:
-		return errors.New("download stalled")
+		return fmt.Errorf("download stalled after %s without progress", stallDuration)
 	case <-done:
 		return pullError
 	}
+}
+
+func pullStallDuration(total int64) time.Duration {
+	const gibiByte = 1 << 30
+
+	// The base includes checksum verification, which can take a while on
+	// larger models and slower systems.
+	timeout := 2 * time.Minute
+	if total > 0 {
+		timeout += time.Duration((total+gibiByte-1)/gibiByte) * 4 * time.Second
+	}
+	return min(timeout, 15*time.Minute)
 }
 
 var serverProcMutex sync.Mutex
@@ -538,9 +348,9 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 			<-serverDone
 			slog.Info("terminate complete")
 
-			if t.Failed() {
+			if t.Failed() || os.Getenv("OLLAMA_TEST_LOG_SERVER") != "" {
 				slog.Warn("SERVER LOG FOLLOWS")
-				io.Copy(os.Stderr, &serverLog)
+				io.Copy(os.Stderr, bytes.NewReader(serverLog.Bytes()))
 				slog.Warn("END OF SERVER")
 			}
 			slog.Info("cleanup complete", "failed", t.Failed())
@@ -617,14 +427,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 	verify := func() {
 		// Verify the response contains the expected data
 		response = buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
+		if !containsExpectedResponse(response, anyResp) {
 			t.Fatalf("%s: none of %v found in %s", genReq.Model, anyResp, response)
 		}
 	}
@@ -696,6 +499,45 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 		}
 }
 
+// summarizeMessages returns a compact string form of the messages suitable
+// for logs and error output. Image byte payloads are replaced with a
+// "<image: N bytes>" marker so vision tests don't dump huge integer arrays.
+func summarizeMessages(msgs []api.Message) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, m := range msgs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "{Role:%s Content:%q", m.Role, m.Content)
+		if m.Thinking != "" {
+			fmt.Fprintf(&b, " Thinking:%q", m.Thinking)
+		}
+		if len(m.Images) > 0 {
+			b.WriteString(" Images:[")
+			for j, img := range m.Images {
+				if j > 0 {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "<image: %d bytes>", len(img))
+			}
+			b.WriteByte(']')
+		}
+		if len(m.ToolCalls) > 0 {
+			fmt.Fprintf(&b, " ToolCalls:%+v", m.ToolCalls)
+		}
+		if m.ToolName != "" {
+			fmt.Fprintf(&b, " ToolName:%s", m.ToolName)
+		}
+		if m.ToolCallID != "" {
+			fmt.Fprintf(&b, " ToolCallID:%s", m.ToolCallID)
+		}
+		b.WriteByte('}')
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
@@ -723,15 +565,8 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 	verify := func() {
 		// Verify the response contains the expected data
 		response = buf.String()
-		atLeastOne := false
-		for _, resp := range anyResp {
-			if strings.Contains(strings.ToLower(response), resp) {
-				atLeastOne = true
-				break
-			}
-		}
-		if !atLeastOne {
-			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%v", req.Model, anyResp, response, req.Messages)
+		if !containsExpectedResponse(response, anyResp) {
+			t.Fatalf("%s: none of %v found in \"%s\" -- request was:%s", req.Model, anyResp, response, summarizeMessages(req.Messages))
 		}
 	}
 
@@ -748,10 +583,10 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 			return nil
 		}
 		if genErr != nil {
-			t.Fatalf("%s failed with %s request prompt %v", genErr, req.Model, req.Messages)
+			t.Fatalf("%s failed with %s request prompt %s", genErr, req.Model, summarizeMessages(req.Messages))
 		}
 		verify()
-		slog.Info("test pass", "model", req.Model, "messages", req.Messages, "contains", anyResp, "response", response)
+		slog.Info("test pass", "model", req.Model, "messages", summarizeMessages(req.Messages), "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		// On slow systems, we might timeout before some models finish rambling, so check what we have so far to see
 		// if it's considered a pass - the stallTimer will detect hangs, but we want to consider slow systems a pass
@@ -760,6 +595,24 @@ func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatR
 		verify()
 	}
 	return &api.Message{Role: role, Content: buf.String()}
+}
+
+func containsExpectedResponse(response string, anyResp []string) bool {
+	lowerResponse := strings.ToLower(response)
+	normalizedResponse := normalizeResponseText(response)
+	for _, resp := range anyResp {
+		if strings.Contains(lowerResponse, strings.ToLower(resp)) {
+			return true
+		}
+		if strings.Contains(normalizedResponse, normalizeResponseText(resp)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeResponseText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
 func ChatRequests() ([]api.ChatRequest, [][]string) {
@@ -781,6 +634,115 @@ func ChatRequests() ([]api.ChatRequest, [][]string) {
 	return reqs, results
 }
 
+func preloadGenerateModel(ctx context.Context, t *testing.T, client *api.Client, req api.GenerateRequest) {
+	t.Helper()
+	slog.Info("loading", "model", req.Model)
+	err := client.Generate(ctx, &req, func(response api.GenerateResponse) error { return nil })
+	if err != nil {
+		skipIfMLXUnsupported(t, err)
+		t.Fatalf("failed to load model %s: %s", req.Model, err)
+	}
+}
+
+// skipIfMLXUnsupported converts an MLX runner startup error into a test skip
+// when the fingerprint matches "the MLX stack is not wired up on this host",
+// and only on platforms where MLX is not yet expected to work. On Apple
+// Silicon (darwin/arm64) MLX must work, so the same errors there fall
+// through and fail the test — we never want to mask a real Mac regression.
+//
+// The fingerprints are the exact wrapper strings produced by the MLX code
+// paths (see mlxrunner/server.go, mlx/dynamic.go). Model-level errors
+// (unsupported architecture, tensor mismatches, runtime failures) do not
+// contain these strings, so this helper will not mask them.
+func skipIfMLXUnsupported(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	targetGOOS, targetGOARCH := targetPlatform()
+	if targetGOOS == "darwin" && targetGOARCH == "arm64" {
+		return
+	}
+	msg := err.Error()
+	for _, s := range []string{
+		"MLX not available:",
+		"failed to load MLX dynamic library",
+		"failed to load MLX function symbols",
+		"MLX on macOS requires Apple Silicon",
+		"MLX is not supported on",
+	} {
+		if strings.Contains(msg, s) {
+			t.Skipf("MLX not available on target %s/%s (runner %s/%s): %v", targetGOOS, targetGOARCH, runtime.GOOS, runtime.GOARCH, err)
+		}
+	}
+}
+
+func targetPlatform() (goos, goarch string) {
+	goos = normalizeTargetGOOS(os.Getenv("OLLAMA_TEST_HOST_OS"))
+	goarch = normalizeTargetGOARCH(os.Getenv("OLLAMA_TEST_HOST_ARCH"))
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	return goos, goarch
+}
+
+func normalizeTargetGOOS(goos string) string {
+	switch strings.ToLower(goos) {
+	case "darwin":
+		return "darwin"
+	case "linux":
+		return "linux"
+	case "windows", "win32nt":
+		return "windows"
+	default:
+		return strings.ToLower(goos)
+	}
+}
+
+func normalizeTargetGOARCH(goarch string) string {
+	switch strings.ToLower(goarch) {
+	case "aarch64", "arm64":
+		return "arm64"
+	case "x86_64", "amd64":
+		return "amd64"
+	default:
+		return strings.ToLower(goarch)
+	}
+}
+
+// skipIfModelTooLargeForVRAM skips the test when the model's on-disk size
+// is larger than OLLAMA_MAX_VRAM by enough that even partial GPU offload
+// won't help. The 0.75x gate keeps vision/audio tests runnable on systems
+// where the model is slightly over VRAM and a portion legitimately spills to
+// CPU. No-op when OLLAMA_MAX_VRAM is unset.
+func skipIfModelTooLargeForVRAM(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	s := os.Getenv("OLLAMA_MAX_VRAM")
+	if s == "" {
+		return
+	}
+	maxVram, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatalf("invalid OLLAMA_MAX_VRAM %v", err)
+	}
+	resp, err := client.List(ctx)
+	if err != nil {
+		t.Fatalf("list models failed %v", err)
+	}
+	for _, m := range resp.Models {
+		if sameModelName(m.Name, modelName) && float32(m.Size)*0.75 > float32(maxVram) {
+			t.Skipf("model %s is too large %s for available VRAM %s", modelName, format.HumanBytes(m.Size), format.HumanBytes(int64(maxVram)))
+		}
+	}
+}
+
+func sameModelName(a, b string) bool {
+	return a == b || strings.TrimSuffix(a, ":latest") == strings.TrimSuffix(b, ":latest")
+}
+
 func skipUnderMinVRAM(t *testing.T, gb uint64) {
 	// TODO use info API in the future
 	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
@@ -799,6 +761,8 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 func skipIfNotGPULoaded(ctx context.Context, t *testing.T, client *api.Client, model string, minPercent int) {
 	gpuPercent := getGPUPercent(ctx, t, client, model)
 	if gpuPercent < minPercent {
+		// Unload the model if we're going to skip
+		client.Generate(ctx, &api.GenerateRequest{Model: model, KeepAlive: &api.Duration{Duration: 0}}, func(rsp api.GenerateResponse) error { return nil })
 		t.Skip(fmt.Sprintf("test requires minimum %d%% GPU load, but model %s only has %d%%", minPercent, model, gpuPercent))
 	}
 }

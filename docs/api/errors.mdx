@@ -28,9 +28,9 @@ Errors are returned in the `application/json` format with the following structur
 If an error occurs mid-stream, the error will be returned as an object in the `application/x-ndjson` format with an `error` property. Since the response has already started, the status code of the response will not be changed.
 
 ```json
-{"model":"gemma3","created_at":"2025-10-26T17:21:21.196249Z","response":" Yes","done":false}
-{"model":"gemma3","created_at":"2025-10-26T17:21:21.207235Z","response":".","done":false}
-{"model":"gemma3","created_at":"2025-10-26T17:21:21.219166Z","response":"I","done":false}
-{"model":"gemma3","created_at":"2025-10-26T17:21:21.231094Z","response":"can","done":false}
+{"model":"gemma4","created_at":"2025-10-26T17:21:21.196249Z","response":" Yes","done":false}
+{"model":"gemma4","created_at":"2025-10-26T17:21:21.207235Z","response":".","done":false}
+{"model":"gemma4","created_at":"2025-10-26T17:21:21.219166Z","response":"I","done":false}
+{"model":"gemma4","created_at":"2025-10-26T17:21:21.231094Z","response":"can","done":false}
 {"error":"an error was encountered while running the model"}
 ```

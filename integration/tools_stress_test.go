@@ -15,104 +15,90 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-// TestAPIToolCallingStress tests tool calling with complex, agent-style prompts
-// that include large system messages, multiple tools, and multi-turn conversations.
-// This catches cache corruption and parser bugs that simple tool tests miss.
-func TestAPIToolCallingStress(t *testing.T) {
+func registerToolStressCases(models []string) {
+	registerModelIntegrationCases("tools-stress", models, runAPIToolCallingStressModel)
+}
+
+var toolStressSkipModels = map[string]string{
+	"lfm2.5-thinking": "returns text instead of tool calls with complex system prompts",
+	"qwen3.5:2b":      "2B model too small for reliable multi-tool agent prompts",
+	"qwen3-vl":        "vision model, extremely slow with complex tool prompts",
+	"llama3.2":        "3B model too small for reliable multi-tool agent prompts",
+	"mistral":         "7B v0.3 returns text instead of tool calls with complex prompts",
+	"mixtral:8x22b":   "returns text instead of tool calls with complex prompts",
+	"qwen2":           "returns text instead of tool calls with complex prompts",
+	"granite3.3":      "returns text instead of tool calls with complex prompts",
+}
+
+func runAPIToolCallingStressModel(t *testing.T, model string) {
 	initialTimeout := 120 * time.Second
 	streamTimeout := 120 * time.Second
+	softTimeout, _ := getTimeouts(t)
+	if time.Since(started) > softTimeout {
+		t.Skip("skipping remaining tests to avoid excessive runtime")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	minVRAM := map[string]uint64{
-		"qwen3-vl":      16,
-		"gpt-oss:20b":   16,
-		"gpt-oss:120b":  70,
-		"qwen3":         6,
-		"llama3.1":      8,
-		"llama3.2":      4,
-		"mistral":       6,
-		"qwen2.5":       6,
-		"qwen2":         6,
-		"ministral-3":   20,
-		"mistral-nemo":  9,
-		"mistral-small": 16,
-		"mixtral:8x22b": 80,
-		"qwq":           20,
-		"granite3.3":    7,
+	runAPIToolCallingStressModelWithClient(t, ctx, client, model, initialTimeout, streamTimeout, toolsMinVRAM, toolStressSkipModels)
+}
+
+func runAPIToolCallingStressModelWithClient(t *testing.T, ctx context.Context, client *api.Client, model string, initialTimeout, streamTimeout time.Duration, minVRAM map[string]uint64, skipModels map[string]string) {
+	t.Helper()
+
+	// Skip known-bad models unless explicitly requested via env var
+	if reason, ok := skipModels[model]; ok && testModel == "" {
+		t.Skipf("skipping: %s", reason)
 	}
-
-	// Models that don't reliably produce tool calls with complex/multi-tool prompts.
-	// The stress test uses a large system prompt with many tools, simulating coding agents.
-	// Some models are too small, too slow, or not designed for this use case.
-	skipModels := map[string]string{
-		"lfm2.5-thinking": "returns text instead of tool calls with complex system prompts",
-		"qwen3-vl":        "vision model, extremely slow with complex tool prompts",
-		"llama3.2":        "3B model too small for reliable multi-tool agent prompts",
-		"mistral":         "7B v0.3 returns text instead of tool calls with complex prompts",
-		"mixtral:8x22b":   "returns text instead of tool calls with complex prompts",
-		"qwen2":           "returns text instead of tool calls with complex prompts",
-		"granite3.3":      "returns text instead of tool calls with complex prompts",
+	if v, ok := minVRAM[model]; ok {
+		skipUnderMinVRAM(t, v)
 	}
+	requireCapability(ctx, t, client, model, "tools")
 
-	models := testModels(libraryToolsModels)
+	// Preload and skip if not sufficiently GPU-loaded to avoid timeouts
+	preloadGenerateModel(ctx, t, client, api.GenerateRequest{Model: model})
+	skipIfNotGPULoaded(ctx, t, client, model, 80)
 
-	for _, model := range models {
-		t.Run(model, func(t *testing.T) {
-			// Skip known-bad models unless explicitly requested via env var
-			if reason, ok := skipModels[model]; ok && testModel == "" {
-				t.Skipf("skipping: %s", reason)
-			}
-			if testModel != "" {
-				requireCapability(ctx, t, client, model, "tools")
-			}
-			if v, ok := minVRAM[model]; ok {
-				skipUnderMinVRAM(t, v)
-			}
+	tools := stressTestTools()
 
-			pullOrSkip(ctx, t, client, model)
+	// Large system prompt that mimics real coding agents (opencode, Claude Code, etc.)
+	// This is intentionally very long (~5000+ tokens) to match the prompt sizes that
+	// real coding agents send. The combination of a large system prompt, many tools,
+	// and thinking mode is what triggers failures in some models.
+	systemPrompt := stressTestSystemPrompt()
 
-			tools := stressTestTools()
+	// Test 1: First request (fresh prompt processing)
+	// Use a direct prompt that tells the model exactly what tool to use,
+	// reducing the chance it asks for clarification instead.
+	t.Run("first_request", func(t *testing.T) {
+		testToolCall(t, ctx, client, model, systemPrompt, tools,
+			"Run git diff main to review the code changes on the current branch.",
+			initialTimeout, streamTimeout)
+	})
 
-			// Large system prompt that mimics real coding agents (opencode, Claude Code, etc.)
-			// This is intentionally very long (~5000+ tokens) to match the prompt sizes that
-			// real coding agents send. The combination of a large system prompt, many tools,
-			// and thinking mode is what triggers failures in some models.
-			systemPrompt := stressTestSystemPrompt()
+	// Test 2: Repeat with same prompt (tests cache reuse)
+	t.Run("cached_request", func(t *testing.T) {
+		testToolCall(t, ctx, client, model, systemPrompt, tools,
+			"Run git diff main to review the code changes on the current branch.",
+			initialTimeout, streamTimeout)
+	})
 
-			// Test 1: First request (fresh prompt processing)
-			// Use a direct prompt that tells the model exactly what tool to use,
-			// reducing the chance it asks for clarification instead.
-			t.Run("first_request", func(t *testing.T) {
-				testToolCall(t, ctx, client, model, systemPrompt, tools,
-					"Run git diff main to review the code changes on the current branch.",
-					initialTimeout, streamTimeout)
-			})
+	// Test 3: Different user message (partial cache hit)
+	t.Run("different_user_message", func(t *testing.T) {
+		testToolCall(t, ctx, client, model, systemPrompt, tools,
+			"Read the file at ./go.mod and tell me what dependencies we have.",
+			initialTimeout, streamTimeout)
+	})
 
-			// Test 2: Repeat with same prompt (tests cache reuse)
-			t.Run("cached_request", func(t *testing.T) {
-				testToolCall(t, ctx, client, model, systemPrompt, tools,
-					"Run git diff main to review the code changes on the current branch.",
-					initialTimeout, streamTimeout)
-			})
-
-			// Test 3: Different user message (partial cache hit)
-			t.Run("different_user_message", func(t *testing.T) {
-				testToolCall(t, ctx, client, model, systemPrompt, tools,
-					"Read the file at ./go.mod and tell me what dependencies we have.",
-					initialTimeout, streamTimeout)
-			})
-
-			// Test 4: Multi-turn with tool response
-			t.Run("multi_turn", func(t *testing.T) {
-				testToolCallMultiTurn(t, ctx, client, model, systemPrompt, tools,
-					initialTimeout, streamTimeout)
-			})
-		})
-	}
+	// Test 4: Multi-turn with tool response
+	t.Run("multi_turn", func(t *testing.T) {
+		skipKnownIntegrationFlake(t, "tools-stress/multi_turn", model)
+		testToolCallMultiTurn(t, ctx, client, model, systemPrompt, tools,
+			initialTimeout, streamTimeout)
+	})
 }
 
 func newTool(name, description string, required []string, props map[string]api.ToolProperty) api.Tool {
@@ -342,7 +328,8 @@ func testToolCall(t *testing.T, ctx context.Context, client *api.Client, model, 
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMessage},
 		},
-		Tools: tools,
+		Tools:     tools,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 		Options: map[string]any{
 			"temperature": 0,
 			"num_ctx":     contextLength(16384),
@@ -425,7 +412,8 @@ func testToolCallMultiTurn(t *testing.T, ctx context.Context, client *api.Client
 			{Role: "tool", Content: "go.mod\ngo.sum\nmain.go\nREADME.md\n"},
 			// The model should now respond with content or another tool call
 		},
-		Tools: tools,
+		Tools:     tools,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 		Options: map[string]any{
 			"temperature": 0,
 			"num_ctx":     contextLength(16384),

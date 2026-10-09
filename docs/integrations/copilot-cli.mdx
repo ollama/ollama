@@ -1,0 +1,93 @@
+---
+title: Copilot CLI
+---
+
+GitHub Copilot CLI is GitHub's AI coding agent for the terminal. It can understand your codebase, make edits, run commands, and help you build software faster.
+
+Open models can be used with Copilot CLI through Ollama, enabling you to use models such as `qwen3.5`, `glm-5.1:cloud`, `kimi-k2.5:cloud`.
+
+## Install
+
+Install [Copilot CLI](https://github.com/features/copilot/cli/):
+
+<CodeGroup>
+
+```shell macOS / Linux (Homebrew)
+brew install copilot-cli
+```
+
+```shell npm (all platforms)
+npm install -g @github/copilot
+```
+
+```shell macOS / Linux (script)
+curl -fsSL https://gh.io/copilot-install | bash
+```
+
+```powershell Windows (WinGet)
+winget install GitHub.Copilot
+```
+
+</CodeGroup>
+
+## Usage with Ollama
+
+### Quick setup
+
+```shell
+ollama launch copilot
+```
+
+### Run directly with a model
+
+```shell
+ollama launch copilot --model kimi-k2.5:cloud
+```
+
+## Recommended Models
+
+- `kimi-k2.5:cloud`
+- `glm-5:cloud`
+- `minimax-m2.7:cloud`
+- `qwen3.5:cloud`
+- `glm-4.7-flash`
+- `qwen3.5`
+
+Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+
+## Non-interactive (headless) mode
+
+Run Copilot CLI without interaction for use in Docker, CI/CD, or scripts:
+
+```shell
+ollama launch copilot --model kimi-k2.5:cloud --yes -- -p "how does this repository work?"
+```
+
+The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified. Arguments after `--` are passed directly to Copilot CLI.
+
+## Manual setup
+
+Copilot CLI connects to Ollama using the OpenAI-compatible API via environment variables.
+
+1. Set the environment variables:
+
+```shell
+export COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1
+export COPILOT_PROVIDER_API_KEY=
+export COPILOT_PROVIDER_WIRE_API=responses
+export COPILOT_MODEL=qwen3.5
+```
+
+1. Run Copilot CLI:
+
+```shell
+copilot
+```
+
+Or run with environment variables inline:
+
+```shell
+COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1 COPILOT_PROVIDER_API_KEY= COPILOT_PROVIDER_WIRE_API=responses COPILOT_MODEL=glm-5:cloud copilot
+```
+
+**Note:** Copilot requires a large context window. We recommend at least 64k tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.

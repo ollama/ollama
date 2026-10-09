@@ -21,6 +21,7 @@ const (
 const (
 	qwen35ThinkingOpenTag  = "<think>"
 	qwen35ThinkingCloseTag = "</think>"
+	qwen35ToolCallOpenTag  = "<tool_call>"
 )
 
 // Qwen35Parser handles qwen3.5 reasoning extraction and delegates post-thinking
@@ -33,6 +34,7 @@ type Qwen35Parser struct {
 	// Some checkpoints may emit an explicit leading <think> even when the
 	// prompt already opened thinking. Strip at most one such tag.
 	allowLeadingThinkOpenTag bool
+	trimLeadingThinkingSpace bool
 }
 
 func (p *Qwen35Parser) HasToolSupport() bool {
@@ -41,6 +43,22 @@ func (p *Qwen35Parser) HasToolSupport() bool {
 
 func (p *Qwen35Parser) HasThinkingSupport() bool {
 	return true
+}
+
+func (p *Qwen35Parser) ThinkingClose() []string {
+	if p.state == qwen35ParserStateCollectingThinking {
+		return []string{qwen35ThinkingCloseTag}
+	}
+	return nil
+}
+
+func (p *Qwen35Parser) PreservedTokens() []string {
+	return []string{
+		qwen35ThinkingOpenTag,
+		qwen35ThinkingCloseTag,
+		toolOpenTag,
+		toolCloseTag,
+	}
 }
 
 func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
@@ -57,9 +75,11 @@ func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkVal
 	if thinkingEnabled && !assistantPrefill {
 		p.state = qwen35ParserStateCollectingThinking
 		p.allowLeadingThinkOpenTag = true
+		p.trimLeadingThinkingSpace = false
 	} else {
 		p.state = qwen35ParserStateCollectingContent
 		p.allowLeadingThinkOpenTag = false
+		p.trimLeadingThinkingSpace = false
 	}
 
 	return tools
@@ -152,10 +172,11 @@ func (p *Qwen35Parser) maybeConsumeLeadingThinkOpenTag(acc string) (bool, bool) 
 		after = strings.TrimLeftFunc(after, unicode.IsSpace)
 		p.buffer.Reset()
 		p.buffer.WriteString(after)
+		p.allowLeadingThinkOpenTag = false
+		p.trimLeadingThinkingSpace = after == ""
 		if after == "" {
 			return true, false
 		}
-		p.allowLeadingThinkOpenTag = false
 		return true, true
 	}
 
@@ -177,6 +198,15 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 		if handled, continueNow := p.maybeConsumeLeadingThinkOpenTag(acc); handled {
 			return events, continueNow
 		}
+		if p.trimLeadingThinkingSpace {
+			acc = strings.TrimLeftFunc(acc, unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(acc)
+			if acc == "" {
+				return events, false
+			}
+			p.trimLeadingThinkingSpace = false
+		}
 
 		if strings.Contains(acc, qwen35ThinkingCloseTag) {
 			thinking, remaining := p.splitAtTag(qwen35ThinkingCloseTag, true)
@@ -189,7 +219,7 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				p.state = qwen35ParserStateCollectingContent
 			}
 			return events, true
-		} else if overlapLen := overlap(acc, qwen35ThinkingCloseTag); overlapLen > 0 {
+		} else if overlapLen := max(overlap(acc, qwen35ThinkingCloseTag), overlap(acc, qwen35ToolCallOpenTag)); overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWsLen
@@ -202,6 +232,14 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				events = append(events, qwen35EventThinkingContent{content: unambiguous})
 			}
 			return events, false
+		} else if strings.Contains(acc, qwen35ToolCallOpenTag) {
+			// qwen3.5:9b model forgets sometimes to use </think> tag before the <tool_call> block starts
+			// this condition ends the Think block and continues with the <tool_call> when the tag
+			// is found
+			thinking, tooling := p.splitAtTag(qwen35ToolCallOpenTag, true)
+			p.buffer.Reset()
+			p.buffer.WriteString(thinking + qwen35ThinkingCloseTag + qwen35ToolCallOpenTag + tooling)
+			return events, true
 		}
 
 		whitespaceLen := trailingWhitespaceLen(acc)

@@ -25,11 +25,8 @@ type VSCode struct{}
 func (v *VSCode) String() string { return "Visual Studio Code" }
 
 // findBinary returns the path/command to launch VS Code, or "" if not found.
-// It checks for the "code" CLI on PATH first, then falls back to platform-specific locations.
+// It checks platform-specific locations only.
 func (v *VSCode) findBinary() string {
-	if _, err := exec.LookPath("code"); err == nil {
-		return "code"
-	}
 	var candidates []string
 	switch runtime.GOOS {
 	case "darwin":
@@ -129,7 +126,7 @@ const (
 	minVSCodeVersion      = "1.113"
 )
 
-func (v *VSCode) Run(model string, args []string) error {
+func (v *VSCode) Run(model string, _ []LaunchModel, args []string) error {
 	v.checkVSCodeVersion()
 	v.checkCopilotChatVersion()
 
@@ -241,7 +238,7 @@ func (v *VSCode) Paths() []string {
 	return nil
 }
 
-func (v *VSCode) Edit(models []string) error {
+func (v *VSCode) Edit(models []LaunchModel) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -276,7 +273,7 @@ func (v *VSCode) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := fileutil.WriteWithBackup(clmPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(clmPath, data, "vscode"); err != nil {
 		return err
 	}
 
@@ -353,7 +350,7 @@ func (v *VSCode) updateSettings() {
 	if err != nil {
 		return
 	}
-	_ = fileutil.WriteWithBackup(settingsPath, updated)
+	_ = fileutil.WriteWithBackup(settingsPath, updated, "vscode")
 }
 
 func (v *VSCode) statePath() string {

@@ -268,6 +268,7 @@ type HarmonyMessageHandler struct {
 	FunctionNameMap *FunctionNameMap
 	toolAccumulator *HarmonyToolCallAccumulator
 	convertedTools  map[string]struct{}
+	contentPrefill  bool // the prompt continues a final-channel message
 }
 
 // NewHarmonyMessageHandler creates a new message handler
@@ -406,6 +407,7 @@ func (h *HarmonyMessageHandler) Init(tools []api.Tool, lastMessage *api.Message,
 	} else {
 		h.HarmonyParser.AddImplicitStart()
 	}
+	h.contentPrefill = lastMessage != nil && lastMessage.Role == "assistant" && lastMessage.Content != ""
 
 	// Initialize tool accumulator
 	h.toolAccumulator = h.CreateToolParser()
@@ -459,6 +461,35 @@ func (h *HarmonyMessageHandler) HasToolSupport() bool {
 // HasThinkingSupport implements the Parser interface
 func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
 	return true
+}
+
+// The analysis ends when the model opens a message whose body is content: the
+// final channel in any constrain spelling parseHeader accepts, a commentary
+// message with no recipient, or a message with no channel.
+func (h *HarmonyMessageHandler) ThinkingClose() []string {
+	if h.contentPrefill {
+		return nil
+	}
+	return []string{
+		"<|end|><|start|>assistant<|channel|>final<|message|>",
+		"<|end|><|start|>assistant<|channel|>final <|constrain|>json<|message|>",
+		"<|end|><|start|>assistant<|channel|>final<|constrain|>json<|message|>",
+		"<|end|><|start|>assistant<|channel|>final json<|message|>",
+		"<|end|><|start|>assistant<|channel|>commentary<|message|>",
+		"<|end|><|start|>assistant<|message|>",
+	}
+}
+
+func (h *HarmonyMessageHandler) PreservedTokens() []string {
+	// <|call|> is an EOG marker for tool calls. Preserve structural tokens
+	// used by the parser, but let llama-server stop on the call terminator.
+	return []string{
+		"<|start|>",
+		"<|end|>",
+		"<|message|>",
+		"<|channel|>",
+		"<|constrain|>",
+	}
 }
 
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {

@@ -14,7 +14,12 @@ import (
 type LFM2ParserState int
 
 const (
-	LFM2CollectingThinking LFM2ParserState = iota
+	// LFM2LookingForThinking is the initial state when thinking is enabled.
+	// LFM2 models emit an explicit <think> tag only when they reason; a direct
+	// answer has no tag at all. This state waits to see which one the output
+	// begins with before committing to thinking or content.
+	LFM2LookingForThinking LFM2ParserState = iota
+	LFM2CollectingThinking
 	LFM2CollectingContent
 	LFM2CollectingToolCalls
 )
@@ -29,6 +34,7 @@ const (
 type LFM2Parser struct {
 	state                    LFM2ParserState
 	buffer                   strings.Builder
+	callIndex                int
 	hasThinkingSupport       bool
 	needsThinkingLeadingTrim bool // trim leading whitespace after <think> tag
 	needsContentLeadingTrim  bool // trim leading whitespace after </think> tag
@@ -42,6 +48,22 @@ func (p *LFM2Parser) HasToolSupport() bool {
 
 func (p *LFM2Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
+}
+
+func (p *LFM2Parser) ThinkingClose() []string {
+	if p.state == LFM2LookingForThinking || p.state == LFM2CollectingThinking {
+		return []string{lfm2ThinkingCloseTag}
+	}
+	return nil
+}
+
+func (p *LFM2Parser) PreservedTokens() []string {
+	return []string{
+		lfm2ThinkingOpenTag,
+		lfm2ThinkingCloseTag,
+		lfm2ToolCallStartTag,
+		lfm2ToolCallEndTag,
+	}
 }
 
 func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
@@ -60,12 +82,15 @@ func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.T
 		return
 	}
 
-	p.state = LFM2CollectingThinking
-	p.needsThinkingLeadingTrim = true
+	// Thinking is enabled, but the model decides per-turn whether to reason. Wait
+	// for a leading <think> tag before treating output as thinking; otherwise it's
+	// a direct answer.
+	p.state = LFM2LookingForThinking
 }
 
 func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.toolNames = make(map[string]struct{}, len(tools))
+	p.callIndex = 0
 	p.hasTools = len(tools) > 0
 	for _, tool := range tools {
 		if tool.Function.Name != "" {
@@ -98,6 +123,18 @@ func (lfm2EventToolCall) isLFM2Event()        {}
 
 func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
+
+	// On the final chunk a partial "<think>" prefix can never complete, so commit
+	// the buffered output as a direct answer rather than withholding it.
+	if done && p.state == LFM2LookingForThinking {
+		trimmed := strings.TrimLeftFunc(p.buffer.String(), unicode.IsSpace)
+		if !strings.HasPrefix(trimmed, lfm2ThinkingOpenTag) {
+			p.buffer.Reset()
+			p.buffer.WriteString(trimmed)
+			p.state = LFM2CollectingContent
+		}
+	}
+
 	events := p.parseEvents()
 
 	var toolCalls []api.ToolCall
@@ -121,6 +158,11 @@ func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, 
 			contentSb.Reset()
 			toolCalls = append(toolCalls, fallbackCalls...)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
@@ -164,6 +206,28 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 	}
 
 	switch p.state {
+	case LFM2LookingForThinking:
+		// Decide whether this turn is a reasoning turn (begins with <think>) or a
+		// direct answer (no tag). Leading whitespace is ignored either way.
+		trimmed := strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+		if strings.HasPrefix(trimmed, lfm2ThinkingOpenTag) {
+			after := trimmed[len(lfm2ThinkingOpenTag):]
+			p.buffer.Reset()
+			p.buffer.WriteString(after)
+			p.state = LFM2CollectingThinking
+			p.needsThinkingLeadingTrim = true
+			return events, true
+		}
+		if trimmed == "" || strings.HasPrefix(lfm2ThinkingOpenTag, trimmed) {
+			// Only whitespace so far, or a partial "<think>" prefix; wait for more.
+			return events, false
+		}
+		// Direct answer: no thinking block.
+		p.buffer.Reset()
+		p.buffer.WriteString(trimmed)
+		p.state = LFM2CollectingContent
+		return events, true
+
 	case LFM2CollectingThinking:
 		// Strip opening <think> tag if present
 		if strings.HasPrefix(bufStr, lfm2ThinkingOpenTag) {

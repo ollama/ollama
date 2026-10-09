@@ -2,6 +2,9 @@ package server
 
 import (
 	"testing"
+
+	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestModelOptionsNumCtxPriority(t *testing.T) {
@@ -121,6 +124,197 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 
 			if opts.NumCtx != tt.expectedNumCtx {
 				t.Errorf("NumCtx = %d, want %d", opts.NumCtx, tt.expectedNumCtx)
+			}
+		})
+	}
+}
+
+func TestModelOptionsGenerationDefaultsPriority(t *testing.T) {
+	m := &Model{
+		GenerationDefaults: model.GenerationDefaults{
+			"top_k":          int64(12),
+			"top_p":          float64(0.7),
+			"min_p":          float64(0.05),
+			"temperature":    float64(0.4),
+			"repeat_last_n":  int64(128),
+			"repeat_penalty": float64(1.2),
+		},
+		Options: map[string]any{
+			"top_p":         float64(0.5),
+			"min_p":         float64(0),
+			"repeat_last_n": float64(0),
+		},
+	}
+	requestOpts := map[string]any{
+		"temperature":    float64(0),
+		"repeat_penalty": float64(1.5),
+	}
+
+	opts, err := (&Server{}).modelOptions(m, requestOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if opts.TopK != 12 {
+		t.Fatalf("TopK = %d, want 12", opts.TopK)
+	}
+	if opts.TopP != 0.5 {
+		t.Fatalf("TopP = %v, want 0.5", opts.TopP)
+	}
+	if opts.MinP != 0 {
+		t.Fatalf("MinP = %v, want 0", opts.MinP)
+	}
+	if opts.Temperature != 0 {
+		t.Fatalf("Temperature = %v, want 0", opts.Temperature)
+	}
+	if opts.RepeatLastN != 0 {
+		t.Fatalf("RepeatLastN = %d, want 0", opts.RepeatLastN)
+	}
+	if opts.RepeatPenalty != 1.5 {
+		t.Fatalf("RepeatPenalty = %v, want 1.5", opts.RepeatPenalty)
+	}
+}
+
+func TestModelOptionsEmbeddingNumBatchDefault(t *testing.T) {
+	tests := []struct {
+		name             string
+		defaultNumCtx    int
+		capabilities     []string
+		modelOpts        map[string]any
+		requestOpts      map[string]any
+		expectedNumBatch int
+	}{
+		{
+			name:             "embedding model defaults to embedding batch size",
+			defaultNumCtx:    40960,
+			capabilities:     []string{string(model.CapabilityEmbedding)},
+			expectedNumBatch: llm.DefaultEmbeddingNumBatch,
+		},
+		{
+			name:             "embedding default is capped by context",
+			defaultNumCtx:    1024,
+			capabilities:     []string{string(model.CapabilityEmbedding)},
+			expectedNumBatch: 1024,
+		},
+		{
+			name:             "model num_batch overrides embedding default",
+			defaultNumCtx:    40960,
+			capabilities:     []string{string(model.CapabilityEmbedding)},
+			modelOpts:        map[string]any{"num_batch": float64(1024)},
+			expectedNumBatch: 1024,
+		},
+		{
+			name:             "request num_batch overrides embedding default",
+			defaultNumCtx:    40960,
+			capabilities:     []string{string(model.CapabilityEmbedding)},
+			requestOpts:      map[string]any{"num_batch": float64(4096)},
+			expectedNumBatch: 4096,
+		},
+		{
+			name:             "non embedding model keeps general default",
+			defaultNumCtx:    40960,
+			capabilities:     []string{string(model.CapabilityCompletion)},
+			expectedNumBatch: 512,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{defaultNumCtx: tt.defaultNumCtx}
+			m := &Model{
+				Options: tt.modelOpts,
+			}
+			m.Config.Capabilities = tt.capabilities
+
+			opts, err := s.modelOptions(m, tt.requestOpts)
+			if err != nil {
+				t.Fatalf("modelOptions failed: %v", err)
+			}
+
+			if opts.NumBatch != tt.expectedNumBatch {
+				t.Fatalf("NumBatch = %d, want %d", opts.NumBatch, tt.expectedNumBatch)
+			}
+		})
+	}
+}
+
+func TestModelOptionsDraftNumPredictDefault(t *testing.T) {
+	tests := []struct {
+		name        string
+		model       *Model
+		requestOpts map[string]any
+		want        int
+	}{
+		{
+			name:  "separate draft model keeps default enabled",
+			model: &Model{DraftPath: "draft.gguf"},
+			want:  4,
+		},
+		{
+			name:  "embedded draft requires explicit parameter",
+			model: &Model{},
+			want:  0,
+		},
+		{
+			name:  "model parameter enables embedded draft",
+			model: &Model{Options: map[string]any{"draft_num_predict": float64(4)}},
+			want:  4,
+		},
+		{
+			name:        "request parameter enables embedded draft",
+			model:       &Model{},
+			requestOpts: map[string]any{"draft_num_predict": float64(8)},
+			want:        8,
+		},
+		{
+			name:        "request can disable separate draft model",
+			model:       &Model{DraftPath: "draft.gguf"},
+			requestOpts: map[string]any{"draft_num_predict": float64(0)},
+			want:        0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, err := (&Server{}).modelOptions(tt.model, tt.requestOpts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opts.DraftNumPredict != tt.want {
+				t.Fatalf("DraftNumPredict = %d, want %d", opts.DraftNumPredict, tt.want)
+			}
+		})
+	}
+}
+
+func TestUsesAutomaticNumBatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		modelOpts   map[string]any
+		requestOpts map[string]any
+		want        bool
+	}{
+		{
+			name: "default is automatic",
+			want: true,
+		},
+		{
+			name:        "model num_batch is explicit",
+			modelOpts:   map[string]any{"num_batch": float64(1024)},
+			requestOpts: nil,
+			want:        false,
+		},
+		{
+			name:        "request num_batch is explicit",
+			requestOpts: map[string]any{"num_batch": float64(2048)},
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := usesAutomaticNumBatch(&Model{Options: tt.modelOpts}, tt.requestOpts); got != tt.want {
+				t.Fatalf("usesAutomaticNumBatch = %v, want %v", got, tt.want)
 			}
 		})
 	}

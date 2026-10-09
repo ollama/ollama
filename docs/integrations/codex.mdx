@@ -1,11 +1,11 @@
 ---
-title: Codex
+title: Codex CLI
 ---
 
 
 ## Install
 
-Install the [Codex CLI](https://developers.openai.com/codex/cli/):
+Install the [Codex CLI](https://developers.openai.com/codex/cli/). For the ChatGPT desktop app, see [ChatGPT Desktop](/integrations/chatgpt).
 
 ```
 npm install -g @openai/codex
@@ -13,7 +13,7 @@ npm install -g @openai/codex
 
 ## Usage with Ollama
 
-<Note>Codex requires a larger context window. It is recommended to use a context window of at least 64k tokens.</Note>
+<Note>Use a context window of at least 64k tokens for Codex.</Note>
 
 ### Quick setup
 
@@ -21,10 +21,19 @@ npm install -g @openai/codex
 ollama launch codex
 ```
 
+When launched through `ollama launch codex`, Ollama refreshes the model catalog
+and uses a dedicated Codex profile for that session.
+
 To configure without launching:
 
 ```shell
 ollama launch codex --config
+```
+
+To remove the Ollama launch profile and generated model catalog:
+
+```shell
+ollama launch codex --restore
 ```
 
 ### Manual setup
@@ -35,36 +44,47 @@ To use `codex` with Ollama, use the `--oss` flag:
 codex --oss
 ```
 
-### Changing Models
-
-By default, codex will use the local `gpt-oss:20b` model. However, you can specify a different model with the `-m` flag:
+To use a specific model, pass the `-m` flag:
 
 ```
 codex --oss -m gpt-oss:120b
 ```
 
-### Cloud Models
+To use a cloud model:
 
 ```
 codex --oss -m gpt-oss:120b-cloud
 ```
 
+### Profile-based setup
 
-## Connecting to ollama.com
-
-
-Create an [API key](https://ollama.com/settings/keys) from ollama.com and export it as `OLLAMA_API_KEY`.
-
-To use ollama.com directly, edit your `~/.codex/config.toml` file to point to ollama.com.
+For a persistent Codex CLI configuration, create `~/.codex/ollama-launch.config.toml`:
 
 ```toml
 model = "gpt-oss:120b"
-model_provider = "ollama"
+model_provider = "ollama-launch"
+model_catalog_json = "/Users/you/.codex/model.json"
 
-[model_providers.ollama]
+[model_providers.ollama-launch]
 name = "Ollama"
-base_url = "https://ollama.com/v1"
-env_key = "OLLAMA_API_KEY"
+base_url = "http://localhost:11434/v1/"
+wire_api = "responses"
 ```
 
-Run `codex` in a new terminal to load the new settings.
+Then run:
+
+```
+codex --profile ollama-launch
+```
+
+## Web search through local Ollama
+
+Codex web-search requests sent through the Ollama profile are executed by
+Ollama for both local and cloud models. Sign in with `ollama signin` to use the
+web-search service.
+
+To disable web search for a Codex session:
+
+```shell
+codex --profile ollama-launch -c 'web_search="disabled"'
+```

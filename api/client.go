@@ -259,6 +259,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 	}
 
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -368,6 +372,16 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+// ModelRecommendationsExperimental lists model recommendations from the local
+// server's experimental recommendations endpoint.
+func (c *Client) ModelRecommendationsExperimental(ctx context.Context) (*ModelRecommendationsResponse, error) {
+	var resp ModelRecommendationsResponse
+	if err := c.do(ctx, http.MethodGet, "/api/experimental/model-recommendations", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ListRunning lists running models.
 func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 	var lr ProcessResponse
@@ -378,12 +392,14 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 }
 
 // Copy copies a model - creating a model with another name from an existing
-// model.
-func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
-	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
-		return err
+// model. Status carries a warning when the copy drops manifest list children
+// that are not held locally.
+func (c *Client) Copy(ctx context.Context, req *CopyRequest) (*ProgressResponse, error) {
+	var resp ProgressResponse
+	if err := c.do(ctx, http.MethodPost, "/api/copy", req, &resp); err != nil {
+		return nil, err
 	}
-	return nil
+	return &resp, nil
 }
 
 // Delete deletes a model and its data.
@@ -398,6 +414,21 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, error) {
 	var resp ShowResponse
 	if err := c.do(ctx, http.MethodPost, "/api/show", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ShowManifests obtains model information for all manifests in a manifest list.
+func (c *Client) ShowManifests(ctx context.Context, req *ShowRequest) (*ShowManifestsResponse, error) {
+	showReq := &ShowRequest{AllManifests: true}
+	if req != nil {
+		*showReq = *req
+		showReq.AllManifests = true
+	}
+
+	var resp ShowManifestsResponse
+	if err := c.do(ctx, http.MethodPost, "/api/show", showReq, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -436,6 +467,19 @@ func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) err
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
 }
 
+// HeadBlob checks if a blob exists on the server. It returns false for a 404
+// and an error for any unexpected response.
+func (c *Client) HeadBlob(ctx context.Context, digest string) (bool, error) {
+	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
+		var statusErr StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // Version returns the Ollama server version as a string.
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var version struct {
@@ -457,6 +501,26 @@ func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, 
 	}
 
 	return &status, nil
+}
+
+// WebSearchExperimental searches the web through the local server's
+// experimental web search endpoint.
+func (c *Client) WebSearchExperimental(ctx context.Context, req *WebSearchRequest) (*WebSearchResponse, error) {
+	var resp WebSearchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/experimental/web_search", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// WebFetchExperimental fetches web page content through the local server's
+// experimental web fetch endpoint.
+func (c *Client) WebFetchExperimental(ctx context.Context, req *WebFetchRequest) (*WebFetchResponse, error) {
+	var resp WebFetchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/experimental/web_fetch", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 // Signout will signout a client for a local ollama server.

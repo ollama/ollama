@@ -11,13 +11,61 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/app/store"
 )
+
+func TestUpdateStagePathRejectsUnsafeFilename(t *testing.T) {
+	stageDir := t.TempDir()
+	for _, tt := range []struct {
+		name     string
+		filename string
+	}{
+		{"empty", ""},
+		{"dot", "."},
+		{"dotdot", ".."},
+		{"posix_parent", "../OllamaSetup.exe"},
+		{"windows_parent", `..\OllamaSetup.exe`},
+		{"posix_absolute_tmp", "/tmp/OllamaSetup.exe"},
+		{"darwin_absolute_app", "/Applications/Ollama.app"},
+		{"darwin_bundle_path", "Ollama.app/Contents/MacOS/Ollama"},
+		{"darwin_user_download", "~/Downloads/Ollama-darwin.zip"},
+		{"windows_absolute", `C:\Users\Public\OllamaSetup.exe`},
+		{"colon", "Ollama:Setup.exe"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := updateStagePath(stageDir, "etag", tt.filename); err == nil {
+				t.Fatal("expected unsafe filename to be rejected")
+			}
+		})
+	}
+}
+
+func TestUpdateStagePathHashesETag(t *testing.T) {
+	stageDir := t.TempDir()
+	stageFilename, err := updateStagePath(stageDir, `../escaped`, "OllamaSetup.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rel, err := filepath.Rel(stageDir, stageFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		t.Fatalf("stage filename escaped stage dir: %s", stageFilename)
+	}
+	etagDir := filepath.Base(filepath.Dir(stageFilename))
+	if etagDir == ".." || etagDir == "escaped" || strings.ContainsAny(etagDir, `/\`) {
+		t.Fatalf("stage filename used raw etag path component: %s", stageFilename)
+	}
+}
 
 func TestIsNewReleaseAvailable(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -47,14 +95,270 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 	}
 }
 
+func TestDownloadNewReleaseRejectsUnsafeHeaderFilename(t *testing.T) {
+	UpdateStageDir = t.TempDir()
+	oldInstaller := Installer
+	oldVerifyDownload := VerifyDownload
+	oldUpdateDownloaded := UpdateDownloaded
+	defer func() {
+		Installer = oldInstaller
+		VerifyDownload = oldVerifyDownload
+		UpdateDownloaded = oldUpdateDownloaded
+	}()
+	Installer = "OllamaSetup.exe"
+	UpdateDownloaded = false
+	VerifyDownload = func() error {
+		t.Fatal("verification should not run for rejected downloads")
+		return nil
+	}
+
+	var getAttempted atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("ETag", `"safe"`)
+			w.Header().Set("Content-Disposition", `attachment; filename="../OllamaSetup.exe"`)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		getAttempted.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	updater := &Updater{}
+	err := updater.DownloadNewRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"})
+	if err == nil || !strings.Contains(err.Error(), "unsafe update filename") {
+		t.Fatalf("expected unsafe filename error, got %v", err)
+	}
+	if getAttempted.Load() {
+		t.Fatal("download should not continue after unsafe filename")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(UpdateStageDir), "OllamaSetup.exe")); err == nil {
+		t.Fatal("download escaped update stage dir")
+	}
+}
+
+func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
+	UpdateStageDir = t.TempDir()
+	oldInstaller := Installer
+	oldVerifyDownload := VerifyDownload
+	oldUpdateDownloaded := UpdateDownloaded
+	defer func() {
+		Installer = oldInstaller
+		VerifyDownload = oldVerifyDownload
+		UpdateDownloaded = oldUpdateDownloaded
+	}()
+	Installer = "OllamaSetup.exe"
+	UpdateDownloaded = false
+	VerifyDownload = func() error {
+		return nil
+	}
+
+	payload := []byte("payload")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"../escaped"`)
+		w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(payload)
+		}
+	}))
+	defer server.Close()
+
+	updater := &Updater{}
+	if err := updater.DownloadNewRelease(t.Context(), UpdateResponse{UpdateURL: server.URL + "/download"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(filepath.Dir(UpdateStageDir), "escaped", Installer)); err == nil {
+		t.Fatal("download escaped update stage dir via etag")
+	}
+
+	entries, err := os.ReadDir(UpdateStageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one staged update dir, got %d", len(entries))
+	}
+	stageFilename := filepath.Join(UpdateStageDir, entries[0].Name(), Installer)
+	got, err := os.ReadFile(stageFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("unexpected staged payload %q", got)
+	}
+}
+
+// stopChecker cancels the background update checker and waits for its
+// goroutine to return. Tests must join it before returning: the goroutine
+// reads package-level knobs (UpdateCheckURLBase, UpdateCheckInterval, ...)
+// that the next test rewrites.
+func stopChecker(t *testing.T, cancel context.CancelFunc, done <-chan struct{}) {
+	t.Helper()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Error("background update checker did not stop")
+	}
+}
+
+// waitDownloadIdle blocks until no download is in flight, so staged-file
+// handles close before t.TempDir cleanup removes the stage directory. After
+// the context is cancelled a new download can't write (it aborts at the HEAD
+// request), so reaching idle makes cleanup race-free.
+func (u *Updater) waitDownloadIdle() {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		u.cancelDownloadLock.Lock()
+		idle := u.cancelDownload == nil
+		u.cancelDownloadLock.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
+	UpdateStageDir = t.TempDir()
+	oldInstaller := Installer
+	oldVerifyDownload := VerifyDownload
+	oldUpdateDownloaded := UpdateDownloaded
+	oldUpdateCheckInitialDelay := UpdateCheckInitialDelay
+	oldUpdateCheckInterval := UpdateCheckInterval
+	oldUpdateCheckURLBase := UpdateCheckURLBase
+	defer func() {
+		Installer = oldInstaller
+		VerifyDownload = oldVerifyDownload
+		UpdateDownloaded = oldUpdateDownloaded
+		UpdateCheckInitialDelay = oldUpdateCheckInitialDelay
+		UpdateCheckInterval = oldUpdateCheckInterval
+		UpdateCheckURLBase = oldUpdateCheckURLBase
+	}()
+	Installer = "OllamaSetup.exe"
+	UpdateDownloaded = false
+	UpdateCheckInitialDelay = time.Millisecond
+	UpdateCheckInterval = 5 * time.Millisecond
+
+	var verifyCount atomic.Int32
+	VerifyDownload = func() error {
+		verifyCount.Add(1)
+		return nil
+	}
+
+	headETag := `"old-update"`
+	getETag := `"download-response-etag"`
+	payload := []byte("payload")
+	var headCount atomic.Int32
+	var getCount atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/update.json":
+			w.Write([]byte(
+				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
+					server.URL+"/9.9.9/"+Installer)))
+		case "/9.9.9/" + Installer:
+			w.Header().Set("Content-Disposition", `attachment; filename="OllamaSetup.exe"`)
+			switch r.Method {
+			case http.MethodHead:
+				etag := headETag
+				if getCount.Load() > 0 {
+					etag = getETag
+				}
+				w.Header().Set("ETag", etag)
+				headCount.Add(1)
+				w.WriteHeader(http.StatusOK)
+			case http.MethodGet:
+				w.Header().Set("ETag", getETag)
+				getCount.Add(1)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(payload)
+			default:
+				t.Errorf("unexpected request method %s", r.Method)
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		default:
+			t.Errorf("unexpected request path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	UpdateCheckURLBase = server.URL + "/update.json"
+
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
+	defer updater.Store.Close()
+	settings, err := updater.Store.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = true
+	if err := updater.Store.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	callbacks := make(chan string, 4)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, func(ver string) error {
+		callbacks <- ver
+		return nil
+	})
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
+
+	for range 2 {
+		select {
+		case <-callbacks:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for repeated update checks")
+		}
+	}
+	cancel()
+
+	stageFilename, err := updateStagePath(UpdateStageDir, getETag, Installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(stageFilename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("unexpected staged payload %q", got)
+	}
+
+	if headCount.Load() < 2 {
+		t.Fatalf("HEAD count = %d, want at least 2", headCount.Load())
+	}
+	if getCount.Load() != 1 {
+		t.Fatalf("GET count = %d, want 1", getCount.Load())
+	}
+	if verifyCount.Load() != 1 {
+		t.Fatalf("verification count = %d, want 1", verifyCount.Load())
+	}
+	if !UpdateDownloaded {
+		t.Fatal("UpdateDownloaded should stay true for already staged update")
+	}
+}
+
 func TestBackgoundChecker(t *testing.T) {
 	UpdateStageDir = t.TempDir()
 	haveUpdate := false
 	verified := false
-	done := make(chan int)
+	// Buffered + non-blocking send: the checker keeps calling cb every
+	// UpdateCheckInterval, and a blocking send would wedge its goroutine once
+	// the test stops receiving.
+	done := make(chan int, 1)
 	cb := func(ver string) error {
 		haveUpdate = true
-		done <- 0
+		select {
+		case done <- 0:
+		default:
+		}
 		return nil
 	}
 	stallTimer := time.NewTimer(5 * time.Second)
@@ -98,7 +402,9 @@ func TestBackgoundChecker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 	select {
 	case <-stallTimer.C:
 		t.Fatal("stalled")
@@ -156,11 +462,13 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 	}
 
 	cb := func(ver string) error {
-		t.Fatal("callback should not be called when auto-update is disabled")
+		t.Error("callback should not be called when auto-update is disabled")
 		return nil
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait enough time for multiple check cycles
 	time.Sleep(50 * time.Millisecond)
@@ -222,7 +530,9 @@ func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
 		return nil
 	}
 
-	upd.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := upd.startBackgroundUpdaterChecker(ctx, cb)
+	defer upd.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for a few cycles with auto-update disabled - no download should happen
 	time.Sleep(50 * time.Millisecond)
@@ -291,7 +601,9 @@ func TestCancelOngoingDownload(t *testing.T) {
 	_, resp := updater.checkForUpdate(ctx)
 
 	// Start download in goroutine
+	downloadDone := make(chan struct{})
 	go func() {
+		defer close(downloadDone)
 		_ = updater.DownloadNewRelease(ctx, resp)
 	}()
 
@@ -312,6 +624,10 @@ func TestCancelOngoingDownload(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("download cancellation was not received by server")
 	}
+
+	// Wait for the download goroutine to unwind: it drags along a background
+	// update-check loop that reads package-level knobs the next test rewrites.
+	<-downloadDone
 }
 
 func TestTriggerImmediateCheck(t *testing.T) {
@@ -349,7 +665,9 @@ func TestTriggerImmediateCheck(t *testing.T) {
 		return nil
 	}
 
-	updater.StartBackgroundUpdaterChecker(ctx, cb)
+	checkerDone := updater.startBackgroundUpdaterChecker(ctx, cb)
+	defer updater.waitDownloadIdle()
+	defer stopChecker(t, cancel, checkerDone)
 
 	// Wait for the initial check that fires after the initial delay
 	select {

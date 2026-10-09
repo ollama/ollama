@@ -64,6 +64,9 @@ type GenerateRequest struct {
 	// the library at https://ollama.com/library
 	Model string `json:"model"`
 
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
@@ -102,9 +105,9 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models. Needs to be a pointer so we can distinguish between false
-	// (request that thinking _not_ be used) and unset (use the old behavior
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// Needs to be a pointer so we can distinguish between false (request that
+	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
 	Think *ThinkValue `json:"think,omitempty"`
 
@@ -127,26 +130,15 @@ type GenerateRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
-
-	// Experimental: Image generation fields (may change or be removed)
-
-	// Width is the width of the generated image in pixels.
-	// Only used for image generation models.
-	Width int32 `json:"width,omitempty"`
-
-	// Height is the height of the generated image in pixels.
-	// Only used for image generation models.
-	Height int32 `json:"height,omitempty"`
-
-	// Steps is the number of diffusion steps for image generation.
-	// Only used for image generation models.
-	Steps int32 `json:"steps,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
@@ -168,8 +160,7 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
-	// for supported models.
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -436,6 +427,7 @@ type ToolProperty struct {
 	Description string             `json:"description,omitempty"`
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
+	Required    []string           `json:"required,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
@@ -568,12 +560,13 @@ type DebugInfo struct {
 }
 
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TotalDuration         time.Duration `json:"total_duration,omitempty"`
+	LoadDuration          time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount       int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalCachedCount *int          `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount             int           `json:"eval_count,omitempty"`
+	EvalDuration          time.Duration `json:"eval_duration,omitempty"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -588,7 +581,7 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"` // Deprecated: rejected as a model parameter; still accepted per request with a warning
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
@@ -599,12 +592,13 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx          int   `json:"num_ctx,omitempty"`
+	NumBatch        int   `json:"num_batch,omitempty"`
+	NumGPU          int   `json:"num_gpu,omitempty"`
+	MainGPU         *int  `json:"main_gpu,omitempty"`
+	UseMMap         *bool `json:"use_mmap,omitempty"`
+	NumThread       int   `json:"num_thread,omitempty"`
+	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -612,7 +606,15 @@ type EmbedRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
 
-	// Input is the input to embed.
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
+	// Input is the input to embed. Three shapes are accepted:
+	//   - a string, or a []string — one text entry per item
+	//   - a map with any of "text", "image", "audio" — one multimodal item
+	//     (image/audio values are base64-encoded blobs)
+	//   - a list mixing strings and those maps — a batch where each item
+	//     owns its own media
 	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
@@ -644,6 +646,9 @@ type EmbeddingRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
 
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
 	// Prompt is the textual prompt to embed.
 	Prompt string `json:"prompt"`
 
@@ -668,19 +673,30 @@ type CreateRequest struct {
 	// Stream specifies whether the response is streaming; it is true by default.
 	Stream *bool `json:"stream,omitempty"`
 
-	// Quantize is the quantization format for the model; leave blank to not change the quantization level.
+	// Quantize is the quantization format to apply when importing safetensors weights.
 	Quantize string `json:"quantize,omitempty"`
+
+	// DraftQuantize is the quantization format to apply when importing safetensors draft weights.
+	DraftQuantize string `json:"draft_quantize,omitempty"`
 
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
 
+	// List is the list of local model tags to include in a manifest list.
+	List []string `json:"list,omitempty"`
+
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
 
-	// Files is a map of files include when creating the model.
+	// Files maps source file names to their SHA-256 digests.
 	Files map[string]string `json:"files,omitempty"`
 
+	// DraftFiles maps draft source file names to their SHA-256 digests.
+	DraftFiles map[string]string `json:"draft_files,omitempty"`
+
 	// Adapters is a map of LoRA adapters to include when creating the model.
+	//
+	// Deprecated: LoRA adapters are no longer supported.
 	Adapters map[string]string `json:"adapters,omitempty"`
 
 	// Template is the template used when constructing a request to the model.
@@ -698,11 +714,17 @@ type CreateRequest struct {
 	// Messages is a list of messages added to the model before chat and generation requests.
 	Messages []Message `json:"messages,omitempty"`
 
+	// Renderer is the name of the renderer used when constructing a request to the model.
 	Renderer string `json:"renderer,omitempty"`
-	Parser   string `json:"parser,omitempty"`
+
+	// Parser is the name of the parser used to parse the output of the request.
+	Parser string `json:"parser,omitempty"`
 
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
+
+	// Capabilities adds to the model's inherited or inferred capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
 
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
@@ -723,8 +745,10 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model  string `json:"model"`
-	System string `json:"system"`
+	Model        string `json:"model"`
+	Runner       string `json:"runner,omitempty"`
+	AllManifests bool   `json:"all_manifests,omitempty"`
+	System       string `json:"system"`
 
 	// Template is deprecated
 	Template string `json:"template"`
@@ -738,6 +762,7 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
+	Thinking      *model.Thinking    `json:"thinking,omitempty"`
 	License       string             `json:"license,omitempty"`
 	Modelfile     string             `json:"modelfile,omitempty"`
 	Parameters    string             `json:"parameters,omitempty"`
@@ -753,8 +778,29 @@ type ShowResponse struct {
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
+	Manifests     []ManifestSummary  `json:"manifests,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+}
+
+// ManifestSummary describes one child manifest available through a model tag.
+type ManifestSummary struct {
+	Digest   string `json:"digest,omitempty"`
+	Runner   string `json:"runner,omitempty"`
+	Format   string `json:"format,omitempty"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// ShowManifest is a single manifest summary returned from [Client.ShowManifests].
+type ShowManifest struct {
+	Runner string `json:"runner,omitempty"`
+	ShowResponse
+}
+
+// ShowManifestsResponse is the response returned from [Client.ShowManifests].
+type ShowManifestsResponse struct {
+	Manifests []ShowManifest `json:"manifests"`
+	License   string         `json:"license,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -766,6 +812,7 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
+	Runner   string `json:"runner,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
@@ -801,6 +848,37 @@ type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
 }
 
+// ModelRecommendationsResponse is the response from [Client.ModelRecommendationsExperimental].
+type ModelRecommendationsResponse struct {
+	Recommendations []ModelRecommendation        `json:"recommendations"`
+	Mappings        *ModelRecommendationMappings `json:"mappings,omitempty"`
+}
+
+// ModelRecommendationMapping defines one app-specific route preference.
+type ModelRecommendationMapping struct {
+	Model        string `json:"model"`
+	RequiredPlan string `json:"required_plan,omitempty"`
+}
+
+// ModelRecommendationMappings defines the app-specific model routes.
+type ModelRecommendationMappings map[string]ModelRecommendationMapping
+
+// ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
+type ModelRecommendation struct {
+	Model           string                       `json:"model"`
+	Description     string                       `json:"description"`
+	ContextLength   int                          `json:"context_length,omitempty"`
+	MaxOutputTokens int                          `json:"max_output_tokens,omitempty"`
+	VRAMBytes       int64                        `json:"vram_bytes,omitempty"`
+	RequiredPlan    string                       `json:"required_plan,omitempty"`
+	Thinking        *ModelRecommendationThinking `json:"thinking,omitempty"`
+}
+
+// ModelRecommendationThinking advertises the controls a model honors and its
+// default. Values may be booleans or named effort levels; other strings may
+// still be accepted by the endpoint and fall back to the default.
+type ModelRecommendationThinking = model.Thinking
+
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
@@ -808,14 +886,15 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name        string       `json:"name"`
-	Model       string       `json:"model"`
-	RemoteModel string       `json:"remote_model,omitempty"`
-	RemoteHost  string       `json:"remote_host,omitempty"`
-	ModifiedAt  time.Time    `json:"modified_at"`
-	Size        int64        `json:"size"`
-	Digest      string       `json:"digest"`
-	Details     ModelDetails `json:"details,omitempty"`
+	Name         string             `json:"name"`
+	Model        string             `json:"model"`
+	RemoteModel  string             `json:"remote_model,omitempty"`
+	RemoteHost   string             `json:"remote_host,omitempty"`
+	ModifiedAt   time.Time          `json:"modified_at"`
+	Size         int64              `json:"size"`
+	Digest       string             `json:"digest"`
+	Details      ModelDetails       `json:"details,omitempty"`
+	Capabilities []model.Capability `json:"capabilities,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
@@ -828,6 +907,7 @@ type ProcessModelResponse struct {
 	ExpiresAt     time.Time    `json:"expires_at"`
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
+	Runner        string       `json:"runner,omitempty"`
 }
 
 type TokenResponse struct {
@@ -842,6 +922,36 @@ type CloudStatus struct {
 // StatusResponse is the response from [Client.CloudStatusExperimental].
 type StatusResponse struct {
 	Cloud CloudStatus `json:"cloud"`
+}
+
+// WebSearchRequest is the request for [Client.WebSearchExperimental].
+type WebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// WebSearchResult is a single result from [Client.WebSearchExperimental].
+type WebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// WebSearchResponse is the response from [Client.WebSearchExperimental].
+type WebSearchResponse struct {
+	Results []WebSearchResult `json:"results"`
+}
+
+// WebFetchRequest is the request for [Client.WebFetchExperimental].
+type WebFetchRequest struct {
+	URL string `json:"url"`
+}
+
+// WebFetchResponse is the response from [Client.WebFetchExperimental].
+type WebFetchResponse struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Links   []string `json:"links,omitempty"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].
@@ -884,20 +994,6 @@ type GenerateResponse struct {
 	// Logprobs contains log probability information for the generated tokens,
 	// if requested via the Logprobs parameter.
 	Logprobs []Logprob `json:"logprobs,omitempty"`
-
-	// Experimental: Image generation fields (may change or be removed)
-
-	// Image contains a base64-encoded generated image.
-	// Only present for image generation models.
-	Image string `json:"image,omitempty"`
-
-	// Completed is the number of completed steps in image generation.
-	// Only present for image generation models during streaming.
-	Completed int64 `json:"completed,omitempty"`
-
-	// Total is the total number of steps for image generation.
-	// Only present for image generation models during streaming.
-	Total int64 `json:"total,omitempty"`
 }
 
 // ModelDetails provides details about a model.
@@ -908,6 +1004,12 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+	ContextLength     int      `json:"context_length,omitempty"`
+	EmbeddingLength   int      `json:"embedding_length,omitempty"`
+
+	// Runner identifies which runner serves this model. Manifest-list models
+	// list one row per child manifest; Runner is what distinguishes them.
+	Runner string `json:"runner,omitempty"`
 }
 
 // UserResponse provides information about a user.
@@ -942,9 +1044,18 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
 	}
 
+	cached := 0
+	if m.PromptEvalCachedCount != nil {
+		cached = *m.PromptEvalCachedCount
+	}
+	if cached > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval cached:   %d token(s)\n", cached)
+	}
+
 	if m.PromptEvalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", m.PromptEvalDuration)
-		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(m.PromptEvalCount)/m.PromptEvalDuration.Seconds())
+		uncached := max(0, m.PromptEvalCount-cached)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(uncached)/m.PromptEvalDuration.Seconds())
 	}
 
 	if m.EvalCount > 0 {
@@ -1030,14 +1141,25 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.Set(reflect.ValueOf(slice))
 			case reflect.Pointer:
-				var b bool
-				if field.Type() == reflect.TypeOf(&b) {
+				switch field.Type().Elem().Kind() {
+				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
 						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.Set(reflect.ValueOf(&val))
-				} else {
+				case reflect.Int:
+					var i int
+					switch t := val.(type) {
+					case int64:
+						i = int(t)
+					case float64:
+						i = int(t)
+					default:
+						return fmt.Errorf("option %q must be of type integer", key)
+					}
+					field.Set(reflect.ValueOf(&i))
+				default:
 					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
 				}
 			default:
@@ -1063,127 +1185,38 @@ func DefaultOptions() Options {
 		TopP:             0.9,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
+		RepeatPenalty:    1.0,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
 		Seed:             -1,
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:          int(envconfig.ContextLength()),
+			NumBatch:        512,
+			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:       0,  // let the runtime decide
+			DraftNumPredict: 4,
+			UseMMap:         nil,
 		},
 	}
 }
 
-// ThinkValue represents a value that can be a boolean or a string ("high", "medium", "low")
-type ThinkValue struct {
-	// Value can be a bool or string
-	Value interface{}
-}
+// ThinkValue represents a boolean or model-defined thinking level.
+type ThinkValue = model.ThinkValue
 
-// IsValid checks if the ThinkValue is valid
-func (t *ThinkValue) IsValid() bool {
-	if t == nil || t.Value == nil {
-		return true // nil is valid (means not set)
-	}
-
-	switch v := t.Value.(type) {
-	case bool:
-		return true
-	case string:
-		return v == "high" || v == "medium" || v == "low"
-	default:
-		return false
-	}
-}
-
-// IsBool returns true if the value is a boolean
-func (t *ThinkValue) IsBool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(bool)
-	return ok
-}
-
-// IsString returns true if the value is a string
-func (t *ThinkValue) IsString() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-	_, ok := t.Value.(string)
-	return ok
-}
-
-// Bool returns the value as a bool (true if enabled in any way)
-func (t *ThinkValue) Bool() bool {
-	if t == nil || t.Value == nil {
-		return false
-	}
-
-	switch v := t.Value.(type) {
-	case bool:
-		return v
-	case string:
-		// Any string value ("high", "medium", "low") means thinking is enabled
-		return v == "high" || v == "medium" || v == "low"
-	default:
-		return false
-	}
-}
-
-// String returns the value as a string
-func (t *ThinkValue) String() string {
-	if t == nil || t.Value == nil {
-		return ""
-	}
-
-	switch v := t.Value.(type) {
-	case string:
-		return v
-	case bool:
-		if v {
-			return "medium" // Default level when just true
-		}
-		return ""
-	default:
-		return ""
-	}
-}
-
-// UnmarshalJSON implements json.Unmarshaler
-func (t *ThinkValue) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal as bool first
-	var b bool
-	if err := json.Unmarshal(data, &b); err == nil {
-		t.Value = b
+// ValidateLegacyThinking checks named levels for models without thinking metadata.
+// Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
+func ValidateLegacyThinking(think *ThinkValue) error {
+	if !think.IsString() {
 		return nil
 	}
-
-	// Try to unmarshal as string
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		// Validate string values
-		if s != "high" && s != "medium" && s != "low" {
-			return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", true, or false)", s)
-		}
-		t.Value = s
+	switch think.String() {
+	case "low", "medium", "high", "max":
 		return nil
+	default:
+		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
-
-	return fmt.Errorf("think must be a boolean or string (\"high\", \"medium\", \"low\", true, or false)")
-}
-
-// MarshalJSON implements json.Marshaler
-func (t *ThinkValue) MarshalJSON() ([]byte, error) {
-	if t == nil || t.Value == nil {
-		return []byte("null"), nil
-	}
-	return json.Marshal(t.Value)
 }
 
 type Duration struct {
@@ -1278,14 +1311,20 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
-					var b bool
-					if field.Type() == reflect.TypeOf(&b) {
+					switch field.Type().Elem().Kind() {
+					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
 						if err != nil {
 							return nil, fmt.Errorf("invalid bool value %s", vals)
 						}
 						out[key] = &boolVal
-					} else {
+					case reflect.Int:
+						intVal, err := strconv.ParseInt(vals[0], 10, 64)
+						if err != nil {
+							return nil, fmt.Errorf("invalid int value %s", vals)
+						}
+						out[key] = intVal
+					default:
 						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 					}
 				default:

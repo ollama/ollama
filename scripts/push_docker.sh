@@ -8,7 +8,6 @@ export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$V
 docker build \
     --push \
     --platform=linux/arm64,linux/amd64 \
-    --build-arg=VERSION \
     --build-arg=GOFLAGS \
     -f Dockerfile \
     -t ollama/ollama -t ollama/ollama:$VERSION \

@@ -84,3 +84,66 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, cleaned, "before  after")
 }
+
+func TestEditInExternalEditorWhitespaceOnly(t *testing.T) {
+	// A whitespace-only VISUAL or EDITOR is non-empty, so it bypasses the
+	// editor == "" fallbacks, but strings.Fields collapses it to an empty
+	// slice. Indexing that slice must not panic; it must return an error.
+	cases := []struct {
+		name   string
+		visual string
+		editor string
+	}{
+		{name: "VISUAL whitespace", visual: "\t "},
+		{name: "EDITOR whitespace", editor: "\t "},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_EDITOR", "")
+			t.Setenv("VISUAL", tt.visual)
+			t.Setenv("EDITOR", tt.editor)
+			_, err := editInExternalEditor("content")
+			assert.Error(t, err)
+		})
+	}
+}
+
+func TestEditInExternalEditorParsesEditorWithArgs(t *testing.T) {
+	// A well-formed editor command with arguments must still be parsed so
+	// its binary is looked up (guards the normal path from regressing).
+	t.Setenv("OLLAMA_EDITOR", "definitely-not-a-real-editor arg1")
+	t.Setenv("VISUAL", "")
+	t.Setenv("EDITOR", "")
+	_, err := editInExternalEditor("content")
+	assert.ErrorContains(t, err, "definitely-not-a-real-editor")
+}
+
+func TestExtractFileDataWAV(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "sample.wav")
+	data := make([]byte, 600)
+	copy(data[:44], []byte{
+		'R', 'I', 'F', 'F',
+		0x58, 0x02, 0x00, 0x00, // file size - 8
+		'W', 'A', 'V', 'E',
+		'f', 'm', 't', ' ',
+		0x10, 0x00, 0x00, 0x00, // fmt chunk size
+		0x01, 0x00, // PCM
+		0x01, 0x00, // mono
+		0x80, 0x3e, 0x00, 0x00, // 16000 Hz
+		0x00, 0x7d, 0x00, 0x00, // byte rate
+		0x02, 0x00, // block align
+		0x10, 0x00, // 16-bit
+		'd', 'a', 't', 'a',
+		0x34, 0x02, 0x00, 0x00, // data size
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test audio: %v", err)
+	}
+
+	input := "before " + fp + " after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, "before  after", cleaned)
+}
