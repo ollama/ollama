@@ -126,6 +126,10 @@ func TestDecisionPublicCapabilities(t *testing.T) {
 				want := []model.Capability{model.CapabilityDecision}
 				if declaredVision {
 					cfg.Capabilities = append(cfg.Capabilities, "vision")
+				}
+				// The GGUF inherits vision from its base model; the safetensors
+				// fixture ships a projector.
+				if declaredVision || format == "safetensors" {
 					want = append(want, model.CapabilityVision)
 				}
 				_, digest := createBinFile(t, map[string]any{

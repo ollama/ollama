@@ -549,7 +549,9 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
-			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
+			var batchMemory uint64
+			launchOpts.NumBatch, batchMemory = llm.LlamaServerBatch(f, launchOpts, completion)
+			predictedForLoad := predicted + batchMemory
 
 			// Pre-flight check: estimate whether the model fits in remaining memory.
 			// llama-server auto-detects layers based on available VRAM, so if
@@ -831,13 +833,6 @@ func (req *LlmRequest) applyAutomaticGenerationBatch(completion bool, effectiveC
 	req.opts.NumBatch = automaticGenerationBatch(effectiveCtx, predictedVRAM, availableMemory, flashAttention, gpus)
 }
 
-func generationBatchSurchargeForCompletion(completion bool, batch int) uint64 {
-	if !completion {
-		return 0
-	}
-	return generationBatchSurcharge(batch)
-}
-
 func automaticGenerationBatch(effectiveCtx int, predictedVRAM, availableMemory uint64, flashAttention ml.FlashAttentionType, gpus []ml.DeviceInfo) int {
 	if flashAttention == ml.FlashAttentionDisabled && hasCUDADevice(gpus) {
 		if constrainedCUDAWithoutFlashAttention(effectiveCtx, gpus) {
@@ -899,7 +894,7 @@ func generationBatchFits(batch int, predictedVRAM, availableMemory uint64) bool 
 		return false
 	}
 
-	return generationBatchSurcharge(batch) <= threshold-predictedVRAM
+	return llm.LlamaServerBatchMemory(batch) <= threshold-predictedVRAM
 }
 
 func generationBatchHasHeadroom(batch int, predictedVRAM, availableMemory uint64) bool {
@@ -919,17 +914,6 @@ func nextLowerGenerationBatch(batch int) int {
 		return llamaServerGenerationBatchMedium
 	default:
 		return llamaServerGenerationBatchDefault
-	}
-}
-
-func generationBatchSurcharge(batch int) uint64 {
-	switch {
-	case batch >= llamaServerGenerationBatchLarge:
-		return 2 * format.GibiByte
-	case batch >= llamaServerGenerationBatchMedium:
-		return 768 * format.MebiByte
-	default:
-		return 0
 	}
 }
 
