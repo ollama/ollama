@@ -144,6 +144,13 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		}
 	} else if prevMessageType == "tool_response" && hasThink {
 		sb.WriteString("<|channel>thought\n")
+	} else if prevMessageType == "tool_response" && thinkValue != nil && !thinkValue.Bool() {
+		// Thinking was explicitly turned off. The reference templates write
+		// nothing here, so the model has to open and close its own empty
+		// thought, and after some tool results it closes it with
+		// <tool_call|> and stops: an empty reply with no tool call. Close the
+		// empty thought for it, as the 31B template does on a new model turn.
+		sb.WriteString("<|channel>thought\n<channel|>")
 	}
 
 	return sb.String(), nil
