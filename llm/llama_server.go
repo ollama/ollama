@@ -184,6 +184,7 @@ type llamaServerLaunchConfig struct {
 	kvCacheType          string
 	embedding            bool
 	wholePrompt          bool // the model evaluates each prompt in one batch
+	sharedPrompt         bool // decision questions share the prompt prefix across slots
 	config               LlamaServerConfig
 	gpus                 []ml.DeviceInfo
 	gpuLibs              []string
@@ -369,6 +370,14 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		port = rand.Intn(65535-49152) + 49152
 	}
 
+	// llama-server shares a decision request's prompt prefix only among the
+	// questions it answers at once, one per slot, so these models get more
+	// slots than requests. The slots share one KV cache.
+	slots := launch.numParallel
+	if launch.sharedPrompt {
+		slots = max(slots, 8)
+	}
+
 	// Build CLI flags — minimal set, let llama-server auto-detect the rest
 	params := []string{
 		"--model", launch.modelPath,
@@ -377,7 +386,10 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		"--no-webui",
 		"--offline",
 		"-c", strconv.Itoa(launch.opts.NumCtx * launch.numParallel),
-		"-np", strconv.Itoa(launch.numParallel),
+		"-np", strconv.Itoa(slots),
+	}
+	if launch.sharedPrompt {
+		params = append(params, "--kv-unified")
 	}
 	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, launch.config)
@@ -868,8 +880,11 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
-	// llama-server evaluates the whole prompt of these decision models in one batch.
-	wholePrompt := slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, f.KV().String("decision.type"))
+	// llama-server evaluates the whole prompt of these decision models in one
+	// batch, and shares the prompt prefix of these among questions.
+	decisionType := f.KV().String("decision.type")
+	wholePrompt := slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, decisionType)
+	sharedPrompt := slices.Contains([]string{"openjev", "lev", "kev", "nimble", "pplx-decider", "lfm2-d1"}, decisionType)
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -951,6 +966,7 @@ func NewLlamaServerRunner(
 		kvCacheType:  kvCacheType,
 		embedding:    isEmbedding,
 		wholePrompt:  wholePrompt,
+		sharedPrompt: sharedPrompt,
 		config:       config,
 		gpus:         slices.Clone(gpus),
 		gpuLibs:      slices.Clone(gpuLibs),
