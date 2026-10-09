@@ -33,7 +33,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
-	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
@@ -254,16 +253,17 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 // scheduleRunnerForModel retains the request's resolved model, including its selected
 // manifest-list child, without repeating model lookup and metadata loading.
 func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
-	selectedName := model.ParseName(m.Name)
-	if !manifest.IsDigestReferenceName(selectedName) {
-		runner := m.Runner
-		if runner == "" && m.isGGUF() {
-			runner = manifest.RunnerGGML
-		}
-		if runner == manifest.RunnerGGML {
-			compatmigrate.StartLocalCompatibilityMigration(selectedName)
-		}
-	}
+	// TODO: enable compatibility migration
+	// selectedName := model.ParseName(m.Name)
+	// if !manifest.IsDigestReferenceName(selectedName) {
+	// 	runner := m.Runner
+	// 	if runner == "" && m.isGGUF() {
+	// 		runner = manifest.RunnerGGML
+	// 	}
+	// 	if runner == manifest.RunnerGGML {
+	// 		compatmigrate.StartLocalCompatibilityMigration(selectedName)
+	// 	}
+	// }
 
 	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(m.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
