@@ -164,13 +164,14 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities limits decision models to decision and explicitly declared
-// vision support. Serving still uses Capabilities.
+// publicCapabilities limits decision models to decision and the vision they
+// declare or ship a projector for, not vision inherited from a base model.
+// Serving still uses Capabilities.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
 	if slices.Contains(capabilities, model.CapabilityDecision) {
 		public := []model.Capability{model.CapabilityDecision}
-		if slices.Contains(m.Config.Capabilities, "vision") && slices.Contains(capabilities, model.CapabilityVision) {
+		if slices.Contains(m.Config.Capabilities, "vision") || len(m.ProjectorPaths) > 0 {
 			public = append(public, model.CapabilityVision)
 		}
 		return public
@@ -859,7 +860,7 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 		m.PreferChatTemplate = true
 	}
 
-	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony {
+	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony && m.metadata.String("decision.type") == "" {
 		slog.Warn("model is missing tokenizer.chat_template and Go TEMPLATE support is unavailable; chat responses may be poorly formatted", "model", m.Name, "env", "OLLAMA_GO_TEMPLATE=1")
 	}
 
