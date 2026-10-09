@@ -813,6 +813,7 @@ type CopyRequest struct {
 type PullRequest struct {
 	Model    string `json:"model"`
 	Runner   string `json:"runner,omitempty"`
+	Force    bool   `json:"force,omitempty"`    // Pull even if the model is determined too large for this system
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
