@@ -183,6 +183,7 @@ type llamaServerLaunchConfig struct {
 	numParallel          int
 	kvCacheType          string
 	embedding            bool
+	wholePrompt          bool // the model evaluates each prompt in one batch
 	config               LlamaServerConfig
 	gpus                 []ml.DeviceInfo
 	gpuLibs              []string
@@ -400,7 +401,11 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendFlashAttentionArgs(params, launch.gpus)
 
-	params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
+	if launch.wholePrompt {
+		params = append(params, "-b", strconv.Itoa(launch.opts.NumCtx), "-ub", strconv.Itoa(launch.opts.NumCtx))
+	} else {
+		params = appendBatchArgs(params, launch.opts, launch.embedding, launch.numParallel)
+	}
 
 	// GPU layer offloading — only pass if user explicitly set it (non-default).
 	// Default behavior: let llama-server auto-detect via -ngl auto.
@@ -863,6 +868,8 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
+	// llama-server evaluates the whole prompt of these decision models in one batch.
+	wholePrompt := slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, f.KV().String("decision.type"))
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -943,6 +950,7 @@ func NewLlamaServerRunner(
 		numParallel:  numParallel,
 		kvCacheType:  kvCacheType,
 		embedding:    isEmbedding,
+		wholePrompt:  wholePrompt,
 		config:       config,
 		gpus:         slices.Clone(gpus),
 		gpuLibs:      slices.Clone(gpuLibs),

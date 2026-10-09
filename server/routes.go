@@ -898,6 +898,55 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 // SystemOneHandler compiles typed questions, scores their allowed answers, and
 // returns probabilities. Callers must select weights trained for the prompt format.
+// systemOneNative hands a request for a decision model llama.cpp supports to
+// its runner, which builds the model's own prompt and answers it.
+func (s *Server) systemOneNative(c *gin.Context, m *Model, req decision.Request, body []byte) {
+	if len(req.Videos) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "video inputs are not supported"})
+		return
+	}
+	var raw struct {
+		State     json.RawMessage `json:"state"`
+		Questions json.RawMessage `json:"questions"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	caps := []model.Capability{model.CapabilityDecision}
+	if len(req.Images) > 0 {
+		caps = append(caps, model.CapabilityVision)
+	}
+	r, _, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+	runner, ok := r.(interface {
+		SystemOne(ctx context.Context, state, questions json.RawMessage, images []api.ImageData) (answers, usage json.RawMessage, err error)
+	})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring", req.Model)})
+		return
+	}
+	answers, usage, err := runner.SystemOne(c.Request.Context(), raw.State, raw.Questions, req.Images)
+	if err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
+		status := http.StatusInternalServerError
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) {
+			status = statusErr.StatusCode
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		Model   string          `json:"model"`
+		Answers json.RawMessage `json:"answers"`
+		Usage   json.RawMessage `json:"usage"`
+	}{req.Model, answers, usage})
+}
+
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
@@ -950,6 +999,10 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	m, err := GetModel(name.String())
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+	if m.metadata.String("decision.type") != "" {
+		s.systemOneNative(c, m, req, body)
 		return
 	}
 	encoding := m.metadata.String("decision.type")

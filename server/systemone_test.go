@@ -25,9 +25,29 @@ import (
 
 type systemOneTestRunner struct {
 	mockRunner
-	request llm.ScoreRequest
-	err     error
-	calls   int
+	request          llm.ScoreRequest
+	err              error
+	calls            int
+	native           bool
+	state, questions json.RawMessage
+}
+
+// SystemOne answers like llama-server does for the decision models it supports.
+func (r *systemOneTestRunner) SystemOne(ctx context.Context, state, questions json.RawMessage, images []api.ImageData) (json.RawMessage, json.RawMessage, error) {
+	r.calls++
+	r.native = true
+	r.state, r.questions = state, questions
+	r.request = llm.ScoreRequest{Images: images}
+	var ids map[string]json.RawMessage
+	if err := json.Unmarshal(questions, &ids); err != nil {
+		return nil, nil, err
+	}
+	answers := map[string]any{}
+	for id := range ids {
+		answers[id] = map[string]any{"type": "noul", "noul": 0.9}
+	}
+	data, _ := json.Marshal(answers)
+	return data, json.RawMessage(`{"input_tokens":123,"output_tokens":0}`), r.err
 }
 
 func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
@@ -100,7 +120,8 @@ func TestSystemOneHandler(t *testing.T) {
 		contextLength                                  int
 		undeclared                                     bool
 	}{
-		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
+		{"renamed-clef", "clef", "", "Ignored for the joint head", "", 1024, false},
+		{"laya-native", "modern-bert", "", "", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
@@ -115,6 +136,9 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		if modelConfig.name == "renamed-clef" {
 			kv[modelConfig.architecture+".decision.type"] = "clef"
+		}
+		if modelConfig.name == "laya-native" {
+			kv[modelConfig.architecture+".decision.type"] = "laya"
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
@@ -174,8 +198,9 @@ func TestSystemOneHandler(t *testing.T) {
 		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef videos unsupported", `{"model":"renamed-clef","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
 		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"Clef null state and default instructions", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
-		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"Clef null state and default instructions", `{"model":"safetensors-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
+		{"Clef joint head", `{"model":"safetensors-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"llama.cpp decision model", `{"model":"laya-native","state":{"total":1250.0},"questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -186,7 +211,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
 		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
-		{"invalid Clef schema", `{"model":"renamed-clef","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"invalid Clef schema", `{"model":"safetensors-clef","state":"x","questions":{}}`, nil, 400, 0, false},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
@@ -288,11 +313,18 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 {
+				if len(runner.request.Fields) > 0 || runner.native {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
+				}
+				if runner.native {
+					// llama-server builds the prompt; the request reaches it as sent.
+					if tt.name == "llama.cpp decision model" && (string(runner.state) != `{"total":1250.0}` || !strings.Contains(w.Body.String(), `"model":"laya-native"`)) {
+						t.Fatalf("request did not pass through: state %s, response %s", runner.state, w.Body)
+					}
+					return
 				}
 				if ref.model.Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
 					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
