@@ -16,12 +16,14 @@ import (
 // quantizeItem is one tensor going into a (possibly multi-tensor) quantized
 // blob: its output name, the quantization to apply (or "" to decode/keep at
 // source precision), a safetensors-wrapped reader for its input bytes (keyed by
-// name), and whether the input is a block-FP8 weight to decode before use.
+// name), whether the input is a block-FP8 weight to decode before use, and
+// whether an NVFP4 result gets a global scale.
 type quantizeItem struct {
-	name      string
-	quantize  string
-	reader    io.Reader
-	decodeFP8 bool
+	name        string
+	quantize    string
+	reader      io.Reader
+	decodeFP8   bool
+	globalScale bool
 }
 
 // quantizeBlob loads, optionally quantizes, and packs the given tensors into a
@@ -101,7 +103,7 @@ func quantizeBlobLocked(items []quantizeItem) ([]byte, error) {
 // quantizeItemArrays loads and quantizes one item into arrays and holds its
 // finished arrays in held.
 func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir string, held *mlx.Scope) error {
-	tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, arrays, tmpDir)
+	tmpPath, toEval, st, err := loadAndQuantizeArray(it.reader, it.name, it.quantize, it.decodeFP8, it.globalScale, arrays, tmpDir)
 	if tmpPath != "" {
 		defer os.Remove(tmpPath)
 	}
@@ -123,7 +125,7 @@ func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir st
 // TODO: MLX's safetensors loader takes a file path, so we spill each tensor to a
 // temp file. Wiring a streaming mlx_load_safetensors_reader into the CGO wrapper
 // would let us load from the reader directly and drop the temp files.
-func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
+func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8, globalScaled bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
 	if quantize != "" && quant.Canonical(quantize) == "" {
 		return "", nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
 	}
@@ -184,7 +186,14 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		}
 
 		groupSize, bits, mode := quant.Params(quantize)
-		qweight, scales, qbiases := mlx.Quantize(arr, groupSize, bits, mode)
+		var globalScale *mlx.Array
+		if globalScaled && mode == "nvfp4" {
+			// Without normalization, small weights can round every E4M3 block
+			// scale to zero. A zero tensor uses the identity scale instead.
+			amax := mlx.Flatten(arr.Abs()).MaxAxis(0, false).AsType(mlx.DTypeFloat32)
+			globalScale = mlx.Where(amax.Equal(mlx.FromValue(float32(0))), mlx.FromValue(float32(mlx.Nvfp4MaxProduct)), amax)
+		}
+		qweight, scales, qbiases := mlx.QuantizeWithGlobalScale(arr, groupSize, bits, mode, globalScale)
 		if len(qweight.Dims()) == 0 || qweight.Dims()[0] == 0 {
 			err = fmt.Errorf("mlx.Quantize produced empty weight for %s (quantize=%s, groupSize=%d, bits=%d, mode=%s)", name, quantize, groupSize, bits, mode)
 			return nil
@@ -199,6 +208,11 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		arrays[name] = qweight
 		arrays[name+".scale"] = scales
 		out := []*mlx.Array{qweight, scales}
+		if globalScale != nil {
+			storedScale := mlx.DivScalar(globalScale, mlx.Nvfp4MaxProduct)
+			arrays[name+".global_scale"] = storedScale
+			out = append(out, storedScale)
+		}
 		if qbiases != nil {
 			qbiases = mlx.Contiguous(qbiases, false)
 			arrays[name+".bias"] = qbiases
