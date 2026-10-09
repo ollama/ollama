@@ -150,6 +150,10 @@ type WebView interface {
 
 	// GetZoom returns the current zoom level of the webview.
 	GetZoom() float64
+
+	// SetAlwaysOnTop keeps the native window above all other windows when
+	// enabled. Must be called from the UI thread.
+	SetAlwaysOnTop(onTop bool)
 }
 
 type webview struct {
@@ -365,4 +369,9 @@ func (w *webview) SetZoom(level float64) {
 
 func (w *webview) GetZoom() float64 {
 	return float64(C.webview_get_zoom(w.w))
+}
+
+// SetAlwaysOnTop keeps the native window above all other windows when enabled.
+func (w *webview) SetAlwaysOnTop(onTop bool) {
+	C.webview_set_always_on_top(w.w, boolToInt(onTop))
 }
