@@ -58,7 +58,8 @@ func TestThinkingInputErrors(t *testing.T) {
 			name    string
 			handler gin.HandlerFunc
 		}{{"chat", s.ChatHandler}, {"generate", s.GenerateHandler}} {
-			for _, value := range []string{"75", "0.5", "{}", "[]"} {
+			// 75 is not here: an integer think value is a thinking-token budget.
+			for _, value := range []string{"0.5", "0", "-3", "{}", "[]"} {
 				for _, body := range []string{
 					fmt.Sprintf(`{"model":%q,"think":%s}`, tc.name, value),
 					fmt.Sprintf(`{"think":%s,"model":%q}`, value, tc.name),
@@ -74,7 +75,8 @@ func TestThinkingInputErrors(t *testing.T) {
 						if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 							t.Fatal(err)
 						}
-						want := "think must be a boolean or string"
+						var probe model.ThinkValue
+						want := probe.UnmarshalJSON([]byte(value)).Error()
 						if tc.values != "" {
 							want += "; supported values: " + tc.values
 						}
@@ -369,7 +371,7 @@ func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 		{"max", &api.ThinkValue{Value: "max"}, "high", false},
 		{"true", &api.ThinkValue{Value: true}, "medium", false},
 		{"false", &api.ThinkValue{Value: false}, "", false},
-		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "", true},
+		{"xhigh", &api.ThinkValue{Value: "xhigh"}, "high", false}, // another name for "max"
 		{"future", &api.ThinkValue{Value: "future"}, "", true},
 	} {
 		for _, endpoint := range []string{"chat", "generate"} {

@@ -575,6 +575,29 @@ func TestThinking_UnmarshalJSON(t *testing.T) {
 			input:            `{ "think": "future-level" }`,
 			expectedThinking: &ThinkValue{Value: "future-level"},
 		},
+		{
+			name:             "budget",
+			input:            `{ "think": 8192 }`,
+			expectedThinking: &ThinkValue{Value: 8192},
+		},
+		{
+			name:             "zero_budget",
+			input:            `{ "think": 0 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+		{
+			name:             "negative_budget",
+			input:            `{ "think": -1 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+		{
+			name:             "fractional_budget",
+			input:            `{ "think": 1.5 }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
 	}
 
 	for _, test := range tests {
@@ -997,8 +1020,8 @@ func TestValidateLegacyThinking(t *testing.T) {
 		{`"medium"`, true},
 		{`"high"`, true},
 		{`"max"`, true},
-		{`"xhigh"`, false},
-		{`"minimal"`, false},
+		{`"xhigh"`, true}, // another name for "max"
+		{`"minimal"`, true},
 		{`"future"`, false},
 		{`""`, false},
 		{`"HIGH"`, false},
@@ -1019,6 +1042,34 @@ func TestValidateLegacyThinking(t *testing.T) {
 	}
 }
 
+func TestThinkValueBudgetTokens(t *testing.T) {
+	tests := []struct {
+		name     string
+		think    *ThinkValue
+		numCtx   int
+		expected int
+	}{
+		{name: "unset", think: nil, numCtx: 32768, expected: 0},
+		{name: "true is unrestricted", think: &ThinkValue{Value: true}, numCtx: 32768, expected: 0},
+		{name: "false is unrestricted", think: &ThinkValue{Value: false}, numCtx: 32768, expected: 0},
+		{name: "explicit budget", think: &ThinkValue{Value: 8192}, numCtx: 32768, expected: 8192},
+		{name: "explicit budget ignores context", think: &ThinkValue{Value: 8192}, numCtx: 0, expected: 8192},
+		{name: "max is four fifths", think: &ThinkValue{Value: "max"}, numCtx: 32768, expected: 26214},
+		{name: "high is one half", think: &ThinkValue{Value: "high"}, numCtx: 32768, expected: 16384},
+		{name: "medium is one quarter", think: &ThinkValue{Value: "medium"}, numCtx: 32768, expected: 8192},
+		{name: "low is one eighth", think: &ThinkValue{Value: "low"}, numCtx: 32768, expected: 4096},
+		{name: "minimal is one sixteenth", think: &ThinkValue{Value: "minimal"}, numCtx: 32768, expected: 2048},
+		{name: "effort without context", think: &ThinkValue{Value: "high"}, numCtx: 0, expected: 0},
+		{name: "effort with tiny context", think: &ThinkValue{Value: "low"}, numCtx: 2, expected: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.think.BudgetTokens(tt.numCtx))
+		})
+	}
+}
+
 func TestThinkValueTransportTypes(t *testing.T) {
 	for _, tt := range []struct {
 		input   string
@@ -1031,7 +1082,9 @@ func TestThinkValueTransportTypes(t *testing.T) {
 		{`"xhigh"`, "xhigh", false},
 		{`"minimal"`, "minimal", false},
 		{`""`, "", false},
-		{`75`, nil, true},
+		{`75`, 75, false},
+		{`0`, nil, true},
+		{`-1`, nil, true},
 		{`0.75`, nil, true},
 		{`[]`, nil, true},
 		{`{}`, nil, true},
@@ -1054,4 +1107,199 @@ func TestThinkValueTransportTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestThinkValueIsValid(t *testing.T) {
+	valid := []*ThinkValue{nil, {Value: nil}, {Value: true}, {Value: false}, {Value: "max"}, {Value: "low"}, {Value: "minimal"}, {Value: "future"}, {Value: 1}}
+	for _, think := range valid {
+		assert.True(t, think.IsValid(), "expected %v to be valid", think)
+	}
+
+	invalid := []*ThinkValue{{Value: 0}, {Value: -1}, {Value: 1.5}}
+	for _, think := range invalid {
+		assert.False(t, think.IsValid(), "expected %v to be invalid", think)
+	}
+}
+
+func TestThinkBudgetOption(t *testing.T) {
+	// think_budget is set as a model default with `PARAMETER think_budget`,
+	// which reaches Options through the generic parameter map. It takes either
+	// a token count or an effort level.
+	tests := []struct {
+		name     string
+		param    string // as written in a Modelfile
+		fromMap  []any  // equivalent values arriving through FromMap
+		expected any    // ThinkValue.Value once decoded
+		budget   int    // resolved against a 32768 token context
+	}{
+		{
+			name:     "token count",
+			param:    "8192",
+			fromMap:  []any{int64(8192), float64(8192)},
+			expected: 8192,
+			budget:   8192,
+		},
+		{
+			name:     "effort level",
+			param:    "high",
+			fromMap:  []any{"high"},
+			expected: "high",
+			budget:   16384,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			params, err := FormatParams(map[string][]string{"think_budget": {tt.param}})
+			require.NoError(t, err)
+
+			// what FormatParams produces must itself be decodable
+			values := append([]any{params["think_budget"]}, tt.fromMap...)
+			for _, value := range values {
+				opts := DefaultOptions()
+				require.NoError(t, opts.FromMap(map[string]any{"think_budget": value}), "value %#v", value)
+				require.NotNil(t, opts.ThinkBudget)
+				assert.Equal(t, tt.expected, opts.ThinkBudget.Value)
+				assert.Equal(t, tt.budget, opts.ThinkBudget.BudgetTokens(32768))
+			}
+		})
+	}
+
+	assert.Nil(t, DefaultOptions().ThinkBudget)
+	assert.Equal(t, 0, DefaultOptions().ThinkBudget.BudgetTokens(32768))
+
+	// A level the budget table has no share for is a model-defined level: it
+	// decodes, and carries no budget.
+	opts := DefaultOptions()
+	require.NoError(t, opts.FromMap(map[string]any{"think_budget": "enormous"}))
+	assert.Equal(t, 0, opts.ThinkBudget.BudgetTokens(32768))
+	assert.Error(t, opts.FromMap(map[string]any{"think_budget": 0}))
+}
+
+func TestThinkBudgetMessageOption(t *testing.T) {
+	// think_budget_message ships with a model the same way the budget does, and
+	// is free text: whatever wording works for that model.
+	const message = "Considering the limited time by the user, I have to give the solution based on the thinking directly now."
+
+	params, err := FormatParams(map[string][]string{"think_budget_message": {message}})
+	require.NoError(t, err)
+
+	for _, value := range []any{params["think_budget_message"], message} {
+		opts := DefaultOptions()
+		require.NoError(t, opts.FromMap(map[string]any{"think_budget_message": value}), "value %#v", value)
+		assert.Equal(t, message, opts.ThinkBudgetMessage)
+	}
+
+	// unset means the bare closing tag is forced, which is what every runner
+	// does today
+	assert.Empty(t, DefaultOptions().ThinkBudgetMessage)
+}
+
+func TestThinkValueLevel(t *testing.T) {
+	// Level is what a model that consumes effort levels directly receives.
+	tests := []struct {
+		name  string
+		think *ThinkValue
+		level string
+	}{
+		{name: "unset", think: nil, level: ""},
+		{name: "low", think: &ThinkValue{Value: "low"}, level: "low"},
+		{name: "medium", think: &ThinkValue{Value: "medium"}, level: "medium"},
+		{name: "high", think: &ThinkValue{Value: "high"}, level: "high"},
+		{name: "max is reported as high", think: &ThinkValue{Value: "max"}, level: "high"},
+		{name: "minimal is reported as low", think: &ThinkValue{Value: "minimal"}, level: "low"},
+		{name: "true", think: &ThinkValue{Value: true}, level: "medium"},
+		{name: "false", think: &ThinkValue{Value: false}, level: ""},
+		{name: "a budget carries no level", think: &ThinkValue{Value: 8192}, level: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.level, tt.think.Level())
+		})
+	}
+
+	// Reporting a level as its nearest neighbour must not change the budget it
+	// asked for, or the requested level itself
+	for _, tt := range []struct {
+		requested string
+		reported  string
+		budget    int
+	}{
+		{requested: "max", reported: "high", budget: 26214},
+		{requested: "minimal", reported: "low", budget: 2048},
+	} {
+		think := &ThinkValue{Value: tt.requested}
+		assert.Equal(t, tt.reported, think.Level())
+		assert.Equal(t, tt.budget, think.BudgetTokens(32768))
+		assert.Equal(t, tt.requested, think.String(), "the requested level is preserved")
+	}
+}
+
+func TestThinkBudgetWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		numCtx     int
+		numPredict int
+		want       int
+	}{
+		{name: "no cap on the response", numCtx: 128000, numPredict: -1, want: 128000},
+		{name: "unset num_predict", numCtx: 128000, numPredict: 0, want: 128000},
+		// the case this exists for: a level resolved against the context would
+		// have matched num_predict exactly and bounded nothing
+		{name: "response capped below the context", numCtx: 128000, numPredict: 32000, want: 32000},
+		{name: "response cap above the context", numCtx: 8192, numPredict: 32000, want: 8192},
+		{name: "no context length known", numCtx: 0, numPredict: 4096, want: 4096},
+		{name: "neither known", numCtx: 0, numPredict: 0, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ThinkBudgetWindow(tt.numCtx, tt.numPredict); got != tt.want {
+				t.Errorf("ThinkBudgetWindow(%d, %d) = %d, want %d", tt.numCtx, tt.numPredict, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestThinkLevelSharesTheResponseNotTheContext(t *testing.T) {
+	// Cline sends num_ctx 128000 with num_predict 32000, where "medium" as a
+	// quarter of the context is exactly the response cap: the model can spend
+	// every token it is allowed to emit inside the thinking block and stop with
+	// no answer at all.
+	const numCtx, numPredict = 128000, 32000
+
+	think := &ThinkValue{Value: "medium"}
+	if got := think.BudgetTokens(numCtx); got != numPredict {
+		t.Fatalf("premise changed: a quarter of %d is %d, not the response cap %d", numCtx, got, numPredict)
+	}
+
+	window := ThinkBudgetWindow(numCtx, numPredict)
+	budget := think.BudgetTokens(window)
+	if budget >= numPredict {
+		t.Errorf("budget %d does not leave room to answer within num_predict %d", budget, numPredict)
+	}
+	if want := numPredict / 4; budget != want {
+		t.Errorf("budget = %d, want %d (a quarter of the response)", budget, want)
+	}
+}
+
+func TestThinkLevelAliases(t *testing.T) {
+	// "xhigh" is what the AI SDK calls the top of its effort scale, which is
+	// the position "max" holds here. A client built on that vocabulary sends
+	// it verbatim, so it has to resolve to the same budget, the same reported
+	// level, and the same validity as the name it aliases.
+	alias := &ThinkValue{Value: "xhigh"}
+	canonical := &ThinkValue{Value: "max"}
+
+	assert.True(t, alias.IsValid(), "an alias is a valid level")
+	assert.True(t, IsThinkLevel("xhigh"))
+	assert.Equal(t, canonical.BudgetTokens(32768), alias.BudgetTokens(32768))
+	assert.Equal(t, canonical.Level(), alias.Level())
+	assert.Equal(t, "xhigh", alias.String(), "the requested spelling is preserved")
+
+	// The canonical set is what a caller is told about; the alias does not
+	// appear twice in the scale or in an error message.
+	assert.NotContains(t, ThinkLevels(), "xhigh")
+	assert.False(t, IsThinkLevel("xlow"), "only the aliases we define resolve")
 }

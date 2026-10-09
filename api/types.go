@@ -105,7 +105,8 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// responding. Can be a boolean (true/false), a model-defined thinking level,
+	// or a positive integer giving an explicit thinking-token budget.
 	// Needs to be a pointer so we can distinguish between false (request that
 	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
@@ -160,7 +161,8 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// responding. Can be a boolean (true/false), a model-defined thinking level,
+	// or a positive integer giving an explicit thinking-token budget.
 	Think *ThinkValue `json:"think,omitempty"`
 
 	// Truncate is a boolean that, when set to true, truncates the chat history messages
@@ -544,6 +546,23 @@ type ChatResponse struct {
 	// DoneReason is the reason the model stopped generating text.
 	DoneReason string `json:"done_reason,omitempty"`
 
+	// ThinkBudget is the budget that applied, in the form it was written: a
+	// level such as "medium", or a token count. It is the request's think
+	// value when that carried a budget, and the model's own `think_budget`
+	// parameter otherwise — which is a budget the caller never sent and has no
+	// other way to learn from the wire.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolved to for this request.
+	//
+	// A level is a share of the room the response has — `min(num_predict,
+	// num_ctx)` — so it names a different number on every request as the
+	// prompt grows, and no client can work it out from the level alone.
+	// Reporting it is what lets a caller tell the model what it is actually
+	// working within, and tell a truncated answer caused by a thinking bound
+	// apart from one caused by the response cap.
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
+
 	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
 
 	// Logprobs contains log probability information for the generated tokens,
@@ -588,6 +607,18 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// ThinkBudget bounds how many tokens the model may spend inside a thinking
+	// block, as either a token count or an effort level. Models that reason at
+	// length by default can ship a bound with `PARAMETER think_budget`; a think
+	// value that carries its own budget takes precedence.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetMessage is written into the thinking block just before the
+	// closing tag is forced, so the model reads that it has to answer now
+	// rather than being cut off mid-sentence with no explanation. Empty means
+	// force the bare closing tag. Only meaningful alongside a budget.
+	ThinkBudgetMessage string `json:"think_budget_message,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -756,6 +787,14 @@ type ShowRequest struct {
 
 	Options map[string]any `json:"options"`
 
+	// Think is the think value the caller intends to send, used only to report
+	// the budget it would produce. A level carries a budget of its own and
+	// takes precedence over the model's `think_budget` parameter, exactly as it
+	// does on a completion — so without it this endpoint can only answer for a
+	// model that happens to carry a parameter, and answers nothing for the
+	// common case of a caller that sets the level itself.
+	Think *ThinkValue `json:"think,omitempty"`
+
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
@@ -781,6 +820,18 @@ type ShowResponse struct {
 	Manifests     []ManifestSummary  `json:"manifests,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+
+	// ThinkBudget is the model's own `think_budget` parameter, in the form it
+	// was written. It also appears in Parameters, but only as a line of text a
+	// caller would have to parse; naming it here matches the field on
+	// [ChatResponse] and [GenerateResponse] so one name means one thing across
+	// the API.
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolves to against the model's
+	// own `num_predict` and `num_ctx`. A request that sets either will resolve
+	// to a different number, which is why the responses report their own.
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
 }
 
 // ManifestSummary describes one child manifest available through a model tag.
@@ -985,6 +1036,14 @@ type GenerateResponse struct {
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
 
+	// ThinkBudget is the budget that applied, in the form it was written. See
+	// the field of the same name on [ChatResponse].
+	ThinkBudget *ThinkValue `json:"think_budget,omitempty"`
+
+	// ThinkBudgetTokens is what that budget resolved to for this request. See
+	// the field of the same name on [ChatResponse].
+	ThinkBudgetTokens int `json:"think_budget_tokens,omitempty"`
+
 	Metrics
 
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
@@ -1091,6 +1150,22 @@ func (opts *Options) FromMap(m map[string]any) error {
 		field := valueOpts.FieldByName(opt.Name)
 		if field.IsValid() && field.CanSet() {
 			if val == nil {
+				continue
+			}
+
+			// Options that accept more than one JSON type decode themselves,
+			// so re-encode the value and hand it to the field's unmarshaler.
+			if field.Kind() == reflect.Pointer && field.Type().Implements(jsonUnmarshalerType) {
+				data, err := json.Marshal(val)
+				if err != nil {
+					return fmt.Errorf("option %q could not be re-encoded: %w", key, err)
+				}
+
+				decoded := reflect.New(field.Type().Elem())
+				if err := json.Unmarshal(data, decoded.Interface()); err != nil {
+					return fmt.Errorf("option %q: %w", key, err)
+				}
+				field.Set(decoded)
 				continue
 			}
 
@@ -1202,7 +1277,8 @@ func DefaultOptions() Options {
 	}
 }
 
-// ThinkValue represents a boolean or model-defined thinking level.
+// ThinkValue represents a boolean, a model-defined thinking level, or a
+// positive integer thinking-token budget.
 type ThinkValue = model.ThinkValue
 
 // ValidateLegacyThinking checks named levels for models without thinking metadata.
@@ -1211,12 +1287,39 @@ func ValidateLegacyThinking(think *ThinkValue) error {
 	if !think.IsString() {
 		return nil
 	}
-	switch think.String() {
-	case "low", "medium", "high", "max":
+	if IsThinkLevel(think.String()) {
 		return nil
-	default:
-		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
+	return fmt.Errorf("invalid think value: %q (must be one of %q, true, false, or a positive thinking-token budget)", think.String(), ThinkLevels())
+}
+
+// ThinkLevels returns the effort levels that carry a thinking budget, weakest
+// first. The OpenAI- and Anthropic-compatible endpoints validate their own
+// effort fields against this for models without thinking metadata, so a level
+// cannot be accepted by one entry point and rejected by another.
+func ThinkLevels() []string {
+	return model.ThinkLevels()
+}
+
+// IsThinkLevel reports whether a string is an effort level with a budget.
+func IsThinkLevel(level string) bool {
+	return model.IsThinkLevel(level)
+}
+
+// ThinkBudgetWindow returns the room a level is a share of. A level bounds
+// thinking so a model still has room left to answer, which makes the response
+// length the thing to divide: when the caller caps it with num_predict, a share
+// of the context length can equal or exceed that cap and then bounds nothing —
+// the model can spend the whole response thinking and stop at the cap with no
+// answer. Prefer num_predict when it is set, and never exceed the context.
+func ThinkBudgetWindow(numCtx, numPredict int) int {
+	if numPredict <= 0 {
+		return numCtx
+	}
+	if numCtx > 0 {
+		return min(numPredict, numCtx)
+	}
+	return numPredict
 }
 
 type Duration struct {
@@ -1259,6 +1362,8 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 
 	return nil
 }
+
+var jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 
 // FormatParams converts specified parameter options to their correct types
 func FormatParams(params map[string][]string) (map[string]any, error) {
@@ -1311,6 +1416,16 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
+					if field.Type().Implements(jsonUnmarshalerType) {
+						// Either a number or a word, decided by the field
+						if intVal, err := strconv.ParseInt(vals[0], 10, 64); err == nil {
+							out[key] = intVal
+						} else {
+							out[key] = vals[0]
+						}
+						break
+					}
+
 					switch field.Type().Elem().Kind() {
 					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
