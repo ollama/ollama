@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/internal/orderedmap"
-	"github.com/ollama/ollama/llm"
 )
 
 // Strands Decider's pointer head reads each question independently. Its prompt
@@ -31,7 +30,7 @@ func encodeStrands(req Request, c *Compiled) error {
 		}
 		var prompt strings.Builder
 		fmt.Fprintf(&prompt, "<question type=\"%s\">\n%s\n%s\n<options>\n", q.Type, header, f.Description)
-		row := llm.ScorePointerRow{Prefix: "<state>\n" + state + "\n</state>\n", Type: typ}
+		row := ScorePointerRow{Prefix: "<state>\n" + state + "\n</state>\n", Type: typ}
 		for i, option := range f.Choices {
 			start := prompt.Len()
 			fmt.Fprintf(&prompt, "%d. %v", i+1, option.Value)

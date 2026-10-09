@@ -1,4 +1,4 @@
-//go:build integration && release
+//go:build integration && (release || migration)
 
 package integration
 
@@ -7,12 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -43,7 +43,7 @@ func postSystemOne(ctx context.Context, endpoint string, input decision.Request)
 func runAPISystemOne(t *testing.T, modelName string) {
 	ctx, cancel := context.WithTimeout(t.Context(), apiTestTimeout)
 	defer cancel()
-	client, endpoint, cleanup := InitServerConnection(ctx, t)
+	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 	if err := PullIfMissing(ctx, client, modelName); err != nil {
 		t.Fatal(err)
@@ -52,6 +52,12 @@ func runAPISystemOne(t *testing.T, modelName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	validateSystemOne(ctx, t, client, modelName, info)
+}
+
+func validateSystemOne(ctx context.Context, t *testing.T, client *api.Client, modelName string, info *api.ShowResponse) {
+	t.Helper()
+	_, endpoint := GetTestEndpoint()
 	if !slices.Contains(info.Capabilities, model.CapabilityDecision) {
 		t.Fatalf("model %q does not declare the decision capability", modelName)
 	}
@@ -68,6 +74,7 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		t.Fatal(err)
 	}
 	input.Model = modelName
+	input.KeepAlive = &api.Duration{Duration: 10 * time.Second}
 	type response struct {
 		Model   string
 		Answers struct {
@@ -77,9 +84,8 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		}
 		Usage decision.Usage
 	}
-	score := func(t *testing.T, req decision.Request) response {
+	decodeScore := func(t *testing.T, body []byte, status int, err error) response {
 		t.Helper()
-		body, status, err := postSystemOne(ctx, endpoint, req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,8 +103,7 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		if result.Model != modelName {
 			t.Fatalf("unexpected model or answer fields: %s", body)
 		}
-		// MLX scores without generating; llama.cpp can report primer/answer
-		// tokens. Neither backend may omit input accounting or report negatives.
+		// Neither backend may omit input accounting or report negative usage.
 		if result.Usage.InputTokens <= 0 || result.Usage.OutputTokens < 0 {
 			t.Fatalf("missing or invalid usage: %s", body)
 		}
@@ -141,6 +146,11 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		}
 		return result
 	}
+	score := func(t *testing.T, req decision.Request) response {
+		t.Helper()
+		body, status, err := postSystemOne(ctx, endpoint, req)
+		return decodeScore(t, body, status, err)
+	}
 
 	baseline := score(t, input)
 	t.Run("decisions", func(t *testing.T) {
@@ -154,9 +164,8 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		}
 	})
 
-	unchanged := func(t *testing.T) {
+	checkUnchanged := func(t *testing.T, got response) {
 		t.Helper()
-		got := score(t, input)
 		// Allow 0.01 absolute probability drift from different BF16 cache/prefill
 		// shapes while requiring identical choices.
 		if diff := cmp.Diff(baseline.Answers, got.Answers, cmpopts.EquateApprox(0, 0.01),
@@ -169,21 +178,38 @@ func runAPISystemOne(t *testing.T, modelName string) {
 			t.Errorf("input token count changed: got %d, want %d", got.Usage.InputTokens, baseline.Usage.InputTokens)
 		}
 	}
+	unchanged := func(t *testing.T) {
+		t.Helper()
+		checkUnchanged(t, score(t, input))
+	}
 	t.Run("repeat", unchanged)
 	t.Run("concurrent", func(t *testing.T) {
-		for i := range 4 {
-			t.Run(fmt.Sprint(i), func(t *testing.T) {
-				t.Parallel()
-				unchanged(t)
-			})
+		// The harness sets server environment variables; use concurrent HTTP
+		// requests, not parallel subtests beneath t.Setenv.
+		type result struct {
+			body   []byte
+			status int
+			err    error
+		}
+		results := make(chan result, 4)
+		for range cap(results) {
+			go func() {
+				body, status, err := postSystemOne(ctx, endpoint, input)
+				results <- result{body, status, err}
+			}()
+		}
+		for range cap(results) {
+			got := <-results
+			checkUnchanged(t, decodeScore(t, got.body, got.status, got.err))
 		}
 	})
 	t.Run("after_generation", func(t *testing.T) {
 		noStream := false
 		err := client.Generate(ctx, &api.GenerateRequest{
 			Model: modelName, Prompt: "Reply with one word: hello", Stream: &noStream,
-			Think:   &api.ThinkValue{Value: false},
-			Options: map[string]any{"temperature": 0, "num_predict": 8},
+			KeepAlive: input.KeepAlive,
+			Think:     &api.ThinkValue{Value: false},
+			Options:   map[string]any{"temperature": 0, "num_predict": 8},
 		}, func(api.GenerateResponse) error { return nil })
 		if !slices.Contains(info.Capabilities, model.CapabilityCompletion) {
 			var status api.StatusError
@@ -196,9 +222,9 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		unchanged(t)
 	})
 
-	t.Run("invalid_state", func(t *testing.T) {
+	t.Run("invalid_questions", func(t *testing.T) {
 		invalid := input
-		invalid.State = json.RawMessage(`""`)
+		invalid.Questions = &decision.Questions{}
 		body, status, err := postSystemOne(ctx, endpoint, invalid)
 		if err != nil {
 			t.Fatal(err)
@@ -208,4 +234,30 @@ func runAPISystemOne(t *testing.T, modelName string) {
 		}
 		unchanged(t)
 	})
+	if slices.Contains(info.Capabilities, model.CapabilityVision) {
+		t.Run("vision", func(t *testing.T) {
+			image, _, _ := decodeTestImages(t)
+			questions := &decision.Questions{}
+			questions.Set("word", decision.Question{
+				Type: "choice", Instructions: json.RawMessage(`"Which word appears in the image?"`),
+				Criteria: json.RawMessage(`{"ollama":"OLLAMA","nasa":"NASA"}`),
+			})
+			body, status, err := postSystemOne(ctx, endpoint, decision.Request{
+				Model: modelName, State: json.RawMessage(`"Read the attached image."`),
+				Images: []api.ImageData{image}, Questions: questions, KeepAlive: input.KeepAlive,
+			})
+			if err != nil || status != http.StatusOK {
+				t.Fatalf("vision decision: HTTP %d: %s: %v", status, body, err)
+			}
+			var result struct {
+				Answers map[string]decision.ChoiceAnswer
+			}
+			if err := json.Unmarshal(body, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Answers["word"].Choice != "ollama" {
+				t.Fatalf("expected image text OLLAMA, got %s", body)
+			}
+		})
+	}
 }

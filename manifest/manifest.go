@@ -26,6 +26,8 @@ var (
 	// ErrNoCompatibleManifest is returned when a manifest list does not contain
 	// a child manifest for the requested runner.
 	ErrNoCompatibleManifest = errors.New("no compatible manifest found")
+	// ErrManifestChanged means conversion lost its original tag or child selection.
+	ErrManifestChanged = errors.New("model changed during conversion; retry the request")
 )
 
 const (
@@ -428,14 +430,12 @@ func retainedBlobDigestsLocked() (map[string]struct{}, error) {
 	for n, ref := range refs {
 		data, _, digest, err := readVerifiedManifestLocked(ref.path, ref.root)
 		if err != nil {
-			slog.Warn("bad manifest", "name", n, "error", err)
-			continue
+			return nil, fmt.Errorf("cannot determine retained blobs for %s: %w", n, err)
 		}
 
 		digests, err := referencedBlobDigestsForData(digest, data)
 		if err != nil {
-			slog.Warn("bad manifest", "name", n, "error", err)
-			continue
+			return nil, fmt.Errorf("cannot determine retained blobs for %s: %w", n, err)
 		}
 
 		for _, digest := range digests {
@@ -666,6 +666,20 @@ func ReadManifestData(n model.Name) ([]byte, error) {
 	defer f.Close()
 
 	return io.ReadAll(f)
+}
+
+// ReadLegacyManifestData reads the downgrade anchor, not a preferred v2 entry.
+func ReadLegacyManifestData(n model.Name) ([]byte, error) {
+	path, err := LegacyPathForName(n)
+	if err != nil {
+		return nil, err
+	}
+	root, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	data, _, _, err := readVerifiedManifest(path, root)
+	return data, err
 }
 
 // ReadSelectedManifestData returns the runnable manifest bytes for a named
@@ -1126,7 +1140,57 @@ func writeManifestData(name model.Name, data []byte, removeLegacy bool) error {
 
 	manifestStoreMu.Lock()
 	defer manifestStoreMu.Unlock()
+	return writeManifestDataLocked(name, data, removeLegacy)
+}
 
+// ReplaceManifestData installs a conversion only while its original tag is unchanged.
+func ReplaceManifestData(name model.Name, previous, data []byte) error {
+	if !name.IsFullyQualified() || IsDigestReferenceName(name) {
+		return fmt.Errorf("conversion requires a model tag")
+	}
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	path, root, err := resolveManifestPath(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrManifestChanged
+	} else if err != nil {
+		return err
+	}
+	current, _, _, err := readVerifiedManifestLocked(path, root)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, previous) {
+		return ErrManifestChanged
+	}
+	// Aborted conversions can reclaim shared output before it is installed.
+	// Check new references under the GC lock; unchanged foreign children may
+	// legitimately be absent from this platform's store.
+	oldBlobs, err := referencedBlobDigestsForData("", previous)
+	if err != nil {
+		return err
+	}
+	newBlobs, err := referencedBlobDigestsForData("", data)
+	if err != nil {
+		return err
+	}
+	for _, digest := range newBlobs {
+		if slices.Contains(oldBlobs, digest) {
+			continue
+		}
+		path, err := BlobsPath(digest)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); err != nil {
+			return fmt.Errorf("conversion output %s unavailable: %w", digest, err)
+		}
+	}
+	return writeManifestDataLocked(name, data, true)
+}
+
+func writeManifestDataLocked(name model.Name, data []byte, removeLegacy bool) error {
 	digest, err := writeManifestBlob(data)
 	if err != nil {
 		return err

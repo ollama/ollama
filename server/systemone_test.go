@@ -28,6 +28,7 @@ type systemOneTestRunner struct {
 	request llm.ScoreRequest
 	err     error
 	calls   int
+	native  bool
 }
 
 func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreResponse, error) {
@@ -73,6 +74,17 @@ func TestDecisionModelRejectsCompletion(t *testing.T) {
 	}
 }
 
+func (r *systemOneTestRunner) SystemOne(ctx context.Context, input decision.Request) (decision.Response, error) {
+	r.calls++
+	r.native = true
+	r.request.Images = input.Images
+	var result decision.Response
+	if err := json.Unmarshal([]byte(`{"answers":{"refund":{"type":"noul","noul":0.8807970779778823}},"usage":{"input_tokens":123,"output_tokens":0}}`), &result); err != nil {
+		return result, err
+	}
+	return result, r.err
+}
+
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -100,7 +112,11 @@ func TestSystemOneHandler(t *testing.T) {
 		contextLength                                  int
 		undeclared                                     bool
 	}{
-		{"renamed-clef", "qwen35", "", "Ignored for the joint head", "", 1024, false},
+		{"native-nimble", "qwen35", "", "Native model scoring instructions.", "", 1024, false},
+		{"native-nimble-system-override", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
+		{"native-nimble-renderer", "qwen35", "tev1", "Native model scoring instructions.", "", 1024, false},
+		{"native-nimble-template", "qwen35", "", "Native model scoring instructions.", "custom:{{ range .Messages }}{{ .Role }}:{{ .Content }}\n{{ end }}answer:", 1024, false},
+		{"renamed-clef", "clef", "", "Ignored for the joint head", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-decision", "qwen35", "", "Native model scoring instructions.", "", 4096, false},
@@ -115,6 +131,9 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		if modelConfig.name == "renamed-clef" {
 			kv[modelConfig.architecture+".decision.type"] = "clef"
+		}
+		if strings.HasPrefix(modelConfig.name, "native-nimble") {
+			kv[modelConfig.architecture+".decision.type"] = "nimble"
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
@@ -168,25 +187,30 @@ func TestSystemOneHandler(t *testing.T) {
 		calls  int
 		expire bool
 	}{
+		{"native Nimble", `{"model":"native-nimble","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"native Nimble SYSTEM override", `{"model":"native-nimble-system-override","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"native Nimble renderer override", `{"model":"native-nimble-renderer","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"native Nimble TEMPLATE override", `{"model":"native-nimble-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"native Nimble validation", `{"model":"native-nimble","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef videos unsupported", `{"model":"renamed-clef","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
 		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"Clef null state and default instructions", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
+		{"Clef invalid state rejected upstream", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "state must be provided"}, 400, 1, false},
 		{"Clef joint head", `{"model":"renamed-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"GGUF success without renderer", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"no system prompt", `{"model":"no-system","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
-		{"template failure", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, errors.New("invalid model template"), 500, 0, false},
 		{"GGUF capability without Qwen architecture", `{"model":"gguf-other-architecture","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"GGUF missing capability", `{"model":"gguf-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
+		{"template failure", `{"model":"gguf-decision","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, errors.New("invalid model template"), 500, 0, false},
 		{"runner validation", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "prompt too long"}, 400, 1, false},
 		{"runner failure", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("runner failed"), 500, 1, false},
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
 		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
-		{"invalid Clef schema", `{"model":"renamed-clef","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"invalid Clef schema", `{"model":"renamed-clef","state":"x","questions":{}}`, api.StatusError{StatusCode: 400, ErrorMessage: "questions must be a non-empty object"}, 400, 1, false},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
@@ -244,6 +268,10 @@ func TestSystemOneHandler(t *testing.T) {
 			if w.Code != tt.status || runner.calls != tt.calls {
 				t.Fatalf("status=%d calls=%d body=%s", w.Code, runner.calls, w.Body)
 			}
+			wantNative := tt.calls > 0 && ref.model != nil && ref.model.isGGUF() && ref.model.metadata.String("decision.type") != ""
+			if runner.native != wantNative {
+				t.Fatalf("native path=%v, want %v", runner.native, wantNative)
+			}
 			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
 			}
@@ -288,7 +316,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 {
+				if len(runner.request.Fields) > 0 || runner.native {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
@@ -296,6 +324,9 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if ref.model.Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
 					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
+				}
+				if runner.native {
+					return
 				}
 				var prompt string
 				if len(runner.request.Rows) > 0 {
@@ -320,7 +351,7 @@ func TestSystemOneHandler(t *testing.T) {
 						t.Fatal("pointer head must bypass chat templates")
 					}
 				} else if ref.model.HasGoTemplate {
-					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
+					if !strings.HasPrefix(prompt, "custom:system:"+ref.model.System+"\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
 					}
 				} else if ref.model.Config.Renderer == "" {
@@ -331,7 +362,7 @@ func TestSystemOneHandler(t *testing.T) {
 				} else {
 					wantPrefix := "<|im_start|>user\n"
 					if ref.model.System != "" {
-						wantPrefix = "<|im_start|>system\nModel-specific scoring instructions.<|im_end|>\n<|im_start|>user\n"
+						wantPrefix = "<|im_start|>system\n" + ref.model.System + "<|im_end|>\n<|im_start|>user\n"
 					}
 					if !strings.HasPrefix(prompt, wantPrefix) || !strings.HasSuffix(prompt, "<think>\n\n</think>\n\n") {
 						t.Fatalf("scorer did not receive the model's rendered prompt: %q", prompt)

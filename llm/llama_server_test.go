@@ -30,6 +30,17 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
+func TestLlamaServerRejectsLegacyClef(t *testing.T) {
+	model := loadTestGGUF(t, gguftest.KV{
+		"general.architecture": "qwen35",
+		"qwen35.decision.type": "clef",
+	})
+	runner, err := NewLlamaServerRunner(nil, "", model, nil, nil, api.DefaultOptions(), 1, "", LlamaServerConfig{})
+	if runner != nil || err == nil || !strings.Contains(err.Error(), "requires compatibility migration") {
+		t.Fatalf("legacy Clef: runner = %v, error = %v", runner, err)
+	}
+}
+
 func TestLlamaServerHealthParsing(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1918,11 +1929,19 @@ func TestEmbeddingBatchSize(t *testing.T) {
 func TestAppendBatchArgs(t *testing.T) {
 	tests := []struct {
 		name        string
+		modelArch   string
 		opts        api.Options
 		embedding   bool
 		numParallel int
 		want        []string
 	}{
+		{
+			name:        "clef fits a complete prompt in the physical batch",
+			modelArch:   "clef",
+			opts:        api.Options{Runner: api.Runner{NumCtx: 16384, NumBatch: 512}},
+			numParallel: 2,
+			want:        []string{"-b", "16384", "-ub", "16384"},
+		},
 		{
 			name:        "generation sets logical and physical batch",
 			opts:        api.Options{Runner: api.Runner{NumBatch: 1024}},
@@ -1946,7 +1965,9 @@ func TestAppendBatchArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendBatchArgs(nil, tt.opts, tt.embedding, tt.numParallel)
+			got := appendBatchArgs(nil, llamaServerLaunchConfig{
+				modelArch: tt.modelArch, opts: tt.opts, embedding: tt.embedding, numParallel: tt.numParallel,
+			})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendBatchArgs = %v, want %v", got, tt.want)
 			}
@@ -2610,54 +2631,12 @@ func TestExternalDraftType(t *testing.T) {
 	}
 }
 
-func TestHasLegacyQwenMTPDraft(t *testing.T) {
-	tests := []struct {
-		name    string
-		arch    string
-		tensors []gguf.TensorInfo
-		want    bool
-	}{
-		{
-			name:    "qwen35 legacy mtp marker",
-			arch:    "qwen35",
-			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
-			want:    true,
-		},
-		{
-			name:    "qwen35moe legacy mtp marker",
-			arch:    "qwen35moe",
-			tensors: []gguf.TensorInfo{{Name: "mtp.layers.0.attn_q.weight"}},
-			want:    true,
-		},
-		{
-			name:    "qwen35 without legacy mtp marker",
-			arch:    "qwen35",
-			tensors: nil,
-			want:    false,
-		},
-		{
-			name:    "other arch with mtp prefix",
-			arch:    "qwen3next",
-			tensors: []gguf.TensorInfo{{Name: "mtp.fc.weight"}},
-			want:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hasLegacyQwenMTPDraft(tt.arch, tt.tensors); got != tt.want {
-				t.Fatalf("hasLegacyQwenMTPDraft() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestHasMTPDraftAcrossShards(t *testing.T) {
-	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, []*gguftest.Tensor{
+	modelPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35", "qwen35.nextn_predict_layers": uint32(1)}, []*gguftest.Tensor{
 		testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{1}),
 	})
 	shardPath, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
-		testGGUFTensor("mtp.0.weight", gguf.TensorTypeF32, []uint64{1}),
+		testGGUFTensor("blk.1.nextn.eh_proj.weight", gguf.TensorTypeF32, []uint64{1}),
 	})
 	model, err := LoadModel(modelPath, 0, shardPath)
 	if err != nil {

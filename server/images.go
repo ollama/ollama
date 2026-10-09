@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
@@ -942,6 +943,9 @@ func narrowManifestListToLocal(data []byte) ([]byte, string, error) {
 }
 
 func PruneLayers() error {
+	if err := compatmigrate.RetireConvertedModels(); err != nil {
+		return err
+	}
 	var candidates []string
 	p, err := manifest.BlobsPath("")
 	if err != nil {

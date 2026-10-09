@@ -90,21 +90,6 @@ func downloadHFModel(t *testing.T, repo, revision, destDir string, extraArgs ...
 	}
 }
 
-// ollamaBin returns the path to the ollama binary to use for tests.
-// Prefers OLLAMA_BIN env, then falls back to the built binary at ../ollama
-// (same binary the integration test server uses).
-func ollamaBin() string {
-	if bin := os.Getenv("OLLAMA_BIN"); bin != "" {
-		return bin
-	}
-	if abs, err := filepath.Abs("../ollama"); err == nil {
-		if _, err := os.Stat(abs); err == nil {
-			return abs
-		}
-	}
-	return "ollama"
-}
-
 // ensureMLXLibraryPath sets OLLAMA_LIBRARY_PATH so the MLX dynamic library
 // is discoverable. Integration tests run from integration/ dir, so the
 // default CWD-based search won't find the library at the repo root.

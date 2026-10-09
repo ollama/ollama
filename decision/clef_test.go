@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
 )
 
 func TestCompileClef(t *testing.T) {
@@ -46,7 +45,7 @@ func TestCompileClef(t *testing.T) {
 	if !strings.HasSuffix(prompt, "<think>\n\n</think>\n\nJOINT SCHEMA DECISIONS:") || !strings.Contains(prompt, "INSTRUCTION: {\"a\":1,\"z\":2}\nALLOWED OPTIONS:\n") {
 		t.Fatal(prompt)
 	}
-	response, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{{2, 0}, {2, 0}, {0, 2}}, InputTokens: 99})
+	response, err := c.Answer(req.Model, ScoreResponse{Logits: [][]float32{{2, 0}, {2, 0}, {0, 2}}, InputTokens: 99})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +134,7 @@ func TestClefSchema(t *testing.T) {
 			t.Fatalf("option = %q, want %q", got, tt.want)
 		}
 	}
-	answer, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{{2, 0}, {2, 0}, {0, 2}}})
+	answer, err := c.Answer(req.Model, ScoreResponse{Logits: [][]float32{{2, 0}, {2, 0}, {0, 2}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +233,7 @@ func TestDecisionMedia(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var wire llm.ScoreRequest
+				var wire ScoreRequest
 				if err := json.Unmarshal(data, &wire); err != nil {
 					t.Fatal(err)
 				}
@@ -286,7 +285,7 @@ func TestClefAnswerOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, logits := range [][]float32{{0, 2}, {0, 0}} {
-		answer, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{logits, {2, 0}}})
+		answer, err := c.Answer(req.Model, ScoreResponse{Logits: [][]float32{logits, {2, 0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -262,19 +262,31 @@ func TestRouteHandlersRejectUnknownRunner(t *testing.T) {
 	}
 }
 
-func TestHandleScheduleErrorNoCompatibleManifest(t *testing.T) {
+func TestHandleScheduleErrorManifest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		body   string
+	}{
+		{"no compatible child", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest), http.StatusBadRequest, `{"error":"no compatible manifest found for runners: mlx"}`},
+		{"changed during conversion", manifest.ErrManifestChanged, http.StatusConflict, `{"error":"model changed during conversion; retry the request"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
 
-	handleScheduleError(c, "test", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest))
+			handleScheduleError(c, "test", tc.err)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
-	}
-	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"no compatible manifest found for runners: mlx"}` {
-		t.Fatalf("response = %s", got)
+			if w.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tc.status, w.Body.String())
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != tc.body {
+				t.Fatalf("response = %s", got)
+			}
+		})
 	}
 }
 

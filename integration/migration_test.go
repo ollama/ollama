@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -19,7 +20,6 @@ import (
 const (
 	migrationChatNumPredict    = 2048
 	migrationDefaultGoTemplate = "{{ .Prompt }}"
-	migrationCompatEnv         = "OLLAMA_LLAMA_CPP_COMPAT"
 	migrationGibiByte          = 1 << 30
 
 	// Timeouts for vision/chat/audio/completion capability validations.
@@ -37,8 +37,6 @@ const (
 	migrationConversionBaseTimeout = 2 * time.Minute
 	migrationConversionPerGiB      = 10 * time.Second
 	migrationConversionMaxTimeout  = 12 * time.Minute
-	// Poll interval while waiting for the converted manifest child.
-	migrationPollInterval = 2 * time.Second
 	// Wait and poll interval for models to unload after validation.
 	migrationUnloadTimeout      = 2 * time.Minute
 	migrationUnloadPollInterval = 500 * time.Millisecond
@@ -65,7 +63,8 @@ func runLocalCompatibilityMigrationCase(t *testing.T, name string) {
 	t.Helper()
 
 	modelsDir := os.Getenv("OLLAMA_MODELS")
-	if testModel == "" || modelsDir == "" {
+	isolated := testModel == "" || modelsDir == ""
+	if isolated {
 		modelsDir = t.TempDir()
 		t.Setenv("OLLAMA_MODELS", modelsDir)
 	}
@@ -84,37 +83,59 @@ func runLocalCompatibilityMigrationCase(t *testing.T, name string) {
 	}()
 
 	t.Logf("%s: pulling source model if needed", name)
-	pullOrSkip(ctx, t, client, name)
+	if err := PullIfMissing(ctx, client, name); err != nil {
+		t.Fatalf("source model unavailable: %v", err)
+	}
 
 	t.Logf("%s: reading source manifest", name)
 	firstShow := showOrFatal(ctx, t, client, name)
 	expectedCapabilities := normalizedCapabilities(firstShow.Capabilities)
 	expectedPromptConfig := promptConfigFromShow(t, firstShow)
+	if expectedPromptConfig.renderer == "clef" && hasCapability(firstShow.Capabilities, model.CapabilityDecision) {
+		// Upstream System One replaces Clef's private Go renderer.
+		expectedPromptConfig.renderer = ""
+	}
 
-	t.Logf("%s: validating first load through legacy source", name)
+	t.Logf("%s: loading legacy source, waiting for conversion before inference", name)
 	firstValidationStart := len(serverLog.String())
-	validateCompatibilityPrimaryCapability(ctx, t, client, name, firstShow, time.Second)
+	loadCtx, loadCancel := context.WithTimeout(ctx, migrationConversionTimeout(ctx, t, client, name))
+	validateCompatibilityPrimaryCapability(loadCtx, t, client, name, firstShow, compatKeepAlive)
+	loadCancel()
 	t.Logf("%s: waiting for first load to unload", name)
 	waitForNoRunningModel(ctx, t, client, name)
 
 	firstValidationLogs := serverLog.String()[firstValidationStart:]
-	if !hasCompatPatchEvidence(firstValidationLogs) {
-		t.Fatalf("server log does not prove first load used compatibility patch")
+	completed := strings.Index(firstValidationLogs, "completed local compat GGUF migration")
+	loaded := strings.Index(firstValidationLogs, "loading model via llama-server")
+	if completed < 0 || loaded < completed || strings.Count(firstValidationLogs, "completed local compat GGUF migration") != 1 {
+		t.Fatal("first load must complete conversion before starting llama-server; use a verified legacy source")
+	}
+	if hasCompatPatchEvidence(firstValidationLogs) {
+		t.Fatal("first load used a patched native binary")
 	}
 
-	conversionTimeout := migrationConversionTimeout(ctx, t, client, name)
-	t.Logf("%s: waiting for background %s conversion", name, manifest.RunnerLlamaCPP)
-	converted := waitForRunnerManifestChild(ctx, t, client, name, manifest.RunnerLlamaCPP, conversionTimeout)
-	t.Logf("%s: converted manifest digest %s", name, converted.Digest)
 	t.Logf("%s: reading converted manifest selection", name)
 	secondShow := showOrFatal(ctx, t, client, name)
-	if child := childSummaryForRunner(secondShow, manifest.RunnerGGML); child == nil {
-		t.Fatalf("converted manifest list for %s does not retain original %s child", name, manifest.RunnerGGML)
+	children, err := client.ShowManifests(ctx, &api.ShowRequest{Model: name})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if child := childSummaryForRunner(secondShow, manifest.RunnerLlamaCPP); child == nil || !child.Selected {
-		t.Fatalf("converted %s child is not selected for %s after migration", manifest.RunnerLlamaCPP, name)
-	} else if child.Digest != converted.Digest {
-		t.Fatalf("selected %s child digest changed after migration: poll=%s show=%s", manifest.RunnerLlamaCPP, converted.Digest, child.Digest)
+	if len(children.Manifests) != 1 || children.Manifests[0].Runner != manifest.RunnerLlamaCPP {
+		t.Fatalf("converted model must have one llamacpp child, got %d children", len(children.Manifests))
+	}
+	convertedDigests := ggufDigestsFromShow(t, secondShow)
+	if !slices.Equal(ggufDigestsFromShow(t, &children.Manifests[0].ShowResponse), convertedDigests) {
+		t.Fatal("default selection differs from the converted child")
+	}
+	if isolated {
+		for _, digest := range ggufDigestsFromShow(t, firstShow) {
+			if slices.Contains(convertedDigests, digest) {
+				continue
+			}
+			if exists, err := client.HeadBlob(ctx, digest); err != nil || exists {
+				t.Fatalf("obsolete GGUF %s was not reclaimed: exists=%v err=%v", digest, exists, err)
+			}
+		}
 	}
 	if got := normalizedCapabilities(secondShow.Capabilities); !slices.Equal(got, expectedCapabilities) {
 		t.Fatalf("converted %s child capabilities changed: before=%v after=%v", name, expectedCapabilities, got)
@@ -130,15 +151,11 @@ func runLocalCompatibilityMigrationCase(t *testing.T, name string) {
 
 	logs := serverLog.String()
 
-	t.Logf("%s: stopping first server before patch-disabled validation", name)
+	t.Logf("%s: stopping first server before restart validation", name)
 	cleanup()
 	cleanup = nil
 
 	t.Logf("%s: checking migration and converted-load log evidence", name)
-	migrationComplete := strings.Index(logs, "local compatibility migration completed")
-	if migrationComplete < 0 {
-		t.Fatalf("server log does not contain background migration completion")
-	}
 	convertedValidationLogs := logs[convertedValidationStart:]
 	if !strings.Contains(convertedValidationLogs, "loading model via llama-server") {
 		t.Fatalf("server log does not show converted model load")
@@ -146,24 +163,25 @@ func runLocalCompatibilityMigrationCase(t *testing.T, name string) {
 	if hasCompatPatchEvidence(convertedValidationLogs) {
 		t.Fatalf("converted %s child still triggered compatibility patch after migration", name)
 	}
-
-	t.Logf("%s: restarting server with %s=0", name, migrationCompatEnv)
-	t.Setenv(migrationCompatEnv, "0")
-	patchDisabledClient, _, patchDisabledCleanup := InitServerConnection(ctx, t)
-	defer patchDisabledCleanup()
-
-	t.Logf("%s: validating converted child with compatibility patch disabled", name)
-	patchDisabledValidationStart := len(serverLog.String())
-	patchDisabledShow := showOrFatal(ctx, t, patchDisabledClient, name)
-	if child := childSummaryForRunner(patchDisabledShow, manifest.RunnerLlamaCPP); child == nil || !child.Selected {
-		t.Fatalf("converted %s child is not selected for %s with compatibility patch disabled", manifest.RunnerLlamaCPP, name)
+	if strings.Contains(convertedValidationLogs, "starting local compat GGUF migration") {
+		t.Fatal("second load converted the model again")
 	}
-	validateCompatibilityCapabilities(ctx, t, patchDisabledClient, name, firstShow, compatKeepAlive)
-	waitForNoRunningModel(ctx, t, patchDisabledClient, name)
 
-	patchDisabledLogs := serverLog.String()[patchDisabledValidationStart:]
-	if hasCompatPatchEvidence(patchDisabledLogs) {
-		t.Fatalf("converted %s child triggered compatibility patch with %s=0", name, migrationCompatEnv)
+	t.Logf("%s: restarting server with the converted store", name)
+	restartedClient, _, restartedCleanup := InitServerConnection(ctx, t)
+	defer restartedCleanup()
+
+	restartedValidationStart := len(serverLog.String())
+	restartedShow := showOrFatal(ctx, t, restartedClient, name)
+	if !slices.Equal(ggufDigestsFromShow(t, restartedShow), convertedDigests) {
+		t.Fatal("restart selected a different model")
+	}
+	validateCompatibilityPrimaryCapability(ctx, t, restartedClient, name, restartedShow, compatKeepAlive)
+	waitForNoRunningModel(ctx, t, restartedClient, name)
+
+	restartedLogs := serverLog.String()[restartedValidationStart:]
+	if hasCompatPatchEvidence(restartedLogs) || strings.Contains(restartedLogs, "starting local compat GGUF migration") {
+		t.Fatalf("converted %s child needed conversion or patching after restart", name)
 	}
 
 	t.Logf("%s: migration validation complete", name)
@@ -199,9 +217,7 @@ func migrationConversionTimeoutForSize(size int64) time.Duration {
 	return timeout
 }
 
-// hasCompatPatchEvidence reports whether the server log shows a load that went
-// through the llama.cpp compatibility layer. Every handler in
-// llama/compat/llama-ollama-compat.cpp logs its detection with this prefix.
+// Detect accidentally testing an older, still-patched native binary.
 func hasCompatPatchEvidence(logs string) bool {
 	return strings.Contains(logs, "detected Ollama-format")
 }
@@ -258,41 +274,26 @@ func showOrFatal(ctx context.Context, t *testing.T, client *api.Client, model st
 	return resp
 }
 
-func childSummaryForRunner(resp *api.ShowResponse, runner string) *api.ManifestSummary {
-	for i := range resp.Manifests {
-		if resp.Manifests[i].Runner == runner {
-			return &resp.Manifests[i]
-		}
-	}
-	return nil
-}
-
-func waitForRunnerManifestChild(ctx context.Context, t *testing.T, client *api.Client, model, runner string, timeout time.Duration) api.ManifestSummary {
+func ggufDigestsFromShow(t *testing.T, resp *api.ShowResponse) []string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	attempt := 0
-	for time.Now().Before(deadline) {
-		attempt++
-		resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
-		if err == nil {
-			if child := childSummaryForRunner(resp, runner); child != nil {
-				t.Logf("%s: found %s manifest child after %d poll(s)", model, runner, attempt)
-				return *child
+	mf, err := parser.ParseFile(strings.NewReader(resp.Modelfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var digests []string
+	for _, cmd := range mf.Commands {
+		if cmd.Name == "model" || cmd.Name == "draft" {
+			digest, ok := manifest.DigestReference(filepath.Base(cmd.Args))
+			if !ok {
+				t.Fatalf("expected a local GGUF in show output, got %q", cmd.Args)
 			}
-		} else {
-			lastErr = err
+			digests = append(digests, digest)
 		}
-		if attempt == 1 || attempt%10 == 0 {
-			t.Logf("%s: waiting for %s manifest child, poll=%d", model, runner, attempt)
-		}
-		time.Sleep(migrationPollInterval)
 	}
-	if lastErr != nil {
-		t.Fatalf("timed out waiting for %s manifest child for %s; last show error: %v", runner, model, lastErr)
+	if len(digests) == 0 {
+		t.Fatal("show output has no GGUF model")
 	}
-	t.Fatalf("timed out waiting for %s manifest child for %s", runner, model)
-	return api.ManifestSummary{}
+	return digests
 }
 
 func migrationToolNumPredict(name string) int {
@@ -300,38 +301,6 @@ func migrationToolNumPredict(name string) int {
 		return 2048
 	}
 	return 512
-}
-
-// migrationToolsSmokeModels lists tools-capable library model families used to
-// gate the tools smoke test during migration validation.
-var migrationToolsSmokeModels = []string{
-	"nemotron3:33b",
-	"laguna-xs.2",
-	"gemma4",
-	"lfm2.5-thinking",
-	"qwen3-vl",
-	"gpt-oss:20b",
-	"gpt-oss:120b",
-	"qwen3",
-	"llama3.1",
-	"llama3.2",
-	"mistral",
-	"qwen2.5",
-	"ministral-3",
-	"mistral-nemo",
-	"mistral-small",
-	"mixtral:8x22b",
-	"qwq",
-	"granite3.3",
-}
-
-func shouldSmokeTools(name string) bool {
-	for _, candidate := range migrationToolsSmokeModels {
-		if name == candidate || strings.HasPrefix(name, candidate+":") {
-			return true
-		}
-	}
-	return false
 }
 
 func isModelFamily(model, family string) bool {

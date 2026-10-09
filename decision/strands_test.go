@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
 )
 
 func TestCompileStrands(t *testing.T) {
@@ -47,7 +46,7 @@ func TestCompileStrands(t *testing.T) {
 	if !strings.Contains(c.Request.PointerRows[1].Prompt, "1. false — the statement does not hold for this state\n2. true — the statement holds for this state") {
 		t.Fatal("wrong noul defaults")
 	}
-	answer, err := c.Answer(req.Model, llm.ScoreResponse{Logits: [][]float32{{0, 2}, {0, 2}, {0, 2}}, InputTokens: 99})
+	answer, err := c.Answer(req.Model, ScoreResponse{Logits: [][]float32{{0, 2}, {0, 2}, {0, 2}}, InputTokens: 99})
 	if err != nil {
 		t.Fatal(err)
 	}

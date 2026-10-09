@@ -13,7 +13,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
-	"github.com/ollama/ollama/llm"
 )
 
 type compiledField struct {
@@ -24,7 +23,7 @@ type compiledField struct {
 }
 
 type Compiled struct {
-	Request  llm.ScoreRequest
+	Request  ScoreRequest
 	fields   []compiledField
 	messages [][]api.Message
 }
@@ -65,7 +64,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
 		return nil, fmt.Errorf("state must not be empty")
 	}
-	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	c := &Compiled{Request: ScoreRequest{State: context, Images: req.Images}}
 	if encoding == "strands" {
 		if err := encodeStrands(req, c); err != nil {
 			return nil, err
@@ -93,7 +92,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		c.messages = append(c.messages, []api.Message{
 			{Role: "user", Content: prompts[i]},
 		})
-		row := llm.ScoreRow{Question: &llm.ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
+		row := ScoreRow{Question: &ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
 		for _, choice := range f.Choices {
 			row.Candidates = append(row.Candidates, choice.Code)
 		}
@@ -220,7 +219,7 @@ func compileField(name string, q Question) (compiledField, error) {
 	return f, nil
 }
 
-func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
+func (c *Compiled) Answer(model string, result ScoreResponse) (Response, error) {
 	response := Response{
 		Model: model, Answers: &Answers{},
 		Usage:                 Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens},

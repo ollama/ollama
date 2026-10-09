@@ -2,9 +2,11 @@ package compatmigrate
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -23,7 +25,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func TestEnsureLocalCompatibilityMigrationAppendsToExistingManifestList(t *testing.T) {
+func TestEnsureLocalCompatibilityMigrationReplacesLegacyChild(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	registerTestCompatMigrator(t)
 
@@ -44,11 +46,11 @@ func TestEnsureLocalCompatibilityMigrationAppendsToExistingManifestList(t *testi
 	})
 	wrapSourceManifestAsList(t, source)
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if !migrated {
+	if migrated == "" {
 		t.Fatal("expected migration to append a llamacpp child")
 	}
 
@@ -63,22 +65,22 @@ func TestEnsureLocalCompatibilityMigrationAppendsToExistingManifestList(t *testi
 	if parent.MediaType != manifest.MediaTypeManifestList {
 		t.Fatalf("expected manifest list, got %q", parent.MediaType)
 	}
-	if len(parent.Manifests) != 2 {
-		t.Fatalf("expected two child manifests, got %d", len(parent.Manifests))
+	if len(parent.Manifests) != 1 {
+		t.Fatalf("expected one child manifest, got %d", len(parent.Manifests))
 	}
-	if _, err := manifest.ParseNamedManifestForRunner(source, manifest.RunnerGGML); err != nil {
-		t.Fatalf("expected ggml child to resolve: %v", err)
+	if _, err := manifest.ParseNamedManifestForRunner(source, manifest.RunnerGGML); !errors.Is(err, manifest.ErrNoCompatibleManifest) {
+		t.Fatalf("legacy child was not retired: %v", err)
 	}
 	if _, err := manifest.ParseNamedManifestForRunner(source, manifest.RunnerLlamaCPP); err != nil {
 		t.Fatalf("expected llamacpp child to resolve: %v", err)
 	}
 
-	migratedAgain, err := EnsureLocalCompatibilityMigration(source)
+	migratedAgain, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration(second) error = %v", err)
 	}
-	if !migratedAgain {
-		t.Fatal("expected existing llamacpp child to satisfy migration")
+	if migratedAgain != "" {
+		t.Fatal("expected existing llamacpp child to need no conversion")
 	}
 	rawAgain, err := manifest.ReadManifestData(source)
 	if err != nil {
@@ -107,11 +109,11 @@ func TestEnsureLocalCompatibilityMigrationUnsupportedFamilyNoop(t *testing.T) {
 		},
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if migrated {
+	if migrated != "" {
 		t.Fatal("expected unsupported family to skip migration")
 	}
 
@@ -128,7 +130,7 @@ func TestEnsureLocalCompatibilityMigrationUnsupportedFamilyNoop(t *testing.T) {
 	}
 }
 
-func TestEnsureLocalCompatibilityMigrationSkipsAdapterModels(t *testing.T) {
+func TestEnsureLocalCompatibilityMigrationRejectsLegacyAdapterModels(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	registerTestCompatMigrator(t)
 
@@ -147,11 +149,11 @@ func TestEnsureLocalCompatibilityMigrationSkipsAdapterModels(t *testing.T) {
 		adapter: "fake lora adapter payload",
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
-	if err != nil {
-		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
+	if err == nil || !strings.Contains(err.Error(), "adapter") {
+		t.Fatalf("expected unsupported adapter error, got %v", err)
 	}
-	if migrated {
+	if migrated != "" {
 		t.Fatal("expected adapter-bearing source to skip migration; the converted child would drop the adapter")
 	}
 
@@ -191,11 +193,11 @@ func TestEnsureLocalCompatibilityMigrationPreservesPromptMetadata(t *testing.T) 
 		template: template,
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if !migrated {
+	if migrated == "" {
 		t.Fatal("expected migration to create target manifest")
 	}
 
@@ -299,11 +301,11 @@ func TestEnsureLocalCompatibilityMigrationGemma4(t *testing.T) {
 		template: "TEMPLATE gemma4",
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if !migrated {
+	if migrated == "" {
 		t.Fatal("expected migration to create target manifest")
 	}
 
@@ -405,11 +407,11 @@ func TestEnsureLocalCompatibilityMigrationGemma4CompatibleCopyNoop(t *testing.T)
 		},
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if migrated {
+	if migrated != "" {
 		t.Fatal("expected compatible copied Gemma4 model to skip migration")
 	}
 
@@ -502,11 +504,11 @@ func TestEnsureLocalCompatibilityMigrationLaguna(t *testing.T) {
 		template: "TEMPLATE laguna",
 	})
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
 	}
-	if !migrated {
+	if migrated == "" {
 		t.Fatal("expected migration to create target manifest")
 	}
 
@@ -553,62 +555,167 @@ func TestEnsureLocalCompatibilityMigrationLaguna(t *testing.T) {
 }
 
 func TestEnsureLocalCompatibilityMigrationSerializesConcurrentCalls(t *testing.T) {
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, aliases := range []bool{false, true} {
+		t.Run(fmt.Sprintf("aliases=%v", aliases), func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
 
-	source := model.ParseName("registry.ollama.ai/library/testcompat:latest")
-	writeSourceManifest(t, source, sourceManifestInput{
-		config: model.ConfigV2{
-			ModelFormat:   "gguf",
-			ModelFamily:   "testcompat",
-			ModelFamilies: []string{"testcompat"},
-		},
-		modelKV: outKV{
-			"general.architecture":  "testcompat",
-			"tokenizer.ggml.tokens": []string{"x"},
-		},
-		modelTensors: []*outTensor{
-			fixtureTensor("token_embd.weight", gguf.TensorTypeF16, []uint64{1, 8}),
-		},
-	})
+			source := model.ParseName("registry.ollama.ai/library/testcompat:latest")
+			writeSourceManifest(t, source, sourceManifestInput{
+				config: model.ConfigV2{
+					ModelFormat:   "gguf",
+					ModelFamily:   "testcompat",
+					ModelFamilies: []string{"testcompat"},
+				},
+				modelKV: outKV{
+					"general.architecture":  "testcompat",
+					"tokenizer.ggml.tokens": []string{"x"},
+				},
+				modelTensors: []*outTensor{
+					fixtureTensor("token_embd.weight", gguf.TensorTypeF16, []uint64{1, 8}),
+				},
+			})
 
-	var calls atomic.Int32
-	registerCountingCompatMigrator(t, &calls)
+			var calls atomic.Int32
+			registerCountingCompatMigrator(t, &calls)
 
-	const workers = 8
-	var wg sync.WaitGroup
-	errs := make(chan error, workers)
-	start := make(chan struct{})
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			migrated, err := EnsureLocalCompatibilityMigration(source)
+			const workers = 8
+			data, err := manifest.ReadManifestData(source)
 			if err != nil {
-				errs <- err
-				return
+				t.Fatal(err)
 			}
-			if !migrated {
-				errs <- errors.New("expected migration to succeed")
-				return
+			var wg sync.WaitGroup
+			errs := make(chan error, workers)
+			start := make(chan struct{})
+			for i := range workers {
+				name := source
+				if aliases {
+					name = model.ParseName(fmt.Sprintf("testcompat:alias-%d", i))
+					if err := manifest.WriteManifestData(name, data); err != nil {
+						t.Fatal(err)
+					}
+				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					<-start
+					_, err := WaitLocalCompatibilityMigration(t.Context(), name, "")
+					if err != nil {
+						errs <- err
+						return
+					}
+				}()
 			}
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
+			close(start)
+			wg.Wait()
+			close(errs)
 
-	for err := range errs {
-		if err != nil {
-			t.Fatalf("concurrent migration failed: %v", err)
-		}
-	}
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("expected one migration under concurrent calls, got %d", got)
+			for err := range errs {
+				if err != nil {
+					t.Fatalf("concurrent migration failed: %v", err)
+				}
+			}
+			want := int32(1)
+			if aliases {
+				want = workers
+			}
+			if got := calls.Load(); got != want {
+				t.Fatalf("migration count: got %d, want %d", got, want)
+			}
+		})
 	}
 }
 
-func TestEnsureLocalCompatibilityMigrationSkipsWhenDiskIsTooFull(t *testing.T) {
+func TestMigrationInterruptedLoad(t *testing.T) {
+	for _, action := range []string{"cancel", "replace", "remove"} {
+		t.Run(action, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("testcompat:interrupted")
+			writeSourceManifest(t, name, sourceManifestInput{
+				config:       model.ConfigV2{ModelFormat: "gguf", ModelFamily: "testcompat"},
+				modelKV:      outKV{"general.architecture": "testcompat"},
+				modelTensors: []*outTensor{fixtureTensor("token_embd.weight", gguf.TensorTypeF32, []uint64{2, 2})},
+			})
+			gate := gatedCompatMigrator{started: make(chan struct{}), finish: make(chan struct{})}
+			t.Cleanup(SetMigratorsForTesting(map[string][]Migrator{"testcompat": {gate}}))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() { _, err := WaitLocalCompatibilityMigration(ctx, name, ""); result <- err }()
+			<-gate.started
+			value, _ := migrationInFlight.Load(name.String() + ":")
+			work := value.(*localMigration)
+			var replacement []byte
+			switch action {
+			case "cancel":
+				cancel()
+				if err := <-result; !errors.Is(err, context.Canceled) {
+					t.Fatalf("canceled waiter: %v", err)
+				}
+			case "replace":
+				replacement = []byte(`{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","layers":[]}`)
+				if err := manifest.WriteManifestData(name, replacement); err != nil {
+					t.Fatal(err)
+				}
+			case "remove":
+				if _, err := manifest.RemoveNamed(name); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case <-work.done:
+				t.Fatal("conversion completed before its work was released")
+			default:
+			}
+			close(gate.finish)
+			<-work.done
+			if action == "cancel" {
+				if work.err != nil || work.digest == "" {
+					t.Fatalf("client cancellation aborted conversion: %s, %v", work.digest, work.err)
+				}
+				if _, err := WaitLocalCompatibilityMigration(t.Context(), name, ""); err != nil {
+					t.Fatalf("next load: %v", err)
+				}
+			} else {
+				if err := <-result; !errors.Is(err, manifest.ErrManifestChanged) {
+					t.Fatalf("changed tag was not rejected: %v", err)
+				}
+				data, err := manifest.ReadManifestData(name)
+				if action == "remove" {
+					if !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("removed tag resurrected: %v", err)
+					}
+				} else if err != nil || !bytes.Equal(data, replacement) {
+					t.Fatalf("replacement overwritten: %s, %v", data, err)
+				}
+			}
+		})
+	}
+}
+
+type gatedCompatMigrator struct {
+	testCompatMigrator
+	started, finish chan struct{}
+}
+
+func manifestReferenceForChild(child *manifest.Manifest) (manifest.Manifest, error) {
+	data, err := json.Marshal(child)
+	if err != nil {
+		return manifest.Manifest{}, err
+	}
+	digest, err := manifest.WriteManifestBlob(data)
+	if err != nil {
+		return manifest.Manifest{}, err
+	}
+	return manifest.NewManifestReference(digest, child.Runner, child.Format)
+}
+
+func (m gatedCompatMigrator) Migrate(src *SourceModel) (*Result, error) {
+	close(m.started)
+	<-m.finish
+	return m.testCompatMigrator.Migrate(src)
+}
+
+func TestEnsureLocalCompatibilityMigrationPreservesSourceWhenDiskIsTooFull(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	registerTestCompatMigrator(t)
 
@@ -629,11 +736,11 @@ func TestEnsureLocalCompatibilityMigrationSkipsWhenDiskIsTooFull(t *testing.T) {
 
 	overrideAvailableSpace(t, func(string) (uint64, error) { return 0, nil })
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
-	if err != nil {
-		t.Fatalf("EnsureLocalCompatibilityMigration() error = %v", err)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
+	if !errors.Is(err, errInsufficientSpace) {
+		t.Fatalf("expected insufficient space, got %v", err)
 	}
-	if migrated {
+	if migrated != "" {
 		t.Fatal("expected migration to skip when disk headroom is insufficient")
 	}
 	data, err := manifest.ReadManifestData(source)
@@ -1116,8 +1223,8 @@ func openGGUFLayer(t *testing.T, digest string) *gguf.File {
 
 type testCompatMigrator struct{}
 
-func (testCompatMigrator) NeedsMigration(*SourceModel) bool {
-	return true
+func (testCompatMigrator) NeedsMigration(src *SourceModel) bool {
+	return !src.GGUF.KeyValue("general.test_converted").Valid()
 }
 
 func (testCompatMigrator) Migrate(src *SourceModel) (*Result, error) {
@@ -1126,7 +1233,7 @@ func (testCompatMigrator) Migrate(src *SourceModel) (*Result, error) {
 		return nil, err
 	}
 
-	kv := outKV{}
+	kv := outKV{"general.test_converted": true}
 	for _, keyValue := range src.GGUF.KeyValues() {
 		if !keyValue.Valid() {
 			continue
@@ -1149,14 +1256,20 @@ func (testCompatMigrator) Migrate(src *SourceModel) (*Result, error) {
 }
 
 type countingCompatMigrator struct {
-	calls *atomic.Int32
+	calls  *atomic.Int32
+	active *atomic.Int32
 }
 
-func (countingCompatMigrator) NeedsMigration(*SourceModel) bool {
-	return true
+func (countingCompatMigrator) NeedsMigration(src *SourceModel) bool {
+	return testCompatMigrator{}.NeedsMigration(src)
 }
 
 func (m countingCompatMigrator) Migrate(src *SourceModel) (*Result, error) {
+	if m.active.Add(1) != 1 {
+		m.active.Add(-1)
+		return nil, errors.New("concurrent conversions of the same source")
+	}
+	defer m.active.Add(-1)
 	m.calls.Add(1)
 	time.Sleep(50 * time.Millisecond)
 	return testCompatMigrator{}.Migrate(src)
@@ -1190,7 +1303,7 @@ func registerCountingCompatMigrator(t *testing.T, calls *atomic.Int32) {
 
 	const key = "testcompat"
 	old, ok := migratorsByArchitecture[key]
-	migratorsByArchitecture[key] = []Migrator{countingCompatMigrator{calls: calls}}
+	migratorsByArchitecture[key] = []Migrator{countingCompatMigrator{calls: calls, active: new(atomic.Int32)}}
 	t.Cleanup(func() {
 		if ok {
 			migratorsByArchitecture[key] = old
@@ -1422,11 +1535,11 @@ func TestEnsureLocalCompatibilityMigrationRepairsDanglingV2Entry(t *testing.T) {
 		t.Fatalf("symlink dangling v2 entry: %v", err)
 	}
 
-	migrated, err := EnsureLocalCompatibilityMigration(source)
+	migrated, err := ensureLocalCompatibilityMigration(source, "")
 	if err != nil {
 		t.Fatalf("EnsureLocalCompatibilityMigration after damage error = %v", err)
 	}
-	if !migrated {
+	if migrated == "" {
 		t.Fatal("expected damaged store to re-migrate")
 	}
 

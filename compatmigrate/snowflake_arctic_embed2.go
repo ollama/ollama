@@ -8,7 +8,6 @@ import (
 
 type snowflakeArcticEmbed2Migrator struct{}
 
-// Mirrors the guard in handle_snowflake_arctic_embed2 in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (snowflakeArcticEmbed2Migrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "bert" ||
 		src.GGUF.KeyValue("tokenizer.ggml.model").String() != "t5" {
