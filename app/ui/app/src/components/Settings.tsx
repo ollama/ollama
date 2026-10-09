@@ -26,7 +26,7 @@ import {
   Squares2X2Icon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { isWindowsPlatform } from "@/lib/platform";
+import { isDarwinPlatform, isWindowsPlatform } from "@/lib/platform";
 import { settingsMutationScope } from "@/lib/settingsMutationScope";
 import { useUser } from "@/hooks/useUser";
 import { invalidateDesktopModels } from "@/lib/desktopModels";
@@ -105,6 +105,7 @@ export async function applySettingsDefaults({
         Tools: false,
         ContextLength: currentSettings.ContextLength,
         AutoUpdateEnabled: true,
+        ShowMenuBarIcon: true,
       }),
     );
     rollbacks.push(() => updateSettings(currentSettings));
@@ -141,6 +142,8 @@ export async function applySettingsDefaults({
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const isWindows = isWindowsPlatform();
+  const isDarwin = isDarwinPlatform();
   const [showSaved, setShowSaved] = useState(false);
   const [restartMessage, setRestartMessage] = useState(false);
   const [showAppsInMenu, setShowAppsInMenuState] = useState(true);
@@ -347,11 +350,16 @@ export default function Settings() {
         }
 
         updateSettingsMutation.mutate(updatedSettings, {
-          onSuccess: showSavedConfirmation,
+          onSuccess: () => {
+            if (field === "ShowMenuBarIcon" && isDarwin) {
+              void window.setMenuBarIconVisible?.(Boolean(value));
+            }
+            showSavedConfirmation();
+          },
         });
       }
     },
-    [settings, showSavedConfirmation, updateSettingsMutation],
+    [isDarwin, settings, showSavedConfirmation, updateSettingsMutation],
   );
 
   const updateShowAppsInMenuVisibility = async (checked: boolean) => {
@@ -403,7 +411,14 @@ export default function Settings() {
     try {
       await applySettingsDefaults({
         updateSettings: (defaultSettings) =>
-          updateSettingsMutation.mutateAsync(defaultSettings),
+          updateSettingsMutation.mutateAsync(defaultSettings).then((result) => {
+            if (isDarwin) {
+              void window.setMenuBarIconVisible?.(
+                defaultSettings.ShowMenuBarIcon,
+              );
+            }
+            return result;
+          }),
         updateCloud: requestCloudUpdate,
         updateShowAppsInMenu: updateShowAppsInMenuVisibility,
         resetChatGPTModels: async () =>
@@ -481,8 +496,6 @@ export default function Settings() {
       </div>
     );
   }
-
-  const isWindows = isWindowsPlatform();
 
   return (
     <main className="flex min-h-0 w-full flex-1 flex-col select-none dark:bg-neutral-900">
@@ -646,6 +659,31 @@ export default function Settings() {
                         checked={showAppsInMenu}
                         disabled={showAppsInMenuPending}
                         onChange={handleShowAppsInMenu}
+                      />
+                    </div>
+                  </div>
+                </Field>
+              )}
+
+              {isDarwin && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-1 items-start space-x-3">
+                      <Squares2X2Icon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Show menu bar icon</Label>
+                        <Description>
+                          Show Ollama in the macOS menu bar.
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        aria-label="Show menu bar icon"
+                        checked={settings.ShowMenuBarIcon}
+                        onChange={(checked) =>
+                          handleChange("ShowMenuBarIcon", checked)
+                        }
                       />
                     </div>
                   </div>

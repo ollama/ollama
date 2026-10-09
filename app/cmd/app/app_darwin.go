@@ -540,7 +540,16 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ s
 	// Run the native macOS app
 	// Note: this will block until the app is closed
 	slog.Debug("starting native darwin event loop")
-	C.run(C._Bool(showOnboarding), C._Bool(startHidden))
+	showMenuBarIcon := true
+	if appStore != nil {
+		settings, err := appStore.Settings()
+		if err != nil {
+			slog.Warn("failed to load menu bar visibility setting; showing the icon", "error", err)
+		} else {
+			showMenuBarIcon = settings.ShowMenuBarIcon
+		}
+	}
+	C.run(C._Bool(showOnboarding), C._Bool(startHidden), C._Bool(showMenuBarIcon))
 }
 
 func reconcileClaudeAppProxy() error {
@@ -1859,6 +1868,10 @@ func getShowAppsInMenu() bool {
 
 func setShowAppsInMenu(visible bool) {
 	C.SetShowAppsInMenu(C._Bool(visible))
+}
+
+func setMenuBarIconVisible(visible bool) {
+	C.SetMenuBarIconVisible(C._Bool(visible))
 }
 
 func claudeDesktopInstallResultFromCode(code int) claudeDesktopInstallResult {

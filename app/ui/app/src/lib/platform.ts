@@ -8,3 +8,14 @@ export function isWindowsPlatform(): boolean {
     navigator.platform.toLowerCase().includes("win")
   );
 }
+
+export function isDarwinPlatform(): boolean {
+  if (typeof window !== "undefined" && window.OLLAMA_PLATFORM) {
+    return window.OLLAMA_PLATFORM === "darwin";
+  }
+
+  return (
+    typeof navigator !== "undefined" &&
+    /mac|iphone|ipad/i.test(navigator.platform)
+  );
+}

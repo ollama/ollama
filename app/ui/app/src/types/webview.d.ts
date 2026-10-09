@@ -154,6 +154,7 @@ declare global {
     installClaudeDesktop?: () => Promise<ClaudeDesktopInstallResult>;
     getShowAppsInMenu?: () => Promise<boolean>;
     setShowAppsInMenu?: (visible: boolean) => Promise<void>;
+    setMenuBarIconVisible?: (visible: boolean) => Promise<void>;
     applyClaudeDesktopMappings?: (
       mappings: Record<string, string>,
       restartConfirmed: boolean,
