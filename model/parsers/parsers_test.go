@@ -110,6 +110,10 @@ func TestThinkingClose(t *testing.T) {
 		{parser: "laguna", think: think(true), want: thinkTag},
 		{parser: "laguna"},
 		{parser: "ministral", think: think(true)},
+		{parser: "ministral-thinking", want: []string{"[/THINK]"}},
+		{parser: "ministral-thinking", think: think(true), want: []string{"[/THINK]"}},
+		{parser: "ministral-thinking", think: think(false)},
+		{parser: "ministral-thinking", lastMessage: contentPrefill},
 		{parser: "glimmer", want: []string{"<|start|>assistant to=user<|message|>", "<|start|>assistant<|message|>"}},
 		{parser: "glimmer", think: think(false)},
 		{parser: "harmony", want: []string{

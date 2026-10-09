@@ -99,7 +99,7 @@ func TestResolveGemma4Renderer(t *testing.T) {
 }
 
 func TestPreservedTokensForCompletion(t *testing.T) {
-	got := preservedTokensForCompletion(parsers.ParserForName("gemma4"))
+	got := preservedTokensForCompletion(parsers.ParserForName("gemma4"), nil)
 	want := []string{
 		"<|channel>",
 		"<channel|>",

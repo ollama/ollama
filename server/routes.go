@@ -729,7 +729,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	var thinkTagParser *thinkingparser.Parser
 	if builtinParser == nil {
-		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
+		openingTag, closingTag := thinkingTagsForModel(m)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 			thinkTagParser = &thinkingparser.Parser{
 				OpeningTag: openingTag,
@@ -767,7 +767,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Truncate:        req.Truncate == nil || *req.Truncate,
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
+			PreservedTokens: preservedTokensForCompletion(builtinParser, thinkTagParser),
 			LeadingBOS:      leadingBOS,
 			ThinkingClose:   thinkingClose,
 		}, func(cr llm.CompletionResponse) {
@@ -2771,9 +2771,14 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func preservedTokensForCompletion(builtinParser parsers.Parser) []string {
+func preservedTokensForCompletion(builtinParser parsers.Parser, thinkTagParser *thinkingparser.Parser) []string {
 	if builtinParser != nil {
 		return builtinParser.PreservedTokens()
+	}
+	if thinkTagParser != nil {
+		// The tag parser splits on tags the model may emit as special
+		// tokens; preserve them so llama-server keeps them visible.
+		return []string{thinkTagParser.OpeningTag, thinkTagParser.ClosingTag}
 	}
 	return nil
 }
@@ -2793,6 +2798,20 @@ func thinkingCloseForCompletion(builtinParser parsers.Parser, thinkTagParser *th
 		return []string{thinkTagParser.ClosingTag}
 	}
 	return nil
+}
+
+// thinkingTagsForModel returns the thinking tag pair to split on for a model:
+// the tags inferred from its Go template, or — when the Go template yields
+// none — the literal tags declared by the raw (jinja) chat template in the
+// GGUF metadata. HF-imported models carry such a chat template, which
+// InferTags cannot read; without the fallback their thinking leaks into the
+// response content.
+func thinkingTagsForModel(m *Model) (opening, closing string) {
+	opening, closing = thinkingparser.InferTags(m.Template.Template)
+	if opening == "" || closing == "" {
+		opening, closing = thinkingparser.TemplateTags(m.metadata.String("tokenizer.chat_template"))
+	}
+	return opening, closing
 }
 
 func leadingBOSForModel(m *Model) string {
@@ -3224,15 +3243,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	var thinkTagParser *thinkingparser.Parser
-	openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
-	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
-		thinkTagParser = &thinkingparser.Parser{
-			OpeningTag: openingTag,
-			ClosingTag: closingTag,
-		}
+	if builtinParser == nil {
+		openingTag, closingTag := thinkingTagsForModel(m)
+		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
+			thinkTagParser = &thinkingparser.Parser{
+				OpeningTag: openingTag,
+				ClosingTag: closingTag,
+			}
 
-		if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
-			thinkTagParser.AddContent(openingTag)
+			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
+				thinkTagParser.AddContent(openingTag)
+			}
 		}
 	}
 
@@ -3259,7 +3280,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Truncate:        truncate,
 			Logprobs:        req.Logprobs,
 			TopLogprobs:     req.TopLogprobs,
-			PreservedTokens: preservedTokensForCompletion(builtinParser),
+			PreservedTokens: preservedTokensForCompletion(builtinParser, thinkTagParser),
 			ToolCallTag:     toolCallTagForCompletion(toolParser),
 			LeadingBOS:      leadingBOSForModel(m),
 			ThinkingClose:   thinkingCloseForCompletion(builtinParser, thinkTagParser),
