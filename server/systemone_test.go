@@ -157,6 +157,13 @@ func TestSystemOneHandler(t *testing.T) {
 	image := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("image"), 16<<10))
 	const imagePrefix = `{"model":"safetensors-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["`
 	largeText := strings.Replace(prefix+strings.Repeat("x", stateLimit+1)+suffix, "decision-test", "safetensors-clef", 1)
+	nativeQuestions := func(n int) string {
+		questions := []string{`"refund":{"type":"noul","instructions":"q"}`}
+		for i := 1; i < n; i++ {
+			questions = append(questions, fmt.Sprintf(`"q%d":{"type":"noul","instructions":"q"}`, i))
+		}
+		return `{"model":"laya-native","state":"x","questions":{` + strings.Join(questions, ",") + `}}`
+	}
 	for _, tt := range []struct {
 		name   string
 		body   string
@@ -182,7 +189,10 @@ func TestSystemOneHandler(t *testing.T) {
 		{"invalid Clef schema", `{"model":"safetensors-clef","state":"x","questions":{}}`, nil, 400, 0, false},
 		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 500, 0, false},
 		{"GGUF without a llama.cpp decision type", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
-		{"llama.cpp validation", `{"model":"laya-native","state":"x","questions":{}}`, api.StatusError{StatusCode: 400, ErrorMessage: "questions must contain 1-64 fields"}, 400, 1, false},
+		{"llama.cpp validation", `{"model":"laya-native","state":"x","questions":{"x":{"type":"score","instructions":"q","criteria":["a"]}}}`, api.StatusError{StatusCode: 400, ErrorMessage: "criteria must be an array of 2 to 10 levels"}, 400, 1, false},
+		{"llama.cpp no questions", `{"model":"laya-native","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"llama.cpp 64 questions", nativeQuestions(64), nil, 200, 1, false},
+		{"llama.cpp 65 questions", nativeQuestions(65), nil, 400, 0, false},
 		{"llama.cpp runtime OOM", `{"model":"laya-native","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},

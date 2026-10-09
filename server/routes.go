@@ -909,6 +909,10 @@ func (s *Server) systemOneNative(c *gin.Context, m *Model, req decision.Request,
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
 		return
 	}
+	if n := req.Questions.Len(); n < 1 || n > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "questions must contain 1–64 fields"})
+		return
+	}
 	if len(req.Videos) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "video inputs are not supported"})
 		return
