@@ -154,9 +154,9 @@ console.log(response.message.content);
 
 > Want to add your project? Open a pull request.
 
-### Tutorial
+### Chinese Tutorial
 
-- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by [Datawhale ](https://github.com/datawhalechina) - China's Largest Open Source AI Learning Community)
+- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by [Datawhale ](https://github.com/datawhalechina) - The Largest Open Source AI Learning Community in China.)
 
 
 ### Chat Interfaces
