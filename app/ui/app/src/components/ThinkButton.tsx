@@ -46,7 +46,8 @@ export const ThinkButton = forwardRef<HTMLButtonElement, ThinkButtonProps>(
         ref.current &&
         mode === "thinkingLevel"
       ) {
-        (ref.current as any).closeDropdown = () => setIsDropdownOpen(false);
+        const mutableRef = ref as React.MutableRefObject<HTMLButtonElement & { closeDropdown?: () => void }>;
+        mutableRef.current.closeDropdown = () => setIsDropdownOpen(false);
       }
     }, [ref, mode]);
 
