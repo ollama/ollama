@@ -401,8 +401,6 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 		if call.Input == nil {
 			return nil, errors.New("custom tool call requires input")
 		}
-		// Normalize history here so chat conversion and compaction share the
-		// function-call path without parsing or trimming the freeform input.
 		arguments, err := json.Marshal(map[string]string{"input": *call.Input})
 		if err != nil {
 			return nil, err
