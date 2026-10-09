@@ -269,6 +269,12 @@ func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []mo
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
+	// Clef GGUFs made before llama.cpp supported Clef keep its head under the
+	// qwen35 architecture, which llama-server cannot load.
+	if m.metadata.String("general.architecture") == "qwen35" && m.metadata.String("decision.type") == "clef" {
+		return nil, nil, nil, fmt.Errorf("'%s' was downloaded in a format that is no longer supported. To re-download, run 'ollama pull %s'", m.ShortName, m.ShortName)
+	}
+
 	if err := m.CheckCapabilities(caps...); err != nil {
 		return nil, nil, nil, fmt.Errorf("%s %w", m.Name, err)
 	}

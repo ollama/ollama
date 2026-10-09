@@ -121,6 +121,7 @@ func TestSystemOneHandler(t *testing.T) {
 		undeclared                                     bool
 	}{
 		{"renamed-clef", "clef", "", "Ignored for the joint head", "", 1024, false},
+		{"old-clef", "qwen35", "", "", "", 1024, false},
 		{"laya-native", "modern-bert", "", "", "", 1024, false},
 		{"decision-test", "qwen35", "qwen3.5", "Model-specific scoring instructions.", "", 1024, false},
 		{"gguf-tev1", "qwen35", "tev1", "Model-specific scoring instructions.", "", 1024, false},
@@ -134,7 +135,8 @@ func TestSystemOneHandler(t *testing.T) {
 		if modelConfig.template == "" {
 			kv["tokenizer.chat_template"] = "{{ messages }}"
 		}
-		if modelConfig.name == "renamed-clef" {
+		clef := modelConfig.name == "renamed-clef" || modelConfig.name == "old-clef"
+		if clef {
 			kv[modelConfig.architecture+".decision.type"] = "clef"
 		}
 		if modelConfig.name == "laya-native" {
@@ -142,7 +144,7 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		_, digest := createBinFile(t, kv, nil)
 		caps := []string{"completion", "decision"}
-		if modelConfig.name == "renamed-clef" {
+		if clef {
 			caps = []string{"decision", "vision"}
 		}
 		if modelConfig.undeclared {
@@ -212,6 +214,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
 		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
 		{"invalid Clef schema", `{"model":"safetensors-clef","state":"x","questions":{}}`, nil, 400, 0, false},
+		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 500, 0, false},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"missing model", `{"model":"missing","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 404, 0, false},
@@ -271,6 +274,9 @@ func TestSystemOneHandler(t *testing.T) {
 			}
 			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
+			}
+			if tt.name == "old-format Clef GGUF" && !strings.Contains(w.Body.String(), "ollama pull old-clef") {
+				t.Fatalf("old Clef format must ask for a re-download: %s", w.Body)
 			}
 			if tt.name == "Clef decision only image" && !strings.Contains(w.Body.String(), "vision") {
 				t.Fatalf("expected missing vision capability: %s", w.Body)
