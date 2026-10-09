@@ -943,6 +943,111 @@ func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	}
 }
 
+// llama-server streams an event for every sampled token, including ones that
+// carry no text. Those must not be mistaken for a repeating token.
+func TestLlamaServerCompletionContentFreeChunksDoNotTripRepeatLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"hello","stop":false}`)
+		fmt.Fprintln(w, ``)
+		// tokens withheld while a stop sequence is partially matched
+		for range 150 {
+			fmt.Fprintln(w, `data: {"content":"","stop":false}`)
+			fmt.Fprintln(w, ``)
+		}
+		fmt.Fprintln(w, `data: {"content":" world","stop":false}`)
+		fmt.Fprintln(w, ``)
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"stop_type":"eos","timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":152,"predicted_ms":1}}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var content strings.Builder
+	var lastResp CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test",
+		Options: &opts,
+	}, func(cr CompletionResponse) {
+		content.WriteString(cr.Content)
+		lastResp = cr
+	})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	if content.String() != "hello world" {
+		t.Errorf("content = %q, want %q", content.String(), "hello world")
+	}
+	if !lastResp.Done {
+		t.Error("final response should be done")
+	}
+	if lastResp.DoneReason != DoneReasonStop {
+		t.Errorf("DoneReason = %v, want %v", lastResp.DoneReason, DoneReasonStop)
+	}
+	if lastResp.EvalCount != 152 {
+		t.Errorf("EvalCount = %d, want 152", lastResp.EvalCount)
+	}
+}
+
+// A generation that really is looping still stops with an error once the
+// repeat limit is reached.
+func TestLlamaServerCompletionTokenRepeatLimitReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for range 150 {
+			fmt.Fprintln(w, `data: {"content":"tok","stop":false}`)
+			fmt.Fprintln(w, ``)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []CompletionResponse
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "test",
+		Options: &opts,
+	}, func(cr CompletionResponse) {
+		responses = append(responses, cr)
+	})
+	if err == nil || !strings.Contains(err.Error(), "token repeat limit reached") {
+		t.Fatalf("Completion error = %v, want token repeat limit error", err)
+	}
+	// 101 content chunks are streamed before the 102nd trips the limit.
+	if got := len(responses); got != 101 {
+		t.Errorf("streamed %d content chunks, want 101", got)
+	}
+}
+
 func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
 	status := &StatusWriter{}
 	status.SetLastError("error: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")

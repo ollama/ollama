@@ -1795,17 +1795,25 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 				return fmt.Errorf("error unmarshalling llama-server response: %v", err)
 			}
 
-			// Token repeat detection
-			switch {
-			case strings.TrimSpace(lsResp.Content) == lastToken:
-				tokenRepeat++
-			default:
-				lastToken = strings.TrimSpace(lsResp.Content)
-				tokenRepeat = 0
-			}
-			if tokenRepeat > 100 {
-				slog.Debug("prediction aborted, token repeat limit reached")
-				return fmt.Errorf("prediction aborted, token repeat limit reached")
+			// Token repeat detection. llama-server streams an event for every
+			// sampled token, including ones that carry no text: tokens held back
+			// while a stop sequence is partially matched, special tokens that are
+			// not preserved, and the terminating stop event. Those all compare
+			// equal once trimmed, so only chunks that carry model output are
+			// considered here, otherwise content-free events pile up and abort a
+			// healthy generation.
+			if lsResp.Content != "" {
+				switch {
+				case strings.TrimSpace(lsResp.Content) == lastToken:
+					tokenRepeat++
+				default:
+					lastToken = strings.TrimSpace(lsResp.Content)
+					tokenRepeat = 0
+				}
+				if tokenRepeat > 100 {
+					slog.Debug("prediction aborted, token repeat limit reached")
+					return fmt.Errorf("prediction aborted, token repeat limit reached")
+				}
 			}
 
 			if lsResp.Content != "" && !lsResp.Stop {
