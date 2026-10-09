@@ -80,6 +80,9 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
-    "mdast-util-gfm-autolink-literal": "2.0.0"
+    "mdast-util-gfm-autolink-literal": "2.0.0",
+    "solid-js": {
+      "seroval": "1.6.3"
+    }
   }
 }
