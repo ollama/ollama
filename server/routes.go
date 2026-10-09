@@ -770,6 +770,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			LeadingBOS:      leadingBOS,
 			ThinkingClose:   thinkingClose,
+			Raw:             req.Raw,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,

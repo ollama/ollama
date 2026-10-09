@@ -1970,6 +1970,9 @@ func TestGenerate(t *testing.T) {
 		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "Help me write tests."); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
+		if !mock.CompletionRequest.Raw {
+			t.Error("expected CompletionRequest.Raw to be true")
+		}
 	})
 
 	t.Run("status error non-streaming", func(t *testing.T) {
@@ -2020,6 +2023,84 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
+}
+
+func TestGenerateRawIncludesEOSTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionFn: func(_ context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			if !req.Raw {
+				t.Fatal("expected Raw completion request")
+			}
+			fn(llm.CompletionResponse{Content: "Hello"})
+			fn(llm.CompletionResponse{Content: "<|eot_id|>"})
+			fn(llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 1, EvalCount: 2})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "test-raw-eos", nil, "", nil)
+
+	stream := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-raw-eos",
+		Prompt: "Hi",
+		Raw:    true,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var actual api.GenerateResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Response != "Hello<|eot_id|>" {
+		t.Fatalf("response = %q, want %q", actual.Response, "Hello<|eot_id|>")
+	}
+}
+
+func TestGenerateNonRawKeepsEOSContentFromRunner(t *testing.T) {
+	// Non-raw mode relies on the runner omitting EOS tokens. If a runner does
+	// emit them, the generate handler still forwards content unchanged.
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionFn: func(_ context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			if req.Raw {
+				t.Fatal("expected non-raw completion request")
+			}
+			fn(llm.CompletionResponse{Content: "Hello"})
+			fn(llm.CompletionResponse{Done: true, DoneReason: llm.DoneReasonStop, PromptEvalCount: 1, EvalCount: 1})
+			return nil
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "test-nonraw-eos", nil, "{{- .Prompt -}}", nil)
+
+	stream := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-nonraw-eos",
+		Prompt: "Hi",
+		Raw:    false,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var actual api.GenerateResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Response != "Hello" {
+		t.Fatalf("response = %q, want %q", actual.Response, "Hello")
+	}
+	if strings.Contains(actual.Response, "<|eot_id|>") {
+		t.Fatalf("non-raw response unexpectedly contains EOS: %q", actual.Response)
+	}
 }
 
 func TestGenerateLogprobs(t *testing.T) {
