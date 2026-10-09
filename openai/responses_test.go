@@ -1002,6 +1002,59 @@ func TestConvertToolsQualifiesNamespaceMemberNames(t *testing.T) {
 	}
 }
 
+func TestResponsesToolIdentityRejectsAmbiguity(t *testing.T) {
+	function := func(name string) ResponsesTool { return ResponsesTool{Type: "function", Name: name} }
+	namespace := func(name string, tools ...ResponsesTool) ResponsesTool {
+		return ResponsesTool{Type: "namespace", Name: name, Tools: tools}
+	}
+	tests := []struct {
+		name  string
+		tools []ResponsesTool
+	}{
+		{"flat and namespaced dotted alias", []ResponsesTool{function("a.b.c"), namespace("a.b", function("c"))}},
+		{"different namespace boundaries", []ResponsesTool{namespace("a.b", function("c")), namespace("a", function("b.c"))}},
+		{"Codex separator alias", []ResponsesTool{function("mcp__apps_search"), namespace("mcp__apps", function("_search"))}},
+		{"duplicate declaration", []ResponsesTool{function("lookup"), function("lookup")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reversed := append([]ResponsesTool(nil), tt.tools...)
+			for left, right := 0, len(reversed)-1; left < right; left, right = left+1, right-1 {
+				reversed[left], reversed[right] = reversed[right], reversed[left]
+			}
+			for _, tools := range [][]ResponsesTool{tt.tools, reversed} {
+				_, err := FromResponsesRequest(ResponsesRequest{Tools: tools})
+				if err == nil || (!strings.Contains(err.Error(), "identity collision") && !strings.Contains(err.Error(), "duplicate")) {
+					t.Fatalf("resolver error = %v, want collision or duplicate rejection", err)
+				}
+			}
+		})
+	}
+}
+
+func TestResponsesToolIdentityRejectsDynamicToolCollision(t *testing.T) {
+	request := ResponsesRequest{
+		Tools: []ResponsesTool{{Type: "function", Name: "a.b"}},
+		Input: ResponsesInput{Items: []ResponsesInputItem{ResponsesToolSearchOutput{
+			Type:  "tool_search_output",
+			Tools: []json.RawMessage{json.RawMessage(`{"type":"namespace","name":"a","tools":[{"type":"function","name":"b"}]}`)},
+		}}},
+	}
+	if _, err := FromResponsesRequest(request); err == nil || !strings.Contains(err.Error(), "identity collision") {
+		t.Fatalf("resolver error = %v, want dynamic-tool collision", err)
+	}
+}
+
+func TestResponsesHistoryToolIdentityRejectsAmbiguity(t *testing.T) {
+	request := ResponsesRequest{Input: ResponsesInput{Items: []ResponsesInputItem{
+		ResponsesFunctionCall{Type: "function_call", CallID: "call_1", Namespace: "a", Name: "b", Arguments: `{}`},
+		ResponsesFunctionCall{Type: "function_call", CallID: "call_2", Name: "a.b", Arguments: `{}`},
+	}}}
+	if _, err := FromResponsesRequest(request); err == nil || !strings.Contains(err.Error(), "identity collision") {
+		t.Fatalf("resolver error = %v, want history collision", err)
+	}
+}
+
 func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1026,6 +1079,17 @@ func TestFromResponsesRequestPreservesFunctionCallNamespace(t *testing.T) {
 				Type:      "function_call",
 				CallID:    "call_1",
 				Name:      "mcp__codex_apps__notion._search",
+				Arguments: `{}`,
+			},
+			want:      "mcp__codex_apps__notion_search",
+			withTools: true,
+		},
+		{
+			name: "legacy colon call",
+			call: ResponsesFunctionCall{
+				Type:      "function_call",
+				CallID:    "call_1",
+				Name:      "mcp__codex_apps__notion:_search",
 				Arguments: `{}`,
 			},
 			want:      "mcp__codex_apps__notion_search",
