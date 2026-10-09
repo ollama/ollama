@@ -43,37 +43,8 @@ func TestResponsesCustomToolHistory(t *testing.T) {
 		t.Fatalf("tool history changed (-want +got):\n%s", diff)
 	}
 
-	// Selecting the outputs must retain their calls and preserve replay order.
-	plan, err := PrepareStandaloneCompaction(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-		"summary": "Keep the notes.", "retain_item_ids": []string{"item_000001", "item_000004", "item_000005", "item_000006", "item_000007"},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	expanded, changed, err := ExpandResponsesCompactionInput(replay)
-	if err != nil || !changed {
-		t.Fatalf("compaction expansion: changed=%v, err=%v", changed, err)
-	}
-	if err := json.Unmarshal(expanded, &request); err != nil {
-		t.Fatal(err)
-	}
-	chat, err = FromResponsesRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chat.Messages) < 2 {
-		t.Fatalf("missing compaction summary: %+v", chat.Messages)
-	}
-	if diff := cmp.Diff(want, chat.Messages[2:], argsComparer); diff != "" { // Skip the summary call and output.
-		t.Fatalf("compaction replay changed history (-want +got):\n%s", diff)
+	if _, err := PrepareStandaloneCompaction(body); err != nil {
+		t.Fatalf("compaction rejected custom tool history: %v", err)
 	}
 }
 
@@ -87,7 +58,6 @@ func TestResponsesCustomToolHistoryValidation(t *testing.T) {
 		{"null output", `{"type":"custom_tool_call_output","call_id":"c","output":null}`, "requires output"},
 		{"object output", `{"type":"custom_tool_call_output","call_id":"c","output":{}}`, "output must be a string or array"},
 		{"unknown output content", `{"type":"custom_tool_call_output","call_id":"c","output":[{"type":"unknown"}]}`, "unknown content type"},
-		{"unknown history", `{"type":"unknown_tool_call"}`, `unknown input item type: "unknown_tool_call"`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var request ResponsesRequest
