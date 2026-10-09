@@ -3,6 +3,7 @@ package gguf
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -149,6 +150,66 @@ func TestCurrentTensorTypes(t *testing.T) {
 			}
 			if got := tt.value.typeSize(); got != tt.typeSize {
 				t.Fatalf("typeSize() = %d, want %d", got, tt.typeSize)
+			}
+		})
+	}
+}
+
+func TestPrismTernaryTensorTypesAreNamedButUnsupported(t *testing.T) {
+	for _, tt := range []struct {
+		value  TensorType
+		number uint32
+		name   string
+	}{
+		{value: tensorTypePQ2_0, number: 142, name: "pq2_0"},
+		{value: tensorTypePTQ1_0, number: 143, name: "ptq1_0"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := uint32(tt.value); got != tt.number {
+				t.Fatalf("value = %d, want %d", got, tt.number)
+			}
+			if got := tt.value.String(); got != tt.name {
+				t.Fatalf("String() = %q, want %q", got, tt.name)
+			}
+			// No type size is provided so tensor data cannot be read.
+			if got := tt.value.typeSize(); got != 0 {
+				t.Fatalf("typeSize() = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestReadFileMetadataNamesPrismTernaryTensors(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		tensor TensorType
+		want   []string
+	}{
+		{name: "pq2_0", tensor: 142, want: []string{`"output.weight"`, "pq2_0", "142", "18521"}},
+		{name: "ptq1_0", tensor: 143, want: []string{`"output.weight"`, "ptq1_0", "143", "18521"}},
+		{name: "unknown", tensor: 99, want: []string{`"output.weight"`, "size overflows"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var b bytes.Buffer
+			b.WriteString("GGUF")
+			writeInternalRaw(t, &b, uint32(3))
+			writeInternalRaw(t, &b, uint64(1)) // tensors
+			writeInternalRaw(t, &b, uint64(0)) // key-values
+			writeInternalString(t, &b, "output.weight")
+			writeInternalRaw(t, &b, uint32(2)) // dimensions
+			writeInternalRaw(t, &b, uint64(256))
+			writeInternalRaw(t, &b, uint64(256))
+			writeInternalRaw(t, &b, tt.tensor)
+			writeInternalRaw(t, &b, uint64(0)) // offset
+
+			_, err := ReadFileMetadata(writeTempFile(t, b.Bytes()), 0)
+			if !errors.Is(err, ErrUnsupported) {
+				t.Fatalf("ReadFileMetadata() error = %v, want ErrUnsupported", err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("ReadFileMetadata() error = %q, want containing %q", err, want)
+				}
 			}
 		})
 	}
