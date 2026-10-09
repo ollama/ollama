@@ -210,6 +210,15 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if aux.Type == "custom_tool_call_output" {
+		if aux.CallID == nil || strings.TrimSpace(*aux.CallID) == "" {
+			return errors.New("custom tool output requires a non-empty call_id")
+		}
+		if len(aux.Output) == 0 || string(aux.Output) == "null" {
+			return errors.New("custom tool output requires output")
+		}
+	}
+
 	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
 		return errors.New("function output call_id must not be empty")
 	}
@@ -372,11 +381,42 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return fc, nil
-	case "function_call_output":
+	case "custom_tool_call":
+		var call struct {
+			ID        string  `json:"id"`
+			CallID    string  `json:"call_id"`
+			Name      string  `json:"name"`
+			Namespace string  `json:"namespace"`
+			Input     *string `json:"input"`
+		}
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(call.CallID) == "" {
+			return nil, errors.New("custom tool call requires a non-empty call_id")
+		}
+		if strings.TrimSpace(call.Name) == "" {
+			return nil, errors.New("custom tool call requires a non-empty name")
+		}
+		if call.Input == nil {
+			return nil, errors.New("custom tool call requires input")
+		}
+		// Normalize history here so chat conversion and compaction share the
+		// function-call path without parsing or trimming the freeform input.
+		arguments, err := json.Marshal(map[string]string{"input": *call.Input})
+		if err != nil {
+			return nil, err
+		}
+		return ResponsesFunctionCall{
+			ID: call.ID, Type: "function_call", CallID: call.CallID,
+			Name: call.Name, Namespace: call.Namespace, Arguments: string(arguments),
+		}, nil
+	case "function_call_output", "custom_tool_call_output":
 		var output ResponsesFunctionCallOutput
 		if err := json.Unmarshal(data, &output); err != nil {
 			return nil, err
 		}
+		output.Type = "function_call_output"
 		return output, nil
 	case "tool_search_call":
 		var call ResponsesToolSearchCall
