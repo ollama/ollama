@@ -66,6 +66,8 @@ type model struct {
 	width      int
 	quitting   bool
 	selected   bool
+	canGoBack  bool
+	goBack     bool
 	action     TUIAction
 }
 
@@ -173,9 +175,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case "ctrl+c", "q":
 			m.quitting = true
 			return m, tea.Quit
+		case "esc":
+			m.goBack = m.canGoBack
+			m.quitting = true
+			return m, tea.Quit
+		case "left", "h":
+			if m.canGoBack {
+				m.goBack = true
+				m.quitting = true
+				return m, tea.Quit
+			}
 
 		case "up", "k":
 			if m.cursor > 0 {
@@ -258,7 +270,11 @@ func (m model) View() string {
 		s += "No apps available.\n"
 	}
 
-	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → configure • esc quit")
+	help := "↑/↓ navigate • enter launch • → configure • esc quit"
+	if m.canGoBack {
+		help = "↑/↓ navigate • enter launch • → configure • esc back • ctrl+c quit"
+	}
+	s += "\n" + selectorHelpStyle.Render(help)
 
 	if m.width > 0 {
 		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
@@ -362,18 +378,24 @@ func actionForMenuItem(item menuItem, forceConfigure bool) TUIAction {
 }
 
 func RunMenu(state *launch.LauncherState) (TUIAction, error) {
+	action, _, err := runMenu(state, false)
+	return action, err
+}
+
+func runMenu(state *launch.LauncherState, canGoBack bool) (TUIAction, bool, error) {
 	menu := newModel(state)
+	menu.canGoBack = canGoBack
 	program := tea.NewProgram(menu)
 
 	finalModel, err := program.Run()
 	if err != nil {
-		return TUIAction{Kind: TUIActionNone}, fmt.Errorf("error running TUI: %w", err)
+		return TUIAction{Kind: TUIActionNone}, false, fmt.Errorf("error running TUI: %w", err)
 	}
 
 	finalMenu := finalModel.(model)
 	if !finalMenu.selected {
-		return TUIAction{Kind: TUIActionNone}, nil
+		return TUIAction{Kind: TUIActionNone}, finalMenu.goBack, nil
 	}
 
-	return finalMenu.action, nil
+	return finalMenu.action, false, nil
 }

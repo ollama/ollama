@@ -2386,8 +2386,17 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	return nil
 }
 
-// runInteractiveTUI runs the main interactive TUI menu.
+func runHomeTUI(cmd *cobra.Command) {
+	var menu tui.HomeMenu
+	runInteractiveMenu(cmd, menu.Run)
+}
+
+// runInteractiveTUI opens the app launcher directly for ollama launch.
 func runInteractiveTUI(cmd *cobra.Command) {
+	runInteractiveMenu(cmd, tui.RunMenu)
+}
+
+func runInteractiveMenu(cmd *cobra.Command, runMenu func(*launch.LauncherState) (tui.TUIAction, error)) {
 	// Ensure the server is running via the shared checkServerHeartbeat path.
 	if err := checkServerHeartbeat(cmd, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -2397,7 +2406,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	accountPrefetch := launch.StartAccountStatePrefetch(cmd.Context())
 	deps := launcherDeps{
 		buildState:          launch.BuildLauncherState,
-		runMenu:             tui.RunMenu,
+		runMenu:             runMenu,
 		resolveRunModel:     launch.ResolveRunModel,
 		launchIntegration:   launch.LaunchIntegration,
 		runModel:            launchInteractiveModel,
@@ -2526,13 +2535,18 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			if !isInteractiveTerminal() {
+				_ = cmd.Help()
+				return
+			}
+
 			if err := runWelcome(); err != nil {
 				if !errors.Is(err, launch.ErrCancelled) {
 					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				}
 				return
 			}
-			runInteractiveTUI(cmd)
+			runHomeTUI(cmd)
 		},
 	}
 
