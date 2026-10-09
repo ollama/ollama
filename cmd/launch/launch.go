@@ -1455,6 +1455,28 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 
 func (c *launcherClient) resolveRunModels(ctx context.Context, integration string, models []string) []LaunchModel {
 	recommendations := c.recommendations(ctx)
+	if integration == "codex" {
+		// Codex reads its /model choices from the generated catalog. Include
+		// installed tool-capable models as well as the requested starting model.
+		if inventory, err := c.modelInventory().Load(ctx); err == nil {
+			cloudDisabled := false
+			if slices.ContainsFunc(inventory, func(model LaunchModel) bool { return model.Remote || isCloudModelName(model.Name) }) {
+				cloudDisabled, _ = cloudStatusDisabled(ctx, c.apiClient)
+			}
+			models = slices.Clone(models)
+			for _, model := range inventory {
+				if !model.ToolCapable || isDeprecatedLaunchModel(model.Name) || (cloudDisabled && (model.Remote || isCloudModelName(model.Name))) {
+					continue
+				}
+				if slices.ContainsFunc(models, func(name string) bool {
+					return launchModelRecommendationKey(name) == launchModelRecommendationKey(model.Name)
+				}) {
+					continue
+				}
+				models = append(models, model.Name)
+			}
+		}
+	}
 	resolved := c.modelInventory().Resolve(ctx, models)
 	byName := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
 	for _, recommendation := range recommendations {
