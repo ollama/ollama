@@ -227,6 +227,26 @@ func TestFilterUnsupportedROCmDevicesRespectsHSAOverride(t *testing.T) {
 	}
 }
 
+func TestROCmGFXTargetsFromKpack(t *testing.T) {
+	baseDir := t.TempDir()
+	libDir := filepath.Join(baseDir, "rocm_v10_0")
+	kpackDir := filepath.Join(baseDir, ".kpack")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(kpackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(kpackDir, "blas_lib_gfx1200.kpack"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	targets := rocblasGFXTargets([]string{libDir})
+	if !targets["gfx1200"] {
+		t.Fatalf("targets = %v, want gfx1200", targets)
+	}
+}
+
 type fakeROCmNode struct {
 	node        int
 	renderMinor int

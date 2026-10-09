@@ -124,13 +124,12 @@ msg="bootstrap discovery took" duration=30s ...
 ```
 
 This typically means the system's AMD GPU driver is too old. Ollama bundles
-ROCm 7 linux libraries which require a compatible ROCm 7 kernel driver. If the
-system is running an older driver (ROCm 6.x or earlier), GPU initialization
-will hang during device discovery and eventually time out, causing Ollama to
-fall back to CPU.
+ROCm userspace libraries which require a compatible AMD kernel driver. With an
+older driver, GPU initialization can hang during device discovery and
+eventually time out, causing Ollama to fall back to CPU.
 
-To resolve this, upgrade to the ROCm v7 driver using the `amdgpu-install`
-utility from [AMD's ROCm documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
+To resolve this, upgrade to a current driver using the `amdgpu-install` utility
+from [AMD's ROCm documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
 After upgrading, reboot and restart Ollama.
 
 ## Multiple AMD GPUs
