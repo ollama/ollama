@@ -30,7 +30,7 @@ type Question struct {
 type Choice struct {
 	Code        string `json:"code"`
 	Value       any    `json:"value"`
-	Description any    `json:"description"`
+	Description any    `json:"description,omitempty"`
 }
 
 // Field is a question's schema as presented to the model.

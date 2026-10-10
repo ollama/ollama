@@ -24,6 +24,16 @@ func decisionPrompts(context string, fields []compiledField, renderer string) ([
 			var options []option
 			for _, c := range f.Choices {
 				description, ok := c.Description.(string)
+				if c.Description == nil {
+					// Tev1 describes every option: noul as No/Yes, bare choices by key.
+					description, ok = fmt.Sprint(c.Value), true
+					switch c.Value {
+					case false:
+						description = "No"
+					case true:
+						description = "Yes"
+					}
+				}
 				if !ok || strings.TrimSpace(description) == "" {
 					return nil, fmt.Errorf("question %q: Tev1 requires nonempty candidate descriptions", f.Name)
 				}
