@@ -1189,6 +1189,49 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "tool call replayed with empty arguments",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "List my open issues"},
+					{"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "list_my_issues", "arguments": ""}}]},
+					{"role": "tool", "tool_call_id": "call_1", "content": "[]"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "List my open issues",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "call_1",
+								Function: api.ToolCallFunction{
+									Name:      "list_my_issues",
+									Arguments: testArgs(map[string]any{}),
+								},
+							},
+						},
+					},
+					{
+						Role:       "tool",
+						Content:    "[]",
+						ToolName:   "list_my_issues",
+						ToolCallID: "call_1",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
 			name: "tool response with name",
 			body: `{
 				"model": "test-model",
@@ -1302,6 +1345,22 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "tool call replayed with malformed arguments",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris?"},
+					{"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": "}}]}
+				]
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "invalid tool call arguments",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
 			name: "chat handler error forwarding",
 			body: `{
 				"model": "test-model",
@@ -1342,13 +1401,15 @@ func TestChatMiddleware(t *testing.T) {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
 				}
+			}
+			if diff := cmp.Diff(tc.err, errResp); diff != "" {
+				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
+			}
+			if resp.Code != http.StatusOK {
 				return
 			}
 			if diff := cmp.Diff(&tc.req, capturedRequest, argsComparer, propsComparer); diff != "" {
 				t.Fatalf("requests did not match: %+v", diff)
-			}
-			if diff := cmp.Diff(tc.err, errResp); diff != "" {
-				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
 			}
 		})
 	}

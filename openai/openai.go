@@ -866,8 +866,16 @@ func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	for i, tc := range toolCalls {
 		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
-		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
-		if err != nil {
+
+		// Clients replaying a call to a function that takes no parameters
+		// often send "" rather than "{}". OpenAI accepts that, so read it as
+		// a call with no arguments instead of rejecting the whole request.
+		if strings.TrimSpace(tc.Function.Arguments) == "" {
+			apiToolCalls[i].Function.Arguments = api.NewToolCallFunctionArguments()
+			continue
+		}
+
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments); err != nil {
 			return nil, errors.New("invalid tool call arguments")
 		}
 	}
