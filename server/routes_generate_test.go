@@ -2709,19 +2709,26 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 	})
 }
 
-// TestChatFormatWithThinkFalse verifies that when a model uses a builtin
-// parser that supports thinking and the request explicitly disables thinking
-// (think=false), the format constraint is passed to the first and only
-// completion call. Previously, format was deferred for all thinking-capable
-// parsers and only re-applied after an end-of-thinking transition -- a
-// transition that never fires when thinking is off. See
+// TestFormatWithThink verifies structured-format boundaries are passed to
+// completion for direct-answer and thinking requests on both API routes. See
 // https://github.com/ollama/ollama/issues/15260 and
 // https://github.com/ollama/ollama/issues/14645.
-func TestChatFormatWithThinkFalse(t *testing.T) {
+func TestFormatWithThink(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	for _, parserName := range []string{"gemma4", "qwen3.5", "qwen3-thinking"} {
-		t.Run(parserName, func(t *testing.T) {
+	scenarios := []struct {
+		name       string
+		parserName string
+		think      bool
+	}{
+		{name: "gemma4/think_false", parserName: "gemma4"},
+		{name: "qwen3.5/think_false", parserName: "qwen3.5"},
+		{name: "qwen3-thinking/think_false", parserName: "qwen3-thinking"},
+		{name: "gemma4/think_true", parserName: "gemma4", think: true},
+	}
+	for _, scenario := range scenarios {
+		parserName, think := scenario.parserName, scenario.think
+		t.Run(scenario.name, func(t *testing.T) {
 			mock := &mockRunner{
 				CompletionResponse: llm.CompletionResponse{
 					Done:               true,
@@ -2814,7 +2821,6 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 			}
 
 			streamRequest := false
-			think := false
 			w = createRequest(t, s.ChatHandler, api.ChatRequest{
 				Model:    modelName,
 				Messages: []api.Message{{Role: "user", Content: "Respond in JSON."}},
@@ -2833,6 +2839,38 @@ func TestChatFormatWithThinkFalse(t *testing.T) {
 
 			if !bytes.Equal([]byte(format), []byte(requests[0].Format)) {
 				t.Errorf("expected first completion format to match the request format, got %q", string(requests[0].Format))
+			}
+			if think {
+				if diff := cmp.Diff([]string{"<|channel>"}, requests[0].ThinkingOpen); diff != "" {
+					t.Errorf("ThinkingOpen mismatch (-want +got):\n%s", diff)
+				}
+				if diff := cmp.Diff([]string{"<channel|>"}, requests[0].ThinkingClose); diff != "" {
+					t.Errorf("ThinkingClose mismatch (-want +got):\n%s", diff)
+				}
+			}
+			w = createRequest(t, s.GenerateHandler, api.GenerateRequest{
+				Model:  modelName,
+				Prompt: "Respond in JSON.",
+				Think:  &api.ThinkValue{Value: think},
+				Stream: &streamRequest,
+				Format: format,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("generate: expected status 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if len(requests) != 2 {
+				t.Fatalf("expected one completion per route, got %d", len(requests))
+			}
+			if !bytes.Equal([]byte(format), []byte(requests[1].Format)) {
+				t.Errorf("generate format = %q, want %q", requests[1].Format, format)
+			}
+			if think {
+				if diff := cmp.Diff([]string{"<|channel>"}, requests[1].ThinkingOpen); diff != "" {
+					t.Errorf("generate ThinkingOpen mismatch (-want +got):\n%s", diff)
+				}
+				if diff := cmp.Diff([]string{"<channel|>"}, requests[1].ThinkingClose); diff != "" {
+					t.Errorf("generate ThinkingClose mismatch (-want +got):\n%s", diff)
+				}
 			}
 		})
 	}

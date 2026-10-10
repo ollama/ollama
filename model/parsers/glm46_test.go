@@ -446,6 +446,19 @@ func TestGLM46ParserStreaming(t *testing.T) {
 	}
 }
 
+func TestGLM46ParserThinkingOpen(t *testing.T) {
+	parser := &GLM46Parser{}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+	if got := parser.ThinkingOpen(); len(got) != 1 || got[0] != glm46ThinkingOpenTag {
+		t.Fatalf("ThinkingOpen() = %q, want %q", got, glm46ThinkingOpenTag)
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+	if got := parser.ThinkingOpen(); len(got) != 0 {
+		t.Fatalf("ThinkingOpen() = %q with thinking disabled, want none", got)
+	}
+}
+
 func TestGLM46ParserFinalizesCompleteToolCallOnDone(t *testing.T) {
 	type chunk struct {
 		content string
