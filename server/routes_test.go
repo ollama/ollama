@@ -496,8 +496,8 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if len(modelList.Models) != 1 || modelList.Models[0].Name != "test-model:latest" {
-					t.Errorf("expected model 'test-model:latest', got %v", modelList.Models)
+				if len(modelList.Models) != 1 || modelList.Models[0].Name != "test-model" {
+					t.Errorf("expected model 'test-model', got %v", modelList.Models)
 				}
 			},
 		},
@@ -586,8 +586,8 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if len(modelList.Data) != 1 || modelList.Data[0].Id != "test-model:latest" || modelList.Data[0].OwnedBy != "library" {
-					t.Errorf("expected model 'test-model:latest' owned by 'library', got %v", modelList.Data)
+				if len(modelList.Data) != 1 || modelList.Data[0].Id != "test-model" || modelList.Data[0].OwnedBy != "library" {
+					t.Errorf("expected model 'test-model' owned by 'library', got %v", modelList.Data)
 				}
 			},
 		},
@@ -627,8 +627,8 @@ func TestRoutes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to get model: %v", err)
 				}
-				if model.ShortName != "t-bone:latest" {
-					t.Errorf("expected model name 't-bone:latest', got %s", model.ShortName)
+				if model.ShortName != "t-bone" {
+					t.Errorf("expected model name 't-bone', got %s", model.ShortName)
 				}
 			},
 		},
@@ -654,8 +654,8 @@ func TestRoutes(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to get model: %v", err)
 				}
-				if model.ShortName != "beefsteak:latest" {
-					t.Errorf("expected model name 'beefsteak:latest', got %s", model.ShortName)
+				if model.ShortName != "beefsteak" {
+					t.Errorf("expected model name 'beefsteak', got %s", model.ShortName)
 				}
 			},
 		},
@@ -906,7 +906,7 @@ func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := "FROM " + name + ":latest\n"; !strings.Contains(resp.Modelfile, want) {
+			if want := "FROM " + name + "\n"; !strings.Contains(resp.Modelfile, want) {
 				t.Fatalf("Modelfile = %q, want %q", resp.Modelfile, want)
 			}
 			if strings.Contains(resp.Modelfile, "# To build a new Modelfile based on this, replace FROM with:") {

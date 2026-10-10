@@ -241,10 +241,12 @@ func (n Name) DisplayShortest() string {
 		sb.WriteByte('/')
 	}
 
-	// always include model and tag
 	sb.WriteString(n.Model)
-	sb.WriteString(":")
-	sb.WriteString(n.Tag)
+	// Omit the default tag so listings show "model" instead of "model:latest".
+	if n.Tag != "" && !strings.EqualFold(n.Tag, defaultTag) {
+		sb.WriteByte(':')
+		sb.WriteString(n.Tag)
+	}
 	return sb.String()
 }
 
