@@ -350,6 +350,27 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 	}
 
 	for i, msg := range r.Messages {
+		// Anthropic's `messages` admits only "user" and "assistant"; the system
+		// prompt is the top-level `system` field. Clients put a "system" message
+		// inside `messages` anyway -- Claude Code appends its `<total_tokens>`
+		// reminder that way after every tool result -- and rendering carries a
+		// system message to the TOP of the prompt wherever it sat, because
+		// template.collate concatenates every one of them into `System`. One per
+		// turn therefore grows the system block, the prompt prefix diverges right
+		// after the static system+tools span, and the implicit prefix cache covers
+		// nothing from that point on. One measured run reached 146 turns and 6.5M
+		// uncached input tokens with cache_read stuck at ~3k (#18431).
+		//
+		// Read as user-side context instead: that is where the message sits in the
+		// conversation, it is what the report asks for, and the prefix then
+		// diverges only at the newest turn, which is where a growing conversation
+		// diverges anyway. Nothing is dropped -- the text is still rendered, and
+		// no template has to know about a role Anthropic does not define here.
+		if strings.EqualFold(msg.Role, "system") {
+			logutil.Trace("anthropic: reading an inline system message as user context", "index", i)
+			msg.Role = "user"
+		}
+
 		converted, err := convertMessage(msg)
 		if err != nil {
 			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
