@@ -179,6 +179,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Clef videos unsupported", `{"model":"renamed-clef","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul"}}}`, nil, 400, 0, false},
 		{"candidate videos unsupported", `{"model":"decision-test","state":"x","videos":["video.mp4"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef null state and default instructions", `{"model":"safetensors-clef","state":null,"questions":{"refund":{"type":"noul"}}}`, nil, 200, 1, false},
+		{"Clef GGUF null state and default instructions", `{"model":"renamed-clef","state":null,"questions":{"refund":{"type":"noul"},"tone":{"type":"noul","instructions":""},"urgent":{"type":"noul","instructions":"Is it urgent?"}}}`, nil, 200, 1, false},
 		{"Clef joint head", `{"model":"safetensors-clef","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"llama.cpp decision model", `{"model":"laya-native","state":{"total":1250.0},"questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Modelfile template", `{"model":"go-template","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
@@ -246,6 +247,10 @@ func TestSystemOneHandler(t *testing.T) {
 			}
 			if tt.name == "old-format Clef GGUF" && !strings.Contains(w.Body.String(), "ollama pull old-clef") {
 				t.Fatalf("old Clef format must ask for a re-download: %s", w.Body)
+			}
+			if tt.name == "Clef GGUF null state and default instructions" && (string(runner.state) != `"null"` ||
+				string(runner.questions) != `{"refund":{"type":"noul","instructions":"refund","criteria":null},"tone":{"type":"noul","instructions":"tone","criteria":null},"urgent":{"type":"noul","instructions":"Is it urgent?","criteria":null}}`) {
+				t.Fatalf("Clef defaults were not filled in: state %s, questions %s", runner.state, runner.questions)
 			}
 			if tt.name == "GGUF without a llama.cpp decision type" && !strings.Contains(w.Body.String(), "not a llama.cpp decision model") {
 				t.Fatalf("expected a llama.cpp decision model error: %s", w.Body)

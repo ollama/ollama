@@ -925,6 +925,13 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if m.metadata.String("decision.type") == "clef" {
+		var err error
+		if raw.State, raw.Questions, err = decision.ClefDefaults(req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {
 		caps = append(caps, model.CapabilityVision)

@@ -14,6 +14,26 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
+// ClefDefaults returns req's state and questions with what the Clef encoder
+// assumes when they are left out, for llama.cpp's Clef, which requires them:
+// a null state reads as the text "null", and a question without instructions
+// is asked by its name.
+func ClefDefaults(req Request) (state, questions json.RawMessage, err error) {
+	state = req.State
+	if string(bytes.TrimSpace(state)) == "null" {
+		state = json.RawMessage(`"null"`)
+	}
+	var qs Questions
+	for name, q := range req.Questions.All() {
+		if raw := string(bytes.TrimSpace(q.Instructions)); raw == "" || raw == "null" || raw == `""` {
+			q.Instructions, _ = json.Marshal(name)
+		}
+		qs.Set(name, q)
+	}
+	questions, err = json.Marshal(&qs)
+	return state, questions, err
+}
+
 // encodeClef preserves the reference encoder's JSON and segment boundaries,
 // retaining its choice order for the shared answer decoder.
 func encodeClef(req Request, c *Compiled) error {
