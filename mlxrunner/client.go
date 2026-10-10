@@ -331,24 +331,12 @@ func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return s, nil
 }
 
-// Embedding implements llm.LlamaServer.
-func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return c.embed(ctx, embedWireRequest{Content: input})
-}
-
-// EmbedWithMedia embeds a single text input with media blobs alongside.
-func (c *Client) EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
-	if len(media) == 0 {
-		return c.Embedding(ctx, input)
+func (c *Client) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+	wire := embedWireRequest{Content: input}
+	for _, blob := range media {
+		wire.Media = append(wire.Media, base64.StdEncoding.EncodeToString(blob))
 	}
-	wire := embedWireRequest{Content: input, Media: make([]string, len(media))}
-	for i, blob := range media {
-		wire.Media[i] = base64.StdEncoding.EncodeToString(blob)
-	}
-	return c.embed(ctx, wire)
-}
 
-func (c *Client) embed(ctx context.Context, wire embedWireRequest) ([]float32, int, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(wire); err != nil {
 		return nil, 0, err
