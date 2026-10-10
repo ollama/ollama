@@ -82,6 +82,10 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 		recommendation bool
 		want           []any
 	}{
+		{"local custom Pi model", `{"thinking":{"values":[false,"low","high","max"],"default":"max"}}`, "pi", false, []any{false, "low", "high", "max"}},
+		{"Pi show overrides recommendation", `{"thinking":{"values":["low","high","max"],"default":"max"}}`, "pi", true, []any{"low", "high", "max"}},
+		{"Pi missing metadata preserves recommendation", `{}`, "pi", true, []any{false, true}},
+		{"Pi invalid metadata preserves recommendation", `{"thinking":{"values":["low"],"default":"missing"}}`, "pi", true, []any{false, true}},
 		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
 		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
 		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
@@ -117,9 +121,16 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 			if len(models) != 1 || models[0].Thinking == nil || !slices.Equal(models[0].Thinking.Values, tc.want) || showCalls != 1 {
 				t.Fatalf("models=%+v showCalls=%d", models, showCalls)
 			}
-			contract := codexAppThinkingContractForModel(models[0])
-			if !slices.Equal(contract.controls.Values, tc.want) {
-				t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
+			if tc.integration == "pi" {
+				cfg := createConfig(models[0])
+				if cfg["reasoning"] != true || cfg["thinkingLevelMap"] == nil {
+					t.Fatalf("Pi config missing discovered thinking controls: %v", cfg)
+				}
+			} else {
+				contract := codexAppThinkingContractForModel(models[0])
+				if !slices.Equal(contract.controls.Values, tc.want) {
+					t.Fatalf("desktop controls=%+v, want %v", contract.controls, tc.want)
+				}
 			}
 		})
 	}
