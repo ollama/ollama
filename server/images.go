@@ -164,13 +164,14 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities limits decision models to decision and explicitly declared
-// vision support. Serving still uses Capabilities.
+// publicCapabilities limits decision models to decision and the vision they
+// declare or ship a projector for, not vision inherited from a base model.
+// Serving still uses Capabilities.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
 	if slices.Contains(capabilities, model.CapabilityDecision) {
 		public := []model.Capability{model.CapabilityDecision}
-		if slices.Contains(m.Config.Capabilities, "vision") && slices.Contains(capabilities, model.CapabilityVision) {
+		if slices.Contains(m.Config.Capabilities, "vision") || len(m.ProjectorPaths) > 0 {
 			public = append(public, model.CapabilityVision)
 		}
 		return public
