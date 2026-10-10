@@ -63,7 +63,7 @@ type LlamaServer interface {
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Chat(ctx context.Context, req ChatRequest, fn func(ChatResponse)) error
 	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
-	Embedding(ctx context.Context, input string) ([]float32, int, error)
+	Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error

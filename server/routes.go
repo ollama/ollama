@@ -1213,33 +1213,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// mediaEmbedder is the runner's media-aware embed if it supports one.
-	// Resolved once before the per-item goroutines fan out: an all-text
-	// batch pays nothing either way, and the lazy write below is not
-	// safe to race on.
-	var mediaEmbedder interface {
-		EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
-	}
-	var mediaErr error
-	resolveMediaEmbedder := func() bool {
-		if mediaEmbedder != nil || mediaErr != nil {
-			return mediaErr == nil
-		}
-		me, ok := r.(interface {
-			EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
-		})
-		if !ok {
-			mediaErr = errors.New("model does not support media embeddings")
-			return false
-		}
-		mediaEmbedder = me
-		return true
-	}
-	// Resolve once here, before the per-item goroutines below fan out:
-	// the lazy path above reads and writes these closures' captured vars
-	// and is not safe to run concurrently.
-	resolveMediaEmbedder()
-
 	adjustTokenLimit := func(tokens []int, limit int) int {
 		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("add_bos_token", true) {
 			limit--
@@ -1321,17 +1294,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
-		run := func(ctx context.Context, text string) ([]float32, int, error) {
-			if len(item.media) == 0 {
-				return r.Embedding(ctx, text)
-			}
-			if !resolveMediaEmbedder() {
-				return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: mediaErr.Error()}
-			}
-			return mediaEmbedder.EmbedWithMedia(ctx, text, item.media)
-		}
-
-		emb, tokCount, err := run(ctx, text)
+		emb, tokCount, err := r.Embedding(ctx, text, item.media)
 		if err == nil {
 			return emb, tokCount, nil
 		}
@@ -1364,7 +1327,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		return run(ctx, truncated)
+		return r.Embedding(ctx, truncated, item.media)
 	}
 
 	var g errgroup.Group
@@ -1493,7 +1456,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, nil)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})

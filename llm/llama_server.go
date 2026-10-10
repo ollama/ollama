@@ -2453,13 +2453,9 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 	}
 }
 
-func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return s.EmbedWithMedia(ctx, input, nil)
-}
-
-// EmbedWithMedia embeds input followed by any images or audio, which
-// llama-server encodes with the model's projector.
-func (s *llamaServerRunner) EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+// Embedding embeds input followed by any images or audio, which llama-server
+// encodes with the model's projector.
+func (s *llamaServerRunner) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
 	var prompt any = input
 	if len(media) > 0 {
 		if len(s.launch.projectors) == 0 {

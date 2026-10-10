@@ -1715,7 +1715,7 @@ func TestLlamaServerEmbedding(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, count, err := runner.Embedding(t.Context(), "hello")
+	embedding, count, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1814,7 +1814,7 @@ func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1847,7 +1847,7 @@ func TestLlamaServerEmbeddingFlatArrayFallback(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1878,7 +1878,7 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	_, _, err := runner.Embedding(t.Context(), "very long input")
+	_, _, err := runner.Embedding(t.Context(), "very long input", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
