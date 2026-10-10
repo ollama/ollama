@@ -874,11 +874,6 @@ func NewLlamaServerRunner(
 	if arch == "qwen35" && decisionType == "clef" {
 		return nil, fmt.Errorf("%w Clef format", gguf.ErrUnsupported)
 	}
-	// llama.cpp keeps no KV cache for these decision models, so each prompt
-	// has to fit in one batch.
-	if slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, decisionType) {
-		opts.NumBatch = opts.NumCtx
-	}
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
