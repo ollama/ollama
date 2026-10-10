@@ -1511,6 +1511,21 @@ func TestCheckPullRequires(t *testing.T) {
 			clientVersion: "0.0.0",
 		},
 		{
+			name:          "bare commit SHA build skips check",
+			requires:      "99.0.0",
+			clientVersion: "8c9fb8e",
+		},
+		{
+			name:          "dirty commit SHA build skips check",
+			requires:      "0.35.0",
+			clientVersion: "4d52e5d-dirty",
+		},
+		{
+			name:          "empty client version skips check",
+			requires:      "0.35.0",
+			clientVersion: "",
+		},
+		{
 			name:          "v-prefixed requirement passes",
 			requires:      "v0.33.0",
 			clientVersion: "0.33.3",
