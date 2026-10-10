@@ -11,6 +11,9 @@ import (
 
 func TestHyperConnectionMatchesReferenceFormula(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
+		mlx.EnableCompile()
+		defer mlx.DisableCompile()
+
 		cfg := &Config{HCCount: 2, HiddenSize: 2, HCLowRank: 2, RMSNormEps: 1e-6}
 		normWeight := []float32{1.1, 0.9, 1.2, 0.8}
 		downWeight := [][]float32{{0.2, -0.3, 0.4, 0.1}, {-0.1, 0.5, 0.2, -0.4}}
@@ -18,11 +21,13 @@ func TestHyperConnectionMatchesReferenceFormula(t *testing.T) {
 		injectWeight := [][]float32{{0.2, -0.1, 0.3, 0.4}, {-0.3, 0.2, 0.1, 0.5}}
 		input := []float32{1, 2, 3, 4}
 
+		downProj := nn.NewLinear(matrix(downWeight), nil)
+		injectProj := nn.NewLinear(matrix(injectWeight), nil)
 		h := &hyperConnection{
-			Norm:         &streamRMSNorm{Weight: mlx.FromValues(normWeight, 2, 2)},
-			InputMixDown: nn.NewLinear(matrix(downWeight), nil),
-			InputMixUp:   nn.NewLinear(matrix(upWeight), nil),
-			BlockInject:  nn.NewLinear(matrix(injectWeight), nil),
+			Norm:        &streamRMSNorm{Weight: mlx.FromValues(normWeight, 2, 2)},
+			InputMixUp:  nn.NewLinear(matrix(upWeight), nil),
+			PackedInput: packHyperConnectionInput(downProj, injectProj),
+			MixDownDim:  downProj.OutputDim(),
 		}
 		residual := mlx.FromValues(input, 1, 1, 4)
 		branch, state := h.Prepare(residual, cfg)
