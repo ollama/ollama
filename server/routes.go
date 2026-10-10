@@ -727,6 +727,22 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	var reqLog *requestLogger
+	if resolveLogRequest(req.LogRequest) {
+		if l, err := openRequestLog(); err != nil {
+			slog.Warn("log_request: failed to open log file", "error", err)
+		} else {
+			reqLog = l
+			defer reqLog.close()
+			// /api/generate knows no tools; Format and Think do apply here too.
+			reqLog.writeRequestHeader(req.Model, req.Options, requestMeta{
+				Format: req.Format,
+				Think:  req.Think,
+				Images: len(media),
+			}, prompt)
+		}
+	}
+
 	var thinkTagParser *thinkingparser.Parser
 	if builtinParser == nil {
 		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
@@ -771,6 +787,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			LeadingBOS:      leadingBOS,
 			ThinkingClose:   thinkingClose,
 		}, func(cr llm.CompletionResponse) {
+			if reqLog != nil {
+				reqLog.writeChunk(cr.Content)
+			}
 			res := api.GenerateResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -821,6 +840,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					res.Context = tokens
 				}
+
+				if reqLog != nil {
+					// Tool calls are parsed out of the content above and are not part of
+					// the text stream — without this they are missing from the log.
+					reqLog.writeToolCalls(res.ToolCalls)
+					reqLog.writeDone(time.Now(), res.DoneReason, res.Metrics)
+				}
 			}
 
 			if builtinParser != nil {
@@ -837,6 +863,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			ch <- res
 		}); err != nil {
 			if parserErr == nil {
+				if reqLog != nil {
+					reqLog.writeError(err)
+				}
 				s.sched.expireRunnersForRuntimeOOM(m, err)
 				var serr api.StatusError
 				if errors.As(err, &serr) {
@@ -847,6 +876,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 		}
 		if parserErr != nil {
+			if reqLog != nil {
+				reqLog.writeError(parserErr)
+			}
 			ch <- gin.H{"error": parserErr.Error()}
 		}
 	}()
@@ -3223,6 +3255,24 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	var chatReqLog *requestLogger
+	if resolveLogRequest(req.LogRequest) {
+		if l, err := openRequestLog(); err != nil {
+			slog.Warn("log_request: failed to open log file", "error", err)
+		} else {
+			chatReqLog = l
+			defer chatReqLog.close()
+			// processedTools, not req.Tools: a builtin parser may rewrite the list, and
+			// what the model saw is what matters here.
+			chatReqLog.writeRequestHeader(req.Model, req.Options, requestMeta{
+				Tools:  processedTools,
+				Format: req.Format,
+				Think:  req.Think,
+				Images: len(media),
+			}, prompt)
+		}
+	}
+
 	var thinkTagParser *thinkingparser.Parser
 	openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
 	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
@@ -3264,6 +3314,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			LeadingBOS:      leadingBOSForModel(m),
 			ThinkingClose:   thinkingCloseForCompletion(builtinParser, thinkTagParser),
 		}, func(r llm.CompletionResponse) {
+			if chatReqLog != nil {
+				chatReqLog.writeChunk(r.Content)
+			}
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -3283,6 +3336,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				// Deferred, because the tool calls are only parsed out of the content
+				// further down in this callback — written straight away they would end
+				// up behind the DONE block. The closure reads res when it runs, so it
+				// sees the final state regardless of which return path was taken.
+				if chatReqLog != nil {
+					defer func() {
+						chatReqLog.writeToolCalls(res.Message.ToolCalls)
+						chatReqLog.writeDone(time.Now(), res.DoneReason, res.Metrics)
+					}()
+				}
 			}
 
 			if builtinParser != nil {
@@ -3353,10 +3416,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			ch <- res
 		})
 		if parserErr != nil {
+			if chatReqLog != nil {
+				chatReqLog.writeError(parserErr)
+			}
 			ch <- gin.H{"error": parserErr.Error()}
 			return
 		}
 		if err != nil {
+			if chatReqLog != nil {
+				chatReqLog.writeError(err)
+			}
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
@@ -3422,11 +3491,48 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		return
 	}
 
+	var nativeReqLog *requestLogger
+	if resolveLogRequest(req.LogRequest) {
+		if l, err := openRequestLog(); err != nil {
+			slog.Warn("log_request: failed to open log file", "error", err)
+		} else {
+			nativeReqLog = l
+			defer nativeReqLog.close()
+			// This path has no rendered template to log — llama-server applies the Jinja
+			// template itself. So the message list is logged raw, and with it everything
+			// the plain "[role]: content" dropped: tool calls of earlier turns, tool
+			// names and ids, thinking, images.
+			nativeReqLog.writeRequestHeader(req.Model, req.Options, requestMeta{
+				Tools:  req.Tools,
+				Format: req.Format,
+				Think:  req.Think,
+				Images: countChatImages(msgs),
+			}, formatRequestMessages(msgs))
+		}
+	}
+
 	ch := make(chan any)
+	var logInThinking bool
 	go func() {
 		defer close(ch)
 
 		err := r.Chat(c.Request.Context(), nativeReq, func(r llm.ChatResponse) {
+			if nativeReqLog != nil {
+				if r.Message.Thinking != "" {
+					if !logInThinking {
+						nativeReqLog.writeChunk("<think>")
+						logInThinking = true
+					}
+					nativeReqLog.writeChunk(r.Message.Thinking)
+				}
+				if r.Message.Content != "" {
+					if logInThinking {
+						nativeReqLog.writeChunk("</think>")
+						logInThinking = false
+					}
+					nativeReqLog.writeChunk(r.Message.Content)
+				}
+			}
 			res := api.ChatResponse{
 				Model:     req.Model,
 				CreatedAt: time.Now().UTC(),
@@ -3450,11 +3556,25 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				if nativeReqLog != nil {
+					if logInThinking {
+						nativeReqLog.writeChunk("</think>")
+						logInThinking = false
+					}
+					// llama-server only delivers the tool calls with the final response,
+					// and as a structure, not as text — writeChunk never saw them. This is
+					// why a tool call did not appear in the log at all.
+					nativeReqLog.writeToolCalls(res.Message.ToolCalls)
+					nativeReqLog.writeDone(time.Now(), res.DoneReason, res.Metrics)
+				}
 			}
 
 			ch <- res
 		})
 		if err != nil {
+			if nativeReqLog != nil {
+				nativeReqLog.writeError(err)
+			}
 			s.sched.expireRunnersForRuntimeOOM(m, err)
 			var serr api.StatusError
 			if errors.As(err, &serr) {
