@@ -383,11 +383,8 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 		return fc, nil
 	case "custom_tool_call":
 		var call struct {
-			ID        string  `json:"id"`
-			CallID    string  `json:"call_id"`
-			Name      string  `json:"name"`
-			Namespace string  `json:"namespace"`
-			Input     *string `json:"input"`
+			ResponsesFunctionCall
+			Input *string `json:"input"`
 		}
 		if err := json.Unmarshal(data, &call); err != nil {
 			return nil, err
@@ -405,10 +402,9 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		return ResponsesFunctionCall{
-			ID: call.ID, Type: "function_call", CallID: call.CallID,
-			Name: call.Name, Namespace: call.Namespace, Arguments: string(arguments),
-		}, nil
+		call.Type = "function_call"
+		call.Arguments = string(arguments)
+		return call.ResponsesFunctionCall, nil
 	case "function_call_output", "custom_tool_call_output":
 		var output ResponsesFunctionCallOutput
 		if err := json.Unmarshal(data, &output); err != nil {
