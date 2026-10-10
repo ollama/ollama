@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -93,6 +94,48 @@ func TestGlmOcrRenderer_Images(t *testing.T) {
 			}
 			if diff := cmp.Diff(tt.expected, got); diff != "" {
 				t.Fatalf("Render() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// ResolveThinking fills Default:false when the client omits think. That must not
+// inject /nothink or an empty generation <think></think> — those markers derail
+// glm-ocr table recognition (see #18810).
+func TestGlmOcrRenderer_NoNothinkWhenThinkingOff(t *testing.T) {
+	messages := []api.Message{
+		{
+			Role:    "user",
+			Content: "Table Recognition:",
+			Images:  []api.ImageData{api.ImageData("img1")},
+		},
+	}
+	want := "[gMASK]<sop><|user|>\n[img-0] Table Recognition:<|assistant|>\n"
+
+	tests := []struct {
+		name  string
+		think *api.ThinkValue
+	}{
+		{name: "think_omitted", think: nil},
+		{name: "think_false", think: &api.ThinkValue{Value: false}},
+		{name: "think_true", think: &api.ThinkValue{Value: true}},
+	}
+
+	renderer := &GlmOcrRenderer{useImgTags: true}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := renderer.Render(messages, nil, tt.think)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("Render() mismatch (-want +got):\n%s", diff)
+			}
+			if strings.Contains(got, "/nothink") {
+				t.Fatalf("prompt unexpectedly contains /nothink: %q", got)
+			}
+			if strings.HasSuffix(got, "<think></think>\n") {
+				t.Fatalf("prompt unexpectedly ends with empty think block: %q", got)
 			}
 		})
 	}
