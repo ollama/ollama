@@ -76,6 +76,12 @@ ollama run embeddinggemma "Hello world"
 Output is a JSON array:
 
 ```
+[0.010071029,-0.0017594862,0.05007221,-0.03259638,...]
+```
+
+Text can also be piped in via stdin:
+
+```
 echo "Hello world" | ollama run nomic-embed-text
 ```
 
