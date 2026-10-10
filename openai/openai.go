@@ -768,8 +768,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else {
-		options["top_p"] = 1.0
 	}
 
 	var format json.RawMessage
