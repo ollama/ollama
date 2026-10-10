@@ -953,7 +953,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	encoding := m.metadata.String("decision.type")
-	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands") {
+	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" || m.Config.Renderer == "helm") {
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)

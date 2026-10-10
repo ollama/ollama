@@ -12,6 +12,10 @@ type Scorer interface {
 	Score(context.Context, ScoreRequest) (ScoreResponse, error)
 }
 
+// MaxScoreCandidates bounds the single-token candidates read from one
+// next-token distribution. Decision encodings apply their own, lower limits.
+const MaxScoreCandidates = 255
+
 // ScoreRequest carries prompt rows or model-native decision head inputs.
 type ScoreRequest struct {
 	PointerRows   []ScorePointerRow `json:"pointer_rows,omitempty"`
