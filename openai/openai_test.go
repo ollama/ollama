@@ -384,6 +384,28 @@ func TestToCompletionUsageIncludesCachedTokens(t *testing.T) {
 	}
 }
 
+func TestToCompleteChunk_UsesResponseCreatedAt(t *testing.T) {
+	createdAt := time.Unix(1700000000, 0)
+	chunk := ToCompleteChunk("cmpl-test", api.GenerateResponse{
+		Model:     "test-model",
+		CreatedAt: createdAt,
+		Response:  "Hello",
+	})
+	if chunk.Created != createdAt.Unix() {
+		t.Fatalf("expected created %d from the response, got %d", createdAt.Unix(), chunk.Created)
+	}
+	if chunk.Usage != nil {
+		t.Fatalf("expected no usage on a completion chunk, got %+v", chunk.Usage)
+	}
+
+	// a response without a timestamp falls back to now rather than 1970
+	before := time.Now().Unix()
+	chunk = ToCompleteChunk("cmpl-test", api.GenerateResponse{Model: "test-model", Response: "Hello"})
+	if chunk.Created < before {
+		t.Fatalf("expected created to fall back to now (>= %d), got %d", before, chunk.Created)
+	}
+}
+
 func TestNewError(t *testing.T) {
 	tests := []struct {
 		code int
