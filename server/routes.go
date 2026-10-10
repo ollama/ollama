@@ -902,9 +902,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// systemOneNative hands a request for a GGUF decision model to llama-server,
+// systemOneLlamaServer hands a request for a GGUF decision model to llama-server,
 // which builds the model's own prompt and answers it.
-func (s *Server) systemOneNative(c *gin.Context, m *Model, req decision.Request, body []byte) {
+func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Request, body []byte) {
 	if m.metadata.String("decision.type") == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
 		return
@@ -1018,7 +1018,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if m.isGGUF() {
-		s.systemOneNative(c, m, req, body)
+		s.systemOneLlamaServer(c, m, req, body)
 		return
 	}
 	var encoding string
