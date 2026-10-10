@@ -896,8 +896,70 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// SystemOneHandler compiles typed questions, scores their allowed answers, and
-// returns probabilities. Callers must select weights trained for the prompt format.
+// systemOneLlamaServer hands a request for a GGUF decision model to llama-server,
+// which builds the model's own prompt and answers it.
+func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Request, body []byte) {
+	if m.metadata.String("decision.type") == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
+		return
+	}
+	if err := decision.ValidateLimits(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var raw struct {
+		State     json.RawMessage `json:"state"`
+		Questions json.RawMessage `json:"questions"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if m.metadata.String("decision.type") == "clef" {
+		var err error
+		if raw.State, raw.Questions, err = decision.ClefDefaults(req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+	caps := []model.Capability{model.CapabilityDecision}
+	if len(req.Images) > 0 {
+		caps = append(caps, model.CapabilityVision)
+	}
+	r, _, _, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, nil, req.KeepAlive, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+	runner, ok := r.(interface {
+		SystemOne(ctx context.Context, state, questions json.RawMessage, images []api.ImageData) (answers, usage json.RawMessage, err error)
+	})
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring", req.Model)})
+		return
+	}
+	answers, usage, err := runner.SystemOne(c.Request.Context(), raw.State, raw.Questions, req.Images)
+	if err != nil {
+		s.sched.expireRunnersForRuntimeOOM(m, err)
+		status := http.StatusInternalServerError
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) {
+			status = statusErr.StatusCode
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, struct {
+		Model   string          `json:"model"`
+		Answers json.RawMessage `json:"answers"`
+		Usage   json.RawMessage `json:"usage"`
+	}{req.Model, answers, usage})
+}
+
+// SystemOneHandler answers typed questions with probabilities. llama.cpp
+// prompts GGUF decision models; for MLX models, questions are compiled and
+// their allowed answers scored. Callers must select weights trained for the
+// prompt format.
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. This byte cap limits memory use until then.
@@ -952,8 +1014,12 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	encoding := m.metadata.String("decision.type")
-	if encoding == "" && (m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands") {
+	if m.isGGUF() {
+		s.systemOneLlamaServer(c, m, req, body)
+		return
+	}
+	var encoding string
+	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" {
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
@@ -979,11 +1045,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		if m.System != "" {
 			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
 		}
-		think := &api.ThinkValue{Value: false}
-		if m.HasChatTemplate && chatModeForModel(m) == chatExecutionModeNative {
-			return r.ApplyChatTemplate(c.Request.Context(), llm.ChatRequest{Messages: messages, Think: think})
-		}
-		return renderPrompt(m, messages, nil, think)
+		return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1141,33 +1203,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	// mediaEmbedder is the runner's media-aware embed if it supports one.
-	// Resolved once before the per-item goroutines fan out: an all-text
-	// batch pays nothing either way, and the lazy write below is not
-	// safe to race on.
-	var mediaEmbedder interface {
-		EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
-	}
-	var mediaErr error
-	resolveMediaEmbedder := func() bool {
-		if mediaEmbedder != nil || mediaErr != nil {
-			return mediaErr == nil
-		}
-		me, ok := r.(interface {
-			EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
-		})
-		if !ok {
-			mediaErr = errors.New("model does not support media embeddings")
-			return false
-		}
-		mediaEmbedder = me
-		return true
-	}
-	// Resolve once here, before the per-item goroutines below fan out:
-	// the lazy path above reads and writes these closures' captured vars
-	// and is not safe to run concurrently.
-	resolveMediaEmbedder()
-
 	adjustTokenLimit := func(tokens []int, limit int) int {
 		if bos := m.metadata.Int("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && m.metadata.Bool("add_bos_token", true) {
 			limit--
@@ -1249,17 +1284,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
-		run := func(ctx context.Context, text string) ([]float32, int, error) {
-			if len(item.media) == 0 {
-				return r.Embedding(ctx, text)
-			}
-			if !resolveMediaEmbedder() {
-				return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: mediaErr.Error()}
-			}
-			return mediaEmbedder.EmbedWithMedia(ctx, text, item.media)
-		}
-
-		emb, tokCount, err := run(ctx, text)
+		emb, tokCount, err := r.Embedding(ctx, text, item.media)
 		if err == nil {
 			return emb, tokCount, nil
 		}
@@ -1292,7 +1317,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		return run(ctx, truncated)
+		return r.Embedding(ctx, truncated, item.media)
 	}
 
 	var g errgroup.Group
@@ -1421,7 +1446,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, nil)
 	if err != nil {
 		s.sched.expireRunnersForRuntimeOOM(m, err)
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})

@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -1713,7 +1715,7 @@ func TestLlamaServerEmbedding(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, count, err := runner.Embedding(t.Context(), "hello")
+	embedding, count, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1722,6 +1724,38 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("prompt_eval_count = %d, want 2", count)
+	}
+}
+
+func TestLlamaServerRejectsOldClef(t *testing.T) {
+	f := loadTestGGUF(t, gguftest.KV{"general.architecture": "qwen35", "qwen35.decision.type": "clef"})
+	if _, err := NewLlamaServerRunner(nil, "", f, nil, nil, api.Options{}, 1, "", LlamaServerConfig{}); !errors.Is(err, gguf.ErrUnsupported) {
+		t.Fatalf("err = %v, want gguf.ErrUnsupported", err)
+	}
+}
+
+func TestResizeImageToTokenBudget(t *testing.T) {
+	// Sizes follow EmbeddingGemma 2's processor: 266, 256, and 264 tokens.
+	for _, tt := range []struct{ w, h, wantW, wantH int }{
+		{640, 480, 912, 672},
+		{224, 224, 768, 768},
+		{1920, 1080, 1056, 576},
+	} {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, tt.w, tt.h))); err != nil {
+			t.Fatal(err)
+		}
+		out, err := resizeImageToTokenBudget(buf.Bytes(), 48, 280)
+		if err != nil {
+			t.Fatalf("%dx%d: %v", tt.w, tt.h, err)
+		}
+		cfg, err := png.DecodeConfig(bytes.NewReader(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Width != tt.wantW || cfg.Height != tt.wantH {
+			t.Errorf("%dx%d resized to %dx%d, want %dx%d", tt.w, tt.h, cfg.Width, cfg.Height, tt.wantW, tt.wantH)
+		}
 	}
 }
 
@@ -1787,7 +1821,7 @@ func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1820,7 +1854,7 @@ func TestLlamaServerEmbeddingFlatArrayFallback(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1851,7 +1885,7 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	_, _, err := runner.Embedding(t.Context(), "very long input")
+	_, _, err := runner.Embedding(t.Context(), "very long input", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

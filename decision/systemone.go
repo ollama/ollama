@@ -29,6 +29,26 @@ type Compiled struct {
 	messages [][]api.Message
 }
 
+// ValidateLimits checks request limits shared by all decision backends.
+func ValidateLimits(req Request) error {
+	if n := req.Questions.Len(); n < 1 || n > 64 {
+		return fmt.Errorf("questions must contain 1–64 fields")
+	}
+	if len(req.Videos) > 0 {
+		return fmt.Errorf("video inputs are not supported")
+	}
+	for name, q := range req.Questions.All() {
+		if q.Type != "score" {
+			continue
+		}
+		var levels []json.RawMessage
+		if err := json.Unmarshal(q.Criteria, &levels); err != nil || len(levels) < 2 || len(levels) > 10 {
+			return fmt.Errorf("question %q: score criteria must be an array of 2–10 levels", name)
+		}
+	}
+	return nil
+}
+
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
 	case "", "tev1", "clef", "strands":
@@ -38,11 +58,8 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	if req.Questions.Len() < 1 || req.Questions.Len() > 64 {
-		return nil, fmt.Errorf("questions must contain 1–64 fields")
-	}
-	if len(req.Videos) > 0 {
-		return nil, fmt.Errorf("video inputs are not supported")
+	if err := ValidateLimits(req); err != nil {
+		return nil, err
 	}
 	if len(req.Images) != 0 && encoding != "clef" {
 		return nil, fmt.Errorf("image inputs are not supported by this decision model")

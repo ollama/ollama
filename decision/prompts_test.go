@@ -2,6 +2,7 @@ package decision
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -68,9 +69,13 @@ func TestTevQuestions(t *testing.T) {
 		}
 	}
 	for _, count := range []int{24, 25, 26} {
-		q, _ := req.Questions.Get("urgency")
-		q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, count-1) + `]`)
-		req.Questions.Set("urgency", q)
+		q, _ := req.Questions.Get("department")
+		criteria := make([]string, count)
+		for i := range criteria {
+			criteria[i] = fmt.Sprintf(`"%d":"x"`, i)
+		}
+		q.Criteria = json.RawMessage(`{` + strings.Join(criteria, ",") + `}`)
+		req.Questions.Set("department", q)
 		_, err := Compile(req, "tev1")
 		if (err == nil) != (count == 24) {
 			t.Errorf("Tev1 accepted %d candidates: %v", count, err)

@@ -549,7 +549,13 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
-			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion, launchOpts.NumBatch)
+			// llama.cpp keeps no KV cache for these decision models, so each
+			// prompt has to fit in one batch.
+			wholePrompt := slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, f.KV().String("decision.type"))
+			if wholePrompt {
+				launchOpts.NumBatch = launchOpts.NumCtx
+			}
+			predictedForLoad := predicted + generationBatchSurchargeForCompletion(completion || wholePrompt, launchOpts.NumBatch)
 
 			// Pre-flight check: estimate whether the model fits in remaining memory.
 			// llama-server auto-detects layers based on available VRAM, so if

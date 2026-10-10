@@ -183,6 +183,7 @@ type llamaServerLaunchConfig struct {
 	numParallel          int
 	kvCacheType          string
 	embedding            bool
+	decision             bool
 	config               LlamaServerConfig
 	gpus                 []ml.DeviceInfo
 	gpuLibs              []string
@@ -285,7 +286,7 @@ func (s *llamaServerRunner) completionPromptForRequest(ctx context.Context, req 
 		return prompt, nil
 	}
 
-	tokens, err := s.tokenize(ctx, prompt, true, nil)
+	tokens, err := s.tokenize(ctx, prompt, true)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +377,11 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		"--no-webui",
 		"--offline",
 		"-c", strconv.Itoa(launch.opts.NumCtx * launch.numParallel),
-		"-np", strconv.Itoa(launch.numParallel),
+	}
+	// llama-server's default slots let the questions of a decision request
+	// share their prompt.
+	if !launch.decision {
+		params = append(params, "-np", strconv.Itoa(launch.numParallel))
 	}
 	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, launch.config)
@@ -863,6 +868,12 @@ func NewLlamaServerRunner(
 	// Check if this is an embedding model
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
+	decisionType := f.KV().String("decision.type")
+	// Clef GGUFs made before llama.cpp supported Clef keep its head under the
+	// qwen35 architecture, which llama-server cannot load.
+	if arch == "qwen35" && decisionType == "clef" {
+		return nil, fmt.Errorf("%w Clef format", gguf.ErrUnsupported)
+	}
 
 	// Older Ollama-format GGUFs store vision tensors (v.*, mm.*) inline in
 	// the main model file rather than in a separate projector layer. When
@@ -943,6 +954,7 @@ func NewLlamaServerRunner(
 		numParallel:  numParallel,
 		kvCacheType:  kvCacheType,
 		embedding:    isEmbedding,
+		decision:     decisionType != "",
 		config:       config,
 		gpus:         slices.Clone(gpus),
 		gpuLibs:      slices.Clone(gpuLibs),
@@ -2442,7 +2454,35 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 	}
 }
 
-func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+// Embedding embeds input followed by any images or audio, which llama-server
+// encodes with the model's projector.
+func (s *llamaServerRunner) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+	var prompt any = input
+	if len(media) > 0 {
+		if len(s.launch.projectors) == 0 {
+			return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "model does not support media embeddings"}
+		}
+		// EmbeddingGemma 2's processor stretches every image to its 280-token
+		// budget of 48-pixel cells, while llama.cpp keeps an image's size
+		// whenever it fits.
+		resize := s.metadata != nil && s.metadata.KV().Architecture() == "gemma-embedding2"
+		multimodal := llamaServerMultimodalPrompt{PromptString: input + strings.Repeat(s.llamaServerMediaMarker(), len(media))}
+		for _, m := range media {
+			var data []byte
+			var err error
+			if resize && DetectMediaKind(m) == MediaKindImage {
+				data, err = resizeImageToTokenBudget(m, 48, 280)
+			} else {
+				data, err = llamaServerMediaBytes(m)
+			}
+			if err != nil {
+				return nil, 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+			}
+			multimodal.MultimodalData = append(multimodal.MultimodalData, base64.StdEncoding.EncodeToString(data))
+		}
+		prompt = multimodal
+	}
+
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		return nil, 0, err
 	}
@@ -2457,7 +2497,7 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]floa
 
 	// Use "input" field (not "content") to get the OAI-compatible response format
 	// which includes tokens_evaluated for prompt token counting
-	req := map[string]any{"input": input}
+	req := map[string]any{"input": prompt}
 	if s.rawEmbeddings {
 		req["embd_normalize"] = -1
 	}
@@ -2588,15 +2628,13 @@ func isEmbeddingInputLimitError(errMsg string) bool {
 		strings.Contains(msg, "exceeds the available context")
 }
 
-func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecial bool, parseSpecial *bool) ([]int, error) {
+func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecial bool) ([]int, error) {
 	req := struct {
-		Content      any   `json:"content"`
-		AddSpecial   bool  `json:"add_special,omitempty"`
-		ParseSpecial *bool `json:"parse_special,omitempty"`
+		Content    any  `json:"content"`
+		AddSpecial bool `json:"add_special,omitempty"`
 	}{
-		Content:      content,
-		AddSpecial:   addSpecial,
-		ParseSpecial: parseSpecial,
+		Content:    content,
+		AddSpecial: addSpecial,
 	}
 
 	data, err := json.Marshal(req)
@@ -2637,7 +2675,7 @@ func (s *llamaServerRunner) tokenize(ctx context.Context, content any, addSpecia
 
 // Tokenize calls llama-server's /tokenize endpoint.
 func (s *llamaServerRunner) Tokenize(ctx context.Context, content string) ([]int, error) {
-	return s.tokenize(ctx, content, false, nil)
+	return s.tokenize(ctx, content, false)
 }
 
 // Detokenize calls llama-server's /detokenize endpoint.
