@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -2415,6 +2416,24 @@ func TestMMProjFitTargetExtraEnvs(t *testing.T) {
 		if _, ok := got[llamaArgFitTargetEnv]; ok {
 			t.Fatalf("user env should not be overridden, got extra env %q", got[llamaArgFitTargetEnv])
 		}
+	})
+
+	t.Run("includes GPU overhead in fit target", func(t *testing.T) {
+		t.Setenv("OLLAMA_GPU_OVERHEAD", strconv.FormatUint(6*bytesPerMiB, 10))
+		launch := newLaunch(map[string]string{"KEEP": "1"})
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, projectorPadMiB+6)
+	})
+
+	t.Run("sets GPU overhead alone when no projector", func(t *testing.T) {
+		t.Setenv("OLLAMA_GPU_OVERHEAD", strconv.FormatUint(8*bytesPerMiB, 10))
+		launch := llamaServerLaunchConfig{
+			extraEnvs: map[string]string{"KEEP": "1"},
+		}
+
+		got := launch.extraEnvsForStart()
+		assertFitTarget(t, got, 8)
 	})
 }
 
