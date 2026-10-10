@@ -596,6 +596,7 @@ func (p *Pi) Edit(models []LaunchModel) error {
 				// User-managed model (no _launch marker) - always preserve
 				if !isPiOllamaModel(modelObj) {
 					newModels = append(newModels, m)
+					selectedSet[id] = false
 				} else if selectedSet[id] {
 					// Rebuild stale managed cloud entries so createConfig refreshes
 					// the whole entry instead of patching it in place.
@@ -603,6 +604,9 @@ func (p *Pi) Edit(models []LaunchModel) error {
 						if _, ok := lookupCloudModelLimit(id); ok {
 							continue
 						}
+					}
+					if model, ok := findLaunchModel(models, id); ok {
+						setPiThinkingControls(modelObj, model)
 					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false
@@ -723,9 +727,59 @@ func createConfig(model LaunchModel) map[string]any {
 		cfg["reasoning"] = true
 	}
 
+	setPiThinkingControls(cfg, model)
+
 	if model.ContextLength > 0 {
 		cfg["contextWindow"] = model.ContextLength
 	}
 
 	return cfg
+}
+
+// setPiThinkingControls writes only controls that can be represented through
+// Pi's OpenAI-compatible endpoint. Unknown metadata leaves existing settings intact.
+func setPiThinkingControls(cfg map[string]any, model LaunchModel) {
+	thinking := model.Thinking
+	if !thinking.Valid() {
+		return
+	}
+
+	// Missing keys inherit Pi defaults, so unsupported levels must be explicit nulls.
+	levels := map[string]any{
+		"off": nil, "minimal": nil, "low": nil, "medium": nil,
+		"high": nil, "xhigh": nil, "max": nil,
+	}
+	hasNamed := false
+	for _, value := range thinking.Values {
+		if _, ok := value.(string); ok {
+			hasNamed = true
+		}
+	}
+
+	reasoning := false
+	for _, value := range thinking.Values {
+		switch value := value.(type) {
+		case bool:
+			if !value {
+				levels["off"] = "none"
+			} else if !hasNamed {
+				// The OpenAI adapter maps high to true for boolean-only models.
+				// With named controls it preserves the string instead, so high
+				// must not be invented as a boolean alias for mixed descriptors.
+				levels["high"] = "high"
+				reasoning = true
+			}
+		case string:
+			switch value {
+			case "minimal", "low", "medium", "high", "xhigh", "max":
+				levels[value] = value
+				reasoning = true
+			}
+		}
+	}
+	if !reasoning && !(len(thinking.Values) == 1 && thinking.Supports(false)) {
+		return // No representable thinking level; retain the capability fallback.
+	}
+	cfg["reasoning"] = reasoning
+	cfg["thinkingLevelMap"] = levels
 }
