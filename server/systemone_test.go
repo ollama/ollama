@@ -56,7 +56,15 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 	if len(input.Fields) > 0 {
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
-	return llm.ScoreResponse{Logits: [][]float32{{0, 2}}, InputTokens: 123, OutputTokens: 2}, r.err
+	logits := [][]float32{{0, 2}}
+	if len(input.Rows) > 0 {
+		logits = make([][]float32, len(input.Rows))
+		for i, row := range input.Rows {
+			logits[i] = make([]float32, len(row.Candidates))
+			logits[i][len(row.Candidates)-1] = 2
+		}
+	}
+	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: 2}, r.err
 }
 
 func TestDecisionModelRejectsCompletion(t *testing.T) {
@@ -163,14 +171,15 @@ func TestSystemOneHandler(t *testing.T) {
 		}
 		return `{"model":"laya-native","state":"x","questions":{` + strings.Join(questions, ",") + `}}`
 	}
-	for _, tt := range []struct {
+	type testCase struct {
 		name   string
 		body   string
 		err    error
 		status int
 		calls  int
 		expire bool
-	}{
+	}
+	tests := []testCase{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
 		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
@@ -203,7 +212,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"invalid image base64", imagePrefix + `!not-base64"]}`, nil, 400, 0, false},
 		{"image data URL", imagePrefix + `data:image/png;base64,aW1hZ2U="]}`, nil, 400, 0, false},
 		{"Tev1 safetensors", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
-		{"Tev1 too many candidates", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
+		{"Tev1 too many score levels", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"score","instructions":"q","criteria":["x"` + strings.Repeat(`,"x"`, 24) + `]}}}`, nil, 400, 0, false},
 		{"Tev1 empty description", `{"model":"safetensors-tev1","state":"x","questions":{"refund":{"type":"choice","instructions":"q","criteria":{"a":"","b":"B"}}}}`, nil, 400, 0, false},
 		{"safetensors missing capability", `{"model":"safetensors-undeclared","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"bad JSON", `{`, nil, 400, 0, false},
@@ -211,7 +220,19 @@ func TestSystemOneHandler(t *testing.T) {
 		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
 		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
 		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
-	} {
+	}
+	for _, model := range []string{"decision-test", "laya-native"} {
+		for _, levels := range []int{1, 2, 10, 11} {
+			status, calls := http.StatusBadRequest, 0
+			if levels >= 2 && levels <= 10 {
+				status, calls = http.StatusOK, 1
+			}
+			criteria := `["x"` + strings.Repeat(`,"x"`, levels-1) + `]`
+			body := fmt.Sprintf(`{"model":%q,"state":"x","questions":{"refund":{"type":"noul","instructions":"q"},"urgency":{"type":"score","instructions":"q","criteria":%s}}}`, model, criteria)
+			tests = append(tests, testCase{fmt.Sprintf("score limits/%s/%d", model, levels), body, nil, status, calls, false})
+		}
+	}
+	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &systemOneTestRunner{err: tt.err}
 			ref := &runnerRef{llama: runner, refCount: 1, sessionDuration: time.Hour}
@@ -238,6 +259,10 @@ func TestSystemOneHandler(t *testing.T) {
 			}
 			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
+			}
+			if strings.HasPrefix(tt.name, "score limits/") && tt.status == http.StatusBadRequest &&
+				!strings.Contains(w.Body.String(), "score criteria must be an array of 2–10 levels") {
+				t.Fatalf("expected shared score validation error: %s", w.Body)
 			}
 			if tt.name == "Clef GGUF null state and default instructions" && (string(runner.state) != `"null"` ||
 				string(runner.questions) != `{"refund":{"type":"noul","instructions":"refund","criteria":null},"tone":{"type":"noul","instructions":"tone","criteria":null},"urgent":{"type":"noul","instructions":"Is it urgent?","criteria":null}}`) {
