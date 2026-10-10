@@ -3767,6 +3767,49 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	}
 }
 
+func TestLlamaServerChatResponseFormatPreservesSchemaOrder(t *testing.T) {
+	format := json.RawMessage(`{"type":"object","properties":{"zeta_colour":{"type":"string"},"alpha_animal":{"type":"string"}},"required":["zeta_colour","alpha_animal"],"additionalProperties":false}`)
+
+	got, err := llamaServerChatResponseFormat(format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	zeta := strings.Index(s, "zeta_colour")
+	alpha := strings.Index(s, "alpha_animal")
+	if zeta < 0 || alpha < 0 {
+		t.Fatalf("expected both properties in marshaled response_format, got %s", s)
+	}
+	if zeta > alpha {
+		t.Fatalf("schema property order not preserved, got %s", s)
+	}
+
+	runner := &llamaServerRunner{}
+	opts := api.DefaultOptions()
+	chatReq, err := runner.llamaServerChatRequest(ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "hi"}},
+		Format:   format,
+		Options:  &opts,
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(chatReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs := string(body)
+	zeta = strings.Index(bs, "zeta_colour")
+	alpha = strings.Index(bs, "alpha_animal")
+	if zeta < 0 || alpha < 0 || zeta > alpha {
+		t.Fatalf("chat request did not preserve schema order, got %s", bs)
+	}
+}
+
 func TestFindLlamaServer(t *testing.T) {
 	// This just tests that the function doesn't panic and returns a reasonable error
 	// when the binary doesn't exist in the expected locations
