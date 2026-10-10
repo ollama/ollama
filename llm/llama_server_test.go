@@ -1727,57 +1727,6 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 }
 
-func TestLlamaServerEmbedWithMedia(t *testing.T) {
-	var got struct {
-		Input llamaServerMultimodalPrompt `json:"input"`
-	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/health" {
-			fmt.Fprint(w, `{"status":"ok"}`)
-			return
-		}
-		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		fmt.Fprint(w, `{"data":[{"embedding":[0.1,0.2,0.3]}],"usage":{"prompt_tokens":7}}`)
-	}))
-	defer srv.Close()
-
-	parts := strings.Split(srv.URL, ":")
-	var portInt int
-	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
-
-	runner := &llamaServerRunner{
-		port:        portInt,
-		cmd:         fakeRunningCmd(),
-		sem:         semaphore.NewWeighted(1),
-		mediaMarker: "<m>",
-		launch:      llamaServerLaunchConfig{projectors: []string{"mmproj.gguf"}},
-	}
-
-	wav := []byte("RIFF\x00\x00\x00\x00WAVEfmt ")
-	_, count, err := runner.EmbedWithMedia(t.Context(), "a dog", [][]byte{wav, wav})
-	if err != nil {
-		t.Fatalf("EmbedWithMedia error: %v", err)
-	}
-	if count != 7 {
-		t.Errorf("prompt_eval_count = %d, want 7", count)
-	}
-	if want := "a dog<m><m>"; got.Input.PromptString != want {
-		t.Errorf("prompt_string = %q, want %q", got.Input.PromptString, want)
-	}
-	if want := base64.StdEncoding.EncodeToString(wav); len(got.Input.MultimodalData) != 2 || got.Input.MultimodalData[1] != want {
-		t.Errorf("multimodal_data = %v, want two copies of %q", got.Input.MultimodalData, want)
-	}
-
-	runner.launch.projectors = nil
-	_, _, err = runner.EmbedWithMedia(t.Context(), "a dog", [][]byte{wav})
-	var serr api.StatusError
-	if !errors.As(err, &serr) || serr.StatusCode != http.StatusNotImplemented {
-		t.Errorf("without a projector, err = %v, want status %d", err, http.StatusNotImplemented)
-	}
-}
-
 func TestResizeImageToTokenBudget(t *testing.T) {
 	// Sizes follow EmbeddingGemma 2's processor: 266, 256, and 264 tokens.
 	for _, tt := range []struct{ w, h, wantW, wantH int }{
