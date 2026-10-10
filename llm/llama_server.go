@@ -2454,40 +2454,38 @@ func llamaServerChatResponseFormat(format json.RawMessage) (map[string]any, erro
 }
 
 func (s *llamaServerRunner) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return s.embed(ctx, input)
+	return s.EmbedWithMedia(ctx, input, nil)
 }
 
-// EmbedWithMedia embeds input together with images or audio, which
+// EmbedWithMedia embeds input followed by any images or audio, which
 // llama-server encodes with the model's projector.
 func (s *llamaServerRunner) EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
-	if len(s.launch.projectors) == 0 {
-		return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "model does not support media embeddings"}
-	}
-
-	// Like sentence-transformers and the MLX runner, media follows the text.
-	prompt := llamaServerMultimodalPrompt{PromptString: input + strings.Repeat(s.llamaServerMediaMarker(), len(media))}
-	for _, m := range media {
-		data, err := s.embedMediaBytes(m)
-		if err != nil {
-			return nil, 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+	var prompt any = input
+	if len(media) > 0 {
+		if len(s.launch.projectors) == 0 {
+			return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "model does not support media embeddings"}
 		}
-		prompt.MultimodalData = append(prompt.MultimodalData, base64.StdEncoding.EncodeToString(data))
+		// EmbeddingGemma 2's processor stretches every image to its 280-token
+		// budget of 48-pixel cells, while llama.cpp keeps an image's size
+		// whenever it fits.
+		resize := s.metadata != nil && s.metadata.KV().Architecture() == "gemma-embedding2"
+		multimodal := llamaServerMultimodalPrompt{PromptString: input + strings.Repeat(s.llamaServerMediaMarker(), len(media))}
+		for _, m := range media {
+			var data []byte
+			var err error
+			if resize && DetectMediaKind(m) == MediaKindImage {
+				data, err = resizeImageToTokenBudget(m, 48, 280)
+			} else {
+				data, err = llamaServerMediaBytes(m)
+			}
+			if err != nil {
+				return nil, 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
+			}
+			multimodal.MultimodalData = append(multimodal.MultimodalData, base64.StdEncoding.EncodeToString(data))
+		}
+		prompt = multimodal
 	}
-	return s.embed(ctx, prompt)
-}
 
-// embedMediaBytes prepares one embedding input for llama-server.
-// EmbeddingGemma 2's processor stretches every image to its 280-token budget
-// of 48-pixel cells, while llama.cpp keeps an image's size whenever it fits,
-// so its images are resized here to give llama-server the reference geometry.
-func (s *llamaServerRunner) embedMediaBytes(data []byte) ([]byte, error) {
-	if s.metadata != nil && s.metadata.KV().Architecture() == "gemma-embedding2" && DetectMediaKind(data) == MediaKindImage {
-		return resizeImageToTokenBudget(data, 48, 280)
-	}
-	return llamaServerMediaBytes(data)
-}
-
-func (s *llamaServerRunner) embed(ctx context.Context, input any) ([]float32, int, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		return nil, 0, err
 	}
@@ -2502,7 +2500,7 @@ func (s *llamaServerRunner) embed(ctx context.Context, input any) ([]float32, in
 
 	// Use "input" field (not "content") to get the OAI-compatible response format
 	// which includes tokens_evaluated for prompt token counting
-	req := map[string]any{"input": input}
+	req := map[string]any{"input": prompt}
 	if s.rawEmbeddings {
 		req["embd_normalize"] = -1
 	}
