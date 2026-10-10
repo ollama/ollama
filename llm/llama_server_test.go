@@ -1727,6 +1727,13 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 }
 
+func TestLlamaServerRejectsOldClef(t *testing.T) {
+	f := loadTestGGUF(t, gguftest.KV{"general.architecture": "qwen35", "qwen35.decision.type": "clef"})
+	if _, err := NewLlamaServerRunner(nil, "", f, nil, nil, api.Options{}, 1, "", LlamaServerConfig{}); !errors.Is(err, gguf.ErrUnsupported) {
+		t.Fatalf("err = %v, want gguf.ErrUnsupported", err)
+	}
+}
+
 func TestResizeImageToTokenBudget(t *testing.T) {
 	// Sizes follow EmbeddingGemma 2's processor: 266, 256, and 264 tokens.
 	for _, tt := range []struct{ w, h, wantW, wantH int }{

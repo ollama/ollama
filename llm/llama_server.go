@@ -869,7 +869,13 @@ func NewLlamaServerRunner(
 	arch := f.KV().Architecture()
 	isEmbedding := f.KV().Has("pooling_type")
 	decisionType := f.KV().String("decision.type")
-	// llama-server evaluates the whole prompt of these decision models in one batch.
+	// Clef GGUFs made before llama.cpp supported Clef keep its head under the
+	// qwen35 architecture, which llama-server cannot load.
+	if arch == "qwen35" && decisionType == "clef" {
+		return nil, fmt.Errorf("%w Clef format", gguf.ErrUnsupported)
+	}
+	// llama.cpp keeps no KV cache for these decision models, so each prompt
+	// has to fit in one batch.
 	if slices.Contains([]string{"clef", "laya", "lfm2-d1-omni"}, decisionType) {
 		opts.NumBatch = opts.NumCtx
 	}

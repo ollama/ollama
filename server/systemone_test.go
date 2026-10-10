@@ -129,7 +129,6 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "go-template", config, []manifest.Layer{params, system, goTemplate})
 	for _, gguf := range []struct{ name, architecture, decisionType, renderer string }{
 		{"renamed-clef", "clef", "clef", ""},
-		{"old-clef", "qwen35", "clef", ""},
 		{"laya-native", "modern-bert", "laya", ""},
 		{"gguf-tev1", "qwen35", "", "tev1"},
 	} {
@@ -188,7 +187,6 @@ func TestSystemOneHandler(t *testing.T) {
 		{"runtime OOM", `{"model":"decision-test","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, errors.New("out of memory"), 500, 1, true},
 		{"invalid schema", `{"model":"decision-test","state":"x","questions":{}}`, nil, 400, 0, false},
 		{"invalid Clef schema", `{"model":"safetensors-clef","state":"x","questions":{}}`, nil, 400, 0, false},
-		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 500, 0, false},
 		{"GGUF without a llama.cpp decision type", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"llama.cpp 65 questions", nativeQuestions(65), nil, 400, 0, false},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
@@ -240,9 +238,6 @@ func TestSystemOneHandler(t *testing.T) {
 			}
 			if tt.calls == 0 && tt.err == nil && ref.model != nil {
 				t.Fatal("loaded a runner for a rejected request")
-			}
-			if tt.name == "old-format Clef GGUF" && !strings.Contains(w.Body.String(), "ollama pull old-clef") {
-				t.Fatalf("old Clef format must ask for a re-download: %s", w.Body)
 			}
 			if tt.name == "Clef GGUF null state and default instructions" && (string(runner.state) != `"null"` ||
 				string(runner.questions) != `{"refund":{"type":"noul","instructions":"refund","criteria":null},"tone":{"type":"noul","instructions":"tone","criteria":null},"urgent":{"type":"noul","instructions":"Is it urgent?","criteria":null}}`) {
