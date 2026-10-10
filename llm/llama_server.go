@@ -418,6 +418,8 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 		params = append(params, "-t", strconv.Itoa(launch.opts.NumThread))
 	}
 
+	params = appendThreadpoolPollArgs(params, launch.gpus)
+
 	params = appendMainGPUArgs(params, launch.opts)
 
 	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
@@ -647,6 +649,22 @@ func appendMainGPUArgs(params []string, opts api.Options) []string {
 	}
 
 	return append(params, "--split-mode", "none", "--main-gpu", strconv.Itoa(*opts.MainGPU))
+}
+
+// appendThreadpoolPollArgs disables the CPU threadpool spin when a GPU is
+// present. Since llama.cpp b10434 llama-server keeps a persistent threadpool
+// for CPU graphs whose workers spin for up to ~100 ms after each graph
+// (default --poll 50). On GPU-offloaded models the CPU graphs are small and
+// arrive every few ms, so the pool never falls back to sleeping and pins a
+// dozen cores at 100% for the entire generation. Sleeping instead is cheap
+// there; on CPU-only runs the pool stays continuously busy, so the llama.cpp
+// default is left in place. https://github.com/ollama/ollama/issues/17833
+func appendThreadpoolPollArgs(params []string, gpus []ml.DeviceInfo) []string {
+	if len(gpus) > 0 {
+		return append(params, "--poll", "0")
+	}
+
+	return params
 }
 
 func appendMMProjArgs(params []string, launch llamaServerLaunchConfig) []string {
