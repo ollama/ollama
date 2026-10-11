@@ -224,6 +224,7 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/embeddings", runner.handleEmbed)
+	mux.HandleFunc("POST /v1/audio/speech", runner.speechHandler)
 
 	for source, target := range map[string]string{
 		"GET /health":      "/v1/status",

@@ -209,6 +209,11 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config: `{"architectures":["LlamaForCausalLM"]}`,
 		},
 		{
+			name:     "pocket tts",
+			config:   `{"architectures":["PocketTTS"],"model_type":"pocket_tts"}`,
+			wantCaps: []string{"speech"},
+		},
+		{
 			name:         "nested llm config",
 			config:       `{"model_type":"nemotron_h_omni","llm_config":{"model_type":"nemotron_h"}}`,
 			wantParser:   "nemotron-3-nano",

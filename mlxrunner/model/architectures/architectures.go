@@ -12,6 +12,7 @@ import (
 	_ "github.com/ollama/ollama/mlxrunner/model/laya"
 	_ "github.com/ollama/ollama/mlxrunner/model/llama"
 	_ "github.com/ollama/ollama/mlxrunner/model/nemotron_h"
+	_ "github.com/ollama/ollama/mlxrunner/model/pockettts"
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen3"
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen3_5"
 	_ "github.com/ollama/ollama/mlxrunner/model/qwen3_5_moe"

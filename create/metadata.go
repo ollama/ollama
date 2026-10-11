@@ -108,6 +108,9 @@ func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate,
 	if cfg.Architecture() == "LayaForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" {
 		return []string{"decision"}
 	}
+	if cfg.Architecture() == "PocketTTS" {
+		return []string{"speech"}
+	}
 	capabilities := []string{"completion"}
 
 	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)
