@@ -23,6 +23,21 @@ Nimble, Tev1, [Clef](https://ollama.com/library/clef), and [Clef Flash](https://
 
 Local requests do not need an API key.
 
+## Ask from the terminal
+
+Give `ollama run` the text first, then one or more yes/no questions about it:
+
+```shell
+ollama run nimble "I was charged twice and want my money back" "Is this a refund request?"
+cat ticket.txt | ollama run nimble "Is this urgent?" "Is the customer angry?"
+```
+
+Each answer prints on its own line: the likelier answer and its probability, such as `yes 97%`. `--format json` prints the full response.
+
+Without text, `ollama run nimble` opens an interactive prompt. Your first message is the text and each later message is a question about it; `/clear` starts over with new text.
+
+For [Clef](https://ollama.com/library/clef), include an image's path in the text to judge the image.
+
 ## Choose a label
 
 Put your input in `state` and describe the possible answers in `criteria`:

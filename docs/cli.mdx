@@ -79,6 +79,14 @@ Output is a JSON array:
 echo "Hello world" | ollama run nomic-embed-text
 ```
 
+### Ask a decision model
+
+```
+ollama run nimble "I was charged twice and want my money back" "Is this a refund request?"
+```
+
+The text comes first, or from stdin, followed by yes/no questions. See [Decision](/capabilities/decision).
+
 ### Download a model
 
 ```
