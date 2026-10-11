@@ -1,0 +1,165 @@
+---
+title: Decision
+description: Classify text, estimate yes/no probabilities, and score ordered criteria.
+---
+
+<Note>
+Currently available locally in Ollama.
+</Note>
+
+Use System One to classify text, answer yes/no questions, or score text against a rubric.
+
+See the [full list of decision models](https://ollama.com/search?c=decision).
+
+## Setup
+
+Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
+
+```shell setup.sh
+ollama pull nimble
+```
+
+Nimble, Tev1, [Clef](https://ollama.com/library/clef), and [Clef Flash](https://ollama.com/library/clef-flash) are decision models. The Clef models can also judge images and require v0.35.1 or later.
+
+Local requests do not need an API key.
+
+## Choose a label
+
+Put your input in `state` and describe the possible answers in `criteria`:
+
+```shell choice.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nimble",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "label": {
+        "type": "choice",
+        "instructions": "Which label fits this ticket?",
+        "criteria": {
+          "billing": "Payments and refunds",
+          "bug": "Software errors",
+          "account": "Login and account access"
+        }
+      }
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model": "nimble",
+  "answers": {
+    "label": {
+      "type": "choice",
+      "choice": "bug",
+      "probabilities": {"billing": 0.0125, "bug": 0.9781, "account": 0.0093},
+      "confidence": 0.8906
+    }
+  },
+  "usage": {"input_tokens": 174, "output_tokens": 1}
+}
+```
+
+## Judge an image
+
+[Clef](https://ollama.com/library/clef) and [Clef Flash](https://ollama.com/library/clef-flash) read images alongside the state. Send base64-encoded PNG, JPEG, or WebP files in `images`; they are shared by all questions, in request order. URLs and data URLs are not accepted. `state` is still required — it holds the context for the decision.
+
+```shell image.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef-flash",
+    "state": "A user took this screenshot and wants to know what it shows.",
+    "images": ["<base64-encoded image>"],
+    "questions": {
+      "has_ollama": {
+        "type": "noul",
+        "instructions": "Does this image contain Ollama?"
+      },
+      "app": {
+        "type": "choice",
+        "instructions": "Which application is shown in this screenshot?",
+        "criteria": {
+          "vscode": "Visual Studio Code",
+          "terminal": "A terminal emulator",
+          "browser": "A web browser",
+          "other": "A different application"
+        }
+      }
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model": "clef-flash",
+  "answers": {
+    "has_ollama": {"type": "noul", "noul": 0.959},
+    "app": {
+      "type": "choice",
+      "choice": "vscode",
+      "probabilities": {"vscode": 0.966, "other": 0.017, "browser": 0.010, "terminal": 0.007},
+      "confidence": 0.868
+    }
+  },
+  "usage": {"input_tokens": 677, "output_tokens": 0}
+}
+```
+
+## Question types
+
+| Type | Criteria | Result |
+| --- | --- | --- |
+| `choice` | 2–26 named options with descriptions | The most likely option and each option's probability |
+| `noul` | Descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
+| `score` | 2–26 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
+
+For the urgency criteria below:
+
+```text
+score = 0 × P(Routine) + 1 × P(Soon) + 2 × P(Immediate)
+```
+
+For `choice` and `score`, `confidence` measures how strongly the model favors one answer over the others, from 0 to 1. A higher value does not guarantee the answer is correct.
+
+## Ask multiple questions
+
+Combine question types in one request. Here, both questions use the same ticket:
+
+```shell multiple.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nimble",
+    "state": {"ticket": "I was charged twice. Please refund the extra payment."},
+    "questions": {
+      "refund": {
+        "type": "noul",
+        "instructions": "Is the customer requesting a refund?",
+        "criteria": {
+          "false": "No refund is requested",
+          "true": "The customer requests a refund"
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgently does this ticket need a response?",
+        "criteria": [
+          "Routine: no time pressure",
+          "Soon: a customer is inconvenienced",
+          "Immediate: a critical service is unavailable"
+        ]
+      }
+    }
+  }'
+```
+
+This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
+
+See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.

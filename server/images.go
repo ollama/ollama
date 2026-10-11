@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -23,16 +24,17 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/mlxrunner/mlx"
-	"github.com/ollama/ollama/x/transfer"
+
+	"golang.org/x/mod/semver"
 )
 
 // Blobs newer than this may belong to another process that has not written its
@@ -66,7 +68,9 @@ type Model struct {
 	Config             model.ConfigV2
 	ShortName          string
 	ModelPath          string
+	ModelShardPaths    []string
 	DraftPath          string
+	DraftShardPaths    []string
 	ParentModel        string
 	HasChatTemplate    bool
 	HasGoTemplate      bool
@@ -76,13 +80,19 @@ type Model struct {
 	System             string
 	License            []string
 	Digest             string
+	ManifestDigest     string
+	Runner             string
 	Options            map[string]any
+	GenerationDefaults model.GenerationDefaults
 	Messages           []api.Message
 
-	Template *template.Template
+	Template       *template.Template
+	templateDigest string
 
-	capabilities       []model.Capability
-	capabilitiesCached bool
+	// Metadata of the model blob and of each projector, read from their
+	// metadata files when the model is loaded.
+	metadata          ggufMetadata
+	projectorMetadata []ggufMetadata
 }
 
 func (m *Model) IsMLX() bool {
@@ -91,6 +101,42 @@ func (m *Model) IsMLX() bool {
 
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
+}
+
+func (m *Model) modelPaths() []string {
+	if m == nil || m.ModelPath == "" {
+		return nil
+	}
+	paths := make([]string, 1, len(m.ModelShardPaths)+1)
+	paths[0] = m.ModelPath
+	return append(paths, m.ModelShardPaths...)
+}
+
+func generationDefaultsFromMetadata(md ggufMetadata) model.GenerationDefaults {
+	return model.ParseGGUFGenerationDefaults(
+		func(key string) (int64, bool) {
+			n, ok := md.number(key)
+			if !ok {
+				return 0, false
+			}
+			if value, err := n.Int64(); err == nil {
+				return value, true
+			}
+			value, err := n.Float64()
+			if err != nil {
+				return 0, false
+			}
+			return int64(value), true
+		},
+		func(key string) (float64, bool) {
+			n, ok := md.number(key)
+			if !ok {
+				return 0, false
+			}
+			value, err := n.Float64()
+			return value, err == nil
+		},
+	)
 }
 
 func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
@@ -110,11 +156,7 @@ const (
 
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
-	if m.capabilitiesCached {
-		return slices.Clone(m.capabilities)
-	}
-
-	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected, nil)
+	capabilities := m.capabilitiesForTemplate(templateCapabilitySelected)
 	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
@@ -122,12 +164,26 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-func (m *Model) capabilitiesForTemplate(source templateCapabilitySource, f *gguf.File) []model.Capability {
+// publicCapabilities limits decision models to decision and explicitly declared
+// vision support. Serving still uses Capabilities.
+func (m *Model) publicCapabilities() []model.Capability {
+	capabilities := m.Capabilities()
+	if slices.Contains(capabilities, model.CapabilityDecision) {
+		public := []model.Capability{model.CapabilityDecision}
+		if slices.Contains(m.Config.Capabilities, "vision") && slices.Contains(capabilities, model.CapabilityVision) {
+			public = append(public, model.CapabilityVision)
+		}
+		return public
+	}
+	return capabilities
+}
+
+func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model.Capability {
 	capabilities := []model.Capability{}
 	var modelArch string
 
 	capabilities = m.configCapabilities(capabilities)
-	capabilities, modelArch = m.ggufCapabilities(capabilities, source, f)
+	capabilities, modelArch = m.ggufCapabilities(capabilities, source)
 	capabilities = m.projectorCapabilities(capabilities)
 	capabilities = m.templateCapabilities(capabilities, source)
 	capabilities = m.parserCapabilities(capabilities)
@@ -144,44 +200,36 @@ func (m *Model) configCapabilities(capabilities []model.Capability) []model.Capa
 	return capabilities
 }
 
-func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource, f *gguf.File) ([]model.Capability, string) {
+func (m *Model) ggufCapabilities(capabilities []model.Capability, source templateCapabilitySource) ([]model.Capability, string) {
 	if m.ModelPath == "" || !m.isGGUF() {
 		return capabilities, ""
 	}
 
-	if f == nil {
-		var err error
-		f, err = gguf.Open(m.ModelPath)
-		if err != nil {
-			slog.Error("couldn't open model file", "error", err)
-			return capabilities, ""
-		}
-		defer f.Close()
-	}
-
-	modelArch := f.KeyValue("general.architecture").String()
 	switch source {
 	case templateCapabilitySelected:
 		if !usesOllamaRenderedChat(m) {
-			capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+			capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 		}
 	case templateCapabilityChat:
-		capabilities = chatTemplateCapabilities(capabilities, f.KeyValue("tokenizer.chat_template").String())
+		capabilities = chatTemplateCapabilities(capabilities, m.metadata.String("tokenizer.chat_template"))
 	}
-	if f.KeyValue("pooling_type").Valid() {
+	switch {
+	case m.metadata.String("decision.type") != "":
+		capabilities = appendCapability(capabilities, model.CapabilityDecision)
+	case m.metadata.Valid("pooling_type"):
 		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
-	} else {
-		// If no embedding is specified, we assume the model supports completion.
+	default:
+		// Otherwise, assume the model supports completion.
 		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
 	}
-	if f.KeyValue("vision.block_count").Valid() {
+	if m.metadata.Valid("vision.block_count") {
 		capabilities = appendCapability(capabilities, model.CapabilityVision)
 	}
-	if f.KeyValue("audio.block_count").Valid() {
+	if m.metadata.Valid("audio.block_count") {
 		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
-	return capabilities, modelArch
+	return capabilities, m.metadata.String("general.architecture")
 }
 
 func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate string) []model.Capability {
@@ -192,7 +240,7 @@ func chatTemplateCapabilities(capabilities []model.Capability, chatTemplate stri
 	if chatTemplateHasToolSupport(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityTools)
 	}
-	if chatTemplateHasThinkingSupport(chatTemplate) {
+	if thinking.TemplateSupportsThinking(chatTemplate) {
 		capabilities = appendCapability(capabilities, model.CapabilityThinking)
 	}
 
@@ -220,17 +268,13 @@ func chatTemplateHasToolRoundTrip(chatTemplate string) bool {
 		strings.Contains(chatTemplate, "ipython"))
 }
 
-func chatTemplateHasThinkingSupport(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
-	}
-
-	// Some Qwen/DeepSeek templates strip prior reasoning by splitting assistant
-	// content at </think>; llama.cpp can still extract reasoning from them.
-	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
-		strings.Contains(chatTemplate, `content.split("</think>")`)) &&
-		!strings.Contains(chatTemplate, "reasoning_content") &&
-		!strings.Contains(chatTemplate, "<SPECIAL_12>")
+// chatTemplateHasToolCallIDs detects Mistral-style templates that round-trip
+// tool-call IDs via the [CALL_ID] token. Go templates cannot carry the ID, so
+// these templates must win the renderer preference or multi-turn tool calls
+// break. This applies to any model with such a template, not just migrated
+// ones.
+func chatTemplateHasToolCallIDs(chatTemplate string) bool {
+	return strings.Contains(chatTemplate, "[CALL_ID]") && strings.Contains(chatTemplate, "tool_call.id")
 }
 
 func goTemplateCapabilities(t *template.Template) []model.Capability {
@@ -303,6 +347,10 @@ func shouldPreferChatTemplate(chatTemplate string, chatTemplateCaps []model.Capa
 		return false
 	}
 
+	if chatTemplateHasToolCallIDs(chatTemplate) {
+		return true
+	}
+
 	return chatTemplateHasToolRoundTrip(chatTemplate) && !goTemplateHasToolRoundTrip(goTemplate)
 }
 
@@ -347,28 +395,17 @@ func capabilityLogValue(present bool, capabilities []model.Capability) any {
 }
 
 func (m *Model) templateSelectionCapabilities(usesHarmony bool) (goTemplate, chatTemplate, harmony, rendererParser []model.Capability) {
-	var f *gguf.File
-	if m.ModelPath != "" && m.isGGUF() {
-		var err error
-		f, err = gguf.Open(m.ModelPath)
-		if err != nil {
-			slog.Error("couldn't open model file", "error", err)
-		} else {
-			defer f.Close()
-		}
-	}
-
 	if m.HasGoTemplate {
-		goTemplate = m.capabilitiesForTemplate(templateCapabilityGo, f)
+		goTemplate = m.capabilitiesForTemplate(templateCapabilityGo)
 	}
 	if m.HasChatTemplate {
-		chatTemplate = m.capabilitiesForTemplate(templateCapabilityChat, f)
+		chatTemplate = m.capabilitiesForTemplate(templateCapabilityChat)
 	}
 	if usesHarmony {
-		harmony = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+		harmony = m.capabilitiesForTemplate(templateCapabilitySelected)
 	}
 	if m.Config.Renderer != "" || m.Config.Parser != "" {
-		rendererParser = m.capabilitiesForTemplate(templateCapabilitySelected, f)
+		rendererParser = m.capabilitiesForTemplate(templateCapabilitySelected)
 	}
 
 	return goTemplate, chatTemplate, harmony, rendererParser
@@ -396,16 +433,10 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 	}
 
 	capabilities = appendCapability(capabilities, model.CapabilityVision)
-	for _, projectorPath := range m.ProjectorPaths {
-		f, err := gguf.Open(projectorPath)
-		if err != nil {
-			slog.Error("couldn't open projector file", "error", err)
-			continue
-		}
-		if projectorHasAudio(f) && !projectorSuppressesAudioCapability(f) {
+	for _, md := range m.projectorMetadata {
+		if projectorHasAudio(md) && !projectorSuppressesAudioCapability(md) {
 			capabilities = appendCapability(capabilities, model.CapabilityAudio)
 		}
-		f.Close()
 	}
 
 	return capabilities
@@ -458,38 +489,26 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 }
 
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
+	if m.metadata.String("decision.type") != "" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityCompletion || c == model.CapabilityInsert ||
+				c == model.CapabilityTools || c == model.CapabilityThinking
+		})
+	}
 	if suppressAudioCapability(m, modelArch) {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
 			return c == model.CapabilityAudio
-		})
-	}
-	if suppressVisionCapability(m) {
-		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
-			return c == model.CapabilityVision
 		})
 	}
 
 	return capabilities
 }
 
-func suppressVisionCapability(m *Model) bool {
-	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
-		return true
-	}
-
-	// The current MLX Nemotron path is text-only. Do not advertise vision for
-	// safetensors manifests until the runner can load and serve that modality.
-	return isNemotron3NanoSafetensors(m)
-}
-
 func suppressAudioCapability(m *Model, arch string) bool {
-	if isGemma4Renderer(m.Config.Renderer) && m.Config.ModelFormat == "safetensors" {
-		return true
-	}
 	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "glimmer" {
 		return true
 	}
-	if isNemotron3NanoSafetensors(m) {
+	if isNemotronSafetensors(m) {
 		return true
 	}
 
@@ -503,34 +522,35 @@ func suppressAudioCapability(m *Model, arch string) bool {
 	return false
 }
 
-func isNemotron3NanoSafetensors(m *Model) bool {
-	return isNemotron3NanoSafetensorsConfig(m.Config)
+func isNemotronSafetensors(m *Model) bool {
+	return isNemotronSafetensorsConfig(m.Config)
 }
 
-func isNemotron3NanoSafetensorsConfig(cfg model.ConfigV2) bool {
+func isNemotronSafetensorsConfig(cfg model.ConfigV2) bool {
 	return cfg.ModelFormat == "safetensors" &&
 		(cfg.Parser == "nemotron-3-nano" ||
 			cfg.Renderer == "nemotron-3-nano" ||
+			cfg.Parser == "nemotron-3.5-nano" ||
+			cfg.Renderer == "nemotron-3.5-nano" ||
 			cfg.ModelFamily == "nemotron_h_omni" ||
 			slices.Contains(cfg.ModelFamilies, "nemotron_h_omni"))
 }
 
-func projectorHasAudio(f *gguf.File) bool {
-	if f.KeyValue("has_audio_encoder").Bool() {
-		return true
-	}
-
-	for _, kv := range f.KeyValues() {
-		if strings.HasSuffix(kv.Key, ".has_audio_encoder") && kv.Bool() {
-			return true
+func projectorHasAudio(md ggufMetadata) bool {
+	// read directly: Keys reports qualified keys, the accessors qualify theirs
+	for _, key := range md.Keys() {
+		if key == "has_audio_encoder" || strings.HasSuffix(key, ".has_audio_encoder") {
+			if b, ok := md.KV[key].(bool); ok && b {
+				return true
+			}
 		}
 	}
 
 	return false
 }
 
-func projectorSuppressesAudioCapability(f *gguf.File) bool {
-	switch f.KeyValue("vision.projector_type").String() {
+func projectorSuppressesAudioCapability(md ggufMetadata) bool {
+	switch md.String("vision.projector_type") {
 	case "gemma3nv":
 		return true
 	}
@@ -554,6 +574,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
+		model.CapabilityDecision:   errors.New("decision"),
 	}
 
 	for _, cap := range want {
@@ -639,6 +660,12 @@ func (m *Model) String() string {
 			Args: m.Config.Parser,
 		})
 	}
+	for _, capability := range m.Config.Capabilities {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "capability",
+			Args: capability,
+		})
+	}
 
 	for k, v := range m.Options {
 		switch v := v.(type) {
@@ -674,18 +701,33 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
+// GetModel loads a model without constraining the runner, letting manifest
+// lists resolve to the preferred child.
 func GetModel(name string) (*Model, error) {
+	return GetModelForRunner(name, "")
+}
+
+// GetModelForRunner returns model metadata for name, selecting runner from a
+// manifest list when one is specified.
+func GetModelForRunner(name, runner string) (*Model, error) {
 	n := model.ParseName(name)
-	mf, err := manifest.ParseNamedManifest(n)
+	mf, err := manifest.ParseNamedManifestForRunner(n, runner)
 	if err != nil {
 		return nil, err
 	}
 
+	manifestDigest := mf.SelectedDigest()
+	if manifestDigest == "" {
+		manifestDigest = mf.Digest()
+	}
+
 	m := &Model{
-		Name:      n.String(),
-		ShortName: n.DisplayShortest(),
-		Digest:    mf.Digest(),
-		Template:  template.DefaultTemplate,
+		Name:           n.String(),
+		ShortName:      n.DisplayShortest(),
+		Digest:         mf.Digest(),
+		ManifestDigest: manifestDigest,
+		Runner:         mf.Runner,
+		Template:       template.DefaultTemplate,
 	}
 
 	if mf.Config.Digest != "" {
@@ -703,11 +745,19 @@ func GetModel(name string) (*Model, error) {
 		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
+		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
 
 	modelHasPooling := false
 	ggufChatTemplate := ""
 	for _, layer := range mf.Layers {
+		// Nothing below reads a tensor layer, and resolving a path costs a
+		// syscall each. Named rather than allowlisting the types below, so a new
+		// layer type is slower here instead of silently unread.
+		if layer.MediaType == manifest.MediaTypeImageTensor {
+			continue
+		}
+
 		filename, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
 			return nil, err
@@ -715,21 +765,30 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
+			if m.ModelPath != "" {
+				m.ModelShardPaths = append(m.ModelShardPaths, filename)
+				break
+			}
 			m.ModelPath = filename
 			m.ParentModel = layer.From
 			if m.isGGUF() {
-				f, err := gguf.Open(filename)
+				md, err := readGGUFMetadata(layer.Digest)
 				if err != nil {
-					slog.Error("couldn't open model file", "error", err)
+					slog.Error("couldn't read model metadata", "error", err)
 					break
 				}
-				ggufChatTemplate = f.KeyValue("tokenizer.chat_template").String()
+				m.metadata = md
+				ggufChatTemplate = md.String("tokenizer.chat_template")
 				m.HasChatTemplate = ggufChatTemplate != ""
-				modelHasPooling = f.KeyValue("pooling_type").Valid()
-				f.Close()
+				modelHasPooling = md.Valid("pooling_type")
+				m.GenerationDefaults = generationDefaultsFromMetadata(md)
 			}
 		case manifest.MediaTypeImageDraft:
-			m.DraftPath = filename
+			if m.DraftPath == "" {
+				m.DraftPath = filename
+			} else {
+				m.DraftShardPaths = append(m.DraftShardPaths, filename)
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -738,9 +797,15 @@ func GetModel(name string) (*Model, error) {
 			m.AdapterPaths = append(m.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
 			m.ProjectorPaths = append(m.ProjectorPaths, filename)
+			if md, err := readGGUFMetadata(layer.Digest); err != nil {
+				slog.Error("couldn't read projector metadata", "error", err)
+			} else {
+				m.projectorMetadata = append(m.projectorMetadata, md)
+			}
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			m.HasGoTemplate = true
+			m.templateDigest = layer.Digest
 			bts, err := os.ReadFile(filename)
 			if err != nil {
 				return nil, err
@@ -801,78 +866,83 @@ func GetModel(name string) (*Model, error) {
 	return m, nil
 }
 
-func CopyModel(src, dst model.Name) error {
+// CopyModel copies src to dst, returning a warning when a manifest list is
+// narrowed to the children held locally.
+func CopyModel(src, dst model.Name) (string, error) {
 	if !dst.IsFullyQualified() {
-		return model.Unqualified(dst)
+		return "", model.Unqualified(dst)
 	}
 	if !src.IsFullyQualified() {
-		return model.Unqualified(src)
+		return "", model.Unqualified(src)
 	}
 
 	if src.Filepath() == dst.Filepath() {
-		return nil
+		return "", nil
 	}
 
-	manifests, err := manifest.Path()
+	data, err := manifest.ReadManifestData(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 
-	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
-		return err
-	}
-
-	srcpath := filepath.Join(manifests, src.Filepath())
-	srcfile, err := os.Open(srcpath)
+	data, warning, err := narrowManifestListToLocal(data)
 	if err != nil {
-		return err
+		return "", err
 	}
-	defer srcfile.Close()
 
-	dstfile, err := os.Create(dstpath)
-	if err != nil {
-		return err
-	}
-	defer dstfile.Close()
-
-	_, err = io.Copy(dstfile, srcfile)
-	return err
+	return warning, manifest.WriteManifestData(dst, data)
 }
 
-func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
-	manifests, err := manifest.Manifests(true)
+// narrowManifestListToLocal drops manifest list children whose manifests are
+// not local, returning the rewritten document and a warning naming what went.
+func narrowManifestListToLocal(data []byte) ([]byte, string, error) {
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, "", err
+	}
+	if mf.MediaType != manifest.MediaTypeManifestList {
+		return data, "", nil
+	}
+
+	var kept []manifest.Manifest
+	var dropped []string
+	for _, child := range mf.Manifests {
+		if _, err := resolveShowManifestChild(child); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, "", err
+			}
+			dropped = append(dropped, cmp.Or(child.Runner, "unknown"))
+			continue
+		}
+		kept = append(kept, child)
+	}
+
+	if len(dropped) == 0 {
+		return data, "", nil
+	}
+	if len(kept) == 0 {
+		return nil, "", fmt.Errorf("%w: pull one of %s before copying", manifest.ErrNoCompatibleManifest, strings.Join(dropped, ", "))
+	}
+
+	narrowed := mf
+	narrowed.Manifests = kept
+	out, err := json.Marshal(narrowed)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
-	for _, manifest := range manifests {
-		for _, layer := range manifest.Layers {
-			delete(deleteMap, layer.Digest)
-		}
-
-		delete(deleteMap, manifest.Config.Digest)
+	var runners []string
+	for _, child := range kept {
+		runners = append(runners, cmp.Or(child.Runner, "unknown"))
 	}
+	warning := fmt.Sprintf("Warning: discarded %s (not pulled locally); copy contains %s",
+		strings.Join(dropped, ", "), strings.Join(runners, ", "))
 
-	// only delete the files which are still in the deleteMap
-	for k := range deleteMap {
-		fp, err := manifest.BlobsPath(k)
-		if err != nil {
-			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
-			continue
-		}
-		if err := os.Remove(fp); err != nil {
-			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
-			continue
-		}
-	}
-
-	return nil
+	return out, warning, nil
 }
 
 func PruneLayers() error {
-	deleteMap := make(map[string]struct{})
+	var candidates []string
 	p, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
@@ -913,17 +983,19 @@ func PruneLayers() error {
 			continue
 		}
 
-		deleteMap[name] = struct{}{}
+		candidates = append(candidates, name)
 	}
 
-	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total blobs: %d", len(candidates)))
 
-	if err := deleteUnusedLayers(deleteMap); err != nil {
+	removed, err := manifest.RemoveUnreferencedBlobs(candidates...)
+	if err != nil {
 		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
 		return nil
 	}
+	pruneGGUFMetadata()
 
-	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
+	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(removed)))
 
 	return nil
 }
@@ -936,30 +1008,50 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return errInsecureProtocol
 	}
 
-	mf, err := manifest.ParseNamedManifest(n)
+	manifestJSON, err := manifest.ReadManifestData(n)
 	if err != nil {
 		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
 	}
 
+	var stored manifest.Manifest
+	if err := json.Unmarshal(manifestJSON, &stored); err != nil {
+		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+		return err
+	}
+
 	var layers []manifest.Layer
-	layers = append(layers, mf.Layers...)
-	if mf.Config.Digest != "" {
-		layers = append(layers, mf.Config)
+	manifestMediaType := manifest.MediaTypeManifest
+
+	if stored.MediaType == manifest.MediaTypeManifestList {
+		layers, err = pushLayersForManifestList(stored)
+		if err != nil {
+			return err
+		}
+		manifestMediaType = manifest.MediaTypeManifestList
+	} else {
+		mf, err := manifest.ParseNamedManifest(n)
+		if err != nil {
+			fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
+			return err
+		}
+
+		layers = append(layers, mf.Layers...)
+		if mf.Config.Digest != "" {
+			layers = append(layers, mf.Config)
+		}
+
+		if !hasTensorLayers(layers) {
+			manifestJSON, err = json.Marshal(mf)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		// Read raw manifest JSON to preserve tensor metadata fields
-		manifestPath, err := manifest.PathForName(n)
-		if err != nil {
-			return err
-		}
-		manifestJSON, err := os.ReadFile(manifestPath)
-		if err != nil {
-			return err
-		}
-		if err := pushWithTransfer(ctx, n, layers, manifestJSON, regOpts, fn); err != nil {
+		if err := pushWithTransfer(ctx, n, layers, manifestJSON, manifestMediaType, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -977,13 +1069,8 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	requestURL := n.BaseURL()
 	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
-	manifestJSON, err := json.Marshal(mf)
-	if err != nil {
-		return err
-	}
-
 	headers := make(http.Header)
-	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Content-Type", manifestMediaType)
 	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
 	if err != nil {
 		return err
@@ -995,22 +1082,87 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, error) {
+	seen := make(map[string]struct{})
+	var layers []manifest.Layer
+
+	addLayer := func(layer manifest.Layer) error {
+		if layer.Digest == "" {
+			return nil
+		}
+		if _, ok := seen[layer.Digest]; ok {
+			return nil
+		}
+		if layer.Size == 0 {
+			p, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				return err
+			}
+			fi, err := os.Stat(p)
+			if err != nil {
+				return err
+			}
+			layer.Size = fi.Size()
+		}
+		seen[layer.Digest] = struct{}{}
+		layers = append(layers, layer)
+		return nil
+	}
+
+	for _, child := range parent.Manifests {
+		childDigest := child.BlobDigest()
+		if childDigest == "" {
+			return nil, errors.New("manifest list child is missing digest")
+		}
+		// Resolve before sizing the child: its descriptor carries no size, so
+		// addLayer would stat a missing blob and lose the actionable error.
+		resolved, err := resolveShowManifestChild(child)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// pull materializes only the selected child; the others stay
+				// bare references until pulled explicitly.
+				return nil, fmt.Errorf("manifest child for runner %q is not local; pull it with --runner %s before pushing", child.Runner, child.Runner)
+			}
+			return nil, err
+		}
+
+		if err := addLayer(manifest.Layer{
+			MediaType: manifest.MediaTypeManifest,
+			Digest:    childDigest,
+		}); err != nil {
+			return nil, err
+		}
+
+		for _, layer := range resolved.Layers {
+			if err := addLayer(layer); err != nil {
+				return nil, err
+			}
+		}
+		if err := addLayer(resolved.Config); err != nil {
+			return nil, err
+		}
+	}
+
+	return layers, nil
+}
+
+func PullModel(ctx context.Context, name string, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	n := model.ParseName(name)
 
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-	existingMf, err := manifest.ParseNamedManifest(n)
+	existingDigests, err := manifest.ReferencedBlobDigestsForName(n)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
 	} else if err != nil {
 		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
 	} else {
-		for _, l := range existingMf.Layers {
-			deleteMap[l.Digest] = struct{}{}
-		}
-		if existingMf.Config.Digest != "" {
-			deleteMap[existingMf.Config.Digest] = struct{}{}
+		for _, digest := range existingDigests {
+			if blob, err := manifest.BlobsPath(digest); err == nil {
+				if _, err := os.Stat(blob); err == nil {
+					deleteMap[digest] = struct{}{}
+				}
+			}
 		}
 	}
 
@@ -1024,11 +1176,36 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
-	if hasTensorLayers(mf.Layers) {
+	selectedChildDigest := ""
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		var childDigest string
+		mf, childDigest, err = pullSelectedManifest(ctx, n, mf, runner, regOpts, fn)
+		if err != nil {
+			return err
+		}
+		selectedChildDigest = childDigest
+	} else if runner != "" {
+		// The registry served a plain manifest, so there is no variant to
+		// select. Honor an explicit runner request by rejecting a declared
+		// mismatch instead of silently pulling whatever is stored. Manifests
+		// without runner metadata cannot be checked before their config blob
+		// is local, so they proceed as before.
+		if mf.Runner != "" && !strings.EqualFold(mf.Runner, runner) {
+			return fmt.Errorf("%w for runners: %s", manifest.ErrNoCompatibleManifest, runner)
+		}
+	}
+
+	// Checked against the selected child: a manifest list carries no layers of
+	// its own, so testing the parent would skip the gate entirely.
+	if requiresMLX(mf) {
 		if err := mlx.CheckInit(); err != nil {
 			slog.Debug("MLX is unavailable for safetensors model pull", "error", err)
 			return errors.New("this model requires MLX support, but the MLX runtime is not available")
 		}
+	}
+
+	if err := checkModelRequires(ctx, n, mf, regOpts); err != nil {
+		return err
 	}
 
 	var layers []manifest.Layer
@@ -1042,6 +1219,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err := pullWithTransfer(ctx, n, layers, manifestData, regOpts, fn); err != nil {
 			return err
 		}
+		writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
 		fn(api.ProgressResponse{Status: "success"})
 		return nil
 	}
@@ -1084,6 +1262,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 				if err := os.Remove(fp); err != nil {
 					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
 				}
+				removeGGUFMetadata(layer.Digest)
 			}
 			return err
 		}
@@ -1096,25 +1275,18 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
+		slog.Info(fmt.Sprintf("couldn't write manifest for %s", n.DisplayShortest()))
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestData, 0o644)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
-	}
+	writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
 
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(deleteMap); err != nil {
+		if _, err := manifest.RemoveUnreferencedBlobs(candidateBlobDigests(deleteMap)...); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
@@ -1122,6 +1294,16 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "success"})
 
 	return nil
+}
+
+// requiresMLX reports whether serving mf needs the MLX runtime. A declared
+// runner is authoritative; manifests predating runner metadata are judged by
+// their tensor layers.
+func requiresMLX(mf *manifest.Manifest) bool {
+	if mf.Runner != "" {
+		return strings.EqualFold(mf.Runner, manifest.RunnerMLX)
+	}
+	return hasTensorLayers(mf.Layers)
 }
 
 // hasTensorLayers checks if any layer has tensor media type.
@@ -1134,8 +1316,146 @@ func hasTensorLayers(layers []manifest.Layer) bool {
 	return false
 }
 
-// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func candidateBlobDigests(m map[string]struct{}) []string {
+	digests := make([]string, 0, len(m))
+	for digest := range m {
+		digests = append(digests, digest)
+	}
+
+	return digests
+}
+
+// checkModelRequires makes sure the model is compatible with the local
+// Ollama version before any model layers are downloaded.
+func checkModelRequires(ctx context.Context, n model.Name, mf *manifest.Manifest, regOpts *registryOptions) error {
+	if mf == nil || mf.Config.Digest == "" {
+		return nil
+	}
+
+	if err := verifyBlob(mf.Config.Digest); err != nil {
+		if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errDigestMismatch) {
+			return err
+		}
+		if err := downloadWithTransfer(ctx, n, []manifest.Layer{mf.Config}, regOpts, func(api.ProgressResponse) {}); err != nil {
+			slog.Debug("skipping requires check: config fetch failed", "model", n.DisplayShortest(), "error", err)
+			return nil
+		}
+		if err := verifyBlob(mf.Config.Digest); err != nil {
+			slog.Debug("skipping requires check: config verify failed", "model", n.DisplayShortest(), "error", err)
+			return nil
+		}
+	}
+
+	blobPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return err
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+
+	return checkPullRequires(cfg.Requires, version.Version)
+}
+
+// checkPullRequires reports whether the pulling client satisfies the model's
+// declared minimum version.
+func checkPullRequires(requires, clientVersion string) error {
+	if requires == "" {
+		return nil
+	}
+	if clientVersion == "0.0.0" {
+		return nil
+	}
+	requires = "v" + strings.TrimPrefix(requires, "v")
+	if !semver.IsValid(requires) {
+		slog.Debug("ignoring malformed requires version", "requires", requires)
+		return nil
+	}
+	// Prerelease builds must be able to test models targeting their release.
+	currentVersion, _, _ := strings.Cut(semver.Canonical("v"+clientVersion), "-")
+	if semver.Compare(requires, currentVersion) > 0 {
+		return fmt.Errorf("model requires ollama version %s or newer (current version is v%s)", requires, clientVersion)
+	}
+	return nil
+}
+
+func pullSelectedManifest(ctx context.Context, n model.Name, parent *manifest.Manifest, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) (*manifest.Manifest, string, error) {
+	child, err := manifest.SelectManifestReferenceForRunner(parent.Manifests, runner)
+	if err != nil {
+		return nil, "", err
+	}
+
+	childDigest := child.BlobDigest()
+	if childDigest == "" {
+		return nil, "", errors.New("manifest list child is missing digest")
+	}
+
+	layer, err := remoteBlobLayer(ctx, n, childDigest, manifest.MediaTypeManifest, regOpts)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// The child manifest is metadata; model progress starts with its layers.
+	if err := downloadWithTransfer(ctx, n, []manifest.Layer{layer}, regOpts, func(api.ProgressResponse) {}); err != nil {
+		return nil, "", err
+	}
+
+	if err := verifyBlob(childDigest); err != nil {
+		return nil, "", err
+	}
+	blobPath, err := manifest.BlobsPath(childDigest)
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var mf manifest.Manifest
+	if err := json.Unmarshal(data, &mf); err != nil {
+		return nil, "", err
+	}
+	if mf.MediaType == manifest.MediaTypeManifestList {
+		return nil, "", errors.New("nested manifest lists are not supported")
+	}
+	if mf.Runner == "" {
+		mf.Runner = child.Runner
+	}
+	if mf.Format == "" {
+		mf.Format = child.Format
+	}
+
+	return &mf, childDigest, nil
+}
+
+func remoteBlobLayer(ctx context.Context, n model.Name, digest, mediaType string, regOpts *registryOptions) (manifest.Layer, error) {
+	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "blobs", digest)
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, regOpts)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+	defer resp.Body.Close()
+
+	size, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	if err != nil {
+		return manifest.Layer{}, err
+	}
+
+	return manifest.Layer{
+		MediaType: mediaType,
+		Digest:    digest,
+		Size:      size,
+	}, nil
+}
+
+func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -1178,40 +1498,57 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
-		Blobs:           blobs,
-		BaseURL:         baseURL,
-		DestDir:         destDir,
-		Repository:      n.DisplayNamespaceModel(),
-		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
-		Progress:        progress,
-		Token:           regOpts.Token,
-		GetToken:        getToken,
-		Logger:          slog.Default(),
+		Blobs:             blobs,
+		BaseURL:           baseURL,
+		DestDir:           destDir,
+		Repository:        n.DisplayNamespaceModel(),
+		BodyConcurrency:   max(1, int(envconfig.MaxTransferStreams())),
+		Progress:          progress,
+		Token:             regOpts.Token,
+		GetToken:          getToken,
+		Logger:            slog.Default(),
+		AllowPrivateHosts: regOpts != nil && regOpts.Insecure,
 	}); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// writePullDowngradeAnchor writes a legacy manifest at the pulled name so a
+// pre-manifest-list daemon can load the model and its garbage collector
+// retains the referenced blobs.
+func writePullDowngradeAnchor(n model.Name, mf *manifest.Manifest, manifestData []byte, selectedChildDigest string) {
+	manifestDigests := []string{fmt.Sprintf("sha256:%x", sha256.Sum256(manifestData))}
+	if selectedChildDigest != "" {
+		manifestDigests = append(manifestDigests, selectedChildDigest)
+	}
+	// Best effort: the pull itself succeeded, so a failed downgrade anchor is
+	// logged rather than failing the request.
+	if err := manifest.WriteLegacyAnchor(n, mf, manifestDigests...); err != nil {
+		slog.Warn("couldn't write downgrade anchor for pulled model", "model", n.DisplayShortest(), "error", err)
+	}
+}
+
+// pullWithTransfer uses the simplified x/transfer package for downloading blobs.
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+	if err := downloadWithTransfer(ctx, n, layers, regOpts, fn); err != nil {
 		return err
 	}
 
 	// Write manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	fp, err := manifest.PathForName(n)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := manifest.WriteManifestData(n, manifestData); err != nil {
 		return err
 	}
 
-	if err := os.WriteFile(fp, manifestData, 0o644); err != nil {
-		return err
-	}
-
-	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 	return nil
 }
 
 // pushWithTransfer uses the simplified x/transfer package for uploading blobs and manifest.
-func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestJSON []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestJSON []byte, manifestMediaType string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -1255,17 +1592,19 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	}
 
 	return transfer.Upload(ctx, transfer.UploadOptions{
-		Blobs:           blobs,
-		BaseURL:         baseURL,
-		SrcDir:          srcDir,
-		BodyConcurrency: max(1, int(envconfig.MaxTransferStreams())),
-		Progress:        progress,
-		Token:           regOpts.Token,
-		GetToken:        getToken,
-		Logger:          slog.Default(),
-		Manifest:        manifestJSON,
-		ManifestRef:     n.Tag,
-		Repository:      n.DisplayNamespaceModel(),
+		Blobs:             blobs,
+		BaseURL:           baseURL,
+		SrcDir:            srcDir,
+		BodyConcurrency:   max(1, int(envconfig.MaxTransferStreams())),
+		Progress:          progress,
+		Token:             regOpts.Token,
+		GetToken:          getToken,
+		Logger:            slog.Default(),
+		Manifest:          manifestJSON,
+		ManifestMediaType: manifestMediaType,
+		ManifestRef:       n.Tag,
+		Repository:        n.DisplayNamespaceModel(),
+		AllowPrivateHosts: regOpts != nil && regOpts.Insecure,
 	})
 }
 
@@ -1273,7 +1612,7 @@ func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptio
 	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	headers := make(http.Header)
-	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+	headers.Set("Accept", strings.Join([]string{manifest.MediaTypeManifestList, manifest.MediaTypeManifest}, ", "))
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
 		return nil, nil, err
@@ -1367,6 +1706,20 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 // structured in a way that makes this easy, so this will have to do for now.
 var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
+var errBlockedRedirect = errors.New("blocked redirect to a different host")
+
+// isAllowedHost reports whether host may receive cross-host redirects.
+var allowedRedirectHosts = []string{"ollama.com", "ollama.ai", "hf.co", "huggingface.co"}
+
+func isAllowedHost(host string) bool {
+	for _, h := range allowedRedirectHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
@@ -1400,8 +1753,32 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
+	var checkRedirect func(req *http.Request, via []*http.Request) error
+	if regOpts != nil {
+		checkRedirect = regOpts.CheckRedirect
+	}
+	if checkRedirect == nil {
+		insecure := regOpts != nil && regOpts.Insecure
+		// Default redirect policy: same-host only, so a registry can't steer
+		// manifest or blob requests at internal addresses. CDN-backed
+		// registries redirect among their own hosts, allowed via
+		// isAllowedHost. --insecure opts out for trusted LAN/local registries.
+		checkRedirect = func(req *http.Request, via []*http.Request) error {
+			if len(via) > 10 {
+				return errMaxRedirectsExceeded
+			}
+			if insecure || req.URL.Host == via[0].URL.Host {
+				return nil
+			}
+			if isAllowedHost(via[0].URL.Hostname()) && isAllowedHost(req.URL.Hostname()) {
+				return nil
+			}
+			return errBlockedRedirect
+		}
+	}
+
 	c := &http.Client{
-		CheckRedirect: regOpts.CheckRedirect,
+		CheckRedirect: checkRedirect,
 	}
 	if testMakeRequestDialContext != nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()

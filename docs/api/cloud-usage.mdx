@@ -1,0 +1,120 @@
+---
+title: Cloud usage
+sidebarTitle: /api/usage
+openapi: /openapi.yaml GET /api/usage
+---
+
+<RequestExample>
+
+```shell Request
+curl 'https://ollama.com/api/usage?range=24h' \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json Response (22 empty buckets omitted)
+{
+  "range": "24h",
+  "scope": "self",
+  "granularity": "hour",
+  "from": "2026-09-30T02:00:00Z",
+  "until": "2026-10-01T02:30:00Z",
+  "totals": {
+    "request_count": 15,
+    "usage_usd": 0.01718,
+    "input_tokens": 106000,
+    "cached_input_tokens": 46000,
+    "output_tokens": 13600
+  },
+  "buckets": [
+    {
+      "from": "2026-09-30T12:00:00Z",
+      "until": "2026-09-30T13:00:00Z",
+      "request_count": 4,
+      "usage_usd": 0.0052,
+      "input_tokens": 24000,
+      "cached_input_tokens": 0,
+      "output_tokens": 3200
+    },
+    {
+      "from": "2026-10-01T00:00:00Z",
+      "until": "2026-10-01T01:00:00Z",
+      "request_count": 8,
+      "usage_usd": 0.0088,
+      "input_tokens": 64000,
+      "cached_input_tokens": 40000,
+      "output_tokens": 8000
+    },
+    {
+      "from": "2026-10-01T02:00:00Z",
+      "until": "2026-10-01T02:30:00Z",
+      "partial": true,
+      "request_count": 3,
+      "usage_usd": 0.00318,
+      "input_tokens": 18000,
+      "cached_input_tokens": 6000,
+      "output_tokens": 2400
+    }
+  ]
+}
+```
+
+</ResponseExample>
+
+New usage may take time to appear.
+
+For your remaining included and purchased credits, use [Balance](/api/balance).
+
+Unsupported or repeated query parameters return `400`. Errors follow Ollama's [JSON error format](/api/errors#error-messages).
+
+## Time ranges
+
+| Range | Starts at                                         | Bucket size | Buckets |
+| ----- | ------------------------------------------------- | ----------- | ------- |
+| `24h` | 24 hours before the start of the current UTC hour | Hour        | 25      |
+| `7d`  | Seven days ago at 00:00 UTC                       | Day         | 8       |
+| `30d` | Thirty days ago at 00:00 UTC                      | Day         | 31      |
+
+Every range ends at the time of the request. For example, at 02:30 UTC on October 1, `24h` starts at 02:00 UTC on September 30. It returns 24 complete hourly buckets followed by the current 02:00–02:30 bucket. The `7d` and `30d` ranges return seven and thirty complete days, followed by today so far.
+
+Buckets appear in chronological order, including zeroes for hours or days with no recorded requests. The final bucket covers the current hour or day and has `partial: true`.
+
+All timestamps are in UTC. Each `from` is inclusive and each `until` is exclusive.
+
+## Usage totals and buckets
+
+`totals` summarizes usage across the entire range. `buckets` breaks that usage into hours or days.
+
+`granularity` is set automatically: `hour` for `24h` and `day` for `7d` and `30d`. The top-level `from` and `until` describe the entire range; each bucket has its own boundaries.
+
+`partial` indicates whether the hour or day is still in progress, rather than whether all usage has been recorded.
+
+<Accordion title="Legacy plans">
+
+For legacy plans, only request counts are available. If a bucket or total includes legacy requests, cost and token counts are omitted.
+
+</Accordion>
+
+## Rate limits
+
+This endpoint allows 10 requests per minute per user, shared across API keys and devices. We recommend polling once per minute. A `429` response includes a `Retry-After` header with the number of seconds to wait before retrying.
+
+## Team usage
+
+By default, everyone sees their own usage (`scope=self`).
+
+Team admins can use `scope=team` to see usage for the whole team:
+
+```shell
+curl 'https://ollama.com/api/usage?range=7d&scope=team' \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+## Coming soon
+
+We plan to add custom time ranges, usage breakdowns by model and API key, and breakdowns by team member for team admins.
+
+## Reference

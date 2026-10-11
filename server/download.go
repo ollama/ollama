@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/transfer"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -267,12 +268,22 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			if resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusOK {
 				return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 			}
-			return resp.Location()
+			loc, err := resp.Location()
+			if err != nil {
+				return nil, err
+			}
+			if err := transfer.ValidateRedirectTarget(ctx, loc, requestURL.String(), opts.Insecure); err != nil {
+				return nil, err
+			}
+			return loc, nil
 		}
 	}()
 	if err != nil {
 		return err
 	}
+
+	client := transfer.NewRedirectClient(requestURL.String(), opts.Insecure)
+	defer client.CloseIdleConnections()
 
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
@@ -286,7 +297,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			var err error
 			for try := 0; try < maxRetries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, directURL, w, part)
+				err = b.downloadChunk(inner, client, directURL, w, part)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
 					// return immediately if the context is canceled or the device is out of space
@@ -330,7 +341,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	return nil
 }
 
-func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
+func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, requestURL *url.URL, w io.Writer, part *blobDownloadPart) error {
 	g, ctx := errgroup.WithContext(ctx)
 	attemptStarted := time.Now()
 	transferDone := make(chan struct{})
@@ -342,7 +353,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 			return err
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", part.StartsAt(), part.StopsAt()-1))
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}

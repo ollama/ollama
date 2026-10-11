@@ -19,23 +19,9 @@ export function onboardingConnectUrl(
 
 export const AUTHENTICATION_TIMEOUT_MS = 5 * 60 * 1000;
 
-export type OnboardingStep = "intro" | "welcome" | "apps" | "run";
+export type OnboardingStep = "intro" | "welcome" | "run";
 
-export type OnboardingAction = "continue" | "authenticated" | "local";
 export type AuthenticationTimeoutAction = "ignore" | "defer" | "fail";
-
-export function nextOnboardingStep(
-  step: OnboardingStep,
-  action: OnboardingAction,
-  isAuthenticated: boolean,
-): OnboardingStep {
-  if (action === "local") return "run";
-  if (step === "intro" && action === "continue") {
-    return isAuthenticated ? "apps" : "welcome";
-  }
-  if (step === "welcome" && action === "authenticated") return "apps";
-  return step;
-}
 
 export function authenticationTimeoutAction(
   settled: boolean,

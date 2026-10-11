@@ -1,4 +1,10 @@
 import {
+  getClaudeDesktopAvailableModels,
+  getClaudeDesktopModelsSettings,
+} from "@/api";
+import { Model } from "@/gotypes";
+import { queryClient } from "@/lib/queryClient";
+import {
   act,
   create,
   type ReactTestInstance,
@@ -11,12 +17,25 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Switch } from "./ui/switch";
 import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "./ClaudeDesktopModelsSettings";
+
+vi.mock("@/api", () => ({
+  getClaudeDesktopModelsSettings: vi.fn(),
+  getClaudeDesktopAvailableModels: vi.fn().mockResolvedValue([]),
+}));
+
+beforeEach(() => {
+  vi.mocked(getClaudeDesktopAvailableModels).mockReset().mockResolvedValue([]);
+  vi.mocked(getClaudeDesktopModelsSettings)
+    .mockReset()
+    .mockReturnValue(new Promise(() => {}));
+});
+afterEach(() => queryClient.clear());
 
 vi.mock("@headlessui/react", async (importOriginal) => {
   const React = await import("react");
@@ -171,6 +190,259 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
+  it.each(["catalog", "inventory"])(
+    "keeps the successful %s usable while the other request is pending or fails",
+    async (successful) => {
+      const catalog = testStatus();
+      const summary = {
+        ...catalog,
+        models: [{ ...catalog.models[0], availability: "unknown" as const }],
+      };
+      let resolveCatalog!: (status: typeof catalog) => void;
+      let rejectCatalog!: (error: Error) => void;
+      const pendingCatalog = new Promise<typeof catalog>((resolve, reject) => {
+        resolveCatalog = resolve;
+        rejectCatalog = reject;
+      });
+      let resolveInventory!: (models: Model[]) => void;
+      let rejectInventory!: (error: Error) => void;
+      const pendingInventory = new Promise<Model[]>((resolve, reject) => {
+        resolveInventory = resolve;
+        rejectInventory = reject;
+      });
+      vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+        full ? pendingCatalog : Promise.resolve(summary),
+      );
+      vi.mocked(getClaudeDesktopAvailableModels).mockReturnValue(
+        pendingInventory,
+      );
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ClaudeDesktopModelsSettings initialStatus={summary} />,
+          );
+        });
+        await act(async () => pickerButton(renderer!).props.onClick());
+        await act(async () => {
+          if (successful === "catalog") resolveCatalog(catalog);
+          else resolveInventory([new Model({ model: "local-model" })]);
+        });
+        const name = successful === "catalog" ? "kimi-k3:cloud" : "local-model";
+        const choice = () =>
+          renderer!.root
+            .findAllByProps({ role: "option" })
+            .find((option) => textContent(option).includes(name));
+        expect(choice()?.props.disabled).toBe(false);
+        expect(textContent(renderer!.root)).toContain("Loading models…");
+
+        await act(async () => {
+          if (successful === "catalog")
+            rejectInventory(new Error("inventory unavailable"));
+          else rejectCatalog(new Error("catalog unavailable"));
+        });
+        expect(choice()?.props.disabled).toBe(false);
+        expect(textContent(renderer!.root)).not.toContain("Loading models…");
+        await act(async () => choice()!.props.onClick());
+        expect(textContent(pickerButton(renderer!))).toContain(name);
+      } finally {
+        resolveCatalog(catalog);
+        resolveInventory([]);
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps saved installed models usable after editing one route when the catalog fails (running: %s)",
+    async (running) => {
+      const names = ["saved-one", "saved-two", "another-installed"];
+      const summary = {
+        ...testStatus(undefined, running),
+        mappings: [
+          { ...fableRoute, model: names[0] },
+          {
+            routeId: "claude-opus-5",
+            routeName: "Opus 5",
+            model: names[1],
+          },
+        ],
+        models: names.slice(0, 2).map((name) => ({
+          name,
+          displayName: name,
+          selected: true,
+          availability: "unknown" as const,
+        })),
+      };
+      vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+        full
+          ? Promise.reject(new Error("catalog unavailable"))
+          : Promise.resolve(summary),
+      );
+      vi.mocked(getClaudeDesktopAvailableModels).mockResolvedValue(
+        names.map((model) => new Model({ model })),
+      );
+      const apply = vi.fn().mockResolvedValue({
+        status: {
+          ...summary,
+          mappings: [
+            { ...summary.mappings[0], model: names[2] },
+            summary.mappings[1],
+          ],
+          models: names.map((name) => ({
+            name,
+            displayName: name,
+            selected: name !== names[0],
+            availability: "available" as const,
+          })),
+        },
+        mappingsApplied: true,
+      });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        applyClaudeDesktopMappings: apply,
+      });
+      let renderer: ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = create(
+            <ClaudeDesktopModelsSettings initialStatus={summary} />,
+          );
+        });
+        await act(async () => pickerButton(renderer!).props.onClick());
+        const options = renderer!.root.findAllByProps({ role: "option" });
+        expect(options).toHaveLength(names.length);
+        for (const name of names) {
+          const option = options.find((option) => textContent(option) === name);
+          expect(option?.props.disabled).toBe(false);
+        }
+        await act(async () => {
+          options
+            .find((option) => textContent(option) === names[2])!
+            .props.onClick();
+        });
+        expect(actionButton(renderer!).props.disabled).not.toBe(true);
+        expect(textContent(actionButton(renderer!))).toBe(
+          running ? "Restart Claude" : "Start Claude",
+        );
+        await act(async () => actionButton(renderer!).props.onClick());
+        expect(apply).toHaveBeenCalledWith(
+          { "claude-fable-5": names[2], "claude-opus-5": names[1] },
+          false,
+        );
+      } finally {
+        await act(async () => renderer?.unmount());
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it("keeps unavailable models and unconfirmed placeholders disabled after inventory succeeds", async () => {
+    const summary = {
+      ...testStatus(),
+      models: [
+        {
+          ...testStatus().models[0],
+          availability: "unavailable" as const,
+          reason: "upgrade_required" as const,
+        },
+        {
+          ...testStatus().models[1],
+          availability: "unknown" as const,
+        },
+      ],
+    };
+    vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((full) =>
+      full
+        ? Promise.reject(new Error("catalog unavailable"))
+        : Promise.resolve(summary),
+    );
+    vi.mocked(getClaudeDesktopAvailableModels).mockResolvedValue([
+      new Model({ model: summary.models[0].name }),
+      new Model({ model: "local-model" }),
+    ]);
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings initialStatus={summary} />,
+        );
+      });
+      await act(async () => pickerButton(renderer!).props.onClick());
+      const options = renderer!.root.findAllByProps({ role: "option" });
+      expect(options).toHaveLength(3);
+      expect(options[0].props.disabled).toBe(true);
+      expect(textContent(options[0])).toContain("Upgrade required");
+      expect(options[1].props.disabled).toBe(true);
+      expect(options[2].props.disabled).toBe(false);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the picker loading until the latest refresh finishes", async () => {
+    let focusHandler: (() => void) | undefined;
+    let finishFirst!: (status: ReturnType<typeof testStatus>) => void;
+    let finishLatest!: (status: ReturnType<typeof testStatus>) => void;
+    const first = new Promise<ReturnType<typeof testStatus>>(
+      (resolve) => (finishFirst = resolve),
+    );
+    const latest = new Promise<ReturnType<typeof testStatus>>(
+      (resolve) => (finishLatest = resolve),
+    );
+    let summaries = 0;
+    vi.mocked(getClaudeDesktopModelsSettings).mockImplementation((catalog) =>
+      catalog
+        ? summaries === 1
+          ? first
+          : latest
+        : Promise.resolve(testStatus("glm-5.2:cloud", summaries++ > 0)),
+    );
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn((event, handler) => {
+        if (event === "focus") focusHandler = handler;
+      }),
+      removeEventListener: vi.fn(),
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ClaudeDesktopModelsSettings
+            initialStatus={testStatus()}
+            initialLocalModels={[]}
+          />,
+        );
+      });
+      await act(async () => pickerButton(renderer!).props.onClick());
+      await act(async () => focusHandler?.());
+      await act(async () => finishFirst(testStatus()));
+      expect(textContent(renderer!.root)).toContain("Loading models…");
+      await act(async () => finishLatest(testStatus("glm-5.2:cloud", true)));
+      expect(textContent(renderer!.root)).not.toContain("Loading models…");
+    } finally {
+      finishFirst(testStatus());
+      finishLatest(testStatus());
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("opens below without scrolling and disables auto mode for draft changes", async () => {
     class TestHTMLElement {
       focus() {}
@@ -432,13 +704,13 @@ describe("ClaudeDesktopModelsSettings interactions", () => {
         resolveRefresh = resolve;
       },
     );
+    vi.mocked(getClaudeDesktopModelsSettings).mockReturnValue(staleRefresh);
     vi.stubGlobal("window", {
       addEventListener: vi.fn((event: string, handler: () => void) => {
         if (event === "focus") focusHandler = handler;
       }),
       removeEventListener: vi.fn(),
       HTMLElement: TestHTMLElement,
-      getClaudeDesktopStatus: vi.fn(() => staleRefresh),
       applyClaudeDesktopMappings: vi.fn().mockResolvedValue({
         status: testStatus("kimi-k3:cloud"),
         mappingsApplied: true,

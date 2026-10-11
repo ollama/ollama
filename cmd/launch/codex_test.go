@@ -12,6 +12,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/model/renderers"
 	modelpkg "github.com/ollama/ollama/types/model"
 )
 
@@ -38,6 +39,7 @@ func TestCodexArgs(t *testing.T) {
 		"-c", fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
 		"-c", fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
 		"-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath),
+		"-c", `service_tier="default"`,
 	}
 
 	tests := []struct {
@@ -49,6 +51,7 @@ func TestCodexArgs(t *testing.T) {
 		{"with model", "llama3.2", nil, append(slices.Clone(managedArgs), "-m", "llama3.2")},
 		{"empty model", "", nil, managedArgs},
 		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "--sandbox", "workspace-write")},
+		{"explicit tier", "llama3.2", []string{"-c", `service_tier="priority"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "-c", `service_tier="priority"`)},
 	}
 
 	for _, tt := range tests {
@@ -381,6 +384,8 @@ func TestCodexRestoreRemovesCLIProfileAndCatalogWithoutChangingUserRootConfig(t 
 	}
 	userConfig := "" +
 		`model = "gpt-5.5"` + "\n" +
+		`model_reasoning_effort = "max"` + "\n" +
+		`service_tier = "priority"` + "\n" +
 		`model_provider = "openai"` + "\n\n" +
 		"[model_providers.openai]\n" +
 		`name = "OpenAI"` + "\n"
@@ -717,6 +722,41 @@ func TestBuildCodexModelEntryContextWindow(t *testing.T) {
 
 			if _, err := json.Marshal(entry); err != nil {
 				t.Errorf("entry is not JSON serializable: %v", err)
+			}
+		})
+	}
+}
+
+func TestCodexThinkingControls(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		thinking     *api.ModelRecommendationThinking
+		levels       []string
+		defaultLevel any
+	}{
+		{"unknown", nil, nil, nil},
+		{"harmony", renderers.ThinkingForRenderer("harmony"), []string{"low", "medium", "high"}, "medium"},
+		{"named", &api.ModelRecommendationThinking{Values: []any{false, "low", "high", "max"}, Default: "high"}, []string{"none", "low", "high", "max"}, "high"},
+		{"binary default on", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true}, []string{"none", "high"}, "high"},
+		{"binary default off", &api.ModelRecommendationThinking{Values: []any{false, true}, Default: false}, []string{"none", "high"}, "none"},
+		{"mixed", &api.ModelRecommendationThinking{Values: []any{false, true, "medium"}, Default: true}, []string{"none", "high", "medium"}, "high"},
+		{"xhigh", &api.ModelRecommendationThinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}, []string{"none", "low", "medium", "xhigh"}, "medium"},
+		{"minimal", &api.ModelRecommendationThinking{Values: []any{"minimal", "high"}, Default: "minimal"}, []string{"minimal", "high"}, "minimal"},
+		{"future control", &api.ModelRecommendationThinking{Values: []any{"low", "high", "turbo"}, Default: "high"}, []string{"low", "high"}, "high"},
+		{"future default", &api.ModelRecommendationThinking{Values: []any{"low", "high", "turbo"}, Default: "turbo"}, []string{"low", "high"}, nil},
+		{"on label collision", &api.ModelRecommendationThinking{Values: []any{false, true, "high"}, Default: true}, []string{"none", "high"}, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			entry := buildCodexModelEntry(LaunchModel{Name: "fixture:cloud", Thinking: tt.thinking})
+			var levels []string
+			for _, v := range entry["supported_reasoning_levels"].([]any) {
+				levels = append(levels, v.(map[string]any)["effort"].(string))
+			}
+			if !slices.Equal(levels, tt.levels) {
+				t.Fatalf("levels = %v, want %v", levels, tt.levels)
+			}
+			if entry["default_reasoning_level"] != tt.defaultLevel {
+				t.Fatalf("default = %v, want %v", entry["default_reasoning_level"], tt.defaultLevel)
 			}
 		})
 	}

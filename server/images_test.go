@@ -1,22 +1,30 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
 
 func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
@@ -60,6 +68,62 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 }
 
+func TestGenerationDefaultsFromMetadata(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "model-*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := gguftest.Write(file, gguftest.KV{
+		"general.architecture":             "llama",
+		"general.sampling.top_k":           uint32(40),
+		"general.sampling.top_p":           int32(1),
+		"general.sampling.min_p":           float32(0),
+		"general.sampling.typ_p":           float32(0.95),
+		"general.sampling.temp":            uint32(1),
+		"general.sampling.penalty_last_n":  float32(64),
+		"general.sampling.penalty_repeat":  float32(1.05),
+		"general.sampling.penalty_freq":    uint32(0),
+		"general.sampling.penalty_present": int32(0),
+		"general.sampling.xtc_threshold":   float32(0.5),
+		"general.sampling.mirostat_tau":    float32(5),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	md, err := extractGGUFMetadata(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaults := generationDefaultsFromMetadata(md)
+	check := func(key string, want any) {
+		t.Helper()
+		if got := defaults[key]; got != want {
+			t.Fatalf("%s = %#v, want %#v", key, got, want)
+		}
+	}
+
+	check("top_k", int64(40))
+	check("top_p", float64(1))
+	check("min_p", float64(0))
+	check("typical_p", float64(0.95))
+	check("temperature", float64(1))
+	check("repeat_last_n", int64(64))
+	check("repeat_penalty", float64(1.05))
+	check("frequency_penalty", float64(0))
+	check("presence_penalty", float64(0))
+	if _, ok := defaults["mirostat_tau"]; ok {
+		t.Fatal("mirostat_tau should not be mapped to an Ollama option")
+	}
+	if _, ok := defaults["xtc_threshold"]; ok {
+		t.Fatal("xtc_threshold should not be mapped to an Ollama option")
+	}
+}
+
 func TestGetModelTemplateMetadata(t *testing.T) {
 	customTemplate := "CUSTOM {{ .Prompt }}"
 
@@ -67,13 +131,13 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{{ bos_token }}{{ messages[0]['content'] }}",
 		}, nil)
 		writeTestModelManifest(t, "template-disabled", digest, customTemplate)
 
-		m, err := GetModel("template-disabled")
+		m, err := GetModelForRunner("template-disabled", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,13 +156,13 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
 		writeTestModelManifest(t, "chat-template-tools", digest, customTemplate)
 
-		m, err := GetModel("chat-template-tools")
+		m, err := GetModelForRunner("chat-template-tools", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,13 +178,13 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}",
 		}, nil)
 		writeTestModelManifest(t, "chat-template-tools-thinking", digest, "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}")
 
-		m, err := GetModel("chat-template-tools-thinking")
+		m, err := GetModelForRunner("chat-template-tools-thinking", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -139,7 +203,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
 {% for message in messages %}
@@ -154,7 +218,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 {{ range .ToolCalls }}{{ .Function.Name }}{{ end }}
 {{ end }}`)
 
-		m, err := GetModel("chat-template-tool-round-trip")
+		m, err := GetModelForRunner("chat-template-tool-round-trip", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -170,7 +234,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 			"tokenizer.chat_template": `{%- if tools and not available_tools -%}
 {{- set available_tools = tools -}}
@@ -189,7 +253,7 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 {{ if .ToolCalls }}<|tool_call|>{{ range .ToolCalls }}{{ .Function.Name }}{{ end }}{{ else }}{{ .Content }}{{ end }}
 {{ end }}`)
 
-		m, err := GetModel("chat-template-weaker-tools")
+		m, err := GetModelForRunner("chat-template-weaker-tools", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,17 +268,47 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		}
 	})
 
+	t.Run("prefers Mistral chat template with tool call IDs", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+		_, digest := createBinFile(t, map[string]any{
+			"general.architecture": "llama",
+			"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}
+{% for message in messages %}
+{% if message.get('tool_calls') %}{% for tool_call in message.tool_calls %}[TOOL_CALLS]{{ tool_call.function.name }}[CALL_ID]{{ tool_call.id }}[ARGS]{{ tool_call['function']['arguments']|tojson }}{% endfor %}{% endif %}
+{% if message['role'] == 'tool' %}tool_response{{ message['content'] }}{% endif %}
+{% endfor %}`,
+		}, nil)
+		writeTestModelManifest(t, "chat-template-tool-call-ids", digest, `{{ if .Tools }}tools{{ end }}
+{{ range .Messages }}
+{{ if eq .Role "tool" }}tool_response{{ else }}{{ .Role }}{{ end }}
+{{ if .ToolCalls }}[TOOL_CALLS]{{ range .ToolCalls }}{{ .Function.Name }}[CALL_ID]0[ARGS]{{ .Function.Arguments }}{{ end }}{{ else }}{{ .Content }}{{ end }}
+{{ end }}`)
+
+		m, err := GetModelForRunner("chat-template-tool-call-ids", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !m.PreferChatTemplate {
+			t.Fatal("expected chat template to be preferred")
+		}
+		if got := m.CheckCapabilities(model.CapabilityTools); got != nil {
+			t.Fatalf("expected tools capability, got %v", got)
+		}
+	})
+
 	t.Run("respects explicit Go TEMPLATE enablement", func(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "1")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
 		writeTestModelManifest(t, "go-template-forced", digest, customTemplate)
 
-		m, err := GetModel("go-template-forced")
+		m, err := GetModelForRunner("go-template-forced", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -230,13 +324,13 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "0")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture":    "llama",
 			"tokenizer.chat_template": "{% if tools %}{{ tools }}{% endif %}{{ messages[0]['content'] }}",
 		}, nil)
 		writeTestModelManifest(t, "go-template-disabled", digest, customTemplate)
 
-		m, err := GetModel("go-template-disabled")
+		m, err := GetModelForRunner("go-template-disabled", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -252,12 +346,12 @@ func TestGetModelTemplateMetadata(t *testing.T) {
 		t.Setenv("OLLAMA_MODELS", t.TempDir())
 		t.Setenv("OLLAMA_GO_TEMPLATE", "")
 
-		_, digest := createBinFile(t, ggml.KV{
+		_, digest := createBinFile(t, gguftest.KV{
 			"general.architecture": "llama",
 		}, nil)
 		writeTestModelManifest(t, "missing-chat-template", digest, customTemplate)
 
-		m, err := GetModel("missing-chat-template")
+		m, err := GetModelForRunner("missing-chat-template", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -296,50 +390,416 @@ func writeTestModelManifest(t *testing.T, name, digest, tmpl string) {
 	}
 }
 
-func TestModelCapabilities(t *testing.T) {
-	// Create completion model (llama architecture without vision)
-	completionModelPath, _ := createBinFile(t, ggml.KV{
-		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+// loadTestMetadata fills in what GetModel would have read from the metadata
+// files, so
+// hand-built models resolve capabilities the same way loaded ones do.
+func loadTestMetadata(t *testing.T, m *Model) {
+	t.Helper()
+	if m.ModelPath != "" {
+		md, err := extractGGUFMetadata(m.ModelPath)
+		if err != nil {
+			t.Fatalf("metadata for %s: %v", m.ModelPath, err)
+		}
+		m.metadata = md
+	}
+	m.projectorMetadata = nil
+	for _, path := range m.ProjectorPaths {
+		md, err := extractGGUFMetadata(path)
+		if err != nil {
+			t.Fatalf("projector metadata for %s: %v", path, err)
+		}
+		m.projectorMetadata = append(m.projectorMetadata, md)
+	}
+}
 
-	ggufToolTemplateModelPath, _ := createBinFile(t, ggml.KV{
+func TestPushLayersForManifestListIncludesChildManifests(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeChild := func(name, runner, formatName, layerMediaType string) (manifest.Manifest, manifest.Layer, manifest.Layer) {
+		t.Helper()
+
+		config, err := manifest.NewLayer(strings.NewReader(name+" config"), "application/vnd.docker.container.image.v1+json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer, err := manifest.NewLayer(strings.NewReader(name+" layer"), layerMediaType)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifestWithMetadata(model.ParseName(name), config, []manifest.Layer{layer}, runner, formatName); err != nil {
+			t.Fatal(err)
+		}
+		mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *mf, config, layer
+	}
+
+	mlx, mlxConfig, mlxLayer := writeChild("library/push-mlx:latest", manifest.RunnerMLX, manifest.FormatSafetensors, manifest.MediaTypeImageTensor)
+	ggml, ggmlConfig, ggmlLayer := writeChild("library/push-ggml:latest", manifest.RunnerGGML, manifest.FormatGGUF, "application/vnd.ollama.image.model")
+
+	mlxRef, err := manifest.NewManifestReference(mlx.BlobDigest(), mlx.Runner, mlx.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggml.BlobDigest(), ggml.Runner, ggml.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers, err := pushLayersForManifestList(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		mlx.BlobDigest():  manifest.MediaTypeManifest,
+		ggml.BlobDigest(): manifest.MediaTypeManifest,
+		mlxConfig.Digest:  mlxConfig.MediaType,
+		mlxLayer.Digest:   mlxLayer.MediaType,
+		ggmlConfig.Digest: ggmlConfig.MediaType,
+		ggmlLayer.Digest:  ggmlLayer.MediaType,
+	}
+	if len(layers) != len(want) {
+		t.Fatalf("layer count = %d, want %d: %#v", len(layers), len(want), layers)
+	}
+	for _, layer := range layers {
+		if wantMediaType, ok := want[layer.Digest]; !ok {
+			t.Fatalf("unexpected layer digest %q", layer.Digest)
+		} else if layer.MediaType != wantMediaType {
+			t.Fatalf("layer %q media type = %q, want %q", layer.Digest, layer.MediaType, wantMediaType)
+		}
+		if layer.Size == 0 {
+			t.Fatalf("layer %q has zero size", layer.Digest)
+		}
+	}
+	if !hasTensorLayers(layers) {
+		t.Fatal("manifest list push layers did not preserve tensor media type")
+	}
+}
+
+func TestCopyModelNarrowsManifestListToLocalChildren(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeChild := func(name, runner, formatName string) manifest.Manifest {
+		t.Helper()
+
+		config, err := manifest.NewLayer(strings.NewReader(name+" config"), "application/vnd.docker.container.image.v1+json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		layer, err := manifest.NewLayer(strings.NewReader(name+" layer"), "application/vnd.ollama.image.model")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := manifest.WriteManifestWithMetadata(model.ParseName(name), config, []manifest.Layer{layer}, runner, formatName); err != nil {
+			t.Fatal(err)
+		}
+		mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return *mf
+	}
+
+	local := writeChild("library/narrow-local:latest", manifest.RunnerGGML, manifest.FormatGGUF)
+	localRef, err := manifest.NewManifestReference(local.BlobDigest(), local.Runner, local.Format)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A child the registry advertised but pull never materialized.
+	absentRef, err := manifest.NewManifestReference(fmt.Sprintf("sha256:%064d", 1), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeList := func(name string, refs []manifest.Manifest) model.Name {
+		t.Helper()
+		n := model.ParseName(name)
+		if _, err := manifest.WriteManifestList(n, refs); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	t.Run("drops absent children and warns", func(t *testing.T) {
+		src := writeList("library/narrow-src:latest", []manifest.Manifest{localRef, absentRef})
+		dst := model.ParseName("library/narrow-dst:latest")
+
+		warning, err := CopyModel(src, dst)
+		if err != nil {
+			t.Fatalf("CopyModel() = %v, want nil", err)
+		}
+		if !strings.Contains(warning, manifest.RunnerMLX) {
+			t.Errorf("warning = %q, want it to name the dropped %s child", warning, manifest.RunnerMLX)
+		}
+
+		data, err := manifest.ReadManifestData(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var copied manifest.Manifest
+		if err := json.Unmarshal(data, &copied); err != nil {
+			t.Fatal(err)
+		}
+		if len(copied.Manifests) != 1 {
+			t.Fatalf("copy has %d children, want 1: %#v", len(copied.Manifests), copied.Manifests)
+		}
+		if got := copied.Manifests[0].BlobDigest(); got != local.BlobDigest() {
+			t.Errorf("copied child digest = %q, want %q", got, local.BlobDigest())
+		}
+	})
+
+	t.Run("fully local list is copied verbatim", func(t *testing.T) {
+		src := writeList("library/intact-src:latest", []manifest.Manifest{localRef})
+		dst := model.ParseName("library/intact-dst:latest")
+
+		warning, err := CopyModel(src, dst)
+		if err != nil {
+			t.Fatalf("CopyModel() = %v, want nil", err)
+		}
+		if warning != "" {
+			t.Errorf("warning = %q, want none", warning)
+		}
+
+		srcData, err := manifest.ReadManifestData(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dstData, err := manifest.ReadManifestData(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(srcData, dstData) {
+			t.Errorf("copy differs from source:\n got %s\nwant %s", dstData, srcData)
+		}
+	})
+
+	t.Run("no local children is an error", func(t *testing.T) {
+		src := writeList("library/empty-src:latest", []manifest.Manifest{absentRef})
+		dst := model.ParseName("library/empty-dst:latest")
+
+		if _, err := CopyModel(src, dst); !errors.Is(err, manifest.ErrNoCompatibleManifest) {
+			t.Fatalf("CopyModel() = %v, want ErrNoCompatibleManifest", err)
+		}
+		if _, err := manifest.ReadManifestData(dst); err == nil {
+			t.Error("destination manifest was written despite the error")
+		}
+	})
+}
+
+func TestPullModelManifestListDownloadsSelectedChildOnly(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	oldVersion := version.Version
+	t.Cleanup(func() { version.Version = oldVersion })
+	version.Version = "0.40.0-rc0"
+
+	configData := []byte(`{"architecture":"test","requires":"0.40.0"}`)
+	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
+	layerData := bytes.Repeat([]byte("selected tensor layer"), 64)
+	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layerData))
+
+	child := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifest,
+		Runner:        manifest.RunnerLlamaCPP,
+		Format:        manifest.FormatGGUF,
+		Config: manifest.Layer{
+			MediaType: "application/vnd.docker.container.image.v1+json",
+			Digest:    configDigest,
+			Size:      int64(len(configData)),
+		},
+		Layers: []manifest.Layer{
+			{
+				MediaType: manifest.MediaTypeImageTensor,
+				Digest:    layerDigest,
+				Size:      int64(len(layerData)),
+			},
+		},
+	}
+	childData, err := json.Marshal(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(childData))
+	childRef, err := manifest.NewManifestReference(childDigest, manifest.RunnerLlamaCPP, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unselectedDigest := "sha256:" + strings.Repeat("f", 64)
+	unselectedRef, err := manifest.NewManifestReference(unselectedDigest, manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{childRef, unselectedRef},
+	}
+	parentData, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blobs := map[string][]byte{
+		childDigest:  childData,
+		configDigest: configData,
+		layerDigest:  layerData,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v2/library/test/manifests/latest":
+			w.Header().Set("Content-Type", manifest.MediaTypeManifestList)
+			w.Header().Set("Content-Length", strconv.Itoa(len(parentData)))
+			_, _ = w.Write(parentData)
+		case (r.Method == http.MethodHead || r.Method == http.MethodGet) && strings.HasPrefix(r.URL.Path, "/v2/library/test/blobs/"):
+			digest := strings.TrimPrefix(r.URL.Path, "/v2/library/test/blobs/")
+			if digest == unselectedDigest {
+				t.Errorf("requested unselected child manifest %s", digest)
+				http.Error(w, "unselected child requested", http.StatusNotFound)
+				return
+			}
+			data, ok := blobs[digest]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(data)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	name := strings.TrimPrefix(ts.URL, "http://") + "/library/test:latest"
+	// Blobs download in parallel, so progress arrives from several goroutines.
+	var mu sync.Mutex
+	var progress []api.ProgressResponse
+	if err := PullModel(t.Context(), name, "", &registryOptions{Insecure: true}, func(resp api.ProgressResponse) {
+		mu.Lock()
+		defer mu.Unlock()
+		progress = append(progress, resp)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	payloadTotal := int64(len(configData) + len(layerData))
+	childManifestTotal := int64(len(childData))
+	if payloadTotal == childManifestTotal {
+		t.Fatalf("test fixture payload total equals child manifest size: %d", payloadTotal)
+	}
+	var sawPayloadProgress bool
+	for _, resp := range progress {
+		if resp.Digest != "sha256:model" {
+			continue
+		}
+		if resp.Total == childManifestTotal {
+			t.Fatalf("reported child manifest as model progress: %#v", resp)
+		}
+		if resp.Total == payloadTotal {
+			sawPayloadProgress = true
+		}
+	}
+	if !sawPayloadProgress {
+		t.Fatalf("missing selected payload progress with total %d in %#v", payloadTotal, progress)
+	}
+
+	n := model.ParseName(name)
+	gotParentData, err := manifest.ReadManifestData(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotParentData, parentData) {
+		t.Fatal("named manifest does not contain the parent manifest list")
+	}
+
+	m, err := manifest.ParseNamedManifest(n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Runner != manifest.RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", m.Runner, manifest.RunnerLlamaCPP)
+	}
+	if m.Config.Digest != configDigest {
+		t.Fatalf("config digest = %q, want %q", m.Config.Digest, configDigest)
+	}
+
+	for _, digest := range []string{childDigest, configDigest, layerDigest} {
+		path, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected blob %s to exist: %v", digest, err)
+		}
+	}
+	path, err := manifest.BlobsPath(unselectedDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unselected child manifest blob exists: %v", err)
+	}
+}
+
+func TestModelCapabilities(t *testing.T) {
+	decisionModelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":    "qwen35",
+		"qwen35.decision.type":    "clef",
+		"tokenizer.chat_template": `{% if tools %}{{ tools }}{% endif %}<think>{{ messages }}</think>`,
+	}, []*gguftest.Tensor{})
+
+	// Create completion model (llama architecture without vision)
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture": "llama",
+	}, []*gguftest.Tensor{})
+
+	ggufToolTemplateModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "llama",
 		"tokenizer.chat_template": `{% if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}<think>{{ messages[0]['content'] }}</think>`,
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	audioProjectorPath, _ := createBinFile(t, ggml.KV{
+	audioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "pixtral",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	nemotronOmniModelPath, _ := createBinFile(t, ggml.KV{
+	nemotronOmniModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":                 "nemotron_h_omni",
 		"nemotron_h_omni.vision.block_count":   uint32(1),
 		"nemotron_h_omni.audio.block_count":    uint32(1),
 		"nemotron_h_omni.embedding_length":     uint32(1),
 		"nemotron_h_omni.attention.head_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
-	suppressedAudioProjectorPath, _ := createBinFile(t, ggml.KV{
+	suppressedAudioProjectorPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":    "clip",
 		"clip.has_audio_encoder":  true,
 		"vision.projector_type":   "gemma4v",
 		"clip.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
@@ -361,6 +821,22 @@ func TestModelCapabilities(t *testing.T) {
 		model        Model
 		expectedCaps []model.Capability
 	}{
+		{
+			name: "Clef exposes decision instead of completion",
+			model: Model{
+				ModelPath: decisionModelPath,
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision},
+		},
+		{
+			name: "Clef filters inherited generation capabilities",
+			model: Model{
+				ModelPath:      decisionModelPath,
+				ProjectorPaths: []string{visionModelPath},
+				Config:         model.ConfigV2{Capabilities: []string{"decision", "vision", "completion", "insert", "tools", "thinking"}},
+			},
+			expectedCaps: []model.Capability{model.CapabilityDecision, model.CapabilityVision},
+		},
 		{
 			name: "model with image generation capability via config",
 			model: Model{
@@ -519,7 +995,7 @@ func TestModelCapabilities(t *testing.T) {
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
 		},
 		{
-			name: "nemotron3 safetensors suppresses vision and audio but keeps thinking",
+			name: "nemotron3 safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
@@ -529,40 +1005,20 @@ func TestModelCapabilities(t *testing.T) {
 				},
 				Template: chatTemplate,
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
 		},
 		{
-			name: "gemma4 small safetensors suppresses vision and audio",
+			name: "nemotron3.5 safetensors exposes vision and suppresses audio",
 			model: Model{
 				Config: model.ConfigV2{
 					ModelFormat:  "safetensors",
-					Renderer:     gemma4RendererSmall,
-					Capabilities: []string{"vision", "audio"},
+					Parser:       "nemotron-3.5-nano",
+					Renderer:     "nemotron-3.5-nano",
+					Capabilities: []string{"completion", "vision", "audio"},
 				},
 				Template: chatTemplate,
 			},
-		},
-		{
-			name: "gemma4 large safetensors suppresses vision and audio",
-			model: Model{
-				Config: model.ConfigV2{
-					ModelFormat:  "safetensors",
-					Renderer:     gemma4RendererLarge,
-					Capabilities: []string{"vision", "audio"},
-				},
-				Template: chatTemplate,
-			},
-		},
-		{
-			name: "default gemma4 safetensors suppresses vision and audio",
-			model: Model{
-				Config: model.ConfigV2{
-					ModelFormat:  "safetensors",
-					Renderer:     gemma4RendererLegacy,
-					Capabilities: []string{"vision", "audio"},
-				},
-				Template: chatTemplate,
-			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityThinking},
 		},
 	}
 
@@ -593,6 +1049,8 @@ func TestModelCapabilities(t *testing.T) {
 
 	for _, tt := range testModels {
 		t.Run(tt.name, func(t *testing.T) {
+			loadTestMetadata(t, &tt.model)
+
 			// Test Capabilities method
 			caps := tt.model.Capabilities()
 			if !compareCapabilities(caps, tt.expectedCaps) {
@@ -604,21 +1062,21 @@ func TestModelCapabilities(t *testing.T) {
 
 func TestModelCheckCapabilities(t *testing.T) {
 	// Create simple model file for tests that don't depend on GGUF content
-	completionModelPath, _ := createBinFile(t, ggml.KV{
+	completionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "llama",
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create vision model (llama architecture with vision block count)
-	visionModelPath, _ := createBinFile(t, ggml.KV{
+	visionModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture":     "llama",
 		"llama.vision.block_count": uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	// Create embedding model (bert architecture with pooling type)
-	embeddingModelPath, _ := createBinFile(t, ggml.KV{
+	embeddingModelPath, _ := createBinFile(t, gguftest.KV{
 		"general.architecture": "bert",
 		"bert.pooling_type":    uint32(1),
-	}, []*ggml.Tensor{})
+	}, []*gguftest.Tensor{})
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
@@ -723,6 +1181,8 @@ func TestModelCheckCapabilities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			loadTestMetadata(t, &tt.model)
+
 			// Test CheckCapabilities method
 			err := tt.model.CheckCapabilities(tt.checkCaps...)
 			if tt.expectedErrMsg == "" {
@@ -847,8 +1307,248 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	n := model.ParseName(u.Host + "/test/attack")
 	n.ProtocolScheme = "http"
 
-	err = PullModel(t.Context(), n.String(), &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
+	err = PullModel(t.Context(), n.String(), "", &registryOptions{Insecure: true}, func(api.ProgressResponse) {})
 	if !errors.Is(err, errDigestMismatch) {
 		t.Fatalf("PullModel = %v, want errDigestMismatch (unverified blob would persist)", err)
+	}
+}
+
+// TestPullManifestRejectsCrossHostRedirect: a registry can't redirect a
+// pull at an internal address; cross-host redirects to public addresses
+// (hf.co's CDN) are fine. --insecure opts out.
+func TestPullManifestRejectsCrossHostRedirect(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var internalHit atomic.Bool
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internalHit.Store(true)
+	}))
+	defer internal.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer ts.Close()
+
+	requestURL, err := url.Parse(ts.URL + "/v2/test/attack/manifests/latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Default policy: cross-host redirect is refused before any request
+	// leaves for the internal host. (regOpts nil exercises the makeRequest
+	// default; the insecure protocol check doesn't apply at this level.)
+	blockedResp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+	// On a CheckRedirect failure the client returns the pre-redirect
+	// response with its body already closed; close again defensively to
+	// satisfy bodyclose (double close is a no-op).
+	if blockedResp != nil && blockedResp.Body != nil {
+		blockedResp.Body.Close()
+	}
+	if !errors.Is(err, errBlockedRedirect) {
+		t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+	}
+	if internalHit.Load() {
+		t.Fatal("internal host received a request despite the blocked redirect")
+	}
+
+	// Insecure opts out: the cross-host redirect is followed.
+	resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{Insecure: true})
+	if err != nil {
+		t.Fatalf("makeRequest with Insecure = %v, want redirect followed", err)
+	}
+	resp.Body.Close()
+	if !internalHit.Load() {
+		t.Fatal("redirect target was not reached with Insecure set")
+	}
+}
+
+// TestPullManifestRedirectPolicy: cross-host redirects are blocked by
+// default except between allowlisted hosts.
+func TestPullManifestRedirectPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		origin  string // registry host receiving the initial request
+		target  string // redirect target
+		allowed bool
+	}{
+		{name: "hf to cdn sibling", origin: "hf.co", target: "us.aws.cdn.hf.co", allowed: true},
+		{name: "hf to huggingface", origin: "hf.co", target: "huggingface.co", allowed: true},
+		{name: "ollama registry to cdn", origin: "registry.ollama.ai", target: "cdn.ollama.com", allowed: true},
+		{name: "public third party", origin: "hf.co", target: "93.184.216.34", allowed: false},
+		{name: "other registry cross-host", origin: "registry.example.com", target: "cdn.example.com", allowed: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hit bool
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hit = true
+				w.Write([]byte("ok"))
+			}))
+			defer cdn.Close()
+			_, cdnPort, err := net.SplitHostPort(strings.TrimPrefix(cdn.URL, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, "http://"+net.JoinHostPort(tc.target, cdnPort)+r.URL.Path, http.StatusFound)
+			}))
+			defer ts.Close()
+
+			// Steer all dials at the local servers so tests stay offline.
+			prev := testMakeRequestDialContext
+			testMakeRequestDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				if host == tc.target {
+					addr = net.JoinHostPort("127.0.0.1", cdnPort)
+				} else {
+					_, port, _ := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+					addr = net.JoinHostPort("127.0.0.1", port)
+				}
+				return new(net.Dialer).DialContext(ctx, network, addr)
+			}
+			defer func() { testMakeRequestDialContext = prev }()
+
+			requestURL, err := url.Parse(ts.URL + "/v2/unsloth/model/manifests/latest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			requestURL.Host = net.JoinHostPort(tc.origin, requestURL.Port())
+
+			resp, err := makeRequest(t.Context(), http.MethodGet, requestURL, nil, nil, &registryOptions{})
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("makeRequest = %v, want %s -> %s followed", err, tc.origin, tc.target)
+				}
+				resp.Body.Close()
+				if !hit {
+					t.Fatal("redirect target not reached")
+				}
+				return
+			}
+			if !errors.Is(err, errBlockedRedirect) {
+				t.Fatalf("makeRequest = %v, want errBlockedRedirect", err)
+			}
+			if hit {
+				t.Fatal("blocked redirect target received a request")
+			}
+		})
+	}
+}
+
+func TestCheckPullRequires(t *testing.T) {
+	tests := []struct {
+		name          string
+		requires      string
+		clientVersion string
+		wantErr       bool
+		wantMessage   string
+	}{
+		{
+			name:          "empty requires passes",
+			requires:      "",
+			clientVersion: "0.33.3",
+		},
+		{
+			name:          "older requirement passes",
+			requires:      "0.33.0",
+			clientVersion: "0.33.3",
+		},
+		{
+			name:          "exact requirement passes",
+			requires:      "0.33.3",
+			clientVersion: "0.33.3",
+		},
+		{
+			name:          "release candidate satisfies release requirement",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc0",
+		},
+		{
+			name:          "development release candidate satisfies release requirement",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc0-g75b952780f",
+		},
+		{
+			name:          "prerelease with build metadata satisfies release requirement",
+			requires:      "v0.40.0",
+			clientVersion: "0.40.0-beta.1+build.2",
+		},
+		{
+			name:          "release candidate does not satisfy newer patch requirement",
+			requires:      "0.40.1",
+			clientVersion: "0.40.0-rc0-g75b952780f",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.1 or newer (current version is v0.40.0-rc0-g75b952780f)",
+		},
+		{
+			name:          "older release candidate fails",
+			requires:      "0.40.0",
+			clientVersion: "0.39.0-rc1",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.0 or newer (current version is v0.39.0-rc1)",
+		},
+		{
+			name:          "malformed prerelease fails",
+			requires:      "0.40.0",
+			clientVersion: "0.40.0-rc?",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.40.0 or newer (current version is v0.40.0-rc?)",
+		},
+		{
+			name:          "newer requirement fails",
+			requires:      "0.35.0",
+			clientVersion: "0.33.3",
+			wantErr:       true,
+			wantMessage:   "model requires ollama version v0.35.0 or newer (current version is v0.33.3)",
+		},
+		{
+			name:          "dev build skips check",
+			requires:      "99.0.0",
+			clientVersion: "0.0.0",
+		},
+		{
+			name:          "v-prefixed requirement passes",
+			requires:      "v0.33.0",
+			clientVersion: "0.33.3",
+		},
+		{
+			name:          "malformed requirement fails open",
+			requires:      "banana",
+			clientVersion: "0.33.3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkPullRequires(tt.requires, tt.clientVersion)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("checkPullRequires(%q, %q) = nil, want error", tt.requires, tt.clientVersion)
+				}
+				if err.Error() != tt.wantMessage {
+					t.Fatalf("checkPullRequires error = %q, want %q", err.Error(), tt.wantMessage)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("checkPullRequires(%q, %q) = %v, want nil", tt.requires, tt.clientVersion, err)
+			}
+		})
+	}
+}
+
+func TestCheckPullRequiresUsesRunningVersion(t *testing.T) {
+	oldVersion := version.Version
+	t.Cleanup(func() { version.Version = oldVersion })
+
+	// A dev build skips the check, but a stamped client that is too old
+	// must fail the pull before any model layers are downloaded.
+	version.Version = "0.33.3"
+	if err := checkPullRequires("0.35.0", version.Version); err == nil {
+		t.Fatal("expected stamped client below requires to fail")
 	}
 }

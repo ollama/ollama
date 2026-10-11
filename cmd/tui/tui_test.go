@@ -24,7 +24,7 @@ func launcherTestState() *launch.LauncherState {
 			},
 			"codex": {
 				Name:        "codex",
-				DisplayName: "Codex",
+				DisplayName: "Codex CLI",
 				Description: "OpenAI's open-source coding agent",
 				Selectable:  true,
 				Changeable:  true,
@@ -89,8 +89,6 @@ func integrationSequence(items []menuItem) []string {
 	sequence := make([]string, 0, len(items))
 	for _, item := range items {
 		switch {
-		case item.isRunModel:
-			sequence = append(sequence, "run")
 		case item.isOthers:
 			sequence = append(sequence, "more")
 		case item.integration != "":
@@ -104,59 +102,115 @@ func compareStrings(got, want []string) string {
 	return cmp.Diff(want, got)
 }
 
-func TestMenuRendersRootLaunchChoices(t *testing.T) {
-	state := launcherTestState()
-	menu := newModel(state)
-	want := []string{"run", "claude", "opencode", "hermes", "openclaw", "more"}
-	if diff := compareStrings(integrationSequence(menu.items), want); diff != "" {
-		t.Fatalf("unexpected root launch choices: %s", diff)
-	}
-
-	view := menu.View()
-	for _, want := range []string{
-		"Chat, Code, & Work",
-		"Chat with models, code, search the web, and delegate real work",
-		"Launch Claude Code",
-		"Launch OpenCode",
-		"Launch Hermes Agent",
-		"Launch OpenClaw",
-		"More...",
+func TestMenuPromotesInstalledAppsInDefaultPriorityOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		installed    []string
+		want         []string
+		wantOverflow []string
+	}{
+		{"none installed", nil, []string{"claude", "opencode", "hermes", "openclaw", "codex", "more"}, []string{"droid", "pi"}},
+		{"only OpenClaw", []string{"openclaw"}, []string{"openclaw", "claude", "opencode", "hermes", "codex", "more"}, []string{"droid", "pi"}},
+		{"installed primary and additional apps", []string{"pi", "codex", "openclaw"}, []string{"openclaw", "codex", "pi", "claude", "opencode", "more"}, []string{"hermes", "droid"}},
+		{"more than five installed", []string{"pi", "droid", "codex", "openclaw", "hermes", "opencode"}, []string{"opencode", "hermes", "openclaw", "codex", "droid", "more"}, []string{"pi", "claude"}},
 	} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected menu view to contain %q\n%s", want, view)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			state := launcherTestState()
+			// Keep these ordering fixtures independent of GUI platform support.
+			delete(state.Integrations, "chatgpt")
+			for _, name := range tc.installed {
+				app := state.Integrations[name]
+				app.Installed = true
+				state.Integrations[name] = app
+			}
+			menu := newModel(state)
+			if diff := compareStrings(integrationSequence(menu.items), tc.want); diff != "" {
+				t.Fatalf("wrong installed-first order: %s", diff)
+			}
+			expanded := buildMenuItems(state, true)
+			if diff := compareStrings(integrationSequence(expanded[launcherMenuLimit:]), tc.wantOverflow); diff != "" {
+				t.Fatalf("remaining apps should stay under More in priority order: %s", diff)
+			}
+		})
 	}
-	for _, hidden := range []string{"Launch ChatGPT", "Launch Codex", "Launch Droid", "Launch Pi"} {
-		if strings.Contains(view, hidden) {
-			t.Fatalf("expected root menu to omit %q\n%s", hidden, view)
+}
+
+func TestMenuRemembersPromotedAppWithoutOpeningMore(t *testing.T) {
+	state := launcherTestState()
+	app := state.Integrations["codex"]
+	app.Installed = true
+	state.Integrations["codex"] = app
+	state.LastSelection = "codex"
+	menu := newModel(state)
+	if menu.showOthers || menu.cursor != 0 || menu.items[menu.cursor].integration != "codex" {
+		t.Fatal("previously selected installed app should be recalled in its promoted position")
+	}
+}
+
+func TestMenuEmptyStateDoesNotPanic(t *testing.T) {
+	menu := newModel(nil)
+	if len(menu.items) != 0 {
+		t.Fatal("empty state must not create selectable menu items")
+	}
+	_ = menu.View() // Rendering an empty menu must not panic, regardless of its copy.
+	for _, key := range []tea.KeyType{tea.KeyEnter, tea.KeyRight, tea.KeyUp, tea.KeyDown} {
+		updated, cmd := menu.Update(tea.KeyMsg{Type: key})
+		menu = updated.(model)
+		if menu.selected || menu.action.Kind != TUIActionNone || menu.cursor != 0 || cmd != nil {
+			t.Fatal("empty menu must not select an action")
+		}
+		_ = menu.View()
+	}
+	if updated, quit := menu.Update(tea.KeyMsg{Type: tea.KeyEsc}); !updated.(model).quitting || quit == nil {
+		t.Fatal("Escape must still exit an empty menu")
+	}
+}
+
+func TestMenuUpToFiveAppsDoesNotNeedMore(t *testing.T) {
+	for _, names := range [][]string{
+		{"claude", "opencode", "hermes"},
+		{"claude", "opencode", "hermes", "openclaw", "codex"},
+	} {
+		state := launcherTestState()
+		apps := make(map[string]launch.LauncherIntegrationState)
+		for _, name := range names {
+			apps[name] = state.Integrations[name]
+		}
+		state.Integrations = apps
+		menu := newModel(state)
+		if diff := compareStrings(integrationSequence(menu.items), names); diff != "" {
+			t.Fatalf("up to five apps should appear directly without More: %s", diff)
 		}
 	}
 }
 
-func TestMenuExpandsMoreOnDownNavigation(t *testing.T) {
+func TestMenuExpandsAndCollapsesMoreAfterPromotion(t *testing.T) {
 	state := launcherTestState()
+	app := state.Integrations["codex"]
+	app.Installed = true
+	state.Integrations["codex"] = app
 	menu := newModel(state)
-	menu.cursor = findMenuCursorByIntegration(menu.items, "openclaw")
-	if menu.cursor == -1 {
-		t.Fatal("expected openclaw menu item")
-	}
+	menu.cursor = launcherMenuLimit - 1
+	root := integrationSequence(menu.items)
 
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyDown})
-	got := updated.(model)
-	if !got.showOthers {
-		t.Fatal("expected navigating down onto More to expand additional integrations")
+	expanded := updated.(model)
+	if !expanded.showOthers || expanded.cursor != launcherMenuLimit || expanded.items[expanded.cursor].integration == "" {
+		t.Fatal("Down must expand More and select the first overflow app")
 	}
-	if got.items[got.cursor].integration == "" {
-		t.Fatalf("expected cursor to land on the first additional integration, got %#v", got.items[got.cursor])
+	updated, _ = expanded.Update(tea.KeyMsg{Type: tea.KeyUp})
+	collapsed := updated.(model)
+	if collapsed.showOthers || collapsed.cursor != launcherMenuLimit-1 {
+		t.Fatal("Up must return to the last primary app")
 	}
-	if strings.Contains(got.View(), "More...") {
-		t.Fatalf("expected expanded integrations to replace More\n%s", got.View())
+	if diff := compareStrings(integrationSequence(collapsed.items), root); diff != "" {
+		t.Fatalf("collapsing More changed the promoted root menu: %s", diff)
 	}
 }
 
 func TestMenuStartsExpandedForPreviousOverflowSelection(t *testing.T) {
 	state := launcherTestState()
-	overflow := otherIntegrationItems(state)
+	overflow := buildMenuItems(state, true)[launcherMenuLimit:]
 	if len(overflow) < 2 {
 		t.Fatal("expected at least two additional integrations")
 	}
@@ -169,28 +223,19 @@ func TestMenuStartsExpandedForPreviousOverflowSelection(t *testing.T) {
 	if got := menu.items[menu.cursor].integration; got != state.LastSelection {
 		t.Fatalf("initial cursor integration = %q, want %q", got, state.LastSelection)
 	}
-	if strings.Contains(menu.View(), "More...") {
-		t.Fatalf("expected expanded menu to omit More\n%s", menu.View())
+	for _, item := range menu.items {
+		if item.isOthers {
+			t.Fatal("expanded menu must contain apps instead of More")
+		}
 	}
 }
 
-func TestMenuEnterOnRunSelectsRun(t *testing.T) {
-	menu := newModel(launcherTestState())
-	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	got := updated.(model)
-	want := TUIAction{Kind: TUIActionRunModel}
-	if !got.selected || got.action != want {
-		t.Fatalf("expected enter on run to select run action, got selected=%v action=%v", got.selected, got.action)
-	}
-}
-
-func TestMenuRightOnRunSelectsChangeRun(t *testing.T) {
-	menu := newModel(launcherTestState())
-	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyRight})
-	got := updated.(model)
-	want := TUIAction{Kind: TUIActionRunModel, ForceConfigure: true}
-	if !got.selected || got.action != want {
-		t.Fatalf("expected right on run to select change-run action, got selected=%v action=%v", got.selected, got.action)
+func TestMenuPreviousRunSelectionFallsBackToFirstApp(t *testing.T) {
+	state := launcherTestState()
+	state.LastSelection = "run"
+	menu := newModel(state)
+	if menu.cursor != 0 || menu.items[menu.cursor].integration != "claude" {
+		t.Fatal("previous chat selection must fall back to the first app")
 	}
 }
 
@@ -246,20 +291,18 @@ func TestMenuIgnoresDisabledActions(t *testing.T) {
 	}
 }
 
-func TestMenuShowsCurrentModelSuffixes(t *testing.T) {
-	menu := newModel(launcherTestState())
-	runView := menu.View()
-	if !strings.Contains(runView, "(qwen3:8b)") {
-		t.Fatalf("expected run row to show current model suffix\n%s", runView)
-	}
-
-	menu.cursor = findMenuCursorByIntegration(menu.items, "claude")
-	if menu.cursor == -1 {
-		t.Fatal("expected claude menu item")
-	}
-	integrationView := menu.View()
-	if !strings.Contains(integrationView, "(glm-5:cloud)") {
-		t.Fatalf("expected integration row to show current model suffix\n%s", integrationView)
+func TestMenuShowsOnlySelectedAppsCurrentModel(t *testing.T) {
+	state := launcherTestState()
+	menu := newModel(state)
+	for i, item := range menu.items {
+		menu.cursor = i
+		view := menu.View()
+		if strings.Contains(view, state.RunModel) {
+			t.Fatalf("removed chat model must not appear at cursor %d", i)
+		}
+		if got, want := strings.Contains(view, state.Integrations["claude"].CurrentModel), item.integration == "claude"; got != want {
+			t.Fatalf("current model visibility at cursor %d = %v, want %v", i, got, want)
+		}
 	}
 }
 

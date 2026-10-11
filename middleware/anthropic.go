@@ -100,13 +100,15 @@ type WebSearchAnthropicWriter struct {
 
 	terminalSent bool
 
-	observedPromptEvalCount int
-	observedEvalCount       int
+	observedPromptEvalCount       int
+	observedPromptEvalCachedCount *int
+	observedEvalCount             int
 
-	loopInFlight      bool
-	loopBaseInputTok  int
-	loopBaseOutputTok int
-	loopResultCh      chan webSearchLoopResult
+	loopInFlight         bool
+	loopBaseInputTok     int
+	loopBaseCacheReadTok *int
+	loopBaseOutputTok    int
+	loopResultCh         chan webSearchLoopResult
 
 	streamMessageStarted bool
 	streamHasOpenBlock   bool
@@ -198,10 +200,7 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	loopCtx, cancel := w.startLoopContext()
 	defer cancel()
 
-	initialUsage := anthropic.Usage{
-		InputTokens:  max(w.observedPromptEvalCount, chatResponse.Metrics.PromptEvalCount),
-		OutputTokens: max(w.observedEvalCount, chatResponse.Metrics.EvalCount),
-	}
+	initialUsage := w.usageWithObservedMetrics(chatResponse.Metrics)
 	logutil.Trace("anthropic middleware: starting sync web_search loop",
 		"tool_call", anthropic.TraceToolCall(webSearchCall),
 		"resp", anthropic.TraceChatResponse(chatResponse),
@@ -220,7 +219,15 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 }
 
 func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initialResponse api.ChatResponse, initialToolCall api.ToolCall, initialUsage anthropic.Usage) (anthropic.MessagesResponse, *webSearchLoopError) {
-	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
+	// Omitted or non-positive max_uses retains the server default.
+	maxLoops := maxWebSearchLoops
+	for _, tool := range w.req.Tools {
+		if strings.HasPrefix(tool.Type, "web_search") && tool.MaxUses > 0 {
+			maxLoops = min(maxLoops, tool.MaxUses)
+		}
+	}
+
+	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxLoops*2)
 	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
 
 	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
@@ -230,7 +237,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		"tool_call", anthropic.TraceToolCall(initialToolCall),
 		"messages", len(followUpMessages),
 		"tools", len(followUpTools),
-		"max_loops", maxWebSearchLoops,
+		"max_loops", maxLoops,
 	)
 
 	currentResponse := initialResponse
@@ -238,7 +245,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	var serverContent []anthropic.ContentBlock
 
-	for loop := 1; loop <= maxWebSearchLoops; loop++ {
+	for loop := 1; loop <= maxLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",
 			"loop", loop,
@@ -316,8 +323,10 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			"resp", anthropic.TraceChatResponse(followUpResponse),
 		)
 
-		usage.InputTokens += followUpResponse.Metrics.PromptEvalCount
-		usage.OutputTokens += followUpResponse.Metrics.EvalCount
+		followUpUsage := anthropic.UsageFromMetrics(followUpResponse.Metrics)
+		usage.InputTokens += followUpUsage.InputTokens
+		usage.CacheReadInputTokens = addOptionalInts(usage.CacheReadInputTokens, followUpUsage.CacheReadInputTokens)
+		usage.OutputTokens += followUpUsage.OutputTokens
 
 		nextToolCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(followUpResponse.Message.ToolCalls)
 		if hasWebSearch && hasOtherTools {
@@ -339,7 +348,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	}
 
 	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
-	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
+	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxLoops+1)
 	serverContent = append(serverContent,
 		anthropic.ContentBlock{
 			Type:  "server_tool_use",
@@ -377,11 +386,9 @@ func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatRespo
 		return
 	}
 
-	initialUsage := anthropic.Usage{
-		InputTokens:  max(w.observedPromptEvalCount, initialResponse.Metrics.PromptEvalCount),
-		OutputTokens: max(w.observedEvalCount, initialResponse.Metrics.EvalCount),
-	}
+	initialUsage := w.usageWithObservedMetrics(initialResponse.Metrics)
 	w.loopBaseInputTok = initialUsage.InputTokens
+	w.loopBaseCacheReadTok = initialUsage.CacheReadInputTokens
 	w.loopBaseOutputTok = initialUsage.OutputTokens
 	w.loopResultCh = make(chan webSearchLoopResult, 1)
 	w.loopInFlight = true
@@ -435,14 +442,20 @@ func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
 	if metrics.PromptEvalCount > w.observedPromptEvalCount {
 		w.observedPromptEvalCount = metrics.PromptEvalCount
 	}
+	w.observedPromptEvalCachedCount = maxOptionalInts(w.observedPromptEvalCachedCount, metrics.PromptEvalCachedCount)
 	if metrics.EvalCount > w.observedEvalCount {
 		w.observedEvalCount = metrics.EvalCount
 	}
 }
 
 func (w *WebSearchAnthropicWriter) applyObservedUsageDeltaToUsage(usage *anthropic.Usage) {
-	if deltaIn := w.observedPromptEvalCount - w.loopBaseInputTok; deltaIn > 0 {
-		usage.InputTokens += deltaIn
+	observed := w.currentObservedUsage()
+	if delta := observed.InputTokens - w.loopBaseInputTok; delta > 0 {
+		usage.InputTokens += delta
+	}
+	if observed.CacheReadInputTokens != nil {
+		delta := max(0, optionalIntValue(observed.CacheReadInputTokens)-optionalIntValue(w.loopBaseCacheReadTok))
+		usage.CacheReadInputTokens = addOptionalInts(usage.CacheReadInputTokens, &delta)
 	}
 	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
 		usage.OutputTokens += deltaOut
@@ -450,10 +463,18 @@ func (w *WebSearchAnthropicWriter) applyObservedUsageDeltaToUsage(usage *anthrop
 }
 
 func (w *WebSearchAnthropicWriter) currentObservedUsage() anthropic.Usage {
-	return anthropic.Usage{
-		InputTokens:  w.observedPromptEvalCount,
-		OutputTokens: w.observedEvalCount,
-	}
+	return anthropic.UsageFromMetrics(api.Metrics{
+		PromptEvalCount:       w.observedPromptEvalCount,
+		PromptEvalCachedCount: w.observedPromptEvalCachedCount,
+		EvalCount:             w.observedEvalCount,
+	})
+}
+
+func (w *WebSearchAnthropicWriter) usageWithObservedMetrics(metrics api.Metrics) anthropic.Usage {
+	metrics.PromptEvalCount = max(metrics.PromptEvalCount, w.observedPromptEvalCount)
+	metrics.PromptEvalCachedCount = maxOptionalInts(metrics.PromptEvalCachedCount, w.observedPromptEvalCachedCount)
+	metrics.EvalCount = max(metrics.EvalCount, w.observedEvalCount)
+	return anthropic.UsageFromMetrics(metrics)
 }
 
 func (w *WebSearchAnthropicWriter) startLoopContext() (context.Context, context.CancelFunc) {
@@ -543,7 +564,7 @@ func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usag
 	}
 
 	inputTokens := usage.InputTokens
-	if inputTokens == 0 {
+	if inputTokens == 0 && optionalIntValue(usage.CacheReadInputTokens) == 0 {
 		inputTokens = w.estimatedInputTokens
 	}
 
@@ -556,7 +577,8 @@ func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usag
 			Model:   w.req.Model,
 			Content: []anthropic.ContentBlock{},
 			Usage: anthropic.Usage{
-				InputTokens: inputTokens,
+				InputTokens:          inputTokens,
+				CacheReadInputTokens: usage.CacheReadInputTokens,
 			},
 		},
 	}); err != nil {
@@ -669,8 +691,9 @@ func (w *WebSearchAnthropicWriter) writeTerminalResponse(response anthropic.Mess
 			StopReason: response.StopReason,
 		},
 		Usage: anthropic.DeltaUsage{
-			InputTokens:  response.Usage.InputTokens,
-			OutputTokens: response.Usage.OutputTokens,
+			InputTokens:          response.Usage.InputTokens,
+			CacheReadInputTokens: response.Usage.CacheReadInputTokens,
+			OutputTokens:         response.Usage.OutputTokens,
 		},
 	}); err != nil {
 		return err
@@ -728,7 +751,7 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anth
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
-func AnthropicMessagesMiddleware() gin.HandlerFunc {
+func AnthropicMessagesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestCtx := c.Request.Context()
 
@@ -754,7 +777,8 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		chatReq, err := anthropic.FromMessagesRequest(req)
+		thinking := modelThinking(thinkingLookup, req.Model)
+		chatReq, err := anthropic.FromMessagesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, err.Error()))
 			return
