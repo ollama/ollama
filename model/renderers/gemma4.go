@@ -272,7 +272,7 @@ func (r *Gemma4Renderer) writeTypedProperties(sb *strings.Builder, props *api.To
 		return
 	}
 
-	r.writeSchemaProperties(sb, typedSchemaPropertiesMap(props))
+	r.writeSchemaProperties(sb, typedSchemaPropertiesMap(props), false)
 }
 
 func typedSchemaPropertiesMap(props *api.ToolPropertiesMap) map[string]any {
@@ -307,7 +307,7 @@ func (r *Gemma4Renderer) writeSchemaItemsSpec(sb *strings.Builder, items map[str
 		case "properties":
 			sb.WriteString("properties:{")
 			if props, ok := r.asSchemaMap(value); ok {
-				r.writeSchemaProperties(sb, props)
+				r.writeSchemaProperties(sb, props, false)
 			}
 			sb.WriteString("}")
 		case "required":
@@ -339,7 +339,7 @@ func (r *Gemma4Renderer) writeSchemaItemsSpec(sb *strings.Builder, items map[str
 	}
 }
 
-func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[string]any) {
+func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[string]any, filterKeys bool) {
 	keys := make([]string, 0, len(props))
 	for k := range props {
 		keys = append(keys, k)
@@ -348,7 +348,7 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 
 	first := true
 	for _, name := range keys {
-		if isSchemaStandardKey(name) {
+		if filterKeys && isSchemaStandardKey(name) {
 			continue
 		}
 		prop, ok := r.asSchemaMap(props[name])
@@ -421,7 +421,7 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 					addComma = true
 				}
 				sb.WriteString("properties:{")
-				r.writeSchemaProperties(sb, nestedProps)
+				r.writeSchemaProperties(sb, nestedProps, false)
 				sb.WriteString("}")
 			} else {
 				if addComma {
@@ -430,7 +430,7 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 					addComma = true
 				}
 				sb.WriteString("properties:{")
-				r.writeSchemaProperties(sb, prop)
+				r.writeSchemaProperties(sb, prop, true)
 				sb.WriteString("}")
 			}
 
