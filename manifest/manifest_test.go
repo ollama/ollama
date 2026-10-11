@@ -184,6 +184,18 @@ func TestReadManifestSymlink(t *testing.T) {
 				if _, err := ReadManifestData(name); err == nil || !strings.Contains(err.Error(), "digest mismatch") {
 					t.Fatalf("ReadManifestData error = %v, want digest mismatch", err)
 				}
+				root, err := V2Path()
+				if err != nil {
+					t.Fatal(err)
+				}
+				f, _, err := OpenVerifiedManifest(path, root)
+				if err == nil {
+					f.Close()
+					t.Fatal("OpenVerifiedManifest accepted a corrupt blob")
+				}
+				if !strings.Contains(err.Error(), "digest mismatch") {
+					t.Fatalf("OpenVerifiedManifest error = %v, want digest mismatch", err)
+				}
 				if got, err := os.Readlink(path); err != nil || got != target {
 					t.Fatalf("invalid manifest link changed: target = %q, error = %v", got, err)
 				}
@@ -1292,6 +1304,95 @@ func TestFindName(t *testing.T) {
 				t.Fatalf("FindName error = %v, want os.ErrNotExist", err)
 			}
 		})
+	}
+}
+
+func TestFindNamedManifestForRunner(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("MyOrg/MyModel:Q8")
+	ggml := createManifestForTest("sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), RunnerGGML)
+	mlx := createManifestForTest("sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64), RunnerMLX)
+	mlx.Format = FormatSafetensors
+	if err := WriteManifestData(name, createManifestListData(t, ggml, mlx)); err != nil {
+		t.Fatal(err)
+	}
+
+	query := model.ParseName("myorg/mymodel:q8")
+	selected, err := FindNamedManifestForRunner(query, RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selected.Name(); got.String() != name.String() {
+		t.Fatalf("stored name = %s, want %s", got, name)
+	}
+	if selected.Runner != RunnerMLX {
+		t.Fatalf("selected runner = %q, want %q", selected.Runner, RunnerMLX)
+	}
+	if _, err := FindNamedManifestForRunner(query, RunnerLlamaCPP); !errors.Is(err, ErrNoCompatibleManifest) {
+		t.Fatalf("unsupported runner error = %v, want ErrNoCompatibleManifest", err)
+	}
+
+	path, err := V2PathForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FindNamedManifestForRunner(query, RunnerMLX); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("fresh lookup error = %v, want os.ErrNotExist", err)
+	}
+}
+
+func TestNamedManifestSymlinkPointsToDigest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("Link-Test")
+	if err := WriteManifestData(name, []byte(`{"schemaVersion":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !NamedManifestPointsToDigest(name, selected.Digest()) {
+		t.Skip("v2 tag is a regular file on this platform or filesystem")
+	}
+	if NamedManifestPointsToDigest(name, strings.Repeat("a", 64)) {
+		t.Fatal("v2 tag matched an unrelated digest")
+	}
+
+	if err := WriteManifestData(name, []byte(`{"schemaVersion":2,"layers":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if NamedManifestPointsToDigest(name, selected.Digest()) {
+		t.Fatal("repointed tag still matched the old digest")
+	}
+}
+
+func TestNamedManifestCopyDoesNotUseSymlinkShortcut(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("Copy-Test")
+	data := []byte(`{"schemaVersion":2}`)
+	if err := WriteManifestData(name, data); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := V2PathForName(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if NamedManifestPointsToDigest(name, selected.Digest()) {
+		t.Fatal("regular-file manifest used the symlink shortcut")
 	}
 }
 

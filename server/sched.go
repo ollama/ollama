@@ -82,6 +82,42 @@ type Scheduler struct {
 	waitForRecovery time.Duration
 }
 
+// loadedModelsForName returns models still owned by loaded runners. The models
+// are read-only after resolution, so callers may use them after releasing
+// loadedMu even if a runner unloads in the meantime.
+func (s *Scheduler) loadedModelsForName(name model.Name, requestedRunner string) []*Model {
+	s.loadedMu.Lock()
+	runners := make([]*runnerRef, 0, len(s.loaded))
+	for _, runner := range s.loaded {
+		runners = append(runners, runner)
+	}
+	s.loadedMu.Unlock()
+
+	var models []*Model
+	for _, runner := range runners {
+		// unload clears model under refMu. Keep the lock order separate
+		// from loadedMu, as in loadedModels below.
+		runner.refMu.Lock()
+		m := runner.model
+		runner.refMu.Unlock()
+		if m == nil || !model.ParseName(m.Name).EqualFold(name) {
+			continue
+		}
+		if requestedRunner == "" {
+			// A single manifest has no alternate runner to select. For a list,
+			// an explicit lower-preference runner may differ from the default.
+			singleManifest := m.Digest != "" && m.ManifestDigest == m.Digest
+			if m.runnerSelection != "" && !singleManifest && !manifest.IsTopRunnerPreference(m.Runner) {
+				continue
+			}
+		} else if m.Runner != requestedRunner && m.runnerSelection != requestedRunner {
+			continue
+		}
+		models = append(models, m)
+	}
+	return models
+}
+
 // Default automatic value for number of models we allow per GPU
 // Model will still need to fit in VRAM, but loading many small models
 // on a large GPU can cause stalling

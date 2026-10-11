@@ -89,6 +89,16 @@ func shouldUseHarmony(model *Model) bool {
 	return false
 }
 
+func parserNameForModel(m *Model) string {
+	if m.Config.Parser != "" {
+		return m.Config.Parser
+	}
+	if shouldUseHarmony(m) {
+		return "harmony"
+	}
+	return ""
+}
+
 func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
@@ -235,15 +245,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
 
-	parsedName := model.ParseName(name)
-	if parsedName.IsValid() {
-		existingName, err := getExistingName(parsedName)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		name = existingName.String()
-	}
-	model, err := GetModelForRunner(name, selectedRunner)
+	model, err := s.getExistingModelForRunner(name, selectedRunner)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -353,17 +355,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		req.Runner = runner
 	}
 
-	name := modelRef.Name
-
-	// We cannot currently consolidate this into GetModel because all we'll
-	// induce infinite recursion given the current code structure.
-	name, err = getExistingName(name)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		return
-	}
-
-	m, err := GetModelForRunner(name.String(), req.Runner)
+	m, err := s.getExistingModelForRunner(modelRef.Name.String(), req.Runner)
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -537,6 +529,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
+	parserName := parserNameForModel(m)
 	var builtinParser parsers.Parser
 	if shouldUseHarmony(m) {
 		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
@@ -545,20 +538,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				req.Think.Value = "high"
 			}
 		}
-		if m.Config.Parser == "" {
-			m.Config.Parser = "harmony"
-		}
 	}
 
-	if !req.Raw && m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+	if !req.Raw && parserName != "" {
+		builtinParser = parsers.ParserForName(parserName)
 		if builtinParser != nil {
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -1000,13 +990,12 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
-	name, err := getExistingName(ref.Name)
+	m, err := s.getExistingModelForRunner(ref.Name.String(), "")
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		return
-	}
-	m, err := GetModel(name.String())
-	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			return
+		}
 		handleScheduleError(c, req.Model, err)
 		return
 	}
@@ -1178,13 +1167,17 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 	}
 
-	name, err := getExistingName(modelRef.Name)
+	m, err := s.getExistingModelForRunner(modelRef.Name.String(), req.Runner)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		if errors.Is(err, os.ErrNotExist) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			return
+		}
+		handleScheduleError(c, req.Model, err)
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, []model.Capability{}, req.Options, req.KeepAlive, nil)
+	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -1582,6 +1575,42 @@ func (s *Server) PushHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+// getExistingModelForRunner first tries the model retained by a loaded runner.
+// That model was built from checked manifest bytes; the link check only confirms
+// the name still selects its parent digest. Legacy manifests and cache misses
+// use a full manifest read and selection below.
+func (s *Server) getExistingModelForRunner(name, runner string) (*Model, error) {
+	n := model.ParseName(name)
+	if s.sched != nil && n.IsValid() && !manifest.IsDigestReferenceName(n) {
+		for _, loaded := range s.sched.loadedModelsForName(n, runner) {
+			if manifest.NamedManifestPointsToDigest(model.ParseName(loaded.Name), loaded.Digest) {
+				return loaded, nil
+			}
+		}
+	}
+
+	m, err := loadExistingModelForRunner(name, runner)
+	if err == nil {
+		m.runnerSelection = runner
+	}
+	return m, err
+}
+
+// loadExistingModelForRunner uses the manifest parsed while resolving the
+// stored spelling of a model.
+func loadExistingModelForRunner(name, runner string) (*Model, error) {
+	n := model.ParseName(name)
+	if !n.IsValid() || manifest.IsDigestReferenceName(n) {
+		return GetModelForRunner(name, runner)
+	}
+
+	selected, err := manifest.FindNamedManifestForRunner(n, runner)
+	if err != nil {
+		return nil, err
+	}
+	return modelFromManifest(selected.Name(), selected)
 }
 
 // getExistingName searches the models directory for the longest prefix match of
@@ -2983,18 +3012,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		req.Runner = runner
 	}
 
-	name := modelRef.Name
-
-	name, err = getExistingName(name)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
-		return
-	}
-
-	m, err := GetModelForRunner(name.String(), req.Runner)
+	m, err := s.getExistingModelForRunner(modelRef.Name.String(), req.Runner)
 	if err != nil {
 		switch {
-		case os.IsNotExist(err):
+		case errors.Is(err, os.ErrNotExist):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		case errors.Is(err, manifest.ErrNoCompatibleManifest):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -3056,16 +3077,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			req.Options = map[string]any{}
 		}
 
-		var msgs []api.Message
-		if len(req.Messages) > 0 {
-			msgs = append(m.Messages, req.Messages...)
-			if req.Messages[0].Role != "system" && m.System != "" {
-				msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
-			}
-		}
-
-		msgs = filterThinkTags(msgs, m)
-		req.Messages = msgs
+		req.Messages = chatMessagesForRequest(m, req.Messages)
 
 		for k, v := range m.Options {
 			if _, ok := req.Options[k]; !ok {
@@ -3158,7 +3170,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), req.Runner, caps, req.Options, req.KeepAlive, req.Shift)
+	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, caps, req.Options, req.KeepAlive, req.Shift)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
@@ -3180,21 +3192,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	msgs := append(m.Messages, req.Messages...)
-	if req.Messages[0].Role != "system" && m.System != "" {
-		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
-	}
-	msgs = filterThinkTags(msgs, m)
+	msgs := chatMessagesForRequest(m, req.Messages)
 
+	parserName := parserNameForModel(m)
 	if shouldUseHarmony(m) {
 		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
 		if req.Think != nil {
 			if s, ok := req.Think.Value.(string); ok && s == "max" {
 				req.Think.Value = "high"
 			}
-		}
-		if m.Config.Parser == "" {
-			m.Config.Parser = "harmony"
 		}
 	}
 
@@ -3206,8 +3212,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	var builtinParser parsers.Parser
 	processedTools := req.Tools
 
-	if m.Config.Parser != "" {
-		builtinParser = parsers.ParserForName(m.Config.Parser)
+	if parserName != "" {
+		builtinParser = parsers.ParserForName(parserName)
 		if builtinParser != nil {
 			// Determine last message for chat prefill
 			var lastMessage *api.Message
@@ -3307,7 +3313,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if builtinParser != nil {
-				slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser input", "parser", m.Config.Parser, "content", r.Content)
+				slog.Log(ctx, logutil.LevelTrace, "builtin parser input", "parser", parserName, "content", r.Content)
 
 				content, thinking, toolCalls, err := builtinParser.Add(r.Content, r.Done)
 				if err != nil {
@@ -3324,10 +3330,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.Message.ToolCalls = toolCalls
 
 				if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+					slog.Log(ctx, logutil.LevelTrace, "builtin parser output", "parser", parserName, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 					ch <- res
 				} else {
-					slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser empty output", "parser", m.Config.Parser)
+					slog.Log(ctx, logutil.LevelTrace, "builtin parser empty output", "parser", parserName)
 				}
 				return
 			}
@@ -3571,6 +3577,19 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
+}
+
+func chatMessagesForRequest(m *Model, requestMessages []api.Message) []api.Message {
+	if len(requestMessages) == 0 {
+		return nil
+	}
+
+	// Loaded runners retain m, so request messages must not share its backing slice.
+	msgs := append(slices.Clone(m.Messages), requestMessages...)
+	if requestMessages[0].Role != "system" && m.System != "" {
+		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+	}
+	return filterThinkTags(msgs, m)
 }
 
 func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
