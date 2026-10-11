@@ -990,6 +990,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	applyShowResponseToRunOptions(&opts, info)
 
+	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
+		return runDecision(cmd, opts, prompts, interactive)
+	}
+
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
 
@@ -1824,6 +1828,7 @@ type runOptions struct {
 	Think          *api.ThinkValue
 	HideThinking   bool
 	ShowConnect    bool
+	Decision       bool
 }
 
 func (r runOptions) Copy() runOptions {
@@ -1876,6 +1881,7 @@ func (r runOptions) Copy() runOptions {
 		Think:          think,
 		HideThinking:   r.HideThinking,
 		ShowConnect:    r.ShowConnect,
+		Decision:       r.Decision,
 	}
 }
 

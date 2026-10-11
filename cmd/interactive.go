@@ -115,10 +115,28 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "")
 	}
 
+	// A decision model's first message is the text and each later message is a
+	// yes/no question about it.
+	var decisionText string
+	var decisionImages []api.ImageData
+	asking := func() bool {
+		return decisionText != "" || len(decisionImages) > 0
+	}
+	placeholder := func() string {
+		switch {
+		case !opts.Decision:
+			return "Send a message (/? for help)"
+		case asking():
+			return "Ask a question about the text (/? for help)"
+		default:
+			return "Send text to ask about (/? for help)"
+		}
+	}
+
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
-		Placeholder:    "Send a message (/? for help)",
+		Placeholder:    placeholder(),
 		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
@@ -234,6 +252,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 			applyShowResponseToRunOptions(&opts, info)
+			opts.Decision = slices.Contains(info.Capabilities, model.CapabilityDecision)
+			decisionText, decisionImages = "", nil
+			scanner.Prompt.Placeholder = placeholder()
+			if opts.Decision {
+				// Decision models can't generate; the first answer loads the model.
+				continue
+			}
 			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
 			if err != nil {
 				return err
@@ -277,6 +302,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
+			decisionText, decisionImages = "", nil
+			scanner.Prompt.Placeholder = placeholder()
 			opts.Messages = []api.Message{}
 			if opts.System != "" {
 				newMessage := api.Message{Role: "system", Content: opts.System}
@@ -510,6 +537,25 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(line)
 		default:
 			sb.WriteString(line)
+		}
+
+		if opts.Decision && sb.Len() > 0 && multiline == MultilineNone {
+			input := sb.String()
+			sb.Reset()
+			switch {
+			case asking():
+				if err := decide(cmd, opts, decisionText, decisionImages, input); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+			case opts.MultiModal:
+				if decisionText, decisionImages, err = extractFileData(input); err != nil {
+					return err
+				}
+			default:
+				decisionText = strings.TrimSpace(input)
+			}
+			scanner.Prompt.Placeholder = placeholder()
+			continue
 		}
 
 		if sb.Len() > 0 && multiline == MultilineNone {
