@@ -75,6 +75,47 @@ func TestResolveRunModelsCarriesRecommendationThinkingMetadata(t *testing.T) {
 	}
 }
 
+func TestResolveRunModelsCodexIncludesInstalledToolModels(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cloud disabled=%t", disabled), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					fmt.Fprint(w, `{"models":[{"name":"qwen3:latest","capabilities":["completion","tools"]},{"name":"qwen3:4b","capabilities":["completion","tools"]},{"name":"embedding:latest","capabilities":["embedding"]},{"name":"custom:cloud","remote_model":"custom","capabilities":["completion","tools"]}]}`)
+				case "/api/experimental/model-recommendations":
+					fmt.Fprint(w, `{"recommendations":[]}`)
+				case "/api/status":
+					fmt.Fprintf(w, `{"cloud":{"disabled":%t}}`, disabled)
+				case "/api/show":
+					fmt.Fprint(w, `{}`)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("OLLAMA_HOST", server.URL)
+			client, err := newLauncherClient(defaultLaunchPolicy(false, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			models := client.resolveRunModels(t.Context(), "codex", []string{"qwen3"})
+			want := []string{"qwen3:latest", "qwen3:4b"}
+			if !disabled {
+				want = append(want, "custom:cloud")
+			}
+			// The writer collapses the requested alias and installed canonical name.
+			catalog := codexCatalogModels("qwen3", models)
+			want[0] = "qwen3"
+			if got := launchModelNames(catalog); !slices.Equal(got, want) {
+				t.Fatalf("catalog = %v, want %v", got, want)
+			}
+			if got := launchModelNames(client.resolveRunModels(t.Context(), "test", []string{"qwen3"})); !slices.Equal(got, []string{"qwen3:latest"}) {
+				t.Fatalf("other integration received extra models: %v", got)
+			}
+		})
+	}
+}
+
 func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, show     string
