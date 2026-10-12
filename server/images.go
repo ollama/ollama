@@ -93,6 +93,9 @@ type Model struct {
 	// metadata files when the model is loaded.
 	metadata          ggufMetadata
 	projectorMetadata []ggufMetadata
+	// runnerSelection is empty when the platform's default preference selected
+	// the manifest, or the explicitly requested runner otherwise.
+	runnerSelection string
 }
 
 func (m *Model) IsMLX() bool {
@@ -716,7 +719,10 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	return modelFromManifest(n, mf)
+}
 
+func modelFromManifest(n model.Name, mf *manifest.Manifest) (*Model, error) {
 	manifestDigest := mf.SelectedDigest()
 	if manifestDigest == "" {
 		manifestDigest = mf.Digest()
@@ -732,19 +738,23 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 	}
 
 	if mf.Config.Digest != "" {
-		filename, err := manifest.BlobsPath(mf.Config.Digest)
-		if err != nil {
-			return nil, err
-		}
+		if parsed, ok := mf.ParsedConfig(); ok {
+			m.Config = parsed
+		} else {
+			filename, err := manifest.BlobsPath(mf.Config.Digest)
+			if err != nil {
+				return nil, err
+			}
 
-		configFile, err := os.Open(filename)
-		if err != nil {
-			return nil, err
-		}
-		defer configFile.Close()
+			configFile, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer configFile.Close()
 
-		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
-			return nil, err
+			if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
+				return nil, err
+			}
 		}
 		m.GenerationDefaults = m.Config.GenerationDefaults
 	}

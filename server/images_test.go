@@ -27,6 +27,41 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+func TestModelFromManifestReusesConfigReadForRunnerSelection(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("legacy-runner-selection")
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_format":"safetensors"}`), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(manifest.Manifest{SchemaVersion: 2, Config: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(name, data); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, err := manifest.ParseNamedManifestForRunner(name, manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath, err := manifest.BlobsPath(config.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(configPath); err != nil {
+		t.Fatal(err)
+	}
+	m, err := modelFromManifest(name, selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Config.ModelFormat != "safetensors" {
+		t.Fatalf("model format = %q, want safetensors", m.Config.ModelFormat)
+	}
+}
+
 func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
