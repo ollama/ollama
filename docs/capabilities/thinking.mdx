@@ -43,7 +43,7 @@ Set the `think` field on a chat or generate request:
 - `null`: use the model default.
 - A string: select a supported level from `thinking.values`. Use the exact value from `/api/show`. Numbers are not supported.
 
-If the model resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default. 
+If the model resolves named levels from `/api/show` metadata, Ollama applies supported names exactly. Unsupported names use the model default.
 
 The reasoning output and answer use separate fields. Chat returns `message.thinking` and `message.content`. Generate returns `thinking` and `response`.
 

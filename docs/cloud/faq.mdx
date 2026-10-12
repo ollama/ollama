@@ -1,0 +1,63 @@
+---
+title: Cloud FAQ
+sidebarTitle: FAQ
+description: Frequently asked questions about Ollama's cloud models, accounts, authentication, privacy, and requests.
+---
+
+For questions about installation, hardware, and the local Ollama server, see the [Local FAQ](/faq).
+
+## Does Ollama send my prompts and answers back to ollama.com?
+
+Ollama runs locally. We don't see your prompts or data when you run local models.
+
+When you use Cloud models, Ollama processes your prompts and responses to provide the service but does not store or log that content and never trains on it. Ollama collects basic account information and limited usage metadata that does not include prompt or response content. Ollama does not sell your data, and you can delete your account at any time.
+
+To prevent a local Ollama installation from using Cloud models and web search, enable [local-only mode](/faq#how-do-i-disable-ollama-cloud-features).
+
+## How do I manage the maximum number of requests the Ollama server can queue?
+
+When you access Cloud models through a local Ollama server, requests can queue locally while the server is busy. If the queue is full, the server responds with a `503` overloaded error.
+
+Set `OLLAMA_MAX_QUEUE` before starting the local server to change the maximum number of queued requests:
+
+```shell
+OLLAMA_MAX_QUEUE=1024 ollama serve
+```
+
+See [How do I configure Ollama server?](/faq#how-do-i-configure-ollama-server) for operating-system-specific instructions for setting environment variables.
+
+## What is the difference between an API key and my Ollama Public Key?
+
+An **API key** authenticates a program that calls `https://ollama.com/api` directly. Create and manage API keys in [Ollama settings](https://ollama.com/settings/keys). See [Cloud API authentication](/cloud/api#authentication) for an example.
+
+Your **Ollama Public Key** identifies a local Ollama installation to ollama.com. It is used when you sign in locally to run Cloud models, push models, or pull private models.
+
+## Where can I find my Ollama Public Key?
+
+The Ollama Public Key is the public part of the key pair that lets your local Ollama instance communicate with [ollama.com](https://ollama.com).
+
+You need it to:
+
+- Push models to Ollama
+- Pull private models to your machine
+- Run models hosted in Ollama's cloud through your local Ollama installation
+
+### Add the key to your account
+
+Sign in from the Settings page in the macOS or Windows app, or sign in from the CLI:
+
+```shell
+ollama signin
+```
+
+You can also copy and paste the public key on the [Ollama Keys](https://ollama.com/settings/keys) page.
+
+### Find the key on disk
+
+| Operating system | Path to `id_ed25519.pub` |
+| --- | --- |
+| macOS | `~/.ollama/id_ed25519.pub` |
+| Linux | `/usr/share/ollama/.ollama/id_ed25519.pub` |
+| Windows | `C:\Users\<username>\.ollama\id_ed25519.pub` |
+
+Replace `<username>` with your Windows user name.
