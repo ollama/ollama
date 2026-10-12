@@ -1291,6 +1291,48 @@ func TestToTimings(t *testing.T) {
 	}
 }
 
+func TestToTimingsPromptCache(t *testing.T) {
+	// PromptEvalDuration only measures the uncached tokens, so the prompt rates
+	// must be computed over those; PromptN still reports the full prompt.
+	cached := 30
+	got := ToTimings(api.Metrics{
+		PromptEvalCount:       31,
+		PromptEvalCachedCount: &cached,
+		PromptEvalDuration:    8 * time.Millisecond,
+		EvalCount:             11,
+		EvalDuration:          83 * time.Millisecond,
+	})
+	if got == nil {
+		t.Fatal("ToTimings(populated) = nil")
+	}
+	if got.PromptN != 31 {
+		t.Errorf("PromptN = %d, want 31", got.PromptN)
+	}
+	if got.PromptPerTokenMS != 8 {
+		t.Errorf("PromptPerTokenMS = %v, want 8", got.PromptPerTokenMS)
+	}
+	if got.PromptPerSecond != 125 {
+		t.Errorf("PromptPerSecond = %v, want 125", got.PromptPerSecond)
+	}
+}
+
+func TestToTimingsFullyCachedPrompt(t *testing.T) {
+	// A fully cached prompt evaluates no tokens; the rates stay finite at zero
+	// instead of dividing by zero.
+	cached := 31
+	got := ToTimings(api.Metrics{
+		PromptEvalCount:       31,
+		PromptEvalCachedCount: &cached,
+		PromptEvalDuration:    8 * time.Millisecond,
+	})
+	if got == nil {
+		t.Fatal("ToTimings(populated) = nil")
+	}
+	if got.PromptPerTokenMS != 0 || got.PromptPerSecond != 0 {
+		t.Errorf("unexpected prompt rates: %+v", got)
+	}
+}
+
 func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 	chat, err := json.Marshal(ToChatCompletion("id", api.ChatResponse{
 		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
