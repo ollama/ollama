@@ -987,7 +987,15 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
+		// Forward the original body with the model name normalized — re-encoding
+		// the decoded request would add nulls upstream rejects (e.g. noul
+		// criteria).
+		normalized, err := replaceJSONModelField(body, ref.Base)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		proxyCloudRequest(c, normalized, cloudErrRemoteInferenceUnavailable)
 		return
 	}
 	m, err := s.getExistingModelForRunner(ref.Name.String(), "")
