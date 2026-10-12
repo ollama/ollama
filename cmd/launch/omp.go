@@ -439,6 +439,9 @@ func ompModelConfig(modelInfo LaunchModel) map[string]any {
 	if modelInfo.MaxOutputTokens > 0 {
 		entry["maxTokens"] = modelInfo.MaxOutputTokens
 	}
+	if slices.Contains(modelInfo.Capabilities, model.CapabilityThinking) {
+		entry["reasoning"] = true
+	}
 	return entry
 }
 
