@@ -143,3 +143,39 @@ ollama serve
 ```
 
 To view a list of environment variables that can be set run `ollama serve --help`
+
+### Enable shell tab completion
+
+Ollama can provide tab completion for model names on the command line (for example, completing `ollama run` model arguments). Generate the completion script for your shell and load it from your shell config file.
+
+**Bash** — add to `~/.bashrc`:
+
+```sh
+source <(ollama completion bash)
+```
+
+**Zsh** — add to `~/.zshrc`:
+
+```sh
+source <(ollama completion zsh)
+```
+
+**Fish** — add to `~/.config/fish/config.fish`:
+
+```fish
+ollama completion fish | source
+```
+
+**PowerShell** — add to your PowerShell profile (run `$PROFILE` to find it):
+
+```powershell
+ollama completion powershell | Out-String | Invoke-Expression
+```
+
+After adding the line above, open a new terminal (or source your config file) and tab-complete a model name:
+
+```
+ollama run qwen<tab>
+```
+
+Completion lists models available on your local Ollama server.
