@@ -16,7 +16,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestMaxQueue(t *testing.T) {
+func runMaxQueue(t *testing.T) {
 	t.Skip("this test needs to be re-evaluated to use a proper embedding model")
 
 	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {

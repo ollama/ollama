@@ -392,12 +392,14 @@ func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
 }
 
 // Copy copies a model - creating a model with another name from an existing
-// model.
-func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
-	if err := c.do(ctx, http.MethodPost, "/api/copy", req, nil); err != nil {
-		return err
+// model. Status carries a warning when the copy drops manifest list children
+// that are not held locally.
+func (c *Client) Copy(ctx context.Context, req *CopyRequest) (*ProgressResponse, error) {
+	var resp ProgressResponse
+	if err := c.do(ctx, http.MethodPost, "/api/copy", req, &resp); err != nil {
+		return nil, err
 	}
-	return nil
+	return &resp, nil
 }
 
 // Delete deletes a model and its data.
@@ -412,6 +414,21 @@ func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
 func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, error) {
 	var resp ShowResponse
 	if err := c.do(ctx, http.MethodPost, "/api/show", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ShowManifests obtains model information for all manifests in a manifest list.
+func (c *Client) ShowManifests(ctx context.Context, req *ShowRequest) (*ShowManifestsResponse, error) {
+	showReq := &ShowRequest{AllManifests: true}
+	if req != nil {
+		*showReq = *req
+		showReq.AllManifests = true
+	}
+
+	var resp ShowManifestsResponse
+	if err := c.do(ctx, http.MethodPost, "/api/show", showReq, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
@@ -448,6 +465,19 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 // expected SHA256 digest of the file, and r represents the file.
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {
 	return c.do(ctx, http.MethodPost, fmt.Sprintf("/api/blobs/%s", digest), r, nil)
+}
+
+// HeadBlob checks if a blob exists on the server. It returns false for a 404
+// and an error for any unexpected response.
+func (c *Client) HeadBlob(ctx context.Context, digest string) (bool, error) {
+	if err := c.do(ctx, http.MethodHead, fmt.Sprintf("/api/blobs/%s", digest), nil, nil); err != nil {
+		var statusErr StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // Version returns the Ollama server version as a string.

@@ -322,6 +322,7 @@ func TestClaudeArgs(t *testing.T) {
 		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
 		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
 		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2", "--allowedTools", "Read,Write,Bash"}},
+		{"with channels", "llama3.2", []string{"--channels", "plugin:telegram@claude-plugins-official"}, []string{"--model", "llama3.2", "--channels", "plugin:telegram@claude-plugins-official"}},
 	}
 
 	for _, tt := range tests {
@@ -348,28 +349,132 @@ func TestClaudeEnvVars(t *testing.T) {
 
 	got := envMap(c.envVars("llama3.2"))
 	for key, want := range map[string]string{
-		"ANTHROPIC_BASE_URL":                       envconfig.Host().String(),
-		"ANTHROPIC_API_KEY":                        "",
-		"ANTHROPIC_AUTH_TOKEN":                     "ollama",
-		"CLAUDE_CODE_ATTRIBUTION_HEADER":           "0",
-		"DISABLE_TELEMETRY":                        "1",
-		"DISABLE_ERROR_REPORTING":                  "1",
-		"DISABLE_FEEDBACK_COMMAND":                 "1",
-		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY":      "1",
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":             "llama3.2",
-		"ANTHROPIC_DEFAULT_SONNET_MODEL":           "llama3.2",
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL":            "llama3.2",
-		"CLAUDE_CODE_SUBAGENT_MODEL":               "llama3.2",
+		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
+		"ANTHROPIC_API_KEY":                   "",
+		"ANTHROPIC_AUTH_TOKEN":                "ollama",
+		"ENABLE_CLAUDEAI_MCP_SERVERS":         "false",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
+		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":   "off",
+		"DISABLE_ERROR_REPORTING":             "1",
+		"DISABLE_FEEDBACK_COMMAND":            "1",
+		"CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":        "llama3.2",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":      "llama3.2",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":       "llama3.2",
+		"CLAUDE_CODE_SUBAGENT_MODEL":          "llama3.2",
 	} {
 		if got[key] != want {
 			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+
+	// Both variables disable Claude Code feature-flag evaluation, which keeps Channels unavailable.
+	for _, key := range []string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_TELEMETRY"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%s must not be set by Ollama", key)
+		}
+	}
+}
+
+func TestClaudeRunDisablesClaudeAiConnectors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	for _, model := range []string{"llama3.2", "kimi-k3:cloud"} {
+		t.Run(model, func(t *testing.T) {
+			t.Setenv("ENABLE_CLAUDEAI_MCP_SERVERS", "true")
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:12345")
+			t.Setenv("ANTHROPIC_API_KEY", "test-api-key")
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "test-auth-token")
+
+			dir := t.TempDir()
+			output := filepath.Join(dir, "env-and-args")
+			t.Setenv("PATH", dir)
+			t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+			script := `#!/bin/sh
+printf '%s\n' "$ENABLE_CLAUDEAI_MCP_SERVERS" "$ANTHROPIC_BASE_URL" "${ANTHROPIC_API_KEY-unset}" "$ANTHROPIC_AUTH_TOKEN" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			mcpConfig := filepath.Join(dir, "mcp.json")
+			if err := (&Claude{}).Run(model, nil, []string{"--mcp-config", mcpConfig}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Join([]string{"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig, ""}, "\n")
+			if string(got) != want {
+				t.Fatalf("child environment and arguments = %q, want %q", got, want)
+			}
+			if got := os.Getenv("ENABLE_CLAUDEAI_MCP_SERVERS"); got != "true" {
+				t.Fatalf("parent ENABLE_CLAUDEAI_MCP_SERVERS = %q, want true", got)
+			}
+		})
+	}
+}
+
+func TestClaudeRunAutoModeServer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	for _, model := range []string{"llama3.2", "glm-5:cloud"} {
+		for _, tt := range []struct {
+			name  string
+			value string
+			unset bool
+			want  string
+		}{
+			{name: "default", unset: true, want: "0"},
+			{name: "disabled", value: "0", want: "0"},
+			{name: "enabled", value: "1", want: "1"},
+			{name: "empty", value: "", want: ""},
+		} {
+			t.Run(model+"/"+tt.name, func(t *testing.T) {
+				t.Setenv("CLAUDE_CODE_AUTO_MODE_SERVER", tt.value)
+				if tt.unset {
+					if err := os.Unsetenv("CLAUDE_CODE_AUTO_MODE_SERVER"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				dir := t.TempDir()
+				output := filepath.Join(dir, "env-and-args")
+				t.Setenv("PATH", dir)
+				t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+				script := `#!/bin/sh
+printf '%s\n' "${CLAUDE_CODE_AUTO_MODE_SERVER-unset}" "$ANTHROPIC_DEFAULT_SONNET_MODEL" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+				if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+
+				if err := (&Claude{}).Run(model, nil, []string{"--permission-mode", "auto"}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := strings.Join([]string{tt.want, model, "--model", model, "--permission-mode", "auto", ""}, "\n")
+				if string(got) != want {
+					t.Fatalf("child environment and arguments = %q, want %q", got, want)
+				}
+			})
 		}
 	}
 }
 
 func TestClaudeModelEnvVars(t *testing.T) {
 	c := &Claude{}
+
+	windowKeys := []string{"CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"}
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
 
 	envMap := func(envs []string) map[string]string {
 		m := make(map[string]string)
@@ -394,8 +499,10 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "llama3.2" {
 			t.Errorf("SUBAGENT = %q, want llama3.2", got["CLAUDE_CODE_SUBAGENT_MODEL"])
 		}
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty for local models", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset for local models", key, v)
+			}
 		}
 	})
 
@@ -413,22 +520,45 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "" {
 			t.Errorf("SUBAGENT = %q, want empty", got["CLAUDE_CODE_SUBAGENT_MODEL"])
 		}
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset", key, v)
+			}
 		}
 	})
 
-	t.Run("sets auto compact window for known cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("glm-5:cloud"))
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "202752" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 202752", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+	t.Run("sets context and auto compact windows for known cloud models", func(t *testing.T) {
+		for model, want := range map[string]string{
+			"glm-5:cloud":     "202752",
+			"kimi-k2.6:cloud": "262144",
+		} {
+			got := envMap(c.modelEnvVars(model))
+			for _, key := range windowKeys {
+				if got[key] != want {
+					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
+				}
+			}
 		}
 	})
 
-	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
+	t.Run("keeps the user's auto compact window but not their context window", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
+		t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "150000")
+		got := envMap(c.modelEnvVars("kimi-k2.6:cloud"))
+		if v, ok := got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; ok {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want left to the user's setting", v)
+		}
+		if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "262144" {
+			t.Errorf("MAX_CONTEXT_TOKENS = %q, want 262144", got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
+		}
+	})
+
+	t.Run("does not set windows for unknown cloud models", func(t *testing.T) {
 		got := envMap(c.modelEnvVars("unknown-model:cloud"))
-		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
-			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		for _, key := range windowKeys {
+			if v, ok := got[key]; ok {
+				t.Errorf("%s = %q, want unset", key, v)
+			}
 		}
 	})
 }

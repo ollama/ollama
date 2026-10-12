@@ -115,3 +115,16 @@ pre, code, .font-mono {
         grid-template-columns: 1fr;
     }
 }
+
+.accordion-group {
+    border-style: none;
+    border-radius: 0;
+}
+
+.accordion-group div[id*="-accordion-children"] {
+    margin-inline: calc(var(--spacing) * 1);
+}
+
+.accordion-group details summary {
+    padding-inline: 0;
+}

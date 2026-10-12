@@ -1,0 +1,132 @@
+{#- Iteration on laguna_glm_thinking_v5/chat_template.jinja -#}
+{#- Adds a default system message (used when no system message is provided in `messages`). -#}
+{{- "〈|EOS|〉" -}}
+{%- set enable_thinking = enable_thinking | default(false) -%}
+{%- set render_assistant_messages_raw = render_assistant_messages_raw | default(false) -%}
+{%- set add_generation_prompt = add_generation_prompt | default(false) -%}
+
+{#- ───── header (system message) ───── -#}
+{%- set system_message = "You are a helpful, conversationally-fluent assistant made by Poolside. You are here to be helpful to users through natural language conversations." -%}
+{%- if messages and messages[0].role == "system" -%}
+  {%- set system_message = messages[0].content -%}
+{%- endif -%}
+
+{%- if (system_message and system_message.strip()) or tools -%}
+  {{- "<system>\n" -}}
+
+  {%- if system_message and system_message.strip() -%}
+    {{- "\n" -}}
+    {{- system_message.rstrip() -}}
+  {%- endif -%}
+
+  {%- if tools -%}
+    {{- "\n\n### Tools\n\n" -}}
+    {%- set ns = namespace(tool_string="You may call functions to assist with the user query.\n"
+          ~ "All available function signatures are listed below:\n"
+          ~ "<available_tools>\n") -%}
+    {%- for tool in tools -%}
+      {%- set ns.tool_string = ns.tool_string ~ (tool | tojson) ~ "\n" -%}
+    {%- endfor -%}
+    {%- if enable_thinking -%}
+      {%- set tool_string = ns.tool_string + "</available_tools>\n\n" ~
+            "Wrap your thinking in '<think>', '</think>' tags, followed by a function call. For each function call, return an unescaped XML-like object with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n" ~
+            "<think> your thoughts here </think>\n" ~
+            "<tool_call>function-name\n<arg_key>argument-key</arg_key>\n<arg_value>value-of-argument-key</arg_value>\n" ~
+            "</tool_call>" -%}
+    {%- else -%}
+      {%- set tool_string = ns.tool_string + "</available_tools>\n\n" ~
+            "For each function call, return an unescaped XML-like object " ~
+            "with function name and arguments within '<tool_call>' and '</tool_call>' tags, like here:\n" ~
+            "<tool_call>function-name\n<arg_key>argument-key</arg_key>\n<arg_value>value-of-argument-key</arg_value>\n" ~
+            "</tool_call>" -%}
+    {%- endif -%}
+    {{- tool_string -}}
+  {%- endif -%}
+
+  {{- "\n</system>\n" -}}
+{%- endif -%}
+
+{#- ───── main loop ───── -#}
+{%- for message in messages -%}
+  {%- set content = message.content if message.content is string else "" -%}
+  {%- if message.role == "user" -%}
+    {{- "<user>\n" + content + "\n</user>\n" -}}
+  {%- elif message.role == "assistant" -%}
+    {%- generation -%}
+      {{- "<assistant>\n" -}}
+      {%- if render_assistant_messages_raw -%}
+        {#- Raw mode: prepend the generation prompt token, then dump content verbatim. -#}
+        {#- The generation prompt is <think> when enable_thinking, </think> otherwise. -#}
+        {#- Only prepend if content doesn't already start with it. -#}
+        {%- if enable_thinking -%}
+          {%- if not content.startswith('<think>') -%}
+            {{- '<think>' -}}
+          {%- endif -%}
+        {%- else -%}
+          {%- if not content.startswith('</think>') -%}
+            {{- '</think>' -}}
+          {%- endif -%}
+        {%- endif -%}
+        {{- content -}}
+        {#- Append closing tag if content doesn't already end with it. -#}
+        {%- if not content.endswith('</assistant>\n') and not content.endswith('</assistant>') -%}
+          {{- '\n</assistant>' -}}
+        {%- endif -%}
+        {{- "\n" -}}
+      {%- else -%}
+        {#- Extract reasoning content from message.reasoning (vLLM field name) or message.reasoning_content, or from <think> tags -#}
+        {%- set reasoning_content = '' %}
+        {%- if message.reasoning is string %}
+          {%- set reasoning_content = message.reasoning %}
+        {%- elif message.reasoning_content is string %}
+          {%- set reasoning_content = message.reasoning_content %}
+        {%- endif %}
+        {#- Always strip <think> tags from content if present to avoid duplication -#}
+        {%- if '</think>' in content %}
+          {%- if not reasoning_content %}
+            {%- set reasoning_content = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n') %}
+          {%- endif %}
+          {%- set content = content.split('</think>')[-1].lstrip('\n') %}
+        {%- endif %}
+        {#- Display reasoning content for all messages -#}
+        {%- if reasoning_content -%}
+          {{- '<think>\n' + reasoning_content.strip() + '\n</think>\n' -}}
+        {%- else -%}
+          {{- '</think>\n' -}}
+        {%- endif -%}
+        {#- Display main content -#}
+        {%- if content.strip() -%}
+          {{- content.strip() ~ "\n" -}}
+        {%- endif -%}
+        {%- if message.tool_calls -%}
+          {%- for tool_call in message.tool_calls -%}
+            {%- set function_data = tool_call.function -%}
+            {{- '<tool_call>' + function_data.name }}
+            {% set _args = function_data.arguments %}
+            {%- for k, v in _args.items() -%}
+              {{- "<arg_key>" ~ k ~ "</arg_key>\n" -}}
+              {{- "<arg_value>"}}{{ v | tojson(ensure_ascii=False) if v is not string else v }}{{ "</arg_value>\n" -}}
+            {%- endfor -%}
+            {{- "</tool_call>\n" -}}
+          {%- endfor -%}
+        {%- endif -%}
+        {{- "</assistant>\n" -}}
+      {%- endif -%}
+    {%- endgeneration -%}
+  {%- elif message.role == "tool" -%}
+    {{- "<tool_response>\n" + content + "\n</tool_response>\n" -}}
+  {%- elif message.role == "system" and loop.index0 != 0 -%}
+    {#- Render additional system messages (skip the first one which is handled separately in the header) -#}
+    {{- "<system>\n" + content + "\n</system>\n" -}}
+  {%- endif -%}
+{%- endfor -%}
+{#- ───── generation prompt ───── -#}
+{%- if add_generation_prompt -%}
+  {{- "<assistant>\n" -}}
+  {#- ───── Include reasoning mode directive ───── -#}
+  {%- if not enable_thinking %}
+    {{- '</think>' -}}
+  {%- else %}
+    {{- '<think>' -}}
+  {%- endif %}
+{%- endif -%}

@@ -93,6 +93,10 @@ var outOfMemorySubstrings = []string{
 	"insufficient memory",
 	"vk_error_out_of_device_memory",
 	"erroroutofmemory",
+	// graph buffer reservation failures are memory exhaustion (llama.cpp
+	// ggml_backend_sched_alloc_splits and the llama_context probe checks);
+	// older llama.cpp surfaced these as "failed to allocate graph"
+	"failed to reserve graph",
 }
 
 var recoverableOutOfMemorySubstrings = []string{
