@@ -443,6 +443,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"LagunaForCausalLM":                     newLagunaImportTransform,
 	"MuseGlimmerForConditionalGeneration":   newGlimmerImportTransform,
 	"Cohere2MoeForCausalLM":                 newCohere2MoeImportTransform,
+	"Kolibri1ForCausalLM":                   newKolibri1ImportTransform,
 	"Gemma4AssistantForCausalLM":            newGemma4ImportTransform,
 	"Gemma4UnifiedAssistantForCausalLM":     newGemma4ImportTransform,
 	"gemma4_unified_assistant":              newGemma4ImportTransform,

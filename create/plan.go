@@ -60,6 +60,10 @@ type TensorSpec struct {
 	Quantize  string
 	OutDtype  string  // dtype after the transform; "" means same as the single source
 	OutShape  []int32 // shape after the transform; nil means same as the single source
+
+	// GlobalScale normalizes an NVFP4 tensor by its absolute maximum before
+	// quantizing, so small weights keep nonzero E4M3 block scales.
+	GlobalScale bool
 }
 
 // BlobSpec describes one output blob: its layer name, the tensors it contains,
@@ -103,6 +107,15 @@ func Plan(inv Inventory, class Classification, policy quantizePolicy) ([]BlobSpe
 	}
 	if err != nil {
 		return nil, err
+	}
+	// A policy opts in to NVFP4 global scales when its runner applies them.
+	if _, ok := policy.(interface{ nvfp4GlobalScale() }); ok {
+		for i := range specs {
+			for j := range specs[i].Tensors {
+				ts := &specs[i].Tensors[j]
+				ts.GlobalScale = ts.Quantize == "nvfp4"
+			}
+		}
 	}
 	if err := checkOutputCollisions(specs); err != nil {
 		return nil, err
