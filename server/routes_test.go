@@ -230,6 +230,32 @@ func TestLoadedModelLookupConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
+func TestLoadedModelLookupDoesNotWaitForUnrelatedRunner(t *testing.T) {
+	name := model.ParseName("ready-model")
+	ready := &Model{Name: name.String()}
+	loading := &runnerRef{model: &Model{Name: "loading-model"}, loading: true}
+	s := &Scheduler{loaded: map[string]*runnerRef{
+		"ready":   {model: ready},
+		"loading": loading,
+	}}
+
+	loading.refMu.Lock()
+	defer loading.refMu.Unlock()
+	result := make(chan []*Model, 1)
+	go func() {
+		result <- s.loadedModelsForName(name, "")
+	}()
+
+	select {
+	case got := <-result:
+		if len(got) != 1 || got[0] != ready {
+			t.Fatalf("loaded models = %v, want only the ready model", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup waited for an unrelated loading runner")
+	}
+}
+
 func TestChatMessagesForRequestIsolation(t *testing.T) {
 	defaults := make([]api.Message, 1, 4)
 	defaults[0] = api.Message{Role: "assistant", Content: "<think>saved reasoning</think>saved reply"}

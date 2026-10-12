@@ -95,9 +95,12 @@ func (s *Scheduler) loadedModelsForName(name model.Name, requestedRunner string)
 
 	var models []*Model
 	for _, runner := range runners {
-		// unload clears model under refMu. Keep the lock order separate
-		// from loadedMu, as in loadedModels below.
-		runner.refMu.Lock()
+		// A loading runner holds refMu until it is ready. Do not make lookup
+		// for another model wait for that startup; a miss falls back to a
+		// verified manifest lookup. Keep refMu separate from loadedMu.
+		if !runner.refMu.TryLock() {
+			continue
+		}
 		m := runner.model
 		runner.refMu.Unlock()
 		if m == nil || !model.ParseName(m.Name).EqualFold(name) {
