@@ -99,7 +99,7 @@ func TestModelThinking(t *testing.T) {
 		m    Model
 		want *model.Thinking
 	}{
-		{"local gemma default on", Model{Config: model.ConfigV2{Renderer: "gemma4", Parser: "gemma4"}}, &model.Thinking{Values: []any{false, true}, Default: true}},
+		{"local gemma default off", Model{Config: model.ConfigV2{Renderer: "gemma4", Parser: "gemma4"}}, &model.Thinking{Values: []any{false, true}, Default: false}},
 		{"local qwen38 default medium", Model{Config: model.ConfigV2{Renderer: "qwen3.8", Parser: "qwen3.5"}}, &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}},
 		{"renderer without thinking capability", Model{Config: model.ConfigV2{Renderer: "gemma4"}}, &model.Thinking{Values: []any{false}, Default: false}},
 		{"unknown renderer", Model{Config: model.ConfigV2{Renderer: "unknown"}}, nil},

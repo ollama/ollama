@@ -50,6 +50,34 @@ var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
 	return cmp.Equal(a.ToMap(), b.ToMap())
 })
 
+func TestDefaultThinkValue(t *testing.T) {
+	tests := []struct {
+		name string
+		m    *Model
+		want bool
+	}{
+		{
+			name: "gemma4 parser defaults to disabled thinking",
+			m:    &Model{Config: model.ConfigV2{Parser: "gemma4"}},
+			want: false,
+		},
+		{
+			name: "other thinking models default to enabled thinking",
+			m:    &Model{},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultThinkValue(tt.m)
+			if got.Bool() != tt.want {
+				t.Fatalf("defaultThinkValue().Bool() = %v, want %v", got.Bool(), tt.want)
+			}
+		})
+	}
+}
+
 type mockRunner struct {
 	llm.LlamaServer
 

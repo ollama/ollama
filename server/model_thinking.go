@@ -76,8 +76,9 @@ func (m *Model) Thinking() *model.Thinking {
 		if !slices.Contains(m.Capabilities(), model.CapabilityThinking) {
 			return &model.Thinking{Values: []any{false}, Default: false}
 		}
-		// Preserve the local endpoint's historical default-on behavior.
-		if thinking.Default == false && thinking.Supports(true) {
+		// Preserve the local endpoint's historical default-on behavior,
+		// except for Gemma 4, where the renderer's default-off contract wins.
+		if thinking.Default == false && thinking.Supports(true) && m.Config.Parser != "gemma4" {
 			thinking.Default = true
 		}
 		// true currently reaches Qwen3.8 as medium via ThinkValue.String().
