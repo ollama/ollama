@@ -15,6 +15,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/app/logrotate"
 )
 
 var runningInstaller string
@@ -135,6 +137,8 @@ func DoUpgrade(interactive bool) error {
 		return fmt.Errorf("unable to rename %s -> %s : %w", bundle, runningInstaller, err)
 	}
 
+	// The installer's /LOG overwrites the file, so keep earlier upgrade logs
+	logrotate.Rotate(UpgradeLogFile)
 	slog.Info("upgrade log file " + UpgradeLogFile)
 
 	// make the upgrade show progress, but non interactive
