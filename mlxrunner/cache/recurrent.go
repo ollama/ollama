@@ -146,7 +146,9 @@ func (c *RecurrentCache) Put(b *batch.Batch, convStates, deltaStates []*mlx.Arra
 	}
 
 	// Per-token capture returns views of one allocation holding every interior
-	// delta state. Sparse splits and the final state have separate outputs.
+	// delta state. With one split, a two-token capture has only one state in
+	// that allocation; a longer forward computes the split as a separate output.
+	// The final state is always a separate output.
 	mayShareBacking := len(splits) > 1 && len(splits) == b.InputIDs.Dim(1)-1
 	// Leading entries are the interior split boundaries; capture each as a
 	// snapshot at its scheduled offset.
