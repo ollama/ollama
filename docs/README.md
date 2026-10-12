@@ -1,19 +1,13 @@
 # Documentation
 
-### Getting started
-
+### Getting Started
 * [Quickstart](https://docs.ollama.com/quickstart)
-* [Ollama's cloud](https://docs.ollama.com/cloud)
-* [Run Ollama locally](https://docs.ollama.com/local)
 * [Examples](./examples.md)
-
-### Local
-
-* [macOS](https://docs.ollama.com/macos)
-* [Linux](https://docs.ollama.com/linux)
-* [Windows](https://docs.ollama.com/windows)
-* [Docker](https://docs.ollama.com/docker)
 * [Importing models](https://docs.ollama.com/import)
+* [MacOS Documentation](https://docs.ollama.com/macos)
+* [Linux Documentation](https://docs.ollama.com/linux)
+* [Windows Documentation](https://docs.ollama.com/windows)
+* [Docker Documentation](https://docs.ollama.com/docker)
 
 ### Reference
 
@@ -25,6 +19,5 @@
 ### Resources
 
 * [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
-* [Local FAQ](https://docs.ollama.com/faq)
-* [Cloud FAQ](https://docs.ollama.com/cloud/faq)
+* [FAQ](https://docs.ollama.com/faq)
 * [Development guide](./development.md)
