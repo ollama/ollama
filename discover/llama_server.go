@@ -468,10 +468,10 @@ func inferLibrary(name, description string) string {
 		return "CUDA"
 	case strings.Contains(combined, "rocm") || strings.Contains(combined, "hip"):
 		return "ROCm"
-	case strings.Contains(combined, "metal") || strings.Contains(combined, "apple"):
-		return "Metal"
 	case strings.Contains(combined, "vulkan"):
 		return "Vulkan"
+	case strings.Contains(combined, "metal") || strings.Contains(combined, "apple"):
+		return "Metal"
 	default:
 		return description
 	}
