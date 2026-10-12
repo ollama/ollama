@@ -57,7 +57,10 @@ jobs:
             MLX_VERSION
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
-        run: ./scripts/build_darwin.sh build package
+        run: |
+          cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= -DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/darwin-arm64 "-DOLLAMA_GO_LICENSE_TARGETS=darwin/amd64;darwin/arm64"
+          cmake --build build/go-license --target ollama-go-license
+          ./scripts/build_darwin.sh build package
       - name: Log build results
         run: ls -l dist/
       - uses: actions/upload-artifact@v4
@@ -240,6 +243,7 @@ jobs:
               lib/ollama/vulkan*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)          echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-mlx.tar.in ;;
               lib/ollama/include*)      echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-mlx.tar.in ;;
+              lib/ollama/*_LICENSE|lib/ollama/*_NOTICE) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_jetpack5) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6) echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm_v*)       echo "${COMPONENT}" >>ollama-linux-${{ matrix.arch }}-rocm.tar.in ;;
@@ -381,8 +385,18 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
+          $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              try {
+                Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+                break
+              } catch {
+                if ($attempt -eq 3) { throw }
+                Write-Host "CUDA installer download attempt $attempt failed: $($_.Exception.Message); retrying in 15s"
+                Start-Sleep -Seconds 15
+              }
+            }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
           }
@@ -566,6 +580,16 @@ jobs:
             dist/windows-arm64/lib/ollama/llama-server.exe
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
+          done
+      - name: Collect Go licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            cmake -S . -B build/go-license -DOLLAMA_LLAMA_BACKENDS= -DOLLAMA_MLX_BACKENDS= \
+              "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=dist/windows-${arch}" \
+              "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
+            cmake --build build/go-license --target ollama-go-license
           done
       - name: Build unsigned Windows installer and zips
         run: ./scripts/build_windows.ps1 deps installer zip

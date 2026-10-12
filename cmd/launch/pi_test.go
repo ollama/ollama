@@ -984,7 +984,7 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
-	t.Run("updates existing config preserving ollama provider settings", func(t *testing.T) {
+	t.Run("updates existing config overwriting baseUrl with current host", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
 
@@ -1013,9 +1013,12 @@ func TestPiEdit(t *testing.T) {
 		providers := cfg["providers"].(map[string]any)
 		ollama := providers["ollama"].(map[string]any)
 
-		if ollama["baseUrl"] != "http://custom:8080/v1" {
-			t.Errorf("Custom baseUrl not preserved, got %v", ollama["baseUrl"])
+		// baseUrl must be overwritten to match OLLAMA_HOST (the test server)
+		expectedBaseURL := strings.TrimRight(srv.URL, "/") + "/v1"
+		if ollama["baseUrl"] != expectedBaseURL {
+			t.Errorf("baseUrl = %v, want %v", ollama["baseUrl"], expectedBaseURL)
 		}
+		// User-customized api and apiKey are preserved
 		if ollama["api"] != "custom-api" {
 			t.Errorf("Custom api not preserved, got %v", ollama["api"])
 		}
@@ -1567,6 +1570,75 @@ func TestPiModels(t *testing.T) {
 		models := pi.Models()
 		if models != nil {
 			t.Errorf("Models() = %v, want nil for corrupt config", models)
+		}
+	})
+
+	t.Run("returns nil when baseUrl does not match OLLAMA_HOST", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		configDir := filepath.Join(tmpDir, ".pi", "agent")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		config := `{
+			"providers": {
+				"ollama": {
+					"baseUrl": "http://remote-host:9999/v1",
+					"models": [
+						{"id": "llama3.2"},
+						{"id": "qwen3:8b"}
+					]
+				}
+			}
+		}`
+		configPath := filepath.Join(configDir, "models.json")
+		if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		// OLLAMA_HOST defaults to 127.0.0.1:11434, which differs from the
+		// baseUrl in the config, so Models() should return nil.
+		models := pi.Models()
+		if models != nil {
+			t.Errorf("Models() = %v, want nil when baseUrl is stale", models)
+		}
+	})
+
+	t.Run("returns models when baseUrl matches OLLAMA_HOST", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		configDir := filepath.Join(tmpDir, ".pi", "agent")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		expectedBaseURL := strings.TrimRight(srv.URL, "/") + "/v1"
+		config := fmt.Sprintf(`{
+			"providers": {
+				"ollama": {
+					"baseUrl": "%s",
+					"models": [
+						{"id": "llama3.2"},
+						{"id": "qwen3:8b"}
+					]
+				}
+			}
+		}`, expectedBaseURL)
+		configPath := filepath.Join(configDir, "models.json")
+		if err := os.WriteFile(configPath, []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		models := pi.Models()
+		if len(models) != 2 {
+			t.Errorf("Models() returned %d models, want 2", len(models))
 		}
 	})
 }

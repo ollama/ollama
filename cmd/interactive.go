@@ -224,7 +224,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Messages = []api.Message{}
 			opts.LoadedMessages = nil
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model, Runner: opts.Runner})
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
@@ -323,7 +323,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.Think = &thinkValue
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}
 					if maybeLevel != "" {
 						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
@@ -334,7 +334,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.Think = &api.ThinkValue{Value: false}
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
-						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}
 					fmt.Println("Set 'nothink' mode.")
 				case "format":
@@ -414,6 +414,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 				req := &api.ShowRequest{
 					Name:    opts.Model,
+					Runner:  opts.Runner,
 					System:  opts.System,
 					Options: opts.Options,
 				}
@@ -653,9 +654,12 @@ func editInExternalEditor(content string) (string, error) {
 	}
 
 	// Check that the editor binary exists
-	name := strings.Fields(editor)[0]
-	if _, err := exec.LookPath(name); err != nil {
-		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	args := strings.Fields(editor)
+	if len(args) == 0 {
+		return "", fmt.Errorf("no editor configured, set OLLAMA_EDITOR to the path of your preferred editor")
+	}
+	if _, err := exec.LookPath(args[0]); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", args[0])
 	}
 
 	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
@@ -672,7 +676,6 @@ func editInExternalEditor(content string) (string, error) {
 	}
 	tmpFile.Close()
 
-	args := strings.Fields(editor)
 	args = append(args, tmpFile.Name())
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin

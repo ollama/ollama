@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type mockRenderer struct{}
@@ -17,6 +18,7 @@ func (m *mockRenderer) LeadingBOS() string {
 }
 
 func TestRegisterCustomRenderer(t *testing.T) {
+	t.Cleanup(func() { delete(registry.renderers, "custom-renderer") })
 	// Register a custom renderer
 	Register("custom-renderer", func() Renderer {
 		return &mockRenderer{}
@@ -38,6 +40,9 @@ func TestBuiltInRendererStillWorks(t *testing.T) {
 	}{
 		{name: "qwen3-coder"},
 		{name: "qwen3.5"},
+		{name: "qwen3.8"},
+		{name: "nemotron-3-nano"},
+		{name: "nemotron-3.5-nano"},
 	}
 
 	messages := []api.Message{
@@ -86,6 +91,7 @@ func TestLeadingBOSForRenderer(t *testing.T) {
 }
 
 func TestOverrideBuiltInRenderer(t *testing.T) {
+	t.Cleanup(func() { delete(registry.renderers, "qwen3-coder") })
 	// Override the built-in renderer
 	Register("qwen3-coder", func() Renderer {
 		return &mockRenderer{}
@@ -107,3 +113,5 @@ func TestUnknownRendererReturnsError(t *testing.T) {
 		t.Error("expected error for unknown renderer")
 	}
 }
+
+func (m *mockRenderer) Thinking() *model.Thinking { return nil }

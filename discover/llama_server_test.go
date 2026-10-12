@@ -243,7 +243,7 @@ Available devices:
 				if tt.libDirs == nil {
 					tt.libDirs = []string{"/lib/ollama"}
 				}
-				devices := parseLlamaServerDevices(tt.output, tt.libDirs)
+				devices := parseLlamaServerDevicesWithNative(tt.output, "", tt.libDirs, nil)
 				if len(devices) != len(tt.want) {
 					t.Fatalf("got %d devices, want %d", len(devices), len(tt.want))
 				}
@@ -357,7 +357,7 @@ Available devices:
 					libDirs = []string{"/lib/ollama"}
 				}
 
-				got := parseLlamaServerDevices(tt.output, libDirs)
+				got := parseLlamaServerDevicesWithNative(tt.output, "", libDirs, nil)
 				if len(got) != len(tt.want) {
 					t.Fatalf("got %d devices, want %d", len(got), len(tt.want))
 				}

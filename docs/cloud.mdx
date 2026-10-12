@@ -3,290 +3,90 @@ title: Cloud
 sidebarTitle: Cloud
 ---
 
-## Cloud Models
+Run models in Ollama's cloud from your apps or terminal. No model or app download required.
 
-Ollama's cloud models are a new kind of model in Ollama that can run without a powerful GPU. Instead, cloud models are automatically offloaded to Ollama's cloud service while offering the same capabilities as local models, making it possible to keep using your local tools while running larger models that wouldn't fit on a personal computer.
+## API Key
 
-### Supported models
+Create an [API key](https://ollama.com/settings/keys), then set it in Bash or Zsh:
 
-For a list of supported models, see Ollama's [model library](https://ollama.com/search?c=cloud).
-
-### Running Cloud models
-
-Ollama's cloud models require an account on [ollama.com](https://ollama.com). To sign in or create an account, run:
-
-```
-ollama signin
+```shell
+export OLLAMA_API_KEY="your_api_key"
 ```
 
-<Tabs>
-  <Tab title="CLI">
+Send a request from the same terminal:
 
-To run a cloud model, open the terminal and run:
-
-```
-ollama run gpt-oss:120b-cloud
-```
-
-  </Tab>
-  <Tab title="Python">
-
-First, pull a cloud model so it can be accessed:
-
-```
-ollama pull gpt-oss:120b-cloud
-```
-
-Next, install [Ollama's Python library](https://github.com/ollama/ollama-python):
-
-```
-pip install ollama
-```
-
-Next, create and run a simple Python script:
-
-```python
-from ollama import Client
-
-client = Client()
-
-messages = [
-  {
-    'role': 'user',
-    'content': 'Why is the sky blue?',
-  },
-]
-
-for part in client.chat('gpt-oss:120b-cloud', messages=messages, stream=True):
-  print(part['message']['content'], end='', flush=True)
-```
-
-  </Tab>
-  <Tab title="JavaScript">
-
-First, pull a cloud model so it can be accessed:
-
-```
-ollama pull gpt-oss:120b-cloud
-```
-
-Next, install [Ollama's JavaScript library](https://github.com/ollama/ollama-js):
-
-```
-npm i ollama
-```
-
-Then use the library to run a cloud model:
-
-```typescript
-import { Ollama } from "ollama";
-
-const ollama = new Ollama();
-
-const response = await ollama.chat({
-  model: "gpt-oss:120b-cloud",
-  messages: [{ role: "user", content: "Explain quantum computing" }],
-  stream: true,
-});
-
-for await (const part of response) {
-  process.stdout.write(part.message.content);
-}
-```
-
-  </Tab>
-  <Tab title="cURL">
-
-First, pull a cloud model so it can be accessed:
-
-```
-ollama pull gpt-oss:120b-cloud
-```
-
-Run the following cURL command to run the command via Ollama's API:
-
-```
-curl http://localhost:11434/api/chat -d '{
-  "model": "gpt-oss:120b-cloud",
-  "messages": [{
-    "role": "user",
-    "content": "Why is the sky blue?"
-  }],
-  "stream": false
-}'
-```
-
-  </Tab>
-</Tabs>
-
-## Cloud API access
-
-Cloud models can also be accessed directly on ollama.com's API. In this mode, ollama.com acts as a remote Ollama host.
-
-### Authentication
-
-For direct access to ollama.com's API, first create an [API key](https://ollama.com/settings/keys).
-
-Then, set the `OLLAMA_API_KEY` environment variable to your API key.
-
-```
-export OLLAMA_API_KEY=your_api_key
-```
-
-### Listing models
-
-For models available directly via Ollama's API, models can be listed via:
-
-```
-curl https://ollama.com/api/tags
-```
-
-### Generating a response
-
-<Tabs>
-  <Tab title="Python">
-
-First, install [Ollama's Python library](https://github.com/ollama/ollama-python)
-
-```
-pip install ollama
-```
-
-Then make a request
-
-```python
-import os
-from ollama import Client
-
-client = Client(
-    host="https://ollama.com",
-    headers={'Authorization': 'Bearer ' + os.environ.get('OLLAMA_API_KEY')}
-)
-
-messages = [
-  {
-    'role': 'user',
-    'content': 'Why is the sky blue?',
-  },
-]
-
-for part in client.chat('gpt-oss:120b', messages=messages, stream=True):
-  print(part['message']['content'], end='', flush=True)
-```
-
-  </Tab>
-  <Tab title="JavaScript">
-
-First, install [Ollama's JavaScript library](https://github.com/ollama/ollama-js):
-
-```
-npm i ollama
-```
-
-Next, make a request to the model:
-
-```typescript
-import { Ollama } from "ollama";
-
-const ollama = new Ollama({
-  host: "https://ollama.com",
-  headers: {
-    Authorization: "Bearer " + process.env.OLLAMA_API_KEY,
-  },
-});
-
-const response = await ollama.chat({
-  model: "gpt-oss:120b",
-  messages: [{ role: "user", content: "Explain quantum computing" }],
-  stream: true,
-});
-
-for await (const part of response) {
-  process.stdout.write(part.message.content);
-}
-```
-
-  </Tab>
-  <Tab title="cURL">
-
-Generate a response via Ollama's chat API:
-
-```
+```shell
 curl https://ollama.com/api/chat \
   -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-oss:120b",
-    "messages": [{
-      "role": "user",
-      "content": "Why is the sky blue?"
-    }],
+    "model": "gemma4:31b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in one sentence."
+      }
+    ],
     "stream": false
   }'
 ```
 
-  </Tab>
-</Tabs>
+Read the answer from `message.content`. Keep your API key out of browser code and source control.
 
-## Local only
+You can also use [OpenAI](/api/openai-compatibility) or [Anthropic](/api/anthropic-compatibility) clients. Each supports a subset of the original API. No Ollama installation is required.
 
-Ollama can run in local-only mode by [disabling Ollama's cloud](./faq#how-do-i-disable-ollama-cloud) features.
+## Ollama App or CLI
+
+[Download Ollama](https://ollama.com/download). Open the app, or run:
+
+```shell
+ollama
+```
+
+Follow the setup prompts and sign in to use cloud models.
+
+On macOS, open **Apps** and connect Claude or ChatGPT. For coding agents, run a launch command:
+
+<CodeGroup>
+
+```shell Claude Code
+ollama launch claude
+```
+
+```shell Codex CLI
+ollama launch codex
+```
+
+```shell OpenCode
+ollama launch opencode
+```
+
+</CodeGroup>
+
+For more integrations, open the Ollama app or run `ollama` in your terminal.
+
+Ollama handles sign-in for connected apps. See the [quickstart](/quickstart) for setup.
+
+## Models
+
+Browse [cloud models](https://ollama.com/search?c=cloud), or list them with the API:
+
+```shell
+curl https://ollama.com/api/tags
+```
+
+For API requests to ollama.com, use the name returned by this list, such as `gemma4:31b`. In the Ollama app or CLI, use `gemma4:cloud`. Cloud models do not need to be downloaded.
+
+## Usage
+
+Check your [usage](https://ollama.com/settings/usage) or compare [plans](https://ollama.com/pricing).
 
 ## Retirements
 
-Ollama will occasionally deprecate and retire older cloud models as newer and better open-source models are released.
-Tools and applications relying on Ollama Cloud models may need to be updated to keep working. Impacted users will be
-notified in advance of model deprecation and retirement. Deprecations will be communicated through email and on the
-Ollama website.
+[Usage settings](https://ollama.com/settings) show upcoming retirements for models you've recently used. Switch models before the retirement date. Downloaded local models are not affected.
 
-Ollama Cloud model retirement does not affect local models.
+## Data handling
 
-### Upcoming retirements
+Ollama processes cloud prompts and responses to answer your requests. We do not use them to train models. Read the [Privacy Policy](https://ollama.com/privacy) for details.
 
-| Retirement date | Model | Recommended alternative |
-| --- | --- | --- |
-| July 31, 2026 | `minimax-m2.5` | `minimax-m2.7` |
-| July 31, 2026 | `kimi-k2.5` | `kimi-k2.6` |
-
-### Past retirements
-
-<AccordionGroup>
-  <Accordion title="July 15, 2026">
-    | Model | Recommended alternative |
-    | --- | --- |
-    | `deepseek-v3.1:671b` | `deepseek-v4-flash` |
-    | `deepseek-v3.2` | `deepseek-v4-flash` |
-    | `devstral-2:123b` | `mistral-large-3:675b` |
-    | `devstral-small-2:24b` | |
-    | `ministral-3:14b` | |
-    | `ministral-3:3b` | |
-    | `ministral-3:8b` | |
-    | `gemini-3-flash-preview` | `minimax-m3` |
-    | `gemma3:12b` | `gemma4:31b` |
-    | `gemma3:27b` | `gemma4:31b` |
-    | `gemma3:4b` | `gemma4:31b` |
-    | `glm-4.7` | `glm-5.2` |
-    | `glm-5` | `glm-5.2` |
-    | `minimax-m2.1` | `minimax-m3` |
-    | `qwen3-coder-next` | `qwen3.5:397b` |
-    | `qwen3-coder:480b` | `qwen3.5:397b` |
-  </Accordion>
-
-  <Accordion title="June 30, 2026">
-    | Model | Recommended alternative |
-    | --- | --- |
-    | `rnj-1:8b` | |
-  </Accordion>
-
-  <Accordion title="June 16, 2026">
-    | Model | Recommended alternative |
-    | --- | --- |
-    | `kimi-k2-thinking` | `kimi-k2.6` |
-    | `kimi-k2:1t` | `kimi-k2.6` |
-    | `minimax-m2`  | `minimax-m3` |
-    | `glm-4.6` | `glm-5.1` |
-    | `qwen3-next:80b` | `qwen3.5` |
-    | `qwen3-vl:235b` | `qwen3.5` |
-    | `qwen3-vl:235b-instruct` | `qwen3.5` |
-    | `cogito-2.1:671b` | `deepseek-v4-flash` |
-  </Accordion>
-</AccordionGroup>
+To use only local models, [disable cloud features](/faq#how-do-i-disable-ollama-cloud-features).

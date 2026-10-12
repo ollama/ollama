@@ -249,6 +249,30 @@ func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	}
 }
 
+func TestBuildCloudSignatureChallengePreservesMalformedQuery(t *testing.T) {
+	for _, rawQuery := range []string{
+		"range=24h;",
+		"range=24h&scope=%zz",
+		"ts=999&range=24h;",
+		"ts=%zz&range=24h",
+	} {
+		t.Run(rawQuery, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/usage?"+rawQuery, nil)
+			challenge := buildCloudSignatureChallenge(req, "123")
+			wantQuery := "ts=123&" + rawQuery
+			if got := req.URL.RawQuery; got != wantQuery {
+				t.Errorf("signed query = %q, want %q", got, wantQuery)
+			}
+			if want := "GET,/api/usage?" + wantQuery; challenge != want {
+				t.Errorf("challenge = %q, want %q", challenge, want)
+			}
+			if got := req.URL.Query().Get("ts"); got != "123" {
+				t.Errorf("verifier timestamp = %q, want 123", got)
+			}
+		})
+	}
+}
+
 func TestJSONLFramingResponseWriter_SplitsCoalescedLines(t *testing.T) {
 	rec := &chunkRecorder{header: http.Header{}}
 	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
