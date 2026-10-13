@@ -1,0 +1,67 @@
+可攜式 AI 工作站操作說明
+========================
+
+重要事項
+--------
+1. 所有模型、工具、快取與暫存資料都位於此外接 SSD 的 ollama 資料夾。
+2. NVIDIA 顯示卡驅動是 Windows 系統元件，無法從 SSD 直接執行。
+   若網咖還原軟體還原了驅動，啟動腳本會使用 SSD 保存的官方安裝包重新安裝。
+3. Ollama 執行期間不可直接拔除 SSD，否則可能損壞模型資料。
+4. SSD 的磁碟機代號不一定永遠是 H:。請直接從檔案總管開啟 SSD，
+   再執行 ollama 資料夾內的指令檔；不要依賴固定磁碟機代號。
+5. 建議連接 USB 3.2 Gen 2 或更快的連接埠，避免模型載入速度受限。
+
+抵達網咖後
+----------
+1. 插入 Crucial X9 SSD，等待檔案總管能正常開啟。
+2. 進入 SSD 的 ollama 資料夾。
+3. 雙擊 Launch-Portable-AI.cmd。
+4. 若 Windows 顯示系統管理員確認視窗，按「是」。
+5. 腳本會：
+   - 檢查 NVIDIA 驅動。
+   - 驅動低於 616.64 時，從 SSD 靜默重新安裝官方驅動。
+   - 將模型與所有工具路徑指向 SSD。
+   - 啟動 H:\ollama\ollama.exe serve。
+6. 若腳本要求重新啟動：
+   - 等待驅動安裝程序完全結束。
+   - 執行 Stop-And-Eject.cmd。
+   - 使用 Windows「安全地移除硬體」退出 SSD。
+   - 重新啟動電腦。
+   - 登入後重新插入 SSD，再雙擊 Launch-Portable-AI.cmd。
+
+使用模型
+--------
+目前已下載 qwen2.5:7b。
+
+快速測試：
+1. 雙擊 Run-Qwen-Test.cmd。
+2. 腳本會執行指定中文提示詞並顯示 VRAM 使用量。
+
+互動對話：
+1. 雙擊 Open-Portable-AI-Shell.cmd。
+2. 在開啟的終端機輸入：
+
+   ollama run qwen2.5:7b
+
+3. 輸入 /bye 離開模型。
+
+查看模型：
+
+   ollama list
+
+關機或拔除 SSD 前
+-----------------
+1. 關閉正在使用模型的程式。
+2. 雙擊 Stop-And-Eject.cmd。
+3. 等畫面顯示服務已停止。
+4. 使用 Windows 工作列的「安全地移除硬體」退出 Crucial X9。
+5. 確認 Windows 顯示可以移除後，才能拔除 SSD。
+
+檔案位置
+--------
+Ollama：ollama.exe
+模型：models
+Portable Python、Git、CMake、uv：env
+驅動備份：env\drivers
+維護腳本：env\scripts
+環境版本清單：env\portable-environment.json

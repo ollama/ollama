@@ -1,0 +1,54 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  claude-review:
+    # 只審查來自同一 repo 的 PR，跳過來自 fork 的 PR 以避免 secret 外洩。
+    # 對 issue_comment 則要求評論來自 PR 且內容包含 "@claude"。
+    if: >-
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            請以資深 Go 工程師的角度，對這個 Pull Request 的整個 diff 進行程式碼審查。
+
+            **回覆語言：一律使用繁體中文。**
+
+            請重點檢查：
+            1. 程式邏輯正確性與邊界情境處理
+            2. 錯誤處理是否完整、是否有被吞掉的 error
+            3. 是否符合本 repo 的 `AGENTS.md` / `CLAUDE.md` 規範與 Go 慣例
+            4. 安全性問題（command injection、path traversal、未驗證輸入、secrets 洩漏等）
+            5. 併發安全（goroutine、mutex、channel 使用是否正確）
+            6. 是否需要新增或補強測試
+            7. 效能與可讀性建議
+
+            輸出格式：
+            - 先給一段整體摘要
+            - 再以條列方式列出具體建議，指出檔案與行號
+            - 若沒有問題請直接說明「未發現重大問題」

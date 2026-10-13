@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/ollama/ollama/envconfig"
 )
@@ -43,6 +44,16 @@ func (c *Copilot) findPath() (string, error) {
 	return fallback, nil
 }
 
+func copilotProviderBaseURL() string {
+	if v := strings.TrimSpace(os.Getenv("COPILOT_PROVIDER_BASE_URL")); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	if v := strings.TrimSpace(os.Getenv("OLLAMA_HOST")); v != "" {
+		return strings.TrimRight(v, "/") + "/v1"
+	}
+	return envconfig.Host().String() + "/v1"
+}
+
 func (c *Copilot) Run(model string, _ []LaunchModel, args []string) error {
 	copilotPath, err := c.findPath()
 	if err != nil {
@@ -63,7 +74,7 @@ func (c *Copilot) Run(model string, _ []LaunchModel, args []string) error {
 // to use Ollama as its model provider.
 func (c *Copilot) envVars(model string) []string {
 	env := []string{
-		"COPILOT_PROVIDER_BASE_URL=" + envconfig.Host().String() + "/v1",
+		"COPILOT_PROVIDER_BASE_URL=" + copilotProviderBaseURL(),
 		"COPILOT_PROVIDER_API_KEY=",
 		"COPILOT_PROVIDER_WIRE_API=responses",
 	}
