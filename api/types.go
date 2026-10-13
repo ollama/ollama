@@ -601,6 +601,48 @@ type Runner struct {
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
 }
 
+// SystemOneRequest is the request passed to [Client.SystemOne]. It asks a
+// decision model typed questions about a state.
+type SystemOneRequest struct {
+	Model     string              `json:"model"`
+	Runner    string              `json:"runner,omitempty"`
+	State     json.RawMessage     `json:"state"`
+	Images    []ImageData         `json:"images,omitempty"`
+	Videos    []json.RawMessage   `json:"videos,omitempty"`
+	Questions *SystemOneQuestions `json:"questions"`
+	KeepAlive *Duration           `json:"keep_alive,omitempty"`
+}
+
+// SystemOneQuestions keeps questions in request order, which is the order of
+// the answers.
+type SystemOneQuestions = orderedmap.Map[string, SystemOneQuestion]
+
+// SystemOneQuestion is a noul (yes/no), choice, or score question. Criteria is
+// an object for noul and choice questions and an ordered array for score.
+type SystemOneQuestion struct {
+	Type         string          `json:"type"`
+	Instructions json.RawMessage `json:"instructions"`
+	Criteria     json.RawMessage `json:"criteria,omitempty"`
+}
+
+// SystemOneResponse is the response returned by [Client.SystemOne]. Each
+// answer's type field says which answer fields it has.
+type SystemOneResponse struct {
+	Model                 string            `json:"model"`
+	Answers               *SystemOneAnswers `json:"answers"`
+	Usage                 SystemOneUsage    `json:"usage"`
+	PromptEvalCachedCount *int              `json:"prompt_eval_cached_count,omitempty"`
+}
+
+// SystemOneAnswers keeps answers in request order.
+type SystemOneAnswers = orderedmap.Map[string, json.RawMessage]
+
+// SystemOneUsage counts the tokens evaluated and generated to answer.
+type SystemOneUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 // EmbedRequest is the request passed to [Client.Embed].
 type EmbedRequest struct {
 	// Model is the model name.

@@ -106,6 +106,59 @@ func TestDecisionModelRejectsCompletion(t *testing.T) {
 	}
 }
 
+func TestSystemOneHandlerRunnerSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, variant := range []struct{ runner, format string }{
+		{manifest.RunnerLlamaCPP, manifest.FormatGGUF},
+		{manifest.RunnerMLX, manifest.FormatSafetensors},
+	} {
+		writeShowManifestVariant(t, "decision-"+variant.runner, variant.runner, variant.format, model.ConfigV2{
+			ModelFormat: variant.format, Renderer: "clef", Capabilities: []string{"decision"},
+		}, map[string]any{"general.architecture": "clef", "clef.decision.type": "clef"})
+	}
+	writeManifestListFixture(t, "decision-list",
+		manifestListFixtureChild{name: "decision-llamacpp", runner: manifest.RunnerLlamaCPP, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "decision-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+	defaultModel, err := GetModel("decision-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ runner, want string }{
+		{"", defaultModel.Runner},
+		{"llamacpp", manifest.RunnerLlamaCPP},
+		{"mlx", manifest.RunnerMLX},
+		{" llama.cpp ", manifest.RunnerLlamaCPP},
+	} {
+		t.Run(tt.runner, func(t *testing.T) {
+			runner := &systemOneTestRunner{}
+			s := newServerWithMockRunner(t, &runner.mockRunner)
+			selectedRunner := make(chan string, 1)
+			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				selectedRunner <- req.model.Runner
+				req.successCh <- &runnerRef{llama: runner}
+				return false
+			}
+			w := createRequest(t, s.SystemOneHandler, map[string]any{
+				"model": "decision-list", "runner": tt.runner, "state": "refund please",
+				"questions": map[string]any{"refund": map[string]any{"type": "noul", "instructions": "Refund requested?"}},
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body)
+			}
+			select {
+			case got := <-selectedRunner:
+				if got != tt.want {
+					t.Fatalf("scheduled runner=%q, want %q", got, tt.want)
+				}
+			default:
+				t.Fatal("no runner was scheduled")
+			}
+		})
+	}
+}
+
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -190,6 +243,7 @@ func TestSystemOneHandler(t *testing.T) {
 	}
 	tests := []testCase{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"unknown runner", `{"model":"decision-test","runner":"invalid","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
