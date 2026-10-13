@@ -34,6 +34,7 @@ func patternArray(dtype DType, shape []int, bias, scale float32, stride, modulus
 const gatedDeltaGraphTol = 2e-4
 
 // requireClose compares two arrays within tol after widening to float32.
+// NaN never compares close, so a kernel that produces NaN fails.
 func requireClose(label string, got, want *Array, tol float64) error {
 	got32, want32 := got.AsType(DTypeFloat32), want.AsType(DTypeFloat32)
 	Eval(got32, want32)
@@ -42,7 +43,7 @@ func requireClose(label string, got, want *Array, tol float64) error {
 		return fmt.Errorf("%s length = %d, want %d", label, len(gotValues), len(wantValues))
 	}
 	for i := range wantValues {
-		if diff := math.Abs(float64(gotValues[i] - wantValues[i])); diff > tol {
+		if diff := math.Abs(float64(gotValues[i] - wantValues[i])); !(diff <= tol) {
 			return fmt.Errorf("%s[%d] = %v, want %v (differs by %g, tolerance %g)",
 				label, i, gotValues[i], wantValues[i], diff, tol)
 		}
