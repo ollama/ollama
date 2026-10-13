@@ -801,8 +801,13 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	if result.Think == nil {
 		t.Fatal("expected Think to be set")
 	}
-	if v, ok := result.Think.Value.(int); !ok || v != 1000 {
-		t.Errorf("expected Think.Value to be the 1000 token budget, got %v", result.Think.Value)
+	// budget_tokens is a bound: thinking is switched on, and the count goes
+	// where bounds go, never into the think value.
+	if v, ok := result.Think.Value.(bool); !ok || !v {
+		t.Errorf("expected Think.Value to be true, got %v", result.Think.Value)
+	}
+	if got := result.Options["think_budget"]; got != 1000 {
+		t.Errorf("expected think_budget 1000, got %v", got)
 	}
 }
 
