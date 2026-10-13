@@ -405,10 +405,10 @@ func FromMessagesRequest(r MessagesRequest, thinking ...*model.Thinking) (*api.C
 
 	var think *api.ThinkValue
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
+		// budget_tokens is a bound, not a level: it goes where bounds go.
+		think = &api.ThinkValue{Value: true}
 		if r.Thinking.BudgetTokens > 0 {
-			think = &api.ThinkValue{Value: r.Thinking.BudgetTokens}
-		} else {
-			think = &api.ThinkValue{Value: true}
+			options["think_budget"] = r.Thinking.BudgetTokens
 		}
 	}
 	if r.Thinking != nil && r.Thinking.Type == "disabled" {

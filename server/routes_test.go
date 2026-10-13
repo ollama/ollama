@@ -1591,13 +1591,12 @@ func TestShowThinkBudget(t *testing.T) {
 		return showWithOptions(t, &s, digest, name, parameters, nil)
 	}
 
-	t.Run("answers for a think level the caller intends to send", func(t *testing.T) {
-		// The common case: the client sets the level, and the model carries no
-		// think_budget parameter at all. Without the think value there is
-		// nothing here to resolve and the caller is back to guessing.
-		resp := showWithThink(t, &s, digest, "show-think-request-level",
-			map[string]any{"num_ctx": 32768}, map[string]any{"num_predict": 8000},
-			&api.ThinkValue{Value: "medium"})
+	t.Run("answers for a think_budget the caller intends to send", func(t *testing.T) {
+		// The model carries no think_budget parameter; the caller sends its
+		// own as a request option and asks what it will come to.
+		resp := showWithOptions(t, &s, digest, "show-think-request-budget",
+			map[string]any{"num_ctx": 32768},
+			map[string]any{"num_predict": 8000, "think_budget": "medium"})
 
 		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
 			t.Fatalf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
@@ -1607,25 +1606,34 @@ func TestShowThinkBudget(t *testing.T) {
 		}
 	})
 
-	t.Run("lets the request's think value win over the model parameter", func(t *testing.T) {
-		// Same precedence as a completion: a think value carrying its own
-		// budget beats the model's. An answer that disagreed with the
-		// completion path would be worse than no answer.
+	t.Run("a think level is not a budget", func(t *testing.T) {
+		// A level is the model's control. Asked about one on a model that
+		// carries no think_budget, the answer is that nothing bounds it.
+		resp := showWithThink(t, &s, digest, "show-think-request-level",
+			map[string]any{"num_ctx": 32768}, map[string]any{"num_predict": 8000},
+			&api.ThinkValue{Value: "medium"})
+
+		if resp.ThinkBudget != nil || resp.ThinkBudgetTokens != 0 {
+			t.Fatalf("expected no budget from a level, got %#v / %d", resp.ThinkBudget, resp.ThinkBudgetTokens)
+		}
+	})
+
+	t.Run("a think level leaves the model parameter in force", func(t *testing.T) {
+		// Same answer as a completion: the level goes to the model, the
+		// model's own budget still bounds it.
 		resp := showWithThink(t, &s, digest, "show-think-precedence",
 			map[string]any{"think_budget": "minimal", "num_ctx": 32768}, nil,
 			&api.ThinkValue{Value: "high"})
 
-		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "high" {
-			t.Fatalf("expected think budget %q, got %#v", "high", resp.ThinkBudget)
+		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "minimal" {
+			t.Fatalf("expected think budget %q, got %#v", "minimal", resp.ThinkBudget)
 		}
-		if resp.ThinkBudgetTokens != 16384 {
-			t.Errorf("expected think budget tokens 16384, got %d", resp.ThinkBudgetTokens)
+		if resp.ThinkBudgetTokens != 2048 {
+			t.Errorf("expected think budget tokens 2048, got %d", resp.ThinkBudgetTokens)
 		}
 	})
 
-	t.Run("falls back to the model parameter when think carries no budget", func(t *testing.T) {
-		// `think: true` means unbounded, not "no budget", so the model's own
-		// parameter is still what applies.
+	t.Run("the model parameter applies when thinking is simply on", func(t *testing.T) {
 		resp := showWithThink(t, &s, digest, "show-think-unbounded",
 			map[string]any{"think_budget": "medium", "num_ctx": 32768}, nil,
 			&api.ThinkValue{Value: true})
@@ -1709,9 +1717,7 @@ func TestShowThinkBudget(t *testing.T) {
 	})
 
 	t.Run("says nothing when the caller has switched thinking off", func(t *testing.T) {
-		// `think: false` is the only way to switch thinking off that reaches
-		// here: ThinkValue rejects 0 and "none" at the boundary with a 400, so
-		// the other spellings never get this far. The model still carries its
+		// The model still carries its
 		// own think_budget, and arming it anyway is the bug -- the completion
 		// path does not, and an /api/show that disagreed with it would be worse
 		// than no answer, because a caller writes its prompt from this number
@@ -2596,15 +2602,15 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 			name:          "tags inferred from the template",
 			templateStart: "<think>",
 			templateEnd:   "</think>",
-			think:         &api.ThinkValue{Value: 8192},
-			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			think:         &api.ThinkValue{Value: true},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 8192}},
 			wantBudget:    8192,
 			wantTags:      true,
 		},
 		{
 			name:  "no tags anywhere",
-			think: &api.ThinkValue{Value: 8192},
-			opts:  &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			think: &api.ThinkValue{Value: true},
+			opts:  &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 8192}},
 		},
 		{
 			// a parser that reports its own delimiters wins
@@ -2612,104 +2618,73 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 			parser:        thinkingParser,
 			templateStart: "<think>",
 			templateEnd:   "</think>",
-			think:         &api.ThinkValue{Value: 8192},
-			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			think:         &api.ThinkValue{Value: true},
+			opts:          &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 8192}},
 			wantBudget:    8192,
 			wantTags:      true,
 		},
 		{
-			name:       "effort resolves against the context length",
+			name:       "a share resolves against the context length",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: "medium"},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: "medium"}},
 			wantBudget: 8192,
 			wantTags:   true,
 		},
 		{
-			// num_predict caps the response, so a level takes its share of
-			// that. Against the context length medium would be 32000 here,
-			// exactly the response cap, and the budget would never fire
-			name:       "effort resolves against num_predict when the request sets one",
+			// num_predict caps the response, so a share is taken of that.
+			// Against the context length medium would be 32000 here, exactly
+			// the response cap, and the budget would never fire
+			name:       "a share resolves against num_predict when the request sets one",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: "medium"},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkBudget{Value: "medium"}},
 			wantBudget: 8000,
 			wantTags:   true,
 		},
 		{
-			name:       "effort resolves against the context when num_predict is past it",
+			name:       "a share resolves against the context when num_predict is past it",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: "medium"},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: 128000},
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: 128000, ThinkBudget: &api.ThinkBudget{Value: "medium"}},
 			wantBudget: 8192,
 			wantTags:   true,
 		},
 		{
 			// -1 and 0 both mean "no cap on the response"
-			name:       "effort resolves against the context when num_predict is unlimited",
+			name:       "a share resolves against the context when num_predict is unlimited",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: "medium"},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: -1},
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, NumPredict: -1, ThinkBudget: &api.ThinkBudget{Value: "medium"}},
 			wantBudget: 8192,
 			wantTags:   true,
 		},
 		{
 			// Thinking switched off must not arm a budget from the model's own
 			// think_budget parameter. Every way of switching it off arrives here
-			// as a ThinkValue whose Bool() is false, and each one reached the
-			// fallback below and came back with the model's budget armed -- so a
-			// forced-close message could be written into a response whose caller
-			// asked for no reasoning at all.
-			name:       "think:false does not inherit the model's think_budget",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: false},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkValue{Value: "max"}},
-			wantBudget: 0,
-			wantTags:   false,
+			// as a ThinkValue whose Bool() is false -- so a forced-close message
+			// could be written into a response whose caller asked for no
+			// reasoning at all.
+			name:   "think:false does not inherit the model's think_budget",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: false},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkBudget{Value: "max"}},
 		},
 		{
 			// reasoning_effort:"none" on the OpenAI-compatible route, which
 			// thinkFromReasoningEffort turns into exactly the value above.
-			name:       "reasoning_effort none does not inherit the model's think_budget",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: false},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
-			wantBudget: 0,
-			wantTags:   false,
-		},
-		{
-			// A zero token count is not a budget of zero, it is "off": Bool()
-			// already reads it that way, and the budget has to agree.
-			name:       "think:0 does not inherit the model's think_budget",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: 0},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: "high"}},
-			wantBudget: 0,
-			wantTags:   false,
-		},
-		{
-			name:       "the model think_budget level resolves against num_predict too",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: true},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkValue{Value: "medium"}},
-			wantBudget: 8000,
-			wantTags:   true,
+			name:   "reasoning_effort none does not inherit the model's think_budget",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: false},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 4096}},
 		},
 		{
 			// an explicit token count is what the caller asked for, not a share
-			name:       "an explicit budget ignores num_predict",
+			name:       "a token count ignores num_predict",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: 16000},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
+			think:      &api.ThinkValue{Value: true},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000, ThinkBudget: &api.ThinkBudget{Value: 16000}},
 			wantBudget: 16000,
-			wantTags:   true,
-		},
-		{
-			name:       "explicit budget is used verbatim",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: 8192},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}},
-			wantBudget: 8192,
 			wantTags:   true,
 		},
 		{
@@ -2719,52 +2694,51 @@ func TestThinkBudgetForCompletion(t *testing.T) {
 			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
 		},
 		{
-			name:   "no parser means no tags to bound",
-			parser: nil,
+			// The level is the model's control. It is handed to the model as
+			// written and bounds nothing.
+			name:   "a level is not a budget",
+			parser: thinkingParser,
 			think:  &api.ThinkValue{Value: "medium"},
 			opts:   &api.Options{Runner: api.Runner{NumCtx: 32768}},
 		},
 		{
-			name:   "no options",
+			name:   "a level is not a budget whatever its name",
 			parser: thinkingParser,
-			think:  &api.ThinkValue{Value: "medium"},
+			think:  &api.ThinkValue{Value: "max"},
+			opts:   &api.Options{Runner: api.Runner{NumCtx: 128000}, NumPredict: 32000},
 		},
 		{
-			name:       "model think_budget parameter applies when the request has no budget",
+			// Both set: each does its own job. "high" used to mean 16384 here
+			// and overrule the 999 the caller or the model had asked for.
+			name:       "a level leaves the think_budget as it was set",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: true},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
-			wantBudget: 4096,
+			think:      &api.ThinkValue{Value: "high"},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 999}},
+			wantBudget: 999,
 			wantTags:   true,
 		},
 		{
-			name:       "explicit request budget overrides the model parameter",
-			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: 512},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
-			wantBudget: 512,
-			wantTags:   true,
-		},
-		{
-			name:       "request effort overrides the model parameter",
+			name:       "a low level does not shrink the think_budget either",
 			parser:     thinkingParser,
 			think:      &api.ThinkValue{Value: "low"},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 999}},
-			wantBudget: 4096,
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: "high"}},
+			wantBudget: 16384,
 			wantTags:   true,
 		},
 		{
-			name:       "model think_budget parameter applies without a think value",
-			parser:     thinkingParser,
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: 4096}},
-			wantBudget: 4096,
-			wantTags:   true,
+			name:  "no parser means no tags to bound",
+			think: &api.ThinkValue{Value: true},
+			opts:  &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: "medium"}},
 		},
 		{
-			name:       "model think_budget parameter accepts an effort level",
+			name:   "no options",
+			parser: thinkingParser,
+			think:  &api.ThinkValue{Value: true},
+		},
+		{
+			name:       "think_budget applies without a think value",
 			parser:     thinkingParser,
-			think:      &api.ThinkValue{Value: true},
-			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkValue{Value: "low"}},
+			opts:       &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: 4096}},
 			wantBudget: 4096,
 			wantTags:   true,
 		},
@@ -2790,9 +2764,11 @@ func TestThinkBudgetForCompletionHarmony(t *testing.T) {
 		t.Fatalf("expected a harmony parser with thinking support, got %#v", harmonyParser)
 	}
 
-	opts := &api.Options{Runner: api.Runner{NumCtx: 32768}}
+	opts := &api.Options{Runner: api.Runner{NumCtx: 32768}, ThinkBudget: &api.ThinkBudget{Value: "high"}}
 
-	budget, _, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, opts)
+	// "low" is the level gpt-oss is told to reason at; the bound is the
+	// think_budget, and the two do not touch.
+	budget, _, start, end := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "low"}, opts)
 	if budget != 16384 {
 		t.Errorf("budget = %d, want 16384", budget)
 	}
@@ -2805,7 +2781,8 @@ func TestThinkBudgetForCompletionHarmony(t *testing.T) {
 		t.Errorf("end tag = %q, want %q", end, "<|end|>")
 	}
 
-	if budget, _, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: true}, opts); budget != 0 {
-		t.Errorf("think true budget = %d, want 0 (unrestricted)", budget)
+	unbounded := &api.Options{Runner: api.Runner{NumCtx: 32768}}
+	if budget, _, _, _ := thinkBudgetForCompletion(harmonyParser, "", "", &api.ThinkValue{Value: "high"}, unbounded); budget != 0 {
+		t.Errorf("level high budget = %d, want 0 (a level bounds nothing)", budget)
 	}
 }

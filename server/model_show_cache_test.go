@@ -181,9 +181,9 @@ func TestModelShowCacheKeysOnTheThinkValue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
-	// think_budget and think_budget_tokens are answers about the think value
-	// the caller intends to send, so two requests differing only in think are
-	// two different questions. A key that ignores it freezes whichever was
+	// think_budget and think_budget_tokens depend on whether the caller intends
+	// to think at all, so two requests differing only in think are two
+	// different questions. A key that ignores it freezes whichever was
 	// asked first. Asking think: true and then think: false is the order that
 	// matters -- it reports an armed budget for a request that switched
 	// thinking off, the opposite of what the completion path will do, and a

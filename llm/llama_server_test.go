@@ -3786,58 +3786,72 @@ func TestLlamaServerChatTemplateKwargs(t *testing.T) {
 
 func TestLlamaServerChatRequestThinkBudget(t *testing.T) {
 	// llama-server owns the template on the chat path, so the budget in the
-	// body is the only thing bounding thinking there
+	// body is the only thing bounding thinking there. It comes from
+	// think_budget alone: a level in think is the model's control.
 	tests := []struct {
 		name        string
 		numCtx      int
 		numPredict  int
 		think       *api.ThinkValue
-		thinkBudget *api.ThinkValue
+		thinkBudget *api.ThinkBudget
 		want        any
 	}{
 		{
-			name:   "effort resolves against the context length",
-			numCtx: 32768,
-			think:  &api.ThinkValue{Value: "medium"},
-			want:   8192,
+			name:        "a share resolves against the context length",
+			numCtx:      32768,
+			think:       &api.ThinkValue{Value: true},
+			thinkBudget: &api.ThinkBudget{Value: "medium"},
+			want:        8192,
 		},
 		{
-			// a level leaves room to answer, so a capped response is the
-			// window it takes its share of
-			name:       "effort resolves against num_predict when the request caps the response",
-			numCtx:     128000,
-			numPredict: 32000,
-			think:      &api.ThinkValue{Value: "medium"},
-			want:       8000,
-		},
-		{
-			name:       "effort resolves against the context when num_predict is past it",
-			numCtx:     32768,
-			numPredict: 128000,
-			think:      &api.ThinkValue{Value: "medium"},
-			want:       8192,
-		},
-		{
-			name:       "effort resolves against the context when num_predict is unlimited",
-			numCtx:     32768,
-			numPredict: -1,
-			think:      &api.ThinkValue{Value: "medium"},
-			want:       8192,
-		},
-		{
-			name:        "the model think_budget level resolves against num_predict too",
+			// a share leaves room to answer, so a capped response is the
+			// window it is taken of
+			name:        "a share resolves against num_predict when the request caps the response",
 			numCtx:      128000,
 			numPredict:  32000,
 			think:       &api.ThinkValue{Value: true},
-			thinkBudget: &api.ThinkValue{Value: "medium"},
+			thinkBudget: &api.ThinkBudget{Value: "medium"},
 			want:        8000,
 		},
 		{
-			name:       "an explicit budget ignores num_predict",
-			numCtx:     128000,
-			numPredict: 32000,
-			think:      &api.ThinkValue{Value: 16000},
-			want:       16000,
+			name:        "a share resolves against the context when num_predict is past it",
+			numCtx:      32768,
+			numPredict:  128000,
+			thinkBudget: &api.ThinkBudget{Value: "medium"},
+			want:        8192,
+		},
+		{
+			name:        "a share resolves against the context when num_predict is unlimited",
+			numCtx:      32768,
+			numPredict:  -1,
+			thinkBudget: &api.ThinkBudget{Value: "medium"},
+			want:        8192,
+		},
+		{
+			name:        "a token count ignores num_predict",
+			numCtx:      128000,
+			numPredict:  32000,
+			think:       &api.ThinkValue{Value: true},
+			thinkBudget: &api.ThinkBudget{Value: 16000},
+			want:        16000,
+		},
+		{
+			name:   "a level is not a budget",
+			numCtx: 32768,
+			think:  &api.ThinkValue{Value: "medium"},
+		},
+		{
+			name:        "a level leaves the budget as it was set",
+			numCtx:      32768,
+			think:       &api.ThinkValue{Value: "high"},
+			thinkBudget: &api.ThinkBudget{Value: 2000},
+			want:        2000,
+		},
+		{
+			name:        "thinking off is not bounded",
+			numCtx:      32768,
+			think:       &api.ThinkValue{Value: false},
+			thinkBudget: &api.ThinkBudget{Value: "max"},
 		},
 		{
 			name:   "think true stays unrestricted",

@@ -2392,9 +2392,11 @@ func (s *llamaServerRunner) llamaServerChatRequest(req ChatRequest, stream bool)
 	// llama-server owns the chat template on this path, so it already knows the
 	// thinking delimiters and only needs the budget.
 	window := api.ThinkBudgetWindow(s.ContextLength(), req.Options.NumPredict)
-	budget := req.Think.BudgetTokens(window)
-	if budget <= 0 {
-		budget = req.Options.ThinkBudget.BudgetTokens(window)
+	// Only think_budget bounds thinking. A level in think is the model's
+	// control and went into the template kwargs above.
+	budget := 0
+	if req.Think == nil || req.Think.Bool() {
+		budget = req.Options.ThinkBudget.Tokens(window)
 	}
 	if budget > 0 {
 		body["thinking_budget_tokens"] = budget
@@ -2420,7 +2422,7 @@ func llamaServerChatTemplateKwargs(think *api.ThinkValue) map[string]any {
 		"enable_thinking": think.Bool(),
 	}
 	if think.IsString() {
-		if effort := think.Level(); effort != "" {
+		if effort := think.String(); effort != "" {
 			kwargs["reasoning_effort"] = effort
 		}
 	}
