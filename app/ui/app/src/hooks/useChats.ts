@@ -232,6 +232,13 @@ export const useSendMessage = (chatId: string) => {
     onError: (error) => {
       console.error("error mutating sendMessage", error);
       cleanupStreaming(updatableChatId);
+      // The server reports in-stream failures with an "error" event, but a
+      // request that never started (auth, validation) only fails at the HTTP
+      // level, so surface it through the same channel.
+      queryClient.setQueryData(["chatError", updatableChatId], {
+        eventName: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
     },
     mutationFn: async ({
       message,
@@ -514,8 +521,10 @@ export const useSendMessage = (chatId: string) => {
                   // Update existing assistant message with tool calls
                   const updatedMessage = new Message({
                     ...lastMessage,
-                    content: lastMessage.content + (event.content || ""),
-                    thinking: lastMessage.thinking + (event.thinking || ""),
+                    content:
+                      (lastMessage.content || "") + (event.content || ""),
+                    thinking:
+                      (lastMessage.thinking || "") + (event.thinking || ""),
                     tool_calls: event.toolCalls,
                     thinkingTimeStart:
                       lastMessage.thinkingTimeStart || event.thinkingTimeStart,
@@ -528,8 +537,8 @@ export const useSendMessage = (chatId: string) => {
                   newMessages.push(
                     new Message({
                       role: "assistant",
-                      content: event.content,
-                      thinking: event.thinking,
+                      content: event.content || "",
+                      thinking: event.thinking || "",
                       tool_calls: event.toolCalls,
                       thinkingTimeStart: event.thinkingTimeStart,
                       thinkingTimeEnd: event.thinkingTimeEnd,
