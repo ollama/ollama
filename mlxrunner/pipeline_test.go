@@ -205,3 +205,21 @@ func TestPrepareMediaErrors(t *testing.T) {
 		t.Fatalf("zero-expansion error = %v", err)
 	}
 }
+
+// num_predict 0 reaches the runner when a client sends it explicitly, and it
+// means generate to the context limit, as it does on the llama-server engine.
+// Prefill-only is a separate flag the server never sets.
+func TestPrepareNumPredictZeroGeneratesToLimit(t *testing.T) {
+	r := mediaTestRunner(t)
+	req := &Request{CompletionRequest: CompletionRequest{Prompt: "0123"}}
+	req.Options.NumPredict = 0
+	if err := r.Prepare(req); err != nil {
+		t.Fatal(err)
+	}
+	if want := r.contextLength - len(req.Tokens); req.Options.NumPredict != want {
+		t.Errorf("NumPredict = %d, want %d", req.Options.NumPredict, want)
+	}
+	if req.PrefillOnly {
+		t.Error("PrefillOnly set without being requested")
+	}
+}
