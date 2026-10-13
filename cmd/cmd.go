@@ -959,11 +959,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	ensureCloudStub(cmd.Context(), client, name)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
-	if err != nil {
-		return err
-	}
-
 	applyShowResponseToRunOptions(&opts, info)
 
 	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
@@ -2358,11 +2353,6 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	opts.Model = resolvedModel
 	ensureCloudStub(cmd.Context(), client, opts.Model)
 
-	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, false)
-	if err != nil {
-		return err
-	}
-
 	applyShowResponseToRunOptions(&opts, info)
 
 	if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -2788,47 +2778,6 @@ func NewCLI() *cobra.Command {
 	)
 
 	return rootCmd
-}
-
-// If the user has explicitly set thinking options, either through the CLI or
-// through the `/set think` or `set nothink` interactive options, then we
-// respect them. Otherwise, we check model capabilities to see if the model
-// supports thinking. If the model does support thinking, we enable it.
-// Otherwise, we unset the thinking option (which is different than setting it
-// to false).
-//
-// If capabilities are not provided, we fetch them from the server.
-func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicitlySetByUser bool) (*api.ThinkValue, error) {
-	if explicitlySetByUser {
-		return runOpts.Think, nil
-	}
-
-	if caps == nil {
-		client, err := api.ClientFromEnvironment()
-		if err != nil {
-			return nil, err
-		}
-		ret, err := client.Show(context.Background(), &api.ShowRequest{
-			Model: runOpts.Model,
-		})
-		if err != nil {
-			return nil, err
-		}
-		caps = &ret.Capabilities
-	}
-
-	thinkingSupported := false
-	for _, cap := range *caps {
-		if cap == model.CapabilityThinking {
-			thinkingSupported = true
-		}
-	}
-
-	if thinkingSupported {
-		return &api.ThinkValue{Value: true}, nil
-	}
-
-	return nil, nil
 }
 
 func renderToolCalls(toolCalls []api.ToolCall, plainText bool) string {

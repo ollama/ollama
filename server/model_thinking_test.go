@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/template"
@@ -196,6 +197,7 @@ func TestThinkingResolvedBeforeRenderAndParse(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("create: %s", w.Body.String())
 	}
+	defaultPrompts := make(map[string]string)
 	for _, requested := range []any{nil, true, false, "low", "medium", "xhigh", "high", "max", "minimal", "future"} {
 		for _, endpoint := range []string{"chat", "generate"} {
 			label, _ := json.Marshal(requested)
@@ -224,6 +226,11 @@ func TestThinkingResolvedBeforeRenderAndParse(t *testing.T) {
 					t.Fatalf("status %d: %s", w.Code, w.Body.String())
 				}
 				prompt := mock.CompletionRequest.Prompt
+				if requested == nil {
+					defaultPrompts[endpoint] = prompt
+				} else if requested == true && prompt != defaultPrompts[endpoint] {
+					t.Fatalf("omitted thinking prompt %q differs from explicit true %q", defaultPrompts[endpoint], prompt)
+				}
 				if strings.Contains(prompt, "Reasoning effort is set to xhigh") != (requested == "xhigh") {
 					t.Fatalf("xhigh mismatch for %#v: %s", requested, prompt)
 				}
@@ -398,5 +405,156 @@ func TestThinkingHarmonyDiscoveryPreservesInference(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLegacyThinkingOmissionMatchesTrue(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name, goTemplate, chatTemplate, env, parser string
+		native                                      bool
+	}{
+		{"Go template", `{{ if .Think }}on{{ else }}off{{ end }}:{{ if .IsThinkSet }}set{{ else }}unset{{ end }}{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}`, "", "1", "", false},
+		{"Jinja template", "", "<think></think>{{ messages[0]['content'] }}", "0", "", true},
+		{"parser only", `{{ if .Think }}on{{ else }}off{{ end }}:{{ if .IsThinkSet }}set{{ else }}unset{{ end }}{{ .Prompt }}`, "", "1", "qwen3.5", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			t.Setenv("OLLAMA_GO_TEMPLATE", tt.env)
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+			mock := mockRunner{Template: "native template"}
+			s := newServerWithMockRunner(t, &mock)
+			kv := gguftest.KV{}
+			if tt.chatTemplate != "" {
+				kv["tokenizer.chat_template"] = tt.chatTemplate
+			}
+			createMinimalGGUFModel(t, s, "legacy-thinking", kv, tt.goTemplate, nil)
+			modelName := "legacy-thinking"
+			if tt.parser != "" {
+				modelName = "legacy-parser"
+				w := createRequest(t, s.CreateHandler, api.CreateRequest{Model: modelName, From: "legacy-thinking", Parser: tt.parser, Stream: &stream})
+				if w.Code != http.StatusOK {
+					t.Fatalf("create parser model: %d %s", w.Code, w.Body.String())
+				}
+			}
+			m, err := GetModelForRunner(modelName, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := m.CheckCapabilities(model.CapabilityThinking); err != nil {
+				t.Fatalf("thinking capability: %v", err)
+			}
+			if got := m.genericThinking(); got != nil {
+				t.Fatalf("legacy model got generic descriptor: %#v", got)
+			}
+			for _, endpoint := range []string{"chat", "generate"} {
+				t.Run(endpoint, func(t *testing.T) {
+					var omitted string
+					for _, tc := range []struct {
+						name  string
+						think *api.ThinkValue
+					}{
+						{"omitted", nil},
+						{"explicit true", &api.ThinkValue{Value: true}},
+					} {
+						t.Run(tc.name, func(t *testing.T) {
+							mock.ChatRequest = llm.ChatRequest{}
+							var w *httptest.ResponseRecorder
+							if endpoint == "chat" {
+								w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: modelName, Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: tc.think, DebugRenderOnly: true})
+							} else {
+								w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: modelName, Prompt: "hello", Think: tc.think, DebugRenderOnly: true})
+							}
+							if w.Code != http.StatusOK {
+								t.Fatalf("status %d: %s", w.Code, w.Body.String())
+							}
+							var response struct {
+								DebugInfo *api.DebugInfo `json:"_debug_info"`
+							}
+							if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+								t.Fatal(err)
+							}
+							if response.DebugInfo == nil {
+								t.Fatalf("missing debug info: %s", w.Body.String())
+							}
+							prompt := response.DebugInfo.RenderedTemplate
+							if tt.native {
+								if got := mock.ChatRequest.Think; got == nil || got.Value != true {
+									t.Fatalf("native think = %#v, want true", got)
+								}
+							} else if !strings.Contains(prompt, "on:set") {
+								t.Fatalf("template lost explicit thinking: %q", prompt)
+							}
+							if tc.think == nil {
+								omitted = prompt
+							} else if prompt != omitted {
+								t.Fatalf("omitted prompt %q differs from explicit true %q", omitted, prompt)
+							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestModelThinkingDefaultFromMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	mock := mockRunner{CompletionResponse: llm.CompletionResponse{Content: "answer", Done: true, DoneReason: llm.DoneReasonStop}}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "thinking-off", From: "thinking-base", Renderer: "qwen3.5", Parser: "qwen3.5",
+		Info: map[string]any{"thinking_default": false}, Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	show, err := GetModelInfo(api.ShowRequest{Model: "thinking-off"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(show.Thinking, &model.Thinking{Values: []any{false, true}, Default: false}) {
+		t.Fatalf("thinking descriptor = %#v", show.Thinking)
+	}
+	for _, endpoint := range []string{"chat", "generate"} {
+		for _, tc := range []struct {
+			name  string
+			think *api.ThinkValue
+			off   bool
+		}{
+			{"omitted", nil, true},
+			{"explicit on", &api.ThinkValue{Value: true}, false},
+		} {
+			t.Run(endpoint+"/"+tc.name, func(t *testing.T) {
+				if endpoint == "chat" {
+					w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "thinking-off", Messages: []api.Message{{Role: "user", Content: "hello"}}, Think: tc.think, Stream: &stream})
+				} else {
+					w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "thinking-off", Prompt: "hello", Think: tc.think, Stream: &stream})
+				}
+				if w.Code != http.StatusOK {
+					t.Fatalf("status %d: %s", w.Code, w.Body.String())
+				}
+				if got := strings.HasSuffix(mock.CompletionRequest.Prompt, "<think>\n\n</think>\n\n"); got != tc.off {
+					t.Fatalf("unexpected thinking prefill in %q", mock.CompletionRequest.Prompt)
+				}
+			})
+		}
+	}
+}
+
+func TestCreateRejectsNonBooleanThinkingDefault(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	s := &Server{}
+	createMinimalGGUFModel(t, s, "thinking-base", nil, "{{ .Prompt }}", nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "thinking-invalid", From: "thinking-base", Renderer: "qwen3.5",
+		Info: map[string]any{"thinking_default": "false"}, Stream: &stream,
+	})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "thinking_default") {
+		t.Fatalf("invalid metadata status %d: %s", w.Code, w.Body.String())
 	}
 }

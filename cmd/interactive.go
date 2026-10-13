@@ -133,7 +133,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
-	var thinkExplicitlySet bool = opts.Think != nil
 	// Decision models retain the first message and answer questions about it.
 	var decisionState *api.Message
 
@@ -251,10 +250,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				// Decision models can't generate; the first answer loads the model.
 				continue
 			}
-			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
-			if err != nil {
-				return err
-			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
@@ -339,7 +334,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						thinkValue.Value = maybeLevel
 					}
 					opts.Think = &thinkValue
-					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}
@@ -350,7 +344,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 				case "nothink":
 					opts.Think = &api.ThinkValue{Value: false}
-					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model, opts.Runner)
 					}

@@ -588,6 +588,13 @@ func applyCreateInfo(config *model.ConfigV2, info map[string]any) error {
 	if err := setIntFromInfo("embedding_length", &config.EmbedLen); err != nil {
 		return err
 	}
+	if value, ok := info["thinking_default"]; ok {
+		defaultOn, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("info field %q must be a boolean", "thinking_default")
+		}
+		config.ThinkingDefault = &defaultOn
+	}
 	return nil
 }
 

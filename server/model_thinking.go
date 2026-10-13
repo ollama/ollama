@@ -84,6 +84,9 @@ func (m *Model) Thinking() *model.Thinking {
 		if name == "qwen3.8" {
 			thinking.Default = "medium"
 		}
+		if m.Config.ThinkingDefault != nil && thinking.Supports(*m.Config.ThinkingDefault) {
+			thinking.Default = *m.Config.ThinkingDefault
+		}
 		return thinking
 	}
 	if shouldUseGoTemplate(m) {

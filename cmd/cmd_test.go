@@ -27,9 +27,13 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func TestRunThinkingNamesReachServer(t *testing.T) {
-	for _, value := range []string{"xhigh", "minimal", "future", "true", "false"} {
-		t.Run(value, func(t *testing.T) {
+func TestRunThinkingOptionReachServer(t *testing.T) {
+	for _, value := range []string{"", "xhigh", "minimal", "future", "true", "false"} {
+		name := value
+		if name == "" {
+			name = "omitted"
+		}
+		t.Run(name, func(t *testing.T) {
 			var got *api.ThinkValue
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -56,11 +60,19 @@ func TestRunThinkingNamesReachServer(t *testing.T) {
 			for _, name := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
 				cmd.Flags().Bool(name, false, "")
 			}
-			if err := cmd.Flags().Set("think", value); err != nil {
-				t.Fatal(err)
+			if value != "" {
+				if err := cmd.Flags().Set("think", value); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := RunHandler(cmd, []string{"thinking-test", "hi"}); err != nil {
 				t.Fatal(err)
+			}
+			if value == "" {
+				if got != nil {
+					t.Fatalf("omitted --think sent %#v", got)
+				}
+				return
 			}
 			var want any = value
 			if value == "true" {

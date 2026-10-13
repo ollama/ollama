@@ -536,6 +536,14 @@ components:
         parameters:
           type: object
           description: Key-value parameters for the model
+        info:
+          type: object
+          description: Additional model metadata
+          properties:
+            thinking_default:
+              type: boolean
+              description: Default thinking mode when a request omits think, if the renderer supports boolean thinking
+          additionalProperties: true
         messages:
           description: Message history to use for the model
           type: array
