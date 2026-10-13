@@ -9,6 +9,7 @@ import (
 
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 // Strands Decider's pointer head reads each question independently. Its prompt
@@ -120,57 +121,10 @@ func strandsField(name string, q Question) (compiledField, error) {
 	return f, nil
 }
 
-const maxStrandsContentDepth = 64
-
-// Match json.dumps(indent=2, ensure_ascii=False, sort_keys=False), preserving
-// object order and Python's number formatting as well as literal Unicode.
 func strandsContent(raw json.RawMessage) (string, error) {
-	if _, err := content(raw); err != nil {
-		return "", err
+	if raw = bytes.TrimSpace(raw); len(raw) > 0 && (raw[0] == '{' || raw[0] == '[') {
+		return renderers.PythonJSON(raw, 2)
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var render func(int) (string, error)
-	render = func(depth int) (string, error) {
-		// Bound both recursion and indentation expansion of nested request data.
-		if depth > maxStrandsContentDepth {
-			return "", fmt.Errorf("content nesting exceeds %d levels", maxStrandsContentDepth)
-		}
-		token, err := dec.Token()
-		if err != nil {
-			return "", err
-		}
-		if delim, ok := token.(json.Delim); ok {
-			var parts []string
-			for dec.More() {
-				prefix := strings.Repeat("  ", depth+1)
-				if delim == '{' {
-					key, err := dec.Token()
-					if err != nil {
-						return "", err
-					}
-					quoted, _ := clefJSON(key)
-					prefix += quoted + ": "
-				}
-				value, err := render(depth + 1)
-				if err != nil {
-					return "", err
-				}
-				parts = append(parts, prefix+value)
-			}
-			end, err := dec.Token()
-			if err != nil {
-				return "", err
-			}
-			if len(parts) == 0 {
-				return fmt.Sprint(delim.String(), end), nil
-			}
-			return delim.String() + "\n" + strings.Join(parts, ",\n") + "\n" + strings.Repeat("  ", depth) + fmt.Sprint(end), nil
-		}
-		if depth == 0 {
-			return strings.TrimSpace(token.(string)), nil
-		}
-		return clefJSON(token)
-	}
-	return render(0)
+	text, err := content(raw)
+	return strings.TrimSpace(text), err
 }

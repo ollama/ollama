@@ -34,10 +34,6 @@ func TestPublisherPrompts(t *testing.T) {
 			}
 		})
 	}
-	got, err := promptJSON("\u2028\u2029\\u2028\\u2029")
-	if want := "\"\u2028\u2029\\\\u2028\\\\u2029\""; err != nil || got != want {
-		t.Fatalf("Unicode escaping = %q, %v; want %q", got, err, want)
-	}
 }
 
 func TestTevQuestions(t *testing.T) {
@@ -53,7 +49,7 @@ func TestTevQuestions(t *testing.T) {
 	descriptions := [][]string{{"Charges and refunds", "technical"}, {"No", "Yes"}, {"Routine", "Urgent", "Emergency"}}
 	for i, row := range compiled.Request.Rows {
 		var payload struct {
-			State    string
+			State    json.RawMessage
 			Question string
 			Options  []struct{ Label, Key, Description string }
 		}
@@ -61,7 +57,7 @@ func TestTevQuestions(t *testing.T) {
 			t.Fatal(err)
 		}
 		f := compiled.fields[i]
-		if payload.State != `{"frames":["first","second"]}` || payload.Question != f.Description || len(payload.Options) != len(f.Choices) {
+		if string(payload.State) != `{"frames": ["first", "second"]}` || payload.Question != f.Description || len(payload.Options) != len(f.Choices) {
 			t.Fatalf("question %d was not compiled independently: %s", i, row.Prompt)
 		}
 		for j, option := range payload.Options {

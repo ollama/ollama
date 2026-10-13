@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 type compiledField struct {
@@ -105,7 +106,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	prompts, err := decisionPrompts(context, c.fields, encoding)
+	prompts, err := decisionPrompts(req.State, context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +147,7 @@ func content(raw json.RawMessage) (string, error) {
 		err := json.Unmarshal(raw, &s)
 		return s, err
 	case '{', '[':
-		var b bytes.Buffer
-		err := json.Compact(&b, raw)
-		return b.String(), err
+		return renderers.PythonJSON(raw, 0)
 	default:
 		return "", fmt.Errorf("must be a string, object, or array")
 	}
