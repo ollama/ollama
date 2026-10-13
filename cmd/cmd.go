@@ -85,14 +85,6 @@ func init() {
 		return userName, err
 	}
 
-	launch.DefaultUpgrade = func(modelName, requiredPlan string) (string, error) {
-		plan, err := tui.RunUpgrade(modelName, requiredPlan)
-		if errors.Is(err, tui.ErrCancelled) {
-			return "", launch.ErrCancelled
-		}
-		return plan, err
-	}
-
 	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
 
 	launch.DefaultSpinner = tui.RunSpinner
