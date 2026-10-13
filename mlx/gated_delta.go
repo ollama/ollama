@@ -172,7 +172,7 @@ type gatedDeltaRecurrenceDims struct {
 // resolveGatedDeltaRecurrenceDims validates the inputs against the GPU
 // kernels' contract and recovers the launch geometry. ok=false routes to
 // the graph implementation: shapes that disagree, Dk not a multiple of the
-// 32-lane simd width, or mixed input dtypes.
+// 32-lane simd width, or unsupported input dtypes.
 func resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state *Array) (gatedDeltaRecurrenceDims, bool) {
 	var dims gatedDeltaRecurrenceDims
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
@@ -202,7 +202,8 @@ func resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state *Array) (gatedDelta
 	if sd[0] != dims.B || sd[1] != dims.Hv || sd[2] != dims.Dv || sd[3] != dims.Dk {
 		return dims, false
 	}
-	if k.DType() != q.DType() || v.DType() != q.DType() || g.DType() != q.DType() || beta.DType() != q.DType() {
+	if k.DType() != q.DType() || v.DType() != q.DType() || beta.DType() != q.DType() ||
+		(g.DType() != q.DType() && g.DType() != DTypeFloat32) {
 		return dims, false
 	}
 	return dims, true
@@ -298,7 +299,8 @@ func gatedDeltaRecurrenceGraph(q, k, v, g, beta, state *Array) (y, nextState *Ar
 // directly.
 func gatedDeltaRecurrence(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	if dims, ok := resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state); ok {
-		if supportsFastGatedDeltaUpdate(dims) {
+		// MLX's fast update casts the decay gate to the query dtype.
+		if supportsFastGatedDeltaUpdate(dims) && g.DType() == q.DType() {
 			return fastGatedDeltaUpdate(q, k, v, g, beta, state, nil)
 		}
 		outs := gatedDeltaRecurrenceKernel.run(gpuLaunch{
@@ -400,12 +402,13 @@ func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll bool) (y
 	alpha := SliceStartStop(ba, []int32{0, 0, Hv}, []int32{B, T, 2 * Hv})
 	decay := Softplus(Add(alpha, dtBias))
 	decay = Mul(decay, aExp)
-	decay = Exp(MulScalar(decay, -1)).AsType(alpha.DType())
+	decay = Exp(MulScalar(decay, -1))
 	betaGate := Sigmoid(beta)
 
 	if !captureAll || T == 1 {
 		y, nextState = gatedDeltaRecurrence(q, k, v, decay, betaGate, state)
-		return y, nextState, nil
+		// The recurrent state uses the FP32 gate, but the projection consumes BF16 output.
+		return y.AsType(packed.DType()), nextState, nil
 	}
 
 	sliceT := func(a *Array, t int32) *Array {
@@ -425,7 +428,7 @@ func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll bool) (y
 			interior = append(interior, state)
 		}
 	}
-	return Concatenate(outs, 1), state, interior
+	return Concatenate(outs, 1).AsType(packed.DType()), state, interior
 }
 
 // The fused scan consumes the activated causal-conv output rows [q | k | v]
@@ -447,7 +450,7 @@ auto value_tile = threadgroup_position_in_grid.y;
 
 threadgroup InT q_cache[Dk];
 threadgroup InT k_cache[Dk];
-threadgroup InT decay_cache[1];
+threadgroup float decay_cache[1];
 threadgroup InT beta_cache[1];
 
 float state[ValuesPerSIMD][StatePerLane];
@@ -497,7 +500,7 @@ for (int t = 0; t < SeqT; ++t) {
       InT gate_input = static_cast<InT>(ba[ba_row + Hv + hv_idx] + dt_bias[hv_idx]);
       InT softplus = gdn_logaddexp(gate_input, static_cast<InT>(0));
       float decay = metal::precise::exp(-static_cast<float>(softplus) * a_exp[hv_idx]);
-      decay_cache[0] = static_cast<InT>(decay);
+      decay_cache[0] = decay;
       beta_cache[0] = gdn_sigmoid(ba[ba_row + hv_idx]);
     }
   }

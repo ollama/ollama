@@ -53,6 +53,9 @@ type PreparedItem struct {
 type PreparedRequest struct {
 	Tokens []int32
 	Items  []PreparedItem
+	// ScorePrefix is an optional token boundary shared by independent scoring
+	// rows. The scorer asks the runner to retain its cache state there.
+	ScorePrefix int
 
 	// Layout is an opaque request-scoped value computed in the one pass
 	// that sees every splice position; immutable, carried unread by the

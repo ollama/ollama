@@ -56,14 +56,20 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
 	logits := [][]float32{{0, 2}}
+	outputTokens := 2
 	if len(input.Rows) > 0 {
 		logits = make([][]float32, len(input.Rows))
 		for i, row := range input.Rows {
-			logits[i] = make([]float32, len(row.Candidates))
-			logits[i][len(row.Candidates)-1] = 2
+			options := len(row.Candidates)
+			if options == 0 && row.Question != nil {
+				options = len(row.Question.Options)
+				outputTokens = 0
+			}
+			logits[i] = make([]float32, options)
+			logits[i][options-1] = 2
 		}
 	}
-	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: 2}, r.err
+	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: outputTokens}, r.err
 }
 
 func TestDecisionModelRejectsCompletion(t *testing.T) {
@@ -119,6 +125,9 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision", "vision"}
 	createSafetensorsTestModel(t, "safetensors-clef", config, []manifest.Layer{params})
+	config.Renderer = "kev"
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-kev", config, []manifest.Layer{params})
 	config.Renderer = "qwen3.5"
 	config.Capabilities = []string{"completion"}
 	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
@@ -219,6 +228,9 @@ func TestSystemOneHandler(t *testing.T) {
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
 		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"oversized missing model retains text limit", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 413, 0, false},
+		{"Kev above default text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Kev above extended text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
 		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
 		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 	}
@@ -315,7 +327,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 || runner.native {
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Config.Renderer == "kev" {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
@@ -348,6 +360,10 @@ func TestSystemOneHandler(t *testing.T) {
 				} else if ref.model.HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
+					}
+				} else if ref.model.Config.Renderer == "kev" {
+					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
+						t.Fatalf("Kev scorer received a rendered prompt or lost the state/question")
 					}
 				} else {
 					wantPrefix := "<|im_start|>user\n"

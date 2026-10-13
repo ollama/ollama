@@ -350,6 +350,7 @@ func (l tensorPathLayout) modelPath(suffix string) string {
 func resolveTensorPathLayout(tensors map[string]*mlx.Array) tensorPathLayout {
 	for _, layout := range []tensorPathLayout{
 		{containerPrefix: "", modelPrefix: "model."},
+		{containerPrefix: "", modelPrefix: ""},
 		{containerPrefix: "language_model.", modelPrefix: "model."},
 		{containerPrefix: "language_model.", modelPrefix: ""},
 		{containerPrefix: "model.language_model.", modelPrefix: "model."},

@@ -94,6 +94,26 @@ func TestGatedDeltaRecurrenceUsesFastUpdate(t *testing.T) {
 	})
 }
 
+// The decay gate is FP32 even when the projection and output are BF16.
+// Rounding it to BF16 compounds across the recurrent state.
+func TestGatedDeltaDecayPrecision(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		for _, tokens := range []int{1, gatedDeltaMaxTokens + 1} {
+			packed := Zeros(DTypeBFloat16, 1, tokens, 80)
+			ba := Zeros(DTypeBFloat16, 1, tokens, 2)
+			dtBias := Zeros(DTypeBFloat16, 1)
+			aExp := FromValues([]float32{0.00434}, 1)
+			state := AddScalar(Zeros(DTypeFloat32, 1, 1, 16, 32), 1)
+			_, got, _ := GatedDelta(packed, ba, dtBias, aExp, state, nil, false)
+			Eval(got)
+			want := float32(math.Pow(math.Exp(-math.Ln2*0.00434), float64(tokens)))
+			if delta := float32(math.Abs(float64(got.Floats()[0] - want))); delta > 0.0002 {
+				t.Errorf("T=%d: state = %g, want %g (delta %g)", tokens, got.Floats()[0], want, delta)
+			}
+		}
+	})
+}
+
 func TestGatedDeltaGraphRouting(t *testing.T) {
 	withMLXThread(t, func(t *mlxthreadtest.T) {
 		testGatedDeltaGraphRouting(t)

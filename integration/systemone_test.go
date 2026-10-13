@@ -21,7 +21,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func postSystemOne(ctx context.Context, endpoint string, input decision.Request) ([]byte, int, error) {
+func postSystemOne(ctx context.Context, endpoint string, input any) ([]byte, int, error) {
 	body, err := json.Marshal(input)
 	if err != nil {
 		return nil, 0, err
@@ -55,6 +55,7 @@ func runAPISystemOne(t *testing.T, modelName string) {
 	if !slices.Contains(info.Capabilities, model.CapabilityDecision) {
 		t.Fatalf("model %q does not declare the decision capability", modelName)
 	}
+	isKev := info.Details.Family == "kev"
 
 	var input decision.Request
 	if err := json.Unmarshal([]byte(`{
@@ -126,7 +127,13 @@ func runAPISystemOne(t *testing.T, modelName string) {
 				}
 				sum += p
 			}
-			if math.Abs(sum-1) > 1e-6 || !(answer.confidence >= 0 && answer.confidence <= 1) {
+			// Kev publishes four-decimal probabilities. Each rounded option can
+			// contribute half a unit in the last reported decimal place.
+			tolerance := 1e-6
+			if isKev {
+				tolerance += float64(len(answer.keys)) * 0.5e-4
+			}
+			if math.Abs(sum-1) > tolerance || !(answer.confidence >= 0 && answer.confidence <= 1) {
 				t.Fatalf("%s: probability sum=%v or missing/invalid confidence: %s", answer.name, sum, body)
 			}
 		}
@@ -197,8 +204,15 @@ func runAPISystemOne(t *testing.T, modelName string) {
 	})
 
 	t.Run("invalid_state", func(t *testing.T) {
-		invalid := input
-		invalid.State = json.RawMessage(`""`)
+		var invalid any
+		if isKev {
+			// Kev accepts empty and null state; absence is invalid.
+			invalid = map[string]any{"model": modelName, "questions": input.Questions}
+		} else {
+			req := input
+			req.State = json.RawMessage(`""`)
+			invalid = req
+		}
 		body, status, err := postSystemOne(ctx, endpoint, invalid)
 		if err != nil {
 			t.Fatal(err)
