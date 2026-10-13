@@ -61,6 +61,10 @@ func (p *Qwen35Parser) PreservedTokens() []string {
 	}
 }
 
+func (p *Qwen35Parser) ToolCallStarts() []string {
+	return []string{qwen35ToolCallOpenTag}
+}
+
 func (p *Qwen35Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.buffer.Reset()
 	p.toolParser = Qwen3CoderParser{}
