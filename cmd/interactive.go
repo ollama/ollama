@@ -118,7 +118,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	scanner, err := readline.New(readline.Prompt{
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
-		Placeholder:    "Send a message (/? for help)",
 		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
@@ -135,8 +134,20 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	var sb strings.Builder
 	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
+	// Decision models retain the first message and answer questions about it.
+	var decisionState *api.Message
 
 	for {
+		switch {
+		case !opts.Decision:
+			scanner.Prompt.Placeholder = "Send a message (/? for help)"
+		case opts.Questions.Len() > 0:
+			scanner.Prompt.Placeholder = "Enter text to evaluate (/? for help)"
+		case decisionState != nil:
+			scanner.Prompt.Placeholder = "Ask yes/no questions about the text, one per line (/? for help)"
+		default:
+			scanner.Prompt.Placeholder = "Enter text to evaluate, then ask yes/no questions (/? for help)"
+		}
 		line, err := scanner.Readline()
 		switch {
 		case errors.Is(err, io.EOF):
@@ -234,6 +245,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 			applyShowResponseToRunOptions(&opts, info)
+			opts.Decision = slices.Contains(info.Capabilities, model.CapabilityDecision)
+			decisionState = nil
+			if opts.Decision {
+				// Decision models can't generate; the first answer loads the model.
+				continue
+			}
 			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
 			if err != nil {
 				return err
@@ -277,6 +294,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
+			decisionState = nil
 			opts.Messages = []api.Message{}
 			if opts.System != "" {
 				newMessage := api.Message{Role: "system", Content: opts.System}
@@ -513,18 +531,46 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		}
 
 		if sb.Len() > 0 && multiline == MultilineNone {
-			newMessage := api.Message{Role: "user", Content: sb.String()}
-
-			if opts.MultiModal {
-				msg, images, err := extractFileData(sb.String())
-				if err != nil {
-					return err
+			input := sb.String()
+			sb.Reset()
+			if opts.Decision && decisionState != nil {
+				// Each line is a question, so pasting several asks them together.
+				var questions []string
+				for _, line := range strings.Split(input, "\n") {
+					if line = strings.TrimSpace(line); line != "" {
+						questions = append(questions, line)
+					}
 				}
-
-				newMessage.Content = msg
-				newMessage.Images = images
+				if len(questions) > 0 {
+					if err := decide(cmd, opts, *decisionState, yesNoQuestions(questions...)); err != nil {
+						fmt.Printf("error: %v\n", err)
+					}
+				}
+				continue
 			}
 
+			newMessage := api.Message{Role: "user", Content: input}
+
+			if opts.MultiModal {
+				if newMessage.Content, newMessage.Images, err = extractFileData(input); err != nil {
+					return err
+				}
+			}
+
+			if opts.Decision {
+				newMessage.Content = strings.TrimSpace(newMessage.Content)
+				switch {
+				case newMessage.Content == "" && len(newMessage.Images) == 0:
+				case opts.Questions.Len() > 0:
+					// With --ask, every message is a state to answer the questions about.
+					if err := decide(cmd, opts, newMessage, opts.Questions); err != nil {
+						fmt.Printf("error: %v\n", err)
+					}
+				default:
+					decisionState = &newMessage
+				}
+				continue
+			}
 			opts.Messages = append(opts.Messages, newMessage)
 
 			assistant, err := chat(cmd, opts)
@@ -532,7 +578,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				if strings.Contains(err.Error(), "does not support thinking") ||
 					strings.Contains(err.Error(), "invalid think value") {
 					fmt.Printf("error: %v\n", err)
-					sb.Reset()
 					continue
 				}
 				return err
@@ -540,8 +585,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if assistant != nil {
 				opts.Messages = append(opts.Messages, *assistant)
 			}
-
-			sb.Reset()
 		}
 	}
 }
