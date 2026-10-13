@@ -3,7 +3,7 @@ package create
 import "testing"
 
 func TestQwen35DecisionQuantizationPolicy(t *testing.T) {
-	for _, arch := range []string{"ClefForDecision", "StrandsDeciderForDecision"} {
+	for _, arch := range []string{"ClefForDecision", "StrandsDeciderForDecision", "KevForDecision"} {
 		inv := Inventory{Config: sourceModelConfig{Architectures: []string{arch}}}
 		policy, err := newTensorImportTransform(inv)
 		if err != nil {
@@ -20,6 +20,8 @@ func TestQwen35DecisionQuantizationPolicy(t *testing.T) {
 			{"lm_head.weight", ""},
 			{"model.language_model.layers.0.linear_attn.in_proj_a.weight", ""},
 			{"model.language_model.layers.0.mlp.gate_proj.weight", "mxfp8"},
+			{"layers.0.linear_attn.in_proj_a.weight", ""},
+			{"layers.0.mlp.gate_proj.weight", "mxfp8"},
 		} {
 			t.Run(arch+"/"+tc.name, func(t *testing.T) {
 				if got := policy.quantizationType(tc.name, []int32{1024, 1024}, "mxfp8"); got != tc.want {

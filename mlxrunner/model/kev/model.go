@@ -49,6 +49,7 @@ func newModel(root *model.Root) (model.Model, error) {
 		return nil, err
 	}
 	m := &Model{Model: backbone.(*qwen3_5.Model), config: cfg}
+	m.Config.PreciseGatedDeltaDecay = true
 	if m.Config.ModelType != "qwen3_5" && m.Config.ModelType != "qwen3_5_text" {
 		return nil, fmt.Errorf("unsupported Kev backbone %q", m.Config.ModelType)
 	}

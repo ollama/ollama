@@ -80,10 +80,11 @@ type Config struct {
 	MropeSection []int32 `json:"-"`
 
 	// Quantization metadata.
-	QuantGroupSize int                               `json:"-"`
-	QuantBits      int                               `json:"-"`
-	QuantMode      string                            `json:"-"`
-	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
+	QuantGroupSize         int                               `json:"-"`
+	QuantBits              int                               `json:"-"`
+	QuantMode              string                            `json:"-"`
+	TensorQuant            map[string]*model.TensorQuantInfo `json:"-"`
+	PreciseGatedDeltaDecay bool                              `json:"-"`
 
 	// Computed fields.
 	Scale   float32 `json:"-"`
@@ -1168,6 +1169,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	var rc *cache.RecurrentCache
 	opts := make([]nn.RecurrentOption, 0, 3)
 	opts = append(opts, nn.WithConvSiLU())
+	if cfg.PreciseGatedDeltaDecay {
+		opts = append(opts, nn.WithPreciseGatedDeltaDecay())
+	}
 	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))

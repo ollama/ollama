@@ -228,7 +228,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
 		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
-		{"oversized missing model retains text limit", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 413, 0, false},
+		{"oversized missing model returns not found", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 404, 0, false},
 		{"Kev above default text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Kev above extended text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
 		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},

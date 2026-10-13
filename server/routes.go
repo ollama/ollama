@@ -974,16 +974,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	textSize := len(bytes.TrimSpace(text.Bytes()))
-	overDefaultLimit := textSize > 64<<10
 	rejectText := func(limit int) {
 		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("text and schema must not exceed %d KiB", limit>>10)})
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
-		if overDefaultLimit {
-			rejectText(64 << 10)
-			return
-		}
 		if errors.Is(err, errModelRequired) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -992,19 +987,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		if overDefaultLimit {
-			rejectText(64 << 10)
-			return
-		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
 	m, err := s.getExistingModelForRunner(ref.Name.String(), "")
 	if err != nil {
-		if overDefaultLimit {
-			rejectText(64 << 10)
-			return
-		}
 		if errors.Is(err, os.ErrNotExist) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 			return

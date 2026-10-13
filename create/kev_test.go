@@ -58,7 +58,10 @@ func TestKevPipelineFileType(t *testing.T) {
 }
 
 func TestKevQuantizationPreservesSensitiveTensors(t *testing.T) {
-	policy := kevImportTransform{}
+	policy, err := newTensorImportTransform(Inventory{Config: sourceModelConfig{Architectures: []string{"KevForDecision"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	modes := [...]string{"mxfp8", "nvfp4"}
 	for _, tc := range []struct {
 		name string

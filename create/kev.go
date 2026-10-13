@@ -1,12 +1,9 @@
 package create
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 )
-
-type kevImportTransform struct{}
 
 func kevFileType(inv Inventory) (string, error) {
 	// The pointer head is FP32; the text embedding records the backbone dtype.
@@ -30,17 +27,4 @@ func kevFileType(inv Inventory) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported Kev text embedding dtype %q in %s", dtype, embedding)
 	}
-}
-
-func newKevImportTransform(_ json.RawMessage) (quantizePolicy, error) {
-	return kevImportTransform{}, nil
-}
-
-func (kevImportTransform) quantizationType(name string, shape []int32, requested string) string {
-	// Current adapter checkpoints use model.*; the full-weight 27B text
-	// checkpoint has top-level layers.*. Keep the FP32 pointer head intact.
-	if !strings.HasPrefix(name, "model.") && !strings.HasPrefix(name, "layers.") {
-		return ""
-	}
-	return qwen35ImportTransform{}.quantizationType(name, shape, requested)
 }

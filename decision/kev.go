@@ -34,41 +34,40 @@ func encodeKev(req Request, c *Compiled) error {
 	}
 	c.Request.State = state
 	for name, question := range req.Questions.All() {
-		field, options, err := kevField(name, question)
+		field, err := kevField(name, question)
 		if err != nil {
 			return fmt.Errorf("question %q: %w", name, err)
 		}
 		c.fields = append(c.fields, field)
 		c.Request.Rows = append(c.Request.Rows, llm.ScoreRow{Question: &llm.ScoreQuestion{
-			Type: question.Type, Instructions: field.Description, Options: options,
+			Type: question.Type, Instructions: field.Description, Options: field.options,
 		}})
 	}
 	return nil
 }
 
-func kevField(name string, question Question) (compiledField, []string, error) {
+func kevField(name string, question Question) (compiledField, error) {
 	field := compiledField{Field: Field{Name: name}, typ: question.Type}
 	if strings.TrimSpace(name) == "" {
-		return field, nil, fmt.Errorf("field name must not be empty")
+		return field, fmt.Errorf("field name must not be empty")
 	}
 	if len(question.Instructions) != 0 {
 		var err error
 		field.Description, err = kevContent(question.Instructions)
 		if err != nil {
-			return field, nil, fmt.Errorf("instructions: %w", err)
+			return field, fmt.Errorf("instructions: %w", err)
 		}
 	}
-	var options []string
 	add := func(value any, description, option string) {
 		field.Choices = append(field.Choices, Choice{Value: value, Description: description})
-		options = append(options, option)
+		field.options = append(field.options, option)
 	}
 	switch question.Type {
 	case "noul":
 		criteria := orderedmap.New[string, json.RawMessage]()
 		if len(question.Criteria) > 0 && string(question.Criteria) != "null" {
 			if err := json.Unmarshal(question.Criteria, criteria); err != nil {
-				return field, nil, fmt.Errorf("noul criteria must be an object")
+				return field, fmt.Errorf("noul criteria must be an object")
 			}
 		}
 		for _, item := range []struct {
@@ -81,7 +80,7 @@ func kevField(name string, question Question) (compiledField, []string, error) {
 				var err error
 				description, err = kevContent(raw)
 				if err != nil {
-					return field, nil, err
+					return field, err
 				}
 			}
 			option := item.label
@@ -92,21 +91,21 @@ func kevField(name string, question Question) (compiledField, []string, error) {
 		}
 		for key := range criteria.All() {
 			if key != "false" && key != "true" {
-				return field, nil, fmt.Errorf("unknown noul criterion %q", key)
+				return field, fmt.Errorf("unknown noul criterion %q", key)
 			}
 		}
 	case "choice":
 		criteria := orderedmap.New[string, json.RawMessage]()
 		if err := json.Unmarshal(question.Criteria, criteria); err != nil {
-			return field, nil, fmt.Errorf("choice criteria must be an object")
+			return field, fmt.Errorf("choice criteria must be an object")
 		}
 		for key, raw := range criteria.All() {
 			if strings.TrimSpace(key) == "" {
-				return field, nil, fmt.Errorf("choice keys must not be empty")
+				return field, fmt.Errorf("choice keys must not be empty")
 			}
 			description, err := kevContent(raw)
 			if err != nil {
-				return field, nil, err
+				return field, err
 			}
 			option := key
 			if description != "" {
@@ -117,22 +116,22 @@ func kevField(name string, question Question) (compiledField, []string, error) {
 	case "score":
 		var criteria []json.RawMessage
 		if err := json.Unmarshal(question.Criteria, &criteria); err != nil {
-			return field, nil, fmt.Errorf("score criteria must be an array")
+			return field, fmt.Errorf("score criteria must be an array")
 		}
 		for index, raw := range criteria {
 			text, err := kevContent(raw)
 			if err != nil {
-				return field, nil, err
+				return field, err
 			}
 			add(strconv.Itoa(index), text, text)
 		}
 	default:
-		return field, nil, fmt.Errorf("type must be choice, noul, or score")
+		return field, fmt.Errorf("type must be choice, noul, or score")
 	}
-	if len(options) < 1 || len(options) > 255 || (question.Type == "noul" && len(options) != 2) {
-		return field, nil, fmt.Errorf("criteria must contain 1–255 options")
+	if len(field.options) < 1 || len(field.options) > 255 || (question.Type == "noul" && len(field.options) != 2) {
+		return field, fmt.Errorf("criteria must contain 1–255 options")
 	}
-	return field, options, nil
+	return field, nil
 }
 
 // kevContent renders JSON values as the labels and indented lines seen during
