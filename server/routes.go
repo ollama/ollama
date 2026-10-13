@@ -532,6 +532,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	parserName := parserNameForModel(m)
 	var builtinParser parsers.Parser
 	if shouldUseHarmony(m) {
+		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
+		if req.Think != nil {
+			if s, ok := req.Think.Value.(string); ok && s == "max" {
+				req.Think.Value = "high"
+			}
+		}
 	}
 
 	if !req.Raw && parserName != "" {
@@ -612,7 +618,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		values.Think = req.Think != nil && req.Think.Bool()
 		values.ThinkLevel = ""
 		if req.Think != nil {
-			values.ThinkLevel = req.Think.Level()
+			values.ThinkLevel = req.Think.String()
 		}
 		values.IsThinkSet = req.Think != nil
 
@@ -2856,12 +2862,11 @@ func preservedTokensForCompletion(builtinParser parsers.Parser) []string {
 	return nil
 }
 
-// budgetThink picks the think value a budget is read from. The value a request
-// renders with is resolved against the model's stated thinking controls, which
-// replaces anything the model does not state with its default: a budget is
-// never one of those controls, and a default level is not something the caller
-// asked to spend. So the budget comes from what the caller sent, and the
-// resolved value only decides whether the model thinks at all.
+// budgetThink picks the think value that decides whether a budget applies at
+// all. The value a request renders with is resolved against the model's stated
+// thinking controls, which replaces anything the model does not state with its
+// default; only "off" matters here, and it is off when either the caller or the
+// resolution says so.
 func budgetThink(requested, resolved *api.ThinkValue) *api.ThinkValue {
 	if resolved != nil && !resolved.Bool() {
 		return resolved
@@ -2873,34 +2878,36 @@ func budgetThink(requested, resolved *api.ThinkValue) *api.ThinkValue {
 // thinking, together with the delimiters a runner needs to enforce that bound.
 // Models with a built-in parser report their own delimiters; the rest fall back
 // to the ones inferred from the Go template, which is what the generic thinking
-// parser splits on. A think value carrying its own budget wins over the model's
-// think_budget parameter. The budget is zero when thinking is unrestricted or
-// when there is no thinking block to close.
+// parser splits on. The budget is zero when thinking is unrestricted or when
+// there is no thinking block to close.
 //
-// The value that produced the budget is returned alongside it, because that is
-// what the response reports: a caller shown only a token count cannot tell a
-// level it sent from one the model carried.
-func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templateEnd string, think *api.ThinkValue, opts *api.Options) (budget int, applied *api.ThinkValue, start, end string) {
+// The bound comes from think_budget and from nowhere else: the request's
+// option when it sent one, the model's parameter otherwise (opts is the merge
+// of the two). The think value is the model's control -- on, off, or a level
+// handed to the model as written -- and never a bound. It is read here only to
+// see whether thinking is off.
+//
+// The budget is returned in the form it was written alongside the count,
+// because that is what the response reports.
+func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templateEnd string, think *api.ThinkValue, opts *api.Options) (budget int, applied *api.ThinkBudget, start, end string) {
 	if opts == nil {
 		return 0, nil, "", ""
 	}
 
 	// Thinking switched off is not "no preference": it is an answer, and the
 	// model's own think_budget parameter must not overrule it. Without this the
-	// fallback below armed the model's budget on a request that asked for no
-	// reasoning at all -- 25,600 tokens for a `max` parameter against a 32,000
-	// num_predict -- which leaves the runner watching for a thinking block it
-	// was told would not exist, and able to write the forced-close message into
-	// a response whose caller wants no reasoning in it.
+	// model's budget was armed on a request that asked for no reasoning at all
+	// -- 25,600 tokens for a `max` parameter against a 32,000 num_predict --
+	// which leaves the runner watching for a thinking block it was told would
+	// not exist, and able to write the forced-close message into a response
+	// whose caller wants no reasoning in it.
 	//
 	// Bool() is the predicate rather than a comparison against false, because
-	// thinking is switched off by more than one route and they do not agree on
-	// the value: `think: false` from the native API, `reasoning_effort: "none"`
-	// from the OpenAI-compatible one (thinkFromReasoningEffort turns it into the
-	// same bool), and `think: 0`, which Bool() already reads as off because a
-	// budget of no tokens is not a budget. A nil think is left alone -- that is
-	// a caller who said nothing, not one who said no, and a model with no
-	// thinking tags is already stopped by the check below.
+	// thinking is switched off by more than one route: `think: false` from the
+	// native API and `reasoning_effort: "none"` from the OpenAI-compatible one
+	// (thinkFromReasoningEffort turns it into the same bool). A nil think is
+	// left alone -- that is a caller who said nothing, not one who said no, and
+	// a model with no thinking tags is already stopped by the check below.
 	if think != nil && !think.Bool() {
 		return 0, nil, "", ""
 	}
@@ -2914,31 +2921,28 @@ func thinkBudgetForCompletion(builtinParser parsers.Parser, templateStart, templ
 	}
 
 	window := api.ThinkBudgetWindow(opts.NumCtx, opts.NumPredict)
-	budget, applied = think.BudgetTokens(window), think
-	if budget <= 0 {
-		budget, applied = opts.ThinkBudget.BudgetTokens(window), opts.ThinkBudget
-	}
+	budget = opts.ThinkBudget.Tokens(window)
 	if budget <= 0 {
 		return 0, nil, "", ""
 	}
-	return budget, applied, start, end
+	return budget, opts.ThinkBudget, start, end
 }
 
 // thinkBudgetForShow answers what a completion would be bounded by, without
 // running one: the budget that would apply, and the tokens it would resolve to,
-// against whichever think value and options the caller asked about.
+// against the options the caller asked about.
 //
-// Precedence is the completion path's, because an answer that disagreed with it
-// would be worse than no answer: a think value carrying its own budget wins
-// over the model's `think_budget` parameter. That parameter already reaches a
-// caller inside Parameters, but only as a line of text to parse, and a level
-// there says nothing about the tokens it stands for.
+// The budget is the `think_budget` in those options -- the model's parameter,
+// or the caller's own when it sent one with the request. That parameter already
+// reaches a caller inside Parameters, but only as a line of text to parse, and
+// a share there says nothing about the tokens it stands for. The think value
+// is asked about only to answer "off": a level bounds nothing.
 //
 // A model whose options set neither num_predict nor num_ctx has no window to
 // resolve against here — the runtime default supplies one only once a request
 // arrives — so the count is left at zero and omitted, and the responses report
 // the figure that actually applied.
-func thinkBudgetForShow(think *api.ThinkValue, options map[string]any) (*api.ThinkValue, int) {
+func thinkBudgetForShow(think *api.ThinkValue, options map[string]any) (*api.ThinkBudget, int) {
 	// The same answer the completion path gives, for the same reason: asked
 	// about a think value that switches thinking off, the model's own
 	// think_budget is not what would apply.
@@ -2946,38 +2950,30 @@ func thinkBudgetForShow(think *api.ThinkValue, options map[string]any) (*api.Thi
 		return nil, 0
 	}
 
-	numCtx, _ := optionAsInt(options["num_ctx"])
-	numPredict, _ := optionAsInt(options["num_predict"])
-	window := api.ThinkBudgetWindow(numCtx, numPredict)
-
-	if budget := think.BudgetTokens(window); budget > 0 {
-		return think, budget
-	}
-
 	raw, ok := options["think_budget"]
 	if !ok {
 		return nil, 0
 	}
 
-	fromModel := &api.ThinkValue{}
+	fromOptions := &api.ThinkBudget{}
 	switch v := raw.(type) {
 	case string:
-		fromModel.Value = v
-	case bool:
-		fromModel.Value = v
+		fromOptions.Value = v
 	default:
 		count, ok := optionAsInt(raw)
 		if !ok {
 			return nil, 0
 		}
-		fromModel.Value = count
+		fromOptions.Value = count
 	}
 
-	budget := fromModel.BudgetTokens(window)
+	numCtx, _ := optionAsInt(options["num_ctx"])
+	numPredict, _ := optionAsInt(options["num_predict"])
+	budget := fromOptions.Tokens(api.ThinkBudgetWindow(numCtx, numPredict))
 	if budget <= 0 {
 		return nil, 0
 	}
-	return fromModel, budget
+	return fromOptions, budget
 }
 
 // optionAsInt reads a numeric Modelfile parameter. Values arrive as whichever
@@ -3372,6 +3368,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	parserName := parserNameForModel(m)
 	if shouldUseHarmony(m) {
+		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
+		if req.Think != nil {
+			if s, ok := req.Think.Value.(string); ok && s == "max" {
+				req.Think.Value = "high"
+			}
+		}
 	}
 
 	if chatModeForModel(m) == chatExecutionModeNative {
