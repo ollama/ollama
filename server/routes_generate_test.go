@@ -2726,7 +2726,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected content %q, got %q", "Based on my analysis, the solution is straightforward.", got)
 		}
 	})
-	// A level names a different number on every request, because it is a share
+	// A share names a different number on every request, because it is a part
 	// of the room the response has. A client that only sees "medium" cannot
 	// work out which number applied, and a budget carried by the model's own
 	// think_budget parameter is one the client never sent at all.
@@ -2746,11 +2746,12 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model:    "test-thinking",
 			Messages: []api.Message{{Role: "user", Content: "Analyze this"}},
-			Think:    &api.ThinkValue{Value: "medium"},
+			Think:    &api.ThinkValue{Value: true},
 			Stream:   &streamRequest,
 			Options: map[string]any{
-				"num_ctx":     32768,
-				"num_predict": 8000,
+				"num_ctx":      32768,
+				"num_predict":  8000,
+				"think_budget": "medium",
 			},
 		})
 
@@ -2768,8 +2769,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		if resp.ThinkBudgetTokens != 2000 {
 			t.Errorf("expected think budget tokens 2000, got %d", resp.ThinkBudgetTokens)
 		}
-		// The level is reported in the form it was written, so a caller can
-		// tell a level it sent apart from one the model carried.
+		// The budget is reported in the form it was written.
 		if resp.ThinkBudget == nil || resp.ThinkBudget.Value != "medium" {
 			t.Errorf("expected think budget %q, got %#v", "medium", resp.ThinkBudget)
 		}
@@ -2777,7 +2777,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 
 	// A fixed count is already the resolved figure, so both fields carry the
 	// same number. That is the point: one name means one thing whether the
-	// budget was written as a level or as a count.
+	// budget was written as a share or as a count.
 	t.Run("reports a fixed budget as both the value and the count", func(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            " thinking </think> done.",
@@ -2794,9 +2794,9 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model:    "test-thinking",
 			Messages: []api.Message{{Role: "user", Content: "Analyze this"}},
-			Think:    &api.ThinkValue{Value: 4096},
+			Think:    &api.ThinkValue{Value: true},
 			Stream:   &streamRequest,
-			Options:  map[string]any{"num_ctx": 32768, "num_predict": 8000},
+			Options:  map[string]any{"num_ctx": 32768, "num_predict": 8000, "think_budget": 4096},
 		})
 
 		if w.Code != http.StatusOK {
