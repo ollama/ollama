@@ -11,9 +11,9 @@ import (
 // decodes it back into the same struct. A budget that cannot survive that trip
 // would fail the request rather than be ignored.
 func TestThinkBudgetSurvivesMLXOptionsRoundTrip(t *testing.T) {
-	for _, v := range []any{8192, "medium", "max", true, false} {
+	for _, v := range []any{8192, "medium", "max"} {
 		opts := api.Options{}
-		opts.ThinkBudget = &api.ThinkValue{Value: v}
+		opts.ThinkBudget = &api.ThinkBudget{Value: v}
 		opts.ThinkBudgetMessage = "\n\nwrap up now\n"
 		opts.NumCtx = 32768
 

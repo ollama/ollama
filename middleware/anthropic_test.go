@@ -230,9 +230,9 @@ func TestAnthropicMessagesMiddleware(t *testing.T) {
 				Messages: []api.Message{
 					{Role: "user", Content: "Hello"},
 				},
-				Options: map[string]any{"num_predict": 1024},
+				Options: map[string]any{"num_predict": 1024, "think_budget": 1000},
 				Stream:  &False,
-				Think:   &api.ThinkValue{Value: 1000},
+				Think:   &api.ThinkValue{Value: true},
 			},
 		},
 		{
