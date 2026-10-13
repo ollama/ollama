@@ -69,6 +69,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return err
 	}
+	if inv.Config.Architecture() == "KevForDecision" && class.Kind == SourceFloat && class.Quantize == "" {
+		modelConfig.FileType, err = kevFileType(inv)
+		if err != nil {
+			return err
+		}
+	}
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {
 		return fmt.Errorf("build quantization policy for %q: %w", inv.Config.Architecture(), err)

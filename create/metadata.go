@@ -105,7 +105,7 @@ func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate,
 		}
 		return capabilities
 	}
-	if cfg.Architecture() == "LayaForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" {
+	if cfg.Architecture() == "LayaForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" || cfg.Architecture() == "KevForDecision" {
 		return []string{"decision"}
 	}
 	capabilities := []string{"completion"}
@@ -218,7 +218,7 @@ func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 }
 
 func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate string) (string, error) {
-	if cfg.Architecture() == "ClefForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" {
+	if cfg.Architecture() == "ClefForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" || cfg.Architecture() == "KevForDecision" {
 		return "", nil
 	}
 	for _, id := range sourceConfigIdentifiers(cfg) {
@@ -269,6 +269,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case s == "kevfordecision":
+		return "kev", nil
 	case s == "strandsdeciderfordecision":
 		return "strands", nil
 	case s == "cleffordecision":
