@@ -162,7 +162,7 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 	}
 
 	if applyEmbeddingBatchDefault {
-		opts = llm.WithDefaultEmbeddingNumBatch(opts)
+		opts.NumBatch = llm.DefaultEmbeddingNumBatch
 	}
 
 	if model != nil && model.DraftPath == "" && !draftNumPredictSet {
