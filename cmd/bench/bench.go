@@ -45,6 +45,7 @@ type flagOptions struct {
 	apiKey       *string
 	decisionFile *string
 	decisionMode *string
+	decisionURL  *string
 	concurrency  *int
 }
 
@@ -1261,6 +1262,7 @@ func main() {
 		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
 		openaiURL:    flag.String("openai", "", "OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)"),
 		apiKey:       flag.String("api-key", "", "API key for OpenAI endpoint (default: OPENAI_API_KEY env)"),
+		decisionURL:  flag.String("decision-url", "", "External System One endpoint (server manages model loading)"),
 		decisionFile: flag.String("decision", "", "Decision JSONL corpus for /v1/systemone (instead of chat)"),
 		decisionMode: flag.String("decision-mode", "score", "Decision label policy: score reports accuracy; regression requires 100%"),
 		concurrency:  flag.Int("concurrency", 1, "Maximum in-flight requests (currently requires -decision; 1 = serial)"),
@@ -1288,7 +1290,7 @@ func main() {
 		})
 	} else {
 		flag.Visit(func(f *flag.Flag) {
-			if f.Name == "concurrency" || f.Name == "decision-mode" {
+			if f.Name == "concurrency" || f.Name == "decision-mode" || f.Name == "decision-url" {
 				fmt.Fprintf(os.Stderr, "ERROR: -%s requires -decision\n", f.Name)
 				os.Exit(1)
 			}

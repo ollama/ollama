@@ -105,10 +105,14 @@ class), or `{"min":1.5,"max":2}` (inclusive expected-score range). Optional
 fail either mode. Stderr summaries report accuracy, latency percentiles and
 requests/questions per second; CSV retains per-request results and input sizes.
 CSV separates label `mismatches` from HTTP/invalid-response `error` values.
-Latency includes server queueing. Optional `total_duration_ns` and `load_duration_ns`
-are server timings; load includes request setup and runner acquisition, as in chat.
-Older servers leave them absent. Summary percentiles use HTTP round-trip latency.
-Compare similar input sizes and question counts; replay may reuse cached prefixes.
+Summary percentiles use HTTP round-trip latency, including server queueing.
+Compare identical corpora, model artifacts and settings on the same host. HTTP
+latency includes model lookup and request setup, so warm runs capture routing and
+metadata-cache improvements as well as inference. Use `-k 0 -concurrency 1` and a
+warmup pass (`-warmup` equal to the corpus length) for this comparison. A warm
+model does not imply uncached prompts: replay may reuse prefixes; inspect
+`cached_input_tokens`. Group latency by input size and question count when
+comparing different workloads.
 
 `-concurrency` currently requires `-decision`: 1 sends back-to-back requests;
 higher values keep that many requests in flight. Cold runs (`-k > 0`) require 1.
@@ -135,6 +139,7 @@ use bench in score mode with the broad corpus to evaluate model quality.
 | -warmup	| Number of warmup requests before timing	| 1			|
 | -prompt-tokens	| Generate a prompt of exactly N tokens (0 = use -p)	| 0		|
 | -decision | External decision JSONL corpus instead of chat | "" |
+| -decision-url | External System One endpoint; server manages loading | "" |
 | -decision-mode | `score` reports accuracy; `regression` requires 100% | score |
 | -concurrency | Maximum in-flight requests (currently requires `-decision`) | 1 |
 | -num-ctx	| Context size (0 = server default)		| 0		|
@@ -203,3 +208,9 @@ Additionally, the model info comment line (displayed once per model before epoch
  * **Family**: Model family (e.g., gemma3)
  * **Size**: Total model memory in bytes
  * **VRAM**: GPU memory used by the loaded model (when Size > VRAM, the difference is CPU spill)
+
+Decision JSONL cases may include `"cache":{"min":0.95}` (and/or `"max"`) to assert
+the reused fraction of input tokens. Run ordered cache scenarios with
+`-concurrency 1 -k 0 -warmup 0`; missing telemetry or failed assertions fail the run
+in either scoring mode. For a cold-cache first case, unload the model before the
+run and use `-epochs 1`. CSV includes `cached_input_tokens` when the server reports it.

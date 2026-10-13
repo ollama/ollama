@@ -61,7 +61,7 @@ func TestDecisionBenchmarkPolicies(t *testing.T) {
 					if !test.cold && req.KeepAlive != nil {
 						t.Error("warm request overrode the server keep_alive default")
 					}
-					fmt.Fprintf(w, `{"model":"test-model","total_duration":10000000,"load_duration":2000000,"usage":{"input_tokens":42,"output_tokens":0},"answers":{"result":{"type":"noul",%s}}}`, test.answer)
+					fmt.Fprintf(w, `{"model":"test-model","usage":{"input_tokens":42,"output_tokens":0},"answers":{"result":{"type":"noul",%s}}}`, test.answer)
 				default:
 					t.Errorf("unexpected endpoint %s", r.URL.Path)
 				}
@@ -98,10 +98,7 @@ func TestDecisionBenchmarkPolicies(t *testing.T) {
 			if rows[1][3] != "test,case" || rows[1][6] != "42" {
 				t.Fatalf("missing per-request metadata or CSV escaping: %v", rows[1])
 			}
-			if rows[0][18] != "total_duration_ns" || rows[0][19] != "load_duration_ns" || rows[1][18] != "10000000" || rows[1][19] != "2000000" {
-				t.Fatalf("server timings were not preserved: %v", rows)
-			}
-			if test.answer == `"noul":0` && (rows[1][17] != "" || len(rows[1]) <= 20 || rows[1][20] == "") {
+			if test.answer == `"noul":0` && (rows[1][17] != "" || len(rows[1]) <= 18 || rows[1][18] == "") {
 				t.Fatalf("label mismatch conflated with request error: %v", rows[1])
 			}
 		})
@@ -277,5 +274,34 @@ func TestDecisionBenchmarkCancelsPeers(t *testing.T) {
 	case <-canceled:
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight peer was not canceled")
+	}
+}
+
+func TestDecisionBenchmarkCacheChecks(t *testing.T) {
+	for _, cached := range []int{0, 42} {
+		t.Run(fmt.Sprint(cached), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/systemone" {
+					t.Errorf("external benchmark attempted %s", r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				fmt.Fprintf(w, `{"model":"test-model","prompt_eval_cached_count":%d,"usage":{"input_tokens":42,"output_tokens":0},"answers":{"result":{"type":"noul","noul":1}}}`, cached)
+			}))
+			defer server.Close()
+			path := filepath.Join(t.TempDir(), "cases.jsonl")
+			if err := os.WriteFile(path, []byte(`{"id":"repeat","dataset":"test","request":{"state":"Message.","questions":{"result":{"type":"noul"}}},"expected":{"result":{"noul":true}},"cache":{"min":1}}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			opts := createTestFlagOptions()
+			mode, concurrency, endpoint := "score", 1, server.URL+"/systemone"
+			opts.decisionFile, opts.decisionMode, opts.concurrency, opts.decisionURL = &path, &mode, &concurrency, &endpoint
+			*opts.epochs, *opts.warmup, *opts.keepAlive = 1, 0, 0
+			var out bytes.Buffer
+			err := benchmarkDecision(opts, []string{"test-model"}, &out)
+			if (err != nil) != (cached == 0) {
+				t.Fatalf("benchmark error=%v, cached=%d", err, cached)
+			}
+		})
 	}
 }

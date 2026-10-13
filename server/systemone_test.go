@@ -318,7 +318,6 @@ func TestSystemOneHandler(t *testing.T) {
 					}
 				}
 				var response struct {
-					api.Metrics
 					Answers map[string]struct {
 						Noul float64 `json:"noul"`
 					} `json:"answers"`
@@ -333,9 +332,6 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
-				}
-				if !runner.native && (response.LoadDuration <= 0 || response.TotalDuration < response.LoadDuration) {
-					t.Fatalf("invalid request durations: %+v", response.Metrics)
 				}
 				if runner.native {
 					if tt.name == "llama.cpp decision model" && (string(runner.state) != `{"total":1250.0}` || !strings.Contains(w.Body.String(), `"model":"laya-native"`)) {

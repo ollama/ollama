@@ -48,6 +48,15 @@ func benchmarkDecision(opts flagOptions, models []string, out io.Writer) error {
 			return fmt.Errorf("empty model name")
 		}
 	}
+	if opts.decisionURL != nil && *opts.decisionURL != "" {
+		endpoint, err := url.Parse(*opts.decisionURL)
+		if err != nil || endpoint.Host == "" || endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+			return fmt.Errorf("invalid -decision-url")
+		}
+		if *opts.keepAlive > 0 {
+			return fmt.Errorf("-decision-url does not support Ollama model unloads (-k > 0)")
+		}
+	}
 	mode, err := decisiontest.Mode(*opts.decisionMode)
 	if err != nil {
 		return err
@@ -55,6 +64,11 @@ func benchmarkDecision(opts flagOptions, models []string, out io.Writer) error {
 	corpus, err := decisiontest.Load(*opts.decisionFile)
 	if err != nil {
 		return err
+	}
+	for _, c := range corpus.Cases {
+		if c.Cache != nil && (*opts.concurrency != 1 || *opts.keepAlive > 0 || *opts.warmup != 0) {
+			return fmt.Errorf("cache assertions require ordered warm requests: -concurrency 1 -k 0 -warmup 0")
+		}
 	}
 	if *opts.epochs > math.MaxInt/len(corpus.Cases) {
 		return fmt.Errorf("epochs times corpus length exceeds the maximum request count")
@@ -81,7 +95,7 @@ func benchmarkDecision(opts flagOptions, models []string, out io.Writer) error {
 	if *opts.format == "csv" {
 		csvOut = csv.NewWriter(out)
 		defer csvOut.Flush()
-		if err := csvOut.Write([]string{"model", "corpus_sha256", "dataset", "case", "epoch", "concurrency", "input_tokens", "output_tokens", "state_bytes", "questions", "options", "images", "image_bytes", "image_pixels", "latency_ns", "correct_questions", "correct_case", "error", "total_duration_ns", "load_duration_ns", "mismatches"}); err != nil {
+		if err := csvOut.Write([]string{"model", "corpus_sha256", "dataset", "case", "epoch", "concurrency", "input_tokens", "output_tokens", "state_bytes", "questions", "options", "images", "image_bytes", "image_pixels", "latency_ns", "correct_questions", "correct_case", "error", "mismatches", "cached_input_tokens"}); err != nil {
 			return err
 		}
 	} else {
@@ -92,6 +106,9 @@ func benchmarkDecision(opts flagOptions, models []string, out io.Writer) error {
 		name = strings.TrimSpace(name)
 		if err := benchmarkDecisionModel(opts, client, name, corpus, mode, out, csvOut); err != nil {
 			failures = append(failures, err)
+		}
+		if opts.decisionURL != nil && *opts.decisionURL != "" {
+			continue
 		}
 		if err := unloadModel(client, name, *opts.timeout); err != nil {
 			failures = append(failures, fmt.Errorf("%s unload: %w", name, err))
@@ -110,6 +127,9 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 	endpoint := envconfig.Host().JoinPath("v1/systemone").String()
+	if opts.decisionURL != nil && *opts.decisionURL != "" {
+		endpoint = *opts.decisionURL
+	}
 	keepAlive := benchmarkKeepAlive(opts)
 	one := func(index int) decisionSample {
 		c := corpus.Cases[index%len(corpus.Cases)]
@@ -125,6 +145,9 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 		requestCtx, cancel := context.WithTimeout(ctx, time.Duration(*opts.timeout)*time.Second)
 		defer cancel()
 		response, duration, err := decisiontest.Do(requestCtx, endpoint, req)
+		if err == nil {
+			err = c.CheckCache(response)
+		}
 		s := decisionSample{Case: c, Epoch: index / len(corpus.Cases), Response: response, Duration: duration, Err: err}
 		if err == nil {
 			s.Wrong = c.Mismatches(response)
@@ -184,27 +207,17 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 				message, correct = s.Err.Error(), 0
 			}
 			row := []string{name, corpus.SHA256, s.Case.Dataset, s.Case.ID, strconv.Itoa(s.Epoch), strconv.Itoa(*opts.concurrency), strconv.Itoa(s.Response.Usage.InputTokens), strconv.Itoa(s.Response.Usage.OutputTokens), strconv.Itoa(len(s.Case.Request.State)), strconv.Itoa(s.Case.Request.Questions.Len()), strconv.Itoa(s.Case.Options()), strconv.Itoa(len(s.Case.Request.Images)), strconv.Itoa(s.Case.ImageBytes), strconv.FormatInt(s.Case.ImagePixels, 10), strconv.FormatInt(s.Duration.Nanoseconds(), 10), strconv.Itoa(correct), strconv.FormatBool(s.Err == nil && len(s.Wrong) == 0), message}
-			for _, duration := range []*time.Duration{s.Response.TotalDuration, s.Response.LoadDuration} {
-				value := ""
-				if duration != nil {
-					value = strconv.FormatInt(duration.Nanoseconds(), 10)
-				}
-				row = append(row, value)
+			cached := ""
+			if s.Response.PromptEvalCachedCount != nil {
+				cached = strconv.Itoa(*s.Response.PromptEvalCachedCount)
 			}
-			row = append(row, strings.Join(s.Wrong, "; "))
+			row = append(row, strings.Join(s.Wrong, "; "), cached)
 			if err := csvOut.Write(row); err != nil {
 				return err
 			}
 		} else if s.Err == nil {
 			step := fmt.Sprintf("decision/case=%s/input=%d/questions=%d/images=%d/concurrency=%d", url.PathEscape(s.Case.ID), s.Response.Usage.InputTokens, s.Case.Request.Questions.Len(), len(s.Case.Request.Images), *opts.concurrency)
-			for _, metric := range []struct {
-				name     string
-				duration *time.Duration
-			}{{"http", &s.Duration}, {"total", s.Response.TotalDuration}, {"load", s.Response.LoadDuration}} {
-				if metric.duration != nil {
-					OutputMetrics(out, *opts.format, []Metrics{{Model: name, Step: step + "/metric=" + metric.name, Count: 1, Duration: *metric.duration}}, *opts.verbose)
-				}
-			}
+			OutputMetrics(out, *opts.format, []Metrics{{Model: name, Step: step + "/metric=http", Count: 1, Duration: s.Duration}}, *opts.verbose)
 		}
 	}
 	writeDecisionSummary(os.Stderr, name, samples, total, elapsed)

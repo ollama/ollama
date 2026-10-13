@@ -27,8 +27,31 @@ type Case struct {
 	Request     decision.Request    `json:"request"`
 	ImageFiles  []string            `json:"image_files,omitempty"`
 	Expected    map[string]Expected `json:"expected"`
+	Cache       *CacheExpectation   `json:"cache,omitempty"`
 	ImageBytes  int                 `json:"-"`
 	ImagePixels int64               `json:"-"`
+}
+
+// CacheExpectation bounds the fraction of input tokens reused in an ordered run.
+// Omitted telemetry is an error whenever a case requests a cache assertion.
+type CacheExpectation struct {
+	Min *float64 `json:"min,omitempty"`
+	Max *float64 `json:"max,omitempty"`
+}
+
+func (c Case) CheckCache(response Response) error {
+	if c.Cache == nil {
+		return nil
+	}
+	n := response.PromptEvalCachedCount
+	if n == nil {
+		return fmt.Errorf("cache assertion requires prompt_eval_cached_count")
+	}
+	ratio := float64(*n) / float64(response.Usage.InputTokens)
+	if c.Cache.Min != nil && ratio < *c.Cache.Min || c.Cache.Max != nil && ratio > *c.Cache.Max {
+		return fmt.Errorf("cache assertion failed: reused %d/%d input tokens", *n, response.Usage.InputTokens)
+	}
+	return nil
 }
 
 type Expected struct {
@@ -114,15 +137,20 @@ func Load(path string) (Corpus, error) {
 }
 
 func (c Case) validate() error {
+	if c.Cache != nil {
+		lo, hi := c.Cache.Min, c.Cache.Max
+		if lo == nil && hi == nil || lo != nil && (*lo < 0 || *lo > 1) || hi != nil && (*hi < 0 || *hi > 1) || lo != nil && hi != nil && *lo > *hi {
+			return fmt.Errorf("cache requires min and/or max fractions in [0,1], with min <= max")
+		}
+	}
 	req := c.Request
 	if req.Model != "" || req.KeepAlive != nil {
 		return fmt.Errorf("model and keep_alive belong to the test invocation, not the corpus")
 	}
-	req.Model = "validation"
-	// Clef accepts the full decision schema, including optional instructions and
-	// images. Model-specific limits remain the server's responsibility.
-	if _, err := decision.CompileWithEncoder(req, "clef"); err != nil {
-		return err
+	// Validate the corpus, not a particular model's prompt schema. The server
+	// owns model-specific limits and accepted state/criteria values.
+	if len(req.State) == 0 || req.Questions.Len() == 0 {
+		return fmt.Errorf("request requires state and questions")
 	}
 	if len(c.Expected) != req.Questions.Len() {
 		return fmt.Errorf("require an expectation for every question")
@@ -156,7 +184,7 @@ func (c Case) validate() error {
 	return nil
 }
 
-// criteria is only called after validating the request schema.
+// Invalid criteria produce no candidate keys and fail expectation validation.
 func criteria(q decision.Question) map[string]any {
 	keys := make(map[string]any)
 	switch q.Type {

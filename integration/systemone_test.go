@@ -111,7 +111,10 @@ func runDecisionCases(t *testing.T, modelName string, corpus decisiontest.Corpus
 				result, _, err := decisiontest.Do(requestCtx, endpoint, req)
 				var wrong []string
 				if err == nil {
-					wrong = c.Mismatches(result)
+					err = c.CheckCache(result)
+					if err == nil {
+						wrong = c.Mismatches(result)
+					}
 				}
 				tally.Add(c, wrong, err)
 				d := datasets[c.Dataset]
@@ -161,6 +164,27 @@ func runDecisionCases(t *testing.T, modelName string, corpus decisiontest.Corpus
 		for i := range 4 {
 			t.Run(fmt.Sprint(i), func(t *testing.T) { t.Parallel(); unchanged(t) })
 		}
+	})
+	t.Run("after_generation", func(t *testing.T) {
+		info, err := client.Show(ctx, &api.ShowRequest{Model: modelName})
+		if err != nil {
+			t.Fatal(err)
+		}
+		noStream := false
+		err = client.Generate(ctx, &api.GenerateRequest{
+			Model: modelName, Prompt: "Reply with one word: hello", Stream: &noStream,
+			Think:   &api.ThinkValue{Value: false},
+			Options: map[string]any{"temperature": 0, "num_predict": 8},
+		}, func(api.GenerateResponse) error { return nil })
+		if !slices.Contains(info.Capabilities, model.CapabilityCompletion) {
+			var status api.StatusError
+			if !errors.As(err, &status) || status.StatusCode != 400 {
+				t.Fatalf("decision-only generation: got %v, want HTTP 400", err)
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		unchanged(t)
 	})
 	t.Run("invalid_request", func(t *testing.T) {
 		invalid := input

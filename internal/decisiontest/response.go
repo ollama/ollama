@@ -17,13 +17,10 @@ import (
 )
 
 type Response struct {
-	Model   string            `json:"model"`
-	Answers map[string]Answer `json:"answers"`
-	Usage   decision.Usage    `json:"usage"`
-
-	// Older servers and other System One implementations omit Ollama timings.
-	TotalDuration *time.Duration `json:"total_duration"`
-	LoadDuration  *time.Duration `json:"load_duration"`
+	Model                 string            `json:"model"`
+	Answers               map[string]Answer `json:"answers"`
+	Usage                 decision.Usage    `json:"usage"`
+	PromptEvalCachedCount *int              `json:"prompt_eval_cached_count"`
 }
 
 // Pointers distinguish missing/null numbers from valid zero values.
@@ -80,11 +77,8 @@ func decode(input decision.Request, body []byte) (Response, error) {
 	if result.Model != input.Model || len(result.Answers) != input.Questions.Len() || result.Usage.InputTokens <= 0 || result.Usage.OutputTokens < 0 {
 		return result, fmt.Errorf("invalid response model, answer count, or token usage")
 	}
-	if result.TotalDuration != nil && *result.TotalDuration < 0 || result.LoadDuration != nil && *result.LoadDuration < 0 {
-		return result, fmt.Errorf("negative response duration")
-	}
-	if result.TotalDuration != nil && result.LoadDuration != nil && *result.LoadDuration > *result.TotalDuration {
-		return result, fmt.Errorf("load duration exceeds total duration")
+	if n := result.PromptEvalCachedCount; n != nil && (*n < 0 || *n > result.Usage.InputTokens) {
+		return result, fmt.Errorf("cached token count outside input token range")
 	}
 	for name, q := range input.Questions.All() {
 		if err := result.Answers[name].validate(q); err != nil {
@@ -112,7 +106,7 @@ func (a Answer) validate(q decision.Question) error {
 	if len(a.Probabilities) != len(keys) || !probability(a.Confidence) {
 		return fmt.Errorf("missing or invalid probabilities or confidence")
 	}
-	var sum, weighted, entropy, best float64
+	var sum, weighted, best float64
 	for key := range keys {
 		p := a.Probabilities[key]
 		if !probability(p) {
@@ -120,27 +114,26 @@ func (a Answer) validate(q decision.Question) error {
 		}
 		sum += *p
 		best = max(best, *p)
-		if *p > 0 {
-			entropy -= *p * math.Log(*p)
-		}
 		if q.Type == "score" {
 			i, _ := strconv.Atoi(key)
 			weighted += float64(i) * *p
 		}
 	}
-	if math.Abs(sum-1) > 1e-6 {
+	// Some implementations report four decimal places. Account for rounding
+	// each probability independently; confidence is model-defined.
+	const rounding = 0.5e-4
+	if math.Abs(sum-1) > 1e-6+float64(len(keys))*rounding {
 		return fmt.Errorf("probabilities sum to %g, want 1", sum)
-	}
-	confidence := max(0, 1-entropy/math.Log(float64(len(keys))))
-	if math.Abs(*a.Confidence-confidence) > 1e-6 {
-		return fmt.Errorf("confidence does not match probabilities")
 	}
 	if q.Type == "choice" {
 		if p := a.Probabilities[a.Choice]; p == nil || *p < best {
 			return fmt.Errorf("choice %q is not a probability maximum", a.Choice)
 		}
 	} else {
-		if a.Score == nil || math.Abs(*a.Score-weighted) > 1e-6 {
+		// Include rounding of the score and its weighted probabilities.
+		n := len(keys)
+		tolerance := 1e-6 + rounding*float64(1+n*(n-1)/2)
+		if a.Score == nil || *a.Score < 0 || *a.Score > float64(n-1) || math.Abs(*a.Score-weighted) > tolerance {
 			return fmt.Errorf("score does not match probabilities")
 		}
 		if !reflect.DeepEqual(a.Legend, keys) {

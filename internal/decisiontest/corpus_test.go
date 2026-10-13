@@ -71,6 +71,7 @@ func TestLoadCorpus(t *testing.T) {
 func TestRejectInvalidCorpus(t *testing.T) {
 	for name, data := range map[string]string{
 		"empty":                  "\n",
+		"missing questions":      `{"id":"empty","dataset":"test","request":{"state":"A test.","questions":{}},"expected":{}}`,
 		"duplicate id":           fixture + "\n" + fixture,
 		"trailing object":        fixture + `{}`,
 		"unknown field":          strings.TrimSuffix(fixture, "}") + `,"unexpected":{}}`,
@@ -128,7 +129,7 @@ func TestResponseContractAndLabels(t *testing.T) {
 		"rating":{"type":"score","criteria":["Low","High"]}}}`), &req); err != nil {
 		t.Fatal(err)
 	}
-	valid := `{"model":"test","total_duration":100,"load_duration":20,"usage":{"input_tokens":10,"output_tokens":0},"answers":{
+	valid := `{"model":"test","usage":{"input_tokens":10,"output_tokens":0},"answers":{
 		"yes":{"type":"noul","noul":0},
 		"topic":{"type":"choice","choice":"a","probabilities":{"a":1,"b":0},"confidence":1},
 		"rating":{"type":"score","score":0,"probabilities":{"0":1,"1":0},"confidence":1,"legend":{"0":"Low","1":"High"}}}}`
@@ -138,12 +139,9 @@ func TestResponseContractAndLabels(t *testing.T) {
 		{`"output_tokens":0`, `"output_tokens":null`},
 		{`"a":1`, `"a":0.7`},
 		{`"choice":"a"`, `"choice":"b"`},
-		{`"confidence":1`, `"confidence":0`},
+		{`"confidence":1`, `"confidence":null`},
 		{`"score":0`, `"score":1`},
 		{`"0":"Low"`, `"0":"Wrong"`},
-		{`"total_duration":100`, `"total_duration":-1`},
-		{`"load_duration":20`, `"load_duration":-1`},
-		{`"load_duration":20`, `"load_duration":101`},
 	} {
 		t.Run(mutation.old, func(t *testing.T) {
 			if _, err := decode(req, []byte(strings.Replace(valid, mutation.old, mutation.replacement, 1))); err == nil {
@@ -154,10 +152,6 @@ func TestResponseContractAndLabels(t *testing.T) {
 	result, err := decode(req, []byte(valid))
 	if err != nil {
 		t.Fatal(err)
-	}
-	legacy, err := decode(req, []byte(strings.Replace(valid, `"total_duration":100,"load_duration":20,`, "", 1)))
-	if err != nil || legacy.TotalDuration != nil || legacy.LoadDuration != nil {
-		t.Fatalf("response without timings: %+v, %v", legacy, err)
 	}
 	no, a, low := false, "a", 0
 	c := Case{Expected: map[string]Expected{"yes": {Noul: &no}, "topic": {Choice: &a}, "rating": {Level: &low}}}
@@ -170,5 +164,17 @@ func TestResponseContractAndLabels(t *testing.T) {
 	}
 	if _, err := Mode("skip-low-confidence"); err == nil {
 		t.Fatal("accepted an unknown evaluation policy")
+	}
+}
+
+func TestCorpusDefersModelLimits(t *testing.T) {
+	// Kev accepts null state and one option; these are not Clef inputs.
+	file := filepath.Join(t.TempDir(), "cases.jsonl")
+	data := `{"id":"one","dataset":"test","request":{"state":null,"questions":{"label":{"type":"choice","criteria":{"a":null}}}},"expected":{"label":{"choice":"a"}}}`
+	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(file); err != nil {
+		t.Fatal(err)
 	}
 }

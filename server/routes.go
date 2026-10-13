@@ -947,7 +947,6 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 
 // SystemOneHandler answers typed questions with probabilities.
 func (s *Server) SystemOneHandler(c *gin.Context) {
-	checkpointStart := time.Now()
 	// TODO(parthsareen): Check token limits before copying state and schema into
 	// each question's prompt. Non-Kev models retain the 64 KiB byte cap until then.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
@@ -1032,7 +1031,6 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	checkpointLoaded := time.Now()
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
@@ -1064,8 +1062,6 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	response.TotalDuration = time.Since(checkpointStart)
-	response.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 	c.JSON(http.StatusOK, response)
 }
 
