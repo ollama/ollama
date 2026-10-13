@@ -286,7 +286,7 @@ func (c *launcherClient) modelRecommendationItem(ctx context.Context, model stri
 
 // confirmModelPayment shows advisory payment guidance without checking credit availability.
 func confirmModelPayment(modelName string) (bool, error) {
-	prompt := fmt.Sprintf("%s\n\nThis model requires usage credits or a paid plan.\n\nAdd credits: %s\nUpgrade: %s", modelName, modelCreditsURL, modelUpgradeURL)
+	prompt := fmt.Sprintf("%s\n\nThis model requires usage credits or a paid plan.\n\nAdd credits: %s\nUpgrade: %s\n\nContinue with %s?", modelName, modelCreditsURL, modelUpgradeURL, modelName)
 	return ConfirmPromptWithOptions(prompt, ConfirmOptions{
 		YesLabel: "Continue",
 		NoLabel:  "Choose another model",

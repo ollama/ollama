@@ -2953,14 +2953,16 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 		t.Fatalf("unexpected prompt: %q", prompt)
 		return false, nil
 	}
+	signInCalls := 0
 	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		signInCalls++
 		return "", ErrCancelled
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/experimental/model-recommendations":
-			fmt.Fprint(w, `{"recommendations":[]}`)
+			fmt.Fprint(w, `{"recommendations":[{"model":"glm-5:cloud","context_length":262144,"max_output_tokens":32768,"required_plan":"pro"}]}`)
 		case "/api/tags":
 			fmt.Fprint(w, `{"models":[{"name":"sample-model"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
 		case "/api/status":
@@ -2996,6 +2998,9 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	})
 	if launchErr != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
+	}
+	if signInCalls != 1 {
+		t.Fatalf("sign-in calls = %d, want 1", signInCalls)
 	}
 	if editor.ranModel != "sample-model" {
 		t.Fatalf("expected launch to use local primary, got %q", editor.ranModel)
@@ -4435,7 +4440,7 @@ func TestResolveSingleIntegrationTargetPaymentGuidance(t *testing.T) {
 		{name: "new selection continues with free plan", mode: LaunchConfirmPrompt, proceed: true, wantModel: "paid:cloud", wantPrompts: 1},
 		{name: "saved selection skips payment prompt", current: "paid:cloud", mode: LaunchConfirmPrompt, wantModel: "paid:cloud"},
 		{name: "yes approves payment guidance", mode: LaunchConfirmAutoApprove, wantModel: "paid:cloud"},
-		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "--yes"},
+		{name: "headless requires yes", mode: LaunchConfirmRequireYes, wantError: "Continue with paid:cloud? requires confirmation; re-run with --yes to continue"},
 		{name: "decline returns to picker", mode: LaunchConfirmPrompt, wantModel: "local-model", wantPrompts: 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

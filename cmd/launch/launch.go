@@ -1352,12 +1352,17 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected,
 	skipped := make([]skippedModel, 0, len(selected))
 
 	for _, model := range selected {
+		var err error
 		if !slices.Contains(previous, model) {
-			if err := c.confirmCloudModelPayment(ctx, model); err != nil {
+			err = c.confirmCloudModelPayment(ctx, model)
+			if errors.Is(err, errModelPaymentDeclined) {
 				return nil, nil, err
 			}
 		}
-		if err := c.ensureModelsReadyFor(ctx, []string{model}, label, commandName); err != nil {
+		if err == nil {
+			err = c.ensureModelsReadyFor(ctx, []string{model}, label, commandName)
+		}
+		if err != nil {
 			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return nil, nil, err
 			}
