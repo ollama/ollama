@@ -3800,7 +3800,7 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 // allowing each to use its own error response format.
 func scheduleError(name string, err error) (int, string) {
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest):
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest), errors.Is(err, model.ErrInvalidThinkBudget):
 		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
 		return 499, "request canceled"

@@ -1,8 +1,10 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -62,6 +64,37 @@ func TestThinkBudgetSurvivesThinkingResolution(t *testing.T) {
 				}
 				if got := mock.CompletionRequest.ThinkBudget; got != tt.budget {
 					t.Errorf("runner got think budget %d, want %d", got, tt.budget)
+				}
+			})
+		}
+	}
+}
+
+// A think_budget the server cannot read is the client's mistake: it is refused
+// with 400 and the reason, on every route that takes options, never with 500.
+func TestInvalidThinkBudgetIsABadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	mock := mockRunner{CompletionResponse: llm.CompletionResponse{Content: "answer", Done: true, DoneReason: llm.DoneReasonStop}}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "budget-base", nil, "{{ .Prompt }}", nil)
+
+	for _, budget := range []any{"bogus", 1.5, -64, 0, true} {
+		for _, endpoint := range []string{"chat", "generate"} {
+			t.Run(fmt.Sprintf("%s/%v", endpoint, budget), func(t *testing.T) {
+				options := map[string]any{"think_budget": budget}
+				var w *httptest.ResponseRecorder
+				if endpoint == "chat" {
+					w = createRequest(t, s.ChatHandler, api.ChatRequest{Model: "budget-base", Messages: []api.Message{{Role: "user", Content: "hello"}}, Options: options, Stream: &stream})
+				} else {
+					w = createRequest(t, s.GenerateHandler, api.GenerateRequest{Model: "budget-base", Prompt: "hello", Options: options, Stream: &stream})
+				}
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("status %d, want 400: %s", w.Code, w.Body.String())
+				}
+				if !strings.Contains(w.Body.String(), "think budget") {
+					t.Errorf("the refusal does not name the budget: %s", w.Body.String())
 				}
 			})
 		}
