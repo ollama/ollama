@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -433,5 +434,71 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSystemOneHandlerCloudPassthrough(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	upstreamBody := `{"model":"clef-flash","answers":{"refund":{"type":"noul","noul":0.9}},"usage":{"input_tokens":42,"output_tokens":0}}`
+	var capturedPath, capturedBody string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		capturedPath = r.URL.Path
+		capturedBody = string(payload)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(upstreamBody))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	resp, err := local.Client().Post(local.URL+"/v1/systemone", "application/json", strings.NewReader(
+		`{"model":"clef-flash:cloud","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`,
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+	}
+
+	if capturedPath != "/v1/systemone" {
+		t.Fatalf("expected upstream path /v1/systemone, got %q", capturedPath)
+	}
+	if !strings.Contains(capturedBody, `"model":"clef-flash"`) {
+		t.Fatalf("expected normalized model in upstream body, got %q", capturedBody)
+	}
+	if strings.Contains(capturedBody, `:cloud`) {
+		t.Fatalf("expected no cloud suffix in upstream body, got %q", capturedBody)
+	}
+
+	var decisionResp struct {
+		Model   string         `json:"model"`
+		Answers map[string]any `json:"answers"`
+		Usage   decision.Usage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &decisionResp); err != nil {
+		t.Fatalf("failed to parse response: %v (%s)", err, string(body))
+	}
+	if decisionResp.Model != "clef-flash" || decisionResp.Usage.InputTokens != 42 || decisionResp.Usage.OutputTokens != 0 {
+		t.Fatalf("unexpected response: %s", string(body))
+	}
+	if len(decisionResp.Answers) != 1 {
+		t.Fatalf("expected one answer, got %s", string(body))
 	}
 }
