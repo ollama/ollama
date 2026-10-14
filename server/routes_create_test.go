@@ -2492,14 +2492,16 @@ func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 		Model:        "uploaded-safetensors",
 		Capabilities: []string{"decision", "completion", "decision"},
 		Info: map[string]any{
-			"capabilities": []string{"completion", "thinking"},
+			"capabilities":     []string{"completion", "thinking"},
+			"thinking_default": true,
 		},
 		Renderer: "test-renderer",
 		Parser:   "test-parser",
 		Requires: "0.20.0",
 		System:   "server-side import",
 	}
-	config := &model.ConfigV2{Renderer: r.Renderer, Parser: r.Parser, Requires: r.Requires}
+	modelDefault := false
+	config := &model.ConfigV2{Renderer: r.Renderer, Parser: r.Parser, Requires: r.Requires, ThinkingDefault: &modelDefault}
 	if err := applyCreateInfo(config, r.Info); err != nil {
 		t.Fatal(err)
 	}
@@ -2526,6 +2528,9 @@ func TestWriteSafetensorsManifestPreservesRequestMetadata(t *testing.T) {
 	}
 	if cfg.Requires != "0.20.0" {
 		t.Fatalf("Requires = %q, want 0.20.0", cfg.Requires)
+	}
+	if cfg.ThinkingDefault == nil || !*cfg.ThinkingDefault {
+		t.Fatalf("thinking default = %v, want explicit true", cfg.ThinkingDefault)
 	}
 	if want := []string{"completion", "thinking", "decision"}; !slices.Equal(cfg.Capabilities, want) {
 		t.Fatalf("Capabilities = %v, want %v", cfg.Capabilities, want)
