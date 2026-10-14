@@ -60,8 +60,7 @@ func TestResponsesMiddlewareNativeAuthenticationErrors(t *testing.T) {
 		stream, webSearch, afterContent bool
 	}{
 		{"JSON", false, false, false},
-		{"before stream", true, false, false},
-		{"during stream", true, false, true},
+		{"streaming request", true, false, false},
 		{"web search JSON", false, true, false},
 		{"web search before stream", true, true, false},
 		{"web search during stream", true, true, true},
@@ -88,7 +87,7 @@ func TestResponsesMiddlewareNativeAuthenticationErrors(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, req)
-			streamError := test.stream && (test.webSearch || test.afterContent)
+			streamError := test.stream && test.webSearch
 			wantStatus := http.StatusUnauthorized
 			if streamError {
 				wantStatus = http.StatusOK

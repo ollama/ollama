@@ -497,13 +497,6 @@ type ResponsesWriter struct {
 	responseID string
 	itemID     string
 	request    openai.ResponsesRequest
-	status     int
-	failed     bool
-}
-
-func (w *ResponsesWriter) WriteHeader(code int) {
-	w.status = code
-	w.ResponseWriter.WriteHeader(code)
 }
 
 func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
@@ -548,38 +541,15 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 }
 
 func (w *ResponsesWriter) Write(data []byte) (int, error) {
-	if w.failed {
-		return len(data), nil
-	}
 	code := w.ResponseWriter.Status()
-	// This writer converts native Ollama responses. Cloud /v1/responses
-	// replies bypass it and retain the error contract supplied by ODC.
-	if code == http.StatusUnauthorized || w.status == http.StatusUnauthorized {
+	// Cloud /v1/responses replies bypass this native response writer.
+	if code == http.StatusUnauthorized {
 		var authorizationError api.AuthorizationError
 		if err := json.Unmarshal(data, &authorizationError); err != nil {
 			authorizationError.SigninURL = ""
 		}
-		failure := openai.NewResponsesAuthenticationError(authorizationError.SigninURL)
-		w.failed = true
-		if w.stream && code == http.StatusOK {
-			response := map[string]any{
-				"id": w.responseID, "object": "response", "status": "failed", "model": w.model,
-				"output": []any{}, "error": failure.Error,
-			}
-			if failure.SigninURL != "" {
-				response["signin_url"] = failure.SigninURL
-			}
-			w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
-			for _, event := range w.converter.Process(api.ChatResponse{}) {
-				if err := w.writeEvent(event.Event, event.Data); err != nil {
-					return 0, err
-				}
-			}
-			event := w.converter.ResponseFailed(response)
-			return len(data), w.writeEvent(event.Event, event.Data)
-		}
 		w.ResponseWriter.Header().Set("Content-Type", "application/json")
-		return len(data), json.NewEncoder(w.ResponseWriter).Encode(failure)
+		return len(data), json.NewEncoder(w.ResponseWriter).Encode(openai.NewResponsesAuthenticationError(authorizationError.SigninURL))
 	}
 	if code != http.StatusOK {
 		return w.writeError(data)

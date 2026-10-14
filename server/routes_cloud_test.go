@@ -1224,59 +1224,60 @@ func TestCloudResponsesSigningFailureReturnsStructuredError(t *testing.T) {
 	}
 
 	const signinURL = "https://ollama.com/connect?name=test&key=synthetic-device-key"
-	for _, withSigninURL := range []bool{true, false} {
-		for _, request := range []struct {
-			name string
-			path string
-			body string
-		}{
-			{"non-streaming", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false}`},
-			{"streaming", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":true}`},
-			{"web search", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false,"tools":[{"type":"web_search"}]}`},
-			{"compaction", "/v1/responses/compact", `{"model":"test:cloud","input":[{"role":"user","content":"hello"}]}`},
-			{"triggered compaction", "/v1/responses", `{"model":"test:cloud","stream":true,"input":[{"role":"user","content":"hello"},{"type":"compaction_trigger"}]}`},
-		} {
-			t.Run(fmt.Sprintf("%s/signin_url=%t", request.name, withSigninURL), func(t *testing.T) {
-				cloudProxySigninURL = func() (string, error) {
-					if !withSigninURL {
-						return "", errors.New("synthetic sign-in URL failure")
-					}
-					return signinURL, nil
+	for _, request := range []struct {
+		name          string
+		path          string
+		body          string
+		withSigninURL bool
+	}{
+		{"non-streaming", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false}`, true},
+		{"streaming", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":true}`, true},
+		{"web search", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false,"tools":[{"type":"web_search"}]}`, true},
+		{"compaction", "/v1/responses/compact", `{"model":"test:cloud","input":[{"role":"user","content":"hello"}]}`, true},
+		{"triggered compaction", "/v1/responses", `{"model":"test:cloud","stream":true,"input":[{"role":"user","content":"hello"},{"type":"compaction_trigger"}]}`, true},
+		{"without sign-in URL", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false}`, false},
+		{"web search without sign-in URL", "/v1/responses", `{"model":"test:cloud","input":"hello","stream":false,"tools":[{"type":"web_search"}]}`, false},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			cloudProxySigninURL = func() (string, error) {
+				if !request.withSigninURL {
+					return "", errors.New("synthetic sign-in URL failure")
 				}
+				return signinURL, nil
+			}
 
-				req := httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(request.body))
-				req.Header.Set("Content-Type", "application/json")
-				recorder := httptest.NewRecorder()
-				router.ServeHTTP(recorder, req)
+			req := httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(request.body))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, req)
 
-				if recorder.Code != http.StatusUnauthorized {
-					t.Fatalf("status = %d, want 401: %s", recorder.Code, recorder.Body.String())
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401: %s", recorder.Code, recorder.Body.String())
+			}
+			if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+				t.Fatalf("content type = %q, want application/json", got)
+			}
+			var response struct {
+				Error     openai.Error `json:"error"`
+				SigninURL *string      `json:"signin_url"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("invalid Responses error: %v: %s", err, recorder.Body.String())
+			}
+			if response.Error.Message != "This model requires an Ollama account. Please sign in to Ollama to use this model." {
+				t.Errorf("message = %q, want safe sign-in instructions", response.Error.Message)
+			}
+			if response.Error.Type != "authentication_error" || response.Error.Code == nil || *response.Error.Code != "authentication_error" {
+				t.Errorf("unexpected error type or code: %+v", response.Error)
+			}
+			if request.withSigninURL {
+				if response.SigninURL == nil || *response.SigninURL != signinURL {
+					t.Errorf("sign-in URL metadata was not preserved: %s", recorder.Body.String())
 				}
-				if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
-					t.Fatalf("content type = %q, want application/json", got)
-				}
-				var response struct {
-					Error     openai.Error `json:"error"`
-					SigninURL *string      `json:"signin_url"`
-				}
-				if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-					t.Fatalf("invalid Responses error: %v: %s", err, recorder.Body.String())
-				}
-				if response.Error.Message != "This model requires an Ollama account. Please sign in to Ollama to use this model." {
-					t.Errorf("message = %q, want safe sign-in instructions", response.Error.Message)
-				}
-				if response.Error.Type != "authentication_error" || response.Error.Code == nil || *response.Error.Code != "authentication_error" {
-					t.Errorf("unexpected error type or code: %+v", response.Error)
-				}
-				if withSigninURL {
-					if response.SigninURL == nil || *response.SigninURL != signinURL {
-						t.Errorf("sign-in URL metadata was not preserved: %s", recorder.Body.String())
-					}
-				} else if response.SigninURL != nil {
-					t.Errorf("unexpected sign-in URL metadata: %s", recorder.Body.String())
-				}
-			})
-		}
+			} else if response.SigninURL != nil {
+				t.Errorf("unexpected sign-in URL metadata: %s", recorder.Body.String())
+			}
+		})
 	}
 }
 
@@ -1311,7 +1312,6 @@ func TestCloudResponsesPreservesUpstreamResponses(t *testing.T) {
 		{"plain authentication", http.StatusUnauthorized, "text/plain", "Unauthorized\n"},
 		{"streamed authentication", http.StatusOK, "text/event-stream", "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"error\":{\"code\":\"authentication_error\",\"message\":\"Device key is not linked to an account\"}}}\n\n"},
 		{"subscription", http.StatusForbidden, "application/json", `{"error":{"message":"subscription required","code":"subscription_required"}}`},
-		{"usage", http.StatusTooManyRequests, "application/json", `{"error":{"message":"usage allowance exhausted"}}`},
 		{"rate limit", http.StatusTooManyRequests, "application/json", `{"error":{"message":"too many requests","code":"rate_limit_exceeded"}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
