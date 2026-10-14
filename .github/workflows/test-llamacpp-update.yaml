@@ -366,8 +366,9 @@ jobs:
       - if: matrix.preset == 'CPU'
         name: Install Windows ARM64 cross compiler
         run: |
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip" -MaximumRetryCount 3 -RetryIntervalSec 2
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          Remove-Item "${{ runner.temp }}\llvm-mingw-ucrt.zip"
           $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
             throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
@@ -387,18 +388,10 @@ jobs:
           $ErrorActionPreference = "Stop"
           $ProgressPreference = 'SilentlyContinue'
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
-              try {
-                Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-                break
-              } catch {
-                if ($attempt -eq 3) { throw }
-                Write-Host "CUDA installer download attempt $attempt failed: $($_.Exception.Message); retrying in 15s"
-                Start-Sleep -Seconds 15
-              }
-            }
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
@@ -408,8 +401,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
@@ -424,8 +418,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
             Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
+            Remove-Item install.exe
           }
 
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
@@ -487,8 +482,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-ExecutionPolicy Bypass -Scope Process -Force
-          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip"
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt.zip" -MaximumRetryCount 3 -RetryIntervalSec 2
           Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt.zip -DestinationPath "C:\Program Files\"
+          Remove-Item "${{ runner.temp }}\llvm-mingw-ucrt.zip"
           $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-x86_64").path
           echo "$installPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {

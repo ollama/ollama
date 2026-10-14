@@ -162,7 +162,7 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 	}
 
 	if applyEmbeddingBatchDefault {
-		opts = llm.WithDefaultEmbeddingNumBatch(opts)
+		opts.NumBatch = llm.DefaultEmbeddingNumBatch
 	}
 
 	if model != nil && model.DraftPath == "" && !draftNumPredictSet {
@@ -948,7 +948,7 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 // SystemOneHandler answers typed questions with probabilities.
 func (s *Server) SystemOneHandler(c *gin.Context) {
 	// TODO(parthsareen): Check token limits before copying state and schema into
-	// each question's prompt. This byte cap limits memory use until then.
+	// each question's prompt. Non-Kev models retain the 64 KiB byte cap until then.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
 	body, err := io.ReadAll(c.Request.Body)
 	var req decision.Request
@@ -973,9 +973,9 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if len(bytes.TrimSpace(text.Bytes())) > 64<<10 {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "text and schema must not exceed 64 KiB"})
-		return
+	textSize := len(bytes.TrimSpace(text.Bytes()))
+	rejectText := func(limit int) {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("text and schema must not exceed %d KiB", limit>>10)})
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
@@ -990,7 +990,13 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
-	m, err := s.getExistingModelForRunner(ref.Name.String(), "")
+	if runner, err := normalizeRunner(req.Runner); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} else {
+		req.Runner = runner
+	}
+	m, err := s.getExistingModelForRunner(ref.Name.String(), req.Runner)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
@@ -999,12 +1005,22 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
+	textLimit := 64 << 10
+	if m.Config.Renderer == "kev" {
+		// Kev shares the state across question rows and admits up to 65,536
+		// state tokens, which can exceed the generic decision prompt cap.
+		textLimit = 1 << 20
+	}
+	if textSize > textLimit {
+		rejectText(textLimit)
+		return
+	}
 	if m.isGGUF() {
 		s.systemOneLlamaServer(c, m, req, body)
 		return
 	}
 	var encoding string
-	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" {
+	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" || m.Config.Renderer == "kev" {
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)

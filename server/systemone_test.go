@@ -56,14 +56,20 @@ func (r *systemOneTestRunner) Score(ctx context.Context, input llm.ScoreRequest)
 		return llm.ScoreResponse{Logits: [][]float32{{2, 0}}, InputTokens: 123}, r.err
 	}
 	logits := [][]float32{{0, 2}}
+	outputTokens := 2
 	if len(input.Rows) > 0 {
 		logits = make([][]float32, len(input.Rows))
 		for i, row := range input.Rows {
-			logits[i] = make([]float32, len(row.Candidates))
-			logits[i][len(row.Candidates)-1] = 2
+			options := len(row.Candidates)
+			if options == 0 && row.Question != nil {
+				options = len(row.Question.Options)
+				outputTokens = 0
+			}
+			logits[i] = make([]float32, options)
+			logits[i][options-1] = 2
 		}
 	}
-	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: 2}, r.err
+	return llm.ScoreResponse{Logits: logits, InputTokens: 123, OutputTokens: outputTokens}, r.err
 }
 
 func TestDecisionModelRejectsCompletion(t *testing.T) {
@@ -100,6 +106,59 @@ func TestDecisionModelRejectsCompletion(t *testing.T) {
 	}
 }
 
+func TestSystemOneHandlerRunnerSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, variant := range []struct{ runner, format string }{
+		{manifest.RunnerLlamaCPP, manifest.FormatGGUF},
+		{manifest.RunnerMLX, manifest.FormatSafetensors},
+	} {
+		writeShowManifestVariant(t, "decision-"+variant.runner, variant.runner, variant.format, model.ConfigV2{
+			ModelFormat: variant.format, Renderer: "clef", Capabilities: []string{"decision"},
+		}, map[string]any{"general.architecture": "clef", "clef.decision.type": "clef"})
+	}
+	writeManifestListFixture(t, "decision-list",
+		manifestListFixtureChild{name: "decision-llamacpp", runner: manifest.RunnerLlamaCPP, format: manifest.FormatGGUF},
+		manifestListFixtureChild{name: "decision-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
+	)
+	defaultModel, err := GetModel("decision-list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ runner, want string }{
+		{"", defaultModel.Runner},
+		{"llamacpp", manifest.RunnerLlamaCPP},
+		{"mlx", manifest.RunnerMLX},
+		{" llama.cpp ", manifest.RunnerLlamaCPP},
+	} {
+		t.Run(tt.runner, func(t *testing.T) {
+			runner := &systemOneTestRunner{}
+			s := newServerWithMockRunner(t, &runner.mockRunner)
+			selectedRunner := make(chan string, 1)
+			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				selectedRunner <- req.model.Runner
+				req.successCh <- &runnerRef{llama: runner}
+				return false
+			}
+			w := createRequest(t, s.SystemOneHandler, map[string]any{
+				"model": "decision-list", "runner": tt.runner, "state": "refund please",
+				"questions": map[string]any{"refund": map[string]any{"type": "noul", "instructions": "Refund requested?"}},
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body)
+			}
+			select {
+			case got := <-selectedRunner:
+				if got != tt.want {
+					t.Fatalf("scheduled runner=%q, want %q", got, tt.want)
+				}
+			default:
+				t.Fatal("no runner was scheduled")
+			}
+		})
+	}
+}
+
 func TestSystemOneHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -119,6 +178,9 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision", "vision"}
 	createSafetensorsTestModel(t, "safetensors-clef", config, []manifest.Layer{params})
+	config.Renderer = "kev"
+	config.Capabilities = []string{"decision"}
+	createSafetensorsTestModel(t, "safetensors-kev", config, []manifest.Layer{params})
 	config.Renderer = "qwen3.5"
 	config.Capabilities = []string{"completion"}
 	createSafetensorsTestModel(t, "safetensors-undeclared", config, nil)
@@ -181,6 +243,7 @@ func TestSystemOneHandler(t *testing.T) {
 	}
 	tests := []testCase{
 		{"success", `{"model":"decision-test","state":"refund please","questions":{"refund":{"type":"noul","instructions":"Refund requested?"}}}`, nil, 200, 1, false},
+		{"unknown runner", `{"model":"decision-test","runner":"invalid","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"Clef image above text body limit", `{"model":"renamed-clef","state":"x","images":["` + base64.StdEncoding.EncodeToString(make([]byte, 70<<10)) + `"],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"over image body limit", `{"model":"renamed-clef","images":["` + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 		{"images require a supported encoding", `{"model":"decision-test","state":"x","images":["aW1hZ2U="],"questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
@@ -219,6 +282,9 @@ func TestSystemOneHandler(t *testing.T) {
 		{"bad JSON", `{`, nil, 400, 0, false},
 		{"at text limit", prefix + strings.Repeat("<", stateLimit) + suffix, nil, 200, 1, false},
 		{"over text limit", prefix + strings.Repeat("x", stateLimit+1) + suffix, nil, 413, 0, false},
+		{"oversized missing model returns not found", strings.Replace(prefix+strings.Repeat("x", stateLimit+32)+suffix, "decision-test", "missing", 1), nil, 404, 0, false},
+		{"Kev above default text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 70<<10) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"Kev above extended text limit", `{"model":"safetensors-kev","state":"` + strings.Repeat("x", 1<<20) + `","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 413, 0, false},
 		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
 		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 	}
@@ -315,7 +381,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 || runner.native {
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Config.Renderer == "kev" {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
@@ -348,6 +414,10 @@ func TestSystemOneHandler(t *testing.T) {
 				} else if ref.model.HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
+					}
+				} else if ref.model.Config.Renderer == "kev" {
+					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
+						t.Fatalf("Kev scorer received a rendered prompt or lost the state/question")
 					}
 				} else {
 					wantPrefix := "<|im_start|>user\n"
