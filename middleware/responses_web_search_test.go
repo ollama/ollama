@@ -132,9 +132,7 @@ func TestWebSearchResponsesWriterNonStreamingAuthorizationError(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
-	if body := recorder.Body.String(); !strings.Contains(body, "https://ollama.com/signin") {
-		t.Fatalf("missing sign-in URL: %s", body)
-	}
+	assertResponsesAuthenticationError(t, recorder.Body.String(), false, "https://ollama.com/signin")
 }
 
 func TestWebSearchResponsesWriterStreamingAuthorizationError(t *testing.T) {
@@ -154,10 +152,7 @@ func TestWebSearchResponsesWriterStreamingAuthorizationError(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "response.failed") || !strings.Contains(body, "https://ollama.com/signin") {
-		t.Fatalf("missing streaming authorization error: %s", body)
-	}
+	assertResponsesAuthenticationError(t, recorder.Body.String(), true, "https://ollama.com/signin")
 }
 
 func TestWebSearchResponsesWriterStreamingRateLimitError(t *testing.T) {
@@ -246,6 +241,9 @@ func TestWebSearchResponsesWriterPreservesFollowUpErrors(t *testing.T) {
 			}
 			if recorder.Code != test.status || !strings.Contains(recorder.Body.String(), test.wantInBody) {
 				t.Fatalf("response status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if test.status == http.StatusUnauthorized {
+				assertResponsesAuthenticationError(t, recorder.Body.String(), false, test.wantInBody)
 			}
 		})
 	}
