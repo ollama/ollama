@@ -4,7 +4,7 @@ description: Classify text, estimate yes/no probabilities, and score ordered cri
 ---
 
 <Note>
-Available locally, and in [Ollama's cloud](/cloud) with `clef:cloud` and `clef-flash:cloud`.
+Currently available locally in Ollama.
 </Note>
 
 Use System One to classify text, answer yes/no questions, or score text against a rubric.
@@ -111,45 +111,6 @@ Example response:
   "usage": {"input_tokens": 677, "output_tokens": 0}
 }
 ```
-
-## Use a cloud model
-
-[Clef](https://ollama.com/library/clef) and [Clef Flash](https://ollama.com/library/clef-flash) also run in [Ollama's cloud](/cloud). Add `:cloud` to the model name to send the request through a local Ollama server signed in to ollama.com:
-
-```shell cloud.sh
-curl http://localhost:11434/v1/systemone \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "clef-flash:cloud",
-    "state": "Our checkout has returned 500 errors since 9am.",
-    "questions": {
-      "urgent": {
-        "type": "noul",
-        "instructions": "Does this ticket need attention within the hour?"
-      }
-    }
-  }'
-```
-
-Or call ollama.com directly with an [API key](https://ollama.com/settings/keys):
-
-```shell cloud-direct.sh
-curl https://ollama.com/v1/systemone \
-  -H "Authorization: Bearer $OLLAMA_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "clef-flash",
-    "state": "Our checkout has returned 500 errors since 9am.",
-    "questions": {
-      "urgent": {
-        "type": "noul",
-        "instructions": "Does this ticket need attention within the hour?"
-      }
-    }
-  }'
-```
-
-Cloud requests accept up to 64 questions, up to 4 images of at most 4 MiB and 16 megapixels each, and `state` plus `questions` of at most 64 KiB. Input is limited to 24,000 tokens for `clef-flash` and 64,000 for `clef`; longer input returns `413`. Usage is billed per input token at the [listed price](https://ollama.com/pricing).
 
 ## Question types
 
