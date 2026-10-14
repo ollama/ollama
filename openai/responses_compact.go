@@ -163,9 +163,9 @@ func PrepareStandaloneCompaction(body []byte) (*ResponsesCompactionPlan, error) 
 	return newResponsesCompactionPlan(req, items)
 }
 
-// ExpandResponsesCompactionInput replaces the newest Ollama compaction item
-// with its summary and retained messages. Items on either side of the
-// compaction item remain in their original order.
+// ExpandResponsesCompactionInput omits foreign compaction state and replaces the
+// newest Ollama compaction item with its summary and retained messages. Readable
+// items on either side of a compaction item remain in their original order.
 func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 	req, items, err := decodeRawResponsesRequest(body)
 	if err != nil {
@@ -267,19 +267,90 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		return items, false, nil
 	}
 
-	payload, err := decodeOllamaCompactionItem(items[boundary])
-	if err != nil {
-		return nil, false, err
+	// A provider switch can leave opaque state alongside readable history. We
+	// cannot recover the encrypted summary, but must preserve the supplied
+	// messages and tool results, including those before the compaction boundary.
+	retained := make([]json.RawMessage, 0, len(items))
+	var payload OllamaCompactionPayload
+	boundary = -1
+	for _, item := range items {
+		if rawInputItemType(item) == "compaction" {
+			var wire ResponsesCompactionItem
+			if err := json.Unmarshal(item, &wire); err != nil {
+				return nil, false, fmt.Errorf("invalid compaction item: %w", err)
+			}
+			foreign, err := isForeignCompactionItem(wire)
+			if err != nil {
+				return nil, false, err
+			}
+			if foreign {
+				continue
+			}
+			payload, err = decodeOllamaCompactionItem(item)
+			if err != nil {
+				return nil, false, err
+			}
+			// The newest Ollama summary supersedes earlier Ollama summaries.
+			boundary = len(retained)
+			continue
+		}
+		retained = append(retained, item)
 	}
+	if boundary < 0 {
+		var input ResponsesInput
+		for i, raw := range retained {
+			item, err := unmarshalResponsesInputItem(raw)
+			if err != nil {
+				return nil, false, fmt.Errorf("input[%d]: %w", i, err)
+			}
+			input.Items = append(input.Items, item)
+		}
+		chat, err := FromResponsesRequest(ResponsesRequest{Input: input})
+		if err != nil {
+			return nil, false, err
+		}
+		// Count model-visible content and tool state, not ignored metadata or
+		// opaque reasoning carried in Message.Thinking.
+		readable := slices.ContainsFunc(chat.Messages, func(message api.Message) bool {
+			return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0 ||
+				len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.ToolName != ""
+		})
+		if !readable {
+			return nil, false, errors.New("input contains no readable history after removing foreign compaction state; resend readable conversation history")
+		}
+		return retained, true, nil
+	}
+
 	expanded, err := payloadToResponsesItems(payload)
 	if err != nil {
 		return nil, false, err
 	}
-	rewritten := make([]json.RawMessage, 0, len(items)-1+len(expanded))
-	rewritten = append(rewritten, items[:boundary]...)
+	rewritten := make([]json.RawMessage, 0, len(retained)+len(expanded))
+	rewritten = append(rewritten, retained[:boundary]...)
 	rewritten = append(rewritten, expanded...)
-	rewritten = append(rewritten, items[boundary+1:]...)
+	rewritten = append(rewritten, retained[boundary:]...)
 	return rewritten, true, nil
+}
+
+func isForeignCompactionItem(item ResponsesCompactionItem) (bool, error) {
+	content := strings.TrimSpace(item.EncryptedContent)
+	if content == "" {
+		return false, errors.New("invalid compaction item: encrypted_content is required")
+	}
+	if !strings.HasPrefix(content, "{") {
+		return true, nil
+	}
+
+	// Inspect the provider marker before applying Ollama's versioned schema.
+	// Malformed JSON must still fail rather than silently discarding broken
+	// Ollama state as though it were an opaque payload from another provider.
+	var payload struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false, fmt.Errorf("invalid compaction payload: %w", err)
+	}
+	return payload.Type != OllamaCompactionPayloadType, nil
 }
 
 func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, error) {

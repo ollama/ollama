@@ -654,3 +654,73 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 		t.Fatalf("expanded state is incomplete: %s", forwarded)
 	}
 }
+
+func TestResponsesForeignCompactionHistory(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		path    string
+		stream  bool
+		compact bool
+	}{
+		{"json continuation", "/v1/responses", false, false},
+		{"streaming continuation", "/v1/responses", true, false},
+		{"standalone compaction", "/v1/responses/compact", false, true},
+		{"triggered compaction", "/v1/responses", true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const response = `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`
+			streamResponse := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n"
+			local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+				if tt.stream && !tt.compact {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, streamResponse)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if tt.compact {
+					_, _ = w.Write(summaryResponse(t, "Remember kiwi-42.", nil))
+				} else {
+					_, _ = io.WriteString(w, response)
+				}
+			})
+			input := []any{
+				map[string]any{"role": "user", "content": "readable prefix"},
+				openai.ResponsesCompactionItem{Type: "compaction", EncryptedContent: "opaque-provider-state"},
+				map[string]any{"type": "custom_tool_call", "call_id": "call_1", "name": "read", "input": "notes.txt"},
+				map[string]any{"type": "custom_tool_call_output", "call_id": "call_1", "output": "kiwi-42"},
+			}
+			if tt.compact && tt.stream {
+				input = append(input, map[string]any{"type": "compaction_trigger"})
+			}
+			request, err := json.Marshal(map[string]any{"model": "fixture:cloud", "stream": tt.stream, "input": input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, headers, body := postCompactionRequest(t, local, tt.path, string(request))
+			if status != http.StatusOK {
+				t.Fatalf("status=%d body=%s", status, body)
+			}
+			if tt.stream {
+				if !strings.HasPrefix(headers.Get("Content-Type"), "text/event-stream") || strings.Count(string(body), "event: response.completed") != 1 {
+					t.Fatalf("unexpected stream: headers=%v body=%s", headers, body)
+				}
+				if !tt.compact && string(body) != streamResponse {
+					t.Fatalf("upstream stream changed: %s", body)
+				}
+			}
+			paths, bodies := capture.snapshot()
+			if len(paths) != 1 || paths[0] != "/v1/responses" {
+				t.Fatalf("paths=%v", paths)
+			}
+			forwarded := string(bodies[0])
+			if strings.Contains(forwarded, "opaque-provider-state") {
+				t.Fatalf("foreign payload reached inference: %s", forwarded)
+			}
+			for _, text := range []string{"readable prefix", "kiwi-42", "call_1", "notes.txt"} {
+				if !strings.Contains(forwarded, text) {
+					t.Errorf("history missing %q: %s", text, forwarded)
+				}
+			}
+		})
+	}
+}

@@ -839,11 +839,34 @@ func TestExpandResponsesCompactionInputPreservesCodexRetainedPrefix(t *testing.T
 	}
 }
 
-func TestExpandResponsesCompactionInputRejectsForeignPayload(t *testing.T) {
-	body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}]}`)
-	_, changed, err := ExpandResponsesCompactionInput(body)
-	if changed || err == nil || !strings.Contains(err.Error(), "not an Ollama payload") {
-		t.Fatalf("changed=%v err=%v", changed, err)
+func TestExpandResponsesCompactionInputRequiresReadableHistory(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		remaining string
+		wantErr   bool
+	}{
+		{"no remaining items", "", true},
+		{"search metadata only", `,{"type":"web_search_call","id":"ws_1","status":"completed"}`, true},
+		{"encrypted reasoning only", `,{"type":"reasoning","id":"rs_foreign","summary":[],"encrypted_content":"opaque-reasoning-state"}`, true},
+		{"empty message", `,{"role":"user","content":" "}`, true},
+		{"metadata with readable message", `,{"type":"web_search_call","id":"ws_1","status":"completed"},{"role":"user","content":"continue"}`, false},
+		{"image only", `,{"role":"user","content":[{"type":"input_image","image_url":"` + compactionTestPNG + `"}]}`, false},
+		{"tool pair with empty result", `,{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":""}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}` + tt.remaining + `]}`)
+			_, changed, err := ExpandResponsesCompactionInput(body)
+			if (err != nil) != tt.wantErr || changed == tt.wantErr {
+				t.Errorf("expand: changed=%v err=%v, wantErr=%v", changed, err, tt.wantErr)
+			}
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "resend readable conversation history")) {
+				t.Errorf("expected readable-history recovery error, got %v", err)
+			}
+			var request ResponsesRequest
+			if err := json.Unmarshal(body, &request); (err != nil) != tt.wantErr {
+				t.Errorf("direct parsing: err=%v, wantErr=%v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
