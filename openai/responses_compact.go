@@ -267,9 +267,6 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		return items, false, nil
 	}
 
-	// A provider switch can leave opaque state alongside readable history. We
-	// cannot recover the encrypted summary, but must preserve the supplied
-	// messages and tool results, including those before the compaction boundary.
 	retained := make([]json.RawMessage, 0, len(items))
 	var payload OllamaCompactionPayload
 	boundary = -1
@@ -309,8 +306,6 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		if err != nil {
 			return nil, false, err
 		}
-		// Count model-visible content and tool state, not ignored metadata or
-		// opaque reasoning carried in Message.Thinking.
 		readable := slices.ContainsFunc(chat.Messages, func(message api.Message) bool {
 			return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0 ||
 				len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.ToolName != ""
@@ -341,9 +336,6 @@ func isForeignCompactionItem(item ResponsesCompactionItem) (bool, error) {
 		return true, nil
 	}
 
-	// Inspect the provider marker before applying Ollama's versioned schema.
-	// Malformed JSON must still fail rather than silently discarding broken
-	// Ollama state as though it were an opaque payload from another provider.
 	var payload struct {
 		Type string `json:"type"`
 	}

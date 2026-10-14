@@ -484,8 +484,6 @@ func (r *ResponsesInput) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("input must be a string or array: %w", err)
 	}
 
-	// Direct consumers such as ODC do not run the local compaction middleware.
-	// Normalize history here as well so both paths accept the same input.
 	rawItems, _, err := expandOllamaCompactionItems(rawItems)
 	if err != nil {
 		return err
