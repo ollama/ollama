@@ -1950,7 +1950,6 @@ func codexAppOllamaProfileSingletonPID(userDataDir string) (int, bool) {
 	return pid, true
 }
 
-// Detect isolated legacy processes for cleanup; this integration uses one profile.
 func defaultCodexAppOllamaProfileIsRunning() bool {
 	pid, ok := codexAppOllamaProfilePID()
 	if !ok {
@@ -2026,8 +2025,9 @@ func codexAppOllamaProfileProcessIdentity(pid int) (bool, bool) {
 		return false, false
 	}
 	command = strings.TrimSpace(command)
+	argument := "--user-data-dir=" + userDataDir
 	return true, strings.HasPrefix(command, executable+" ") &&
-		strings.Contains(command, "--user-data-dir="+userDataDir)
+		(strings.HasSuffix(command, argument) || strings.Contains(command, argument+" "))
 }
 
 func defaultCodexAppProcessCommand(pid int) (string, error) {

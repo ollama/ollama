@@ -45,7 +45,7 @@ type codexDesktopController interface {
 }
 
 var (
-	codexDesktop                        codexDesktopController = &launch.CodexApp{}
+	codexDesktop                        codexDesktopController = &launch.CodexDesktop{}
 	codexDesktopClientFactory                                  = api.ClientFromEnvironment
 	codexDesktopLoadModels                                     = loadCodexDesktopModels
 	codexDesktopLoadConnectionModels                           = loadCodexDesktopConnectionModels

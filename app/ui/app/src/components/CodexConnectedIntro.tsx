@@ -14,21 +14,14 @@ export function CodexConnectedIntro({ onDone }: { onDone: () => void }) {
       />
       <div className="fixed inset-0 flex items-center justify-center overflow-y-auto p-6">
         <DialogPanel className="claude-connected-dialog relative max-h-full w-full max-w-md overflow-y-auto rounded-2xl bg-white font-sans shadow-2xl ring-1 ring-black/10 dark:bg-neutral-800 dark:ring-white/10">
-          <img
-            src="/chatgpt-connected.png"
-            alt="Ollama models alongside OpenAI models in the ChatGPT Codex model picker"
-            width={1172}
-            height={1084}
-            className="h-auto w-full object-contain"
-            draggable={false}
-          />
           <div className="p-6">
             <DialogTitle className="font-rounded text-lg font-medium leading-6 text-neutral-950 dark:text-neutral-100">
               Use Ollama models in ChatGPT
             </DialogTitle>
             <Description className="mt-2 text-[13px] leading-5 text-neutral-500 dark:text-neutral-400">
-              Click Continue to open ChatGPT. In Codex mode, choose an Ollama
-              model from the model picker for your task.
+              Continue opens a separate ChatGPT window for Ollama. In Codex
+              mode, choose an Ollama model for your task. Your usual ChatGPT
+              window keeps its own models and conversations.
             </Description>
             <div className="mt-5 flex justify-end">
               <button

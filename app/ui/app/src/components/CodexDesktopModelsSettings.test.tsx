@@ -527,7 +527,7 @@ describe("CodexDesktopModelsSettings", () => {
 
       expect(textContent(renderer!.root)).toContain("ChatGPT");
       expect(textContent(renderer!.root)).toContain(
-        "Choose up to 5 Ollama models to use in ChatGPT.",
+        "Choose up to 5 models for the Ollama window in ChatGPT.",
       );
       expect(textContent(renderer!.root)).not.toContain("5 of 5 selected");
       const lightIcon = renderer!.root.findByProps({
@@ -827,12 +827,12 @@ describe("CodexDesktopModelsSettings", () => {
     {
       connected: false,
       confirmation:
-        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+        "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
     },
     {
       connected: true,
       confirmation:
-        "Restart ChatGPT to update Ollama models? Any running task will stop.",
+        "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
     },
   ])(
     "uses the native restart copy when connected is $connected",
@@ -928,7 +928,7 @@ describe("CodexDesktopModelsSettings", () => {
       });
 
       expect(window.confirm).toHaveBeenCalledWith(
-        "Restart ChatGPT to update Ollama models? Any running task will stop.",
+        "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
       );
       expect(apply.mock.calls).toEqual([
         [next, false],

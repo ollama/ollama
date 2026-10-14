@@ -502,9 +502,7 @@ export const CodexDesktopModelsSettings = forwardRef<
         applyResult(result, true);
         if (
           !window.confirm(
-            result.settings.connected
-              ? "Restart ChatGPT to update Ollama models? Any running task will stop."
-              : "Restart ChatGPT to add Ollama models? Any running task will stop.",
+            "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
           )
         ) {
           return;
@@ -621,7 +619,8 @@ export const CodexDesktopModelsSettings = forwardRef<
                 ChatGPT
               </h2>
               <p className="mt-1 text-base/6 text-zinc-500 sm:text-sm/6 dark:text-zinc-400">
-                Choose up to {maxModels} Ollama models to use in ChatGPT.
+                Choose up to {maxModels} models for the Ollama window in
+                ChatGPT.
               </p>
             </div>
             <div className="shrink-0">

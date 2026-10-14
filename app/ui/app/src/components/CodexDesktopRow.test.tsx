@@ -266,7 +266,7 @@ describe("CodexDesktopRow", () => {
         }).props["aria-pressed"],
       ).toBe(true);
       expect(renderer!.root.findByProps({ role: "status" }).children).toContain(
-        "Ollama models added alongside Codex models",
+        "Ollama connected to ChatGPT",
       );
     } finally {
       await act(async () => renderer?.unmount());
@@ -532,7 +532,7 @@ describe("CodexDesktopRow", () => {
       });
 
       expect(confirm).toHaveBeenCalledWith(
-        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+        "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
       );
       expect(connect).toHaveBeenCalledOnce();
       expect(connect).toHaveBeenCalledWith(true, false);
@@ -583,7 +583,7 @@ describe("CodexDesktopRow", () => {
       });
 
       expect(confirm).toHaveBeenCalledWith(
-        "Restart ChatGPT to add Ollama models? Any running task will stop.",
+        "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
       );
       expect(connect).toHaveBeenNthCalledWith(1, true, false);
       expect(connect).toHaveBeenNthCalledWith(2, true, true);

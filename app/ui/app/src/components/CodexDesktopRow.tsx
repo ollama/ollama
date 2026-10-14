@@ -38,7 +38,7 @@ const connectionProgress = {
   },
   disconnecting: {
     label: "Disconnecting…",
-    description: "Restoring ChatGPT’s usual connection…",
+    description: "Disconnecting Ollama from ChatGPT…",
   },
 } as const;
 
@@ -278,7 +278,7 @@ export function CodexDesktopRow({
             result.error || "Ollama could not add its models to ChatGPT.",
           );
         } else {
-          setNotice("Ollama models added alongside Codex models");
+          setNotice("Ollama connected to ChatGPT");
         }
       } catch {
         if (!mounted.current || (!active && !completing)) return;
@@ -330,7 +330,7 @@ export function CodexDesktopRow({
     codexDesktopDescription(
       status,
       installed
-        ? "Use Ollama models in Codex mode in ChatGPT."
+        ? "Use Ollama models in a separate ChatGPT window."
         : "We’ll download ChatGPT and connect it to Ollama.",
     );
 
@@ -403,7 +403,7 @@ export function CodexDesktopRow({
         setStatus(liveStatus);
         if (liveStatus.running && !restartConfirmed) {
           restartConfirmed = window.confirm(
-            "Restart ChatGPT to add Ollama models? Any running task will stop.",
+            "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop.",
           );
           if (!restartConfirmed) return;
         }
@@ -426,8 +426,8 @@ export function CodexDesktopRow({
         if (
           !window.confirm(
             enabled
-              ? "Restart ChatGPT to add Ollama models? Any running task will stop."
-              : "Restart ChatGPT to remove Ollama models? Any running task will stop.",
+              ? "Restart ChatGPT’s Ollama connection? Tasks in the affected windows will stop."
+              : "Disconnect Ollama from ChatGPT? Tasks in the affected windows will stop.",
           ) ||
           !mounted.current
         ) {
@@ -456,7 +456,7 @@ export function CodexDesktopRow({
         if (!(await saveAcknowledgment())) return;
       }
       if (enabled) {
-        setNotice("Ollama models added alongside Codex models");
+        setNotice("Ollama connected to ChatGPT");
       } else {
         setNotice("Ollama models removed · Codex models remain available");
       }
