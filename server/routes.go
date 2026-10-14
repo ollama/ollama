@@ -987,15 +987,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	if ref.Source == modelSourceCloud {
-		// Forward the original body with the model name normalized — re-encoding
-		// the decoded request would add nulls upstream rejects (e.g. noul
-		// criteria).
-		normalized, err := replaceJSONModelField(body, ref.Base)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		proxyCloudRequest(c, normalized, cloudErrRemoteInferenceUnavailable)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "System One requires a local decision model"})
 		return
 	}
 	m, err := s.getExistingModelForRunner(ref.Name.String(), "")
@@ -2387,7 +2379,7 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/v1/systemone", s.SystemOneHandler)
+	r.POST("/v1/systemone", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), s.SystemOneHandler)
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
