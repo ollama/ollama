@@ -951,8 +951,8 @@ func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
 	}
 
 	got := runner.statusErrorMessage([]byte(`{"error":{"message":"Compute error."}}`))
-	if !strings.Contains(got, "Compute error") {
-		t.Fatalf("expected original response body, got %q", got)
+	if !strings.HasPrefix(got, "Compute error.\n") {
+		t.Fatalf("expected llama-server's error message, got %q", got)
 	}
 	if !IsOutOfMemoryMessage(got) {
 		t.Fatalf("expected OOM status detail to be detectable, got %q", got)
@@ -1713,7 +1713,7 @@ func TestLlamaServerEmbedding(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, count, err := runner.Embedding(t.Context(), "hello")
+	embedding, count, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1722,6 +1722,21 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("prompt_eval_count = %d, want 2", count)
+	}
+}
+
+func TestLlamaServerSystemOnePromptOverContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":500,"message":"input (9000 tokens) is too large to process. increase the physical batch size (current batch size: 8192)","type":"server_error"}}`)
+	}))
+	defer srv.Close()
+	runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), sem: semaphore.NewWeighted(1)}
+
+	_, _, err := runner.SystemOne(t.Context(), json.RawMessage(`"x"`), json.RawMessage(`{"q":{"type":"noul","instructions":"q"}}`), nil)
+	var serr api.StatusError
+	if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest || serr.ErrorMessage != promptTooLongMessage {
+		t.Fatalf("err = %v, want 400 %q", err, promptTooLongMessage)
 	}
 }
 
@@ -1787,7 +1802,7 @@ func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1820,7 +1835,7 @@ func TestLlamaServerEmbeddingFlatArrayFallback(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1851,17 +1866,17 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	_, _, err := runner.Embedding(t.Context(), "very long input")
+	_, _, err := runner.Embedding(t.Context(), "very long input", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Should be normalized to 400 for the embed handler's truncation retry
+	// Should be normalized to 413 for the embed handler's truncation retry
 	var statusErr api.StatusError
 	if !errors.As(err, &statusErr) {
 		t.Fatalf("expected api.StatusError, got %T: %v", err, err)
 	}
-	if statusErr.StatusCode != 400 {
-		t.Errorf("status code = %d, want 400", statusErr.StatusCode)
+	if statusErr.StatusCode != 413 {
+		t.Errorf("status code = %d, want 413", statusErr.StatusCode)
 	}
 }
 
@@ -1910,6 +1925,40 @@ func TestEmbeddingBatchSize(t *testing.T) {
 			opts.NumBatch = tt.numBatch
 			if got := embeddingBatchSize(opts, tt.numParallel); got != tt.want {
 				t.Fatalf("embeddingBatchSize = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerBatch(t *testing.T) {
+	tests := []struct {
+		name                 string
+		headBlocks, trainCtx uint64
+		numCtx, numBatch     int
+		completion           bool
+		wantBatch            int
+		wantMemory           uint64
+	}{
+		{"default generation", 0, 8192, 8192, 512, true, 512, 0},
+		{"medium generation", 0, 8192, 8192, 1024, true, 1024, 768 << 20},
+		{"large generation", 0, 8192, 8192, 2048, true, 2048, 2 << 30},
+		{"other non-completion models", 0, 8192, 8192, 2048, false, 2048, 0},
+		{"decision uses requested context", 4, 32768, 8192, 512, false, 8192, 2 << 30},
+		{"decision caps at trained context", 4, 1024, 8192, 512, false, 1024, 768 << 20},
+		{"decision without trained context", 4, 0, 8192, 512, false, 8192, 2 << 30},
+		{"decision with an already matching batch", 4, 8192, 8192, 8192, false, 8192, 2 << 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := loadTestGGUF(t, gguftest.KV{
+				"general.architecture":      "clef",
+				"clef.context_length":       tt.trainCtx,
+				"clef.decision.block_count": tt.headBlocks,
+			})
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.numCtx, NumBatch: tt.numBatch}}
+			batch, memory := LlamaServerBatch(f, opts, tt.completion)
+			if batch != tt.wantBatch || memory != tt.wantMemory {
+				t.Fatalf("batch=%d memory=%d, want batch=%d memory=%d", batch, memory, tt.wantBatch, tt.wantMemory)
 			}
 		})
 	}
@@ -2703,21 +2752,21 @@ func TestNormalizeEmbeddingError(t *testing.T) {
 			name:       "physical batch size",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":500,"message":"input (103 tokens) is too large to process. increase the physical batch size (current batch size: 30)"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "context length string error",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"input length exceeds the context length"}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "available context",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"request (302 tokens) exceeds the available context size (256 tokens), try increasing it"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{

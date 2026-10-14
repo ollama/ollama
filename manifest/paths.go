@@ -119,10 +119,13 @@ func resolveManifestPath(n model.Name) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	// Stat, not Lstat: a v2 entry is a symlink, and a dangling one (for
-	// example after a pre-v2 daemon garbage-collected its manifest blob)
-	// must fall through to the legacy manifest instead of being selected.
-	if _, err := os.Stat(v2Path); err == nil {
+	// Resolve Windows links explicitly, preserving fallback for dangling links.
+	if runtime.GOOS == "windows" {
+		_, err = filepath.EvalSymlinks(v2Path)
+	} else {
+		_, err = os.Stat(v2Path)
+	}
+	if err == nil {
 		root, err := V2Path()
 		return v2Path, root, err
 	} else if !os.IsNotExist(err) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,6 +20,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode"
@@ -66,7 +68,406 @@ func TestGetExistingName(t *testing.T) {
 	}
 }
 
-func BenchmarkGetExistingName(b *testing.B) {
+func TestInferenceMissingModelResponses(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	gin.SetMode(gin.TestMode)
+	s := &Server{}
+	for _, tc := range []struct {
+		name    string
+		handler gin.HandlerFunc
+		body    any
+		status  int
+		message string
+	}{
+		{"generate", s.GenerateHandler, api.GenerateRequest{Model: "missing-model", Prompt: "hi"}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"chat", s.ChatHandler, api.ChatRequest{Model: "missing-model", Messages: []api.Message{{Role: "user", Content: "hi"}}}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"embed", s.EmbedHandler, api.EmbedRequest{Model: "missing-model", Input: "hi"}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"embeddings", s.EmbeddingsHandler, api.EmbeddingRequest{Model: "missing-model", Prompt: "hi"}, http.StatusNotFound, `model "missing-model" not found, try pulling it first`},
+		{"system one", s.SystemOneHandler, map[string]any{"model": "missing-model"}, http.StatusNotFound, "model 'missing-model' not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := createRequest(t, tc.handler, tc.body)
+			if w.Code != tc.status || w.Body.String() != fmt.Sprintf(`{"error":%q}`, tc.message) {
+				t.Fatalf("status %d, body %s; want %d, %q", w.Code, w.Body, tc.status, tc.message)
+			}
+		})
+	}
+}
+
+func TestLoadedModelLookupReportsCorruptManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("corrupt-manifest")
+	if err := manifest.WriteManifestData(name, []byte("{")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GetModelForRunner(name.String(), ""); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("previous exact-name loader error = %v; want a parse error", err)
+	}
+	s := &Server{}
+	if _, err := s.getExistingModelForRunner(name.String(), ""); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("combined lookup error = %v; want a parse error", err)
+	}
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{Model: name.String(), Messages: []api.Message{{Role: "user", Content: "hi"}}})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("chat status = %d, want %d: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+}
+
+func TestLoadedModelLookupTracksSymlinkTag(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("Warm-Model")
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	initial, err := s.getExistingModelForRunner("warm-model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.NamedManifestPointsToDigest(name, initial.Digest) {
+		t.Skip("v2 tag is a regular file on this platform or filesystem")
+	}
+	s.sched.loaded["initial"] = &runnerRef{model: initial}
+
+	warm, err := s.getExistingModelForRunner("WARM-MODEL", "")
+	if err != nil || warm != initial {
+		t.Fatalf("warm lookup = %p, %v; want loaded model %p", warm, err, initial)
+	}
+	blobPath, err := manifest.BlobsPath("sha256:" + initial.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blobPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := s.getExistingModelForRunner("warm-model", ""); err != nil || cached != initial {
+		t.Fatalf("warm lookup reread manifest blob: %p, %v", cached, err)
+	}
+	delete(s.sched.loaded, "initial")
+	if _, err := s.getExistingModelForRunner("warm-model", ""); err == nil {
+		t.Fatal("cold lookup accepted a corrupt manifest blob")
+	}
+	s.sched.loaded["initial"] = &runnerRef{model: initial}
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2,"layers":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.getExistingModelForRunner("warm-model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == initial || updated.Digest == initial.Digest {
+		t.Fatal("repointed tag reused the old model")
+	}
+	s.sched.loaded["updated"] = &runnerRef{model: updated}
+	if current, err := s.getExistingModelForRunner("warm-model", ""); err != nil || current != updated {
+		t.Fatalf("current tag lookup = %p, %v; want %p", current, err, updated)
+	}
+
+	delete(s.sched.loaded, "updated")
+	if unloaded, err := s.getExistingModelForRunner("warm-model", ""); err != nil || unloaded == updated {
+		t.Fatalf("lookup after unload = %p, %v; want a fresh model", unloaded, err)
+	}
+}
+
+func TestLoadedModelLookupConcurrent(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("concurrent-model")
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	cached, err := s.getExistingModelForRunner(name.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.NamedManifestPointsToDigest(name, cached.Digest) {
+		t.Skip("v2 tag is a regular file on this platform or filesystem")
+	}
+	s.sched.loaded["cached"] = &runnerRef{model: cached}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				got, err := s.getExistingModelForRunner(name.String(), "")
+				if err != nil || got != cached {
+					t.Errorf("concurrent warm lookup = %p, %v; want %p", got, err, cached)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Unloading clears runner.model under refMu while lookups still inspect
+	// the loaded runner snapshot. A lookup may use the old model or load a new
+	// one, but it must remain safe in either case.
+	runner := s.sched.loaded["cached"]
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 100 {
+			if _, err := s.getExistingModelForRunner(name.String(), ""); err != nil {
+				t.Errorf("lookup during unload: %v", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		runner.refMu.Lock()
+		runner.unload()
+		runner.refMu.Unlock()
+	}()
+	close(start)
+	wg.Wait()
+}
+
+func TestLoadedModelLookupDoesNotWaitForUnrelatedRunner(t *testing.T) {
+	name := model.ParseName("ready-model")
+	ready := &Model{Name: name.String()}
+	loading := &runnerRef{model: &Model{Name: "loading-model"}, loading: true}
+	s := &Scheduler{loaded: map[string]*runnerRef{
+		"ready":   {model: ready},
+		"loading": loading,
+	}}
+
+	loading.refMu.Lock()
+	defer loading.refMu.Unlock()
+	result := make(chan []*Model, 1)
+	go func() {
+		result <- s.loadedModelsForName(name, "")
+	}()
+
+	select {
+	case got := <-result:
+		if len(got) != 1 || got[0] != ready {
+			t.Fatalf("loaded models = %v, want only the ready model", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup waited for an unrelated loading runner")
+	}
+}
+
+func TestChatMessagesForRequestIsolation(t *testing.T) {
+	defaults := make([]api.Message, 1, 4)
+	defaults[0] = api.Message{Role: "assistant", Content: "<think>saved reasoning</think>saved reply"}
+	m := &Model{
+		Name:     "qwen3",
+		System:   "shared instructions",
+		Messages: defaults,
+	}
+	m.Config.ModelFamily = "qwen3"
+
+	aliceRequest := []api.Message{
+		{Role: "assistant", Content: "<think>Alice reasoning</think>Alice reply"},
+		{Role: "user", Content: "Alice private message"},
+	}
+	alice := chatMessagesForRequest(m, aliceRequest)
+	bob := chatMessagesForRequest(m, []api.Message{{Role: "user", Content: "Bob private message"}})
+
+	if len(alice) != 4 || len(bob) != 3 {
+		t.Fatalf("message counts: Alice = %d, Bob = %d; want 4 and 3", len(alice), len(bob))
+	}
+	if alice[0].Content != m.System || bob[0].Content != m.System {
+		t.Fatalf("system instructions missing: Alice = %q, Bob = %q", alice[0].Content, bob[0].Content)
+	}
+	if alice[3].Content != "Alice private message" || bob[2].Content != "Bob private message" {
+		t.Fatalf("request messages changed: Alice = %q, Bob = %q", alice[3].Content, bob[2].Content)
+	}
+	for _, msg := range bob {
+		if strings.Contains(msg.Content, "Alice") {
+			t.Fatalf("Bob received an Alice message: %#v", bob)
+		}
+	}
+	if m.Messages[0].Content != "<think>saved reasoning</think>saved reply" || defaults[:cap(defaults)][1].Content != "" {
+		t.Fatalf("shared model messages changed: %#v", defaults[:cap(defaults)])
+	}
+	if aliceRequest[0].Content != "<think>Alice reasoning</think>Alice reply" {
+		t.Fatalf("Alice's request messages changed: %#v", aliceRequest)
+	}
+
+	alice[1].Content = "Alice private message"
+	if bob[1].Content != "saved reply" || m.Messages[0].Content != "<think>saved reasoning</think>saved reply" {
+		t.Fatalf("Alice's prompt aliases Bob's prompt or the model: Bob = %#v, model = %#v", bob, m.Messages)
+	}
+
+	var wg sync.WaitGroup
+	for _, pair := range [][2]string{{"Alice", "Bob"}, {"Bob", "Alice"}} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				msgs := chatMessagesForRequest(m, []api.Message{{Role: "user", Content: pair[0] + " private message"}})
+				for _, msg := range msgs {
+					if strings.Contains(msg.Content, pair[1]) {
+						t.Errorf("%s received a %s message: %#v", pair[0], pair[1], msgs)
+					}
+				}
+				msgs[1].Content = pair[0] + " private message"
+			}
+		}()
+	}
+	wg.Wait()
+	if m.Messages[0].Content != "<think>saved reasoning</think>saved reply" {
+		t.Errorf("concurrent requests changed saved messages: %#v", m.Messages)
+	}
+}
+
+func TestLoadedModelLookupVerifiesRegularManifest(t *testing.T) {
+	listData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests: []manifest.Manifest{{
+			Runner: manifest.RunnerMLX,
+			Layers: []manifest.Layer{{MediaType: manifest.MediaTypeImageTensor}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "manifest", data: []byte(`{"schemaVersion":2}`)},
+		{name: "manifest list", data: listData},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("copied-manifest")
+			if err := manifest.WriteManifestData(name, tc.data); err != nil {
+				t.Fatal(err)
+			}
+			s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+			initial, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.sched.loaded["initial"] = &runnerRef{model: initial}
+
+			path, err := manifest.V2PathForName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, tc.data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if manifest.NamedManifestPointsToDigest(name, initial.Digest) {
+				t.Fatal("regular manifest used the symlink shortcut")
+			}
+			copyModel, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if copyModel == initial || copyModel.Digest != initial.Digest {
+				t.Fatalf("copy lookup = %p, %s; want a freshly validated model with digest %s", copyModel, copyModel.Digest, initial.Digest)
+			}
+
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := bytes.Replace(tc.data, []byte(`"schemaVersion":2`), []byte(`"schemaVersion":3`), 1)
+			if bytes.Equal(changed, tc.data) {
+				t.Fatal("test manifest did not change")
+			}
+			if err := os.WriteFile(path, changed, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.Digest == initial.Digest {
+				t.Fatal("modified regular manifest reused the loaded model")
+			}
+		})
+	}
+}
+
+func TestLoadedModelLookupRunnerSelection(t *testing.T) {
+	name := model.ParseName("runner-selection")
+	defaultModel := &Model{Name: name.String(), Runner: manifest.RunnerMLX}
+	explicitModel := &Model{Name: name.String(), Runner: manifest.RunnerGGML, runnerSelection: manifest.RunnerGGML}
+	s := &Scheduler{loaded: map[string]*runnerRef{
+		"default":  {model: defaultModel},
+		"explicit": {model: explicitModel},
+	}}
+	if got := s.loadedModelsForName(name, manifest.RunnerGGML); len(got) != 1 || got[0] != explicitModel {
+		t.Fatalf("explicit runner lookup = %v; want GGML model", got)
+	}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != defaultModel {
+		t.Fatalf("default runner lookup = %v; want default model", got)
+	}
+
+	topRunner := manifest.RunnerLlamaCPP
+	if !manifest.IsTopRunnerPreference(topRunner) {
+		topRunner = manifest.RunnerMLX
+	}
+	topModel := &Model{Name: name.String(), Runner: topRunner, runnerSelection: topRunner}
+	s.loaded = map[string]*runnerRef{"top": {model: topModel}}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != topModel {
+		t.Fatalf("default lookup after explicit preferred runner = %v; want loaded model", got)
+	}
+
+	singleManifest := &Model{
+		Name: name.String(), Runner: manifest.RunnerGGML,
+		Digest: "single-digest", ManifestDigest: "single-digest", runnerSelection: manifest.RunnerGGML,
+	}
+	s.loaded = map[string]*runnerRef{"single": {model: singleManifest}}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != singleManifest {
+		t.Fatalf("default lookup after explicit single-manifest runner = %v; want loaded model", got)
+	}
+}
+
+func TestLoadedExplicitRunnerDoesNotChangeDefaultSelection(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("multi-runner")
+	var children []manifest.Manifest
+	for _, runner := range []string{manifest.RunnerGGML, manifest.RunnerMLX, manifest.RunnerLlamaCPP} {
+		children = append(children, manifest.Manifest{
+			Runner: runner,
+			Layers: []manifest.Layer{{MediaType: manifest.MediaTypeImageTensor}},
+		})
+	}
+	data, err := json.Marshal(manifest.Manifest{SchemaVersion: 2, MediaType: manifest.MediaTypeManifestList, Manifests: children})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(name, data); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	explicit, err := s.getExistingModelForRunner(name.String(), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sched.loaded["explicit"] = &runnerRef{model: explicit}
+
+	selected, err := s.getExistingModelForRunner(name.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected == explicit || selected.Runner == explicit.Runner {
+		t.Fatalf("default selection reused explicit %q runner", explicit.Runner)
+	}
+}
+
+func BenchmarkModelLookup(b *testing.B) {
 	// Tensor manifests are large; lookup should only decode the requested model.
 	layers := make([]manifest.Layer, 512)
 	for i := range layers {
@@ -90,12 +491,52 @@ func BenchmarkGetExistingName(b *testing.B) {
 				}
 			}
 			name := model.ParseName("test/model0:latest")
-			b.ReportAllocs()
-			for b.Loop() {
-				if _, err := getExistingName(name); err != nil {
+			b.Run("name", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := getExistingName(name); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("separate-lookups", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					existing, err := getExistingName(name)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := GetModelForRunner(existing.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("single-lookup", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := loadExistingModelForRunner(name.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("warm-runner", func(b *testing.B) {
+				cached, err := loadExistingModelForRunner(name.String(), "")
+				if err != nil {
 					b.Fatal(err)
 				}
-			}
+				if !manifest.NamedManifestPointsToDigest(model.ParseName(cached.Name), cached.Digest) {
+					b.Skip("v2 tag is a regular file on this platform or filesystem")
+				}
+				s := &Server{sched: &Scheduler{loaded: map[string]*runnerRef{
+					"cached": {model: cached},
+				}}}
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := s.getExistingModelForRunner(name.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
 		})
 	}
 }

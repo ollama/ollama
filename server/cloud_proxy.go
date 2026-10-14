@@ -386,9 +386,15 @@ func signCloudProxyRequest(ctx context.Context, req *http.Request) error {
 }
 
 func buildCloudSignatureChallenge(req *http.Request, ts string) string {
-	query := req.URL.Query()
-	query.Set("ts", ts)
-	req.URL.RawQuery = query.Encode()
+	query, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		// Preserve malformed queries for the cloud to reject. Its verifier uses
+		// the first timestamp, so prepend ours ahead of any client value.
+		req.URL.RawQuery = "ts=" + ts + "&" + req.URL.RawQuery
+	} else {
+		query.Set("ts", ts)
+		req.URL.RawQuery = query.Encode()
+	}
 
 	return fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI())
 }

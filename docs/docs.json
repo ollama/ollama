@@ -259,7 +259,9 @@
               "POST /api/pull",
               "POST /api/push",
               "DELETE /api/delete",
-              "GET /api/version"
+              "GET /api/version",
+              "/api/cloud-usage",
+              "/api/balance"
             ]
           }
         ]

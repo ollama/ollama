@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 type compiledField struct {
@@ -27,22 +28,53 @@ type Compiled struct {
 	Request  llm.ScoreRequest
 	fields   []compiledField
 	messages [][]api.Message
+	encoding string
+}
+
+// ValidateLimits checks request limits shared by all decision backends.
+func ValidateLimits(req Request) error {
+	if n := req.Questions.Len(); n < 1 || n > 64 {
+		return fmt.Errorf("questions must contain 1–64 fields")
+	}
+	if len(req.Videos) > 0 {
+		return fmt.Errorf("video inputs are not supported")
+	}
+	if state, err := content(req.State); err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
+		return fmt.Errorf("state must not be empty")
+	}
+	for name, q := range req.Questions.All() {
+		if q.Type != "score" {
+			continue
+		}
+		var levels []json.RawMessage
+		if err := json.Unmarshal(q.Criteria, &levels); err != nil || len(levels) < 2 || len(levels) > 10 {
+			return fmt.Errorf("question %q: score criteria must be an array of 2–10 levels", name)
+		}
+	}
+	return nil
 }
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands":
+	case "", "tev1", "clef", "strands", "kev":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	if req.Questions.Len() < 1 || req.Questions.Len() > 64 {
-		return nil, fmt.Errorf("questions must contain 1–64 fields")
+	if encoding == "kev" {
+		if err := validateKevLimits(req); err != nil {
+			return nil, err
+		}
+		c := &Compiled{encoding: encoding}
+		if err := encodeKev(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
-	if len(req.Videos) > 0 {
-		return nil, fmt.Errorf("video inputs are not supported")
+	if err := ValidateLimits(req); err != nil {
+		return nil, err
 	}
 	if len(req.Images) != 0 && encoding != "clef" {
 		return nil, fmt.Errorf("image inputs are not supported by this decision model")
@@ -65,7 +97,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
 		return nil, fmt.Errorf("state must not be empty")
 	}
-	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}, encoding: encoding}
 	if encoding == "strands" {
 		if err := encodeStrands(req, c); err != nil {
 			return nil, err
@@ -85,7 +117,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	prompts, err := decisionPrompts(context, c.fields, encoding)
+	prompts, err := decisionPrompts(req.State, context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +158,7 @@ func content(raw json.RawMessage) (string, error) {
 		err := json.Unmarshal(raw, &s)
 		return s, err
 	case '{', '[':
-		var b bytes.Buffer
-		err := json.Compact(&b, raw)
-		return b.String(), err
+		return renderers.PythonJSON(raw, 0)
 	default:
 		return "", fmt.Errorf("must be a string, object, or array")
 	}
@@ -144,7 +174,9 @@ func compileField(name string, q Question) (compiledField, error) {
 		return f, fmt.Errorf("instructions must be a nonempty string, object, or array")
 	}
 	f.Description = description
-	add := func(value any, description string) {
+	// Choices carry only the descriptions the request gives, as in Bespoke's
+	// native_schema() for Nimble.
+	add := func(value any, description any) {
 		f.Choices = append(f.Choices, Choice{string(rune('A' + len(f.Choices))), value, description})
 	}
 	switch q.Type {
@@ -155,7 +187,7 @@ func compileField(name string, q Question) (compiledField, error) {
 				return f, fmt.Errorf("noul criteria must be an object of true/false descriptions")
 			}
 		}
-		no, yes := "No", "Yes"
+		var no, yes any
 		for key, value := range criteria.All() {
 			if value == nil {
 				return f, fmt.Errorf("noul descriptions must be strings")
@@ -188,7 +220,7 @@ func compileField(name string, q Question) (compiledField, error) {
 			if strings.TrimSpace(key) == "" {
 				return f, fmt.Errorf("choice keys must not be empty")
 			}
-			description := key
+			var description any
 			if value != nil {
 				description = *value
 			}
@@ -262,7 +294,11 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		if f.typ == "noul" {
 			for j, choice := range f.Choices {
 				if choice.Value == true {
-					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[j]})
+					value := p[j]
+					if c.encoding == "kev" {
+						value = roundKev(value)
+					}
+					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: value})
 				}
 			}
 			continue
@@ -271,10 +307,21 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		legend := &Legend{}
 		for j, choice := range f.Choices {
 			key := choice.Value.(string)
-			probabilities.Set(key, p[j])
+			value := p[j]
+			if c.encoding == "kev" {
+				value = roundKev(value)
+			}
+			probabilities.Set(key, value)
 			legend.Set(key, choice.Description)
 		}
-		confidence := max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		var confidence float64
+		if c.encoding == "kev" {
+			confidence = kevConfidence(p, f.typ)
+			confidence = roundKev(confidence)
+			score = roundKev(score)
+		} else {
+			confidence = max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
 			response.Answers.Set(f.Name, ChoiceAnswer{f.typ, f.Choices[winner].Value.(string), probabilities, confidence})

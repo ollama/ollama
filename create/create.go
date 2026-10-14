@@ -423,6 +423,7 @@ func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) 
 type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
+	"KevForDecision":                        newQwen35DecisionImportTransform,
 	"StrandsDeciderForDecision":             newQwen35DecisionImportTransform,
 	"ClefForDecision":                       newQwen35DecisionImportTransform,
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
@@ -449,6 +450,7 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
+	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {

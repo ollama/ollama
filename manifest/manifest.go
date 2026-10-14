@@ -54,6 +54,7 @@ type Manifest struct {
 	digest         string
 	selectedDigest string
 	name           model.Name
+	parsedConfig   *model.ConfigV2
 }
 
 func (m Manifest) isReference() bool {
@@ -170,6 +171,20 @@ func TotalSizeForName(n model.Name) (int64, error) {
 
 func (m *Manifest) Digest() string {
 	return m.digest
+}
+
+// Name returns the model name associated with a parsed named manifest.
+func (m *Manifest) Name() model.Name {
+	return m.name
+}
+
+// ParsedConfig returns config data already read while checking a legacy
+// manifest's explicit runner selection, when that check was needed.
+func (m *Manifest) ParsedConfig() (model.ConfigV2, bool) {
+	if m.parsedConfig == nil {
+		return model.ConfigV2{}, false
+	}
+	return *m.parsedConfig, true
 }
 
 // SelectedDigest returns the digest of the runnable manifest selected from a
@@ -416,9 +431,9 @@ func ReferencedBlobDigestsForName(n model.Name) ([]string, error) {
 	return referencedBlobDigestsForData(digest, data)
 }
 
-// RetainedBlobDigests returns the complete set of blob digests reachable from
+// retainedBlobDigestsLocked returns the complete set of blob digests reachable from
 // all named manifest objects in the local store.
-func RetainedBlobDigests() (map[string]struct{}, error) {
+func retainedBlobDigestsLocked() (map[string]struct{}, error) {
 	refs, err := namedManifestRefs(true)
 	if err != nil {
 		return nil, err
@@ -426,7 +441,7 @@ func RetainedBlobDigests() (map[string]struct{}, error) {
 
 	retained := make(map[string]struct{})
 	for n, ref := range refs {
-		data, _, digest, err := readVerifiedManifest(ref.path, ref.root)
+		data, _, digest, err := readVerifiedManifestLocked(ref.path, ref.root)
 		if err != nil {
 			slog.Warn("bad manifest", "name", n, "error", err)
 			continue
@@ -592,7 +607,7 @@ func RemoveUnreferencedBlobs(candidates ...string) ([]string, error) {
 }
 
 func removeUnreferencedBlobs(candidates ...string) ([]string, error) {
-	inUse, err := RetainedBlobDigests()
+	inUse, err := retainedBlobDigestsLocked()
 	if err != nil {
 		return nil, err
 	}
@@ -659,13 +674,8 @@ func ReadManifestData(n model.Name) ([]byte, error) {
 		return nil, err
 	}
 
-	f, _, err := OpenVerifiedManifest(p, root)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return io.ReadAll(f)
+	data, _, _, err := readVerifiedManifest(p, root)
+	return data, err
 }
 
 // ReadSelectedManifestData returns the runnable manifest bytes for a named
@@ -737,6 +747,7 @@ func parseManifestData(name model.Name, path string, fi os.FileInfo, digest stri
 		runner := canonicalRunner(m.Runner)
 		if runner == "" {
 			if config, err := readConfigV2(m.Config.Digest); err == nil {
+				m.parsedConfig = &config
 				runner, _ = MetadataForConfig(config)
 			}
 		}
@@ -846,6 +857,12 @@ func runnerPreferences() []string {
 	}
 
 	return []string{RunnerLlamaCPP, RunnerGGML, RunnerMLX}
+}
+
+// IsTopRunnerPreference reports whether runner is the first runner the
+// platform would select from a manifest list when no runner is requested.
+func IsTopRunnerPreference(runner string) bool {
+	return canonicalRunner(runner) == runnerPreferences()[0]
 }
 
 func runnerPreferencesFor(runner string) []string {
@@ -1248,6 +1265,11 @@ func linkManifest(name model.Name, digest string) error {
 		return err
 	}
 
+	// Avoid symlinks on windows
+	if runtime.GOOS == "windows" {
+		return copyManifestFile(blobPath, manifestPath)
+	}
+
 	if rel, err := filepath.Rel(filepath.Dir(manifestPath), blobPath); err == nil {
 		tempName, err := tempManifestPath(filepath.Dir(manifestPath))
 		if err != nil {
@@ -1371,75 +1393,171 @@ func replaceManifestPath(tempName, dst string) error {
 // OpenVerifiedManifest opens a named manifest path rooted under root. Symlinks must resolve to a
 // blob whose basename is sha256-<hex> and whose bytes hash to that digest.
 // Regular-file manifests are treated as legacy/copy fallback manifests and are
-// opened without mutating the local store.
+// opened without mutating the local store. Their returned digest identifies the
+// bytes read; regular files have no expected digest to compare against.
 func OpenVerifiedManifest(path, root string) (*os.File, string, error) {
-	resolvedRoot, err := filepath.EvalSymlinks(root)
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+	return openVerifiedManifestLocked(path, root)
+}
+
+// NamedManifestPointsToDigest reports whether the v2 name is a symlink to the
+// given content-addressed manifest blob. It checks the link and target without
+// reading or hashing the blob. Legacy and copied manifests return false so
+// callers can use full validation instead.
+func NamedManifestPointsToDigest(n model.Name, digest string) bool {
+	if !n.IsFullyQualified() || ValidateDigest("sha256:"+digest) != nil {
+		return false
+	}
+	path, err := V2PathForName(n)
+	if err != nil {
+		return false
+	}
+	blobPath, err := BlobsPath("sha256:" + digest)
+	if err != nil {
+		return false
+	}
+
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	target, err := evalAbs(path)
+	if err != nil || !strings.EqualFold(filepath.Base(target), "sha256-"+digest) {
+		return false
+	}
+	return sameFile(target, blobPath)
+}
+
+func openVerifiedManifestLocked(path, root string) (*os.File, string, error) {
+	opened, err := openManifestFileLocked(path, root)
 	if err != nil {
 		return nil, "", err
+	}
+	return opened.verifiedFile()
+}
+
+// unverifiedManifestFile keeps the opened bytes with the digest required for
+// a content-addressed symlink. Regular files have no expected digest; their
+// contents are hashed to establish their identity when read.
+type unverifiedManifestFile struct {
+	file           *os.File
+	expectedDigest string
+}
+
+func (m *unverifiedManifestFile) checkDigest(digest string) error {
+	if m.expectedDigest != "" && digest != m.expectedDigest {
+		return errors.New("digest mismatch")
+	}
+	return nil
+}
+
+// verifiedFile returns a rewound file after checking all its bytes. The caller
+// owns the returned file.
+func (m *unverifiedManifestFile) verifiedFile() (*os.File, string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, m.file); err != nil {
+		m.file.Close()
+		return nil, "", err
+	}
+	digest := fmt.Sprintf("%x", h.Sum(nil))
+	if err := m.checkDigest(digest); err != nil {
+		m.file.Close()
+		return nil, "", err
+	}
+	if _, err := m.file.Seek(0, io.SeekStart); err != nil {
+		m.file.Close()
+		return nil, "", err
+	}
+	return m.file, digest, nil
+}
+
+// verifiedData reads and checks the file in one pass, then closes it.
+func (m *unverifiedManifestFile) verifiedData() ([]byte, string, error) {
+	defer m.file.Close()
+	data, err := io.ReadAll(m.file)
+	if err != nil {
+		return nil, "", err
+	}
+	sum := sha256.Sum256(data)
+	digest := fmt.Sprintf("%x", sum)
+	if err := m.checkDigest(digest); err != nil {
+		return nil, "", err
+	}
+	return data, digest, nil
+}
+
+// openManifestFileLocked checks the named path before opening its contents.
+// Only the verification methods expose the contents to callers.
+func openManifestFileLocked(path, root string) (*unverifiedManifestFile, error) {
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, err
 	}
 
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	target, err := evalAbs(path)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	if info.Mode()&os.ModeSymlink != 0 {
 		base := filepath.Base(target)
 		if !blobFilenamePattern.MatchString(base) {
-			return nil, "", fmt.Errorf("manifest symlink target %q is not a sha256 blob", target)
+			return nil, fmt.Errorf("manifest symlink target %q is not a sha256 blob", target)
 		}
 
 		digest := strings.ToLower(strings.TrimPrefix(base, "sha256-"))
 		blobPath, err := BlobsPath("sha256:" + digest)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
 		if !sameFile(target, blobPath) {
-			return nil, "", fmt.Errorf("manifest symlink target %q does not match blob %q", target, blobPath)
+			return nil, fmt.Errorf("manifest symlink target %q does not match blob %q", target, blobPath)
 		}
 
-		f, err := os.Open(path)
+		readPath := path
+		if runtime.GOOS == "windows" {
+			readPath = blobPath
+		}
+		f, err := os.Open(readPath)
 		if err != nil {
-			return nil, "", err
+			return nil, err
 		}
-		if err := checkBlobDigestReader(f, "sha256:"+digest); err != nil {
-			f.Close()
-			return nil, "", err
-		}
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			f.Close()
-			return nil, "", err
+		if runtime.GOOS == "windows" {
+			if err := checkBlobDigestReader(f, "sha256:"+digest); err != nil {
+				f.Close()
+				return nil, err
+			}
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				f.Close()
+				return nil, err
+			}
+			if err := copyManifestFile(blobPath, path); err != nil {
+				slog.Warn("could not replace manifest symlink", "path", path, "error", err)
+			}
 		}
 
-		return f, digest, nil
+		return &unverifiedManifestFile{file: f, expectedDigest: digest}, nil
 	}
 
 	if !pathWithin(target, resolvedRoot) {
-		return nil, "", fmt.Errorf("manifest path %q resolves outside manifest directory", path)
+		return nil, fmt.Errorf("manifest path %q resolves outside manifest directory", path)
 	}
 
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		f.Close()
-		return nil, "", err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		f.Close()
-		return nil, "", err
-	}
-	digest := fmt.Sprintf("%x", h.Sum(nil))
-
-	return f, digest, nil
+	return &unverifiedManifestFile{file: f}, nil
 }
 
 // MigrateManifestLinks moves legacy named manifests into manifests-v2. This is currently unwired but
@@ -1496,18 +1614,22 @@ func readManifestPath(path, root string) ([]byte, error) {
 }
 
 func readVerifiedManifest(path, root string) ([]byte, os.FileInfo, string, error) {
-	f, digest, err := OpenVerifiedManifest(path, root)
+	manifestStoreMu.Lock()
+	defer manifestStoreMu.Unlock()
+	return readVerifiedManifestLocked(path, root)
+}
+
+func readVerifiedManifestLocked(path, root string) ([]byte, os.FileInfo, string, error) {
+	opened, err := openManifestFileLocked(path, root)
 	if err != nil {
 		return nil, nil, "", err
 	}
-	defer f.Close()
 
+	data, digest, err := opened.verifiedData()
+	if err != nil {
+		return nil, nil, "", err
+	}
 	fi, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, "", err
-	}
-
-	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -1574,14 +1696,45 @@ func FindName(n model.Name) (model.Name, error) {
 	}
 
 	for name, ref := range refs {
-		if !name.EqualFold(n) {
-			continue
-		}
-		if _, err := parseManifestFile(name, ref.path, ref.root, runnerPreferences()); err == nil {
-			return name, nil
+		if name.EqualFold(n) {
+			if _, err := parseManifestFile(name, ref.path, ref.root, runnerPreferences()); err == nil {
+				return name, nil
+			}
 		}
 	}
 	return model.Name{}, os.ErrNotExist
+}
+
+// FindNamedManifestForRunner finds a named model case-insensitively and returns
+// its verified, runner-selected manifest. It reports an invalid matching
+// manifest when no valid selection exists.
+func FindNamedManifestForRunner(n model.Name, runner string) (*Manifest, error) {
+	refs, err := namedManifestRefs(true)
+	if err != nil {
+		return nil, err
+	}
+
+	var invalid, noCompatible error
+	for name, ref := range refs {
+		if !name.EqualFold(n) {
+			continue
+		}
+		selected, err := parseManifestFile(name, ref.path, ref.root, runnerPreferencesFor(runner))
+		if err == nil {
+			return selected, nil
+		} else if errors.Is(err, ErrNoCompatibleManifest) {
+			noCompatible = err
+		} else if invalid == nil {
+			invalid = err
+		}
+	}
+	if invalid != nil {
+		return nil, invalid
+	}
+	if noCompatible != nil {
+		return nil, noCompatible
+	}
+	return nil, os.ErrNotExist
 }
 
 func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {

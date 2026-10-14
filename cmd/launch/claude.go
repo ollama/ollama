@@ -69,6 +69,7 @@ func (c *Claude) envVars(model string) []string {
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
+		"ENABLE_CLAUDEAI_MCP_SERVERS=false",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER=off",
 		"DISABLE_ERROR_REPORTING=1",
@@ -178,7 +179,11 @@ func (c *Claude) modelEnvVars(model string) []string {
 
 	if isCloudModelName(model) {
 		if l, ok := lookupCloudModelLimit(model); ok {
-			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
+			window := strconv.Itoa(l.Context)
+			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+window)
+			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" {
+				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+window)
+			}
 		}
 	}
 

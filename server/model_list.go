@@ -18,7 +18,7 @@ import (
 
 // listModels builds /api/tags from the manifests and the per-blob metadata
 // files, extracting for any blob that has none yet. Manifest lists contribute
-// one row per child runner.
+// one row for the locally preferred child.
 func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 	manifests, err := manifest.Manifests(true)
 	if err != nil {
@@ -31,6 +31,10 @@ func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+		}
+		// Suppress showing the downgrade guard tag
+		if name.EqualFold(model.ParseName(manifest.RunnerLlamaCPP + ":" + mf.Digest())) {
+			continue
 		}
 
 		rows, err := describeModelRows(name, mf)
@@ -46,7 +50,7 @@ func listModels(ctx context.Context) ([]api.ListModelResponse, error) {
 }
 
 // describeModelRows describes one named manifest for /api/tags. A manifest
-// list describes one row per child runner, keyed by the child digest and
+// list describes its selected child, keyed by the child digest and
 // carrying the parent's modification time; every other manifest describes
 // itself.
 func describeModelRows(name model.Name, mf *manifest.Manifest) ([]api.ListModelResponse, error) {
@@ -78,6 +82,9 @@ func describeModelRows(name model.Name, mf *manifest.Manifest) ([]api.ListModelR
 		digest, err := manifest.ChildManifestDigest(child)
 		if err != nil {
 			return nil, err
+		}
+		if !manifest.SameDigest(digest, mf.SelectedDigest()) {
+			continue
 		}
 		resolved, ok, err := resolveLocalShowManifestChild(child)
 		if err != nil {

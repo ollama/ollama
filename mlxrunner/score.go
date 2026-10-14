@@ -203,7 +203,9 @@ func (r *Runner) scoreHiddenRow(ctx context.Context, input *model.PreparedReques
 	}
 	session := r.scoringCache().beginScore(input.Tokens, items)
 	defer session.close()
-	session.schedulePrefillSnapshots(scoreSnapshots(len(input.Tokens), 0))
+	// Kev repeats the same state in each question row. Preserve that boundary
+	// for the next row; other scorers leave ScorePrefix at zero.
+	session.schedulePrefillSnapshots(scoreSnapshots(len(input.Tokens), input.ScorePrefix))
 	media := r.openMedia(Request{Tokens: input.Tokens, MediaItems: items, Layout: input.Layout})
 	defer media.close()
 	offset := len(input.Tokens) - len(session.remaining)

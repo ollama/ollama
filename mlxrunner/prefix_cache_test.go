@@ -6,9 +6,47 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
+
+func TestSessionCloseCompactsRestoredRecurrentStateWithoutNewFrontier(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		recurrent := cache.NewRecurrentCache(3, 12, 4, 8, 8)
+		defer recurrent.Free()
+		b := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 1), SeqQueryLens: []int32{1}}
+		recurrent.Get(b, mlx.DTypeFloat16)
+		recurrent.PrepareSnapshots([]int{0, 1, 2})
+		forward := &batch.Batch{InputIDs: mlx.Zeros(mlx.DTypeInt32, 1, 3), SeqQueryLens: []int32{3}}
+		conv := mlx.Zeros(mlx.DTypeFloat16, 1, 3, 12)
+		delta := mlx.Zeros(mlx.DTypeFloat32, 1, 4, 8, 8)
+		recurrent.Put(forward, []*mlx.Array{conv, conv, conv}, []*mlx.Array{delta, delta, delta})
+		snaps := recurrent.TakeSnapshots()
+		if !recurrent.Restore(snaps[1], 1) {
+			t.Fatal("interior restore failed")
+		}
+		for _, snap := range snaps {
+			if snap != nil {
+				snap.Close()
+			}
+		}
+		if state := recurrent.PrepareCompaction(); state == nil {
+			t.Fatal("restored interior state should need compaction before close")
+		}
+
+		pc := newPrefixCache([]cache.Cache{recurrent})
+		pc.ensureRoot()
+		frontier := pc.root.appendChild([]trieKey{7}, 1)
+		pc.activePath = []*trieNode{pc.root, frontier}
+		session := &cacheSession{cache: pc, caches: pc.caches, effInputs: []uint32{7}}
+		session.close()
+		if state := recurrent.PrepareCompaction(); state != nil {
+			t.Fatal("restored state was not compacted when the frontier did not advance")
+		}
+	})
+}
 
 // snapshotTracker records every fakeSnapshot created and every Close() call
 // so tests can detect leaked (created but never closed) or double-closed snapshots.

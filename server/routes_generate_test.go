@@ -204,7 +204,7 @@ func TestEmbeddingHandlersUseRunnerSelection(t *testing.T) {
 		ModelFormat:  manifest.FormatSafetensors,
 		Capabilities: []string{string(model.CapabilityEmbedding)},
 	}, nil)
-	writeManifestListFixture(t, "embed-list",
+	writeManifestListFixture(t, "Embed-List",
 		manifestListFixtureChild{name: "embed-ggml", runner: manifest.RunnerGGML, format: manifest.FormatGGUF},
 		manifestListFixtureChild{name: "embed-mlx", runner: manifest.RunnerMLX, format: manifest.FormatSafetensors},
 	)
@@ -583,6 +583,24 @@ func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
 	}
 	if mock.CompletionRequest.Options != nil && slices.Contains(mock.CompletionRequest.Options.Stop, "<|call|>") {
 		t.Fatalf("expected stop sequences not to be patched with Harmony call terminator, got %#v", mock.CompletionRequest.Options)
+	}
+}
+
+func TestParserNameForModelDoesNotChangeConfig(t *testing.T) {
+	tmpl, err := ollamatemplate.Parse("<|start|><|end|>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{Config: model.ConfigV2{ModelFamily: "gptoss"}, Template: tmpl}
+	if got := parserNameForModel(m); got != "harmony" {
+		t.Fatalf("parser = %q, want harmony", got)
+	}
+	if m.Config.Parser != "" {
+		t.Fatalf("model parser changed to %q", m.Config.Parser)
+	}
+	m.Config.Parser = "gemma4"
+	if got := parserNameForModel(m); got != "gemma4" {
+		t.Fatalf("explicit parser = %q, want gemma4", got)
 	}
 }
 

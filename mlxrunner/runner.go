@@ -46,6 +46,7 @@ type Runner struct {
 	weights       *mlx.Scope
 	Tokenizer     *tokenizer.Tokenizer
 	Requests      chan Request
+	EmbedRequests chan EmbeddingRequest
 	Sampler       *sample.Sampler
 	cache         *prefixCache
 	scoreCache    *prefixCache
@@ -311,6 +312,17 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 				}
 
 				close(request.Responses)
+			case erequest := <-r.EmbedRequests:
+				run := func() error { return r.runEmbed(erequest.Ctx, erequest) }
+				var err error
+				if r.mlxThread == nil {
+					err = run()
+				} else {
+					err = r.mlxThread.Do(erequest.Ctx, run)
+				}
+				if err != nil {
+					slog.Info("Embedding request terminated", "error", err)
+				}
 			}
 		}
 	})

@@ -2192,7 +2192,7 @@ func (s *mockLlm) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (s
 	return "", errors.New("not implemented")
 }
 
-func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+func (s *mockLlm) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
 	return s.embeddingResp, 0, s.embeddingRespErr
 }
 

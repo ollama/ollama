@@ -74,10 +74,10 @@ func TestCompile(t *testing.T) {
 				t.Fatalf("schema order changed: %+v", payload.Schema)
 			}
 		}
-		if got := payload.Schema[0].Choices; got[0].Value != "billing" || got[1].Value != "technical" || got[1].Description != "technical" {
+		if got := payload.Schema[0].Choices; got[0].Value != "billing" || got[1].Value != "technical" || got[1].Description != nil {
 			t.Fatalf("choice order or null description changed: %+v", got)
 		}
-		if payload.Schema[1].Description != `{"rule":"Explicit refund request?","notes":["Only facts"]}` {
+		if payload.Schema[1].Description != `{"rule": "Explicit refund request?", "notes": ["Only facts"]}` {
 			t.Fatalf("structured instructions changed: %q", payload.Schema[1].Description)
 		}
 		want := []string{"A", "B"}
@@ -109,7 +109,7 @@ func TestStructuredStateFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range compiled.Request.Rows {
-		if !strings.Contains(row.Prompt, `"context": "{\"frames\":[\"first\",\"second\"],\"position\":7}"`) {
+		if !strings.Contains(row.Prompt, `"context": "{\"frames\": [\"first\", \"second\"], \"position\": 7}"`) {
 			t.Fatalf("structured state was not preserved in the text prompt: %q", row.Prompt)
 		}
 	}
@@ -216,11 +216,15 @@ func TestInvalidRequests(t *testing.T) {
 	}
 	req := testRequest(t)
 	q, _ := req.Questions.Get("urgency")
-	q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, 26) + `]`)
-	req.Questions.Set("urgency", q)
-	for _, encoding := range []string{"", "clef"} {
-		if _, err := Compile(req, encoding); err == nil {
-			t.Fatalf("encoding %q accepted 27 candidates", encoding)
+	for _, levels := range []int{1, 2, 10, 11, 27} {
+		q.Criteria = json.RawMessage(`["x"` + strings.Repeat(`,"x"`, levels-1) + `]`)
+		req.Questions.Set("urgency", q)
+		for _, encoding := range []string{"", "tev1", "clef", "strands"} {
+			_, err := Compile(req, encoding)
+			valid := levels >= 2 && levels <= 10
+			if (err == nil) != valid {
+				t.Fatalf("encoding %q, %d score levels: error = %v, want valid = %v", encoding, levels, err, valid)
+			}
 		}
 	}
 }
@@ -228,8 +232,8 @@ func TestInvalidRequests(t *testing.T) {
 func TestContent(t *testing.T) {
 	for _, tt := range []struct{ input, want string }{
 		{` "line\nquoted \"text\"" `, "line\nquoted \"text\""},
-		{` {"z": 9007199254740993, "a": 1e999} `, `{"z":9007199254740993,"a":1e999}`},
-		{` [1.0, 1e6, -0, "€"] `, `[1.0,1e6,-0,"€"]`},
+		{` {"z": 9007199254740993, "a": 1e999} `, `{"z": 9007199254740993, "a": Infinity}`},
+		{` [1.0, 1e6, -0, "€"] `, `[1.0, 1000000.0, 0, "€"]`},
 	} {
 		got, err := content(json.RawMessage(tt.input))
 		if err != nil || got != tt.want {

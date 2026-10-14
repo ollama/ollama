@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ollama/ollama/types/model"
 )
 
 // PipelineOptions controls the source-specific stages of a safetensors import.
@@ -67,9 +69,22 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return err
 	}
+	if inv.Config.Architecture() == "KevForDecision" && class.Kind == SourceFloat && class.Quantize == "" {
+		modelConfig.FileType, err = kevFileType(inv)
+		if err != nil {
+			return err
+		}
+	}
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {
 		return fmt.Errorf("build quantization policy for %q: %w", inv.Config.Architecture(), err)
+	}
+	// Arch-specific policies may fill manifest-config fields the shared
+	// inference can't derive from an arch-specific config layout.
+	if aug, ok := policy.(interface{ augmentConfig(*model.ConfigV2) error }); ok {
+		if err := aug.augmentConfig(&modelConfig); err != nil {
+			return fmt.Errorf("augment config for %q: %w", inv.Config.Architecture(), err)
+		}
 	}
 	specs, err := Plan(inv, class, policy)
 	if err != nil {

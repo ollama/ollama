@@ -32,12 +32,49 @@ InT sigmoid = stable_sigmoid(conv_out);
 out[elem] = static_cast<InT>(conv_out * sigmoid);
 `
 
+// TODO: call MLX's Sigmoid like CUDA does to DRY this out.
 const depthwiseConvSiLUMetalHeader = `
 template <typename T>
 T stable_sigmoid(T x) {
   auto y = 1 / (1 + metal::precise::exp(metal::abs(x)));
   return (x < 0) ? y : 1 - y;
 }
+`
+
+// The CUDA translation of depthwiseConvSiLUMetalSource.
+const depthwiseConvSiLUCUDASource = `
+unsigned int elem = blockIdx.x * blockDim.x + threadIdx.x;
+int B = dims[0];
+int T = dims[1];
+unsigned int total = static_cast<unsigned int>(B) * static_cast<unsigned int>(T) * static_cast<unsigned int>(C);
+if (elem >= total) {
+  return;
+}
+
+int c = static_cast<int>(elem % static_cast<unsigned int>(C));
+int t = static_cast<int>(elem / static_cast<unsigned int>(C)) % T;
+int b = static_cast<int>(elem) / (C * T);
+int in_base = (b * (T + K - 1) + t) * C + c;
+
+// Not fmaf: the graph path rounds the multiply and the add separately.
+float acc = 0.0f;
+#pragma unroll
+for (int i = 0; i < K; ++i) {
+  acc += static_cast<float>(x[in_base + i * C]) * static_cast<float>(w[c * K + i]);
+}
+
+// The graph path is Add(conv(x, w), bias), so it rounds twice. Folding the
+// bias into the float accumulator would round once and drift by an ULP.
+InT conv_out = static_cast<InT>(acc);
+conv_out = static_cast<InT>(static_cast<float>(conv_out) + DEPTHWISE_CONV_BIAS(c));
+InT sigmoid = Sigmoid{}(conv_out);
+out[elem] = static_cast<InT>(conv_out * sigmoid);
+`
+
+// MLX's own Sigmoid, so this stays bit-exact with the graph path's SiLU.
+// unary_ops.cuh is embedded for the runtime JIT, so nvrtc resolves it.
+const depthwiseConvSiLUCUDAHeader = `
+#include "mlx/backend/cuda/device/unary_ops.cuh"
 `
 
 var (
@@ -48,6 +85,10 @@ var (
 		metal: gpuSource{
 			source: depthwiseConvSiLUMetalSource,
 			header: depthwiseConvSiLUMetalHeader + "#define DEPTHWISE_CONV_BIAS(c) 0.0f\n",
+		},
+		cuda: gpuSource{
+			source: depthwiseConvSiLUCUDASource,
+			header: depthwiseConvSiLUCUDAHeader + "#define DEPTHWISE_CONV_BIAS(c) 0.0f\n",
 		},
 		fallback: func(launch gpuLaunch) []*Array {
 			return []*Array{depthwiseConvSiLUGraph(launch.inputs[0], launch.inputs[1], nil)}
@@ -60,6 +101,10 @@ var (
 		metal: gpuSource{
 			source: depthwiseConvSiLUMetalSource,
 			header: depthwiseConvSiLUMetalHeader + "#define DEPTHWISE_CONV_BIAS(c) static_cast<float>(bias[c])\n",
+		},
+		cuda: gpuSource{
+			source: depthwiseConvSiLUCUDASource,
+			header: depthwiseConvSiLUCUDAHeader + "#define DEPTHWISE_CONV_BIAS(c) static_cast<float>(bias[c])\n",
 		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs

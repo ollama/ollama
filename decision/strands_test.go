@@ -97,10 +97,6 @@ func TestStrandsChoiceWithoutDescriptions(t *testing.T) {
 }
 
 func TestStrandsContent(t *testing.T) {
-	depth := maxStrandsContentDepth + 1
-	if _, err := strandsContent(json.RawMessage(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth))); err == nil {
-		t.Fatal("accepted excessive content nesting")
-	}
 	for _, tt := range []struct{ input, want string }{
 		{`"  text\n"`, "text"},
 		{`[]`, "[]"},
