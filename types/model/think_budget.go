@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -20,6 +21,10 @@ type ThinkBudget struct {
 	// Value is an int (tokens) or a string (a share name)
 	Value any
 }
+
+// ErrInvalidThinkBudget is wrapped by every refusal of a think_budget value,
+// so a server can answer it as the client's error rather than its own.
+var ErrInvalidThinkBudget = errors.New("invalid think budget")
 
 // thinkBudgetShares are the names a budget can be written as, smallest first.
 var thinkBudgetShares = []string{"minimal", "low", "medium", "high", "max"}
@@ -135,21 +140,21 @@ func (b *ThinkBudget) UnmarshalJSON(data []byte) error {
 			return nil
 		}
 		if !IsThinkBudgetShare(v) {
-			return fmt.Errorf("invalid think budget: %q (must be a positive number of tokens or one of %q)", v, thinkBudgetShares)
+			return fmt.Errorf("%w: %q (must be a positive number of tokens or one of %q)", ErrInvalidThinkBudget, v, thinkBudgetShares)
 		}
 		b.Value = v
 		return nil
 	default:
-		return fmt.Errorf("think budget must be a positive number of tokens or one of %q", thinkBudgetShares)
+		return fmt.Errorf("%w: must be a positive number of tokens or one of %q", ErrInvalidThinkBudget, thinkBudgetShares)
 	}
 }
 
 func thinkBudgetCount(v float64) (int, error) {
 	if v != math.Trunc(v) {
-		return 0, fmt.Errorf("invalid think budget: %v (must be a whole number of tokens)", v)
+		return 0, fmt.Errorf("%w: %v (must be a whole number of tokens)", ErrInvalidThinkBudget, v)
 	}
 	if v <= 0 {
-		return 0, fmt.Errorf("invalid think budget: %v (must be greater than 0; leave it out for no bound)", v)
+		return 0, fmt.Errorf("%w: %v (must be greater than 0; leave it out for no bound)", ErrInvalidThinkBudget, v)
 	}
 	return int(v), nil
 }
