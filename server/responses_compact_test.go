@@ -655,6 +655,60 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 	}
 }
 
+func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		item string
+	}{
+		{"image URL", `{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png","detail":"high"}]}`},
+		{"image file ID", `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`},
+		{"file with text", `{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture","filename":"notes.txt"}]}`},
+		{"reasoning summary", `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, foreign := range []bool{false, true} {
+				t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+					local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[]}`)
+					})
+					retained := []json.RawMessage{
+						json.RawMessage(`{"type":"web_search_call","id":"ws_1","status":"completed"}`),
+						json.RawMessage(tt.item),
+						json.RawMessage(`{"type":"reasoning","summary":[],"encrypted_content":"other-opaque-state"}`),
+					}
+					input := append([]json.RawMessage(nil), retained[:1]...)
+					if foreign {
+						input = append(input, json.RawMessage(`{"type":"compaction","encrypted_content":"opaque-provider-state"}`))
+					}
+					input = append(input, retained[1:]...)
+					request, err := json.Marshal(map[string]any{"model": "fixture:cloud", "stream": false, "input": input})
+					if err != nil {
+						t.Fatal(err)
+					}
+					status, _, body := postCompactionRequest(t, local, "/v1/responses", string(request))
+					if status != http.StatusOK {
+						t.Fatalf("status=%d body=%s", status, body)
+					}
+					paths, bodies := capture.snapshot()
+					if len(paths) != 1 || paths[0] != "/v1/responses" {
+						t.Fatalf("paths=%v", paths)
+					}
+					var forwarded struct {
+						Input []json.RawMessage `json:"input"`
+					}
+					if err := json.Unmarshal(bodies[0], &forwarded); err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(forwarded.Input, retained) {
+						t.Fatalf("retained input changed: got=%s want=%s", forwarded.Input, retained)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestResponsesForeignCompactionHistory(t *testing.T) {
 	for _, tt := range []struct {
 		name    string

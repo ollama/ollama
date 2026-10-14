@@ -294,22 +294,14 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		retained = append(retained, item)
 	}
 	if boundary < 0 {
-		var input ResponsesInput
+		var readable bool
 		for i, raw := range retained {
 			item, err := unmarshalResponsesInputItem(raw)
 			if err != nil {
 				return nil, false, fmt.Errorf("input[%d]: %w", i, err)
 			}
-			input.Items = append(input.Items, item)
+			readable = readable || hasReadableResponsesItem(item)
 		}
-		chat, err := FromResponsesRequest(ResponsesRequest{Input: input})
-		if err != nil {
-			return nil, false, err
-		}
-		readable := slices.ContainsFunc(chat.Messages, func(message api.Message) bool {
-			return strings.TrimSpace(message.Content) != "" || len(message.Images) > 0 ||
-				len(message.ToolCalls) > 0 || message.ToolCallID != "" || message.ToolName != ""
-		})
 		if !readable {
 			return nil, false, errors.New("input contains no readable history after removing foreign compaction state; resend readable conversation history")
 		}
@@ -325,6 +317,52 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 	rewritten = append(rewritten, expanded...)
 	rewritten = append(rewritten, retained[boundary:]...)
 	return rewritten, true, nil
+}
+
+// Inspect source content without applying local Chat conversion restrictions to
+// requests that may be forwarded to a cloud provider. Routing metadata and
+// encrypted content do not establish readable history.
+func hasReadableResponsesItem(item ResponsesInputItem) bool {
+	switch v := item.(type) {
+	case ResponsesInputMessage:
+		return hasReadableResponsesContent(v.Content)
+	case ResponsesAgentMessageInput:
+		return hasReadableResponsesContent(v.Content)
+	case ResponsesReasoningInput:
+		return slices.ContainsFunc(v.Summary, func(summary ResponsesReasoningSummary) bool {
+			return strings.TrimSpace(summary.Text) != ""
+		})
+	case ResponsesFunctionCall:
+		// A complete call is readable even when its paired result is empty.
+		var arguments map[string]json.RawMessage
+		return strings.TrimSpace(v.CallID) != "" && strings.TrimSpace(v.Name) != "" &&
+			json.Unmarshal([]byte(v.Arguments), &arguments) == nil && arguments != nil
+	case ResponsesFunctionCallOutput:
+		return strings.TrimSpace(v.Output) != "" || hasReadableResponsesContent(v.OutputItems)
+	case ResponsesToolSearchCall:
+		return strings.TrimSpace(v.CallID) != "" && v.Arguments.Len() > 0
+	case ResponsesToolSearchOutput:
+		return len(v.Tools) > 0
+	default:
+		return false
+	}
+}
+
+func hasReadableResponsesContent(content []ResponsesContent) bool {
+	return slices.ContainsFunc(content, func(content ResponsesContent) bool {
+		switch v := content.(type) {
+		case ResponsesTextContent:
+			return strings.TrimSpace(v.Text) != ""
+		case ResponsesOutputTextContent:
+			return strings.TrimSpace(v.Text) != ""
+		case ResponsesImageContent:
+			return strings.TrimSpace(v.ImageURL) != "" || strings.TrimSpace(v.FileID) != ""
+		case ResponsesFileContent:
+			return strings.TrimSpace(v.FileData) != "" || strings.TrimSpace(v.FileID) != "" || strings.TrimSpace(v.FileURL) != ""
+		default:
+			return false
+		}
+	})
 }
 
 func isForeignCompactionItem(item ResponsesCompactionItem) (bool, error) {
