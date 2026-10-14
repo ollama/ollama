@@ -164,18 +164,6 @@ func (p *Gemma4Parser) parseEvents(done bool) []gemma4Event {
 	return all
 }
 
-// longestOverlap returns the longest overlap between the suffix of bufStr and
-// a prefix of any of the given tags.
-func longestOverlap(bufStr string, tags ...string) int {
-	maxOverlap := 0
-	for _, tag := range tags {
-		if o := overlap(bufStr, tag); o > maxOverlap {
-			maxOverlap = o
-		}
-	}
-	return maxOverlap
-}
-
 func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 	var events []gemma4Event
 	bufStr := p.buffer.String()
