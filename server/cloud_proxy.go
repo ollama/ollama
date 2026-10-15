@@ -164,7 +164,7 @@ func proxyCloudJSONRequest(c *gin.Context, payload any, disabledOperation string
 }
 
 func proxyCloudJSONRequestWithPath(c *gin.Context, payload any, path string, disabledOperation string) {
-	body, err := json.Marshal(payload)
+	body, err := marshalNoHTMLEscape(payload)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -284,7 +284,20 @@ func replaceJSONModelField(body []byte, model string) ([]byte, error) {
 	}
 	payload["model"] = modelJSON
 
-	return json.Marshal(payload)
+	return marshalNoHTMLEscape(payload)
+}
+
+// marshalNoHTMLEscape is json.Marshal without HTML escaping, which would turn
+// each <, >, and & in a client's values into six bytes that count against
+// upstream byte limits.
+func marshalNoHTMLEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {
