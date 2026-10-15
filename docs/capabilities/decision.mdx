@@ -3,10 +3,6 @@ title: Decision
 description: Classify text, estimate yes/no probabilities, and score ordered criteria.
 ---
 
-<Note>
-Currently available locally in Ollama.
-</Note>
-
 Use System One to classify text, answer yes/no questions, or score text against a rubric.
 
 See the [full list of decision models](https://ollama.com/search?c=decision).
@@ -160,6 +156,45 @@ Example response:
   "usage": {"input_tokens": 677, "output_tokens": 0}
 }
 ```
+
+## Use a cloud model
+
+[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud) with a paid plan or purchased [usage credits](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
+
+```shell cloud.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef:cloud",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "urgent": {
+        "type": "noul",
+        "instructions": "Does this ticket need attention within the hour?"
+      }
+    }
+  }'
+```
+
+Or call ollama.com directly with an [API key](https://ollama.com/settings/keys):
+
+```shell cloud-direct.sh
+curl https://ollama.com/v1/systemone \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "urgent": {
+        "type": "noul",
+        "instructions": "Does this ticket need attention within the hour?"
+      }
+    }
+  }'
+```
+
+Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Input is limited to the model's 65,536-token context window; longer input is rejected. Usage is billed per input token at the [listed price](https://ollama.com/pricing).
 
 ## Question types
 
