@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,6 +28,53 @@ func TestNew(t *testing.T) {
 
 	if s.bin == "" {
 		t.Error("expected non-empty bin path")
+	}
+}
+
+func TestServerRunning(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{
+			name:   "healthy Ollama server",
+			status: http.StatusOK,
+			body:   `{"version":"0.1.0"}`,
+			want:   true,
+		},
+		{
+			name:   "server error",
+			status: http.StatusServiceUnavailable,
+			body:   `{"error":"unavailable"}`,
+		},
+		{
+			name:   "missing version",
+			status: http.StatusOK,
+			body:   `{}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/version" {
+					http.NotFound(w, r)
+					return
+				}
+
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			t.Setenv("OLLAMA_HOST", server.URL)
+
+			if got := serverRunning(t.Context()); got != tt.want {
+				t.Errorf("serverRunning() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

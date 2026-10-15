@@ -18,11 +18,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
 )
 
 const restartDelay = time.Second
+const serverCheckTimeout = time.Second
+const serverCheckInterval = 5 * time.Second
 
 // Server is a managed ollama server process
 type Server struct {
@@ -188,11 +191,22 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 
 	reaped := false
+	checkDelay := restartDelay
 	for ctx.Err() == nil {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(restartDelay):
+		case <-time.After(checkDelay):
+		}
+
+		if serverRunning(ctx) {
+			checkDelay = serverCheckInterval
+			continue
+		}
+		checkDelay = restartDelay
+
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 
 		cmd, err := s.cmd(ctx)
@@ -225,6 +239,19 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func serverRunning(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, serverCheckTimeout)
+	defer cancel()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+
+	version, err := client.Version(ctx)
+	return err == nil && version != ""
 }
 
 func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
