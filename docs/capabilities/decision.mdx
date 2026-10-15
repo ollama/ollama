@@ -163,7 +163,7 @@ Example response:
 
 ## Use a cloud model
 
-[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud) on a [paid plan](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
+[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud) with a paid plan or purchased [usage credits](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
 
 ```shell cloud.sh
 curl http://localhost:11434/v1/systemone \
@@ -198,7 +198,7 @@ curl https://ollama.com/v1/systemone \
   }'
 ```
 
-Cloud requests accept up to 64 questions, named with letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Input is limited to the model's 65,536-token context window; longer input is rejected. Usage is billed per input token at the [listed price](https://ollama.com/pricing).
+Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Input is limited to the model's 65,536-token context window; longer input is rejected. Usage is billed per input token at the [listed price](https://ollama.com/pricing).
 
 ## Question types
 
