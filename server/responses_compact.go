@@ -22,7 +22,7 @@ import (
 // Ordinary Responses requests continue through the existing route unchanged.
 func (s *Server) responsesCompactionMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		body, err := readResponsesCompactionBody(c)
+		body, err := readResponsesRequestBody(c)
 		if err != nil {
 			writeResponsesCompactionError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
@@ -54,7 +54,7 @@ func (s *Server) responsesCompactionMiddleware() gin.HandlerFunc {
 // ResponsesCompactHandler implements POST /v1/responses/compact with an
 // Ollama-owned ordinary inference request rather than upstream passthrough.
 func (s *Server) ResponsesCompactHandler(c *gin.Context) {
-	body, err := readResponsesCompactionBody(c)
+	body, err := readResponsesRequestBody(c)
 	if err != nil {
 		writeResponsesCompactionError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 		return
@@ -67,7 +67,7 @@ func (s *Server) ResponsesCompactHandler(c *gin.Context) {
 	s.handleResponsesCompaction(c, plan, false)
 }
 
-func readResponsesCompactionBody(c *gin.Context) ([]byte, error) {
+func readResponsesRequestBody(c *gin.Context) ([]byte, error) {
 	if c.GetHeader("Content-Encoding") == "zstd" {
 		reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
 		if err != nil {

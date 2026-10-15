@@ -1,0 +1,62 @@
+{
+  "type": "function",
+  "name": "exec_command",
+  "description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+  "strict": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "cmd": {
+        "type": "string",
+        "description": "Shell command to execute."
+      },
+      "justification": {
+        "type": "string",
+        "description": "User-facing approval question for `require_escalated`; omit otherwise."
+      },
+      "login": {
+        "type": "boolean",
+        "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."
+      },
+      "max_output_tokens": {
+        "type": "number",
+        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."
+      },
+      "prefix_rule": {
+        "type": "array",
+        "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].",
+        "items": {
+          "type": "string"
+        }
+      },
+      "sandbox_permissions": {
+        "type": "string",
+        "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.",
+        "enum": [
+          "use_default",
+          "require_escalated"
+        ]
+      },
+      "shell": {
+        "type": "string",
+        "description": "Shell binary to launch. Defaults to the user's default shell."
+      },
+      "tty": {
+        "type": "boolean",
+        "description": "True allocates a PTY for the command; false or omitted uses plain pipes."
+      },
+      "workdir": {
+        "type": "string",
+        "description": "Working directory for the command. Defaults to the turn cwd."
+      },
+      "yield_time_ms": {
+        "type": "number",
+        "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+      }
+    },
+    "required": [
+      "cmd"
+    ],
+    "additionalProperties": false
+  }
+}
