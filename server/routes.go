@@ -3220,6 +3220,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
+	// Reuse resolved thinking for server-side tool follow-ups.
+	if w, ok := c.Writer.(interface{ SetThinking(*api.ThinkValue) }); ok {
+		w.SetThinking(req.Think)
+	}
+
 	if chatModeForModel(m) == chatExecutionModeNative {
 		s.handleNativeChat(c, req, m, r, opts, msgs, checkpointStart, checkpointLoaded)
 		return

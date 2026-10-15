@@ -590,6 +590,11 @@ type WebSearchResponsesWriter struct {
 	finalOutputStreamed bool
 }
 
+// SetThinking keeps web-search follow-ups aligned with the resolved chat request.
+func (w *WebSearchResponsesWriter) SetThinking(think *api.ThinkValue) {
+	w.chat.Think = think
+}
+
 func (w *WebSearchResponsesWriter) WriteHeader(code int) {
 	w.status = code
 }
