@@ -171,20 +171,17 @@ func TestResponsesFullAccessToolsPreserveOtherContracts(t *testing.T) {
 }
 
 func TestResponsesFullAccessToolsWindowsDescription(t *testing.T) {
-	// Reconstructed from Codex's native Windows schema definitions. Guidance
-	// follows the executor OS, while yield limits follow the client host OS.
-	data, err := os.ReadFile("testdata/codex_exec_command_windows.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Apply the two differences from Codex's native Windows schema to the base
+	// fixture. Guidance follows the executor OS; yield limits follow the host OS.
 	for _, host := range []string{"windows", "other"} {
 		t.Run(host, func(t *testing.T) {
-			var tool map[string]any
-			if err := json.Unmarshal(data, &tool); err != nil {
-				t.Fatal(err)
-			}
-			if host != "windows" {
-				tool["parameters"].(map[string]any)["properties"].(map[string]any)["yield_time_ms"].(map[string]any)["description"] = "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+			tool := fullAccessExecFixture(t)
+			tool["description"] = tool["description"].(string) + "\n\nWindows safety rules:\n" +
+				"- Do not compose destructive filesystem commands across shells. Do not enumerate paths in PowerShell and then pass them to `cmd /c`, batch builtins, or another shell for deletion or moving. Use one shell end-to-end, prefer native PowerShell cmdlets such as `Remove-Item` / `Move-Item` with `-LiteralPath`, and avoid string-built shell commands for file operations.\n" +
+				"- Before any recursive delete or move on Windows, verify the resolved absolute target paths stay within the intended workspace or explicitly named target directory. Never issue a recursive delete or move against a computed path if the final target has not been checked.\n" +
+				"- When using `Start-Process` to launch a background helper or service, pass `-WindowStyle Hidden` unless the user explicitly asked for a visible interactive window. Use visible windows only for interactive tools the user needs to see or control."
+			if host == "windows" {
+				tool["parameters"].(map[string]any)["properties"].(map[string]any)["yield_time_ms"].(map[string]any)["description"] = "Maximum time to wait before returning a session ID for a still-running command. Commands that finish sooner return immediately. For ordinary commands, omit this parameter to use the 10000 ms default. Effective range on Windows is 10000-30000 ms."
 			}
 			body, _ := json.Marshal(map[string]any{"tools": []any{tool}, "client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`}})
 			got, changed, err := NormalizeResponsesFullAccessTools(body)
