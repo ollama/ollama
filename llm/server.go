@@ -216,6 +216,10 @@ type CompletionRequest struct {
 	// response begins with, which Format leaves free; none when the response
 	// starts in content.
 	ThinkingClose []string
+	// ToolCallOpen and ToolCallClose delimit tool calls that may precede or
+	// replace formatted assistant text. Empty when no tools are available.
+	ToolCallOpen  string
+	ToolCallClose string
 
 	// Logprobs specifies whether to include log probabilities in the response
 	Logprobs bool
