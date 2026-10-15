@@ -195,6 +195,10 @@ func lagunaRendererParserNameFromTemplate(modelDir, chatTemplate string) (string
 	return "laguna", nil
 }
 
+// Nemotron 3.5 replaces inline /think toggles with request-controlled thinking
+// and adds a reasoning-effort marker. The architecture names do not distinguish
+// these prompt formats, but both use the same thinking/tool-call output syntax
+// and therefore the nemotron-3-nano parser.
 func nemotronRendererNameFromTemplate(modelDir, chatTemplate string) (string, error) {
 	const v35Marker = "{reasoning effort: efficient}"
 

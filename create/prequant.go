@@ -12,8 +12,7 @@ import "strings"
 //
 // All suffixes are relative to the base — the source weight name minus its
 // weight suffix. The fused blob is always named "<base>.weight", with
-// companions "<base>.weight.scale", ".bias", ".global_scale", and any
-// producer-provided activation scales.
+// companions "<base>.weight.scale", ".bias", and ".global_scale".
 type prequantPattern struct {
 	name string
 
@@ -26,9 +25,9 @@ type prequantPattern struct {
 	biasSuffix string // optional bias / zero-point companion ("" if none)
 
 	globalSuffix     string // optional global-scale companion ("" if none)
-	globalReciprocal bool   // producer stores weight and activation global scales inverted
+	globalReciprocal bool   // producer stores the weight global scale inverted
 
-	activationScaleSuffixes []string // optional activation scales preserved beside the weight
+	ignoreSuffixes []string // activation scales unused by weight-only inference
 
 	forceQuantType   string // override the blob's quant_type metadata
 	defaultGroupSize string // set group_size metadata only when the config did not
@@ -46,26 +45,26 @@ var prequantPatterns = []prequantPattern{
 		biasSuffix:   ".biases",
 	},
 	{
-		name:                    "compressed-tensors-nvfp4",
-		weightSuffix:            ".weight_packed",
-		repackWeight:            true,
-		scaleSuffix:             ".weight_scale",
-		scaleRelabelU8:          true,
-		globalSuffix:            ".weight_global_scale",
-		globalReciprocal:        true,
-		activationScaleSuffixes: []string{".input_scale", ".input_global_scale"},
-		forceQuantType:          "nvfp4",
-		defaultGroupSize:        "16",
+		name:             "compressed-tensors-nvfp4",
+		weightSuffix:     ".weight_packed",
+		repackWeight:     true,
+		scaleSuffix:      ".weight_scale",
+		scaleRelabelU8:   true,
+		globalSuffix:     ".weight_global_scale",
+		globalReciprocal: true,
+		ignoreSuffixes:   []string{".input_scale", ".input_global_scale"},
+		forceQuantType:   "nvfp4",
+		defaultGroupSize: "16",
 	},
 	{
-		name:                    "modelopt-nvfp4",
-		weightSuffix:            ".weight",
-		repackWeight:            true,
-		scaleSuffix:             ".weight_scale",
-		scaleRelabelU8:          true,
-		globalSuffix:            ".weight_scale_2",
-		activationScaleSuffixes: []string{".input_scale", ".input_global_scale"},
-		forceQuantType:          "nvfp4",
+		name:           "modelopt-nvfp4",
+		weightSuffix:   ".weight",
+		repackWeight:   true,
+		scaleSuffix:    ".weight_scale",
+		scaleRelabelU8: true,
+		globalSuffix:   ".weight_scale_2",
+		ignoreSuffixes: []string{".input_scale", ".input_global_scale"},
+		forceQuantType: "nvfp4",
 	},
 }
 
@@ -158,21 +157,8 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 			}
 		}
 
-		for _, suffix := range p.activationScaleSuffixes {
+		for _, suffix := range p.ignoreSuffixes {
 			if source := base + suffix; inv.Has(source) {
-				scale := inv.Tensors[source]
-				transform := f32ScaleTransform(scale)
-				// Like weight_global_scale, compressed-tensors' input_global_scale
-				// is a divisor. Store both as dequantization multipliers, matching
-				// ModelOpt. input_scale is a local scale and is not inverted.
-				if p.globalReciprocal && suffix == ".input_global_scale" {
-					transform = TransformReciprocalF32
-				}
-				tensors = append(tensors, TensorSpec{
-					Name:      outWeight + suffix,
-					Sources:   []SourceTensor{scale},
-					Transform: transform,
-				})
 				consumed = append(consumed, source)
 			}
 		}

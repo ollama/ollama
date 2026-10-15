@@ -1,8 +1,20 @@
 package mlx
 
+const (
+	weightedSumValues = iota
+	weightedSumScores
+	weightedSumIndices
+)
+
+const (
+	weightedSumWidth = iota
+	weightedSumExperts
+	weightedSumGather
+)
+
 var gatherWeightedSum = &gpuKernel{
 	name:    "gather_weighted_sum",
-	inputs:  []string{"values", "scores", "indices"},
+	inputs:  []string{weightedSumValues: "values", weightedSumScores: "scores", weightedSumIndices: "indices"},
 	outputs: []string{"out"},
 	metal: gpuSource{source: `
 auto col = thread_position_in_grid.x;
@@ -18,11 +30,11 @@ out[row * D + col] = static_cast<T>(sum);
 `},
 	fallback: func(launch gpuLaunch) []*Array {
 		in := launch.inputs
-		indices := in[2]
-		if launch.ints[2].value == 0 {
+		indices := in[weightedSumIndices]
+		if launch.ints[weightedSumGather].value == 0 {
 			indices = nil
 		}
-		return []*Array{gatherWeightedSumGraph(in[0], in[1], indices)}
+		return []*Array{gatherWeightedSumGraph(in[weightedSumValues], in[weightedSumScores], indices)}
 	},
 }
 
@@ -62,10 +74,10 @@ func GatherWeightedSum(values, scores, indices *Array) *Array {
 	}
 	return gatherWeightedSum.run(gpuLaunch{
 		dtypes:      []gpuDTypeArg{{"T", values.DType()}},
-		ints:        []gpuIntArg{{"D", D}, {"K", K}, {"GATHER", gather}},
+		ints:        []gpuIntArg{weightedSumWidth: {"D", D}, weightedSumExperts: {"K", K}, weightedSumGather: {"GATHER", gather}},
 		outputs:     []gpuOutputSpec{{"WEIGHTED_SUM", []int32{int32(N), int32(D)}, values.DType()}},
 		grid:        [3]int{D, N, 1},
 		threadGroup: [3]int{min(D, 256), 1, 1},
-		inputs:      []*Array{values, scores, indices},
+		inputs:      []*Array{weightedSumValues: values, weightedSumScores: scores, weightedSumIndices: indices},
 	})[0]
 }

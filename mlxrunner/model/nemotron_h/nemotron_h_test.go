@@ -899,6 +899,44 @@ func TestResizeRadioImageChannels(t *testing.T) {
 	}
 }
 
+func TestResizeRadioImagePixelAccess(t *testing.T) {
+	bounds := image.Rect(3, 5, 12, 13)
+	crop := image.Rect(5, 7, 10, 11)
+	nrgba := image.NewNRGBA(bounds)
+	for i := range nrgba.Pix {
+		nrgba.Pix[i] = byte(i * 31)
+	}
+	for i := 3; i < len(nrgba.Pix); i += 4 {
+		nrgba.Pix[i] = [4]byte{0, 1, 127, 255}[(i/4)%4]
+	}
+	images := []image.Image{nrgba.SubImage(crop)}
+	for _, ratio := range []image.YCbCrSubsampleRatio{
+		image.YCbCrSubsampleRatio444, image.YCbCrSubsampleRatio422,
+		image.YCbCrSubsampleRatio420, image.YCbCrSubsampleRatio440,
+		image.YCbCrSubsampleRatio411, image.YCbCrSubsampleRatio410,
+	} {
+		src := image.NewYCbCr(bounds, ratio)
+		for i := range src.Y {
+			src.Y[i] = byte(i * 31)
+		}
+		for i := range src.Cb {
+			src.Cb[i], src.Cr[i] = byte(i*17), byte(i*43)
+		}
+		images = append(images, src.SubImage(crop))
+	}
+	for _, src := range images {
+		// Hiding the concrete image type exercises the generic color conversion.
+		generic := struct{ image.Image }{src}
+		for _, size := range [][2]int{{2, 3}, {4, 5}, {7, 9}} {
+			got := resizeRadioImage(src, size[0], size[1])
+			want := resizeRadioImage(generic, size[0], size[1])
+			if !slices.Equal(got, want) {
+				t.Errorf("%T resize to %v differs from generic pixel access", src, size)
+			}
+		}
+	}
+}
+
 func TestNemotronImagePatchBudget(t *testing.T) {
 	cfg := &VisionConfig{
 		DownsampleFactor: 2,

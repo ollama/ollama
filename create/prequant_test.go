@@ -120,49 +120,6 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 	}
 }
 
-func TestPlanPrequantizedModelOptRetainsActivationScale(t *testing.T) {
-	// Preserve calibration metadata for an explicitly enabled quantized-
-	// activation path without changing the existing weight-only runtime path.
-	inv := newInventory(sourceModelConfig{}, map[string]string{
-		"l.weight":             "U8",
-		"l.weight_scale":       "F8_E4M3",
-		"l.weight_scale_2":     "F32",
-		"l.input_scale":        "F32",
-		"l.input_global_scale": "F32",
-	})
-	for _, name := range []string{"l.weight_scale_2", "l.input_scale", "l.input_global_scale"} {
-		scale := inv.Tensors[name]
-		scale.Shape = nil
-		inv.Tensors[name] = scale
-	}
-
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
-	if err != nil {
-		t.Fatalf("Plan() error = %v", err)
-	}
-	if len(specs) != 1 {
-		t.Fatalf("got %d specs %v, want 1", len(specs), specNames(specs))
-	}
-	w := specs[0]
-	for _, scale := range []struct {
-		source string
-		output string
-	}{
-		{source: "l.input_scale", output: "l.weight.input_scale"},
-		{source: "l.input_global_scale", output: "l.weight.input_global_scale"},
-	} {
-		input, ok := inputByOutput(w, scale.output)
-		if !ok || input.Transform != TransformScalarF32 || sourceName(input) != scale.source {
-			t.Errorf("activation scale %s = %+v ok=%v, want scalar_f32 companion %s", scale.output, input, ok, scale.source)
-		}
-		for _, s := range specs {
-			if s.Name == scale.source {
-				t.Errorf("activation scale %s should be stored beside its weight", scale.source)
-			}
-		}
-	}
-}
-
 func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"l.weight_packed":       "U8",
@@ -197,13 +154,8 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	if !ok || globalIn.Transform != TransformReciprocalF32 {
 		t.Errorf("global_scale input = %+v ok=%v, want reciprocal_f32", globalIn, ok)
 	}
-	inputGlobal, ok := inputByOutput(w, "l.weight.input_global_scale")
-	if !ok || inputGlobal.Transform != TransformReciprocalF32 || sourceName(inputGlobal) != "l.input_global_scale" {
-		t.Errorf("input_global_scale = %+v ok=%v, want reciprocal_f32 companion", inputGlobal, ok)
-	}
-	inputScale, ok := inputByOutput(w, "l.weight.input_scale")
-	if !ok || inputScale.Transform != TransformScalarF32 || sourceName(inputScale) != "l.input_scale" {
-		t.Errorf("input_scale = %+v ok=%v, want unchanged F32 companion", inputScale, ok)
+	if len(w.Tensors) != 3 {
+		t.Errorf("fused tensors = %v, want only weight, block scale and global scale", w.Tensors)
 	}
 	if w.Metadata["quant_type"] != "nvfp4" || w.Metadata["group_size"] != "16" {
 		t.Errorf("metadata = %v, want quant_type=nvfp4 group_size=16", w.Metadata)
@@ -231,11 +183,12 @@ func TestPlanPrequantizedModelOptRetainsExpertScaleBanks(t *testing.T) {
 	if !ok {
 		t.Fatal("missing l.weight blob")
 	}
-	for _, name := range []string{"l.weight.global_scale", "l.weight.input_scale"} {
-		scale, ok := inputByOutput(w, name)
-		if !ok || scale.Transform != TransformF32 || !slices.Equal(scale.Sources[0].Shape, []int32{128}) {
-			t.Errorf("%s = %+v ok=%v, want F32 expert scale bank", name, scale, ok)
-		}
+	scale, ok := inputByOutput(w, "l.weight.global_scale")
+	if !ok || scale.Transform != TransformF32 || !slices.Equal(scale.Sources[0].Shape, []int32{128}) {
+		t.Errorf("global scale = %+v ok=%v, want F32 expert scale bank", scale, ok)
+	}
+	if len(specs) != 1 || len(w.Tensors) != 3 {
+		t.Errorf("specs = %v, want only fused weight, block scale and global scale", specs)
 	}
 }
 

@@ -25,11 +25,11 @@ func TestMamba2ScanMatchesReference(t *testing.T) {
 }
 
 func TestMamba2ScanSoftplusExtremes(t *testing.T) {
-	for _, size := range []int{31, 32} { // graph fallback and Metal kernel
+	for _, size := range []int{31, 32} { // graph fallback and GPU kernel
 		t.Run(fmt.Sprintf("state=%d", size), func(t *testing.T) {
 			withMLXThread(t, func(t *mlxthreadtest.T) {
 				if size == 32 {
-					requireMamba2Metal(t)
+					requireGPUKernel(t)
 				}
 				// With zero decay coefficient and initial state, unit B/C/x and no
 				// skip connection, every state element is softplus(dt + bias).

@@ -19,11 +19,31 @@ func resizeRadioImage(src image.Image, height, width int) []float32 {
 		horizontal = radioResizeWeights(srcW, width)
 	}
 	for y := range srcH {
-		for x := range srcW {
-			c := color.NRGBAModel.Convert(src.At(bounds.Min.X+x, bounds.Min.Y+y)).(color.NRGBA)
-			row[x] = float32(c.R)
-			row[srcW+x] = float32(c.G)
-			row[2*srcW+x] = float32(c.B)
+		switch src := src.(type) {
+		case *image.NRGBA:
+			offset := src.PixOffset(bounds.Min.X, bounds.Min.Y+y)
+			pixels := src.Pix[offset : offset+4*srcW]
+			for x := range srcW {
+				row[x] = float32(pixels[4*x])
+				row[srcW+x] = float32(pixels[4*x+1])
+				row[2*srcW+x] = float32(pixels[4*x+2])
+			}
+		case *image.YCbCr:
+			offset := src.YOffset(bounds.Min.X, bounds.Min.Y+y)
+			for x := range srcW {
+				chroma := src.COffset(bounds.Min.X+x, bounds.Min.Y+y)
+				r, g, b := color.YCbCrToRGB(src.Y[offset+x], src.Cb[chroma], src.Cr[chroma])
+				row[x] = float32(r)
+				row[srcW+x] = float32(g)
+				row[2*srcW+x] = float32(b)
+			}
+		default:
+			for x := range srcW {
+				c := color.NRGBAModel.Convert(src.At(bounds.Min.X+x, bounds.Min.Y+y)).(color.NRGBA)
+				row[x] = float32(c.R)
+				row[srcW+x] = float32(c.G)
+				row[2*srcW+x] = float32(c.B)
+			}
 		}
 		for c := range 3 {
 			srcRow := row[c*srcW : (c+1)*srcW]
