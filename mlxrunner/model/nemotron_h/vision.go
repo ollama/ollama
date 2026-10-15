@@ -45,6 +45,8 @@ type VisionConfig struct {
 	HeadDim           int32
 	LayerNormEps      float32
 	ProjectorNormEps  float32
+	FinalLayerNorm    bool
+	FloatImageResize  bool
 	DownsampleFactor  int32
 	MinNumPatches     int
 	MaxNumPatches     int
@@ -79,22 +81,28 @@ type RadioVisionLayer struct {
 }
 
 type VisionProjector struct {
-	Norm *nn.RMSNorm
-	FC1  nn.LinearLayer
-	FC2  nn.LinearLayer
+	FinalNorm *nn.LayerNorm
+	Norm      *nn.RMSNorm
+	FC1       nn.LinearLayer
+	FC2       nn.LinearLayer
 }
 
 func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, error) {
 	var env struct {
+		Architectures []string `json:"architectures"`
+		LLMConfig     struct {
+			NumNextNPredictLayers int `json:"num_nextn_predict_layers"`
+		} `json:"llm_config"`
 		PSVersion    string `json:"ps_version"`
 		VisionConfig *struct {
-			Version         string `json:"version"`
-			PatchSize       int32  `json:"patch_size"`
-			MinNumPatches   int    `json:"min_num_patches"`
-			MaxNumPatches   int    `json:"max_num_patches"`
-			HiddenSize      int32  `json:"hidden_size"`
-			NumHiddenLayers int32  `json:"num_hidden_layers"`
-			NumHeads        int32  `json:"num_attention_heads"`
+			Version         string  `json:"version"`
+			PatchSize       int32   `json:"patch_size"`
+			MinNumPatches   int     `json:"min_num_patches"`
+			MaxNumPatches   int     `json:"max_num_patches"`
+			HiddenSize      int32   `json:"hidden_size"`
+			NumHiddenLayers int32   `json:"num_hidden_layers"`
+			NumHeads        int32   `json:"num_attention_heads"`
+			LayerNormEps    float32 `json:"layer_norm_eps"`
 			Args            struct {
 				Model         string `json:"model"`
 				MinNumPatches int    `json:"min_num_patches"`
@@ -152,6 +160,17 @@ func parseVisionConfig(configData, preprocessorData []byte) (*VisionConfig, erro
 	}
 	if env.DownsampleRatio > 0 {
 		cfg.DownsampleFactor = int32(math.Round(float64(1 / env.DownsampleRatio)))
+	}
+	if env.VisionConfig.LayerNormEps > 0 {
+		cfg.LayerNormEps = env.VisionConfig.LayerNormEps
+	}
+	for _, architecture := range env.Architectures {
+		if architecture == "NemotronH_Omni_Reasoning_V3" {
+			// The publisher's Megatron vision block inherits the MTP config,
+			// which adds a final layer norm when prediction layers are enabled.
+			cfg.FinalLayerNorm = env.LLMConfig.NumNextNPredictLayers > 0
+			cfg.FloatImageResize = true
+		}
 	}
 	if cfg.DownsampleFactor <= 0 {
 		cfg.DownsampleFactor = 2
@@ -326,6 +345,16 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 	}
 
 	projector := m.Projector
+	projector.FinalNorm = newLayerNorm(tensors, "vision_projector.vision_final_layernorm", cfg.LayerNormEps)
+	if cfg.FinalLayerNorm && projector.FinalNorm == nil {
+		return fmt.Errorf("missing final vision layer norm weights")
+	}
+	if norm := projector.FinalNorm; norm != nil {
+		if norm.Weight.NumDims() != 1 || norm.Weight.Dim(0) != int(cfg.HiddenSize) ||
+			norm.Bias == nil || norm.Bias.NumDims() != 1 || norm.Bias.Dim(0) != int(cfg.HiddenSize) {
+			return fmt.Errorf("invalid final vision layer norm dimensions")
+		}
+	}
 	normWeight := tensors["mlp1.0.weight"]
 	projector.FC1 = linears.Make("mlp1.1")
 	projector.FC2 = linears.Make("mlp1.3")
@@ -494,14 +523,18 @@ func (m *Model) forwardVision(pixelValues *mlx.Array) *mlx.Array {
 		[]int32{0, clsTokens, 0},
 		[]int32{B, clsTokens + patchH*patchW, cfg.HiddenSize},
 	)
-	h = mlx.Reshape(h, B, patchH, patchW, cfg.HiddenSize)
-	h = radioPixelShuffle(h, cfg.DownsampleFactor)
-	h = mlx.Reshape(h, B, (patchH/cfg.DownsampleFactor)*(patchW/cfg.DownsampleFactor), cfg.HiddenSize*cfg.DownsampleFactor*cfg.DownsampleFactor)
-	return m.Projector.Forward(h)
+	return m.Projector.Forward(h, patchH, patchW, cfg.DownsampleFactor)
 }
 
-func (p *VisionProjector) Forward(x *mlx.Array) *mlx.Array {
-	x = p.Norm.Forward(x, 0)
+func (p *VisionProjector) Forward(x *mlx.Array, patchH, patchW, factor int32) *mlx.Array {
+	B, hidden := int32(x.Dim(0)), int32(x.Dim(2))
+	if p.FinalNorm != nil {
+		x = radioLayerNorm(p.FinalNorm, x)
+	}
+	x = mlx.Reshape(x, B, patchH, patchW, hidden)
+	x = radioPixelShuffle(x, factor)
+	x = mlx.Reshape(x, B, (patchH/factor)*(patchW/factor), hidden*factor*factor)
+	x = p.Norm.Forward(x.AsType(mlx.DTypeFloat32), 0).AsType(x.DType())
 	x = p.FC1.Forward(x)
 	x = mlx.ReLUSquared(x)
 	return p.FC2.Forward(x)
@@ -509,14 +542,19 @@ func (p *VisionProjector) Forward(x *mlx.Array) *mlx.Array {
 
 func radioVisionLayerForward(layer *RadioVisionLayer, x *mlx.Array, B int32, cfg *VisionConfig) *mlx.Array {
 	S := int32(x.Dim(1))
-	normed := layer.Norm1.Forward(x)
+	normed := radioLayerNorm(layer.Norm1, x)
 	attn := radioAttentionForward(layer, normed, B, S, cfg)
 	h := mlx.Add(x, attn)
-	mlp := layer.FC1.Forward(layer.Norm2.Forward(h))
+	mlp := layer.FC1.Forward(radioLayerNorm(layer.Norm2, h))
 	mlpDType := mlp.DType()
 	mlp = mlx.GELU(mlp.AsType(mlx.DTypeFloat32)).AsType(mlpDType)
 	mlp = layer.FC2.Forward(mlp)
 	return mlx.Add(h, mlp)
+}
+
+func radioLayerNorm(norm *nn.LayerNorm, x *mlx.Array) *mlx.Array {
+	// Avoid BF16 rounding between normalization and the affine transform.
+	return norm.Forward(x.AsType(mlx.DTypeFloat32)).AsType(x.DType())
 }
 
 func radioAttentionForward(layer *RadioVisionLayer, x *mlx.Array, B, S int32, cfg *VisionConfig) *mlx.Array {

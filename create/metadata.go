@@ -195,7 +195,11 @@ func lagunaRendererParserNameFromTemplate(modelDir, chatTemplate string) (string
 	return "laguna", nil
 }
 
-func nemotronRendererParserNameFromTemplate(modelDir, chatTemplate string) (string, error) {
+// Nemotron 3.5 replaces inline /think toggles with request-controlled thinking
+// and adds a reasoning-effort marker. The architecture names do not distinguish
+// these prompt formats, but both use the same thinking/tool-call output syntax
+// and therefore the nemotron-3-nano parser.
+func nemotronRendererNameFromTemplate(modelDir, chatTemplate string) (string, error) {
 	const v35Marker = "{reasoning effort: efficient}"
 
 	chatTemplatePath := filepath.Join(modelDir, "chat_template.jinja")
@@ -250,7 +254,7 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	case strings.Contains(s, "qwen3"):
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+		return "nemotron-3-nano", nil
 	default:
 		return "", nil
 	}
@@ -293,8 +297,10 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return qwen35RendererNameFromTemplate(chatTemplate), nil
 	case strings.Contains(s, "qwen3"):
 		return "qwen3-coder", nil
+	case s == "nemotronh_omni_reasoning_v3":
+		return "nemotron-3.5-super", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+		return nemotronRendererNameFromTemplate(modelDir, chatTemplate)
 	default:
 		return "", nil
 	}

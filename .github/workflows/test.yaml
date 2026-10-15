@@ -216,7 +216,7 @@ jobs:
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
             superbuild_target: ollama-llama-server-vulkan
-            superbuild_dir: build\local-superbuild-vulkan
+            superbuild_dir: build\vk
             superbuild_args: '-DOLLAMA_LLAMA_BACKENDS=vulkan'
             expected_payload: lib\ollama\vulkan\ggml-vulkan.dll
           - preset: 'MLX CUDA 13'
