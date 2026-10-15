@@ -164,7 +164,7 @@ func proxyCloudJSONRequest(c *gin.Context, payload any, disabledOperation string
 }
 
 func proxyCloudJSONRequestWithPath(c *gin.Context, payload any, path string, disabledOperation string) {
-	body, err := json.Marshal(payload)
+	body, err := marshalNoHTMLEscape(payload)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -210,7 +210,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 
 	if err := cloudProxySignRequest(outReq.Context(), outReq); err != nil {
 		slog.Warn("cloud proxy signing failed", "error", err)
-		writeCloudUnauthorized(c)
+		writeCloudUnauthorized(c, path)
 		return
 	}
 
@@ -284,7 +284,20 @@ func replaceJSONModelField(body []byte, model string) ([]byte, error) {
 	}
 	payload["model"] = modelJSON
 
-	return json.Marshal(payload)
+	return marshalNoHTMLEscape(payload)
+}
+
+// marshalNoHTMLEscape is json.Marshal without HTML escaping, which would turn
+// each <, >, and & in a client's values into six bytes that count against
+// upstream byte limits.
+func marshalNoHTMLEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func readRequestBody(r *http.Request) ([]byte, error) {
@@ -359,14 +372,23 @@ func hasWebSearchTool(path string, body []byte) bool {
 	return false
 }
 
-func writeCloudUnauthorized(c *gin.Context) {
+func writeCloudUnauthorized(c *gin.Context, path string) {
 	signinURL, err := cloudProxySigninURL()
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		signinURL = ""
+	}
+	// Responses passthrough runs before the compatibility writer. Requests
+	// routed through /api/chat (including web search) still need native errors.
+	if path == "/v1/responses" {
+		c.JSON(http.StatusUnauthorized, openai.NewResponsesAuthenticationError(signinURL))
 		return
 	}
 
-	c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "signin_url": signinURL})
+	response := gin.H{"error": "unauthorized"}
+	if err == nil {
+		response["signin_url"] = signinURL
+	}
+	c.JSON(http.StatusUnauthorized, response)
 }
 
 func signCloudProxyRequest(ctx context.Context, req *http.Request) error {
