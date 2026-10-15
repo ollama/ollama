@@ -441,8 +441,15 @@ func isForeignCompactionItem(item ResponsesCompactionItem) (bool, error) {
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
 		return false, fmt.Errorf("invalid compaction payload: %w", err)
 	}
+	// Only a string discriminator can identify an Ollama payload.
+	if len(payload.Type) == 0 || payload.Type[0] != '"' {
+		return true, nil
+	}
 	var kind string
-	return json.Unmarshal(payload.Type, &kind) != nil || kind != OllamaCompactionPayloadType, nil
+	if err := json.Unmarshal(payload.Type, &kind); err != nil {
+		return false, fmt.Errorf("invalid compaction payload type: %w", err)
+	}
+	return kind != OllamaCompactionPayloadType, nil
 }
 
 func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, error) {
