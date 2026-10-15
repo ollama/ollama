@@ -58,6 +58,35 @@ Advanced parameters (optional):
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 
+#### Options
+
+`options` accepts the same parameters as [`PARAMETER` in the Modelfile](./modelfile.mdx#valid-parameters-and-values) and can be set per request. Sampling options apply at generation time; runner options only take effect when the model is loaded into memory.
+
+| Option | Description |
+| --- | --- |
+| `num_keep` | Tokens from the prompt to keep when the context fills. |
+| `seed` | Random seed for reproducible generation. |
+| `num_predict` | Maximum tokens to generate (`-1` = infinite generation). |
+| `top_k` | Sample from the top-K most likely tokens; higher is more diverse. |
+| `top_p` | Nucleus sampling threshold; higher is more diverse. |
+| `min_p` | Minimum token probability relative to the most likely token. |
+| `typical_p` | (Deprecated) Locally typical sampling; rejected as a `Modelfile` parameter, still accepted per request with a warning. |
+| `repeat_last_n` | How far back to look to prevent repetition (`0` = disabled, `-1` = `num_ctx`). |
+| `temperature` | Model temperature; higher is more creative. |
+| `repeat_penalty` | How strongly to penalize repetitions; higher penalizes more strongly. |
+| `presence_penalty` | Penalize tokens that already appeared; higher discourages repetition. |
+| `frequency_penalty` | Penalize tokens by frequency; higher discourages repetition. |
+| `stop` | Stop sequences; generation halts when encountered. |
+| `num_ctx` | Context window size in tokens (load-time). |
+| `num_batch` | Prompt batch size processed at once (load-time). |
+| `num_gpu` | Layers to offload to the GPU (load-time). |
+| `main_gpu` | Main GPU for multi-GPU setups (load-time). |
+| `use_mmap` | Memory-map the model file to reduce RAM use (load-time). |
+| `num_thread` | CPU threads to use (`0` = automatic, load-time). |
+| `draft_num_predict` | Speculative draft tokens predicted per step (`0` = disable drafting, load-time). |
+
+`numa` and `penalize_newline` are not valid `options`: unknown options are ignored with a warning (`api.Options.FromMap`), and `penalize_newline` is a deprecated `Modelfile` parameter (`parser/parser.go`). NUMA handling on Linux is automatic and is not controlled per request.
+
 #### Structured outputs
 
 Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [structured outputs](#request-structured-outputs) example below.
