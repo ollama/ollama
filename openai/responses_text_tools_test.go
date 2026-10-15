@@ -17,7 +17,7 @@ func TestResponsesStreamTextThenTools(t *testing.T) {
 					events = append(events, c.Process(api.ChatResponse{Message: api.Message{Content: text}})...)
 				}
 				var calls []api.ToolCall
-				for i := 0; i < toolCount; i++ {
+				for range toolCount {
 					calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{
 						Name: "weather", Arguments: testArgs(map[string]any{"city": "Paris"}),
 					}})
@@ -92,7 +92,7 @@ func TestResponsesStreamReasoningThenTools(t *testing.T) {
 				c := NewResponsesStreamConverter("resp_reasoning", "msg_reasoning", "test-model", ResponsesRequest{})
 				events := c.Process(api.ChatResponse{Message: api.Message{Thinking: "Checking the weather."}})
 				var calls []api.ToolCall
-				for i := 0; i < toolCount; i++ {
+				for range toolCount {
 					calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{
 						Name: "weather", Arguments: testArgs(map[string]any{"city": "Paris"}),
 					}})
@@ -150,7 +150,6 @@ func TestResponsesStreamReasoningThenTools(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestResponsesStreamEmptyToolsKeepReasoningOpen(t *testing.T) {
