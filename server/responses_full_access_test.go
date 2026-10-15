@@ -88,8 +88,11 @@ func TestResponsesFullAccessLocalConversion(t *testing.T) {
 						args := api.NewToolCallFunctionArguments()
 						args.Set("cmd", "printf TEST_MARKER")
 						args.Set("sandbox_permissions", "require_escalated")
-						c.JSON(http.StatusOK, api.ChatResponse{Model: request.Model, Done: true,
-							Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_test", Function: api.ToolCallFunction{Name: tool.Name, Arguments: args}}}}})
+						c.JSON(http.StatusOK, api.ChatResponse{
+							Model:   request.Model,
+							Done:    true,
+							Message: api.Message{Role: "assistant", ToolCalls: []api.ToolCall{{ID: "call_test", Function: api.ToolCallFunction{Name: tool.Name, Arguments: args}}}},
+						})
 					})
 					request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(fullAccessRouteBody(t, "fixture", mode, namespace, stream)))
 					request.Header.Set("Content-Type", "application/json")

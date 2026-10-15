@@ -102,7 +102,47 @@ func TestResponsesFullAccessToolsPreserveOtherContracts(t *testing.T) {
 			r["tools"] = []any{map[string]any{"type": "namespace", "name": "application", "tools": []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{tool}}}}}
 		}},
 		{"custom description", func(_, tool map[string]any) { tool["description"] = "Run my application's command." }},
+		{"custom description suffix", func(_, tool map[string]any) {
+			tool["description"] = tool["description"].(string) + "\n\nAlways supply justification for the application's audit log."
+		}},
 		{"custom tool type", func(_, tool map[string]any) { tool["type"] = "custom" }},
+		{"strict custom contract", func(_, tool map[string]any) {
+			tool["strict"] = true
+			parameters := tool["parameters"].(map[string]any)
+			required := []any{}
+			for name := range parameters["properties"].(map[string]any) {
+				required = append(required, name)
+			}
+			parameters["required"] = required
+		}},
+		{"custom functions namespace", func(r, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["justification"].(map[string]any)["description"] = "Audit reason required by the application."
+			r["tools"] = []any{map[string]any{"type": "namespace", "name": "functions", "tools": []any{tool}}}
+		}},
+		{"custom permission semantics", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["sandbox_permissions"].(map[string]any)["default"] = "require_escalated"
+		}},
+		{"custom prefix semantics", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["prefix_rule"].(map[string]any)["description"] = "Prefix required to select the application's command handler."
+		}},
+		{"required by composed schema", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["allOf"] = []any{map[string]any{"required": []any{"justification"}}}
+		}},
+		{"reference to removed property", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["workdir"] = map[string]any{"$ref": "#/properties/justification"}
+		}},
+		{"custom command parameter", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["host"] = map[string]any{"type": "string", "description": "Remote command host."}
+		}},
+		{"incomplete command contract", func(_, tool map[string]any) {
+			delete(tool["parameters"].(map[string]any)["properties"].(map[string]any), "shell")
+		}},
+		{"custom required parameter", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["required"] = []any{"cmd", "workdir"}
+		}},
+		{"custom workdir semantics", func(_, tool map[string]any) {
+			tool["parameters"].(map[string]any)["properties"].(map[string]any)["workdir"].(map[string]any)["description"] = "Select the tenant whose command service should run."
+		}},
 		{"another function", func(_, tool map[string]any) { tool["name"] = "shell_command" }},
 		{"custom command schema", func(_, tool map[string]any) {
 			tool["parameters"].(map[string]any)["properties"].(map[string]any)["cmd"] = map[string]any{"type": "object"}
@@ -131,21 +171,58 @@ func TestResponsesFullAccessToolsPreserveOtherContracts(t *testing.T) {
 }
 
 func TestResponsesFullAccessToolsWindowsDescription(t *testing.T) {
-	tool := fullAccessExecFixture(t)
-	tool["description"] = tool["description"].(string) + "\n\nWindows shell guidance."
-	tool["parameters"].(map[string]any)["properties"].(map[string]any)["yield_time_ms"].(map[string]any)["description"] = "Windows yield guidance."
-	body, _ := json.Marshal(map[string]any{"tools": []any{tool}, "client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`}})
-	got, changed, err := NormalizeResponsesFullAccessTools(body)
-	if err != nil || !changed {
-		t.Fatalf("changed=%v err=%v", changed, err)
-	}
-	var request struct {
-		Tools []ResponsesTool `json:"tools"`
-	}
-	if err := json.Unmarshal(got, &request); err != nil {
+	// Reconstructed from Codex's native Windows schema definitions. Guidance
+	// follows the executor OS, while yield limits follow the client host OS.
+	data, err := os.ReadFile("testdata/codex_exec_command_windows.json")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(request.Tools[0].Parameters["required"], []any{"cmd"}) {
-		t.Fatal("required command argument changed")
+	for _, host := range []string{"windows", "other"} {
+		t.Run(host, func(t *testing.T) {
+			var tool map[string]any
+			if err := json.Unmarshal(data, &tool); err != nil {
+				t.Fatal(err)
+			}
+			if host != "windows" {
+				tool["parameters"].(map[string]any)["properties"].(map[string]any)["yield_time_ms"].(map[string]any)["description"] = "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
+			}
+			body, _ := json.Marshal(map[string]any{"tools": []any{tool}, "client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`}})
+			got, changed, err := NormalizeResponsesFullAccessTools(body)
+			if err != nil || !changed {
+				t.Fatalf("changed=%v err=%v", changed, err)
+			}
+			var request struct {
+				Tools []ResponsesTool `json:"tools"`
+			}
+			if err := json.Unmarshal(got, &request); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(request.Tools[0].Parameters["required"], []any{"cmd"}) {
+				t.Fatal("required command argument changed")
+			}
+			for _, key := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
+				if _, exists := request.Tools[0].Parameters["properties"].(map[string]any)[key]; exists {
+					t.Errorf("%s was not filtered", key)
+				}
+			}
+			tool["description"] = tool["description"].(string) + "\n\nAlways supply justification for the application's audit log."
+			body, _ = json.Marshal(map[string]any{"tools": []any{tool}, "client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`}})
+			got, changed, err = NormalizeResponsesFullAccessTools(body)
+			if err != nil || changed || !bytes.Equal(got, body) {
+				t.Fatalf("custom Windows contract changed: changed=%v err=%v", changed, err)
+			}
+		})
+	}
+}
+
+func TestResponsesFullAccessToolsWithoutTTY(t *testing.T) {
+	tool := fullAccessExecFixture(t)
+	// Codex omits tty when PTY allocation is disabled; the remaining built-in
+	// command contract and permission handling are unchanged.
+	delete(tool["parameters"].(map[string]any)["properties"].(map[string]any), "tty")
+	body, _ := json.Marshal(map[string]any{"tools": []any{tool}, "client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`}})
+	_, changed, err := NormalizeResponsesFullAccessTools(body)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
 	}
 }
