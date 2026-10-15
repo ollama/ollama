@@ -260,7 +260,7 @@ func lockCodexAppHistory(home string) (func(), error) {
 }
 
 func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
-	if !bytes.Contains(data, []byte("ollama_compaction")) && !bytes.Contains(data, []byte("rs_")) {
+	if !bytes.Contains(data, []byte("ollama_compaction")) && !bytes.Contains(data, []byte("encrypted_content")) {
 		return data, false, nil
 	}
 	var output bytes.Buffer
@@ -406,7 +406,8 @@ func portableCodexAppHistoryItem(raw json.RawMessage) ([]json.RawMessage, error)
 	_ = json.Unmarshal(item["type"], &kind)
 	_ = json.Unmarshal(item["id"], &id)
 	_ = json.Unmarshal(item["encrypted_content"], &encrypted)
-	if kind == "reasoning" && codexAppOllamaReasoningID(id) && encrypted != "" {
+	missingID := len(item["id"]) == 0 || bytes.Equal(item["id"], []byte("null"))
+	if kind == "reasoning" && (codexAppOllamaReasoningID(id) || missingID) && encrypted != "" {
 		var summary []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
@@ -423,6 +424,12 @@ func portableCodexAppHistoryItem(raw json.RawMessage) ([]json.RawMessage, error)
 		}
 		if text.String() != encrypted {
 			return nil, nil
+		}
+		if missingID {
+			// Older clients omitted reasoning IDs on disk. Matching plaintext is
+			// Ollama's wire shape, but does not prove which provider wrote it.
+			// Keep the original and stop before restoring an incompatible connection.
+			return nil, errors.New("cannot safely convert saved reasoning without an ID: its provider is unknown")
 		}
 		delete(item, "encrypted_content")
 		encoded, err := marshalCodexAppHistory(item)
