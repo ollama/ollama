@@ -1215,6 +1215,12 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 			return
 		}
 
+		// Clients can retain reasoning effort when switching to a non-thinking
+		// model. Ignore that effort, but preserve explicit Ollama think overrides.
+		if req.Think == nil {
+			c.Set("relax_thinking", true)
+		}
+
 		// Check if client requested streaming (defaults to false)
 		streamRequested := req.Stream != nil && *req.Stream
 
