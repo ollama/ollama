@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/openai"
 )
@@ -613,22 +614,48 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`))
 	})
-	payload, err := json.Marshal(openai.OllamaCompactionPayload{
+	html := strings.Repeat("<tag>&</tag>", 10_000)
+	const argumentJSON = `{"z_text":"<argument>&","a_nested":{"values":["<nested>&","\\u003c"]}}`
+	const searchArgumentJSON = `{"z_query":"<search>&","a_limit":1}`
+	var arguments, searchArguments api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(argumentJSON), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(searchArgumentJSON), &searchArguments); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalNoHTMLEscape(openai.OllamaCompactionPayload{
 		Type: openai.OllamaCompactionPayloadType, Version: openai.OllamaCompactionPayloadVersion,
-		Summary: "The build is ready.",
+		Summary: "The build is ready. <summary>&",
+		Retained: []api.Message{
+			{
+				Role: "assistant", Content: "<retained>&", Thinking: "<thinking>&",
+				ToolCalls: []api.ToolCall{
+					{ID: "call_retained", Function: api.ToolCallFunction{Name: "echo", Arguments: arguments}},
+					{ID: "call_search", Function: api.ToolCallFunction{Name: "tool_search", Arguments: searchArguments}},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_retained", Content: "<output>&"},
+			{Role: "tool", ToolCallID: "call_search", ToolName: "tool_search", Content: "[]"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := json.Marshal(map[string]any{
-		"model": "fixture:cloud", "stream": false,
-		"input": []any{
-			map[string]any{"type": "message", "role": "user", "content": "first retained user turn"},
-			map[string]any{"type": "message", "role": "user", "content": "second retained user turn"},
-			openai.ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(payload)},
-			map[string]any{"type": "message", "role": "user", "content": "new turn"},
-		},
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(fullAccessRouteBody(t, "fixture:cloud", "danger-full-access", "", false), &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["input"], err = marshalNoHTMLEscape([]any{
+		map[string]any{"type": "message", "role": "user", "content": "first retained user turn <before>&"},
+		map[string]any{"type": "message", "role": "user", "content": "second retained user turn"},
+		openai.ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(payload)},
+		map[string]any{"type": "message", "role": "user", "content": "new turn " + html},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := marshalNoHTMLEscape(fields)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -642,6 +669,14 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 		t.Fatalf("paths=%v", paths)
 	}
 	forwarded := string(bodies[0])
+	for _, marker := range []string{"<before>&", "<summary>&", "<retained>&", "<thinking>&", "<output>&", "<argument>&", "<nested>&", "<search>&", html} {
+		if !strings.Contains(forwarded, marker) {
+			t.Fatalf("expanded request lost or HTML-escaped content of length %d", len(marker))
+		}
+	}
+	if len(bodies[0]) > len(request) {
+		t.Fatalf("expanded request was inflated: before=%d after=%d", len(request), len(bodies[0]))
+	}
 	if strings.Contains(forwarded, `"type":"compaction"`) {
 		t.Fatalf("compaction boundary was forwarded: %s", forwarded)
 	}
@@ -652,5 +687,36 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 	}
 	if !strings.Contains(forwarded, "The build is ready.") || !strings.Contains(forwarded, "new turn") || !strings.Contains(forwarded, "ollama_compaction_summary") {
 		t.Fatalf("expanded state is incomplete: %s", forwarded)
+	}
+	var sent struct {
+		Tools []openai.ResponsesTool `json:"tools"`
+		Input []struct {
+			CallID    string          `json:"call_id"`
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(bodies[0], &sent); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent.Tools) != 1 {
+		t.Fatalf("tools=%d", len(sent.Tools))
+	}
+	checkFullAccessParameters(t, sent.Tools[0].Parameters, true)
+	var retainedArguments, retainedSearchArguments string
+	for _, item := range sent.Input {
+		if len(item.Arguments) == 0 {
+			continue
+		}
+		switch item.CallID {
+		case "call_retained":
+			if err := json.Unmarshal(item.Arguments, &retainedArguments); err != nil {
+				t.Fatal(err)
+			}
+		case "call_search":
+			retainedSearchArguments = string(item.Arguments)
+		}
+	}
+	if retainedArguments != argumentJSON || retainedSearchArguments != searchArgumentJSON {
+		t.Fatalf("retained arguments changed value or key order: function=%s search=%s", retainedArguments, retainedSearchArguments)
 	}
 }

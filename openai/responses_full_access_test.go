@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,37 @@ func TestResponsesFullAccessTools(t *testing.T) {
 					t.Fatalf("second normalization changed request: changed=%v err=%v", changed, err)
 				}
 			})
+		}
+	}
+}
+
+func TestResponsesFullAccessToolsPreserveHTML(t *testing.T) {
+	content := strings.Repeat("<tag>&</tag>", 10000) + strings.Repeat("a", 120000)
+	const toolDescription = "<helper> & custom tool"
+	request := map[string]any{
+		"model": "test", "input": content,
+		"client_metadata": map[string]any{"x-codex-turn-metadata": `{"sandbox_mode":"danger-full-access","sandbox":"none"}`},
+		"tools": []any{fullAccessExecFixture(t), map[string]any{
+			"type": "function", "name": "custom", "description": toolDescription,
+			"parameters": map[string]any{"type": "object"},
+		}},
+	}
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	got, changed, err := NormalizeResponsesFullAccessTools(body.Bytes())
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if len(got) >= body.Len() {
+		t.Errorf("removing schema fields grew the request: before=%d after=%d", body.Len(), len(got))
+	}
+	for _, text := range []string{content, toolDescription} {
+		if !bytes.Contains(got, []byte(text)) {
+			t.Error("conversation or custom tool description was HTML-escaped")
 		}
 	}
 }

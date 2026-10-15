@@ -36,12 +36,24 @@ func NormalizeResponsesFullAccessTools(body []byte) ([]byte, bool, error) {
 		return body, false, nil
 	}
 	var err error
-	request["tools"], err = json.Marshal(tools)
+	request["tools"], err = marshalNoHTMLEscape(tools)
 	if err != nil {
 		return nil, false, err
 	}
-	normalized, err := json.Marshal(request)
+	normalized, err := marshalNoHTMLEscape(request)
 	return normalized, err == nil, err
+}
+
+// marshalNoHTMLEscape avoids expanding HTML-like conversation or tool content
+// into escape sequences that count against upstream request byte limits.
+func marshalNoHTMLEscape(value any) ([]byte, error) {
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(body.Bytes(), []byte("\n")), nil
 }
 
 // Unsupported metadata and tool declarations are left to the normal Responses
@@ -149,11 +161,30 @@ func normalizeCodexFullAccessExec(tool map[string]any) bool {
 		prefix["description"] != "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"]." {
 		return false
 	}
-	for _, name := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
-		delete(properties, name)
-	}
-	parameters["required"] = slices.DeleteFunc(required, func(value any) bool {
-		return value == "sandbox_permissions" || value == "justification" || value == "prefix_rule"
-	})
+	parameters["required"], _ = RemoveExecEscalationParameters(properties, required)
 	return true
+}
+
+// RemoveExecEscalationParameters removes escalation properties and their required
+// entries. Callers must establish Full Access and tool eligibility first. The
+// value types preserve each caller's decoded schema and required representation.
+func RemoveExecEscalationParameters[P, R any](properties map[string]P, required []R) ([]R, bool) {
+	changed := false
+	for _, name := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
+		if _, exists := properties[name]; exists {
+			delete(properties, name)
+			changed = true
+		}
+	}
+	if !changed {
+		return required, false
+	}
+	return slices.DeleteFunc(required, func(value R) bool {
+		switch any(value) {
+		case "sandbox_permissions", "justification", "prefix_rule":
+			return true
+		default:
+			return false
+		}
+	}), true
 }

@@ -18,9 +18,9 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
-// responsesCompactionMiddleware intercepts only Codex compaction control items.
-// Ordinary Responses requests continue through the existing route unchanged.
-func (s *Server) responsesCompactionMiddleware() gin.HandlerFunc {
+// responsesRequestMiddleware handles compaction controls and prepares ordinary
+// Responses requests before local conversion or cloud forwarding.
+func (s *Server) responsesRequestMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		body, err := readResponsesRequestBody(c)
 		if err != nil {
@@ -39,13 +39,18 @@ func (s *Server) responsesCompactionMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		rewritten, changed, err := openai.ExpandResponsesCompactionInput(body)
+		rewritten, compactionChanged, err := openai.ExpandResponsesCompactionInput(body)
 		if err != nil {
 			writeResponsesCompactionError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
 			return
 		}
-		if changed {
-			resetResponsesRequestBody(c.Request, rewritten)
+		normalized, toolsChanged, err := openai.NormalizeResponsesFullAccessTools(rewritten)
+		if err != nil {
+			writeResponsesCompactionError(c, http.StatusBadRequest, "invalid_request_error", err.Error())
+			return
+		}
+		if compactionChanged || toolsChanged {
+			resetResponsesRequestBody(c.Request, normalized)
 		}
 		c.Next()
 	}

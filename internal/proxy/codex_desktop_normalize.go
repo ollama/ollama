@@ -126,15 +126,20 @@ func normalizeFullAccessTools(rawTools json.RawMessage) (json.RawMessage, bool, 
 		if err := json.Unmarshal(parameters["properties"], &properties); err != nil {
 			return nil, false, fmt.Errorf("decode exec_command properties: %w", err)
 		}
-		toolChanged := false
-		for _, property := range []string{"sandbox_permissions", "justification", "prefix_rule"} {
-			if _, ok := properties[property]; ok {
-				delete(properties, property)
-				toolChanged = true
-			}
+		rawRequired, hasRequired := parameters["required"]
+		var required []string
+		var requiredErr error
+		if hasRequired {
+			requiredErr = json.Unmarshal(rawRequired, &required)
 		}
+		required, toolChanged := openai.RemoveExecEscalationParameters(properties, required)
 		if !toolChanged {
 			continue
+		}
+		// Preserve the gateway's no-op behavior when no escalation properties
+		// exist, including its handling of an unrelated malformed required list.
+		if requiredErr != nil {
+			return nil, false, fmt.Errorf("decode exec_command required properties: %w", requiredErr)
 		}
 		changed = true
 
@@ -143,14 +148,7 @@ func normalizeFullAccessTools(rawTools json.RawMessage) (json.RawMessage, bool, 
 			return nil, false, fmt.Errorf("encode exec_command properties: %w", err)
 		}
 		parameters["properties"] = encodedProperties
-		if rawRequired, ok := parameters["required"]; ok {
-			var required []string
-			if err := json.Unmarshal(rawRequired, &required); err != nil {
-				return nil, false, fmt.Errorf("decode exec_command required properties: %w", err)
-			}
-			required = slices.DeleteFunc(required, func(property string) bool {
-				return property == "sandbox_permissions" || property == "justification" || property == "prefix_rule"
-			})
+		if hasRequired {
 			parameters["required"], err = json.Marshal(required)
 			if err != nil {
 				return nil, false, fmt.Errorf("encode exec_command required properties: %w", err)

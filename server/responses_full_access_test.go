@@ -45,8 +45,8 @@ func fullAccessRouteBody(t *testing.T, model, mode, namespace string, stream boo
 	if namespace != "" {
 		entry = map[string]any{"type": "namespace", "name": namespace, "tools": []any{entry}}
 	}
-	body, err := json.Marshal(map[string]any{
-		"model": model, "stream": stream, "input": "Print the test marker.",
+	body, err := marshalNoHTMLEscape(map[string]any{
+		"model": model, "stream": stream, "input": "Print <the> & test marker.",
 		"client_metadata": map[string]any{"x-codex-turn-metadata": map[string]string{"sandbox_mode": mode, "sandbox": "none"}},
 		"tools":           []any{entry}, "unknown_field": json.Number("9007199254740993"),
 	})
@@ -78,7 +78,7 @@ func TestResponsesFullAccessLocalConversion(t *testing.T) {
 					s := &Server{}
 					router := gin.New()
 					called := false
-					router.POST("/v1/responses", s.responsesCompactionMiddleware(), responsesFullAccessMiddleware(), cloudPassthroughMiddleware("test"), middleware.ResponsesMiddleware(), func(c *gin.Context) {
+					router.POST("/v1/responses", s.responsesRequestMiddleware(), cloudPassthroughMiddleware("test"), middleware.ResponsesMiddleware(), func(c *gin.Context) {
 						called = true
 						var request api.ChatRequest
 						if err := json.NewDecoder(c.Request.Body).Decode(&request); err != nil {
@@ -180,8 +180,11 @@ func TestResponsesFullAccessCloudRoute(t *testing.T) {
 				if err := decoder.Decode(&sent); err != nil {
 					t.Fatal(err)
 				}
-				if sent["model"] != "fixture" || sent["unknown_field"] != json.Number("9007199254740993") || sent["input"] != "Print the test marker." {
+				if sent["model"] != "fixture" || sent["unknown_field"] != json.Number("9007199254740993") || sent["input"] != "Print <the> & test marker." {
 					t.Fatalf("unrelated fields changed: %s", bodies[0])
+				}
+				if !bytes.Contains(bodies[0], []byte("Print <the> & test marker.")) || len(bodies[0]) > len(body) {
+					t.Fatalf("forwarded request was HTML-escaped or inflated: before=%d after=%d", len(body), len(bodies[0]))
 				}
 				tool := sent["tools"].([]any)[0].(map[string]any)
 				if namespace != "" {
