@@ -8,18 +8,23 @@ import (
 )
 
 var (
-	runnerJobOnce sync.Once
-	runnerJob     windows.Handle
-	runnerJobErr  error
+	// runnerJobMu guards runnerJob initialization and process assignment.
+	runnerJobMu sync.Mutex
+	runnerJob   windows.Handle
 )
 
 // AddRunnerToJob assigns a runner process to Ollama's process-lifetime Job Object.
+// A failed Job initialization is retried by the next call.
 func AddRunnerToJob(pid int) error {
-	runnerJobOnce.Do(func() {
-		runnerJob, runnerJobErr = createRunnerJob()
-	})
-	if runnerJobErr != nil {
-		return runnerJobErr
+	runnerJobMu.Lock()
+	defer runnerJobMu.Unlock()
+
+	if runnerJob == 0 {
+		job, err := createRunnerJob()
+		if err != nil {
+			return err
+		}
+		runnerJob = job
 	}
 
 	return assignProcessToJob(runnerJob, pid)
