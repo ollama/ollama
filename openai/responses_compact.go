@@ -318,8 +318,10 @@ func hasReadableResponsesItem(raw json.RawMessage) bool {
 	var wire struct {
 		Type    string          `json:"type"`
 		Role    string          `json:"role"`
+		CallID  string          `json:"call_id"`
 		Content json.RawMessage `json:"content"`
 		Output  json.RawMessage `json:"output"`
+		Action  json.RawMessage `json:"action"`
 	}
 	if json.Unmarshal(raw, &wire) != nil {
 		return false
@@ -332,6 +334,22 @@ func hasReadableResponsesItem(raw json.RawMessage) bool {
 		return hasReadableResponsesContent(wire.Content)
 	case "function_call_output", "custom_tool_call_output":
 		return hasReadableResponsesContent(wire.Output)
+	case "shell_call", "local_shell_call":
+		// A command remains readable history when execution produced no output.
+		var action struct {
+			Type     string   `json:"type"`
+			Commands []string `json:"commands"`
+			Command  []string `json:"command"`
+		}
+		if strings.TrimSpace(wire.CallID) == "" || json.Unmarshal(wire.Action, &action) != nil {
+			return false
+		}
+		if wire.Type == "local_shell_call" {
+			return action.Type == "exec" && len(action.Command) > 0 && strings.TrimSpace(action.Command[0]) != ""
+		}
+		return slices.ContainsFunc(action.Commands, func(command string) bool {
+			return strings.TrimSpace(command) != ""
+		})
 	}
 	item, err := unmarshalResponsesInputItem(raw)
 	if err != nil {

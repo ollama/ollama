@@ -657,20 +657,16 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		}
 		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Keep native thinking intact and preserve readable summaries when
-			// another provider supplies different opaque encrypted content.
+			// Keep native thinking intact, but put distinct readable summaries in
+			// content so renderers cannot discard them with historical thinking.
 			pendingThinking = v.EncryptedContent
 			var parts []string
 			for _, part := range v.Summary {
 				parts = append(parts, part.Text)
 			}
 			summary := strings.Join(parts, "\n")
-			if strings.TrimSpace(summary) != "" {
-				if pendingThinking == "" {
-					pendingThinking = summary
-				} else if summary != pendingThinking {
-					appendReasoning(summary, "")
-				}
+			if strings.TrimSpace(summary) != "" && summary != pendingThinking {
+				appendReasoning(summary, "")
 			}
 		case ResponsesAgentMessageInput:
 			content, images, err := convertResponsesContent(v.Content)

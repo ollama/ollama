@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/internal/proxy"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestIsCompactionContextLimit(t *testing.T) {
@@ -680,6 +681,18 @@ func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
 		}},
 		{"computer screenshot", []string{`{"type":"computer_call_output","call_id":"call_1","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,Zml4dHVyZQ=="}}`}},
 		{"shell output", []string{`{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"kiwi-42\n","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`}},
+		{"shell pair with empty result", []string{
+			`{"type":"shell_call","id":"sc_1","call_id":"call_1","status":"completed","action":{"commands":["true"]}}`,
+			`{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`,
+		}},
+		{"local shell pair with empty result", []string{
+			`{"type":"local_shell_call","id":"lsc_1","call_id":"call_1","status":"completed","action":{"type":"exec","command":["true"],"env":{}}}`,
+			`{"type":"local_shell_call_output","id":"call_1","output":""}`,
+		}},
+		{"function pair with empty result", []string{
+			`{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"}`,
+			`{"type":"function_call_output","call_id":"call_1","output":""}`,
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, foreign := range []bool{false, true} {
@@ -734,6 +747,7 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		item         string
 		wantErr      string
 		wantMessages []api.Message
+		wantPrompt   []string
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
@@ -752,24 +766,46 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 			wantErr: "unknown content type: input_audio",
 		},
 		{
+			name: "unsupported shell call", item: `{"type":"shell_call","call_id":"call_1","action":{"commands":["true"]}}`,
+			wantErr: "shell_call",
+		},
+		{
+			name: "unsupported local shell call", item: `{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":["true"]}}`,
+			wantErr: "local_shell_call",
+		},
+		{
 			name: "summary only", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]}`,
-			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}},
+			wantPrompt:   []string{"Remember kiwi-42"},
 		},
 		{
 			name: "summary with encrypted content", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`,
 			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "assistant", Thinking: "opaque-reasoning-state"}},
+			wantPrompt:   []string{"Remember kiwi-42"},
 		},
 		{
 			name: "summary before user message", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"role":"user","content":"continue"}`,
-			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"Remember kiwi-42", "continue"},
 		},
 		{
 			name: "consecutive summaries", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember plum-73"}]}`,
-			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "assistant", Thinking: "Remember plum-73"}},
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "assistant", Content: "Remember plum-73"}},
+			wantPrompt:   []string{"Remember kiwi-42", "Remember plum-73"},
+		},
+		{
+			name: "summary between tool call and result", item: `{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"function_call_output","call_id":"call_1","output":""},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{
+				{Role: "assistant", Content: "Remember kiwi-42", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "run", Arguments: api.NewToolCallFunctionArguments()}}}},
+				{Role: "tool", ToolCallID: "call_1"},
+				{Role: "user", Content: "continue"},
+			},
+			wantPrompt: []string{"Remember kiwi-42", "continue"},
 		},
 		{
 			name: "native thinking and summary", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"Remember kiwi-42"},{"role":"assistant","content":"remembered"}`,
 			wantMessages: []api.Message{{Role: "assistant", Content: "remembered", Thinking: "Remember kiwi-42"}},
+			wantPrompt:   []string{"remembered"},
 		},
 		{
 			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
@@ -801,8 +837,28 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 						if response.Code != http.StatusBadRequest || captured != nil || !strings.Contains(response.Body.String(), tt.wantErr) {
 							t.Fatalf("status=%d captured=%+v body=%s", response.Code, captured, response.Body.String())
 						}
-					} else if response.Code != http.StatusNoContent || captured == nil || !reflect.DeepEqual(captured.Messages, tt.wantMessages) {
+						return
+					}
+					if response.Code != http.StatusNoContent || captured == nil {
 						t.Fatalf("status=%d captured=%+v, want messages=%+v", response.Code, captured, tt.wantMessages)
+					}
+					if !reflect.DeepEqual(captured.Messages, tt.wantMessages) {
+						t.Errorf("messages=%+v, want=%+v", captured.Messages, tt.wantMessages)
+					}
+					if len(tt.wantPrompt) > 0 {
+						for _, renderer := range []string{"qwen3-coder", "qwen3.5"} {
+							t.Run(renderer, func(t *testing.T) {
+								prompt, err := renderPrompt(&Model{Config: model.ConfigV2{Renderer: renderer}}, captured.Messages, captured.Tools, captured.Think)
+								if err != nil {
+									t.Fatal(err)
+								}
+								for _, text := range tt.wantPrompt {
+									if strings.Count(prompt, text) != 1 {
+										t.Errorf("expected %q once in rendered prompt: %q", text, prompt)
+									}
+								}
+							})
+						}
 					}
 				})
 			}

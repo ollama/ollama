@@ -2164,7 +2164,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought\nsecond readable thought" {
+		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought" || chat.Messages[0].Content != "second readable thought" {
 			t.Fatalf("reasoning or tool calls lost: %+v", chat.Messages)
 		}
 	})
