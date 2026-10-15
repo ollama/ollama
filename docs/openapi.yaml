@@ -899,7 +899,7 @@ components:
         model:
           type: string
           pattern: '\S'
-          description: Local model trained for System One, such as nimble.
+          description: Model trained for System One, such as nimble, or clef:cloud for Ollama's cloud.
         state:
           $ref: "#/components/schemas/SystemOneContent"
         images:
@@ -1155,7 +1155,7 @@ paths:
     post:
       summary: Answer typed questions
       description: |
-        Answer choice, yes/no, and scoring questions with a local System One model. Requires Ollama v0.35.0 or later. See the [decision guide](/capabilities/decision) for examples.
+        Answer choice, yes/no, and scoring questions with a System One model, locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or v0.40.5 or later for cloud models. See the [decision guide](/capabilities/decision) for examples.
       operationId: systemone
       x-mint:
         href: /api/systemone
@@ -1164,11 +1164,12 @@ paths:
           sidebarTitle: /v1/systemone
         content: |
           <Note>
-          Currently available locally in Ollama.
+          Available locally, and in [Ollama's cloud](/cloud) with `clef:cloud`.
           </Note>
 
           - Returns one JSON response; streaming, video, tools, and generation controls are not supported.
-          - Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+          - Local requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+          - Cloud models require a [paid plan](https://ollama.com/pricing). Cloud requests accept up to 64 questions, named with letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Requests must fit within 13 MiB, and input must fit the model's 65,536-token context window.
       x-codeSamples:
         - lang: bash
           label: Choose a label
@@ -1229,19 +1230,31 @@ paths:
                   input_tokens: 174
                   output_tokens: 1
         "400":
-          description: Invalid request, unsupported model or runner, or a rendered prompt that exceeds the loaded context. Cloud models are rejected.
+          description: Invalid request, unsupported model or runner, or a rendered prompt that exceeds the loaded context or a cloud model's token limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: A cloud model was requested without signing in. The response includes a `signin_url`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: The cloud model requires a paid plan.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Local model not found. Download the model before making a request.
+          description: Model not found. Download a local model before making a request.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: Request body exceeds 64 KiB without images or 32 MiB with images.
+          description: Local request body exceeds 64 KiB without images or 32 MiB with images, or a cloud request exceeds 13 MiB or the model's context window.
           content:
             application/json:
               schema:
