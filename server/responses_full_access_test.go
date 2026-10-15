@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,11 +18,30 @@ import (
 
 func fullAccessRouteBody(t *testing.T, model, mode, namespace string, stream bool) []byte {
 	t.Helper()
-	tool, err := os.ReadFile("../openai/testdata/codex_exec_command.json")
-	if err != nil {
-		t.Fatal(err)
+	// Captured from the unmodified codex-cli 0.155.0-alpha.16.3 backend.
+	var entry any = map[string]any{
+		"type":        "function",
+		"name":        "exec_command",
+		"description": "Runs a command in a PTY, returning output or a session ID for ongoing interaction.",
+		"strict":      false,
+		"parameters": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"cmd":                 map[string]any{"type": "string", "description": "Shell command to execute."},
+				"justification":       map[string]any{"type": "string", "description": "User-facing approval question for `require_escalated`; omit otherwise."},
+				"login":               map[string]any{"type": "boolean", "description": "True runs the shell with -l/-i semantics; false disables them. Defaults to true."},
+				"max_output_tokens":   map[string]any{"type": "number", "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy."},
+				"prefix_rule":         map[string]any{"type": "array", "description": "Reusable approval prefix for `cmd`, only with `sandbox_permissions: \"require_escalated\"`; for example [\"git\", \"pull\"].", "items": map[string]any{"type": "string"}},
+				"sandbox_permissions": map[string]any{"type": "string", "description": "Per-command sandbox override. Defaults to `use_default`; use `require_escalated` for unsandboxed execution.", "enum": []any{"use_default", "require_escalated"}},
+				"shell":               map[string]any{"type": "string", "description": "Shell binary to launch. Defaults to the user's default shell."},
+				"tty":                 map[string]any{"type": "boolean", "description": "True allocates a PTY for the command; false or omitted uses plain pipes."},
+				"workdir":             map[string]any{"type": "string", "description": "Working directory for the command. Defaults to the turn cwd."},
+				"yield_time_ms":       map[string]any{"type": "number", "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."},
+			},
+			"required":             []any{"cmd"},
+			"additionalProperties": false,
+		},
 	}
-	var entry any = json.RawMessage(tool)
 	if namespace != "" {
 		entry = map[string]any{"type": "namespace", "name": namespace, "tools": []any{entry}}
 	}
