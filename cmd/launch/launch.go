@@ -272,7 +272,7 @@ type SelectionItem struct {
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
-// The runTUI callback is called when the root launcher UI should be shown.
+// The runTUI callback is called when the app launcher UI should be shown.
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
@@ -281,10 +281,10 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
-		Short: "Launch the Ollama menu or an integration",
-		Long: `Launch the Ollama interactive menu, or directly launch a specific integration.
+		Short: "Launch the Ollama app menu or an integration",
+		Long: `Launch the Ollama app menu, or directly launch a specific integration.
 
-Without arguments, this is equivalent to running 'ollama' directly.
+Without arguments, open the app menu. Run 'ollama' to choose whether to run a model directly or with an agent.
 Flags and extra arguments require an integration name.
 
 Supported integrations:
