@@ -1171,10 +1171,6 @@ paths:
           title: System One
           sidebarTitle: /v1/systemone
         content: |
-          <Note>
-          Available locally, and in [Ollama's cloud](/cloud) with `clef:cloud`.
-          </Note>
-
           - Returns one JSON response; streaming, video, tools, and generation controls are not supported.
           - Local requests' text and schema, excluding images, must fit within 64 KiB, and the whole request within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
           - Cloud models need a paid plan or purchased [usage credits](https://ollama.com/pricing). Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Requests must fit within 13 MiB, and input must fit the model's 65,536-token context window.
