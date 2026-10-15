@@ -101,9 +101,11 @@ func TestCodexAppPortableHistory(t *testing.T) {
 	}
 	var checkpoint struct {
 		Payload struct {
-			Items    []map[string]json.RawMessage `json:"replacement_history"`
-			Metadata []json.RawMessage            `json:"replacement_history_metadata"`
-			WindowID string                       `json:"window_id"`
+			Items           []map[string]json.RawMessage `json:"replacement_history"`
+			Metadata        []json.RawMessage            `json:"replacement_history_metadata"`
+			GuardianHistory []map[string]json.RawMessage `json:"guardian_history"`
+			RetainedContext json.RawMessage              `json:"retained_context"`
+			WindowID        string                       `json:"window_id"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(after[2], &checkpoint); err != nil {
@@ -115,6 +117,28 @@ func TestCodexAppPortableHistory(t *testing.T) {
 	}
 	if !bytes.Contains(items[1]["content"], []byte("amber-42")) || string(items[2]["call_id"]) != `"call_note"` || string(items[3]["call_id"]) != `"call_note"` || !bytes.Contains(items[3]["output"], []byte("tulip-73")) {
 		t.Fatalf("summary or retained tool pair lost: %s", after[2])
+	}
+	wantMetadata := `[{"client_authored":true},{"client_authored":false},{"client_authored":false},{"client_authored":false}]`
+	if got := string(historyJSON(t, checkpoint.Payload.Metadata)); got != wantMetadata {
+		t.Fatalf("checkpoint metadata = %s, want %s", got, wantMetadata)
+	}
+	if string(checkpoint.Payload.RetainedContext) != `{"keep":"unchanged"}` {
+		t.Fatalf("retained context changed: %s", checkpoint.Payload.RetainedContext)
+	}
+	var reasoning struct {
+		Payload map[string]json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(after[1], &reasoning); err != nil {
+		t.Fatal(err)
+	}
+	if len(checkpoint.Payload.GuardianHistory) != 1 {
+		t.Fatalf("guardian history changed: %v", checkpoint.Payload.GuardianHistory)
+	}
+	wantReasoning := `{"id":"rs_resp_42","summary":[{"text":"Remember the note.","type":"summary_text"}],"type":"reasoning"}`
+	for _, item := range []map[string]json.RawMessage{reasoning.Payload, checkpoint.Payload.GuardianHistory[0]} {
+		if got := string(historyJSON(t, item)); got != wantReasoning {
+			t.Fatalf("readable thinking = %s, want %s", got, wantReasoning)
+		}
 	}
 	again, changed, err := portableCodexAppHistory(converted)
 	if err != nil || changed || !bytes.Equal(again, converted) {
@@ -135,6 +159,29 @@ func TestCodexAppPortableHistoryLeavesOtherProvidersUntouched(t *testing.T) {
 		if err != nil || changed || !bytes.Equal(got, original) {
 			t.Fatalf("unrelated history changed: %s, %v", original, err)
 		}
+	}
+}
+
+func TestCodexAppHistoryDisconnectIgnoresUnrelatedArchive(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	home := t.TempDir()
+	ollama := writeHistoryFixture(t, home, "sessions/rollout-ollama.jsonl", historyFixture(t, false))
+	original := []byte("{\"type\":\"session_meta\",\"payload\":{\"history_mode\":\"legacy\"}}\n" +
+		"{\"type\":\"response_item\",\"payload\":{\"type\":\"reasoning\",\"id\":\"rs_native_openai\",\"summary\":[],\"encrypted_content\":\"opaque\"}}\n" +
+		"{\"type\":")
+	archive := writeHistoryFixture(t, home, "archived_sessions/rollout-openai.jsonl", original)
+	restored := false
+	if err := prepareCodexAppHistoryForDisconnect(home, func() error { restored = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !restored {
+		t.Fatal("connection was not restored")
+	}
+	if got, err := os.ReadFile(archive); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("unrelated archive changed: %v", err)
+	}
+	if got, err := os.ReadFile(ollama); err != nil || bytes.Contains(got, []byte("ollama_compaction")) {
+		t.Fatalf("Ollama history was not converted: %v", err)
 	}
 }
 

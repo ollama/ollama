@@ -247,6 +247,7 @@ func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
 	}
 	var output bytes.Buffer
 	changed := false
+	var validationErr error
 	for line := range bytes.SplitAfterSeq(data, []byte{'\n'}) {
 		body := bytes.TrimSuffix(line, []byte{'\n'})
 		if len(bytes.TrimSpace(body)) == 0 {
@@ -255,11 +256,15 @@ func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
 		}
 		var record map[string]json.RawMessage
 		if err := json.Unmarshal(body, &record); err != nil {
-			return nil, false, errors.New("invalid saved conversation JSON")
+			validationErr = errors.New("invalid saved conversation JSON")
+			output.Write(line)
+			continue
 		}
 		var kind string
 		if err := json.Unmarshal(record["type"], &kind); err != nil {
-			return nil, false, errors.New("unsupported saved conversation record")
+			validationErr = errors.New("unsupported saved conversation record")
+			output.Write(line)
+			continue
 		}
 		var replacement json.RawMessage
 		var err error
@@ -298,6 +303,10 @@ func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
 		changed = true
 	}
 	if changed {
+		// Do not rewrite a partially readable conversation.
+		if validationErr != nil {
+			return nil, false, validationErr
+		}
 		first, _, _ := bytes.Cut(data, []byte{'\n'})
 		var header struct {
 			Type    string `json:"type"`
