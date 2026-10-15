@@ -23,6 +23,55 @@ Nimble, Tev1, [Clef](https://ollama.com/library/clef), and [Clef Flash](https://
 
 Local requests do not need an API key.
 
+## Ask from the terminal
+
+`ollama run` answers questions about a state: text or JSON, piped in or given after the model name. Ask each question with `--ask`. It is answered yes or no, unless you follow it with labels to choose from (`--choice`) or levels to score it on (`--level`).
+
+```shell examples.sh
+# Ask a yes/no question
+ollama run nimble --ask "Is a refund being requested?" < ticket.txt
+
+# Choose a label
+ollama run nimble --ask "Which team should handle this?" \
+  --choice billing="Payments and refunds" \
+  --choice technical="Software problems" < ticket.txt
+
+# Score on a scale, from the lowest level to the highest
+ollama run nimble --ask "How urgent is this?" \
+  --level "Routine" \
+  --level "Soon" \
+  --level "Immediate" < ticket.txt
+
+# Ask several questions at once
+ollama run nimble --ask "Is a refund being requested?" \
+  --ask "Which team should handle this?" \
+  --choice billing="Payments and refunds" \
+  --choice technical="Software problems" \
+  --ask "How urgent is this?" \
+  --level "Routine" \
+  --level "Soon" \
+  --level "Immediate" < ticket.txt
+
+# Use a JSON file as the state, and refer to its fields in backticks
+ollama run nimble --ask 'Is a refund being requested in `body`?' < ticket.json
+
+# Judge an image with Clef
+ollama run clef ./receipt.png --ask "Is this a restaurant receipt?"
+
+# Print the full response
+ollama run nimble --ask "Is a refund being requested?" --format json < ticket.txt
+```
+
+Each answer prints on its own line. A yes/no answer shows the likelier answer and its probability, a label shows its probability, and a score shows the most likely level, its probability, and the score on the scale:
+
+```text
+Is a refund being requested?    yes      97%
+Which team should handle this?  billing  91%
+How urgent is this?             Soon     64%  1.2 / 2
+```
+
+Without a state, `ollama run nimble` opens an interactive prompt. Your first message is the state, and after that each line is a yes/no question about it, so you can paste several at once; `/clear` starts over. With `--ask`, each message is a new state to answer those questions about.
+
 ## Choose a label
 
 Put your input in `state` and describe the possible answers in `criteria`:
@@ -118,7 +167,7 @@ Example response:
 | --- | --- | --- |
 | `choice` | 2–26 named options with descriptions | The most likely option and each option's probability |
 | `noul` | Descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
-| `score` | 2–26 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
+| `score` | 2–10 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
 
 For the urgency criteria below:
 

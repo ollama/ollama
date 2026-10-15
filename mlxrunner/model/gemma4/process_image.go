@@ -81,32 +81,50 @@ func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32
 // preprocessImage decodes and prepares one image: aspect-preserving
 // resize, rescale to [0,1], and patchify. The [-1,1] normalization stays
 // in the patch embedder, so pixels here match the reference
-// pixel_values.
+// pixel_values. Budget 0 selects the dynamic per-image resolution the
+// generative path uses (#18603).
 func (m *Model) preprocessImage(data []byte) (pixels []float32, positions []int32, geom ImageGeometry, err error) {
+	return ProcessImage(data, m.Vision, 0)
+}
+
+// ProcessImage decodes and prepares one image: aspect-preserving
+// resize, rescale to [0,1], and patchify under the given per-image
+// soft-token budget. The [-1,1] normalization stays in the patch
+// embedder, so pixels here match the reference pixel_values.
+func ProcessImage(data []byte, cfg *VisionConfig, softTokenBudget int32) (pixels []float32, positions []int32, geom ImageGeometry, err error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, nil, ImageGeometry{}, fmt.Errorf("decode image: %w", err)
 	}
 
-	patch, pool := m.Vision.PatchSize, m.Vision.PoolingKernelSize
+	patch, pool := cfg.PatchSize, cfg.PoolingKernelSize
 	bounds := img.Bounds()
-	targetH, targetW, err := dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool)
+	// A declared budget fixes the resize grid (the embedding models'
+	// reference processor resizes to the budget's grid, not the closest
+	// fit); budget 0 keeps the dynamic per-image selection the generative
+	// path uses (#18603).
+	var targetH, targetW int32
+	if softTokenBudget > 0 {
+		targetH, targetW, err = visionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool, softTokenBudget)
+	} else {
+		targetH, targetW, err = dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool)
+	}
 	if err != nil {
 		return nil, nil, ImageGeometry{}, err
 	}
 	positionPatch := patch
-	if m.Vision.unified() {
+	if cfg.unified() {
 		positionPatch *= pool
 	}
-	if int(max(targetH, targetW)/positionPatch) > m.Vision.positionEmbeddingSize {
-		return nil, nil, ImageGeometry{}, fmt.Errorf("image patch grid exceeds vision position embedding size %d", m.Vision.positionEmbeddingSize)
+	if int(max(targetH, targetW)/positionPatch) > cfg.positionEmbeddingSize {
+		return nil, nil, ImageGeometry{}, fmt.Errorf("image patch grid exceeds vision position embedding size %d", cfg.positionEmbeddingSize)
 	}
 
 	img = dropAlpha(img, bounds)
 	resized := image.NewRGBA(image.Rect(0, 0, int(targetW), int(targetH)))
 	draw.CatmullRom.Scale(resized, resized.Bounds(), img, bounds, draw.Src, nil)
 
-	if m.Vision.unified() {
+	if cfg.unified() {
 		// One raster patch of pool*patchSize pixels per soft token: the
 		// reference merge rearranges its intermediate 16px patches back
 		// into this layout, with positions on the merged grid.

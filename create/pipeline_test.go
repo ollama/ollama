@@ -22,7 +22,7 @@ func (f blobStoreFunc) WriteBlob(r io.Reader, mediaType, name string) (LayerInfo
 
 func TestCreatePipeline(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
 		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
 		st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 8*2)),
@@ -58,6 +58,9 @@ func TestCreatePipeline(t *testing.T) {
 	}
 	if gotModelConfig.Requires != "0.20.0" {
 		t.Errorf("requires = %q, want 0.20.0", gotModelConfig.Requires)
+	}
+	if gotModelConfig.FileType != "" {
+		t.Errorf("file type = %q, want empty for non-Kev source", gotModelConfig.FileType)
 	}
 	if gotClass.Kind != SourceFloat || gotClass.Quantize != "" {
 		t.Errorf("classification = {%s %q}, want {float %q}", gotClass.Kind, gotClass.Quantize, "")
@@ -150,7 +153,7 @@ func TestCreatePipelineIncludesDraftLayers(t *testing.T) {
 
 func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
 		st.NewTensorDataFromBytes("linear.weight", "U8", []int32{16, 8}, make([]byte, 16*8)),
 		st.NewTensorDataFromBytes("linear.weight_scale", "F8_E4M3", []int32{16, 1}, make([]byte, 16)),
@@ -159,8 +162,10 @@ func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 
 	store := newCaptureStore()
 	var got Classification
+	var gotModelConfig model.ConfigV2
 	writeManifest := func(_ context.Context, _ string, info ManifestInfo) error {
 		got = info.Class
+		gotModelConfig = info.ModelConfig
 		return nil
 	}
 	if err := Create(context.Background(), "mymodel", dir, testPipelineOptions(), store, writeManifest, func(string) {}); err != nil {
@@ -168,6 +173,9 @@ func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 	}
 	if got.Kind != SourcePrequantized || got.Quantize != "nvfp4" {
 		t.Errorf("classification = {%s %q}, want {prequantized nvfp4}", got.Kind, got.Quantize)
+	}
+	if gotModelConfig.FileType != "" {
+		t.Errorf("file type = %q, want empty before manifest writer selects NVFP4", gotModelConfig.FileType)
 	}
 }
 

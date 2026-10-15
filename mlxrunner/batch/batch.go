@@ -26,7 +26,7 @@ type Batch struct {
 	// ride featureless. Nil at decode and for text-only requests.
 	Media []MediaItem
 
-	// Layout carries each row's opaque layout state from PrepareMedia,
+	// Layout carries each row's opaque model-owned metadata,
 	// identical on every forward of the request; the runner never reads
 	// it. Nil entries derive nothing from layout.
 	Layout []any

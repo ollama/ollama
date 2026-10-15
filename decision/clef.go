@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 // encodeClef preserves the reference encoder's JSON and segment boundaries,
@@ -49,7 +50,7 @@ func encodeClef(req Request, c *Compiled) error {
 			if option.Description != nil {
 				semantics["description"] = option.Description
 			}
-			raw, err := clefJSON(semantics)
+			raw, err := renderers.PythonJSONCompact(semantics)
 			if err != nil {
 				return err
 			}
@@ -58,6 +59,13 @@ func encodeClef(req Request, c *Compiled) error {
 		}
 		add("END FIELD\n")
 		input.Fields = append(input.Fields, field)
+		if len(f.order) > 0 {
+			choices := make([]Choice, len(f.Choices))
+			for j, index := range f.order {
+				choices[index] = f.Choices[j]
+			}
+			f.Choices = choices
+		}
 		c.fields = append(c.fields, f)
 	}
 	add("\n<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\nJOINT SCHEMA DECISIONS:")
@@ -111,11 +119,20 @@ func clefField(name string, q Question) (compiledField, error) {
 		if !ok {
 			return f, fmt.Errorf("choice criteria must be an object")
 		}
+		ordered := orderedmap.New[string, json.RawMessage]()
+		if err := json.Unmarshal(q.Criteria, ordered); err != nil {
+			return f, err
+		}
+		var original []string
+		for key := range ordered.All() {
+			original = append(original, key)
+		}
 		for _, key := range slices.Sorted(maps.Keys(values)) {
 			if strings.TrimSpace(key) == "" {
 				return f, fmt.Errorf("choice keys must not be empty")
 			}
 			add(key, values[key])
+			f.order = append(f.order, slices.Index(original, key))
 		}
 	case "score":
 		values, ok := criteria.([]any)
@@ -145,6 +162,7 @@ func clefValue(raw json.RawMessage) (any, error) {
 	return value, err
 }
 
+// encoding/json sorts map keys, as Clef's reference does.
 func clefContent(raw json.RawMessage) (string, error) {
 	value, err := clefValue(raw)
 	if err != nil {
@@ -153,94 +171,5 @@ func clefContent(raw json.RawMessage) (string, error) {
 	if s, ok := value.(string); ok {
 		return s, nil
 	}
-	return clefJSON(value)
-}
-
-// clefJSON matches Python's json.dumps(ensure_ascii=False, sort_keys=True,
-// separators=(",", ":")), including its integer/float distinction.
-// encoding/json sorts map keys, but its number and Unicode escaping rules
-// differ from the reference and would change the model's input tokens.
-func clefJSON(value any) (string, error) {
-	switch v := value.(type) {
-	case nil:
-		return "null", nil
-	case bool:
-		return strconv.FormatBool(v), nil
-	case string:
-		var b strings.Builder
-		b.WriteByte('"')
-		for _, r := range v {
-			switch r {
-			case '"', '\\':
-				b.WriteByte('\\')
-				b.WriteRune(r)
-			case '\b':
-				b.WriteString(`\b`)
-			case '\f':
-				b.WriteString(`\f`)
-			case '\n':
-				b.WriteString(`\n`)
-			case '\r':
-				b.WriteString(`\r`)
-			case '\t':
-				b.WriteString(`\t`)
-			default:
-				if r < 0x20 {
-					fmt.Fprintf(&b, `\u%04x`, r)
-				} else {
-					b.WriteRune(r)
-				}
-			}
-		}
-		b.WriteByte('"')
-		return b.String(), nil
-	case json.Number:
-		if !strings.ContainsAny(string(v), ".eE") {
-			if v == "-0" {
-				return "0", nil
-			}
-			return string(v), nil
-		}
-		n, err := v.Float64()
-		if math.IsInf(n, 0) {
-			if n < 0 {
-				return "-Infinity", nil
-			}
-			return "Infinity", nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if a := math.Abs(n); a >= 1e16 || (a != 0 && a < 1e-4) {
-			return strconv.FormatFloat(n, 'e', -1, 64), nil
-		}
-		s := strconv.FormatFloat(n, 'f', -1, 64)
-		if !strings.ContainsRune(s, '.') {
-			s += ".0"
-		}
-		return s, nil
-	case []any:
-		parts := make([]string, len(v))
-		for i, child := range v {
-			text, err := clefJSON(child)
-			if err != nil {
-				return "", err
-			}
-			parts[i] = text
-		}
-		return "[" + strings.Join(parts, ",") + "]", nil
-	case map[string]any:
-		parts := make([]string, 0, len(v))
-		for _, key := range slices.Sorted(maps.Keys(v)) {
-			name, _ := clefJSON(key)
-			text, err := clefJSON(v[key])
-			if err != nil {
-				return "", err
-			}
-			parts = append(parts, name+":"+text)
-		}
-		return "{" + strings.Join(parts, ",") + "}", nil
-	default:
-		return "", fmt.Errorf("unsupported JSON value %T", value)
-	}
+	return renderers.PythonJSONCompact(value)
 }

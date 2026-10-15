@@ -64,6 +64,9 @@ type GenerateRequest struct {
 	// the library at https://ollama.com/library
 	Model string `json:"model"`
 
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
@@ -133,6 +136,9 @@ type GenerateRequest struct {
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
@@ -595,12 +601,62 @@ type Runner struct {
 	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
 }
 
+// SystemOneRequest is the request passed to [Client.SystemOne]. It asks a
+// decision model typed questions about a state.
+type SystemOneRequest struct {
+	Model     string              `json:"model"`
+	Runner    string              `json:"runner,omitempty"`
+	State     json.RawMessage     `json:"state"`
+	Images    []ImageData         `json:"images,omitempty"`
+	Videos    []json.RawMessage   `json:"videos,omitempty"`
+	Questions *SystemOneQuestions `json:"questions"`
+	KeepAlive *Duration           `json:"keep_alive,omitempty"`
+}
+
+// SystemOneQuestions keeps questions in request order, which is the order of
+// the answers.
+type SystemOneQuestions = orderedmap.Map[string, SystemOneQuestion]
+
+// SystemOneQuestion is a noul (yes/no), choice, or score question. Criteria is
+// an object for noul and choice questions and an ordered array for score.
+type SystemOneQuestion struct {
+	Type         string          `json:"type"`
+	Instructions json.RawMessage `json:"instructions"`
+	Criteria     json.RawMessage `json:"criteria,omitempty"`
+}
+
+// SystemOneResponse is the response returned by [Client.SystemOne]. Each
+// answer's type field says which answer fields it has.
+type SystemOneResponse struct {
+	Model                 string            `json:"model"`
+	Answers               *SystemOneAnswers `json:"answers"`
+	Usage                 SystemOneUsage    `json:"usage"`
+	PromptEvalCachedCount *int              `json:"prompt_eval_cached_count,omitempty"`
+}
+
+// SystemOneAnswers keeps answers in request order.
+type SystemOneAnswers = orderedmap.Map[string, json.RawMessage]
+
+// SystemOneUsage counts the tokens evaluated and generated to answer.
+type SystemOneUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 // EmbedRequest is the request passed to [Client.Embed].
 type EmbedRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
 
-	// Input is the input to embed.
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
+	// Input is the input to embed. Three shapes are accepted:
+	//   - a string, or a []string — one text entry per item
+	//   - a map with any of "text", "image", "audio" — one multimodal item
+	//     (image/audio values are base64-encoded blobs)
+	//   - a list mixing strings and those maps — a batch where each item
+	//     owns its own media
 	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
@@ -631,6 +687,9 @@ type EmbedResponse struct {
 type EmbeddingRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Prompt is the textual prompt to embed.
 	Prompt string `json:"prompt"`
@@ -664,6 +723,9 @@ type CreateRequest struct {
 
 	// From is the name of the model or file to use as the source.
 	From string `json:"from,omitempty"`
+
+	// List is the list of local model tags to include in a manifest list.
+	List []string `json:"list,omitempty"`
 
 	// RemoteHost is the URL of the upstream ollama API for the model (if any).
 	RemoteHost string `json:"remote_host,omitempty"`
@@ -725,8 +787,10 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model  string `json:"model"`
-	System string `json:"system"`
+	Model        string `json:"model"`
+	Runner       string `json:"runner,omitempty"`
+	AllManifests bool   `json:"all_manifests,omitempty"`
+	System       string `json:"system"`
 
 	// Template is deprecated
 	Template string `json:"template"`
@@ -756,8 +820,29 @@ type ShowResponse struct {
 	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
 	Tensors       []Tensor           `json:"tensors,omitempty"`
 	Capabilities  []model.Capability `json:"capabilities,omitempty"`
+	Manifests     []ManifestSummary  `json:"manifests,omitempty"`
 	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 	Requires      string             `json:"requires,omitempty"`
+}
+
+// ManifestSummary describes one child manifest available through a model tag.
+type ManifestSummary struct {
+	Digest   string `json:"digest,omitempty"`
+	Runner   string `json:"runner,omitempty"`
+	Format   string `json:"format,omitempty"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// ShowManifest is a single manifest summary returned from [Client.ShowManifests].
+type ShowManifest struct {
+	Runner string `json:"runner,omitempty"`
+	ShowResponse
+}
+
+// ShowManifestsResponse is the response returned from [Client.ShowManifests].
+type ShowManifestsResponse struct {
+	Manifests []ShowManifest `json:"manifests"`
+	License   string         `json:"license,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -769,6 +854,7 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
+	Runner   string `json:"runner,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
@@ -863,6 +949,7 @@ type ProcessModelResponse struct {
 	ExpiresAt     time.Time    `json:"expires_at"`
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
+	Runner        string       `json:"runner,omitempty"`
 }
 
 type TokenResponse struct {
@@ -961,6 +1048,10 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 	ContextLength     int      `json:"context_length,omitempty"`
 	EmbeddingLength   int      `json:"embedding_length,omitempty"`
+
+	// Runner identifies which runner serves this model. Manifest-list models
+	// list one row per child manifest; Runner is what distinguishes them.
+	Runner string `json:"runner,omitempty"`
 }
 
 // UserResponse provides information about a user.

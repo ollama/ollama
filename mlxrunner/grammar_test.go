@@ -129,6 +129,7 @@ func TestValidateGrammarVocab(t *testing.T) {
 		{name: "input-only tokens past the head", logits: 31, tokenizer: 32},
 		{name: "invalid tokenizer", logits: 32, tokenizer: -1, wantErr: true},
 		{name: "invalid logits width", logits: 0, tokenizer: 32, wantErr: true},
+		{name: "scalar scoring head", logits: 1, tokenizer: 32, wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateGrammarVocab(tt.logits, tt.tokenizer)
@@ -136,6 +137,13 @@ func TestValidateGrammarVocab(t *testing.T) {
 				t.Fatalf("validateGrammarVocab(%d, %d) error = %v, wantErr %v", tt.logits, tt.tokenizer, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestNewGrammarEngineWithoutTokenizer(t *testing.T) {
+	if e := newGrammarEngine(32, nil); e != nil {
+		e.close()
+		t.Fatal("expected no grammar engine without a tokenizer")
 	}
 }
 

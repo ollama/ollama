@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxthread"
 	"github.com/ollama/ollama/mlx/mlxthread/mlxthreadtest"
 )
 
@@ -24,6 +25,17 @@ var testThread = sync.OnceValues(func() (*mlxthreadtest.Thread, error) {
 
 // T is the test state available to callbacks running on the MLX thread.
 type T = mlxthreadtest.T
+
+// Worker returns the shared worker for handlers that dispatch their own MLX
+// jobs. Call them outside Run; the shared worker must not be stopped by a test.
+func Worker(t testing.TB) *mlxthread.Thread {
+	t.Helper()
+	thread, err := testThread()
+	if err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
+	return thread.Worker()
+}
 
 // SkipIfUnavailable skips the test when the MLX dynamic library cannot be
 // loaded (e.g. no MLX backend built for this platform).

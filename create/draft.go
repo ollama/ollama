@@ -61,7 +61,7 @@ func createDraftLayers(ctx context.Context, modelDir, tensorPrefix, configPrefix
 		return nil, err
 	}
 
-	configLayers, _, err := importConfigBlobs(ctx, modelDir, configPrefix, store, fn)
+	configLayers, _, err := importConfigBlobs(ctx, modelDir, configPrefix, nil, store, fn)
 	if err != nil {
 		return nil, err
 	}

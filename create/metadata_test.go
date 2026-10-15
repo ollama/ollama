@@ -283,3 +283,15 @@ func inferConfigForTest(t *testing.T, modelDir, parser, renderer string) model.C
 	}
 	return config
 }
+
+func TestStrandsDecisionMetadata(t *testing.T) {
+	cfg := sourceModelConfig{Architectures: []string{"StrandsDeciderForDecision"}, ModelType: "qwen3_5"}
+	// The Qwen backbone must not advertise chat or thinking for a pointer head.
+	got, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Parser != "" || got.Renderer != "strands" || len(got.Capabilities) != 1 || got.Capabilities[0] != "decision" {
+		t.Fatalf("unexpected Strands metadata: %+v", got)
+	}
+}

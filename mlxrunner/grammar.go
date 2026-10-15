@@ -50,12 +50,15 @@ type grammarEngine struct {
 }
 
 func newGrammarEngine(logitsWidth int, tokenizer *tokenizer.Tokenizer) *grammarEngine {
-	library, err := mlx.LoadedLibraryPath()
-	if err != nil {
-		slog.Warn("Structured output is unavailable", "error", err)
+	if tokenizer == nil {
 		return nil
 	}
 	if err := validateGrammarVocab(logitsWidth, tokenizer.VocabSize()); err != nil {
+		slog.Warn("Structured output is unavailable", "error", err)
+		return nil
+	}
+	library, err := mlx.LoadedLibraryPath()
+	if err != nil {
 		slog.Warn("Structured output is unavailable", "error", err)
 		return nil
 	}
@@ -85,8 +88,9 @@ func validateGrammarVocab(logitsWidth, tokenizerSize int) error {
 	if tokenizerSize <= 0 {
 		return fmt.Errorf("invalid tokenizer vocabulary size %d", tokenizerSize)
 	}
-	if logitsWidth <= 0 {
-		return fmt.Errorf("invalid model logits width %d", logitsWidth)
+	// A scalar scoring head has no token vocabulary for a grammar to constrain.
+	if logitsWidth <= 1 {
+		return fmt.Errorf("model has no token vocabulary (logits width %d)", logitsWidth)
 	}
 	return nil
 }

@@ -112,12 +112,48 @@ func ReadInventory(dir string) (Inventory, error) {
 	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
 }
 
-// SafetensorsWeightFiles returns the weight shards selected by the same index
-// rules used by ReadInventory. Callers that transfer a source model should use
-// this list rather than guessing shard names.
+// SafetensorsWeightFiles returns the source shards and supported sidecars for
+// transfer. Importing a sidecar still requires its model-specific importer.
 func SafetensorsWeightFiles(dir string) ([]string, error) {
 	_, files, err := safetensorsWeightFiles(dir)
-	return files, err
+	if err != nil {
+		return nil, err
+	}
+	return clefWeightFiles(dir, files)
+}
+
+// SafetensorsConfigFiles lists source metadata for remote transfer and local
+// JSON import. Auxiliary checkpoint subfolders are excluded.
+func SafetensorsConfigFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	var hasLaya bool
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		hasLaya = hasLaya || name == "rl_agent_config.json"
+		if filepath.Ext(name) == ".json" || name == "chat_template.jinja" {
+			names = append(names, name)
+		}
+	}
+	if hasLaya {
+		for _, name := range []string{"encoder/config.json", "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"} {
+			info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name)))
+			if err != nil {
+				return nil, err
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("Laya metadata %s is not a regular file", name)
+			}
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 func safetensorsWeightFiles(dir string) (map[string]string, []string, error) {

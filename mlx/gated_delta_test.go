@@ -31,7 +31,7 @@ func gatedDeltaTestInputs36(g gatedDeltaTestGeometry, T int) gatedDeltaTestInput
 // gatedDeltaReference runs the graph implementation the fused kernels fall
 // back to; the test pins the kernels against it bit-for-bit.
 func gatedDeltaReference(in gatedDeltaTestInputs, captureAll bool) (y, nextState *Array, interior []*Array) {
-	return gatedDeltaGraph(in.packed, in.ba, in.dtBias, in.aExp, in.state, captureAll)
+	return gatedDeltaGraph(in.packed, in.ba, in.dtBias, in.aExp, in.state, captureAll, false)
 }
 
 // Exactness is per compiler pair: the metallib and the runtime JIT round
@@ -56,17 +56,17 @@ func testGatedDeltaMatchesGraph(t *mlxthreadtest.T) {
 					in := batchGatedDeltaRows(gatedDeltaTestInputs36(g, T), B)
 					refY, refState, refInterior := gatedDeltaReference(in, captureAll)
 					y, state, interior := GatedDelta(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
-					if err := requireExact("y", y, refY); err != nil {
+					if err := requireClose("y", y, refY, gatedDeltaGraphTol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
-					if err := requireExact("state", state, refState); err != nil {
+					if err := requireClose("state", state, refState, gatedDeltaGraphTol); err != nil {
 						t.Fatalf("%s: %v", name, err)
 					}
 					if captureAll && len(interior) != len(refInterior) {
 						t.Fatalf("%s: interior count = %d, want %d", name, len(interior), len(refInterior))
 					}
 					for i := range interior {
-						if err := requireExact(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i]); err != nil {
+						if err := requireClose(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i], gatedDeltaGraphTol); err != nil {
 							t.Fatalf("%s: %v", name, err)
 						}
 					}
@@ -90,6 +90,81 @@ func TestGatedDeltaRecurrenceUsesFastUpdate(t *testing.T) {
 		}
 		if err := requireExact("state", state, wantState); err != nil {
 			t.Fatal(err)
+		}
+	})
+}
+
+// The decay gate is FP32 even when the projection and output are BF16.
+// Rounding it to BF16 compounds across the recurrent state.
+func TestGatedDeltaDecayPrecision(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		for _, tokens := range []int{1, gatedDeltaMaxTokens + 1} {
+			packed := Zeros(DTypeBFloat16, 1, tokens, 80)
+			ba := Zeros(DTypeBFloat16, 1, tokens, 2)
+			dtBias := Zeros(DTypeBFloat16, 1)
+			aExp := FromValues([]float32{0.00434}, 1)
+			state := AddScalar(Zeros(DTypeFloat32, 1, 1, 16, 32), 1)
+			_, got, _ := GatedDeltaPrecise(packed, ba, dtBias, aExp, state, nil, false)
+			Eval(got)
+			want := float32(math.Pow(math.Exp(-math.Ln2*0.00434), float64(tokens)))
+			if delta := float32(math.Abs(float64(got.Floats()[0] - want))); delta > 0.0002 {
+				t.Errorf("T=%d: state = %g, want %g (delta %g)", tokens, got.Floats()[0], want, delta)
+			}
+			if tokens > gatedDeltaMaxTokens {
+				_, original, _ := GatedDelta(packed, ba, dtBias, aExp, state, nil, false)
+				Eval(original)
+				if delta := math.Abs(float64(original.Floats()[0] - got.Floats()[0])); delta < 0.001 {
+					t.Errorf("T=%d: default and precise decay states differ by only %g", tokens, delta)
+				}
+			}
+		}
+	})
+}
+
+func TestGatedDeltaPreciseSkipsBF16FastUpdate(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		if !MetalIsAvailable() {
+			t.Skip("requires Metal fast update")
+		}
+		const tokens, heads, width = 33, 16, 128
+		packed := Zeros(DTypeBFloat16, 1, tokens, 3*heads*width)
+		ba := Zeros(DTypeBFloat16, 1, tokens, 2*heads)
+		dtBias := Zeros(DTypeBFloat16, heads)
+		aExp := AddScalar(Zeros(DTypeFloat32, heads), 0.00434)
+		state := AddScalar(Zeros(DTypeFloat32, 1, heads, width, width), 1)
+		_, precise, _ := GatedDeltaPrecise(packed, ba, dtBias, aExp, state, nil, false)
+		_, original, _ := GatedDelta(packed, ba, dtBias, aExp, state, nil, false)
+		Eval(precise, original)
+		want := float32(math.Pow(math.Exp(-math.Ln2*0.00434), tokens))
+		if delta := math.Abs(float64(precise.Floats()[0] - want)); delta > 0.0005 {
+			t.Errorf("precise state = %g, want %g (delta %g)", precise.Floats()[0], want, delta)
+		}
+		if delta := math.Abs(float64(original.Floats()[0] - precise.Floats()[0])); delta < 0.005 {
+			t.Errorf("default and precise states differ by only %g", delta)
+		}
+	})
+}
+
+func TestGatedDeltaPreciseMatchesGraph(t *testing.T) {
+	withMLXThread(t, func(t *mlxthreadtest.T) {
+		in := gatedDeltaTestInputs36(gatedDeltaTestGeometry{Hk: 4, Dk: 64, Hv: 8, Dv: 32}, 3)
+		for _, captureAll := range []bool{false, true} {
+			refY, refState, refInterior := gatedDeltaGraph(in.packed, in.ba, in.dtBias, in.aExp, in.state, captureAll, true)
+			y, state, interior := GatedDeltaPrecise(in.packed, in.ba, in.dtBias, in.aExp, in.state, nil, captureAll)
+			if err := requireExact("y", y, refY); err != nil {
+				t.Fatalf("captureAll=%v: %v", captureAll, err)
+			}
+			if err := requireExact("state", state, refState); err != nil {
+				t.Fatalf("captureAll=%v: %v", captureAll, err)
+			}
+			if len(interior) != len(refInterior) {
+				t.Fatalf("captureAll=%v: interior count = %d, want %d", captureAll, len(interior), len(refInterior))
+			}
+			for i := range interior {
+				if err := requireExact(fmt.Sprintf("interior[%d]", i), interior[i], refInterior[i]); err != nil {
+					t.Fatalf("captureAll=%v: %v", captureAll, err)
+				}
+			}
 		}
 	})
 }

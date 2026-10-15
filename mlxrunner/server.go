@@ -58,8 +58,9 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		Requests:  make(chan Request),
-		mlxThread: worker,
+		Requests:      make(chan Request),
+		EmbedRequests: make(chan EmbeddingRequest),
+		mlxThread:     worker,
 	}
 
 	if err := worker.Do(context.Background(), func() error {
@@ -87,13 +88,18 @@ func Execute(args []string) error {
 	)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/score", runner.scoreHandler)
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(statusResponse{
+		resp := statusResponse{
 			Status:        0,
 			Progress:      100,
 			ContextLength: runner.contextLength,
 			Memory:        memoryCache.Memory(),
-		}); err != nil {
+		}
+		if em, ok := runner.Model.(interface{ EmbeddingDimensions() []int }); ok {
+			resp.EmbeddingDimensions = em.EmbeddingDimensions()
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
@@ -204,6 +210,20 @@ func Execute(args []string) error {
 			return
 		}
 	})
+
+	mux.HandleFunc("POST /v1/detokenize", func(w http.ResponseWriter, r *http.Request) {
+		var tokens []int32
+		if err := json.NewDecoder(r.Body).Decode(&tokens); err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(runner.Tokenizer.Decode(tokens)); err != nil {
+			slog.Error("Failed to encode response", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		}
+	})
+
+	mux.HandleFunc("POST /v1/embeddings", runner.handleEmbed)
 
 	for source, target := range map[string]string{
 		"GET /health":      "/v1/status",

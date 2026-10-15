@@ -86,21 +86,12 @@ func prepareRemoteSourceFiles(ctx context.Context, dir string, draft bool) ([]re
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(dir)
+	configs, err := create.SafetensorsConfigFiles(dir)
 	if err != nil {
 		return nil, err
 	}
 
-	names := append([]string(nil), weightFiles...)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if filepath.Ext(name) == ".json" || name == "chat_template.jinja" {
-			names = append(names, name)
-		}
-	}
+	names := append(weightFiles, configs...)
 	slices.Sort(names)
 
 	files := make([]remoteSourceFile, 0, len(names))

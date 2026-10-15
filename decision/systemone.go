@@ -14,58 +14,102 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 type compiledField struct {
 	Field
-	typ string
+	typ     string
+	options []string
+	order   []int // Model option index to original API option index, when different.
 }
 
 type Compiled struct {
 	Request  llm.ScoreRequest
 	fields   []compiledField
 	messages [][]api.Message
+	encoding string
 }
 
-// Compile validates the request and prepares candidate scoring for Nimble and Tev.
-func Compile(req Request) (*Compiled, error) {
-	return CompileWithEncoder(req, "")
+// ValidateLimits checks request limits shared by all decision backends.
+func ValidateLimits(req Request) error {
+	if n := req.Questions.Len(); n < 1 || n > 64 {
+		return fmt.Errorf("questions must contain 1–64 fields")
+	}
+	if len(req.Videos) > 0 {
+		return fmt.Errorf("video inputs are not supported")
+	}
+	if state, err := content(req.State); err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
+		return fmt.Errorf("state must not be empty")
+	}
+	for name, q := range req.Questions.All() {
+		if q.Type != "score" {
+			continue
+		}
+		var levels []json.RawMessage
+		if err := json.Unmarshal(q.Criteria, &levels); err != nil || len(levels) < 2 || len(levels) > 10 {
+			return fmt.Errorf("question %q: score criteria must be an array of 2–10 levels", name)
+		}
+	}
+	return nil
 }
 
-// CompileWithEncoder validates the request and encodes it using the named input format.
-// An empty encoding uses the candidate-scoring format shared by Nimble and Tev.
-func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
+func Compile(req Request, encoding string) (*Compiled, error) {
+	switch encoding {
+	case "", "tev1", "clef", "strands", "kev":
+	default:
+		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
+	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
 	}
-	if req.Questions.Len() < 1 || req.Questions.Len() > 64 {
-		return nil, fmt.Errorf("questions must contain 1–64 fields")
-	}
-	if len(req.Videos) > 0 {
-		return nil, fmt.Errorf("video inputs are not supported")
-	}
-	switch encoding {
-	case "":
-		if len(req.Images) > 0 {
-			return nil, fmt.Errorf("this decision model does not support images")
+	if encoding == "kev" {
+		if err := validateKevLimits(req); err != nil {
+			return nil, err
 		}
-	case "clef":
-		c := &Compiled{}
+		c := &Compiled{encoding: encoding}
+		if err := encodeKev(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if err := ValidateLimits(req); err != nil {
+		return nil, err
+	}
+	if len(req.Images) != 0 && encoding != "clef" {
+		return nil, fmt.Errorf("image inputs are not supported by this decision model")
+	}
+	for i, image := range req.Images {
+		if len(image) == 0 {
+			return nil, fmt.Errorf("image %d must not be empty", i)
+		}
+	}
+	var context string
+	var err error
+	if encoding == "clef" {
+		context, err = clefContent(req.State)
+	} else {
+		context, err = content(req.State)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: %w", err)
+	}
+	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
+		return nil, fmt.Errorf("state must not be empty")
+	}
+	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}, encoding: encoding}
+	if encoding == "strands" {
+		if err := encodeStrands(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "clef" {
 		if err := encodeClef(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil
-	default:
-		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
-	context, err := content(req.State)
-	if err != nil {
-		return nil, fmt.Errorf("state: %w", err)
-	}
-	if strings.TrimSpace(context) == "" {
-		return nil, fmt.Errorf("state must not be empty")
-	}
-	c := &Compiled{}
 	for name, q := range req.Questions.All() {
 		f, err := compileField(name, q)
 		if err != nil {
@@ -73,22 +117,15 @@ func CompileWithEncoder(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	data, err := json.Marshal(struct {
-		Context string          `json:"context"`
-		Schema  []compiledField `json:"schema"`
-	}{context, c.fields})
+	prompts, err := decisionPrompts(req.State, context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
-	for _, f := range c.fields {
-		name, err := json.Marshal(f.Name)
-		if err != nil {
-			return nil, err
-		}
+	for i, f := range c.fields {
 		c.messages = append(c.messages, []api.Message{
-			{Role: "user", Content: string(data) + "\n\nRequested field: " + string(name)},
+			{Role: "user", Content: prompts[i]},
 		})
-		var row llm.ScoreRow
+		row := llm.ScoreRow{Question: &llm.ScoreQuestion{Type: f.typ, Instructions: f.Description, Options: f.options}}
 		for _, choice := range f.Choices {
 			row.Candidates = append(row.Candidates, choice.Code)
 		}
@@ -121,9 +158,7 @@ func content(raw json.RawMessage) (string, error) {
 		err := json.Unmarshal(raw, &s)
 		return s, err
 	case '{', '[':
-		var b bytes.Buffer
-		err := json.Compact(&b, raw)
-		return b.String(), err
+		return renderers.PythonJSON(raw, 0)
 	default:
 		return "", fmt.Errorf("must be a string, object, or array")
 	}
@@ -139,7 +174,9 @@ func compileField(name string, q Question) (compiledField, error) {
 		return f, fmt.Errorf("instructions must be a nonempty string, object, or array")
 	}
 	f.Description = description
-	add := func(value any, description string) {
+	// Choices carry only the descriptions the request gives, as in Bespoke's
+	// native_schema() for Nimble.
+	add := func(value any, description any) {
 		f.Choices = append(f.Choices, Choice{string(rune('A' + len(f.Choices))), value, description})
 	}
 	switch q.Type {
@@ -150,7 +187,7 @@ func compileField(name string, q Question) (compiledField, error) {
 				return f, fmt.Errorf("noul criteria must be an object of true/false descriptions")
 			}
 		}
-		no, yes := "No", "Yes"
+		var no, yes any
 		for key, value := range criteria.All() {
 			if value == nil {
 				return f, fmt.Errorf("noul descriptions must be strings")
@@ -166,6 +203,14 @@ func compileField(name string, q Question) (compiledField, error) {
 		}
 		add(false, no)
 		add(true, yes)
+		// Keep the decoder's established labels while retaining the richer
+		// descriptions used by encoder decision models.
+		f.options = []string{"false: no, the statement does not hold", "true: yes, the statement holds"}
+		for i, key := range []string{"false", "true"} {
+			if value, ok := criteria.Get(key); ok && *value != "" {
+				f.options[i] = key + ": " + *value
+			}
+		}
 	case "choice":
 		criteria := orderedmap.New[string, *string]()
 		if err := json.Unmarshal(q.Criteria, criteria); err != nil {
@@ -175,11 +220,16 @@ func compileField(name string, q Question) (compiledField, error) {
 			if strings.TrimSpace(key) == "" {
 				return f, fmt.Errorf("choice keys must not be empty")
 			}
-			description := key
+			var description any
 			if value != nil {
 				description = *value
 			}
 			add(key, description)
+			option := key
+			if value != nil && *value != "" {
+				option += ": " + *value
+			}
+			f.options = append(f.options, option)
 		}
 	case "score":
 		var criteria []*string
@@ -191,6 +241,7 @@ func compileField(name string, q Question) (compiledField, error) {
 				return f, fmt.Errorf("score descriptions must be strings")
 			}
 			add(strconv.Itoa(i), *description)
+			f.options = append(f.options, fmt.Sprintf("level %d: %s", i, *description))
 		}
 	default:
 		return f, fmt.Errorf("type must be choice, noul, or score")
@@ -202,7 +253,11 @@ func compileField(name string, q Question) (compiledField, error) {
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
-	response := Response{Model: model, Answers: &Answers{}, Usage: Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens}}
+	response := Response{
+		Model: model, Answers: &Answers{},
+		Usage:                 Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens},
+		PromptEvalCachedCount: result.CachedTokens,
+	}
 	if len(result.Logits) != len(c.fields) {
 		return response, fmt.Errorf("scorer returned %d rows for %d questions", len(result.Logits), len(c.fields))
 	}
@@ -210,6 +265,13 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		logits := result.Logits[i]
 		if len(logits) != len(f.Choices) {
 			return response, fmt.Errorf("scorer returned the wrong number of candidates for %q", f.Name)
+		}
+		if len(f.order) > 0 {
+			ordered := make([]float32, len(logits))
+			for j, index := range f.order {
+				ordered[index] = logits[j]
+			}
+			logits = ordered
 		}
 		peak := slices.Max(logits)
 		p := make([]float64, len(logits))
@@ -232,7 +294,11 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		if f.typ == "noul" {
 			for j, choice := range f.Choices {
 				if choice.Value == true {
-					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[j]})
+					value := p[j]
+					if c.encoding == "kev" {
+						value = roundKev(value)
+					}
+					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: value})
 				}
 			}
 			continue
@@ -241,10 +307,21 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		legend := &Legend{}
 		for j, choice := range f.Choices {
 			key := choice.Value.(string)
-			probabilities.Set(key, p[j])
+			value := p[j]
+			if c.encoding == "kev" {
+				value = roundKev(value)
+			}
+			probabilities.Set(key, value)
 			legend.Set(key, choice.Description)
 		}
-		confidence := max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		var confidence float64
+		if c.encoding == "kev" {
+			confidence = kevConfidence(p, f.typ)
+			confidence = roundKev(confidence)
+			score = roundKev(score)
+		} else {
+			confidence = max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
 			response.Answers.Set(f.Name, ChoiceAnswer{f.typ, f.Choices[winner].Value.(string), probabilities, confidence})

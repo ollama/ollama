@@ -1537,7 +1537,7 @@ func TestApplyAccountStateToSelectionItems_BadgesOnlyWhenActionRequired(t *testi
 	if freeUser[0].AvailabilityBadge != "" {
 		t.Fatalf("signed-in account model should not be badged, got %q", freeUser[0].AvailabilityBadge)
 	}
-	if freeUser[1].AvailabilityBadge != "Upgrade required" {
+	if freeUser[1].AvailabilityBadge != "Use usage credits or upgrade your plan" {
 		t.Fatalf("subscription cloud free-plan badge = %q", freeUser[1].AvailabilityBadge)
 	}
 	if freeUser[4].AvailabilityBadge != "" {
