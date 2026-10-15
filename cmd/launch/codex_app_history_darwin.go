@@ -37,6 +37,8 @@ type codexAppHistoryEdit struct {
 	digest    [sha256.Size]byte
 }
 
+var errCodexAppHistoryGrowth = errors.New("cannot convert compaction without changing saved history offsets")
+
 // The caller stops the app before changing history or restoring its connection.
 func prepareCodexAppHistoryForDisconnect(home string, restore func() error) error {
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
@@ -56,82 +58,47 @@ func prepareCodexAppHistoryForDisconnect(home string, restore func() error) erro
 			_ = os.Remove(edit.temporary)
 		}
 	}()
-	for _, directory := range []string{"sessions", "archived_sessions"} {
-		root := filepath.Join(home, directory)
-		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-			if errors.Is(walkErr, os.ErrNotExist) && path == root {
-				return nil
-			}
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.Type()&os.ModeSymlink != 0 {
-				return fmt.Errorf("cannot safely update linked conversation path %s", path)
-			}
-			if entry.IsDir() || !strings.HasPrefix(entry.Name(), "rollout-") {
-				return nil
-			}
-			compressed := strings.HasSuffix(path, ".jsonl.zst")
-			if !compressed && !strings.HasSuffix(path, ".jsonl") {
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() {
-				return fmt.Errorf("conversation is not a regular file: %s", path)
-			}
-			original, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			data := original
-			if compressed {
-				decoder, err := zstd.NewReader(nil)
-				if err != nil {
-					return err
-				}
-				data, err = decoder.DecodeAll(original, nil)
-				decoder.Close()
-				if err != nil {
-					return fmt.Errorf("read compressed conversation %s: %w", path, err)
-				}
-			}
-			rewritten, changed, err := portableCodexAppHistory(data)
-			if err != nil {
-				return fmt.Errorf("conversation %s: %w", path, err)
-			}
-			if !changed {
-				return nil
-			}
-			if compressed {
-				encoder, err := zstd.NewWriter(nil)
-				if err != nil {
-					return err
-				}
-				rewritten = encoder.EncodeAll(rewritten, nil)
-				encoder.Close()
-			}
-			relative, err := filepath.Rel(home, path)
-			if err != nil {
-				return err
-			}
-			digest := sha256.Sum256(original)
-			backup := filepath.Join(fileutil.BackupDir(), "chatgpt-history", relative+fmt.Sprintf(".%x.bak", digest))
-			if err := backupCodexAppHistory(backup, original); err != nil {
-				return fmt.Errorf("back up conversation %s: %w", path, err)
-			}
-			temporary, err := stageCodexAppHistory(path, rewritten, info.Mode().Perm())
-			if err != nil {
-				return err
-			}
-			edits = append(edits, codexAppHistoryEdit{path: path, temporary: temporary, info: info, digest: digest})
-			return nil
-		})
+	err = walkCodexAppHistory(home, func(path string, info fs.FileInfo) error {
+		original, data, err := readCodexAppHistory(path)
 		if err != nil {
 			return err
 		}
+		rewritten, changed, err := portableCodexAppHistory(data)
+		if err != nil {
+			return fmt.Errorf("conversation %s: %w", path, err)
+		}
+		if !changed {
+			return nil
+		}
+		if strings.HasSuffix(path, ".zst") {
+			encoder, err := zstd.NewWriter(nil)
+			if err != nil {
+				return err
+			}
+			rewritten = encoder.EncodeAll(rewritten, nil)
+			encoder.Close()
+		}
+		relative, err := filepath.Rel(home, path)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(original)
+		backup := filepath.Join(fileutil.BackupDir(), "chatgpt-history", relative+fmt.Sprintf(".%x.bak", digest))
+		if err := backupCodexAppHistory(backup, original); err != nil {
+			return fmt.Errorf("back up conversation %s: %w", path, err)
+		}
+		temporary, err := stageCodexAppHistory(path, rewritten, info.Mode().Perm())
+		if err != nil {
+			return err
+		}
+		edits = append(edits, codexAppHistoryEdit{path: path, temporary: temporary, info: info, digest: digest})
+		return nil
+	})
+	if errors.Is(err, errCodexAppHistoryGrowth) {
+		return migrateCodexAppGrowingHistory(home, restore)
+	}
+	if err != nil {
+		return err
 	}
 	// Validate every conversation before publishing any changes. A failed publish
 	// leaves the old connection in place; already converted history is safe to retry.
@@ -143,7 +110,66 @@ func prepareCodexAppHistoryForDisconnect(home string, restore func() error) erro
 	return restore()
 }
 
+func walkCodexAppHistory(home string, visit func(string, fs.FileInfo) error) error {
+	for _, directory := range []string{"sessions", "archived_sessions"} {
+		root := filepath.Join(home, directory)
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if errors.Is(err, os.ErrNotExist) && path == root {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("cannot safely update linked conversation path %s", path)
+			}
+			if entry.IsDir() || !strings.HasPrefix(entry.Name(), "rollout-") || (!strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".jsonl.zst")) {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("conversation is not a regular file: %s", path)
+			}
+			return visit(path, info)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readCodexAppHistory(path string) (original, data []byte, err error) {
+	original, err = os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !strings.HasSuffix(path, ".zst") {
+		return original, original, nil
+	}
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer decoder.Close()
+	data, err = decoder.DecodeAll(original, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read compressed conversation %s: %w", path, err)
+	}
+	return original, data, nil
+}
+
 func (e codexAppHistoryEdit) publish() error {
+	if err := e.validate(); err != nil {
+		return err
+	}
+	return os.Rename(e.temporary, e.path)
+}
+
+func (e codexAppHistoryEdit) validate() error {
 	info, err := os.Lstat(e.path)
 	if err != nil {
 		return err
@@ -155,7 +181,7 @@ func (e codexAppHistoryEdit) publish() error {
 	if !os.SameFile(e.info, info) || sha256.Sum256(current) != e.digest {
 		return fmt.Errorf("conversation changed during disconnect; close other ChatGPT or Codex sessions and retry: %s", e.path)
 	}
-	return os.Rename(e.temporary, e.path)
+	return nil
 }
 
 func backupCodexAppHistory(path string, data []byte) error {
@@ -260,6 +286,10 @@ func lockCodexAppHistory(home string) (func(), error) {
 }
 
 func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
+	return rewriteCodexAppHistory(data, true)
+}
+
+func rewriteCodexAppHistory(data []byte, preserveOffsets bool) ([]byte, bool, error) {
 	if !bytes.Contains(data, []byte("ollama_compaction")) && !bytes.Contains(data, []byte("encrypted_content")) {
 		return data, false, nil
 	}
@@ -310,13 +340,15 @@ func portableCodexAppHistory(data []byte) ([]byte, bool, error) {
 		if err != nil {
 			return nil, false, err
 		}
-		// Forks refer to both ordinals and byte offsets in older records. Keep
-		// every record at its original byte length, including the newline.
-		if len(encoded) > len(body) {
-			return nil, false, errors.New("cannot convert compaction without changing saved history offsets")
+		// In-place conversion preserves fork offsets by keeping record lengths.
+		// The replacement-file migration can grow records and remaps the offsets.
+		if preserveOffsets && len(encoded) > len(body) {
+			return nil, false, errCodexAppHistoryGrowth
 		}
 		output.Write(encoded)
-		output.Write(bytes.Repeat([]byte{' '}, len(body)-len(encoded)))
+		if len(encoded) < len(body) {
+			output.Write(bytes.Repeat([]byte{' '}, len(body)-len(encoded)))
+		}
 		output.Write(line[len(body):])
 		changed = true
 	}
