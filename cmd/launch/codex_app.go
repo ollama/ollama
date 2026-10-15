@@ -768,16 +768,7 @@ func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
 	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
 		return err
 	}
-	return codexAppApplyProfileFromDesktop(func() error {
-		configPath, err := codexConfigPath()
-		if err != nil {
-			return err
-		}
-		if err := prepareCodexAppHistoryForDisconnect(filepath.Dir(configPath), restoreCodexAppProfile); err != nil {
-			return fmt.Errorf("prepare ChatGPT conversations before disconnecting: %w", err)
-		}
-		return nil
-	}, false, restartConfirmed)
+	return codexAppApplyProfileFromDesktop(restoreCodexAppProfileFromDesktop, false, restartConfirmed)
 }
 
 // RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.

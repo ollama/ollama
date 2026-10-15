@@ -1,3 +1,5 @@
+//go:build darwin
+
 package launch
 
 import (
@@ -14,7 +16,19 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/openai"
+	"golang.org/x/sys/unix"
 )
+
+func restoreCodexAppProfileFromDesktop() error {
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return err
+	}
+	if err := prepareCodexAppHistoryForDisconnect(filepath.Dir(configPath), restoreCodexAppProfile); err != nil {
+		return fmt.Errorf("prepare ChatGPT conversations before disconnecting: %w", err)
+	}
+	return nil
+}
 
 type codexAppHistoryEdit struct {
 	path      string
@@ -185,6 +199,10 @@ func stageCodexAppHistory(path string, data []byte, mode fs.FileMode) (string, e
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+func tryLockCodexAppHistoryFile(file *os.File) error {
+	return unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 }
 
 func lockCodexAppHistory(home string) (func(), error) {

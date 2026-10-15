@@ -1,3 +1,5 @@
+//go:build darwin
+
 package launch
 
 import (
@@ -8,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -210,7 +211,7 @@ func TestCodexAppHistoryBackupAndRetry(t *testing.T) {
 			t.Fatalf("original backup missing: %v", err)
 		}
 		info, err := os.Stat(backup)
-		if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Fatalf("backup permissions: %v, %v", info, err)
 		}
 		cleaned, err := os.ReadFile(path)
