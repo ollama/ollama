@@ -833,8 +833,15 @@ func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testin
 	}
 }
 
-func TestFromResponsesRequestRejectsIncompleteToolSearchNamespace(t *testing.T) {
+func TestFromResponsesRequestRejectsIncompleteToolSearchResults(t *testing.T) {
 	tests := []json.RawMessage{
+		json.RawMessage(`null`),
+		json.RawMessage(`{}`),
+		json.RawMessage(`{"type":"function"}`),
+		json.RawMessage(`{"type":"function","name":" "}`),
+		json.RawMessage(`{"type":" ","name":"blank_type"}`),
+		json.RawMessage(`{"type":"namespace","name":"docs","tools":[]}`),
+		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function","name":"search"},{"name":"missing_type"}]}`),
 		json.RawMessage(`{"type":"namespace","tools":[{"type":"function","name":"search"}]}`),
 		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function"}]}`),
 	}
@@ -847,7 +854,7 @@ func TestFromResponsesRequestRejectsIncompleteToolSearchNamespace(t *testing.T) 
 				}}},
 			})
 			if err == nil {
-				t.Fatal("expected incomplete namespace to be rejected")
+				t.Fatal("expected incomplete tool definition to be rejected")
 			}
 		})
 	}
@@ -2116,6 +2123,52 @@ func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 }
 
 func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
+	t.Run("reasoning preserves a pending tool pair", func(t *testing.T) {
+		for _, assistant := range []string{"", `,{"role":"assistant","content":"Checking the result"}`} {
+			var req ResponsesRequest
+			body := `{"model":"test","input":[
+				{"type":"reasoning","encrypted_content":"first native thought"},
+				{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},
+				{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque"}` + assistant + `,
+				{"type":"function_call_output","call_id":"call_1","output":"done"}
+			]}`
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatal(err)
+			}
+			chat, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(chat.Messages) != 2 || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].ID != "call_1" || chat.Messages[1].ToolCallID != "call_1" {
+				t.Fatalf("tool pair split: %+v", chat.Messages)
+			}
+			if !strings.Contains(chat.Messages[0].Content, "Remember kiwi-42") || chat.Messages[0].Thinking != "first native thought\nopaque" {
+				t.Fatalf("reasoning lost: %+v", chat.Messages[0])
+			}
+			if assistant != "" && !strings.Contains(chat.Messages[0].Content, "Checking the result") {
+				t.Fatalf("assistant text lost: %+v", chat.Messages[0])
+			}
+		}
+	})
+	t.Run("successive calls preserve both reasoning items", func(t *testing.T) {
+		var req ResponsesRequest
+		if err := json.Unmarshal([]byte(`{"model":"test","input":[
+			{"type":"reasoning","encrypted_content":"first native thought"},
+			{"type":"function_call","call_id":"call_1","name":"first","arguments":"{}"},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"second readable thought"}]},
+			{"type":"function_call","call_id":"call_2","name":"second","arguments":"{}"}
+		]}`), &req); err != nil {
+			t.Fatal(err)
+		}
+		chat, err := FromResponsesRequest(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought\nsecond readable thought" {
+			t.Fatalf("reasoning or tool calls lost: %+v", chat.Messages)
+		}
+	})
+
 	t.Run("reasoning merged with following message", func(t *testing.T) {
 		reqJSON := `{
 			"model": "qwen3",
@@ -2136,9 +2189,13 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			t.Fatalf("failed to convert request: %v", err)
 		}
 
-		// Should have 2 messages: user and assistant (with thinking merged)
-		if len(chatReq.Messages) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
+		// Preserve the distinct readable summary and merge native thinking into
+		// the following assistant message.
+		if len(chatReq.Messages) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+		}
+		if chatReq.Messages[1].Role != "assistant" || chatReq.Messages[1].Content != "Thinking about math" {
+			t.Fatalf("readable summary lost: %+v", chatReq.Messages[1])
 		}
 
 		// Check user message
@@ -2147,7 +2204,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		}
 
 		// Check assistant message has both content and thinking
-		assistantMsg := chatReq.Messages[1]
+		assistantMsg := chatReq.Messages[2]
 		if assistantMsg.Role != "assistant" {
 			t.Errorf("Messages[1].Role = %q, want %q", assistantMsg.Role, "assistant")
 		}
@@ -2222,12 +2279,16 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			t.Fatalf("failed to convert request: %v", err)
 		}
 
-		// Should have 3 messages:
+		// Should have 4 messages:
 		// 1. user: "What is 2+2?"
-		// 2. assistant: thinking + "The answer is 4."
-		// 3. user: "Now multiply that by 3"
-		if len(chatReq.Messages) != 3 {
-			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+		// 2. assistant: readable reasoning summary
+		// 3. assistant: thinking + "The answer is 4."
+		// 4. user: "Now multiply that by 3"
+		if len(chatReq.Messages) != 4 {
+			t.Fatalf("expected 4 messages, got %d", len(chatReq.Messages))
+		}
+		if chatReq.Messages[1].Role != "assistant" || chatReq.Messages[1].Content != "Calculating 2+2" {
+			t.Fatalf("readable summary lost: %+v", chatReq.Messages[1])
 		}
 
 		// Check first user message
@@ -2237,21 +2298,21 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		}
 
 		// Check assistant message has merged thinking + content
-		if chatReq.Messages[1].Role != "assistant" {
-			t.Errorf("Messages[1].Role = %q, want \"assistant\"", chatReq.Messages[1].Role)
+		if chatReq.Messages[2].Role != "assistant" {
+			t.Errorf("Messages[2].Role = %q, want \"assistant\"", chatReq.Messages[2].Role)
 		}
-		if chatReq.Messages[1].Content != "The answer is 4." {
-			t.Errorf("Messages[1].Content = %q, want \"The answer is 4.\"", chatReq.Messages[1].Content)
+		if chatReq.Messages[2].Content != "The answer is 4." {
+			t.Errorf("Messages[2].Content = %q, want \"The answer is 4.\"", chatReq.Messages[2].Content)
 		}
-		if chatReq.Messages[1].Thinking != "This is a simple arithmetic problem. 2+2=4." {
-			t.Errorf("Messages[1].Thinking = %q, want \"This is a simple arithmetic problem. 2+2=4.\"",
-				chatReq.Messages[1].Thinking)
+		if chatReq.Messages[2].Thinking != "This is a simple arithmetic problem. 2+2=4." {
+			t.Errorf("Messages[2].Thinking = %q, want \"This is a simple arithmetic problem. 2+2=4.\"",
+				chatReq.Messages[2].Thinking)
 		}
 
 		// Check second user message
-		if chatReq.Messages[2].Role != "user" || chatReq.Messages[2].Content != "Now multiply that by 3" {
-			t.Errorf("Messages[2] = {Role: %q, Content: %q}, want {Role: \"user\", Content: \"Now multiply that by 3\"}",
-				chatReq.Messages[2].Role, chatReq.Messages[2].Content)
+		if chatReq.Messages[3].Role != "user" || chatReq.Messages[3].Content != "Now multiply that by 3" {
+			t.Errorf("Messages[3] = {Role: %q, Content: %q}, want {Role: \"user\", Content: \"Now multiply that by 3\"}",
+				chatReq.Messages[3].Role, chatReq.Messages[3].Content)
 		}
 	})
 

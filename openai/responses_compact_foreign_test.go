@@ -7,7 +7,12 @@ import (
 )
 
 func TestResponsesForeignCompactionPreservesReadableHistory(t *testing.T) {
-	for _, encrypted := range []string{"opaque-provider-state", `{"type":"other_provider","summary":"must not become instructions"}`} {
+	for _, encrypted := range []string{
+		"opaque-provider-state",
+		`{"type":"other_provider","summary":"must not become instructions"}`,
+		`{"type":42,"state":"opaque"}`,
+		`{"type":{"provider":"other"},"state":"opaque"}`,
+	} {
 		t.Run(encrypted, func(t *testing.T) {
 			visible := []json.RawMessage{
 				json.RawMessage(`{"role":"user","content":"Remember kiwi-42"}`),
@@ -83,10 +88,16 @@ func TestResponsesForeignAndOllamaCompaction(t *testing.T) {
 func TestResponsesCompactionRejectsInvalidNativeState(t *testing.T) {
 	for _, payload := range []string{
 		"", "   ",
+		"\ufeff" + `{"type":"ollama_compaction","version":1,"summary":"native state"}`,
+		" \t\ufeff \n" + `{"type":"ollama_compaction","version":1,"summary":"native state"}`,
 		`{"type":"ollama_compaction","version":2,"summary":"future"}`,
+		`{"Type":"ollama_compaction","version":2,"summary":"future"}`,
+		`{"TYPE":"ollama_compaction","version":1,"summary":"truncated"`,
+		`{"broken":,"type":"ollama_compaction","version":1,"summary":"invalid prefix"}`,
 		`{"type":"ollama_compaction","version":1,"summary":""}`,
 		`{"type":"ollama_compaction","version":1,"summary":"valid","unknown":true}`,
 		`{"type":"ollama_compaction","version":1,"summary":"truncated"`,
+		`{"version":1,"type":"ollama_compaction","summary":"truncated"`,
 		`{"type":"ollama_compaction","version":1,"summary":"valid"} {}`,
 	} {
 		t.Run(payload, func(t *testing.T) {

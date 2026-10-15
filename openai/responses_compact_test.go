@@ -859,6 +859,12 @@ func TestExpandResponsesCompactionInputRequiresReadableHistory(t *testing.T) {
 		{"function call with invalid arguments", `,{"type":"function_call","call_id":"call_1","name":"shell","arguments":"not JSON"}`, true},
 		{"empty reasoning summary", `,{"type":"reasoning","summary":[{"type":"summary_text","text":" "}]}`, true},
 		{"empty image reference", `,{"role":"user","content":[{"type":"input_image","image_url":" "}]}`, true},
+		{"empty audio data", `,{"role":"user","content":[{"type":"input_audio","input_audio":{"data":" ","format":"wav"}}]}`, true},
+		{"null discovered tool", `,{"type":"tool_search_output","tools":[null]}`, true},
+		{"empty discovered tool", `,{"type":"tool_search_output","tools":[{}]}`, true},
+		{"unnamed discovered function", `,{"type":"tool_search_output","tools":[{"type":"function"}]}`, true},
+		{"blank discovered tool type", `,{"type":"tool_search_output","tools":[{"type":" ","name":"blank_type"}]}`, true},
+		{"empty discovered namespace", `,{"type":"tool_search_output","tools":[{"type":"namespace","name":"workspace","tools":[]}]}`, true},
 		{"metadata with readable message", `,{"type":"web_search_call","id":"ws_1","status":"completed"},{"role":"user","content":"continue"}`, false},
 		{"readable agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[{"type":"input_text","text":"Remember kiwi-42"}]}`, false},
 		{"readable reasoning summary", `,{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`, false},
@@ -868,6 +874,8 @@ func TestExpandResponsesCompactionInputRequiresReadableHistory(t *testing.T) {
 		{"file with text", `,{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture"}]}`, false},
 		{"file reference only", `,{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`, false},
 		{"readable tool result", `,{"type":"function_call_output","call_id":"call_1","output":"kiwi-42"}`, false},
+		{"readable discovered tool", `,{"type":"tool_search_output","tools":[{"type":"function","name":"read_notes"}]}`, false},
+		{"readable discovered namespace", `,{"type":"tool_search_output","tools":[{"type":"namespace","name":"workspace","tools":[{"type":"function","name":"read_notes"}]}]}`, false},
 		{"tool pair with empty result", `,{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":""}`, false},
 		{"custom tool pair with empty result", `,{"type":"custom_tool_call","call_id":"call_1","name":"read","input":"notes.txt"},{"type":"custom_tool_call_output","call_id":"call_1","output":""}`, false},
 	} {
@@ -956,7 +964,8 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		"recipient": "/root/worker",
 		"content": [
 			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
-			{"type": "encrypted_content", "encrypted_content": "analyze the parser"}
+			{"type": "encrypted_content", "encrypted_content": "analyze the parser"},
+			{"type": "input_image", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 		]
 	}`), &item)
 	if err != nil {
@@ -969,7 +978,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	if kind != "message" || msg.Role != "user" || msg.Content != want {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || string(msg.Images[0]) != "fixture" {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }

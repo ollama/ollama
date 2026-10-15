@@ -16,7 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/proxy"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/openai"
 )
 
@@ -657,13 +659,27 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 
 func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
 	for _, tt := range []struct {
-		name string
-		item string
+		name  string
+		items []string
 	}{
-		{"image URL", `{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png","detail":"high"}]}`},
-		{"image file ID", `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`},
-		{"file with text", `{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture","filename":"notes.txt"}]}`},
-		{"reasoning summary", `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`},
+		{"image URL", []string{`{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png","detail":"high"}]}`}},
+		{"image file ID", []string{`{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`}},
+		{"file with text", []string{`{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture","filename":"notes.txt"}]}`}},
+		{"reasoning summary", []string{`{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`}},
+		{"provider tool with text", []string{
+			`{"role":"user","content":"Continue from this computer action"}`,
+			`{"type":"computer_call","call_id":"call_1","action":{"type":"click","x":10,"y":20}}`,
+		}},
+		{"provider content with text", []string{`{"role":"user","content":[{"type":"input_text","text":"Transcribe this audio"},{"type":"input_audio","input_audio":{"data":"fixture","format":"wav"}}]}`}},
+		{"provider tool output with text", []string{`{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"Recorded kiwi-42"},{"type":"input_audio","input_audio":{"data":"fixture","format":"wav"}}]}`}},
+		{"audio only", []string{`{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`}},
+		{"audio tool output", []string{`{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`}},
+		{"provider tool result", []string{
+			`{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":["pwd"]}}`,
+			`{"type":"local_shell_call_output","call_id":"call_1","output":"/workspace"}`,
+		}},
+		{"computer screenshot", []string{`{"type":"computer_call_output","call_id":"call_1","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,Zml4dHVyZQ=="}}`}},
+		{"shell output", []string{`{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"kiwi-42\n","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, foreign := range []bool{false, true} {
@@ -674,9 +690,11 @@ func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
 					})
 					retained := []json.RawMessage{
 						json.RawMessage(`{"type":"web_search_call","id":"ws_1","status":"completed"}`),
-						json.RawMessage(tt.item),
-						json.RawMessage(`{"type":"reasoning","summary":[],"encrypted_content":"other-opaque-state"}`),
 					}
+					for _, item := range tt.items {
+						retained = append(retained, json.RawMessage(item))
+					}
+					retained = append(retained, json.RawMessage(`{"type":"reasoning","summary":[],"encrypted_content":"other-opaque-state"}`))
 					input := append([]json.RawMessage(nil), retained[:1]...)
 					if foreign {
 						input = append(input, json.RawMessage(`{"type":"compaction","encrypted_content":"opaque-provider-state"}`))
@@ -702,6 +720,89 @@ func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
 					}
 					if !reflect.DeepEqual(forwarded.Input, retained) {
 						t.Fatalf("retained input changed: got=%s want=%s", forwarded.Input, retained)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name         string
+		item         string
+		wantErr      string
+		wantMessages []api.Message
+	}{
+		{
+			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
+			wantErr: "image file_id",
+		},
+		{
+			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
+			wantErr: "image file_id",
+		},
+		{
+			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
+			wantErr: "file inputs",
+		},
+		{
+			name: "audio input", item: `{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`,
+			wantErr: "unknown content type: input_audio",
+		},
+		{
+			name: "summary only", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+		},
+		{
+			name: "summary with encrypted content", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`,
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "assistant", Thinking: "opaque-reasoning-state"}},
+		},
+		{
+			name: "summary before user message", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+		},
+		{
+			name: "consecutive summaries", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember plum-73"}]}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "assistant", Thinking: "Remember plum-73"}},
+		},
+		{
+			name: "native thinking and summary", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"Remember kiwi-42"},{"role":"assistant","content":"remembered"}`,
+			wantMessages: []api.Message{{Role: "assistant", Content: "remembered", Thinking: "Remember kiwi-42"}},
+		},
+		{
+			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
+			wantMessages: []api.Message{{Role: "user", Images: []api.ImageData{[]byte("fixture")}}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, foreign := range []bool{false, true} {
+				t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+					s := &Server{}
+					router := gin.New()
+					var captured *api.ChatRequest
+					router.POST("/v1/responses", s.responsesCompactionMiddleware(), middleware.ResponsesMiddleware(), func(c *gin.Context) {
+						captured = new(api.ChatRequest)
+						if err := json.NewDecoder(c.Request.Body).Decode(captured); err != nil {
+							t.Fatal(err)
+						}
+						c.Status(http.StatusNoContent)
+					})
+					input := tt.item
+					if foreign {
+						input = `{"type":"compaction","encrypted_content":"opaque-provider-state"},` + input
+					}
+					request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"fixture","input":[`+input+`]}`))
+					request.Header.Set("Content-Type", "application/json")
+					response := httptest.NewRecorder()
+					router.ServeHTTP(response, request)
+					if tt.wantErr != "" {
+						if response.Code != http.StatusBadRequest || captured != nil || !strings.Contains(response.Body.String(), tt.wantErr) {
+							t.Fatalf("status=%d captured=%+v body=%s", response.Code, captured, response.Body.String())
+						}
+					} else if response.Code != http.StatusNoContent || captured == nil || !reflect.DeepEqual(captured.Messages, tt.wantMessages) {
+						t.Fatalf("status=%d captured=%+v, want messages=%+v", response.Code, captured, tt.wantMessages)
 					}
 				})
 			}
