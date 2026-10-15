@@ -412,7 +412,7 @@ func portableCodexAppHistoryItem(raw json.RawMessage) ([]json.RawMessage, error)
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal(item["summary"], &summary); err != nil {
-			return nil, nil
+			return nil, nil //nolint:nilerr // Leave unrecognized reasoning unchanged.
 		}
 		var text strings.Builder
 		for _, part := range summary {

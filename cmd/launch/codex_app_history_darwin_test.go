@@ -151,6 +151,7 @@ func TestCodexAppPortableHistoryLeavesOtherProvidersUntouched(t *testing.T) {
 	for _, item := range []string{
 		`{"type":"reasoning","id":"rs_native_openai","encrypted_content":"opaque","summary":[]}`,
 		`{"type":"reasoning","id":"rs_42","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"A readable summary, with unrelated encrypted state."}]}`,
+		`{"type":"reasoning","id":"rs_42","encrypted_content":"opaque","summary":"unrecognized format"}`,
 		`{"type":"compaction","encrypted_content":"opaque"}`,
 		`{"type":"compaction","encrypted_content":"{\"type\":\"another_provider\",\"version\":1}"}`,
 		`{"type":"message","role":"user","content":[{"type":"input_text","text":"ollama_compaction rs_42 are literal text"}]}`,
