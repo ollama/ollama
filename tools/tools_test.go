@@ -895,8 +895,15 @@ func TestContent(t *testing.T) {
 			name:    "tag",
 			tag:     "<tool_call>",
 			content: []byte("<tool_call>{\"name\": \"get_temperature\""),
-			want:    "",
+			want:    "<tool_call>{\"name\": \"get_temperature\"",
 			n:       0,
+		},
+		{
+			name:    "tag after called",
+			tag:     "<tool_call>",
+			content: []byte("</tool_call>"),
+			want:    "",
+			n:       1,
 		},
 		{
 			name:    "json object",
@@ -945,6 +952,77 @@ func TestContent(t *testing.T) {
 			got := parser.Content()
 			if got != tt.want {
 				t.Errorf("Content() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestUnparsedToolCallContent verifies that model output buffered while
+// looking for a tool call is returned as content at the end of the stream
+// when no tool call could be parsed, instead of being silently dropped
+func TestUnparsedToolCallContent(t *testing.T) {
+	tmpl, err := template.New("qwen").Parse(`{{if .ToolCalls}}<tool_call>{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}</tool_call>{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "tag_document",
+				Description: "Apply tags to a document.",
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		output  string
+		content string
+		calls   int
+	}{
+		{
+			name:    "wrong name emits description not name",
+			output:  `<tool_call>{"name": "Apply tags to a document.", "arguments": {"document_id": "doc-17", "tags": ["alpha", "beta", "gamma"]}}</tool_call>`,
+			content: `<tool_call>{"name": "Apply tags to a document.", "arguments": {"document_id": "doc-17", "tags": ["alpha", "beta", "gamma"]}}</tool_call>`,
+			calls:   0,
+		},
+		{
+			name:    "truncated arguments",
+			output:  `<tool_call>{"name": "tag_document", "arguments": {"document_id": `,
+			content: `<tool_call>{"name": "tag_document", "arguments": {"document_id": `,
+			calls:   0,
+		},
+		{
+			name:    "valid tool call discards scaffolding",
+			output:  `<tool_call>{"name": "tag_document", "arguments": {"document_id": "doc-17", "tags": ["alpha"]}}</tool_call>`,
+			content: "",
+			calls:   1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, chunkSize := range []int{1, 3, len(tt.output)} {
+				parser := NewParser(tmpl, tools)
+
+				var calls []api.ToolCall
+				var content string
+				for i := 0; i < len(tt.output); i += chunkSize {
+					tcs, c := parser.Add(tt.output[i:min(i+chunkSize, len(tt.output))])
+					calls = append(calls, tcs...)
+					content += c
+				}
+				content += parser.Content()
+
+				if content != tt.content {
+					t.Errorf("chunk size %d: expected content %q, got %q", chunkSize, tt.content, content)
+				}
+
+				if len(calls) != tt.calls {
+					t.Errorf("chunk size %d: expected %d tool calls, got %d", chunkSize, tt.calls, len(calls))
+				}
 			}
 		})
 	}
