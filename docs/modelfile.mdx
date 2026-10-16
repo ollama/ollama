@@ -182,6 +182,8 @@ TEMPLATE """{{ if .System }}<|im_start|>system
 
 The `SYSTEM` instruction specifies the system message to be used in the template, if applicable.
 
+When using `FROM` with an existing model, omitting `SYSTEM` preserves its system message. Use `SYSTEM ""` to clear an inherited system message.
+
 ```
 SYSTEM """<system message>"""
 ```
