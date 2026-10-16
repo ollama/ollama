@@ -87,12 +87,17 @@ We update Ollama regularly to support the latest models, and this installer will
 help you keep up to date.
 
 If you'd like to install or integrate Ollama as a service, a standalone
-`ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia. Depending on your hardware, you may also
-need to download and extract additional packages into the same directory:
+`ollama-windows-amd64-cpu.zip` file is available containing the Ollama CLI and
+CPU backend. Download and extract the applicable GPU packages into the same
+directory:
 
+- **NVIDIA GPU**: `ollama-windows-amd64-cuda-v13.zip`, or `cuda-v12` for pre-Turing GPUs or older drivers
 - **AMD GPU**: `ollama-windows-amd64-rocm.zip`
+- **Vulkan**: `ollama-windows-amd64-vulkan.zip`
 - **MLX (CUDA)**: `ollama-windows-amd64-mlx.zip`
+
+The MLX package also requires the CUDA v13 package. Windows ARM64 standalone
+files are `ollama-windows-arm64-cpu.zip` and `ollama-windows-arm64-cuda-v13.zip`.
 
 This allows for embedding Ollama in existing applications, or
 running it as a system service via `ollama serve` with tools such as

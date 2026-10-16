@@ -156,6 +156,14 @@ download_and_extract() {
         $SUDO tar -xzf - -C "${dest_dir}"
 }
 
+archive_available() {
+    local url_base="$1"
+    local filename="$2"
+
+    curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1 ||
+        curl --fail --silent --head --location "${url_base}/${filename}.tgz${VER_PARAM}" >/dev/null 2>&1
+}
+
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
@@ -168,7 +176,57 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+if archive_available "https://ollama.com/download" "ollama-linux-${ARCH}-cpu"; then
+    SPLIT_PACKAGES=true
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-cpu"
+else
+    SPLIT_PACKAGES=false
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+fi
+
+if [ "$SPLIT_PACKAGES" = true ] && [ "$ARCH" = "amd64" ]; then
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-vulkan"
+fi
+
+NVIDIA_PAYLOADS_INSTALLED=
+install_nvidia_package() {
+    local package="$1"
+    case " $NVIDIA_PAYLOADS_INSTALLED " in
+        *" $package "*) return 0 ;;
+    esac
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-${package}"
+    NVIDIA_PAYLOADS_INSTALLED="$NVIDIA_PAYLOADS_INSTALLED $package"
+}
+
+install_nvidia_payload() {
+    [ "$SPLIT_PACKAGES" = true ] || return 0
+    available nvidia-smi || return 0
+
+    CUDA_MAJOR=$(nvidia-smi | sed -n 's/.*CUDA Version: \([0-9][0-9]*\).*/\1/p' | head -n 1)
+    if [ -z "$CUDA_MAJOR" ]; then
+        install_nvidia_package cuda-v12
+        install_nvidia_package cuda-v13
+        return 0
+    fi
+    if [ "$CUDA_MAJOR" -lt 13 ]; then
+        install_nvidia_package cuda-v12
+        return 0
+    fi
+
+    COMPUTE_CAPS=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null |
+        awk '/^[0-9]+([.][0-9]+)?$/ { print }')
+    if [ -z "$COMPUTE_CAPS" ]; then
+        install_nvidia_package cuda-v12
+        install_nvidia_package cuda-v13
+        return 0
+    fi
+    if printf '%s\n' "$COMPUTE_CAPS" | awk '$1 + 0 < 7.5 { found = 1 } END { exit !found }'; then
+        install_nvidia_package cuda-v12
+    fi
+    if printf '%s\n' "$COMPUTE_CAPS" | awk '$1 + 0 >= 7.5 { found = 1 } END { exit !found }'; then
+        install_nvidia_package cuda-v13
+    fi
+}
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
@@ -182,7 +240,10 @@ if [ -f /etc/nv_tegra_release ] ; then
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
         download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
-        warning "Unsupported JetPack version detected.  GPU may not be supported"
+        install_nvidia_payload
+        if [ -z "$NVIDIA_PAYLOADS_INSTALLED" ]; then
+            warning "Unsupported JetPack version detected.  GPU may not be supported"
+        fi
     fi
 fi
 
@@ -255,6 +316,7 @@ fi
 # so check for nvidia-smi to determine if GPU is available
 if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+        install_nvidia_payload
         status "Nvidia GPU detected."
     fi
     install_success
@@ -269,6 +331,12 @@ if [ -f /etc/nv_tegra_release ] ; then
 fi
 
 # Install GPU dependencies on Linux
+if available nvidia-smi; then
+    install_nvidia_payload
+    status "NVIDIA GPU installed."
+    exit 0
+fi
+
 if ! available lspci && ! available lshw; then
     warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
@@ -291,11 +359,6 @@ check_gpu() {
     esac
 }
 
-if check_gpu nvidia-smi; then
-    status "NVIDIA GPU installed."
-    exit 0
-fi
-
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
     warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
@@ -316,20 +379,25 @@ CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not sup
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-9-rocky-9
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
 install_cuda_driver_yum() {
+    local CUDA_REPO=https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
     status 'Installing NVIDIA repository...'
     
     case $PACKAGE_MANAGER in
         yum)
             $SUDO $PACKAGE_MANAGER -y install yum-utils
-            if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo" >/dev/null ; then
-                $SUDO $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
+            if curl -I --silent --fail --location "$CUDA_REPO" >/dev/null ; then
+                $SUDO $PACKAGE_MANAGER-config-manager --add-repo "$CUDA_REPO"
             else
                 error $CUDA_REPO_ERR_MSG
             fi
             ;;
         dnf)
-            if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo" >/dev/null ; then
-                $SUDO $PACKAGE_MANAGER config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
+            if curl -I --silent --fail --location "$CUDA_REPO" >/dev/null ; then
+                if $PACKAGE_MANAGER --version 2>/dev/null | grep -q '^dnf5 version'; then
+                    $SUDO $PACKAGE_MANAGER config-manager addrepo --from-repofile="$CUDA_REPO"
+                else
+                    $SUDO $PACKAGE_MANAGER config-manager --add-repo "$CUDA_REPO"
+                fi
             else
                 error $CUDA_REPO_ERR_MSG
             fi
@@ -403,9 +471,9 @@ fi
 
 if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
     case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
+        almalinux|centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
         rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
-        fedora) [ $OS_VERSION -lt '39' ] && install_cuda_driver_yum $OS_NAME $OS_VERSION || install_cuda_driver_yum $OS_NAME '39';;
+        fedora) install_cuda_driver_yum $OS_NAME $OS_VERSION ;;
         amzn) install_cuda_driver_yum 'fedora' '37' ;;
         debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
         ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
@@ -417,7 +485,7 @@ if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
     KERNEL_RELEASE="$(uname -r)"
     case $OS_NAME in
         rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
-        centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+        almalinux|centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
         fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
         debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
         *) exit ;;
@@ -448,6 +516,7 @@ if available nvidia-persistenced; then
     done
 fi
 
+install_nvidia_payload
 status "NVIDIA GPU ready."
 install_success
 }

@@ -40,38 +40,13 @@ docker buildx build \
         -f Dockerfile \
         .
 
-# Run deduplication for each platform output directory
-if echo $PLATFORM | grep "," > /dev/null ; then
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_amd64"
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_arm64"
-elif echo $PLATFORM | grep "amd64\|arm64" > /dev/null ; then
-    $(dirname $0)/deduplicate_cuda_libs.sh "./dist"
-fi
-
 # buildx behavior changes for single vs. multiplatform
 echo "Compressing linux tar bundles..."
 if echo $PLATFORM | grep "," > /dev/null ; then
-        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
-        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
-        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
-        tar c -C ./dist/linux_amd64 --exclude './lib/ollama/rocm*' --exclude './lib/ollama/mlx*' --exclude './lib/ollama/include' . | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
-        ( cd ./dist/linux_amd64 && tar c lib/ollama/rocm_v* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
-        ( cd ./dist/linux_amd64 && if [ -e lib/ollama/include ]; then tar c lib/ollama/mlx* lib/ollama/include; else tar c lib/ollama/mlx*; fi ) | zstd -9 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
+    $(dirname $0)/package_linux.sh ./dist/linux_amd64 amd64 ./dist
+    $(dirname $0)/package_linux.sh ./dist/linux_arm64 arm64 ./dist
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
-        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
-        tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
-        tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
+    $(dirname $0)/package_linux.sh ./dist arm64 ./dist
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
-        tar c -C ./dist/ --exclude 'lib/ollama/rocm*' --exclude 'lib/ollama/mlx*' --exclude 'lib/ollama/include' bin lib | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
-        ( cd ./dist/ && tar c lib/ollama/rocm_v* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
-        ( cd ./dist/ && if [ -e lib/ollama/include ]; then tar c lib/ollama/mlx* lib/ollama/include; else tar c lib/ollama/mlx*; fi ) | zstd -9 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
+    $(dirname $0)/package_linux.sh ./dist amd64 ./dist
 fi
-
-LIMIT=2147483648
-for f in ./dist/ollama-linux-*.tar.zst; do
-    [ -f "$f" ] || continue
-    size=$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f")
-    if [ "$size" -gt "$LIMIT" ]; then
-        echo "WARNING: $f is $size bytes ($((size - LIMIT)) over the 2 GiB GitHub release-asset limit)" >&2
-    fi
-done

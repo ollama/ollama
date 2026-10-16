@@ -17,12 +17,22 @@ curl -fsSL https://ollama.com/install.sh | sh
   with `sudo rm -rf /usr/lib/ollama` first.
 </Note>
 
-Download and extract the package:
+Download and extract the CPU package:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-cpu.tar.zst \
     | sudo tar x -C /usr
 ```
+
+For NVIDIA GPUs, also extract the CUDA package supported by your driver:
+
+```shell
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-cuda-v13.tar.zst \
+    | sudo tar x -C /usr
+```
+
+Use `cuda-v12` instead of `cuda-v13` with pre-Turing GPUs or drivers that do
+not support CUDA 13.
 
 Start Ollama:
 
@@ -45,14 +55,22 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tar.zst \
     | sudo tar x -C /usr
 ```
 
+The Vulkan fallback is available as `ollama-linux-amd64-vulkan.tar.zst`.
+The optional MLX package requires both `ollama-linux-amd64-mlx.tar.zst` and
+`ollama-linux-amd64-cuda-v13.tar.zst`.
+
 ### ARM64 install
 
 Download and extract the ARM64-specific package:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-arm64.tar.zst \
+curl -fsSL https://ollama.com/download/ollama-linux-arm64-cpu.tar.zst \
     | sudo tar x -C /usr
 ```
+
+CUDA v12, CUDA v13, JetPack 5, and JetPack 6 are distributed as separate
+packages using the corresponding `-cuda-v12`, `-cuda-v13`, `-jetpack5`, and
+`-jetpack6` suffixes.
 
 ### Adding Ollama as a startup service (recommended)
 
@@ -143,10 +161,10 @@ Update Ollama by running the install script again:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Or by re-downloading Ollama:
+Or by re-downloading the CPU package and any GPU packages you use:
 
 ```shell
-curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-cpu.tar.zst \
     | sudo tar x -C /usr
 ```
 
