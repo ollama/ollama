@@ -129,7 +129,7 @@ func TestLoadedModelLookupTracksSymlinkTag(t *testing.T) {
 	if !manifest.NamedManifestPointsToDigest(name, initial.Digest) {
 		t.Skip("v2 tag is a regular file on this platform or filesystem")
 	}
-	s.sched.loaded["initial"] = &runnerRef{model: initial}
+	s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
 
 	warm, err := s.getExistingModelForRunner("WARM-MODEL", "")
 	if err != nil || warm != initial {
@@ -149,7 +149,7 @@ func TestLoadedModelLookupTracksSymlinkTag(t *testing.T) {
 	if _, err := s.getExistingModelForRunner("warm-model", ""); err == nil {
 		t.Fatal("cold lookup accepted a corrupt manifest blob")
 	}
-	s.sched.loaded["initial"] = &runnerRef{model: initial}
+	s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
 	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2,"layers":[]}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestLoadedModelLookupTracksSymlinkTag(t *testing.T) {
 	if updated == initial || updated.Digest == initial.Digest {
 		t.Fatal("repointed tag reused the old model")
 	}
-	s.sched.loaded["updated"] = &runnerRef{model: updated}
+	s.sched.loaded["updated"] = withModel(&runnerRef{}, updated)
 	if current, err := s.getExistingModelForRunner("warm-model", ""); err != nil || current != updated {
 		t.Fatalf("current tag lookup = %p, %v; want %p", current, err, updated)
 	}
@@ -185,7 +185,7 @@ func TestLoadedModelLookupConcurrent(t *testing.T) {
 	if !manifest.NamedManifestPointsToDigest(name, cached.Digest) {
 		t.Skip("v2 tag is a regular file on this platform or filesystem")
 	}
-	s.sched.loaded["cached"] = &runnerRef{model: cached}
+	s.sched.loaded["cached"] = withModel(&runnerRef{}, cached)
 
 	var wg sync.WaitGroup
 	for range 8 {
@@ -234,9 +234,9 @@ func TestLoadedModelLookupConcurrent(t *testing.T) {
 func TestLoadedModelLookupDoesNotWaitForUnrelatedRunner(t *testing.T) {
 	name := model.ParseName("ready-model")
 	ready := &Model{Name: name.String()}
-	loading := &runnerRef{model: &Model{Name: "loading-model"}, loading: true}
+	loading := withModel(&runnerRef{loading: true}, &Model{Name: "loading-model"})
 	s := &Scheduler{loaded: map[string]*runnerRef{
-		"ready":   {model: ready},
+		"ready":   withModel(&runnerRef{}, ready),
 		"loading": loading,
 	}}
 
@@ -352,7 +352,7 @@ func TestLoadedModelLookupVerifiesRegularManifest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			s.sched.loaded["initial"] = &runnerRef{model: initial}
+			s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
 
 			path, err := manifest.V2PathForName(name)
 			if err != nil {
@@ -405,8 +405,8 @@ func TestLoadedModelLookupRunnerSelection(t *testing.T) {
 	defaultModel := &Model{Name: name.String(), Runner: manifest.RunnerMLX}
 	explicitModel := &Model{Name: name.String(), Runner: manifest.RunnerGGML, runnerSelection: manifest.RunnerGGML}
 	s := &Scheduler{loaded: map[string]*runnerRef{
-		"default":  {model: defaultModel},
-		"explicit": {model: explicitModel},
+		"default":  withModel(&runnerRef{}, defaultModel),
+		"explicit": withModel(&runnerRef{}, explicitModel),
 	}}
 	if got := s.loadedModelsForName(name, manifest.RunnerGGML); len(got) != 1 || got[0] != explicitModel {
 		t.Fatalf("explicit runner lookup = %v; want GGML model", got)
@@ -420,7 +420,7 @@ func TestLoadedModelLookupRunnerSelection(t *testing.T) {
 		topRunner = manifest.RunnerMLX
 	}
 	topModel := &Model{Name: name.String(), Runner: topRunner, runnerSelection: topRunner}
-	s.loaded = map[string]*runnerRef{"top": {model: topModel}}
+	s.loaded = map[string]*runnerRef{"top": withModel(&runnerRef{}, topModel)}
 	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != topModel {
 		t.Fatalf("default lookup after explicit preferred runner = %v; want loaded model", got)
 	}
@@ -429,7 +429,7 @@ func TestLoadedModelLookupRunnerSelection(t *testing.T) {
 		Name: name.String(), Runner: manifest.RunnerGGML,
 		Digest: "single-digest", ManifestDigest: "single-digest", runnerSelection: manifest.RunnerGGML,
 	}
-	s.loaded = map[string]*runnerRef{"single": {model: singleManifest}}
+	s.loaded = map[string]*runnerRef{"single": withModel(&runnerRef{}, singleManifest)}
 	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != singleManifest {
 		t.Fatalf("default lookup after explicit single-manifest runner = %v; want loaded model", got)
 	}
@@ -457,7 +457,7 @@ func TestLoadedExplicitRunnerDoesNotChangeDefaultSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.sched.loaded["explicit"] = &runnerRef{model: explicit}
+	s.sched.loaded["explicit"] = withModel(&runnerRef{}, explicit)
 
 	selected, err := s.getExistingModelForRunner(name.String(), "")
 	if err != nil {
@@ -529,7 +529,7 @@ func BenchmarkModelLookup(b *testing.B) {
 					b.Skip("v2 tag is a regular file on this platform or filesystem")
 				}
 				s := &Server{sched: &Scheduler{loaded: map[string]*runnerRef{
-					"cached": {model: cached},
+					"cached": withModel(&runnerRef{}, cached),
 				}}}
 				b.ReportAllocs()
 				for b.Loop() {
@@ -549,22 +549,21 @@ func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
 	s := Server{
 		sched: &Scheduler{
 			loaded: map[string]*runnerRef{
-				"test": {
-					model: &Model{
-						ShortName:      "test-model:latest",
-						Digest:         strings.Repeat("b", 64),
-						ManifestDigest: childDigest,
-						Runner:         manifest.RunnerMLX,
-						Config: model.ConfigV2{
-							ModelFormat: manifest.FormatSafetensors,
-						},
-					},
+				"test": withModel(&runnerRef{
 					runner:          manifest.RunnerMLX,
 					totalSize:       1024,
 					vramSize:        1024,
 					expiresAt:       time.Now().Add(time.Hour),
 					sessionDuration: time.Hour,
-				},
+				}, &Model{
+					ShortName:      "test-model:latest",
+					Digest:         strings.Repeat("b", 64),
+					ManifestDigest: childDigest,
+					Runner:         manifest.RunnerMLX,
+					Config: model.ConfigV2{
+						ModelFormat: manifest.FormatSafetensors,
+					},
+				}),
 			},
 		},
 	}
