@@ -167,6 +167,17 @@ func TestRunDecisionModel(t *testing.T) {
 	}
 }
 
+func TestYesNoQuestions(t *testing.T) {
+	got, err := json.Marshal(yesNoQuestions("Is this spam?", "Is it urgent?"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"q1":{"type":"noul","instructions":"Is this spam?"},"q2":{"type":"noul","instructions":"Is it urgent?"}}`
+	if string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
 func TestRunDecisionModelErrors(t *testing.T) {
 	const tooLong = "text and schema must not exceed 64 KiB"
 	_, err := runDecide(t, "", func(w http.ResponseWriter, r *http.Request) {
