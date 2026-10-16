@@ -25,6 +25,7 @@ import (
 
 var (
 	u32                  = windows.NewLazySystemDLL("User32.dll")
+	shcore               = windows.NewLazySystemDLL("Shcore.dll")
 	pBringWindowToTop    = u32.NewProc("BringWindowToTop")
 	pShowWindow          = u32.NewProc("ShowWindow")
 	pSendMessage         = u32.NewProc("SendMessageA")
@@ -35,12 +36,57 @@ var (
 	pSetActiveWindow     = u32.NewProc("SetActiveWindow")
 	pIsIconic            = u32.NewProc("IsIconic")
 
+	pSetProcessDpiAwarenessContext = u32.NewProc("SetProcessDpiAwarenessContext")
+	pSetProcessDpiAwareness        = shcore.NewProc("SetProcessDpiAwareness")
+	pSetProcessDPIAware            = u32.NewProc("SetProcessDPIAware")
+
 	appPath         = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
 	appLogPath      = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
 	startupShortcut = filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Ollama.lnk")
 	ollamaPath      string
 	DesktopAppName  = "ollama app.exe"
 )
+
+func init() {
+	// Mark the process Per-Monitor-V2 DPI aware before any window is created.
+	//
+	// This must run before the tray window (and its popup menu) and the webview
+	// are created. A window's DPI-awareness context is fixed at creation time,
+	// so enabling awareness only when the webview later starts (see
+	// webview.h enable_dpi_awareness) leaves the already-created tray window
+	// unaware and Windows bitmap-stretches its menu, making it blurry and
+	// mis-sized on high-DPI displays. In hidden-start mode the webview never
+	// runs, so the menu would otherwise never be DPI aware at all.
+	//
+	// Per-Monitor-V2 (not v1) is required: only v2 makes Win32 automatically
+	// DPI-scale menus shown via TrackPopupMenu.
+	enableDPIAwareness()
+}
+
+// enableDPIAwareness opts the process into the best DPI-awareness mode the
+// running version of Windows supports, preferring Per-Monitor-V2.
+func enableDPIAwareness() {
+	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (HANDLE)-4 (Windows 10 1703+)
+	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE    == (HANDLE)-3
+	if pSetProcessDpiAwarenessContext.Find() == nil {
+		if ret, _, _ := pSetProcessDpiAwarenessContext.Call(^uintptr(3)); ret != 0 {
+			return
+		}
+		if ret, _, _ := pSetProcessDpiAwarenessContext.Call(^uintptr(2)); ret != 0 {
+			return
+		}
+	}
+	// PROCESS_PER_MONITOR_DPI_AWARE == 2, returns S_OK (0) on success (Windows 8.1+)
+	if pSetProcessDpiAwareness.Find() == nil {
+		if ret, _, _ := pSetProcessDpiAwareness.Call(2); ret == 0 {
+			return
+		}
+	}
+	// System-DPI aware fallback (Windows Vista+)
+	if pSetProcessDPIAware.Find() == nil {
+		pSetProcessDPIAware.Call() //nolint:errcheck
+	}
+}
 
 func init() {
 	// With alternate install location use executable location
