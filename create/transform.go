@@ -19,8 +19,8 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		}
 		return sources[0].WithName(ts.Name), nil
 
-	case TransformRepackFP4, TransformRelabelU8:
-		// Both relabel the header (dtype, and for the fp4 repack the last
+	case TransformRepackFP4, TransformRepackFP8, TransformRelabelU8:
+		// These relabel the header (dtype, and for packed weights the last
 		// dimension); the bytes are unchanged, so the reader is reused.
 		if len(sources) != 1 {
 			return nil, fmt.Errorf("transform %s expects 1 source, got %d", ts.Transform, len(sources))
