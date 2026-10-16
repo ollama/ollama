@@ -1354,6 +1354,164 @@ func TestChatMiddleware(t *testing.T) {
 	}
 }
 
+func TestCompleteWriter_StreamSharesOneTimestamp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:     true,
+		id:         "cmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	// The server stamps each streamed response; later responses must not
+	// change the stream's created value.
+	responses := []api.GenerateResponse{
+		{Model: "test-model", CreatedAt: time.Unix(1700000000, 0), Response: "Hello"},
+		{Model: "test-model", CreatedAt: time.Unix(1700000010, 0), Response: " world"},
+		{Model: "test-model", CreatedAt: time.Unix(1700000020, 0), Done: true, DoneReason: "stop"},
+	}
+	for i, resp := range responses {
+		data, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("marshal response %d: %v", i, err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatalf("write response %d: %v", i, err)
+		}
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// chunk1 + chunk2 + finish + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	for _, frame := range frames[:3] {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(frame), &raw); err != nil {
+			t.Fatalf("unmarshal frame: %v", err)
+		}
+		if got := raw["created"]; got != float64(1700000000) {
+			t.Fatalf("expected all chunks to share created=1700000000, got %v in %s", got, frame)
+		}
+	}
+	if frames[3] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[3])
+	}
+}
+
+func TestCompleteWriter_StreamUsageOnlyOnFinalChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:        true,
+		id:            "cmpl-test",
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	content := api.GenerateResponse{Model: "test-model", Response: "Hi"}
+	data, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("marshal content: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+
+	// Real streams end with a metrics-only response: Done with an empty response.
+	trailer := api.GenerateResponse{
+		Model:      "test-model",
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount:       3,
+			PromptEvalCachedCount: testIntPtr(1),
+			PromptEvalDuration:    30 * time.Millisecond,
+			EvalCount:             1,
+			EvalDuration:          20 * time.Millisecond,
+		},
+	}
+	data, err = json.Marshal(trailer)
+	if err != nil {
+		t.Fatalf("marshal trailer: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write trailer: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + finish + usage + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames (content + finish + usage + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if !strings.Contains(frames[0], `"text":"Hi"`) {
+		t.Fatalf("expected content frame to carry the text, got %s", frames[0])
+	}
+	if !strings.Contains(frames[1], `"finish_reason":"stop"`) {
+		t.Fatalf("expected finish frame with stop reason, got %s", frames[1])
+	}
+	// OpenAI sends usage only on the dedicated usage chunk; the content and
+	// finish chunks must not report (zero) usage.
+	for _, frame := range frames[:2] {
+		if strings.Contains(frame, `"usage"`) {
+			t.Fatalf("expected no usage before the usage frame, got %s", frame)
+		}
+	}
+	if !strings.Contains(frames[2], `"choices":[]`) {
+		t.Fatalf("expected usage frame with empty choices, got %s", frames[2])
+	}
+	if !strings.Contains(frames[2], `"usage":{"prompt_tokens":3,"prompt_tokens_details":{"cached_tokens":1},"completion_tokens":1,"total_tokens":4}`) {
+		t.Fatalf("expected usage frame with the request's usage, got %s", frames[2])
+	}
+	if !strings.Contains(frames[2], `"timings":{"prompt_n":3,"prompt_ms":30`) {
+		t.Fatalf("expected usage frame to carry timings, got %s", frames[2])
+	}
+	if frames[3] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[3])
+	}
+}
+
+func TestCompleteWriter_StreamWithoutUsageOption(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &CompleteWriter{
+		stream:     true,
+		id:         "cmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	for _, resp := range []api.GenerateResponse{
+		{Model: "test-model", Response: "Hi"},
+		{Model: "test-model", Done: true, DoneReason: "stop", Metrics: api.Metrics{PromptEvalCount: 3, EvalCount: 1}},
+	} {
+		data, err := json.Marshal(resp)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if _, err := writer.Write(data); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + finish + [DONE]; no usage chunk unless stream_options asks for it
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), `"usage"`) {
+		t.Fatalf("expected no usage without stream_options.include_usage, got %s", recorder.Body.String())
+	}
+	if frames[2] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[2])
+	}
+}
+
 func TestCompletionsMiddleware(t *testing.T) {
 	type testCase struct {
 		name string
