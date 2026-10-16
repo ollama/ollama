@@ -71,6 +71,12 @@ func open(path string, maxArraySize int) (_ *File, err error) {
 		}
 	}()
 
+	defer func() {
+		if err != nil {
+			f.file.Close()
+		}
+	}()
+
 	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if _, err := io.ReadFull(f.reader, f.Magic[:]); err != nil {
