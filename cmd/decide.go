@@ -41,12 +41,12 @@ func runDecision(cmd *cobra.Command, opts runOptions, interactive bool) error {
 	return decide(cmd, opts, input, opts.Questions)
 }
 
-// yesNoQuestions asks each text as a yes/no question keyed by the text itself.
+// yesNoQuestions asks each text as a yes/no question.
 func yesNoQuestions(texts ...string) *api.SystemOneQuestions {
 	questions := &api.SystemOneQuestions{}
-	for _, text := range texts {
+	for i, text := range texts {
 		instructions, _ := json.Marshal(text)
-		questions.Set(text, api.SystemOneQuestion{Type: "noul", Instructions: instructions})
+		questions.Set(fmt.Sprintf("q%d", i+1), api.SystemOneQuestion{Type: "noul", Instructions: instructions})
 	}
 	return questions
 }
@@ -95,7 +95,7 @@ func (f questionFlag) Set(value string) error {
 	return nil
 }
 
-// askedQuestions returns the --ask questions keyed by their text: yes/no, or
+// askedQuestions returns the --ask questions: yes/no, or
 // answered with a --choice label or on a --level scale.
 func askedQuestions(cmd *cobra.Command) *api.SystemOneQuestions {
 	questions := &api.SystemOneQuestions{}
@@ -103,7 +103,7 @@ func askedQuestions(cmd *cobra.Command) *api.SystemOneQuestions {
 	if flag == nil {
 		return questions
 	}
-	for _, q := range *flag.Value.(questionFlag).asked {
+	for i, q := range *flag.Value.(questionFlag).asked {
 		question := api.SystemOneQuestion{Type: "noul"}
 		question.Instructions, _ = json.Marshal(q.text)
 		switch {
@@ -114,7 +114,7 @@ func askedQuestions(cmd *cobra.Command) *api.SystemOneQuestions {
 			question.Type = "score"
 			question.Criteria, _ = json.Marshal(q.levels)
 		}
-		questions.Set(q.text, question)
+		questions.Set(fmt.Sprintf("q%d", i+1), question)
 	}
 	return questions
 }
@@ -165,10 +165,12 @@ func decide(cmd *cobra.Command, opts runOptions, input api.Message, questions *a
 	}
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	for name := range questions.All() {
+	for name, q := range questions.All() {
+		var text string
+		_ = json.Unmarshal(q.Instructions, &text)
 		raw, ok := resp.Answers.Get(name)
 		if !ok {
-			return fmt.Errorf("no answer to %q", name)
+			return fmt.Errorf("no answer to %q", text)
 		}
 		var a struct {
 			Type          string             `json:"type"`
@@ -179,7 +181,7 @@ func decide(cmd *cobra.Command, opts runOptions, input api.Message, questions *a
 			Probabilities map[string]float64 `json:"probabilities"`
 		}
 		if err := json.Unmarshal(raw, &a); err != nil {
-			return fmt.Errorf("answer to %q: %w", name, err)
+			return fmt.Errorf("answer to %q: %w", text, err)
 		}
 		var answer, measure string
 		switch a.Type {
@@ -204,10 +206,10 @@ func decide(cmd *cobra.Command, opts runOptions, input api.Message, questions *a
 			}
 			measure = fmt.Sprintf("%.0f%%\t%.1f / %d", a.Probabilities[level]*100, a.Score, len(a.Legend)-1)
 		default:
-			return fmt.Errorf("answer to %q has unknown type %q", name, a.Type)
+			return fmt.Errorf("answer to %q has unknown type %q", text, a.Type)
 		}
 		if questions.Len() > 1 {
-			fmt.Fprintf(tw, "%s\t", name)
+			fmt.Fprintf(tw, "%s\t", text)
 		}
 		fmt.Fprintf(tw, "%s\t%s\n", answer, measure)
 	}
