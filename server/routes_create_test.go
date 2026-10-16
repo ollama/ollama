@@ -1932,6 +1932,55 @@ func TestCreateGemma4KeepsDynamicRendererAlias(t *testing.T) {
 	}
 }
 
+func TestCreateQwen38GGUFDetectsRendererParser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	templateBytes, err := os.ReadFile("../model/renderers/testdata/qwen38_chat_template.jinja")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatTemplate := string(templateBytes)
+	tests := []struct {
+		name         string
+		arch         string
+		template     string
+		renderer     string
+		parser       string
+		wantRenderer string
+		wantParser   string
+	}{
+		{name: "dense", arch: "qwen35", template: chatTemplate, wantRenderer: "qwen3.8", wantParser: "qwen3.5"},
+		{name: "moe", arch: "qwen35moe", template: chatTemplate, wantRenderer: "qwen3.8", wantParser: "qwen3.5"},
+		{name: "explicit", arch: "qwen35", template: chatTemplate, renderer: "custom-renderer", parser: "custom-parser", wantRenderer: "custom-renderer", wantParser: "custom-parser"},
+		{name: "explicit renderer", arch: "qwen35", template: chatTemplate, renderer: "custom-renderer", wantRenderer: "custom-renderer", wantParser: "qwen3.5"},
+		{name: "explicit parser", arch: "qwen35", template: chatTemplate, parser: "custom-parser", wantRenderer: "qwen3.8", wantParser: "custom-parser"},
+		{name: "no template", arch: "qwen35"},
+		{name: "no effort marker", arch: "qwen35", template: strings.ReplaceAll(chatTemplate, "resolved_reasoning_effort", "other_effort")},
+		{name: "no preserve marker", arch: "qwen35", template: strings.ReplaceAll(chatTemplate, "preserve_thinking", "other_preserve")},
+		{name: "unrelated architecture", arch: "llama", template: chatTemplate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			_, digest := createBinFile(t, gguftest.KV{
+				"general.architecture":    tt.arch,
+				"tokenizer.chat_template": tt.template,
+			}, nil)
+			var s Server
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
+				Name: "test", Files: map[string]string{"test.gguf": digest},
+				Renderer: tt.renderer, Parser: tt.parser, Stream: &stream,
+			})
+			if w.Code != http.StatusOK {
+				t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
+			}
+			cfg := readCreatedModelConfig(t, "test")
+			if cfg.Renderer != tt.wantRenderer || cfg.Parser != tt.wantParser {
+				t.Errorf("renderer/parser = %q/%q, want %q/%q", cfg.Renderer, cfg.Parser, tt.wantRenderer, tt.wantParser)
+			}
+		})
+	}
+}
+
 func TestCreateLagunaDetectsRendererParser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
