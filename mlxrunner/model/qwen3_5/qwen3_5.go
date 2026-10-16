@@ -85,6 +85,7 @@ type Config struct {
 	QuantMode              string                            `json:"-"`
 	TensorQuant            map[string]*model.TensorQuantInfo `json:"-"`
 	PreciseGatedDeltaDecay bool                              `json:"-"`
+	NoncausalFullAttention bool                              `json:"-"`
 
 	// Computed fields.
 	Scale   float32 `json:"-"`
@@ -104,6 +105,8 @@ type Model struct {
 	Vision      *VisionConfig
 	VisionTower *VisionTower
 	MM          multimodalConfig
+	// Zero uses the Qwen family default. Decision checkpoints may save a lower cap.
+	VisionMaxPixels int32
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -1147,7 +1150,11 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 	} else {
 		kv = nn.WithKV(k, v, b.SeqQueryLens)
 	}
-	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
+	mask := nn.CausalMask()
+	if cfg.NoncausalFullAttention {
+		mask = nn.AttentionMask{}
+	}
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(mask))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	gateSigmoid := mlx.Sigmoid(gate)
 	out = mlx.Mul(out, gateSigmoid)

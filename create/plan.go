@@ -20,6 +20,10 @@ const (
 	// and last dimension are relabeled.
 	TransformRepackFP4 Transform = "repack_fp4"
 
+	// TransformRepackFP8 reinterprets four FP8 values as one U32 word for
+	// MLX's mxfp8 matrix multiplication. The bytes are unchanged.
+	TransformRepackFP8 Transform = "repack_fp8"
+
 	// TransformRelabelU8 relabels an F8_E4M3 scale as U8 so the loader reads
 	// its raw bytes; the bytes themselves are unchanged.
 	TransformRelabelU8 Transform = "relabel_u8"
