@@ -6,7 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
+
+const defaultToolTimeout = 60 * time.Second
 
 // Tool defines the interface that all tools must implement
 type Tool interface {
@@ -28,14 +31,16 @@ type Tool interface {
 
 // Registry manages the available tools and their execution
 type Registry struct {
-	tools      map[string]Tool
-	workingDir string // Working directory for all tool operations
+	tools       map[string]Tool
+	workingDir  string // Working directory for all tool operations
+	toolTimeout time.Duration
 }
 
 // NewRegistry creates a new tool registry with no tools
 func NewRegistry() *Registry {
 	return &Registry{
-		tools: make(map[string]Tool),
+		tools:       make(map[string]Tool),
+		toolTimeout: defaultToolTimeout,
 	}
 }
 
@@ -71,11 +76,33 @@ func (r *Registry) Execute(ctx context.Context, name string, args map[string]any
 		return nil, "", fmt.Errorf("unknown tool: %s", name)
 	}
 
-	result, text, err := tool.Execute(ctx, args)
-	if err != nil {
-		return nil, "", err
+	if r.toolTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.toolTimeout)
+		defer cancel()
 	}
-	return result, text, nil
+
+	type toolResult struct {
+		result any
+		text   string
+		err    error
+	}
+
+	done := make(chan toolResult, 1)
+	go func() {
+		result, text, err := tool.Execute(ctx, args)
+		done <- toolResult{result: result, text: text, err: err}
+	}()
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			return nil, "", result.err
+		}
+		return result.result, result.text, nil
+	case <-ctx.Done():
+		return nil, "", ctx.Err()
+	}
 }
 
 // ToolCall represents a request to execute a tool
