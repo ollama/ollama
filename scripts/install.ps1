@@ -42,6 +42,19 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # --------------------------------------------------------------------------
+# OS Detection
+# --------------------------------------------------------------------------
+
+if ($IsLinux -or $IsMacOS) {
+    Write-Host ">>> This script is for installing Ollama on Windows." -ForegroundColor Yellow
+    Write-Host ">>> To install Ollama on Linux or macOS, run:"
+    Write-Host "    curl -fsSL https://ollama.com/install.sh | sh"
+    Write-Host ""
+    Write-Host ">>> For more information, visit https://ollama.com/download"
+    return
+}
+
+# --------------------------------------------------------------------------
 # Configuration from environment variables
 # --------------------------------------------------------------------------
 
@@ -257,7 +270,8 @@ function Invoke-Install {
         Write-Host ">>> Downloading Ollama for Windows..."
     }
 
-    $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
+    $tempDir = [System.IO.Path]::GetTempPath()
+    $tempInstaller = Join-Path $tempDir "OllamaSetup.exe"
     Invoke-Download -Url $installerUrl -OutFile $tempInstaller
 
     # Verify signature
