@@ -175,6 +175,7 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 		)
 		model.Recommended = true
 		model.entitlementKnown = true
+		model.gateway.MaxInputTokens = recommendation.ContextLength
 		models = append(models, model)
 	}
 	return models
@@ -184,11 +185,11 @@ func ClaudeDesktopModelsFromRecommendations(recommendations []api.ModelRecommend
 // deliberately small; the Ollama.com app-aware endpoint is the primary source.
 func DefaultClaudeDesktopModels() []ClaudeDesktopModel {
 	models := ClaudeDesktopModelsFromRecommendations([]api.ModelRecommendation{
-		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, RequiredPlan: "pro"},
-		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, RequiredPlan: "pro"},
-		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, RequiredPlan: "free"},
+		{Model: "glm-5.2:cloud", Description: "Long-horizon coding and agentic engineering", MaxOutputTokens: 128_000, ContextLength: 202_752, RequiredPlan: "pro"},
+		{Model: "kimi-k3:cloud", Description: "Long-horizon agentic reasoning with multimodal tool use", MaxOutputTokens: 262_144, ContextLength: 262_144, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-pro", Description: "High-performance coding and tool use", MaxOutputTokens: 128_000, ContextLength: 163_840, RequiredPlan: "pro"},
+		{Model: "deepseek-v4-flash", Description: "Fast coding and agentic tool use", MaxOutputTokens: 64_000, ContextLength: 163_840, RequiredPlan: "pro"},
+		{Model: "gemma4:31b-cloud", Description: "Agentic workflows and multimodal reasoning", MaxOutputTokens: 262_144, ContextLength: 262_144, RequiredPlan: "free"},
 	})
 	// Preserve the proven fallback route while the endpoint remains free to
 	// move the canonical DeepSeek alias independently.
