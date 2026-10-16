@@ -88,12 +88,19 @@ func (t *winTray) UpdateAvailable(ver string) error {
 	return nil
 }
 
+// logsCommandArgs returns the cmd.exe arguments that open dir in Explorer.
+// start treats its first quoted argument as the window title, so the empty
+// title keeps a directory such as C:\Users\Jane Doe\... from being split.
+func logsCommandArgs(dir string) []string {
+	return []string{"/c", "start", "", dir}
+}
+
 func (t *winTray) showLogs() error {
 	localAppData := os.Getenv("LOCALAPPDATA")
 	AppDataDir := filepath.Join(localAppData, "Ollama")
 	cmd_path := "c:\\Windows\\system32\\cmd.exe"
 	slog.Debug(fmt.Sprintf("viewing logs with start %s", AppDataDir))
-	cmd := exec.Command(cmd_path, "/c", "start", AppDataDir)
+	cmd := exec.Command(cmd_path, logsCommandArgs(AppDataDir)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: false, CreationFlags: 0x08000000}
 	err := cmd.Start()
 	if err != nil {
