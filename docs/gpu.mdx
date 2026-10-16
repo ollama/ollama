@@ -42,7 +42,7 @@ For building locally to support older GPUs, see [development](./development.md).
 If you have multiple NVIDIA GPUs in your system and want to limit Ollama to use
 a subset, you can set `CUDA_VISIBLE_DEVICES` to a comma separated list of GPUs.
 Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
-You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
+You can discover the UUID of your GPUs by running `nvidia-smi -L`. If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
 ### Linux Suspend Resume
