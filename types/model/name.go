@@ -165,10 +165,13 @@ func ParseNameBare(s string) Name {
 	}
 
 	scheme, host, ok := strings.Cut(s, "://")
-	if ok {
+	if ok && scheme != "" {
 		n.ProtocolScheme = scheme
 	} else {
-		host = scheme
+		// No (non-empty) scheme: the whole remainder is the host. An
+		// empty scheme (e.g. "://host") is malformed and must not be
+		// swallowed, otherwise String() cannot round-trip the name.
+		host = s
 	}
 	n.Host = host
 
