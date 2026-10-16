@@ -565,6 +565,110 @@ func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
 	}
 }
 
+func TestChatPromptTokenizeCallsWithToolHistory(t *testing.T) {
+	// Use a permissive template so renderer validation cannot mask repeated
+	// tokenization. The Qwen-specific regression test covers that validation.
+	tmpl, err := template.Parse(`{{range .Messages}}{{.Role}}: {{.Content}}{{range .ToolCalls}} {{.Function.Name}}{{end}}{{"\n"}}{{end}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name      string
+		toolPairs int
+		olderTurn bool
+	}{
+		{name: "short tool loop", toolPairs: 2},
+		{name: "long tool loop", toolPairs: 32},
+		{name: "latest user after older turn", toolPairs: 2, olderTurn: true},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := []api.Message{
+				{Role: "system", Content: "system instructions"},
+			}
+			if tt.olderTurn {
+				msgs = append(msgs,
+					api.Message{Role: "user", Content: "older question"},
+					api.Message{Role: "assistant", Content: "older answer"},
+				)
+			}
+			lastUserIdx := len(msgs)
+			msgs = append(msgs, api.Message{Role: "user", Content: "latest question"})
+			for range tt.toolPairs {
+				msgs = append(msgs,
+					api.Message{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{Function: api.ToolCallFunction{Name: "lookup"}},
+						},
+					},
+					api.Message{Role: "tool", Content: "lookup result"},
+				)
+			}
+
+			calls := 0
+			tokenize := func(context.Context, string) ([]int, error) {
+				calls++
+				// Force every candidate over NumCtx without relying on token sizes.
+				return []int{0, 1}, nil
+			}
+			m := Model{Template: tmpl}
+			opts := api.Options{Runner: api.Runner{NumCtx: 1}}
+			prompt, _, err := chatPrompt(t.Context(), &m, tokenize, &opts, msgs, nil, nil, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// The bound depends on the latest user's index, not the number of
+			// assistant/tool messages following it. Allow future optimizations.
+			if maxCalls := lastUserIdx + 1; calls > maxCalls {
+				t.Errorf("tokenize called %d times, expected at most %d", calls, maxCalls)
+			}
+
+			// Keep the system message and the entire latest turn, but not the
+			// older turn. Render independently of the truncation under test.
+			wantMsgs := append([]api.Message{msgs[0]}, msgs[lastUserIdx:]...)
+			want, err := renderPrompt(&m, wantMsgs, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, prompt); diff != "" {
+				t.Errorf("prompt mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestChatPromptPreservesLastUserMessageOnTruncation(t *testing.T) {
+	m := Model{
+		Config: testConfigWithRenderer("qwen3.8"),
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 1}}
+	think := false
+
+	msgs := []api.Message{
+		{Role: "system", Content: "You are a helpful assistant with web search."},
+		{Role: "user", Content: "Search for the latest qwen3.8 model settings"},
+		{Role: "assistant", Content: "", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "web_search"}}}},
+		{Role: "tool", Content: "http://example.com/search?q=qwen3.8+settings\nlorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"},
+		{Role: "assistant", Content: "", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "get_url"}}}},
+		{Role: "tool", Content: "http://example.com/page\n" + strings.Repeat("quid est veritas et quis est qui loquitur ", 40)},
+	}
+
+	// Without preserving the last user message, truncation to 1 token drops the
+	// user query entirely and the qwen3.8 renderer rejects the transcript with
+	// "no user query found in messages" (issue #17778).
+	prompt, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(prompt, "Search for the latest qwen3.8 model settings") {
+		t.Fatalf("prompt dropped the most recent user query, got: %q", prompt)
+	}
+}
+
 func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
 	msgs := []api.Message{{Role: "user", Content: "Hello"}}
 
