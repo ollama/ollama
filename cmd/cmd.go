@@ -1196,6 +1196,13 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	jsonFormat, _ := cmd.Flags().GetBool("json")
+	if jsonFormat {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(models)
+	}
+
 	var data [][]string
 
 	for _, m := range models.Models {
@@ -1234,6 +1241,13 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	models, err := client.ListRunning(cmd.Context())
 	if err != nil {
 		return err
+	}
+
+	jsonFormat, _ := cmd.Flags().GetBool("json")
+	if jsonFormat {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(models)
 	}
 
 	var data [][]string
@@ -2672,6 +2686,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+	listCmd.Flags().Bool("json", false, "Format output as JSON")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
@@ -2679,6 +2694,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+	psCmd.Flags().Bool("json", false, "Format output as JSON")
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
