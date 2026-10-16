@@ -307,7 +307,7 @@ func TestSystemOneHandler(t *testing.T) {
 			s := newServerWithMockRunner(t, &runner.mockRunner)
 			s.sched.loadFn = func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				runner.contextLength = req.opts.NumCtx
-				ref.model = req.model
+				ref.model.Store(req.model)
 				ref.modelKey = schedulerModelKey(req.model)
 				s.sched.loadedMu.Lock()
 				s.sched.loaded[ref.modelKey] = ref
@@ -325,7 +325,7 @@ func TestSystemOneHandler(t *testing.T) {
 			if w.Code != tt.status || runner.calls != tt.calls {
 				t.Fatalf("status=%d calls=%d body=%s", w.Code, runner.calls, w.Body)
 			}
-			if tt.calls == 0 && tt.err == nil && ref.model != nil {
+			if tt.calls == 0 && tt.err == nil && ref.model.Load() != nil {
 				t.Fatal("loaded a runner for a rejected request")
 			}
 			if strings.HasPrefix(tt.name, "score limits/") && tt.status == http.StatusBadRequest &&
@@ -382,7 +382,7 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 				outputTokens := 2
-				if len(runner.request.Fields) > 0 || runner.native || ref.model.Config.Renderer == "kev" {
+				if len(runner.request.Fields) > 0 || runner.native || ref.model.Load().Config.Renderer == "kev" {
 					outputTokens = 0
 				}
 				if response.Answers["refund"].Noul < 0.88 || response.Usage.InputTokens != 123 || response.Usage.OutputTokens != outputTokens {
@@ -394,14 +394,14 @@ func TestSystemOneHandler(t *testing.T) {
 					}
 					return
 				}
-				if ref.model.Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
+				if ref.model.Load().Config.Renderer == "strands" && (len(runner.request.PointerRows) != 1 || len(runner.request.Rows) != 0 || !strings.HasSuffix(runner.request.PointerRows[0].Prompt, "<answer>")) {
 					t.Fatalf("Strands did not receive pointer inputs: %+v", runner.request)
 				}
 				var prompt string
 				if len(runner.request.Rows) > 0 {
 					prompt = runner.request.Rows[0].Prompt
 				}
-				if ref.model.Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
+				if ref.model.Load().Config.Renderer == "tev1" && (!strings.Contains(prompt, `"state": "x", "question": "q", "options":`) || strings.Contains(prompt, "Requested field:")) {
 					t.Fatalf("Tev1 did not receive its per-question prompt: %q", prompt)
 				}
 				if len(runner.request.Fields) > 0 {
@@ -412,17 +412,17 @@ func TestSystemOneHandler(t *testing.T) {
 					if len(runner.request.Rows) != 0 {
 						t.Fatal("pointer head must bypass chat templates")
 					}
-				} else if ref.model.HasGoTemplate {
+				} else if ref.model.Load().HasGoTemplate {
 					if !strings.HasPrefix(prompt, "custom:system:Model-specific scoring instructions.\nuser:") || !strings.HasSuffix(prompt, "answer:") {
 						t.Fatalf("scorer did not receive the Modelfile template output: %q", prompt)
 					}
-				} else if ref.model.Config.Renderer == "kev" {
+				} else if ref.model.Load().Config.Renderer == "kev" {
 					if prompt != "" || len(runner.request.State) != 70<<10 || runner.request.Rows[0].Question == nil {
 						t.Fatalf("Kev scorer received a rendered prompt or lost the state/question")
 					}
 				} else {
 					wantPrefix := "<|im_start|>user\n"
-					if ref.model.System != "" {
+					if ref.model.Load().System != "" {
 						wantPrefix = "<|im_start|>system\nModel-specific scoring instructions.<|im_end|>\n<|im_start|>user\n"
 					}
 					if !strings.HasPrefix(prompt, wantPrefix) || !strings.HasSuffix(prompt, "<think>\n\n</think>\n\n") {
