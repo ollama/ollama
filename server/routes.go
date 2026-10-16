@@ -718,6 +718,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	var thinkTagParser *thinkingparser.Parser
+	var thinkingOpen []string
 	if builtinParser == nil {
 		openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
 		if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
@@ -727,6 +728,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 			if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
 				thinkTagParser.AddContent(openingTag)
+			} else {
+				thinkingOpen = []string{openingTag}
 			}
 		}
 	}
@@ -747,6 +750,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if !req.Raw {
 			thinkingClose = thinkingCloseForCompletion(builtinParser, thinkTagParser)
 		}
+		thinkingOpenForRequest := append(thinkingOpen, thinkingOpenForCompletion(builtinParser)...)
+		if req.Raw {
+			thinkingOpenForRequest = nil
+		}
 
 		if err := r.Completion(ctx, llm.CompletionRequest{
 			Prompt:          prompt,
@@ -760,6 +767,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			LeadingBOS:      leadingBOS,
 			ThinkingClose:   thinkingClose,
+			ThinkingOpen:    thinkingOpenForRequest,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2861,6 +2869,13 @@ func thinkingCloseForCompletion(builtinParser parsers.Parser, thinkTagParser *th
 	return nil
 }
 
+func thinkingOpenForCompletion(builtinParser parsers.Parser) []string {
+	if parser, ok := builtinParser.(interface{ ThinkingOpen() []string }); ok {
+		return parser.ThinkingOpen()
+	}
+	return nil
+}
+
 func leadingBOSForModel(m *Model) string {
 	if m == nil || m.Config.Renderer == "" {
 		return ""
@@ -3267,6 +3282,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	var thinkTagParser *thinkingparser.Parser
+	var thinkingOpen []string
 	openingTag, closingTag := thinkingparser.InferTags(m.Template.Template)
 	if req.Think != nil && req.Think.Bool() && openingTag != "" && closingTag != "" {
 		thinkTagParser = &thinkingparser.Parser{
@@ -3276,6 +3292,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		if strings.HasSuffix(strings.TrimSpace(prompt), openingTag) {
 			thinkTagParser.AddContent(openingTag)
+		} else {
+			thinkingOpen = []string{openingTag}
 		}
 	}
 
@@ -3306,6 +3324,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			ToolCallTag:     toolCallTagForCompletion(toolParser),
 			LeadingBOS:      leadingBOSForModel(m),
 			ThinkingClose:   thinkingCloseForCompletion(builtinParser, thinkTagParser),
+			ThinkingOpen:    append(thinkingOpen, thinkingOpenForCompletion(builtinParser)...),
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:     req.Model,
