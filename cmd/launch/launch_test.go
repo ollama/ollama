@@ -2294,6 +2294,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 }
 
 func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
+	withInteractiveSession(t, true)
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2345,6 +2346,7 @@ func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 }
 
 func TestResolveRunModel_MetadataSignedOutUsesSignInHook(t *testing.T) {
+	withInteractiveSession(t, true)
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -2976,6 +2978,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsMissingLocalAndPersistsAccep
 }
 
 func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAccepted(t *testing.T) {
+	withInteractiveSession(t, true)
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -3141,6 +3144,7 @@ func TestLaunchIntegration_EditorConfigurePaymentDeclinedReturnsToModelSelector(
 }
 
 func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *testing.T) {
+	withInteractiveSession(t, true)
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)

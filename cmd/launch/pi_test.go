@@ -761,6 +761,36 @@ exit 0
 		}
 	})
 
+	t.Run("pinned web search version is preserved without update attempts", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiWebSearchPackage(t, tmpDir, "0.0.4")
+		setNpmRegistryVersion(t, "0.0.5")
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+		listPath := filepath.Join(tmpDir, "pi-list.txt")
+		list, err := os.ReadFile(listPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		list = []byte(strings.Replace(string(list), piWebSearchSource+"\n", piWebSearchSource+"@0.0.4\n", 1))
+		if err := os.WriteFile(listPath, list, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&Pi{}).Run("ignored", nil, []string{"doctor"}); err != nil {
+			t.Fatal(err)
+		}
+		calls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(calls), "update ") || strings.Contains(string(calls), "install ") {
+			t.Fatalf("pinned package was managed: %s", calls)
+		}
+	})
+
 	t.Run("web search update failure warns and continues", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
@@ -879,6 +909,39 @@ exit 0
 	})
 }
 
+func TestPiPackageInfo_VersionSources(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+	for _, tc := range []struct {
+		name      string
+		suffix    string
+		installed bool
+		pinned    bool
+	}{
+		{"exact version", "@0.0.4", true, true},
+		{"prerelease with build metadata", "@0.0.4-beta.1+build.2", true, true},
+		{"latest tag", "@latest", true, false},
+		{"version range", "@^0.0.4", true, false},
+		{"different package", "-extra", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := filepath.Join(t.TempDir(), "pi")
+			script := fmt.Sprintf("#!/bin/sh\nprintf 'User packages:\\n  %%s\\n    /tmp/pi-web-search\\n' '%s'\n", piWebSearchSource+tc.suffix)
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			got, err := piPackageInfo(bin, piWebSearchSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.installed != tc.installed || got.pinned != tc.pinned {
+				t.Fatalf("package info = %+v, want installed=%t pinned=%t", got, tc.installed, tc.pinned)
+			}
+		})
+	}
+}
+
 func TestPiPaths(t *testing.T) {
 	pi := &Pi{}
 
@@ -910,6 +973,65 @@ func TestPiPaths(t *testing.T) {
 			t.Errorf("Paths() = %v, want [%s]", paths, configPath)
 		}
 	})
+}
+
+func TestPiCustomAgentDirectory(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprintf("tilde=%t", relative), func(t *testing.T) {
+			home := t.TempDir()
+			setTestHome(t, home)
+			dir := filepath.Join(home, "custom-agent")
+			override := dir
+			if relative {
+				override = "~/custom-agent"
+			}
+			t.Setenv("PI_CODING_AGENT_DIR", override)
+			t.Setenv("OLLAMA_HOST", "http://localhost:11434")
+			pi := &Pi{}
+			if err := pi.Edit(testLaunchModels("local-model")); err != nil {
+				t.Fatal(err)
+			}
+			wantPaths := []string{filepath.Join(dir, "models.json"), filepath.Join(dir, "settings.json")}
+			if got := pi.Paths(); !slices.Equal(got, wantPaths) {
+				t.Fatalf("Paths() = %v, want %v", got, wantPaths)
+			}
+			if got := pi.Models(); !slices.Equal(got, []string{"local-model"}) {
+				t.Fatalf("Models() = %v, want [local-model]", got)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".pi", "agent")); !os.IsNotExist(err) {
+				t.Fatalf("default Pi config directory was touched: %v", err)
+			}
+		})
+	}
+}
+
+func TestPiEdit_PreservesSelectedUserModel(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	dir := filepath.Join(home, ".pi", "agent")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "models.json")
+	original := `{"providers":{"ollama":{"models":[{"id":"local-model","contextWindow":8192,"compat":{"supportsDeveloperRole":false}}]}}}`
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Pi{}).Edit(testLaunchModels("local-model")); err != nil {
+		t.Fatal(err)
+	}
+	config, err := fileutil.ReadJSON(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := config["providers"].(map[string]any)["ollama"].(map[string]any)["models"].([]any)
+	if len(models) != 1 {
+		t.Fatalf("selected user model was duplicated: %v", models)
+	}
+	got := models[0].(map[string]any)
+	if got["contextWindow"] != float64(8192) || got["_launch"] != nil || got["compat"].(map[string]any)["supportsDeveloperRole"] != false {
+		t.Fatalf("user model changed: %v", got)
+	}
 }
 
 func TestPiEdit(t *testing.T) {
@@ -1185,35 +1307,19 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
-	t.Run("handles corrupt config gracefully", func(t *testing.T) {
+	t.Run("preserves corrupt config", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
-
-		if err := os.WriteFile(configPath, []byte("{invalid json}"), 0o644); err != nil {
+		original := "{invalid json}"
+		if err := os.WriteFile(configPath, []byte(original), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		models := []string{"test-model"}
-		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
-			t.Fatalf("Edit() should not fail with corrupt config, got %v", err)
+		if err := pi.Edit(testLaunchModels("test-model")); err == nil {
+			t.Fatal("Edit() succeeded with corrupt models.json")
 		}
-
 		data, err := os.ReadFile(configPath)
-		if err != nil {
-			t.Fatalf("Failed to read config: %v", err)
-		}
-
-		var cfg map[string]any
-		if err := json.Unmarshal(data, &cfg); err != nil {
-			t.Fatalf("Config should be valid after Edit, got parse error: %v", err)
-		}
-
-		providers := cfg["providers"].(map[string]any)
-		ollama := providers["ollama"].(map[string]any)
-		modelsArray := ollama["models"].([]any)
-
-		if len(modelsArray) != 1 {
-			t.Errorf("Expected 1 model, got %d", len(modelsArray))
+		if err != nil || string(data) != original {
+			t.Fatalf("corrupt models.json changed: %q, %v", data, err)
 		}
 	})
 
@@ -1365,36 +1471,26 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
-	t.Run("handles corrupt settings.json gracefully", func(t *testing.T) {
+	t.Run("preserves both files when settings is corrupt", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
-
-		// Create corrupt settings
 		settingsPath := filepath.Join(configDir, "settings.json")
-		if err := os.WriteFile(settingsPath, []byte("{invalid"), 0o644); err != nil {
+		originalModels := `{"providers":{"ollama":{"models":[{"id":"keep-model"}]}}}`
+		originalSettings := "{invalid"
+		if err := os.WriteFile(configPath, []byte(originalModels), 0o644); err != nil {
 			t.Fatal(err)
 		}
-
-		models := []string{"test-model"}
-		if err := pi.Edit(launchModelsFromNames(models)); err != nil {
-			t.Fatalf("Edit() should not fail with corrupt settings, got %v", err)
+		if err := os.WriteFile(settingsPath, []byte(originalSettings), 0o644); err != nil {
+			t.Fatal(err)
 		}
-
-		data, err := os.ReadFile(settingsPath)
-		if err != nil {
-			t.Fatalf("Failed to read settings: %v", err)
+		if err := pi.Edit(testLaunchModels("test-model")); err == nil {
+			t.Fatal("Edit() succeeded with corrupt settings.json")
 		}
-
-		var settings map[string]any
-		if err := json.Unmarshal(data, &settings); err != nil {
-			t.Fatalf("settings.json should be valid after Edit, got parse error: %v", err)
-		}
-
-		if settings["defaultProvider"] != "ollama" {
-			t.Errorf("defaultProvider = %v, want ollama", settings["defaultProvider"])
-		}
-		if settings["defaultModel"] != "test-model" {
-			t.Errorf("defaultModel = %v, want test-model", settings["defaultModel"])
+		for path, original := range map[string]string{configPath: originalModels, settingsPath: originalSettings} {
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != original {
+				t.Errorf("%s changed: %q, %v", path, data, err)
+			}
 		}
 	})
 }
