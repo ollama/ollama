@@ -586,6 +586,54 @@ func TestChatHandlerHarmonyPreservesStructuralTokens(t *testing.T) {
 	}
 }
 
+func TestGenerateHandlerRawPreservesParserTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	const output = "<|channel>thought\nhmm<channel|>done"
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Content:    output,
+			Done:       true,
+			DoneReason: llm.DoneReasonStop,
+		},
+	}
+	s := newServerWithMockRunner(t, &mock)
+	createMinimalGGUFModel(t, s, "test-raw-base", nil, "{{ .Prompt }}", nil)
+
+	stream := false
+	if w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test-raw-parser",
+		From:   "test-raw-base",
+		Parser: "gemma4",
+		Stream: &stream,
+	}); w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-raw-parser",
+		Prompt: "hello",
+		Raw:    true,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, token := range []string{"<|channel>", "<channel|>"} {
+		if !slices.Contains(mock.CompletionRequest.PreservedTokens, token) {
+			t.Fatalf("expected preserved tokens to contain %q, got %#v", token, mock.CompletionRequest.PreservedTokens)
+		}
+	}
+
+	var resp api.GenerateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Response != output || resp.Thinking != "" {
+		t.Fatalf("expected raw output to stay unparsed, got response %q thinking %q", resp.Response, resp.Thinking)
+	}
+}
+
 func TestParserNameForModelDoesNotChangeConfig(t *testing.T) {
 	tmpl, err := ollamatemplate.Parse("<|start|><|end|>")
 	if err != nil {
