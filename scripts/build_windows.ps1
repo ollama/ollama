@@ -1046,6 +1046,20 @@ function installer {
         & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
     }
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+    if ("${env:KEY_CONTAINER}") {
+        $installerPath = Join-Path $script:SRC_DIR "dist\OllamaSetup.exe"
+        $signature = Get-AuthenticodeSignature -FilePath $installerPath
+        if ($signature.Status -ne "Valid") {
+            throw "Windows installer signature status is $($signature.Status)"
+        }
+
+        $subject = $signature.SignerCertificate.Subject
+        if ($subject -notmatch "(^|, )O=Ollama Inc\.(,|$)") {
+            throw "Unexpected Windows installer signer: $subject"
+        }
+        Write-Output "Windows installer signature verified: $subject"
+    }
 }
 
 function newZipJob($sourceDir, $destZip) {
