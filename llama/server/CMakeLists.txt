@@ -549,7 +549,7 @@ if(OLLAMA_RUNNER_DIR)
             )
             install(RUNTIME_DEPENDENCY_SET rocm_deps
                 DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocm_kpack rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller origami rocm_sysdeps LLVM clang-cpp drm drm_amdgpu numa elf
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -576,14 +576,86 @@ if(OLLAMA_RUNNER_DIR)
                     message(FATAL_ERROR "Could not find ROCm COMGR runtime DLLs to bundle")
                 endif()
             endif()
-            foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
-                if(EXISTS ${_hip_dir}/rocblas)
-                    install(DIRECTORY ${_hip_dir}/rocblas
-                        DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
-                        COMPONENT llama-server)
-                    break()
+            get_filename_component(_rocm_root "${HIP_BIN_INSTALL_DIR}" DIRECTORY)
+            if(EXISTS "${_rocm_root}/.kpack")
+                set(_rocm_targets ${GPU_TARGETS})
+                if(NOT _rocm_targets)
+                    set(_rocm_targets ${AMDGPU_TARGETS})
                 endif()
-            endforeach()
+                if(NOT _rocm_targets)
+                    set(_rocm_targets ${CMAKE_HIP_ARCHITECTURES})
+                endif()
+
+                set(_rocm_kpack_targets)
+                foreach(_rocm_target IN LISTS _rocm_targets)
+                    string(REGEX REPLACE ":.*$" "" _rocm_target "${_rocm_target}")
+                    list(APPEND _rocm_kpack_targets "${_rocm_target}")
+                endforeach()
+                list(REMOVE_DUPLICATES _rocm_kpack_targets)
+
+                set(_rocm_rocblas_dir)
+                foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                    if(EXISTS "${_hip_dir}/rocblas/library")
+                        set(_rocm_rocblas_dir "${_hip_dir}/rocblas/library")
+                        break()
+                    endif()
+                endforeach()
+                if(NOT _rocm_rocblas_dir)
+                    message(FATAL_ERROR "Could not find ROCm rocBLAS runtime data")
+                endif()
+
+                set(_rocm_kpacks)
+                set(_rocm_rocblas_files)
+                set(_rocm_rocblas_dirs)
+                foreach(_rocm_target IN LISTS _rocm_kpack_targets)
+                    set(_target_kpack "${_rocm_root}/.kpack/blas_lib_${_rocm_target}.kpack")
+                    if(NOT EXISTS "${_target_kpack}")
+                        message(FATAL_ERROR "Could not find ROCm kernel packs for ${_rocm_target}")
+                    endif()
+                    file(GLOB _target_rocblas_files
+                        LIST_DIRECTORIES false
+                        "${_rocm_rocblas_dir}/*${_rocm_target}*")
+                    set(_target_rocblas_dir "${_rocm_rocblas_dir}/${_rocm_target}")
+                    if(NOT _target_rocblas_files AND NOT IS_DIRECTORY "${_target_rocblas_dir}")
+                        message(STATUS "Skipping ROCm target ${_rocm_target}: no rocBLAS runtime data")
+                        continue()
+                    endif()
+                    list(APPEND _rocm_kpacks "${_target_kpack}")
+                    list(APPEND _rocm_rocblas_files ${_target_rocblas_files})
+                    if(IS_DIRECTORY "${_target_rocblas_dir}")
+                        list(APPEND _rocm_rocblas_dirs "${_target_rocblas_dir}")
+                    endif()
+                endforeach()
+                if(NOT _rocm_kpacks)
+                    message(FATAL_ERROR "Could not find compatible ROCm runtime data")
+                endif()
+                install(FILES ${_rocm_kpacks}
+                    DESTINATION "${_base_dest}/.kpack"
+                    COMPONENT llama-server)
+
+                # rocBLAS still uses its target-specific Tensile databases in
+                # addition to the split kernel packs.
+                if(_rocm_rocblas_files)
+                    install(FILES ${_rocm_rocblas_files}
+                        DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}/rocblas/library"
+                        COMPONENT llama-server)
+                endif()
+                if(_rocm_rocblas_dirs)
+                    install(DIRECTORY ${_rocm_rocblas_dirs}
+                        DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}/rocblas/library"
+                        COMPONENT llama-server)
+                endif()
+            else()
+                # Older ROCm releases store per-target Tensile data here.
+                foreach(_hip_dir IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+                    if(EXISTS ${_hip_dir}/rocblas)
+                        install(DIRECTORY ${_hip_dir}/rocblas
+                            DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}"
+                            COMPONENT llama-server)
+                        break()
+                    endif()
+                endforeach()
+            endif()
         endif()
     endif()
     if(GGML_VULKAN)
