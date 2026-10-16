@@ -2592,6 +2592,34 @@ func TestFromResponsesRequest_TextFormatText(t *testing.T) {
 	}
 }
 
+func TestFromResponsesRequest_TextFormatJsonObject(t *testing.T) {
+	// The older JSON mode maps to the "json" format, as it does for
+	// response_format in chat completions
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": "List three colors as JSON",
+		"text": {
+			"format": {
+				"type": "json_object"
+			}
+		}
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if string(chatReq.Format) != `"json"` {
+		t.Errorf("Format = %q, want %q", string(chatReq.Format), `"json"`)
+	}
+}
+
 func TestResponsesInputMessage_ShorthandFormats(t *testing.T) {
 	t.Run("string content shorthand", func(t *testing.T) {
 		// Content can be a plain string instead of an array of content items
