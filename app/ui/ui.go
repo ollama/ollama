@@ -142,12 +142,24 @@ func (s *Server) ollamaProxy() http.Handler {
 			if proxy == nil {
 				var err error
 				for i := range 2 {
+					if err := r.Context().Err(); err != nil {
+						break
+					}
 					if i > 0 {
 						s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
-						time.Sleep(1 * time.Second)
+						timer := time.NewTimer(time.Second)
+						select {
+						case <-r.Context().Done():
+							timer.Stop()
+							break
+						case <-timer.C:
+						}
+						if err := r.Context().Err(); err != nil {
+							break
+						}
 					}
 
-					err = WaitForServer(context.Background(), 10*time.Second)
+					err = WaitForServer(r.Context(), 10*time.Second)
 					if err == nil {
 						break
 					}
@@ -496,6 +508,9 @@ func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 func WaitForServer(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		c, err := api.ClientFromEnvironment()
 		if err != nil {
 			return err
@@ -504,7 +519,16 @@ func WaitForServer(ctx context.Context, timeout time.Duration) error {
 			slog.Debug("ollama server is ready")
 			return nil
 		}
-		time.Sleep(10 * time.Millisecond)
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return errors.New("timeout waiting for Ollama server to be ready")
 }
