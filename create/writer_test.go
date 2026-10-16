@@ -249,6 +249,49 @@ func TestWriteBlobsNVFP4ExpertScaleBanks(t *testing.T) {
 	}
 }
 
+func TestWriteBlobsModelOptMXFP8(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+	weight := make([]byte, 16*128)
+	for i := range weight {
+		weight[i] = byte(i)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("linear.weight", "F8_E4M3", []int32{16, 128}, weight),
+		st.NewTensorDataFromBytes("linear.weight_scale", "U8", []int32{16, 4}, make([]byte, 16*4)),
+	})
+
+	inv, err := ReadInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newCaptureStore()
+	if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.blobs) != 1 {
+		t.Fatalf("got blobs %v, want only fused weight", store.names())
+	}
+	blob := store.blobs["linear.weight"]
+	h := blobHeader(t, blob)
+	if w := h["linear.weight"]; w.Dtype != "U32" || !slices.Equal(w.Shape, []int32{16, 32}) {
+		t.Errorf("weight header = %+v, want U32 [16 32]", w)
+	}
+	if s := h["linear.weight.scale"]; s.Dtype != "U8" || !slices.Equal(s.Shape, []int32{16, 4}) {
+		t.Errorf("scale header = %+v, want U8 [16 4]", s)
+	}
+	if got := readPackedTensorRaw(t, blob, "linear.weight"); !slices.Equal(got, weight) {
+		t.Error("FP8 weight bytes changed during packing")
+	}
+	if md := blobMetadata(t, blob); md["quant_type"] != "mxfp8" || md["group_size"] != "32" {
+		t.Errorf("metadata = %v, want mxfp8 group 32", md)
+	}
+}
+
 func TestWriteBlobsQuantizeFloat(t *testing.T) {
 	mlxtest.SkipIfUnavailable(t)
 	for _, quantize := range []string{"int4", "nvfp4", "mxfp8"} {

@@ -14,6 +14,9 @@ type Scorer interface {
 
 // ScoreRequest carries prompt rows or model-native decision head inputs.
 type ScoreRequest struct {
+	// System is the Modelfile instruction for scorers that assemble a native prompt.
+	// Generic candidate rows already include it in their rendered prompts.
+	System        string            `json:"system,omitempty"`
 	PointerRows   []ScorePointerRow `json:"pointer_rows,omitempty"`
 	State         string            `json:"state,omitempty"`
 	Rows          []ScoreRow        `json:"rows,omitempty"`

@@ -2,9 +2,11 @@ package create
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/safetensors"
@@ -119,7 +121,44 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return clefWeightFiles(dir, files)
+	// Clef selects its separate head through RENDERER, so its sidecar is
+	// included whenever present. The Perplexity readout belongs only to its
+	// Qwen3_5Model checkpoint.
+	files, err = appendWeightSidecar(dir, files, "joint_head.safetensors", "Clef")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "readout.safetensors")); errors.Is(err, os.ErrNotExist) {
+		return files, nil
+	} else if err != nil {
+		return nil, err
+	}
+	cfg, _, err := readSourceModelConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Architecture() != "Qwen3_5Model" {
+		return files, nil
+	}
+	return appendWeightSidecar(dir, files, "readout.safetensors", "Perplexity")
+}
+
+func appendWeightSidecar(dir string, files []string, name, modelName string) ([]string, error) {
+	info, err := os.Stat(filepath.Join(dir, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return files, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s %s must be a regular file", modelName, name)
+	}
+	if !slices.Contains(files, name) {
+		files = append(files, name)
+		slices.Sort(files)
+	}
+	return files, nil
 }
 
 // SafetensorsConfigFiles lists source metadata for remote transfer and local
@@ -153,7 +192,39 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 			names = append(names, name)
 		}
 	}
-	return names, nil
+	hasSidecar, err := hasPplxSidecar(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !hasSidecar {
+		return names, nil
+	}
+	cfg, _, err := readSourceModelConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Architecture() != "Qwen3_5Model" {
+		return names, nil
+	}
+	// This checkpoint has extra JSON that does not configure inference. Keep
+	// only the files the importer or runner consumes.
+	modelMetadata := map[string]bool{
+		"config.json":                  true,
+		"decision_config.json":         true,
+		"joint_config.json":            true,
+		"generation_config.json":       true,
+		"model.safetensors.index.json": true,
+		"processor_config.json":        true,
+		"tokenizer.json":               true,
+		"tokenizer_config.json":        true,
+		"special_tokens_map.json":      true,
+		"added_tokens.json":            true,
+		"hf_quant_config.json":         true,
+		"quantization_config.json":     true,
+	}
+	return slices.DeleteFunc(names, func(name string) bool {
+		return filepath.Ext(name) == ".json" && !modelMetadata[name]
+	}), nil
 }
 
 func safetensorsWeightFiles(dir string) (map[string]string, []string, error) {
