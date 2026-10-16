@@ -1,0 +1,28 @@
+---
+title: Usage
+description: Review usage, balances, and plans for Ollama's cloud models.
+---
+
+Review recent activity on the [usage page](https://ollama.com/settings), or compare available [plans](https://ollama.com/pricing).
+
+## Usage API
+
+Use the [cloud usage endpoint](/api/cloud-usage) to retrieve request counts, token usage, and cost over the last 24 hours, 7 days, or 30 days.
+
+```shell
+curl 'https://ollama.com/api/usage?range=24h' \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+New usage may take time to appear.
+
+## Balance API
+
+Use the [balance endpoint](/api/balance) to retrieve your remaining included and purchased credits.
+
+```shell
+curl https://ollama.com/api/balance \
+  -H "Authorization: Bearer $OLLAMA_API_KEY"
+```
+
+Both endpoints require an [API key](/cloud/api). Team admins can also retrieve usage for the whole team.
