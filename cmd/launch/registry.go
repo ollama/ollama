@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen", "talos"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -288,6 +288,20 @@ var integrationSpecs = []*IntegrationSpec{
 				return (&Hermes{}).ensureInstalledFor("hermes-desktop")
 			},
 			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
+		Name:        "talos",
+		Runner:      &Talos{},
+		Description: "Permission-gated agent with a provable audit log",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Talos{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Talos{}).ensureInstalled()
+			},
+			URL: "https://talos-agent.ch",
 		},
 	},
 	{
