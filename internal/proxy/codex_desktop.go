@@ -390,11 +390,6 @@ func (h *CodexDesktop) modifyResponse(resp *http.Response) error {
 			h.chatGPTRequests.Add(1)
 		}
 	}
-	if state.routed {
-		if err := h.rewriteAccessErrors(resp); err != nil {
-			return err
-		}
-	}
 	if !state.autoReview.buffersResponse(resp.StatusCode) {
 		return nil
 	}

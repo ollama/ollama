@@ -6,7 +6,7 @@ NemoClaw is NVIDIA's open source security stack for [OpenClaw](/integrations/ope
 
 ## Quick start
 
-Pull a model:
+Pull a model (see all supported models [here](https://ollama.com/search)):
 
 ```bash
 ollama pull nemotron-3-nano:30b
@@ -55,13 +55,3 @@ CMD and PowerShell are not supported on Windows — WSL2 is required.
 - Disk: 20 GB free (40 GB recommended for local models)
 - Node.js 20+ and npm 10+
 - Container runtime (Docker preferred)
-
-## Recommended models
-
-- `nemotron-3-super:cloud` — Strong reasoning and coding
-- `qwen3.5:cloud` — 397B; reasoning and code generation
-- `nemotron-3-nano:30b` — Recommended local model; fits in 24 GB VRAM
-- `qwen3.5:27b` — Fast local reasoning (~18 GB VRAM)
-- `glm-4.7-flash` — Reasoning and code generation (~25 GB VRAM)
-
-More models at [ollama.com/search](https://ollama.com/search).

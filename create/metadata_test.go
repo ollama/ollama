@@ -182,7 +182,7 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			chatTemplate: "{reasoning effort: efficient}",
 			standalone:   true,
-			wantParser:   "nemotron-3.5-nano",
+			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3.5-nano",
 		},
 		{
@@ -191,6 +191,13 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3-nano",
 			wantCaps:     []string{"completion", "vision", "audio", "tools", "thinking"},
+		},
+		{
+			name:         "nemotron super published architecture",
+			config:       `{"architectures":["NemotronH_Omni_Reasoning_V3"],"model_type":"nemotron_h_omni","vision_config":{},"sound_config":null,"llm_config":{"model_type":"nemotron_h"}}`,
+			wantParser:   "nemotron-3-nano",
+			wantRenderer: "nemotron-3.5-super",
+			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
 		},
 		{
 			name:         "deepseek",

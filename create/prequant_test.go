@@ -84,6 +84,9 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 		"l.weight_scale":   "F8_E4M3",
 		"l.weight_scale_2": "F32",
 	})
+	global := inv.Tensors["l.weight_scale_2"]
+	global.Shape = nil
+	inv.Tensors[global.Name] = global
 
 	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
@@ -117,52 +120,26 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 	}
 }
 
-func TestPlanPrequantizedModelOptDropsActivationScale(t *testing.T) {
-	// ModelOpt ships per-weight activation scales (.input_scale and, in some
-	// variants, .input_global_scale) that are unused for weight-only
-	// inference. They must be consumed, not emitted as their own blobs.
-	inv := newInventory(sourceModelConfig{}, map[string]string{
-		"l.weight":             "U8",
-		"l.weight_scale":       "F8_E4M3",
-		"l.weight_scale_2":     "F32",
-		"l.input_scale":        "F32",
-		"l.input_global_scale": "F32",
-	})
-
-	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
-	if err != nil {
-		t.Fatalf("Plan() error = %v", err)
-	}
-	if len(specs) != 1 {
-		t.Fatalf("got %d specs %v, want 1 (activation scales must not become blobs)", len(specs), specNames(specs))
-	}
-	w := specs[0]
-	for _, act := range []string{"l.input_scale", "l.input_global_scale"} {
-		if _, leaked := inputByOutput(w, act); leaked {
-			t.Errorf("activation scale %s leaked into the fused blob", act)
-		}
-		for _, s := range specs {
-			if s.Name == act {
-				t.Errorf("activation scale %s emitted as its own blob", act)
-			}
-		}
-	}
-}
-
 func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"l.weight_packed":       "U8",
 		"l.weight_scale":        "F8_E4M3",
 		"l.weight_global_scale": "F32",
 		"l.input_global_scale":  "F32",
+		"l.input_scale":         "F32",
 	})
+	for _, name := range []string{"l.weight_global_scale", "l.input_global_scale", "l.input_scale"} {
+		scale := inv.Tensors[name]
+		scale.Shape = nil
+		inv.Tensors[name] = scale
+	}
 
 	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
 	if len(specs) != 1 {
-		t.Fatalf("got %d specs %v, want 1 (input_global_scale must be consumed)", len(specs), specNames(specs))
+		t.Fatalf("got %d specs %v, want 1", len(specs), specNames(specs))
 	}
 	w := specs[0]
 	if w.Name != "l.weight" {
@@ -177,7 +154,62 @@ func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	if !ok || globalIn.Transform != TransformReciprocalF32 {
 		t.Errorf("global_scale input = %+v ok=%v, want reciprocal_f32", globalIn, ok)
 	}
+	if len(w.Tensors) != 3 {
+		t.Errorf("fused tensors = %v, want only weight, block scale and global scale", w.Tensors)
+	}
 	if w.Metadata["quant_type"] != "nvfp4" || w.Metadata["group_size"] != "16" {
 		t.Errorf("metadata = %v, want quant_type=nvfp4 group_size=16", w.Metadata)
+	}
+}
+
+func TestPlanPrequantizedModelOptRetainsExpertScaleBanks(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":         "U32",
+		"l.weight_scale":   "U8",
+		"l.weight_scale_2": "F32",
+		"l.input_scale":    "F32",
+	})
+	for _, name := range []string{"l.weight_scale_2", "l.input_scale"} {
+		scale := inv.Tensors[name]
+		scale.Shape = []int32{128}
+		inv.Tensors[name] = scale
+	}
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	w, ok := specByName(specs, "l.weight")
+	if !ok {
+		t.Fatal("missing l.weight blob")
+	}
+	scale, ok := inputByOutput(w, "l.weight.global_scale")
+	if !ok || scale.Transform != TransformF32 || !slices.Equal(scale.Sources[0].Shape, []int32{128}) {
+		t.Errorf("global scale = %+v ok=%v, want F32 expert scale bank", scale, ok)
+	}
+	if len(specs) != 1 || len(w.Tensors) != 3 {
+		t.Errorf("specs = %v, want only fused weight, block scale and global scale", specs)
+	}
+}
+
+func TestPlanPrequantizedRetainsKVCacheScales(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.k_proj.weight":       "U8",
+		"l.k_proj.weight_scale": "F8_E4M3",
+		"l.k_proj.k_scale":      "F32",
+		"l.v_proj.weight":       "U8",
+		"l.v_proj.weight_scale": "F8_E4M3",
+		"l.v_proj.v_scale":      "F32",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	for _, name := range []string{"l.k_proj.k_scale", "l.v_proj.v_scale"} {
+		spec, ok := specByName(specs, name)
+		if !ok || len(spec.Tensors) != 1 || sourceName(spec.Tensors[0]) != name {
+			t.Errorf("%s = %+v ok=%v, want unchanged standalone tensor", name, spec, ok)
+		}
 	}
 }

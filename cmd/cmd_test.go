@@ -2497,6 +2497,44 @@ func TestApplyShowResponseToRunOptions(t *testing.T) {
 	}
 }
 
+func TestApplyShowResponseRefreshesMultimodal(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info api.ShowResponse
+	}{
+		{
+			name: "decision vision",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityDecision, model.CapabilityVision}},
+		},
+		{
+			name: "audio",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityAudio}},
+		},
+		{
+			name: "legacy projector",
+			info: api.ShowResponse{ProjectorInfo: map[string]any{"general.architecture": "clip"}},
+		},
+		{
+			name: "legacy vision",
+			info: api.ShowResponse{ModelInfo: map[string]any{"mllama.vision.block_count": 32}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := runOptions{}
+			applyShowResponseToRunOptions(&opts, &tt.info)
+			if !opts.MultiModal {
+				t.Fatal("loading a multimodal model did not enable media input")
+			}
+			applyShowResponseToRunOptions(&opts, &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityDecision},
+			})
+			if opts.MultiModal {
+				t.Fatal("loading a text-only model did not disable media input")
+			}
+		})
+	}
+}
+
 func TestRunOptions_Copy(t *testing.T) {
 	// Setup test data
 	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}

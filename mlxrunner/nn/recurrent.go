@@ -14,11 +14,12 @@ type RecurrentOption func(*recurrentConfig)
 // RecurrentOption. Exactly one of history or (convState/deltaState)
 // must be supplied per call.
 type recurrentConfig struct {
-	history    *RecurrentHistory
-	convState  *mlx.Array
-	deltaState *mlx.Array
-	splits     []int
-	convSiLU   bool
+	history      *RecurrentHistory
+	convState    *mlx.Array
+	deltaState   *mlx.Array
+	splits       []int
+	convSiLU     bool
+	preciseDecay bool
 }
 
 // WithRecurrentHistory supplies a cache's per-layer view of conv and
@@ -43,6 +44,12 @@ func WithRecurrentState(convState, deltaState *mlx.Array) RecurrentOption {
 // ignore it, so it can ride a shared option list.
 func WithConvSiLU() RecurrentOption {
 	return func(c *recurrentConfig) { c.convSiLU = true }
+}
+
+// WithPreciseGatedDeltaDecay selects the FP32 decay gate for models trained
+// with that recurrence. Other recurrent wrappers ignore this option.
+func WithPreciseGatedDeltaDecay() RecurrentOption {
+	return func(c *recurrentConfig) { c.preciseDecay = true }
 }
 
 // WithSnapshotSplits requests that the scan run in segments cut at the given
@@ -232,12 +239,16 @@ func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...Re
 
 	L := int32(convOut.Dim(1))
 	mask := paddingMask(b, L)
+	run := mlx.GatedDelta
+	if cfg.preciseDecay {
+		run = mlx.GatedDeltaPrecise
+	}
 
 	// No splits and per-token splits are both a single whole-forward call:
 	// len(splits) == L-1 means the sorted interior offsets are exactly
 	// 1..L-1, the kernels' captureAll shape.
 	if n := len(cfg.splits); n == 0 || n == int(L)-1 {
-		y, end, interior := mlx.GatedDelta(convOut, ba, dtBias, aExp, prior, mask, n > 0)
+		y, end, interior := run(convOut, ba, dtBias, aExp, prior, mask, n > 0)
 		return y, append(interior, end)
 	}
 
@@ -247,7 +258,7 @@ func GatedDelta(b *batch.Batch, convOut, ba, dtBias, aExp *mlx.Array, opts ...Re
 	state := prior
 	for _, seg := range segs {
 		var y *mlx.Array
-		y, state, _ = mlx.GatedDelta(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
+		y, state, _ = run(sliceSeg(convOut, seg), sliceSeg(ba, seg), dtBias, aExp, state, sliceSeg(mask, seg), false)
 		outs = append(outs, y)
 		states = append(states, state)
 	}

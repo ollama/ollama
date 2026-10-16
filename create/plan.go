@@ -28,8 +28,11 @@ const (
 	// it through (a global scale stored as-is).
 	TransformScalarF32 Transform = "scalar_f32"
 
-	// TransformReciprocalF32 validates a scalar F32 and stores its reciprocal
-	// (a global scale the producer stored inverted).
+	// TransformF32 preserves an F32 vector scale bank with one value per expert.
+	TransformF32 Transform = "f32"
+
+	// TransformReciprocalF32 validates an F32 scale tensor and stores each
+	// element's reciprocal (global scales the producer stored inverted).
 	TransformReciprocalF32 Transform = "reciprocal_f32"
 
 	// TransformStackExperts concatenates N per-expert source tensors (in

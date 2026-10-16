@@ -79,6 +79,23 @@ Output is a JSON array:
 echo "Hello world" | ollama run nomic-embed-text
 ```
 
+### Ask a decision model
+
+```
+ollama run nimble --ask "Is a refund being requested?" < ticket.txt
+
+ollama run nimble --ask "Which team should handle this?" \
+  --choice billing="Payments and refunds" \
+  --choice technical="Software problems" < ticket.txt
+
+ollama run nimble --ask "How urgent is this?" \
+  --level "Routine" \
+  --level "Soon" \
+  --level "Immediate" < ticket.txt
+```
+
+The state is piped in or given after the model name, as text or JSON. Each `--ask` question is answered yes or no, unless it's followed by labels to choose from (`--choice`) or levels to score it on (`--level`). See [Decision](/capabilities/decision#ask-from-the-terminal).
+
 ### Download a model
 
 ```

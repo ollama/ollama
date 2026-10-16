@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 type compiledField struct {
@@ -27,6 +28,7 @@ type Compiled struct {
 	Request  llm.ScoreRequest
 	fields   []compiledField
 	messages [][]api.Message
+	encoding string
 }
 
 // ValidateLimits checks request limits shared by all decision backends.
@@ -54,12 +56,22 @@ func ValidateLimits(req Request) error {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands":
+	case "", "tev1", "clef", "strands", "kev":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
+	}
+	if encoding == "kev" {
+		if err := validateKevLimits(req); err != nil {
+			return nil, err
+		}
+		c := &Compiled{encoding: encoding}
+		if err := encodeKev(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 	if err := ValidateLimits(req); err != nil {
 		return nil, err
@@ -85,7 +97,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	if strings.TrimSpace(context) == "" && len(req.Images) == 0 {
 		return nil, fmt.Errorf("state must not be empty")
 	}
-	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}}
+	c := &Compiled{Request: llm.ScoreRequest{State: context, Images: req.Images}, encoding: encoding}
 	if encoding == "strands" {
 		if err := encodeStrands(req, c); err != nil {
 			return nil, err
@@ -105,7 +117,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c.fields = append(c.fields, f)
 	}
-	prompts, err := decisionPrompts(context, c.fields, encoding)
+	prompts, err := decisionPrompts(req.State, context, c.fields, encoding)
 	if err != nil {
 		return nil, err
 	}
@@ -146,9 +158,7 @@ func content(raw json.RawMessage) (string, error) {
 		err := json.Unmarshal(raw, &s)
 		return s, err
 	case '{', '[':
-		var b bytes.Buffer
-		err := json.Compact(&b, raw)
-		return b.String(), err
+		return renderers.PythonJSON(raw, 0)
 	default:
 		return "", fmt.Errorf("must be a string, object, or array")
 	}
@@ -284,7 +294,11 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		if f.typ == "noul" {
 			for j, choice := range f.Choices {
 				if choice.Value == true {
-					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: p[j]})
+					value := p[j]
+					if c.encoding == "kev" {
+						value = roundKev(value)
+					}
+					response.Answers.Set(f.Name, NoulAnswer{Type: f.typ, Noul: value})
 				}
 			}
 			continue
@@ -293,10 +307,21 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		legend := &Legend{}
 		for j, choice := range f.Choices {
 			key := choice.Value.(string)
-			probabilities.Set(key, p[j])
+			value := p[j]
+			if c.encoding == "kev" {
+				value = roundKev(value)
+			}
+			probabilities.Set(key, value)
 			legend.Set(key, choice.Description)
 		}
-		confidence := max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		var confidence float64
+		if c.encoding == "kev" {
+			confidence = kevConfidence(p, f.typ)
+			confidence = roundKev(confidence)
+			score = roundKev(score)
+		} else {
+			confidence = max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
 			response.Answers.Set(f.Name, ChoiceAnswer{f.typ, f.Choices[winner].Value.(string), probabilities, confidence})

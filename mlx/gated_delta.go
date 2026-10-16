@@ -172,7 +172,7 @@ type gatedDeltaRecurrenceDims struct {
 // resolveGatedDeltaRecurrenceDims validates the inputs against the GPU
 // kernels' contract and recovers the launch geometry. ok=false routes to
 // the graph implementation: shapes that disagree, Dk not a multiple of the
-// 32-lane simd width, or mixed input dtypes.
+// 32-lane simd width, or unsupported input dtypes.
 func resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state *Array) (gatedDeltaRecurrenceDims, bool) {
 	var dims gatedDeltaRecurrenceDims
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
@@ -202,7 +202,8 @@ func resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state *Array) (gatedDelta
 	if sd[0] != dims.B || sd[1] != dims.Hv || sd[2] != dims.Dv || sd[3] != dims.Dk {
 		return dims, false
 	}
-	if k.DType() != q.DType() || v.DType() != q.DType() || g.DType() != q.DType() || beta.DType() != q.DType() {
+	if k.DType() != q.DType() || v.DType() != q.DType() || beta.DType() != q.DType() ||
+		(g.DType() != q.DType() && g.DType() != DTypeFloat32) {
 		return dims, false
 	}
 	return dims, true
@@ -298,7 +299,8 @@ func gatedDeltaRecurrenceGraph(q, k, v, g, beta, state *Array) (y, nextState *Ar
 // directly.
 func gatedDeltaRecurrence(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	if dims, ok := resolveGatedDeltaRecurrenceDims(q, k, v, g, beta, state); ok {
-		if supportsFastGatedDeltaUpdate(dims) {
+		// MLX's fast update casts the decay gate to the query dtype.
+		if supportsFastGatedDeltaUpdate(dims) && g.DType() == q.DType() {
 			return fastGatedDeltaUpdate(q, k, v, g, beta, state, nil)
 		}
 		outs := gatedDeltaRecurrenceKernel.run(gpuLaunch{
@@ -349,9 +351,13 @@ var (
 			source: gatedDeltaMetalSource,
 			header: gatedDeltaMetalHeader + "#define GDN_STORE_INTERIOR(index, value)\n",
 		},
+		cuda: gpuSource{
+			source: gatedDeltaCUDASource,
+			header: gatedDeltaCUDAHeader + "#define GDN_STORE_INTERIOR(index, value)\n",
+		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs
-			y, end, _ := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], false)
+			y, end, _ := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], false, false)
 			return []*Array{y, end}
 		},
 	}
@@ -363,11 +369,48 @@ var (
 			source: gatedDeltaMetalSource,
 			header: gatedDeltaMetalHeader + "#define GDN_STORE_INTERIOR(index, value) state_seq[index] = value\n",
 		},
+		cuda: gpuSource{
+			source: gatedDeltaCUDASource,
+			header: gatedDeltaCUDAHeader + "#define GDN_STORE_INTERIOR(index, value) state_seq[index] = value\n",
+		},
 		fallback: func(launch gpuLaunch) []*Array {
 			in := launch.inputs
-			y, end, interior := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], true)
+			y, end, interior := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], true, false)
 			for i, s := range interior {
 				interior[i] = ExpandDims(s, 0)
+			}
+			return []*Array{y, end, Concatenate(interior, 0)}
+		},
+	}
+	// Kev opts into FP32 decay without changing the default decision and
+	// generative model kernels.
+	gatedDeltaPrecise = &gpuKernel{
+		name:    "gated_delta_precise",
+		inputs:  []string{"packed", "ba", "dt_bias", "a_exp", "qk_scale", "state_in"},
+		outputs: []string{"y", "state_out"},
+		metal: gpuSource{
+			source: gatedDeltaMetalSource,
+			header: gatedDeltaMetalHeader + "#define GDN_PRECISE_DECAY\n#define GDN_STORE_INTERIOR(index, value)\n",
+		},
+		fallback: func(launch gpuLaunch) []*Array {
+			in := launch.inputs
+			y, end, _ := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], false, true)
+			return []*Array{y, end}
+		},
+	}
+	gatedDeltaPreciseStates = &gpuKernel{
+		name:    "gated_delta_precise_states",
+		inputs:  []string{"packed", "ba", "dt_bias", "a_exp", "qk_scale", "state_in"},
+		outputs: []string{"y", "state_out", "state_seq"},
+		metal: gpuSource{
+			source: gatedDeltaMetalSource,
+			header: gatedDeltaMetalHeader + "#define GDN_PRECISE_DECAY\n#define GDN_STORE_INTERIOR(index, value) state_seq[index] = value\n",
+		},
+		fallback: func(launch gpuLaunch) []*Array {
+			in := launch.inputs
+			y, end, interior := gatedDeltaGraph(in[0], in[1], in[2], in[3], in[5], true, true)
+			for i, st := range interior {
+				interior[i] = ExpandDims(st, 0)
 			}
 			return []*Array{y, end, Concatenate(interior, 0)}
 		},
@@ -379,7 +422,7 @@ var (
 // gate, and the (per-token, for captureAll) scan. Geometry is recovered
 // from the packed and state shapes, and the q/k scales are recomputed from
 // Dk with the same bits the kernel input carries.
-func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll bool) (y, nextState *Array, interior []*Array) {
+func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll, preciseDecay bool) (y, nextState *Array, interior []*Array) {
 	B, T := int32(packed.Dim(0)), int32(packed.Dim(1))
 	sd := state.Dims()
 	Hv, Dv, Dk := int32(sd[1]), int32(sd[2]), int32(sd[3])
@@ -400,12 +443,16 @@ func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll bool) (y
 	alpha := SliceStartStop(ba, []int32{0, 0, Hv}, []int32{B, T, 2 * Hv})
 	decay := Softplus(Add(alpha, dtBias))
 	decay = Mul(decay, aExp)
-	decay = Exp(MulScalar(decay, -1)).AsType(alpha.DType())
+	decay = Exp(MulScalar(decay, -1))
+	if !preciseDecay {
+		decay = decay.AsType(alpha.DType())
+	}
 	betaGate := Sigmoid(beta)
 
 	if !captureAll || T == 1 {
 		y, nextState = gatedDeltaRecurrence(q, k, v, decay, betaGate, state)
-		return y, nextState, nil
+		// The recurrent state uses FP32, but the projection consumes the packed dtype.
+		return y.AsType(packed.DType()), nextState, nil
 	}
 
 	sliceT := func(a *Array, t int32) *Array {
@@ -425,7 +472,7 @@ func gatedDeltaGraph(packed, ba, dtBias, aExp, state *Array, captureAll bool) (y
 			interior = append(interior, state)
 		}
 	}
-	return Concatenate(outs, 1), state, interior
+	return Concatenate(outs, 1).AsType(packed.DType()), state, interior
 }
 
 // The fused scan consumes the activated causal-conv output rows [q | k | v]
@@ -447,7 +494,11 @@ auto value_tile = threadgroup_position_in_grid.y;
 
 threadgroup InT q_cache[Dk];
 threadgroup InT k_cache[Dk];
+#ifdef GDN_PRECISE_DECAY
+threadgroup float decay_cache[1];
+#else
 threadgroup InT decay_cache[1];
+#endif
 threadgroup InT beta_cache[1];
 
 float state[ValuesPerSIMD][StatePerLane];
@@ -497,7 +548,11 @@ for (int t = 0; t < SeqT; ++t) {
       InT gate_input = static_cast<InT>(ba[ba_row + Hv + hv_idx] + dt_bias[hv_idx]);
       InT softplus = gdn_logaddexp(gate_input, static_cast<InT>(0));
       float decay = metal::precise::exp(-static_cast<float>(softplus) * a_exp[hv_idx]);
+#ifdef GDN_PRECISE_DECAY
+      decay_cache[0] = decay;
+#else
       decay_cache[0] = static_cast<InT>(decay);
+#endif
       beta_cache[0] = gdn_sigmoid(ba[ba_row + hv_idx]);
     }
   }
@@ -549,6 +604,148 @@ for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
 }
 `
 
+// The CUDA translation of gatedDeltaMetalSource. Metal's threadgroup caches
+// become per-warp registers: every warp normalizes the same q/k row and
+// broadcasts the gates over its own lanes, so the step needs no shared
+// memory and no barriers.
+const gatedDeltaCUDASource = `
+constexpr int SIMDGroups = 4;
+constexpr int ValuesPerSIMD = DvTile / SIMDGroups;
+constexpr int StatePerLane = Dk / 32;
+constexpr int QDim = Hk * Dk;
+
+int lane = static_cast<int>(threadIdx.x);
+int simd_idx = static_cast<int>(threadIdx.y);
+int n = static_cast<int>(blockIdx.z);
+int b_idx = n / Hv;
+int hv_idx = n % Hv;
+int hk_idx = hv_idx / (Hv / Hk);
+int value_tile = static_cast<int>(blockIdx.y);
+int grid_z = static_cast<int>(gridDim.z * blockDim.z);
+
+float state[ValuesPerSIMD][StatePerLane];
+for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+  int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+  int state_offset = (n * Dv + dv_idx) * Dk;
+#pragma unroll
+  for (int i = 0; i < StatePerLane; ++i) {
+    int d = StatePerLane * lane + i;
+    state[value_iter][i] = state_in[state_offset + d];
+  }
+}
+
+for (int t = 0; t < SeqT; ++t) {
+  auto token = packed + (b_idx * SeqT + t) * PackedDim;
+
+  InT q_row[StatePerLane];
+  InT k_row[StatePerLane];
+  {
+    float q_values[StatePerLane];
+    float k_values[StatePerLane];
+    float q_squares = 0.0f;
+    float k_squares = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      int d = StatePerLane * lane + i;
+      float q_value = static_cast<float>(token[hk_idx * Dk + d]);
+      float k_value = static_cast<float>(token[QDim + hk_idx * Dk + d]);
+      q_values[i] = q_value;
+      k_values[i] = k_value;
+      q_squares += q_value * q_value;
+      k_squares += k_value * k_value;
+    }
+    q_squares = gdn_simd_sum(q_squares);
+    k_squares = gdn_simd_sum(k_squares);
+    float q_inv_rms = rsqrtf(q_squares / float(Dk) + 1.0e-6f);
+    float k_inv_rms = rsqrtf(k_squares / float(Dk) + 1.0e-6f);
+    InT q_scale = static_cast<InT>(qk_scale[0]);
+    InT k_scale = static_cast<InT>(qk_scale[1]);
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      InT q_norm = static_cast<InT>(q_values[i] * q_inv_rms);
+      InT k_norm = static_cast<InT>(k_values[i] * k_inv_rms);
+      q_row[i] = static_cast<InT>(q_norm * q_scale);
+      k_row[i] = static_cast<InT>(k_norm * k_scale);
+    }
+  }
+
+  // Metal rounds both gates to InT through threadgroup memory, so round
+  // here too rather than carrying float precision forward.
+  float decay = 0.0f;
+  float beta_gate = 0.0f;
+  if (lane == 0) {
+    int ba_row = (b_idx * SeqT + t) * 2 * Hv;
+    InT gate_input = static_cast<InT>(ba[ba_row + Hv + hv_idx] + dt_bias[hv_idx]);
+    InT softplus = LogAddExp{}(gate_input, static_cast<InT>(0));
+    decay = static_cast<float>(static_cast<InT>(
+        Exp{}(-static_cast<float>(softplus) * a_exp[hv_idx])));
+    beta_gate = static_cast<float>(Sigmoid{}(ba[ba_row + hv_idx]));
+  }
+  decay = __shfl_sync(0xffffffff, decay, 0);
+  beta_gate = __shfl_sync(0xffffffff, beta_gate, 0);
+
+  for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+    int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+    float projection = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      state[value_iter][i] *= decay;
+      projection += state[value_iter][i] * static_cast<float>(k_row[i]);
+    }
+    projection = gdn_simd_sum(projection);
+
+    float v_value = static_cast<float>(token[2 * QDim + hv_idx * Dv + dv_idx]);
+    float delta = (v_value - projection) * beta_gate;
+
+    float out = 0.0f;
+#pragma unroll
+    for (int i = 0; i < StatePerLane; ++i) {
+      state[value_iter][i] += static_cast<float>(k_row[i]) * delta;
+      out += state[value_iter][i] * static_cast<float>(q_row[i]);
+    }
+    out = gdn_simd_sum(out);
+    if (lane == 0) {
+      y[((b_idx * SeqT + t) * Hv + hv_idx) * Dv + dv_idx] = static_cast<InT>(out);
+    }
+
+    if (t + 1 < SeqT) {
+      int seq_offset = ((t * grid_z + n) * Dv + dv_idx) * Dk;
+#pragma unroll
+      for (int i = 0; i < StatePerLane; ++i) {
+        int d = StatePerLane * lane + i;
+        GDN_STORE_INTERIOR(seq_offset + d, state[value_iter][i]);
+      }
+    }
+  }
+}
+
+for (int value_iter = 0; value_iter < ValuesPerSIMD; ++value_iter) {
+  int dv_idx = value_tile * DvTile + simd_idx + value_iter * SIMDGroups;
+  int state_offset = (n * Dv + dv_idx) * Dk;
+#pragma unroll
+  for (int i = 0; i < StatePerLane; ++i) {
+    int d = StatePerLane * lane + i;
+    state_out[state_offset + d] = state[value_iter][i];
+  }
+}
+`
+
+// MLX's own ops, so the gates match the graph path this is pinned against.
+// Both headers are embedded for the runtime JIT. gdn_simd_sum is Metal's
+// simd_sum: a full-warp reduction every lane can read.
+const gatedDeltaCUDAHeader = `
+#include "mlx/backend/cuda/device/binary_ops.cuh"
+#include "mlx/backend/cuda/device/unary_ops.cuh"
+
+__device__ inline float gdn_simd_sum(float v) {
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    v += __shfl_down_sync(0xffffffff, v, offset);
+  }
+  return __shfl_sync(0xffffffff, v, 0);
+}
+`
+
+// TODO: call MLX's Sigmoid/LogAddExp like CUDA does to DRY this out.
 const gatedDeltaMetalHeader = `
 template <typename T>
 T gdn_sigmoid(T x) {
@@ -597,6 +794,16 @@ type gatedDeltaDims struct {
 // padded position is an identity step with zero output, exactly as on the
 // recurrence path.
 func GatedDelta(packed, ba, dtBias, aExp, state, mask *Array, captureAll bool) (y, nextState *Array, interior []*Array) {
+	return gatedDeltaStep(packed, ba, dtBias, aExp, state, mask, captureAll, false)
+}
+
+// GatedDeltaPrecise keeps the decay gate in FP32 for models trained with that
+// recurrence. Other models continue through GatedDelta's original path.
+func GatedDeltaPrecise(packed, ba, dtBias, aExp, state, mask *Array, captureAll bool) (y, nextState *Array, interior []*Array) {
+	return gatedDeltaStep(packed, ba, dtBias, aExp, state, mask, captureAll, true)
+}
+
+func gatedDeltaStep(packed, ba, dtBias, aExp, state, mask *Array, captureAll bool, preciseDecay bool) (y, nextState *Array, interior []*Array) {
 	if mask != nil {
 		mask3 := Reshape(mask, int32(mask.Dim(0)), int32(mask.Dim(1)), 1)
 		zero := FromValue(float32(0)).AsType(packed.DType())
@@ -607,7 +814,7 @@ func GatedDelta(packed, ba, dtBias, aExp, state, mask *Array, captureAll bool) (
 
 	dims, ok := resolveGatedDeltaDims(packed, ba, dtBias, aExp, state)
 	if !ok {
-		return gatedDeltaGraph(packed, ba, dtBias, aExp, state, captureAll)
+		return gatedDeltaGraph(packed, ba, dtBias, aExp, state, captureAll, preciseDecay)
 	}
 
 	inv := gatedDeltaInvScale(dims.Dk)
@@ -619,12 +826,18 @@ func GatedDelta(packed, ba, dtBias, aExp, state, mask *Array, captureAll bool) (
 	}
 	useAllStates := captureAll && dims.T > 1
 	kernel := gatedDelta
+	if preciseDecay {
+		kernel = gatedDeltaPrecise
+	}
 	outputs := []gpuOutputSpec{
 		{"GATED_DELTA_Y", []int32{int32(dims.B), int32(dims.T), int32(dims.Hv), int32(dims.Dv)}, packed.DType()},
 		{"GATED_DELTA_STATE", []int32{int32(dims.B), int32(dims.Hv), int32(dims.Dv), int32(dims.Dk)}, DTypeFloat32},
 	}
 	if useAllStates {
 		kernel = gatedDeltaStates
+		if preciseDecay {
+			kernel = gatedDeltaPreciseStates
+		}
 		outputs = append(outputs, gpuOutputSpec{
 			"GATED_DELTA_STATE_SEQ", []int32{int32(dims.T - 1), int32(dims.B), int32(dims.Hv), int32(dims.Dv), int32(dims.Dk)}, DTypeFloat32,
 		})
