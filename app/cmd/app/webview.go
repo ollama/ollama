@@ -2,6 +2,7 @@
 
 package main
 
+// #include <stdlib.h>
 // #include "menu.h"
 import "C"
 
@@ -417,6 +418,8 @@ func (w *Webview) Run(path string) unsafe.Pointer {
 
 			if len(menuItems) > 0 {
 				pinner.Unpin()
+				for _, it := range menuItems {
+					C.free(unsafe.Pointer(it.label))
 			}
 
 			menuItems = nil
