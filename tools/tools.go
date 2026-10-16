@@ -159,6 +159,12 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
+// isIdentByte reports whether b is a byte that can appear in a
+// Go/JSON identifier: letters, digits, or underscore.
+func isIdentByte(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
+}
+
 // findTool finds the first tool name in the list that matches the
 // beginning of the buffer, returning nil if no tool is found
 // or if the buffer ends with a partial tool name since we need
@@ -199,6 +205,16 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 		name := []byte(tools[i].Function.Name)
 		pos := bytes.Index(buf, name)
 		if pos == -1 {
+			continue
+		}
+
+		// Ignore matches that are a substring of a longer identifier
+		// (e.g., matching "add" inside "add_numbers"). Only accept the
+		// match when it is not preceded or followed by an identifier byte.
+		if pos > 0 && isIdentByte(buf[pos-1]) {
+			continue
+		}
+		if end := pos + len(name); end < len(buf) && isIdentByte(buf[end]) {
 			continue
 		}
 
