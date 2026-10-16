@@ -1035,9 +1035,31 @@ components:
         output_tokens:
           type: integer
           description: Recorded output tokens.
-    UsageBucket:
+    UsageGroup:
       allOf:
         - $ref: "#/components/schemas/UsageMetrics"
+        - type: object
+          required: [model]
+          properties:
+            model:
+              type: string
+              description: Model name.
+    UsageSummary:
+      allOf:
+        - $ref: "#/components/schemas/UsageMetrics"
+        - type: object
+          properties:
+            groups:
+              type: array
+              description: Present when group_by is requested. Currently returns up to 10 groups selected across the entire range, ranked by usage_usd or by request_count when the range includes legacy requests. Groups use the same order in every bucket; groups without requests in a bucket are omitted.
+              items:
+                $ref: "#/components/schemas/UsageGroup"
+            remainder:
+              $ref: "#/components/schemas/UsageMetrics"
+              description: Combined usage from groups outside the current limit. Omitted when there are no requests from additional groups.
+    UsageBucket:
+      allOf:
+        - $ref: "#/components/schemas/UsageSummary"
         - type: object
           required: [from, until]
           properties:
@@ -1068,6 +1090,10 @@ components:
           type: string
           enum: [hour, day]
           description: "Set automatically: hour for 24h, day for 7d and 30d."
+        group_by:
+          type: string
+          enum: [model]
+          description: Selected grouping. Present when group_by is requested.
         from:
           type: string
           format: date-time
@@ -1077,8 +1103,8 @@ components:
           format: date-time
           description: End of the range in UTC, exclusive.
         totals:
-          $ref: "#/components/schemas/UsageMetrics"
-          description: Usage across the entire range.
+          $ref: "#/components/schemas/UsageSummary"
+          description: Usage across the entire range, including groups in the remainder.
         buckets:
           type: array
           description: Usage in chronological order, including buckets with no recorded requests.
@@ -2151,6 +2177,12 @@ paths:
             type: string
             enum: [self, team]
             default: self
+        - name: group_by
+          in: query
+          description: "How to group usage within totals and buckets. Supported values: model."
+          schema:
+            type: string
+            enum: [model]
       responses:
         "200":
           description: Usage for the selected range and scope.
