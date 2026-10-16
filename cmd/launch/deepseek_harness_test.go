@@ -16,6 +16,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestDeepSeekHarnessModelConfigsMaxTokensFallback(t *testing.T) {
+	// Local models have MaxOutputTokens==0; maxTokens should fall back to ContextLength.
+	configs := deepSeekHarnessModelConfigs("local-model:latest", []LaunchModel{
+		{Name: "local-model:latest", ContextLength: 32768, MaxOutputTokens: 0},
+		{Name: "cloud-model:cloud", ContextLength: 131072, MaxOutputTokens: 65536},
+	})
+	if len(configs) != 2 {
+		t.Fatalf("expected 2 configs, got %d", len(configs))
+	}
+	local, _ := configs[0].(map[string]any)
+	if local["maxTokens"] != 32768 {
+		t.Errorf("local maxTokens = %v, want 32768 (fallback to contextWindow)", local["maxTokens"])
+	}
+	cloud, _ := configs[1].(map[string]any)
+	if cloud["maxTokens"] != 65536 {
+		t.Errorf("cloud maxTokens = %v, want 65536 (explicit)", cloud["maxTokens"])
+	}
+}
+
 func TestDeepSeekHarnessRegistry(t *testing.T) {
 	spec, err := LookupIntegrationSpec("deepseek-harness")
 	if err != nil {
