@@ -20,7 +20,7 @@ See the [development documentation](./docs/development.md) for instructions on h
 
 ### Issues that may not be accepted
 
-* Changes that break backwards compatibility in Ollama's API (including the OpenAI-compatible API)
+* Changes that break backward compatibility in Ollama's API (including the OpenAI-compatible API)
 * Changes that add significant friction to the user experience
 * Changes that create a large future maintenance burden for maintainers and contributors
 
