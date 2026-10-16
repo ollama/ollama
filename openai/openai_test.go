@@ -1312,3 +1312,70 @@ func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }
+
+func TestFromChatRequest_ToolResultsFollowToolCallOrder(t *testing.T) {
+	assistant := func(ids ...string) Message {
+		m := Message{Role: "assistant"}
+		for _, id := range ids {
+			tc := ToolCall{ID: id, Type: "function"}
+			tc.Function.Name = "get_weather"
+			tc.Function.Arguments = `{"city":"x"}`
+			m.ToolCalls = append(m.ToolCalls, tc)
+		}
+		return m
+	}
+	tool := func(id string) Message {
+		return Message{Role: "tool", ToolCallID: id, Content: "result of " + id}
+	}
+
+	cases := []struct {
+		name string
+		msgs []Message
+		want []string
+	}{
+		{
+			name: "reordered results follow the calls",
+			msgs: []Message{assistant("call_tokyo", "call_toronto"), tool("call_toronto"), tool("call_tokyo")},
+			want: []string{"call_tokyo", "call_toronto"},
+		},
+		{
+			name: "unmatched id leaves the run as sent",
+			msgs: []Message{assistant("a", "b"), tool("b"), tool("zzz")},
+			want: []string{"b", "zzz"},
+		},
+		{
+			name: "missing id leaves the run as sent",
+			msgs: []Message{assistant("a", "b"), tool("b"), tool("")},
+			want: []string{"b", ""},
+		},
+		{
+			name: "each assistant turn is reordered independently",
+			msgs: []Message{
+				assistant("a1", "a2"), tool("a2"), tool("a1"),
+				assistant("b1", "b2"), tool("b2"), tool("b1"),
+			},
+			want: []string{"a1", "a2", "b1", "b2"},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FromChatRequest(ChatCompletionRequest{Model: "test-model", Messages: tt.msgs})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var ids []string
+			for _, m := range got.Messages {
+				if m.Role == "tool" {
+					ids = append(ids, m.ToolCallID)
+					if m.Content != "result of "+m.ToolCallID {
+						t.Errorf("result for %q carries content %q", m.ToolCallID, m.Content)
+					}
+				}
+			}
+			if diff := cmp.Diff(tt.want, ids); diff != "" {
+				t.Errorf("tool result order (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
