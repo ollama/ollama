@@ -3,6 +3,9 @@ package llm
 import (
 	"strings"
 	"testing"
+	"unicode"
+
+	"github.com/ollama/ollama/harmony"
 )
 
 // TestRenameGrammarRule checks that only rule names change, not the same word
@@ -16,6 +19,62 @@ func TestRenameGrammarRule(t *testing.T) {
 		"root-item ::= \"\\\"root\\\"\" out\n"
 	if got := renameGrammarRule(grammar, "root", "out"); got != want {
 		t.Errorf("renamed grammar:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestHarmonyClosingWhitespace(t *testing.T) {
+	handler := &harmony.HarmonyMessageHandler{}
+	a := newClosingAutomaton(handler.ThinkingClose(), handler.ThinkingCloseWhitespace()...)
+	closes := func(text string) bool {
+		state := 0
+		for _, r := range text {
+			var done bool
+			state, done = a.next(state, r)
+			if done {
+				return true
+			}
+		}
+		return false
+	}
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		if !unicode.IsSpace(r) {
+			continue
+		}
+		gap := strings.Repeat(string(r), 3)
+		for _, header := range []string{
+			"assistant<|channel|>final" + gap,
+			"assistant<|channel|>final" + gap + "<|constrain|>json",
+			"assistant" + gap + "<|channel|>final" + gap + "json" + gap,
+			gap + "assistant<|channel|>final<|constrain|>" + gap + "json" + gap,
+			"assistant<|channel|>commentary" + gap,
+			"assistant" + gap,
+		} {
+			if !closes("reasoning<|end|><|start|>" + header + "<|message|>") {
+				t.Fatalf("did not close for header %q", header)
+			}
+		}
+	}
+	for _, text := range []string{
+		"reasoning<|end|><|start|>assistant<|channel|>analysis\n<|message|>",
+		"reasoning<|end|><|start|>assistant<|channel|>finality\n<|message|>",
+		"reasoning<|end|><|start|>assistant to=functions.test<|channel|>commentary\n<|message|>",
+		"reasoning<|end|><|start|>assistant<|channel|>commentary to=functions.test\n<|message|>",
+	} {
+		if closes(text) {
+			t.Fatalf("closed non-content header %q", text)
+		}
+	}
+}
+
+func TestLiteralClosingsDoNotFoldWhitespace(t *testing.T) {
+	a := newClosingAutomaton([]string{"</think>", "a b"})
+	state := 0
+	for _, r := range "a\t b" {
+		var done bool
+		state, done = a.next(state, r)
+		if done {
+			t.Fatal("literal closing accepted different whitespace")
+		}
 	}
 }
 
