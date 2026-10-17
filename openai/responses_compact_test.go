@@ -839,55 +839,24 @@ func TestExpandResponsesCompactionInputPreservesCodexRetainedPrefix(t *testing.T
 	}
 }
 
-func TestExpandResponsesCompactionInputRequiresReadableHistory(t *testing.T) {
+// Accepting retained items does not mean a foreign checkpoint was recovered.
+// Each destination is responsible for validating the retained item schemas.
+func TestExpandResponsesCompactionInputRequiresRemainingItems(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		remaining string
 		wantErr   bool
 	}{
 		{"no remaining items", "", true},
-		{"search metadata only", `,{"type":"web_search_call","id":"ws_1","status":"completed"}`, true},
-		{"encrypted reasoning only", `,{"type":"reasoning","id":"rs_foreign","summary":[],"encrypted_content":"opaque-reasoning-state"}`, true},
-		{"empty message", `,{"role":"user","content":" "}`, true},
-		{"empty routed agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[]}`, true},
-		{"encrypted agent content only", `,{"type":"agent_message","content":[{"type":"encrypted_content","encrypted_content":"opaque-provider-content"}]}`, true},
-		{"encrypted message content only", `,{"role":"user","content":[{"type":"encrypted_content","encrypted_content":"opaque-provider-content"}]}`, true},
-		{"orphan empty tool result", `,{"type":"function_call_output","call_id":"missing-call","output":""}`, true},
-		{"empty named tool result", `,{"type":"function_call_output","name":"shell","output":" "}`, true},
-		{"empty function call", `,{"type":"function_call"}`, true},
-		{"function call without arguments", `,{"type":"function_call","call_id":"call_1","name":"shell"}`, true},
-		{"function call with invalid arguments", `,{"type":"function_call","call_id":"call_1","name":"shell","arguments":"not JSON"}`, true},
-		{"shell status only", `,{"type":"shell_call","call_id":"call_1","status":"completed"}`, true},
-		{"shell without call ID", `,{"type":"shell_call","action":{"commands":["true"]}}`, true},
-		{"shell limits only", `,{"type":"shell_call","call_id":"call_1","action":{"timeout_ms":1000,"max_output_length":2000}}`, true},
-		{"shell empty commands", `,{"type":"shell_call","call_id":"call_1","action":{"commands":[]}}`, true},
-		{"shell blank commands", `,{"type":"shell_call","call_id":"call_1","action":{"commands":[" ",""]}}`, true},
-		{"shell invalid commands", `,{"type":"shell_call","call_id":"call_1","action":{"commands":[42]}}`, true},
-		{"orphan silent shell result", `,{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`, true},
-		{"local shell empty command", `,{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":[]}}`, true},
-		{"local shell blank program", `,{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":[" ","argument"]}}`, true},
-		{"local shell unknown action", `,{"type":"local_shell_call","call_id":"call_1","action":{"type":"unknown","command":["true"]}}`, true},
-		{"empty reasoning summary", `,{"type":"reasoning","summary":[{"type":"summary_text","text":" "}]}`, true},
-		{"empty image reference", `,{"role":"user","content":[{"type":"input_image","image_url":" "}]}`, true},
-		{"empty audio data", `,{"role":"user","content":[{"type":"input_audio","input_audio":{"data":" ","format":"wav"}}]}`, true},
-		{"null discovered tool", `,{"type":"tool_search_output","tools":[null]}`, true},
-		{"empty discovered tool", `,{"type":"tool_search_output","tools":[{}]}`, true},
-		{"unnamed discovered function", `,{"type":"tool_search_output","tools":[{"type":"function"}]}`, true},
-		{"blank discovered tool type", `,{"type":"tool_search_output","tools":[{"type":" ","name":"blank_type"}]}`, true},
-		{"empty discovered namespace", `,{"type":"tool_search_output","tools":[{"type":"namespace","name":"workspace","tools":[]}]}`, true},
-		{"metadata with readable message", `,{"type":"web_search_call","id":"ws_1","status":"completed"},{"role":"user","content":"continue"}`, false},
-		{"readable agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[{"type":"input_text","text":"Remember kiwi-42"}]}`, false},
-		{"readable reasoning summary", `,{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`, false},
-		{"image only", `,{"role":"user","content":[{"type":"input_image","image_url":"` + compactionTestPNG + `"}]}`, false},
-		{"image URL", `,{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png"}]}`, false},
-		{"image file ID", `,{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`, false},
-		{"file with text", `,{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture"}]}`, false},
-		{"file reference only", `,{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`, false},
-		{"readable tool result", `,{"type":"function_call_output","call_id":"call_1","output":"kiwi-42"}`, false},
-		{"readable discovered tool", `,{"type":"tool_search_output","tools":[{"type":"function","name":"read_notes"}]}`, false},
-		{"readable discovered namespace", `,{"type":"tool_search_output","tools":[{"type":"namespace","name":"workspace","tools":[{"type":"function","name":"read_notes"}]}]}`, false},
-		{"tool pair with empty result", `,{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},{"type":"function_call_output","call_id":"call_1","output":""}`, false},
-		{"custom tool pair with empty result", `,{"type":"custom_tool_call","call_id":"call_1","name":"read","input":"notes.txt"},{"type":"custom_tool_call_output","call_id":"call_1","output":""}`, false},
+		{"only foreign checkpoints", `,{"type":"compaction","encrypted_content":"other-provider"}`, true},
+		{"Codex retained user", `,{"role":"user","content":"continue"}`, false},
+		{"search metadata only", `,{"type":"web_search_call","id":"ws_1","status":"completed"}`, false},
+		{"encrypted reasoning only", `,{"type":"reasoning","summary":[],"encrypted_content":"opaque"}`, false},
+		{"empty message", `,{"role":"user","content":" "}`, false},
+		{"empty routed agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[]}`, false},
+		{"orphan empty tool result", `,{"type":"function_call_output","call_id":"missing-call","output":""}`, false},
+		{"incomplete tool definition", `,{"type":"tool_search_output","tools":[{}]}`, false},
+		{"provider call", `,{"type":"shell_call","call_id":"call_1","action":{"commands":["true"]}}`, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}` + tt.remaining + `]}`)
@@ -895,12 +864,8 @@ func TestExpandResponsesCompactionInputRequiresReadableHistory(t *testing.T) {
 			if (err != nil) != tt.wantErr || changed == tt.wantErr {
 				t.Errorf("expand: changed=%v err=%v, wantErr=%v", changed, err, tt.wantErr)
 			}
-			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "resend readable conversation history")) {
-				t.Errorf("expected readable-history recovery error, got %v", err)
-			}
-			var request ResponsesRequest
-			if err := json.Unmarshal(body, &request); (err != nil) != tt.wantErr {
-				t.Errorf("direct parsing: err=%v, wantErr=%v", err, tt.wantErr)
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "resend conversation history")) {
+				t.Errorf("expected empty-history recovery error, got %v", err)
 			}
 		})
 	}
@@ -988,7 +953,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || string(msg.Images[0]) != "fixture" {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 0 {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }

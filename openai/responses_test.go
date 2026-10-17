@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -833,15 +834,8 @@ func TestFromResponsesRequest_ToolSearchOutputFlattensNamespaceMembers(t *testin
 	}
 }
 
-func TestFromResponsesRequestRejectsIncompleteToolSearchResults(t *testing.T) {
+func TestFromResponsesRequestRejectsIncompleteToolSearchNamespace(t *testing.T) {
 	tests := []json.RawMessage{
-		json.RawMessage(`null`),
-		json.RawMessage(`{}`),
-		json.RawMessage(`{"type":"function"}`),
-		json.RawMessage(`{"type":"function","name":" "}`),
-		json.RawMessage(`{"type":" ","name":"blank_type"}`),
-		json.RawMessage(`{"type":"namespace","name":"docs","tools":[]}`),
-		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function","name":"search"},{"name":"missing_type"}]}`),
 		json.RawMessage(`{"type":"namespace","tools":[{"type":"function","name":"search"}]}`),
 		json.RawMessage(`{"type":"namespace","name":"docs","tools":[{"type":"function"}]}`),
 	}
@@ -854,7 +848,7 @@ func TestFromResponsesRequestRejectsIncompleteToolSearchResults(t *testing.T) {
 				}}},
 			})
 			if err == nil {
-				t.Fatal("expected incomplete tool definition to be rejected")
+				t.Fatal("expected incomplete namespace to be rejected")
 			}
 		})
 	}
@@ -1723,7 +1717,7 @@ func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
 			"model": "gpt-oss:20b",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "think and act"}]},
-				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Let me think...", "summary": []},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Let me think...", "summary": [{"type":"summary_text","text":"Let me think..."}]},
 				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I thought about it."}]},
 				{"type": "function_call", "call_id": "call_1", "name": "do_thing", "arguments": "{}"}
 			]
@@ -1768,7 +1762,7 @@ func TestFromResponsesRequest_FunctionCallMerge(t *testing.T) {
 			"model": "gpt-oss:20b",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "complex task"}]},
-				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Thinking first...", "summary": []},
+				{"type": "reasoning", "id": "rs_1", "encrypted_content": "Thinking first...", "summary": [{"type":"summary_text","text":"Thinking first..."}]},
 				{"type": "message", "role": "assistant", "content": ""},
 				{"type": "function_call", "call_id": "call_1", "name": "think_action", "arguments": "{}"},
 				{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Now doing more."}]},
@@ -2123,11 +2117,32 @@ func TestResponsesStreamConverter_Reasoning(t *testing.T) {
 }
 
 func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
+	t.Run("web search carries consecutive reasoning into the answer", func(t *testing.T) {
+		for _, encrypted := range []string{"first thought", "opaque-provider-reasoning"} {
+			request := ResponsesRequest{Input: ResponsesInput{Items: []ResponsesInputItem{
+				ResponsesInputMessage{Role: "user", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "search"}}},
+				ResponsesReasoningInput{EncryptedContent: encrypted, Summary: []ResponsesReasoningSummary{{Type: "summary_text", Text: "first thought"}}},
+				ResponsesWebSearchCall{Type: "web_search_call"},
+				ResponsesReasoningInput{Summary: []ResponsesReasoningSummary{{Type: "summary_text", Text: "second thought"}, {Type: "summary_text", Text: "third thought"}}},
+				ResponsesReasoningInput{EncryptedContent: "opaque-without-summary"},
+				ResponsesInputMessage{Role: "assistant", Content: []ResponsesContent{ResponsesTextContent{Type: "input_text", Text: "the answer"}}},
+			}}}
+			chat, err := FromResponsesRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []api.Message{{Role: "user", Content: "search"}, {Role: "assistant", Content: "the answer", Thinking: "first thought\nsecond thought\nthird thought"}}
+			if !reflect.DeepEqual(chat.Messages, want) {
+				t.Fatalf("messages=%+v, want=%+v", chat.Messages, want)
+			}
+		}
+	})
+
 	t.Run("reasoning preserves a pending tool pair", func(t *testing.T) {
 		for _, assistant := range []string{"", `,{"role":"assistant","content":"Checking the result"}`} {
 			var req ResponsesRequest
 			body := `{"model":"test","input":[
-				{"type":"reasoning","encrypted_content":"first native thought"},
+				{"type":"reasoning","encrypted_content":"first native thought","summary":[{"type":"summary_text","text":"first native thought"}]},
 				{"type":"function_call","call_id":"call_1","name":"shell","arguments":"{}"},
 				{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque"}` + assistant + `,
 				{"type":"function_call_output","call_id":"call_1","output":"done"}
@@ -2142,7 +2157,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			if len(chat.Messages) != 2 || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[0].ToolCalls[0].ID != "call_1" || chat.Messages[1].ToolCallID != "call_1" {
 				t.Fatalf("tool pair split: %+v", chat.Messages)
 			}
-			if !strings.Contains(chat.Messages[0].Content, "Remember kiwi-42") || chat.Messages[0].Thinking != "first native thought\nopaque" {
+			if strings.Contains(chat.Messages[0].Content, "Remember kiwi-42") || chat.Messages[0].Thinking != "first native thought\nRemember kiwi-42" {
 				t.Fatalf("reasoning lost: %+v", chat.Messages[0])
 			}
 			if assistant != "" && !strings.Contains(chat.Messages[0].Content, "Checking the result") {
@@ -2153,7 +2168,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 	t.Run("successive calls preserve both reasoning items", func(t *testing.T) {
 		var req ResponsesRequest
 		if err := json.Unmarshal([]byte(`{"model":"test","input":[
-			{"type":"reasoning","encrypted_content":"first native thought"},
+			{"type":"reasoning","encrypted_content":"first native thought","summary":[{"type":"summary_text","text":"first native thought"}]},
 			{"type":"function_call","call_id":"call_1","name":"first","arguments":"{}"},
 			{"type":"reasoning","summary":[{"type":"summary_text","text":"second readable thought"}]},
 			{"type":"function_call","call_id":"call_2","name":"second","arguments":"{}"}
@@ -2164,7 +2179,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought" || chat.Messages[0].Content != "second readable thought" {
+		if len(chat.Messages) != 1 || len(chat.Messages[0].ToolCalls) != 2 || chat.Messages[0].Thinking != "first native thought\nsecond readable thought" || chat.Messages[0].Content != "" {
 			t.Fatalf("reasoning or tool calls lost: %+v", chat.Messages)
 		}
 	})
@@ -2189,13 +2204,9 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			t.Fatalf("failed to convert request: %v", err)
 		}
 
-		// Preserve the distinct readable summary and merge native thinking into
-		// the following assistant message.
-		if len(chatReq.Messages) != 3 {
-			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
-		}
-		if chatReq.Messages[1].Role != "assistant" || chatReq.Messages[1].Content != "Thinking about math" {
-			t.Fatalf("readable summary lost: %+v", chatReq.Messages[1])
+		// Should have 2 messages: user and assistant (with thinking merged)
+		if len(chatReq.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(chatReq.Messages))
 		}
 
 		// Check user message
@@ -2204,15 +2215,15 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		}
 
 		// Check assistant message has both content and thinking
-		assistantMsg := chatReq.Messages[2]
+		assistantMsg := chatReq.Messages[1]
 		if assistantMsg.Role != "assistant" {
 			t.Errorf("Messages[1].Role = %q, want %q", assistantMsg.Role, "assistant")
 		}
 		if assistantMsg.Content != "The answer is 4" {
 			t.Errorf("Messages[1].Content = %q, want %q", assistantMsg.Content, "The answer is 4")
 		}
-		if assistantMsg.Thinking != "Let me think about this math problem..." {
-			t.Errorf("Messages[1].Thinking = %q, want %q", assistantMsg.Thinking, "Let me think about this math problem...")
+		if assistantMsg.Thinking != "Thinking about math" {
+			t.Errorf("Messages[1].Thinking = %q, want %q", assistantMsg.Thinking, "Thinking about math")
 		}
 	})
 
@@ -2221,7 +2232,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
-				{"type": "reasoning", "id": "rs_123", "encrypted_content": "I need to call a tool for this...", "summary": []},
+				{"type": "reasoning", "id": "rs_123", "encrypted_content": "I need to call a tool for this...", "summary": [{"type":"summary_text","text":"I need to call a tool for this..."}]},
 				{"type": "function_call", "call_id": "call_abc", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"}
 			]
 		}`
@@ -2279,16 +2290,12 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			t.Fatalf("failed to convert request: %v", err)
 		}
 
-		// Should have 4 messages:
+		// Should have 3 messages:
 		// 1. user: "What is 2+2?"
-		// 2. assistant: readable reasoning summary
-		// 3. assistant: thinking + "The answer is 4."
-		// 4. user: "Now multiply that by 3"
-		if len(chatReq.Messages) != 4 {
-			t.Fatalf("expected 4 messages, got %d", len(chatReq.Messages))
-		}
-		if chatReq.Messages[1].Role != "assistant" || chatReq.Messages[1].Content != "Calculating 2+2" {
-			t.Fatalf("readable summary lost: %+v", chatReq.Messages[1])
+		// 2. assistant: thinking + "The answer is 4."
+		// 3. user: "Now multiply that by 3"
+		if len(chatReq.Messages) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
 		}
 
 		// Check first user message
@@ -2298,21 +2305,21 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 		}
 
 		// Check assistant message has merged thinking + content
-		if chatReq.Messages[2].Role != "assistant" {
-			t.Errorf("Messages[2].Role = %q, want \"assistant\"", chatReq.Messages[2].Role)
+		if chatReq.Messages[1].Role != "assistant" {
+			t.Errorf("Messages[1].Role = %q, want \"assistant\"", chatReq.Messages[1].Role)
 		}
-		if chatReq.Messages[2].Content != "The answer is 4." {
-			t.Errorf("Messages[2].Content = %q, want \"The answer is 4.\"", chatReq.Messages[2].Content)
+		if chatReq.Messages[1].Content != "The answer is 4." {
+			t.Errorf("Messages[1].Content = %q, want \"The answer is 4.\"", chatReq.Messages[1].Content)
 		}
-		if chatReq.Messages[2].Thinking != "This is a simple arithmetic problem. 2+2=4." {
-			t.Errorf("Messages[2].Thinking = %q, want \"This is a simple arithmetic problem. 2+2=4.\"",
-				chatReq.Messages[2].Thinking)
+		if chatReq.Messages[1].Thinking != "Calculating 2+2" {
+			t.Errorf("Messages[1].Thinking = %q, want \"Calculating 2+2\"",
+				chatReq.Messages[1].Thinking)
 		}
 
 		// Check second user message
-		if chatReq.Messages[3].Role != "user" || chatReq.Messages[3].Content != "Now multiply that by 3" {
-			t.Errorf("Messages[3] = {Role: %q, Content: %q}, want {Role: \"user\", Content: \"Now multiply that by 3\"}",
-				chatReq.Messages[3].Role, chatReq.Messages[3].Content)
+		if chatReq.Messages[2].Role != "user" || chatReq.Messages[2].Content != "Now multiply that by 3" {
+			t.Errorf("Messages[2] = {Role: %q, Content: %q}, want {Role: \"user\", Content: \"Now multiply that by 3\"}",
+				chatReq.Messages[2].Role, chatReq.Messages[2].Content)
 		}
 	})
 
@@ -2322,10 +2329,10 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What is the weather in Paris?"}]},
-				{"type": "reasoning", "id": "rs_001", "encrypted_content": "I need to call the weather API for Paris.", "summary": []},
+				{"type": "reasoning", "id": "rs_001", "encrypted_content": "I need to call the weather API for Paris.", "summary": [{"type":"summary_text","text":"I need to call the weather API for Paris."}]},
 				{"type": "function_call", "call_id": "call_abc", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
 				{"type": "function_call_output", "call_id": "call_abc", "output": "Sunny, 72°F"},
-				{"type": "reasoning", "id": "rs_002", "encrypted_content": "The weather API returned sunny and 72°F. I should format this nicely.", "summary": []},
+				{"type": "reasoning", "id": "rs_002", "encrypted_content": "The weather API returned sunny and 72°F. I should format this nicely.", "summary": [{"type":"summary_text","text":"The weather API returned sunny and 72°F. I should format this nicely."}]},
 				{"type": "message", "role": "assistant", "content": [{"type": "input_text", "text": "It's sunny and 72°F in Paris!"}]},
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "What about London?"}]}
 			]
@@ -2396,7 +2403,7 @@ func TestFromResponsesRequest_ReasoningMerge(t *testing.T) {
 			"model": "qwen3",
 			"input": [
 				{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "think about this"}]},
-				{"type": "reasoning", "id": "rs_123", "encrypted_content": "Still thinking...", "summary": []}
+				{"type": "reasoning", "id": "rs_123", "encrypted_content": "Still thinking...", "summary": [{"type":"summary_text","text":"Still thinking..."}]}
 			]
 		}`
 

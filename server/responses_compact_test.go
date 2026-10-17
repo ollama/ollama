@@ -663,6 +663,9 @@ func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
 		name  string
 		items []string
 	}{
+		{"metadata only", nil},
+		{"retained user", []string{`{"role":"user","content":"continue"}`}},
+		{"incomplete tool definition", []string{`{"type":"tool_search_output","tools":[{}]}`}},
 		{"image URL", []string{`{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png","detail":"high"}]}`}},
 		{"image file ID", []string{`{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`}},
 		{"file with text", []string{`{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture","filename":"notes.txt"}]}`}},
@@ -748,14 +751,17 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		wantErr      string
 		wantMessages []api.Message
 		wantPrompt   []string
+		// Historical reasoning stays in Thinking, which these renderers may omit.
+		wantOmitted  []string
+		wantThinking []string
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantErr: "image file_id",
+			wantMessages: []api.Message{{Role: "user"}},
 		},
 		{
 			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantErr: "image file_id",
+			wantMessages: []api.Message{{Role: "user", Content: "Read this image"}},
 		},
 		{
 			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
@@ -775,32 +781,50 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		},
 		{
 			name: "summary only", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]}`,
-			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}},
-			wantPrompt:   []string{"Remember kiwi-42"},
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+			wantOmitted:  []string{"Remember kiwi-42"},
 		},
 		{
 			name: "summary with encrypted content", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`,
-			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "assistant", Thinking: "opaque-reasoning-state"}},
-			wantPrompt:   []string{"Remember kiwi-42"},
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+			wantOmitted:  []string{"Remember kiwi-42"},
 		},
 		{
 			name: "summary before user message", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"role":"user","content":"continue"}`,
-			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
-			wantPrompt:   []string{"Remember kiwi-42", "continue"},
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"continue"},
+			wantOmitted:  []string{"Remember kiwi-42"},
 		},
 		{
 			name: "consecutive summaries", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember plum-73"}]}`,
-			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "assistant", Content: "Remember plum-73"}},
-			wantPrompt:   []string{"Remember kiwi-42", "Remember plum-73"},
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42\nRemember plum-73"}},
+			wantOmitted:  []string{"Remember kiwi-42", "Remember plum-73"},
 		},
 		{
 			name: "summary between tool call and result", item: `{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"function_call_output","call_id":"call_1","output":""},{"role":"user","content":"continue"}`,
 			wantMessages: []api.Message{
-				{Role: "assistant", Content: "Remember kiwi-42", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "run", Arguments: api.NewToolCallFunctionArguments()}}}},
+				{Role: "assistant", Thinking: "Remember kiwi-42", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "run", Arguments: api.NewToolCallFunctionArguments()}}}},
 				{Role: "tool", ToolCallID: "call_1"},
 				{Role: "user", Content: "continue"},
 			},
-			wantPrompt: []string{"Remember kiwi-42", "continue"},
+			wantPrompt:  []string{"continue"},
+			wantOmitted: []string{"Remember kiwi-42"},
+		},
+		{
+			name: "encrypted reasoning without summary", item: `{"type":"reasoning","summary":[],"encrypted_content":"opaque-reasoning-state"},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"continue"},
+		},
+		{
+			name: "web search with consecutive reasoning", item: `{"role":"user","content":"search"},{"type":"reasoning","summary":[{"type":"summary_text","text":"first thought"}],"encrypted_content":"first thought"},{"type":"web_search_call","id":"ws_1","status":"completed"},{"type":"reasoning","summary":[{"type":"summary_text","text":"second thought"}],"encrypted_content":"opaque-reasoning-state"},{"role":"assistant","content":"the answer"}`,
+			wantMessages: []api.Message{{Role: "user", Content: "search"}, {Role: "assistant", Content: "the answer", Thinking: "first thought\nsecond thought"}},
+			wantPrompt:   []string{"search", "the answer"},
+			wantThinking: []string{"first thought", "second thought"},
+		},
+		{
+			name: "readable handoff message control", item: `{"role":"assistant","content":"Remember kiwi-42"},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"Remember kiwi-42", "continue"},
 		},
 		{
 			name: "native thinking and summary", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"Remember kiwi-42"},{"role":"assistant","content":"remembered"}`,
@@ -809,7 +833,7 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		},
 		{
 			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
-			wantMessages: []api.Message{{Role: "user", Images: []api.ImageData{[]byte("fixture")}}},
+			wantMessages: []api.Message{{Role: "user"}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -845,10 +869,10 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 					if !reflect.DeepEqual(captured.Messages, tt.wantMessages) {
 						t.Errorf("messages=%+v, want=%+v", captured.Messages, tt.wantMessages)
 					}
-					if len(tt.wantPrompt) > 0 {
+					if len(tt.wantPrompt)+len(tt.wantOmitted)+len(tt.wantThinking) > 0 {
 						for _, renderer := range []string{"qwen3-coder", "qwen3.5"} {
 							t.Run(renderer, func(t *testing.T) {
-								prompt, err := renderPrompt(&Model{Config: model.ConfigV2{Renderer: renderer}}, captured.Messages, captured.Tools, captured.Think)
+								prompt, err := renderPrompt(&Model{Config: model.ConfigV2{Renderer: renderer}}, captured.Messages, captured.Tools, &api.ThinkValue{Value: true})
 								if err != nil {
 									t.Fatal(err)
 								}
@@ -857,12 +881,68 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 										t.Errorf("expected %q once in rendered prompt: %q", text, prompt)
 									}
 								}
+								for _, text := range append([]string{"opaque-reasoning-state", "opaque-provider-state"}, tt.wantOmitted...) {
+									if strings.Contains(prompt, text) {
+										t.Errorf("unexpected %q in rendered prompt: %q", text, prompt)
+									}
+								}
+								for _, text := range tt.wantThinking {
+									wantCount := 0
+									if renderer == "qwen3.5" {
+										wantCount = 1
+									}
+									if strings.Count(prompt, text) != wantCount {
+										t.Errorf("expected %q %d times in rendered prompt: %q", text, wantCount, prompt)
+									}
+								}
 							})
 						}
 					}
 				})
 			}
 		})
+	}
+}
+
+func TestResponsesCompactionRejectsInvalidStateBeforeInference(t *testing.T) {
+	for _, modelName := range []string{"fixture", "fixture:cloud"} {
+		for _, mode := range []struct {
+			name    string
+			path    string
+			trigger bool
+		}{
+			{"continuation", "/v1/responses", false},
+			{"standalone", "/v1/responses/compact", false},
+			{"triggered", "/v1/responses", true},
+		} {
+			for _, tt := range []struct {
+				name  string
+				input string
+				error string
+			}{
+				{"foreign only", `{"type":"compaction","encrypted_content":"foreign"}`, "no items"},
+				{"native invalid version", `{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":"{\"type\":\"ollama_compaction\",\"version\":2,\"summary\":\"future\"}"}`, "version"},
+				{"invalid envelope", `{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":42}`, "invalid compaction item"},
+			} {
+				t.Run(modelName+"/"+mode.name+"/"+tt.name, func(t *testing.T) {
+					local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+						w.WriteHeader(http.StatusInternalServerError)
+					})
+					input := tt.input
+					if mode.trigger {
+						input += `,{"type":"compaction_trigger"}`
+					}
+					request := fmt.Sprintf(`{"model":%q,"stream":%t,"input":[%s]}`, modelName, mode.trigger, input)
+					status, _, body := postCompactionRequest(t, local, mode.path, request)
+					if status != http.StatusBadRequest || !bytes.Contains(body, []byte(tt.error)) {
+						t.Fatalf("status=%d body=%s", status, body)
+					}
+					if paths, _ := capture.snapshot(); len(paths) != 0 {
+						t.Fatalf("invalid state reached inference: %v", paths)
+					}
+				})
+			}
+		}
 	}
 }
 

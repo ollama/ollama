@@ -484,11 +484,6 @@ func (r *ResponsesInput) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("input must be a string or array: %w", err)
 	}
 
-	rawItems, _, err := expandOllamaCompactionItems(rawItems)
-	if err != nil {
-		return err
-	}
-
 	r.Items = make([]ResponsesInputItem, 0, len(rawItems))
 	for i, raw := range rawItems {
 		item, err := unmarshalResponsesInputItem(raw)
@@ -616,32 +611,20 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 	// Handle array of input items
 	// Track pending reasoning to merge with the next assistant message
 	var pendingThinking string
-	appendReasoning := func(content, thinking string) {
-		if len(messages) > 0 {
-			last := &messages[len(messages)-1]
-			if last.Role == "assistant" && len(last.ToolCalls) > 0 {
-				if content != "" {
-					if last.Content != "" {
-						last.Content += "\n"
-					}
-					last.Content += content
-				}
-				if thinking != "" {
-					if last.Thinking != "" {
-						last.Thinking += "\n"
-					}
-					last.Thinking += thinking
-				}
-				return
-			}
-		}
-		messages = append(messages, api.Message{Role: "assistant", Content: content, Thinking: thinking})
-	}
 	flushThinking := func() {
-		if pendingThinking != "" {
-			appendReasoning("", pendingThinking)
-			pendingThinking = ""
+		if pendingThinking == "" {
+			return
 		}
+		if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && len(messages[len(messages)-1].ToolCalls) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += pendingThinking
+		} else {
+			messages = append(messages, api.Message{Role: "assistant", Thinking: pendingThinking})
+		}
+		pendingThinking = ""
 	}
 
 	for i, item := range r.Input.Items {
@@ -650,33 +633,33 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 			if v.Role != "assistant" {
 				flushThinking()
 			}
-		case ResponsesFunctionCall, ResponsesToolSearchCall:
+		case ResponsesReasoningInput, ResponsesWebSearchCall, ResponsesFunctionCall, ResponsesToolSearchCall:
 			// These items can carry the preceding reasoning.
 		default:
 			flushThinking()
 		}
 		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Keep native thinking intact, but put distinct readable summaries in
-			// content so renderers cannot discard them with historical thinking.
-			pendingThinking = v.EncryptedContent
+			// Ollama writes the same text to summary and encrypted_content. Only
+			// the summary is portable; another provider's ciphertext is opaque.
 			var parts []string
 			for _, part := range v.Summary {
 				parts = append(parts, part.Text)
 			}
-			summary := strings.Join(parts, "\n")
-			if strings.TrimSpace(summary) != "" && summary != pendingThinking {
-				appendReasoning(summary, "")
+			if summary := strings.Join(parts, "\n"); summary != "" {
+				if pendingThinking != "" {
+					pendingThinking += "\n"
+				}
+				pendingThinking += summary
 			}
 		case ResponsesAgentMessageInput:
-			content, images, err := convertResponsesContent(v.Content)
+			content, _, err := convertResponsesContent(v.Content)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, api.Message{
 				Role:    "user",
 				Content: agentMessageContent(v.Author, v.Recipient, content),
-				Images:  images,
 			})
 		case ResponsesInputMessage:
 			msg, err := convertInputMessage(v)
@@ -1044,9 +1027,6 @@ func modelToolSearchTools(tools []json.RawMessage) ([]json.RawMessage, error) {
 		if err := json.Unmarshal(raw, &tool); err != nil {
 			return nil, fmt.Errorf("failed to decode tool search result: %w", err)
 		}
-		if !hasReadableResponsesTool(raw) {
-			return nil, errors.New("tool search result must contain a named tool definition")
-		}
 		if tool.Type != "namespace" {
 			flattened = append(flattened, raw)
 			continue
@@ -1056,9 +1036,6 @@ func modelToolSearchTools(tools []json.RawMessage) ([]json.RawMessage, error) {
 		}
 
 		for _, rawMember := range tool.Tools {
-			if !hasReadableResponsesTool(rawMember) {
-				return nil, fmt.Errorf("tool search namespace %q has an incomplete tool definition", tool.Name)
-			}
 			var member map[string]json.RawMessage
 			if err := json.Unmarshal(rawMember, &member); err != nil {
 				return nil, fmt.Errorf("failed to decode tool search namespace %q member: %w", tool.Name, err)
@@ -1155,10 +1132,7 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
-				if v.FileID != "" {
-					return "", nil, errors.New("image file_id inputs are not supported for local models; resend the image as a base64 data URL")
-				}
-				continue
+				continue // Skip if no URL (FileID not supported)
 			}
 			img, err := decodeImageURL(v.ImageURL)
 			if err != nil {

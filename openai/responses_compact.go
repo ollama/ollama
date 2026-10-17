@@ -164,8 +164,8 @@ func PrepareStandaloneCompaction(body []byte) (*ResponsesCompactionPlan, error) 
 }
 
 // ExpandResponsesCompactionInput omits foreign compaction state and replaces the
-// newest Ollama compaction item with its summary and retained messages. Readable
-// items on either side of a compaction item remain in their original order.
+// newest Ollama compaction item with its summary and retained messages. Other
+// input items remain in their original order.
 func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 	req, items, err := decodeRawResponsesRequest(body)
 	if err != nil {
@@ -176,12 +176,12 @@ func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 		return body, changed, err
 	}
 
-	input, err := json.Marshal(items)
+	input, err := marshalCompactionInput(items)
 	if err != nil {
 		return nil, false, err
 	}
 	req.Fields["input"] = input
-	rewritten, err := json.Marshal(req.Fields)
+	rewritten, err := marshalCompactionInput(req.Fields)
 	return rewritten, true, err
 }
 
@@ -276,13 +276,10 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 			if err := json.Unmarshal(item, &wire); err != nil {
 				return nil, false, fmt.Errorf("invalid compaction item: %w", err)
 			}
-			foreign, err := isForeignCompactionItem(wire)
-			if err != nil {
-				return nil, false, err
-			}
-			if foreign {
+			if isForeignCompactionItem(wire) {
 				continue
 			}
+			var err error
 			payload, err = decodeOllamaCompactionItem(item)
 			if err != nil {
 				return nil, false, err
@@ -294,8 +291,8 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 		retained = append(retained, item)
 	}
 	if boundary < 0 {
-		if !slices.ContainsFunc(retained, hasReadableResponsesItem) {
-			return nil, false, errors.New("input contains no readable history after removing foreign compaction state; resend readable conversation history")
+		if len(retained) == 0 {
+			return nil, false, errors.New("input contains no items after removing foreign compaction state; resend conversation history")
 		}
 		return retained, true, nil
 	}
@@ -311,163 +308,25 @@ func expandOllamaCompactionItems(items []json.RawMessage) ([]json.RawMessage, bo
 	return rewritten, true, nil
 }
 
-// Inspect readable content without validating provider-specific items that may
-// be forwarded to a cloud provider. Routing metadata and encrypted content do
-// not establish readable history; endpoint-specific validation happens later.
-func hasReadableResponsesItem(raw json.RawMessage) bool {
-	var wire struct {
-		Type    string          `json:"type"`
-		Role    string          `json:"role"`
-		CallID  string          `json:"call_id"`
-		Content json.RawMessage `json:"content"`
-		Output  json.RawMessage `json:"output"`
-		Action  json.RawMessage `json:"action"`
-	}
-	if json.Unmarshal(raw, &wire) != nil {
-		return false
-	}
-	if wire.Type == "" && wire.Role != "" {
-		wire.Type = "message"
-	}
-	switch wire.Type {
-	case "message", "agent_message":
-		return hasReadableResponsesContent(wire.Content)
-	case "function_call_output", "custom_tool_call_output":
-		return hasReadableResponsesContent(wire.Output)
-	case "shell_call", "local_shell_call":
-		// A command remains readable history when execution produced no output.
-		var action struct {
-			Type     string   `json:"type"`
-			Commands []string `json:"commands"`
-			Command  []string `json:"command"`
-		}
-		if strings.TrimSpace(wire.CallID) == "" || json.Unmarshal(wire.Action, &action) != nil {
-			return false
-		}
-		if wire.Type == "local_shell_call" {
-			return action.Type == "exec" && len(action.Command) > 0 && strings.TrimSpace(action.Command[0]) != ""
-		}
-		return slices.ContainsFunc(action.Commands, func(command string) bool {
-			return strings.TrimSpace(command) != ""
-		})
-	}
-	item, err := unmarshalResponsesInputItem(raw)
-	if err != nil {
-		// A provider-specific tool can still carry a readable result. Preserve
-		// the original item and leave its schema validation to the destination.
-		return hasReadableResponsesContent(wire.Output)
-	}
-	switch v := item.(type) {
-	case ResponsesReasoningInput:
-		return slices.ContainsFunc(v.Summary, func(summary ResponsesReasoningSummary) bool {
-			return strings.TrimSpace(summary.Text) != ""
-		})
-	case ResponsesFunctionCall:
-		// A complete call is readable even when its paired result is empty.
-		var arguments map[string]json.RawMessage
-		return strings.TrimSpace(v.CallID) != "" && strings.TrimSpace(v.Name) != "" &&
-			json.Unmarshal([]byte(v.Arguments), &arguments) == nil && arguments != nil
-	case ResponsesToolSearchCall:
-		return strings.TrimSpace(v.CallID) != "" && v.Arguments.Len() > 0
-	case ResponsesToolSearchOutput:
-		return slices.ContainsFunc(v.Tools, hasReadableResponsesTool)
-	default:
-		return false
-	}
-}
-
-func hasReadableResponsesTool(raw json.RawMessage) bool {
-	var tool struct {
-		Type  string            `json:"type"`
-		Name  string            `json:"name"`
-		Tools []json.RawMessage `json:"tools"`
-	}
-	if json.Unmarshal(raw, &tool) != nil || strings.TrimSpace(tool.Type) == "" || strings.TrimSpace(tool.Name) == "" {
-		return false
-	}
-	if tool.Type == "namespace" {
-		return slices.ContainsFunc(tool.Tools, hasReadableResponsesTool)
-	}
-	return true
-}
-
-func hasReadableResponsesContent(raw json.RawMessage) bool {
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return strings.TrimSpace(text) != ""
-	}
-	var content []json.RawMessage
-	if json.Unmarshal(raw, &content) != nil {
-		content = []json.RawMessage{raw}
-	}
-	return slices.ContainsFunc(content, func(raw json.RawMessage) bool {
-		var part struct {
-			Type       string `json:"type"`
-			ImageURL   string `json:"image_url"`
-			FileID     string `json:"file_id"`
-			Stdout     string `json:"stdout"`
-			Stderr     string `json:"stderr"`
-			InputAudio struct {
-				Data string `json:"data"`
-			} `json:"input_audio"`
-		}
-		if json.Unmarshal(raw, &part) != nil {
-			return false
-		}
-		switch part.Type {
-		case "":
-			return strings.TrimSpace(part.Stdout) != "" || strings.TrimSpace(part.Stderr) != ""
-		case "input_audio":
-			return strings.TrimSpace(part.InputAudio.Data) != ""
-		case "computer_screenshot":
-			return strings.TrimSpace(part.ImageURL) != "" || strings.TrimSpace(part.FileID) != ""
-		}
-		content, err := unmarshalResponsesContent(raw)
-		if err != nil {
-			return false
-		}
-		switch v := content.(type) {
-		case ResponsesTextContent:
-			return strings.TrimSpace(v.Text) != ""
-		case ResponsesOutputTextContent:
-			return strings.TrimSpace(v.Text) != ""
-		case ResponsesImageContent:
-			return strings.TrimSpace(v.ImageURL) != "" || strings.TrimSpace(v.FileID) != ""
-		case ResponsesFileContent:
-			return strings.TrimSpace(v.FileData) != "" || strings.TrimSpace(v.FileID) != "" || strings.TrimSpace(v.FileURL) != ""
-		default:
-			return false
-		}
-	})
-}
-
-func isForeignCompactionItem(item ResponsesCompactionItem) (bool, error) {
-	content := strings.TrimSpace(item.EncryptedContent)
-	if content == "" {
-		return false, errors.New("invalid compaction item: encrypted_content is required")
-	}
-	if strings.HasPrefix(content, "\ufeff") {
-		return false, errors.New("invalid compaction payload: unexpected UTF-8 byte order mark")
-	}
-	if !strings.HasPrefix(content, "{") {
-		return true, nil
-	}
-
+// Only a successfully parsed discriminator identifies native state. Its version
+// and fields are validated by decodeOllamaCompactionItem.
+func isForeignCompactionItem(item ResponsesCompactionItem) bool {
 	var payload struct {
-		Type json.RawMessage `json:"type"`
+		Type string `json:"type"`
 	}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		return false, fmt.Errorf("invalid compaction payload: %w", err)
+	return json.Unmarshal([]byte(item.EncryptedContent), &payload) != nil || payload.Type != OllamaCompactionPayloadType
+}
+
+// Preserve literal HTML-sensitive characters in client input and other fields
+// when rewriting a request for local conversion or cloud forwarding.
+func marshalCompactionInput(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
 	}
-	// Only a string discriminator can identify an Ollama payload.
-	if len(payload.Type) == 0 || payload.Type[0] != '"' {
-		return true, nil
-	}
-	var kind string
-	if err := json.Unmarshal(payload.Type, &kind); err != nil {
-		return false, fmt.Errorf("invalid compaction payload type: %w", err)
-	}
-	return kind != OllamaCompactionPayloadType, nil
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, error) {
@@ -757,14 +616,13 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		}
 		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
 	case ResponsesAgentMessageInput:
-		content, images, err := convertResponsesContent(value.Content)
+		content, _, err := convertResponsesContent(value.Content)
 		if err != nil {
 			return api.Message{}, "", err
 		}
 		return api.Message{
 			Role:    "user",
 			Content: agentMessageContent(value.Author, value.Recipient, content),
-			Images:  images,
 		}, "message", nil
 	case ResponsesCompactionItem, ResponsesCompactionTrigger:
 		return api.Message{}, "", errors.New("unexpected compaction control item")
