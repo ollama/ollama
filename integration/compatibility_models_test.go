@@ -6,11 +6,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -30,7 +33,7 @@ func TestPublishedCompatibilityModels(t *testing.T) {
 	prefix := os.Getenv("OLLAMA_TEST_COMPAT_NAMESPACE")
 
 	if testModel != "" {
-		runPublishedCompatibilityModelCase(ctx, t, testModel, false)
+		runPublishedCompatibilityModelCase(ctx, t, testModel)
 		return
 	}
 
@@ -41,19 +44,19 @@ func TestPublishedCompatibilityModels(t *testing.T) {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
 
-			runPublishedCompatibilityModelCase(ctx, t, name, true)
+			runPublishedCompatibilityModelCase(ctx, t, name)
 		})
 	}
 }
 
-func runPublishedCompatibilityModelCase(ctx context.Context, t *testing.T, name string, isolatedModelStore bool) {
+func runPublishedCompatibilityModelCase(ctx context.Context, t *testing.T, name string) {
 	t.Helper()
 
 	if strings.HasSuffix(name, "-ggml") {
 		t.Fatalf("%s is a legacy GGML source tag; run migration validation on a temporary copy instead", name)
 	}
 
-	if isolatedModelStore {
+	if testModel == "" || os.Getenv("OLLAMA_MODELS") == "" {
 		modelsDir := t.TempDir()
 		t.Setenv("OLLAMA_MODELS", modelsDir)
 		t.Logf("%s: using published compatibility model store %s", name, modelsDir)
@@ -62,63 +65,120 @@ func runPublishedCompatibilityModelCase(ctx context.Context, t *testing.T, name 
 	}
 	t.Setenv("OLLAMA_DEBUG", "2")
 
-	t.Logf("%s: starting server with %s=0", name, migrationCompatEnv)
-	t.Setenv(migrationCompatEnv, "0")
-	patchDisabledClient, _, patchDisabledCleanup := InitServerConnection(ctx, t)
+	t.Logf("%s: starting server for published-model validation", name)
+	firstClient, _, firstCleanup := InitServerConnection(ctx, t)
 	defer func() {
-		if patchDisabledCleanup != nil {
-			patchDisabledCleanup()
+		if firstCleanup != nil {
+			firstCleanup()
 		}
 	}()
 
 	t.Logf("%s: pulling published model if needed", name)
-	if err := PullIfMissing(ctx, patchDisabledClient, name); err != nil {
+	if err := PullIfMissing(ctx, firstClient, name); err != nil {
 		t.Fatalf("model %s not available: %v", name, err)
 	}
 
-	patchDisabledShow := showOrFatal(ctx, t, patchDisabledClient, name)
-	if len(patchDisabledShow.Capabilities) == 0 {
+	firstShow := showOrFatal(ctx, t, firstClient, name)
+	originalDigests := compatibilityModelDigests(ctx, t, firstClient, name)
+	if len(firstShow.Capabilities) == 0 {
 		t.Fatalf("show %s returned no capabilities", name)
 	}
-	slog.Info("validating published compatibility model", "model", name, "capabilities", normalizedCapabilities(patchDisabledShow.Capabilities))
+	slog.Info("validating published compatibility model", "model", name, "capabilities", normalizedCapabilities(firstShow.Capabilities))
 
-	skipIfModelTooLargeForVRAM(ctx, t, patchDisabledClient, name)
-	patchDisabledValidationStart := len(serverLog.String())
-	validatePublishedCapabilities(ctx, t, patchDisabledClient, name, patchDisabledShow, compatKeepAlive)
-	waitForNoRunningModel(ctx, t, patchDisabledClient, name)
+	skipIfModelTooLargeForVRAM(ctx, t, firstClient, name)
+	firstValidationStart := len(serverLog.String())
+	validateCompatibilityCapabilities(ctx, t, firstClient, name, firstShow, compatKeepAlive)
+	checkCompatibilityRunner(ctx, t, firstClient, name, firstShow)
+	waitForNoRunningModel(ctx, t, firstClient, name)
 
-	patchDisabledLogs := serverLog.String()[patchDisabledValidationStart:]
-	if hasCompatPatchEvidence(patchDisabledLogs) {
-		t.Fatalf("%s triggered compatibility patch with %s=0", name, migrationCompatEnv)
+	firstLogs := serverLog.String()[firstValidationStart:]
+	if hasCompatPatchEvidence(firstLogs) || strings.Contains(firstLogs, "starting local compat GGUF migration") {
+		t.Fatalf("%s required migration or patching; published model is not clean", name)
 	}
 
-	t.Logf("%s: stopping patch-disabled server", name)
-	patchDisabledCleanup()
-	patchDisabledCleanup = nil
+	t.Logf("%s: stopping first server", name)
+	firstCleanup()
+	firstCleanup = nil
 
-	t.Logf("%s: restarting server with default compatibility patch settings", name)
-	// Safe only because the earlier t.Setenv(migrationCompatEnv, "0") in this test registered a cleanup that restores the original value.
-	os.Unsetenv(migrationCompatEnv)
+	t.Logf("%s: restarting server to verify unchanged published model", name)
 	defaultClient, _, defaultCleanup := InitServerConnection(ctx, t)
 	defer defaultCleanup()
 
 	defaultShow := showOrFatal(ctx, t, defaultClient, name)
+	if got := compatibilityModelDigests(ctx, t, defaultClient, name); !slices.Equal(got, originalDigests) {
+		t.Fatalf("published manifest digests changed across inference/restart: before=%v after=%v", originalDigests, got)
+	}
+	t.Logf("%s: unchanged model format=%s manifests=%+v", name, defaultShow.Details.Format, defaultShow.Manifests)
 	defaultValidationStart := len(serverLog.String())
 	validateCompatibilityPrimaryCapability(ctx, t, defaultClient, name, defaultShow, compatKeepAlive)
+	checkCompatibilityRunner(ctx, t, defaultClient, name, defaultShow)
 	waitForNoRunningModel(ctx, t, defaultClient, name)
 
 	defaultLogs := serverLog.String()[defaultValidationStart:]
-	if hasCompatPatchEvidence(defaultLogs) {
-		t.Fatalf("%s triggered compatibility patch from published llama.cpp-compatible artifact", name)
+	if hasCompatPatchEvidence(defaultLogs) || strings.Contains(defaultLogs, "starting local compat GGUF migration") {
+		t.Fatalf("%s required migration or patching after restart", name)
 	}
 }
 
-func validatePublishedCapabilities(ctx context.Context, t *testing.T, client *api.Client, name string, resp *api.ShowResponse, keepAlive time.Duration) {
+func compatibilityModelDigests(ctx context.Context, t *testing.T, client *api.Client, name string) []string {
+	t.Helper()
+	list, err := client.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var digests []string
+	for _, entry := range list.Models {
+		if sameModelName(entry.Name, name) {
+			digests = append(digests, entry.Digest)
+		}
+	}
+	if len(digests) == 0 {
+		t.Fatalf("no manifest identities returned for %s", name)
+	}
+	slices.Sort(digests)
+	return digests
+}
+
+func checkCompatibilityRunner(ctx context.Context, t *testing.T, client *api.Client, name string, show *api.ShowResponse) {
+	t.Helper()
+	want := manifest.RunnerLlamaCPP
+	if show.Details.Format == "safetensors" {
+		want = manifest.RunnerMLX
+	}
+	// When both children are local, verify platform preference rather than
+	// trusting whichever child show happened to select.
+	for _, child := range show.Manifests {
+		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && child.Runner == manifest.RunnerMLX {
+			want = manifest.RunnerMLX
+			break
+		}
+		if runtime.GOOS != "darwin" && child.Runner == manifest.RunnerLlamaCPP {
+			want = manifest.RunnerLlamaCPP
+			break
+		}
+	}
+	running, err := client.ListRunning(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, loaded := range running.Models {
+		if sameModelName(loaded.Name, name) {
+			if loaded.Runner != want {
+				t.Fatalf("%s: running via %s, want %s", name, loaded.Runner, want)
+			}
+			t.Logf("%s: runner=%s digest=%s format=%s", name, loaded.Runner, loaded.Digest, loaded.Details.Format)
+			return
+		}
+	}
+	t.Fatalf("%s was not resident after capability validation", name)
+}
+
+func validateCompatibilityCapabilities(ctx context.Context, t *testing.T, client *api.Client, name string, resp *api.ShowResponse, keepAlive time.Duration) {
 	t.Helper()
 	capabilities := resp.Capabilities
-	if isModelFamily(name, "glm-ocr") {
-		// glm-ocr is OCR-specialized; generic chat/tools probes are weak even
-		// on the old runner, so validate the intended vision path here.
+	if isModelFamily(name, "glm-ocr") || isModelFamily(name, "deepseek-ocr") {
+		// OCR specialists fail generic chat probes on released builds too
+		// (DeepSeek OCR confirmed on v0.40.0); validate image content instead.
 		if !hasCapability(capabilities, model.CapabilityVision) {
 			t.Fatalf("%s did not advertise expected vision capability: %v", name, capabilities)
 		}
@@ -128,6 +188,11 @@ func validatePublishedCapabilities(ctx context.Context, t *testing.T, client *ap
 	}
 
 	validated := false
+	if hasCapability(capabilities, model.CapabilityDecision) {
+		t.Logf("%s: validating System One decisions, concurrency and error recovery", name)
+		validateSystemOne(ctx, t, client, name, resp)
+		validated = true
+	}
 	if hasCapability(capabilities, model.CapabilityEmbedding) {
 		t.Logf("%s: validating embedding capability", name)
 		testEmbedCosineDistanceCorrelationForModel(t, ctx, client, name, keepAlive)
@@ -138,7 +203,7 @@ func validatePublishedCapabilities(ctx context.Context, t *testing.T, client *ap
 		testAudioResponseForModel(t, ctx, client, name, keepAlive, compatValidationInitialTimeout, compatValidationStreamTimeout)
 		validated = true
 	}
-	if hasCapability(capabilities, model.CapabilityVision) {
+	if hasCapability(capabilities, model.CapabilityVision) && !hasCapability(capabilities, model.CapabilityDecision) {
 		t.Logf("%s: validating vision capability", name)
 		validateCompatibilityVision(ctx, t, client, name, keepAlive)
 		validated = true
@@ -170,19 +235,16 @@ func validatePublishedCapabilities(ctx context.Context, t *testing.T, client *ap
 func validateCompatibilityPrimaryCapability(ctx context.Context, t *testing.T, client *api.Client, name string, resp *api.ShowResponse, keepAlive time.Duration) {
 	t.Helper()
 	capabilities := resp.Capabilities
+	if hasCapability(capabilities, model.CapabilityDecision) {
+		validateSystemOne(ctx, t, client, name, resp)
+		return
+	}
 	if hasCapability(capabilities, model.CapabilityEmbedding) {
 		testEmbedCosineDistanceCorrelationForModel(t, ctx, client, name, keepAlive)
 		return
 	}
 	if hasCapability(capabilities, model.CapabilityVision) {
 		validateCompatibilityVision(ctx, t, client, name, keepAlive)
-		if hasCapability(capabilities, model.CapabilityTools) && shouldSmokeTools(name) {
-			testBasicToolCallWithNumPredict(t, ctx, client, name, compatToolInitialTimeout, compatToolStreamTimeout, migrationToolNumPredict(name))
-		}
-		return
-	}
-	if hasCapability(capabilities, model.CapabilityTools) && shouldSmokeTools(name) {
-		testBasicToolCallWithNumPredict(t, ctx, client, name, compatToolInitialTimeout, compatToolStreamTimeout, migrationToolNumPredict(name))
 		return
 	}
 	if hasCapability(capabilities, model.CapabilityCompletion) {
@@ -191,36 +253,9 @@ func validateCompatibilityPrimaryCapability(ctx context.Context, t *testing.T, c
 		} else {
 			validateCompatibilityChat(ctx, t, client, name, keepAlive)
 		}
-	}
-}
-
-func validateCompatibilityCapabilities(ctx context.Context, t *testing.T, client *api.Client, name string, resp *api.ShowResponse, keepAlive time.Duration) {
-	t.Helper()
-	capabilities := resp.Capabilities
-	if hasCapability(capabilities, model.CapabilityEmbedding) {
-		testEmbedCosineDistanceCorrelationForModel(t, ctx, client, name, keepAlive)
 		return
 	}
-	if hasCapability(capabilities, model.CapabilityAudio) {
-		testAudioResponseForModel(t, ctx, client, name, keepAlive, compatValidationInitialTimeout, compatValidationStreamTimeout)
-	}
-	if hasCapability(capabilities, model.CapabilityVision) {
-		validateCompatibilityVision(ctx, t, client, name, keepAlive)
-		if hasCapability(capabilities, model.CapabilityTools) && shouldSmokeTools(name) {
-			testBasicToolCallWithNumPredict(t, ctx, client, name, compatToolInitialTimeout, compatToolStreamTimeout, migrationToolNumPredict(name))
-		}
-		return
-	}
-	if hasCapability(capabilities, model.CapabilityCompletion) {
-		if isPlainCompletionOnlyModel(resp) {
-			validateGenerateCompletion(ctx, t, client, name, keepAlive)
-		} else {
-			validateCompatibilityChat(ctx, t, client, name, keepAlive)
-		}
-	}
-	if hasCapability(capabilities, model.CapabilityTools) {
-		testBasicToolCallWithNumPredict(t, ctx, client, name, compatToolInitialTimeout, compatToolStreamTimeout, migrationToolNumPredict(name))
-	}
+	t.Fatalf("%s has no supported primary capability: %v", name, capabilities)
 }
 
 func isPlainCompletionOnlyModel(resp *api.ShowResponse) bool {

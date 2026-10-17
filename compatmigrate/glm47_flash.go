@@ -7,7 +7,6 @@ import (
 
 type glm47FlashMigrator struct{}
 
-// Mirrors detect_ollama_glm4moelite in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (glm47FlashMigrator) NeedsMigration(src *SourceModel) bool {
 	return src.GGUF.KeyValue("general.architecture").String() == "glm4moelite"
 }

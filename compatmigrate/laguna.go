@@ -6,7 +6,6 @@ import (
 
 type lagunaMigrator struct{}
 
-// Mirrors detect_ollama_laguna in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (lagunaMigrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "laguna" {
 		return false
