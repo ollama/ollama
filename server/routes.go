@@ -2851,6 +2851,23 @@ func toolCallTagForCompletion(toolParser *tools.Parser) string {
 	return toolParser.Tag()
 }
 
+func toolCallStartsForCompletion(builtinParser parsers.Parser, toolParser *tools.Parser, hasTools bool) []string {
+	if !hasTools {
+		return nil
+	}
+	if starts := parsers.ToolCallStarts(builtinParser); len(starts) > 0 {
+		return starts
+	}
+	if toolParser == nil {
+		return nil
+	}
+	tag := toolParser.Tag()
+	if tag == "" || tag == "{" || tag == "[" {
+		return nil
+	}
+	return []string{tag}
+}
+
 func thinkingCloseForCompletion(builtinParser parsers.Parser, thinkTagParser *thinkingparser.Parser) []string {
 	if builtinParser != nil {
 		return builtinParser.ThinkingClose()
@@ -3304,6 +3321,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			TopLogprobs:     req.TopLogprobs,
 			PreservedTokens: preservedTokensForCompletion(builtinParser),
 			ToolCallTag:     toolCallTagForCompletion(toolParser),
+			ToolCallStarts:  toolCallStartsForCompletion(builtinParser, toolParser, len(req.Tools) > 0),
 			LeadingBOS:      leadingBOSForModel(m),
 			ThinkingClose:   thinkingCloseForCompletion(builtinParser, thinkTagParser),
 		}, func(r llm.CompletionResponse) {
