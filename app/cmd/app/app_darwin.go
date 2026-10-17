@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/internal/proxy"
+	modelpkg "github.com/ollama/ollama/types/model"
 	"golang.org/x/sys/unix"
 )
 
@@ -117,6 +119,9 @@ var (
 
 	claudeAccessStateResolver = currentClaudeDesktopAccessState
 	claudeLocalModelsResolver = currentClaudeDesktopLocalModels
+	// claudeLocalChatModelsResolver lists installed local models that can serve
+	// Claude Desktop, best choice first.
+	claudeLocalChatModelsResolver = currentClaudeDesktopLocalChatModels
 )
 
 var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the selected models. Try again")
@@ -679,7 +684,11 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 		if localErr != nil {
 			slog.Debug("could not load local models for Claude startup defaults", "error", localErr)
 		}
-		selected = defaultClaudeDesktopSelection(selectable, state, localNames, localErr == nil)
+		chatModels, chatErr := claudeLocalChatModelsResolver(ctx)
+		if chatErr != nil {
+			slog.Debug("could not load local chat models for Claude startup defaults", "error", chatErr)
+		}
+		selected = defaultClaudeDesktopSelection(selectable, state, localNames, chatModels, localErr == nil)
 	} else {
 		selected = proxy.SelectClaudeDesktopModels(selectable, selectedNames)
 	}
@@ -1005,21 +1014,13 @@ func claudeLocalModels(
 	ctx context.Context,
 	list func(context.Context) (*api.ListResponse, error),
 ) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	response, err := list(ctx)
-	if err != nil || response == nil {
+	locals, err := listClaudeLocalModels(ctx, list)
+	if err != nil {
 		return nil, err
 	}
 
-	names := make([]string, 0, len(response.Models)*2)
-	for _, model := range response.Models {
-		// /api/tags can include cloud placeholders. Only models with local
-		// weights qualify as installed local choices for Claude Desktop.
-		if model.RemoteModel != "" || model.RemoteHost != "" ||
-			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
-			continue
-		}
+	names := make([]string, 0, len(locals)*2)
+	for _, model := range locals {
 		if model.Name != "" {
 			names = append(names, model.Name)
 			if alias := strings.TrimSuffix(model.Name, ":latest"); alias != model.Name {
@@ -1036,9 +1037,68 @@ func claudeLocalModels(
 	return names, nil
 }
 
+// claudeLocalChatModels returns the installed local models that can serve
+// Claude Desktop, best first: models with tool calling, which Claude Desktop
+// relies on, then other models that can generate text. Embedding-only and
+// image models are left out, as are models whose capabilities the server did
+// not report because they could not be loaded.
+func claudeLocalChatModels(
+	ctx context.Context,
+	list func(context.Context) (*api.ListResponse, error),
+) ([]string, error) {
+	locals, err := listClaudeLocalModels(ctx, list)
+	if err != nil {
+		return nil, err
+	}
+
+	var withTools, completionOnly []string
+	for _, model := range locals {
+		if model.Name == "" || !slices.Contains(model.Capabilities, modelpkg.CapabilityCompletion) {
+			continue
+		}
+		if slices.Contains(model.Capabilities, modelpkg.CapabilityTools) {
+			withTools = append(withTools, model.Name)
+		} else {
+			completionOnly = append(completionOnly, model.Name)
+		}
+	}
+	return append(withTools, completionOnly...), nil
+}
+
+// listClaudeLocalModels returns the models in the list that have local
+// weights.
+func listClaudeLocalModels(
+	ctx context.Context,
+	list func(context.Context) (*api.ListResponse, error),
+) ([]api.ListModelResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	response, err := list(ctx)
+	if err != nil || response == nil {
+		return nil, err
+	}
+
+	locals := make([]api.ListModelResponse, 0, len(response.Models))
+	for _, model := range response.Models {
+		// /api/tags can include cloud placeholders. Only models with local
+		// weights qualify as installed local choices for Claude Desktop.
+		if model.RemoteModel != "" || model.RemoteHost != "" ||
+			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
+			continue
+		}
+		locals = append(locals, model)
+	}
+	return locals, nil
+}
+
 func currentClaudeDesktopLocalModels(ctx context.Context) ([]string, error) {
 	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 	return claudeLocalModels(ctx, client.List)
+}
+
+func currentClaudeDesktopLocalChatModels(ctx context.Context) ([]string, error) {
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	return claudeLocalChatModels(ctx, client.List)
 }
 
 func ensureClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.ClaudeDesktopModel) error {
@@ -1083,19 +1143,22 @@ func hasCloudClaudeDesktopModel(models []proxy.ClaudeDesktopModel) bool {
 // defaultClaudeDesktopSelection returns the models Claude Desktop starts with
 // when the user has not chosen any. The recommended cloud default is used
 // whenever this account can use it. If it cannot (Cloud is off, the user is
-// signed out, the plan is too low, or the catalog has no default), the first
-// installed local model takes its place so the integration still connects.
+// signed out, the plan is too low, or the catalog has no default), the best
+// installed chat model takes its place so the integration still connects.
 // An unverifiable account keeps the cloud default so the caller's retry loop
-// can try again, and with no local model installed the cloud default is
+// can try again, and with no chat model installed the cloud default is
 // returned as-is so the caller reports why it is unusable.
-func defaultClaudeDesktopSelection(selectable []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState, localNames []string, inventoryKnown bool) []proxy.ClaudeDesktopModel {
+//
+// localNames lists every installed local model and chatModels the subset that
+// can serve Claude Desktop, best first.
+func defaultClaudeDesktopSelection(selectable []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState, localNames, chatModels []string, inventoryKnown bool) []proxy.ClaudeDesktopModel {
 	cloudDefault := proxy.MapClaudeDesktopModels(selectable, proxy.DefaultClaudeDesktopMappingsForModels(selectable))
 	err := validateClaudeDesktopModels(cloudDefault, state, localNames, inventoryKnown)
-	if err == nil || errors.Is(err, errClaudeDesktopAccessUnavailable) || len(localNames) == 0 {
+	if err == nil || errors.Is(err, errClaudeDesktopAccessUnavailable) || len(chatModels) == 0 {
 		return cloudDefault
 	}
 	return proxy.MapClaudeDesktopModels(nil, map[string]string{
-		defaultClaudeDesktopRouteID(): localNames[0],
+		defaultClaudeDesktopRouteID(): chatModels[0],
 	})
 }
 
@@ -1443,7 +1506,11 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 	}
 	var defaultSelection []proxy.ClaudeDesktopModel
 	if showDefaults {
-		defaultSelection = defaultClaudeDesktopSelection(availableModels, accessState, localNames, localErr == nil)
+		chatModels, chatErr := claudeLocalChatModelsResolver(ctx)
+		if chatErr != nil {
+			slog.Debug("could not load local chat models for Claude Settings", "error", chatErr)
+		}
+		defaultSelection = defaultClaudeDesktopSelection(availableModels, accessState, localNames, chatModels, localErr == nil)
 		availableModels = includeSelectedClaudeDesktopModels(availableModels, defaultSelection)
 	}
 	localModels := make(map[string]struct{}, len(localNames))
