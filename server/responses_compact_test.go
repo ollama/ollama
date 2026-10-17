@@ -16,8 +16,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/proxy"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestIsCompactionContextLimit(t *testing.T) {
@@ -652,5 +655,363 @@ func TestResponsesCompactionPayloadIsExpandedBeforeCloudPassthrough(t *testing.T
 	}
 	if !strings.Contains(forwarded, "The build is ready.") || !strings.Contains(forwarded, "new turn") || !strings.Contains(forwarded, "ollama_compaction_summary") {
 		t.Fatalf("expanded state is incomplete: %s", forwarded)
+	}
+}
+
+func TestResponsesForeignCompactionCloudForwarding(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		items []string
+	}{
+		{"metadata only", nil},
+		{"retained user", []string{`{"role":"user","content":"continue"}`}},
+		{"incomplete tool definition", []string{`{"type":"tool_search_output","tools":[{}]}`}},
+		{"image URL", []string{`{"role":"user","content":[{"type":"input_image","image_url":"https://example.invalid/image.png","detail":"high"}]}`}},
+		{"image file ID", []string{`{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`}},
+		{"file with text", []string{`{"role":"user","content":[{"type":"input_text","text":"Read the file"},{"type":"input_file","file_id":"file-fixture","filename":"notes.txt"}]}`}},
+		{"reasoning summary", []string{`{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`}},
+		{"provider tool with text", []string{
+			`{"role":"user","content":"Continue from this computer action"}`,
+			`{"type":"computer_call","call_id":"call_1","action":{"type":"click","x":10,"y":20}}`,
+		}},
+		{"provider content with text", []string{`{"role":"user","content":[{"type":"input_text","text":"Transcribe this audio"},{"type":"input_audio","input_audio":{"data":"fixture","format":"wav"}}]}`}},
+		{"provider tool output with text", []string{`{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"Recorded kiwi-42"},{"type":"input_audio","input_audio":{"data":"fixture","format":"wav"}}]}`}},
+		{"audio only", []string{`{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`}},
+		{"audio tool output", []string{`{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`}},
+		{"provider tool result", []string{
+			`{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":["pwd"]}}`,
+			`{"type":"local_shell_call_output","call_id":"call_1","output":"/workspace"}`,
+		}},
+		{"computer screenshot", []string{`{"type":"computer_call_output","call_id":"call_1","output":{"type":"computer_screenshot","image_url":"data:image/png;base64,Zml4dHVyZQ=="}}`}},
+		{"shell output", []string{`{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"kiwi-42\n","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`}},
+		{"shell pair with empty result", []string{
+			`{"type":"shell_call","id":"sc_1","call_id":"call_1","status":"completed","action":{"commands":["true"]}}`,
+			`{"type":"shell_call_output","call_id":"call_1","output":[{"stdout":"","stderr":"","outcome":{"type":"exit","exit_code":0}}]}`,
+		}},
+		{"local shell pair with empty result", []string{
+			`{"type":"local_shell_call","id":"lsc_1","call_id":"call_1","status":"completed","action":{"type":"exec","command":["true"],"env":{}}}`,
+			`{"type":"local_shell_call_output","id":"call_1","output":""}`,
+		}},
+		{"function pair with empty result", []string{
+			`{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"}`,
+			`{"type":"function_call_output","call_id":"call_1","output":""}`,
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, foreign := range []bool{false, true} {
+				t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+					local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = io.WriteString(w, `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[]}`)
+					})
+					retained := []json.RawMessage{
+						json.RawMessage(`{"type":"web_search_call","id":"ws_1","status":"completed"}`),
+					}
+					for _, item := range tt.items {
+						retained = append(retained, json.RawMessage(item))
+					}
+					retained = append(retained, json.RawMessage(`{"type":"reasoning","summary":[],"encrypted_content":"other-opaque-state"}`))
+					input := append([]json.RawMessage(nil), retained[:1]...)
+					if foreign {
+						input = append(input, json.RawMessage(`{"type":"compaction","encrypted_content":"opaque-provider-state"}`))
+					}
+					input = append(input, retained[1:]...)
+					request, err := json.Marshal(map[string]any{"model": "fixture:cloud", "stream": false, "input": input})
+					if err != nil {
+						t.Fatal(err)
+					}
+					status, _, body := postCompactionRequest(t, local, "/v1/responses", string(request))
+					if status != http.StatusOK {
+						t.Fatalf("status=%d body=%s", status, body)
+					}
+					paths, bodies := capture.snapshot()
+					if len(paths) != 1 || paths[0] != "/v1/responses" {
+						t.Fatalf("paths=%v", paths)
+					}
+					var forwarded struct {
+						Input []json.RawMessage `json:"input"`
+					}
+					if err := json.Unmarshal(bodies[0], &forwarded); err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(forwarded.Input, retained) {
+						t.Fatalf("retained input changed: got=%s want=%s", forwarded.Input, retained)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name         string
+		item         string
+		wantErr      string
+		wantMessages []api.Message
+		wantPrompt   []string
+		// Historical reasoning stays in Thinking, which these renderers may omit.
+		wantOmitted  []string
+		wantThinking []string
+	}{
+		{
+			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
+			wantMessages: []api.Message{{Role: "user"}},
+		},
+		{
+			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
+			wantMessages: []api.Message{{Role: "user", Content: "Read this image"}},
+		},
+		{
+			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
+			wantErr: "file inputs",
+		},
+		{
+			name: "audio input", item: `{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"Zml4dHVyZQ==","format":"wav"}}]}`,
+			wantErr: "unknown content type: input_audio",
+		},
+		{
+			name: "unsupported shell call", item: `{"type":"shell_call","call_id":"call_1","action":{"commands":["true"]}}`,
+			wantErr: "shell_call",
+		},
+		{
+			name: "unsupported local shell call", item: `{"type":"local_shell_call","call_id":"call_1","action":{"type":"exec","command":["true"]}}`,
+			wantErr: "local_shell_call",
+		},
+		{
+			name: "summary only", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+			wantOmitted:  []string{"Remember kiwi-42"},
+		},
+		{
+			name: "summary with encrypted content", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"opaque-reasoning-state"}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}},
+			wantOmitted:  []string{"Remember kiwi-42"},
+		},
+		{
+			name: "summary before user message", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"continue"},
+			wantOmitted:  []string{"Remember kiwi-42"},
+		},
+		{
+			name: "consecutive summaries", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember plum-73"}]}`,
+			wantMessages: []api.Message{{Role: "assistant", Thinking: "Remember kiwi-42\nRemember plum-73"}},
+			wantOmitted:  []string{"Remember kiwi-42", "Remember plum-73"},
+		},
+		{
+			name: "summary between tool call and result", item: `{"type":"function_call","call_id":"call_1","name":"run","arguments":"{}"},{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}]},{"type":"function_call_output","call_id":"call_1","output":""},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{
+				{Role: "assistant", Thinking: "Remember kiwi-42", ToolCalls: []api.ToolCall{{ID: "call_1", Function: api.ToolCallFunction{Name: "run", Arguments: api.NewToolCallFunctionArguments()}}}},
+				{Role: "tool", ToolCallID: "call_1"},
+				{Role: "user", Content: "continue"},
+			},
+			wantPrompt:  []string{"continue"},
+			wantOmitted: []string{"Remember kiwi-42"},
+		},
+		{
+			name: "encrypted reasoning without summary", item: `{"type":"reasoning","summary":[],"encrypted_content":"opaque-reasoning-state"},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"continue"},
+		},
+		{
+			name: "web search with consecutive reasoning", item: `{"role":"user","content":"search"},{"type":"reasoning","summary":[{"type":"summary_text","text":"first thought"}],"encrypted_content":"first thought"},{"type":"web_search_call","id":"ws_1","status":"completed"},{"type":"reasoning","summary":[{"type":"summary_text","text":"second thought"}],"encrypted_content":"opaque-reasoning-state"},{"role":"assistant","content":"the answer"}`,
+			wantMessages: []api.Message{{Role: "user", Content: "search"}, {Role: "assistant", Content: "the answer", Thinking: "first thought\nsecond thought"}},
+			wantPrompt:   []string{"search", "the answer"},
+			wantThinking: []string{"first thought", "second thought"},
+		},
+		{
+			name: "readable handoff message control", item: `{"role":"assistant","content":"Remember kiwi-42"},{"role":"user","content":"continue"}`,
+			wantMessages: []api.Message{{Role: "assistant", Content: "Remember kiwi-42"}, {Role: "user", Content: "continue"}},
+			wantPrompt:   []string{"Remember kiwi-42", "continue"},
+		},
+		{
+			name: "native thinking and summary", item: `{"type":"reasoning","summary":[{"type":"summary_text","text":"Remember kiwi-42"}],"encrypted_content":"Remember kiwi-42"},{"role":"assistant","content":"remembered"}`,
+			wantMessages: []api.Message{{Role: "assistant", Content: "remembered", Thinking: "Remember kiwi-42"}},
+			wantPrompt:   []string{"remembered"},
+		},
+		{
+			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
+			wantMessages: []api.Message{{Role: "user"}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, foreign := range []bool{false, true} {
+				t.Run(fmt.Sprintf("foreign=%t", foreign), func(t *testing.T) {
+					s := &Server{}
+					router := gin.New()
+					var captured *api.ChatRequest
+					router.POST("/v1/responses", s.responsesCompactionMiddleware(), middleware.ResponsesMiddleware(), func(c *gin.Context) {
+						captured = new(api.ChatRequest)
+						if err := json.NewDecoder(c.Request.Body).Decode(captured); err != nil {
+							t.Fatal(err)
+						}
+						c.Status(http.StatusNoContent)
+					})
+					input := tt.item
+					if foreign {
+						input = `{"type":"compaction","encrypted_content":"opaque-provider-state"},` + input
+					}
+					request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"fixture","input":[`+input+`]}`))
+					request.Header.Set("Content-Type", "application/json")
+					response := httptest.NewRecorder()
+					router.ServeHTTP(response, request)
+					if tt.wantErr != "" {
+						if response.Code != http.StatusBadRequest || captured != nil || !strings.Contains(response.Body.String(), tt.wantErr) {
+							t.Fatalf("status=%d captured=%+v body=%s", response.Code, captured, response.Body.String())
+						}
+						return
+					}
+					if response.Code != http.StatusNoContent || captured == nil {
+						t.Fatalf("status=%d captured=%+v, want messages=%+v", response.Code, captured, tt.wantMessages)
+					}
+					if !reflect.DeepEqual(captured.Messages, tt.wantMessages) {
+						t.Errorf("messages=%+v, want=%+v", captured.Messages, tt.wantMessages)
+					}
+					if len(tt.wantPrompt)+len(tt.wantOmitted)+len(tt.wantThinking) > 0 {
+						for _, renderer := range []string{"qwen3-coder", "qwen3.5"} {
+							t.Run(renderer, func(t *testing.T) {
+								prompt, err := renderPrompt(&Model{Config: model.ConfigV2{Renderer: renderer}}, captured.Messages, captured.Tools, &api.ThinkValue{Value: true})
+								if err != nil {
+									t.Fatal(err)
+								}
+								for _, text := range tt.wantPrompt {
+									if strings.Count(prompt, text) != 1 {
+										t.Errorf("expected %q once in rendered prompt: %q", text, prompt)
+									}
+								}
+								for _, text := range append([]string{"opaque-reasoning-state", "opaque-provider-state"}, tt.wantOmitted...) {
+									if strings.Contains(prompt, text) {
+										t.Errorf("unexpected %q in rendered prompt: %q", text, prompt)
+									}
+								}
+								for _, text := range tt.wantThinking {
+									wantCount := 0
+									if renderer == "qwen3.5" {
+										wantCount = 1
+									}
+									if strings.Count(prompt, text) != wantCount {
+										t.Errorf("expected %q %d times in rendered prompt: %q", text, wantCount, prompt)
+									}
+								}
+							})
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResponsesCompactionRejectsInvalidStateBeforeInference(t *testing.T) {
+	for _, modelName := range []string{"fixture", "fixture:cloud"} {
+		for _, mode := range []struct {
+			name    string
+			path    string
+			trigger bool
+		}{
+			{"continuation", "/v1/responses", false},
+			{"standalone", "/v1/responses/compact", false},
+			{"triggered", "/v1/responses", true},
+		} {
+			for _, tt := range []struct {
+				name  string
+				input string
+				error string
+			}{
+				{"foreign only", `{"type":"compaction","encrypted_content":"foreign"}`, "no items"},
+				{"native invalid version", `{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":"{\"type\":\"ollama_compaction\",\"version\":2,\"summary\":\"future\"}"}`, "version"},
+				{"invalid envelope", `{"role":"user","content":"continue"},{"type":"compaction","encrypted_content":42}`, "invalid compaction item"},
+			} {
+				t.Run(modelName+"/"+mode.name+"/"+tt.name, func(t *testing.T) {
+					local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+						w.WriteHeader(http.StatusInternalServerError)
+					})
+					input := tt.input
+					if mode.trigger {
+						input += `,{"type":"compaction_trigger"}`
+					}
+					request := fmt.Sprintf(`{"model":%q,"stream":%t,"input":[%s]}`, modelName, mode.trigger, input)
+					status, _, body := postCompactionRequest(t, local, mode.path, request)
+					if status != http.StatusBadRequest || !bytes.Contains(body, []byte(tt.error)) {
+						t.Fatalf("status=%d body=%s", status, body)
+					}
+					if paths, _ := capture.snapshot(); len(paths) != 0 {
+						t.Fatalf("invalid state reached inference: %v", paths)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestResponsesForeignCompactionHistory(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		path    string
+		stream  bool
+		compact bool
+	}{
+		{"json continuation", "/v1/responses", false, false},
+		{"streaming continuation", "/v1/responses", true, false},
+		{"standalone compaction", "/v1/responses/compact", false, true},
+		{"triggered compaction", "/v1/responses", true, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const response = `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`
+			streamResponse := "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n"
+			local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+				if tt.stream && !tt.compact {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, streamResponse)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if tt.compact {
+					_, _ = w.Write(summaryResponse(t, "Remember kiwi-42.", nil))
+				} else {
+					_, _ = io.WriteString(w, response)
+				}
+			})
+			input := []any{
+				map[string]any{"role": "user", "content": "readable prefix"},
+				openai.ResponsesCompactionItem{Type: "compaction", EncryptedContent: "opaque-provider-state"},
+				map[string]any{"type": "custom_tool_call", "call_id": "call_1", "name": "read", "input": "notes.txt"},
+				map[string]any{"type": "custom_tool_call_output", "call_id": "call_1", "output": "kiwi-42"},
+			}
+			if tt.compact && tt.stream {
+				input = append(input, map[string]any{"type": "compaction_trigger"})
+			}
+			request, err := json.Marshal(map[string]any{"model": "fixture:cloud", "stream": tt.stream, "input": input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, headers, body := postCompactionRequest(t, local, tt.path, string(request))
+			if status != http.StatusOK {
+				t.Fatalf("status=%d body=%s", status, body)
+			}
+			if tt.stream {
+				if !strings.HasPrefix(headers.Get("Content-Type"), "text/event-stream") || strings.Count(string(body), "event: response.completed") != 1 {
+					t.Fatalf("unexpected stream: headers=%v body=%s", headers, body)
+				}
+				if !tt.compact && string(body) != streamResponse {
+					t.Fatalf("upstream stream changed: %s", body)
+				}
+			}
+			paths, bodies := capture.snapshot()
+			if len(paths) != 1 || paths[0] != "/v1/responses" {
+				t.Fatalf("paths=%v", paths)
+			}
+			forwarded := string(bodies[0])
+			if strings.Contains(forwarded, "opaque-provider-state") {
+				t.Fatalf("foreign payload reached inference: %s", forwarded)
+			}
+			for _, text := range []string{"readable prefix", "kiwi-42", "call_1", "notes.txt"} {
+				if !strings.Contains(forwarded, text) {
+					t.Errorf("history missing %q: %s", text, forwarded)
+				}
+			}
+		})
 	}
 }

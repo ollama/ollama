@@ -839,11 +839,35 @@ func TestExpandResponsesCompactionInputPreservesCodexRetainedPrefix(t *testing.T
 	}
 }
 
-func TestExpandResponsesCompactionInputRejectsForeignPayload(t *testing.T) {
-	body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}]}`)
-	_, changed, err := ExpandResponsesCompactionInput(body)
-	if changed || err == nil || !strings.Contains(err.Error(), "not an Ollama payload") {
-		t.Fatalf("changed=%v err=%v", changed, err)
+// Accepting retained items does not mean a foreign checkpoint was recovered.
+// Each destination is responsible for validating the retained item schemas.
+func TestExpandResponsesCompactionInputRequiresRemainingItems(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		remaining string
+		wantErr   bool
+	}{
+		{"no remaining items", "", true},
+		{"only foreign checkpoints", `,{"type":"compaction","encrypted_content":"other-provider"}`, true},
+		{"Codex retained user", `,{"role":"user","content":"continue"}`, false},
+		{"search metadata only", `,{"type":"web_search_call","id":"ws_1","status":"completed"}`, false},
+		{"encrypted reasoning only", `,{"type":"reasoning","summary":[],"encrypted_content":"opaque"}`, false},
+		{"empty message", `,{"role":"user","content":" "}`, false},
+		{"empty routed agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[]}`, false},
+		{"orphan empty tool result", `,{"type":"function_call_output","call_id":"missing-call","output":""}`, false},
+		{"incomplete tool definition", `,{"type":"tool_search_output","tools":[{}]}`, false},
+		{"provider call", `,{"type":"shell_call","call_id":"call_1","action":{"commands":["true"]}}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}` + tt.remaining + `]}`)
+			_, changed, err := ExpandResponsesCompactionInput(body)
+			if (err != nil) != tt.wantErr || changed == tt.wantErr {
+				t.Errorf("expand: changed=%v err=%v, wantErr=%v", changed, err, tt.wantErr)
+			}
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "resend conversation history")) {
+				t.Errorf("expected empty-history recovery error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -915,7 +939,8 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		"recipient": "/root/worker",
 		"content": [
 			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
-			{"type": "encrypted_content", "encrypted_content": "analyze the parser"}
+			{"type": "encrypted_content", "encrypted_content": "analyze the parser"},
+			{"type": "input_image", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 		]
 	}`), &item)
 	if err != nil {
@@ -928,7 +953,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	if kind != "message" || msg.Role != "user" || msg.Content != want {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 0 {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }
