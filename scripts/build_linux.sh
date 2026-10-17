@@ -54,17 +54,23 @@ if echo $PLATFORM | grep "," > /dev/null ; then
         tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
-        tar c -C ./dist/linux_amd64 --exclude './lib/ollama/rocm*' --exclude './lib/ollama/mlx*' --exclude './lib/ollama/include' . | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/linux_amd64 --exclude './lib/ollama/rocm*' --exclude './lib/ollama/mlx*' --exclude './lib/ollama/oneapi*' --exclude './lib/ollama/include' . | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
         ( cd ./dist/linux_amd64 && tar c lib/ollama/rocm_v* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
         ( cd ./dist/linux_amd64 && if [ -e lib/ollama/include ]; then tar c lib/ollama/mlx* lib/ollama/include; else tar c lib/ollama/mlx*; fi ) | zstd -9 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
+        if ls ./dist/linux_amd64/lib/ollama/oneapi* >/dev/null 2>&1; then
+            ( cd ./dist/linux_amd64 && tar c lib/ollama/oneapi* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-oneapi.tar.zst
+        fi
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
         tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
-        tar c -C ./dist/ --exclude 'lib/ollama/rocm*' --exclude 'lib/ollama/mlx*' --exclude 'lib/ollama/include' bin lib | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/ --exclude 'lib/ollama/rocm*' --exclude 'lib/ollama/mlx*' --exclude 'lib/ollama/oneapi*' --exclude 'lib/ollama/include' bin lib | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
         ( cd ./dist/ && tar c lib/ollama/rocm_v* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
         ( cd ./dist/ && if [ -e lib/ollama/include ]; then tar c lib/ollama/mlx* lib/ollama/include; else tar c lib/ollama/mlx*; fi ) | zstd -9 -T0 >./dist/ollama-linux-amd64-mlx.tar.zst
+        if ls ./dist/lib/ollama/oneapi* >/dev/null 2>&1; then
+            ( cd ./dist/ && tar c lib/ollama/oneapi* ) | zstd -9 -T0 >./dist/ollama-linux-amd64-oneapi.tar.zst
+        fi
 fi
 
 LIMIT=2147483648
