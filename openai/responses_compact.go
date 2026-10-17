@@ -354,9 +354,11 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 func messageToResponsesItems(message api.Message, standaloneName compactionFunctionName) ([]json.RawMessage, error) {
 	var values []any
 	if message.Thinking != "" {
+		// Match ToResponse's plaintext replay format for Ollama-owned thinking.
 		values = append(values, map[string]any{
-			"type":    "reasoning",
-			"summary": []map[string]string{{"type": "summary_text", "text": message.Thinking}},
+			"type":              "reasoning",
+			"summary":           []map[string]string{{"type": "summary_text", "text": message.Thinking}},
+			"encrypted_content": message.Thinking,
 		})
 	}
 	if message.Role == "tool" {
