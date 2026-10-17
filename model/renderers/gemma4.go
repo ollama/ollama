@@ -272,7 +272,7 @@ func (r *Gemma4Renderer) writeTypedProperties(sb *strings.Builder, props *api.To
 		return
 	}
 
-	r.writeSchemaProperties(sb, typedSchemaPropertiesMap(props))
+	r.writeSchemaProperties(sb, typedSchemaPropertiesMap(props), false)
 }
 
 func typedSchemaPropertiesMap(props *api.ToolPropertiesMap) map[string]any {
@@ -307,7 +307,7 @@ func (r *Gemma4Renderer) writeSchemaItemsSpec(sb *strings.Builder, items map[str
 		case "properties":
 			sb.WriteString("properties:{")
 			if props, ok := r.asSchemaMap(value); ok {
-				r.writeSchemaProperties(sb, props)
+				r.writeSchemaProperties(sb, props, false)
 			}
 			sb.WriteString("}")
 		case "required":
@@ -339,7 +339,13 @@ func (r *Gemma4Renderer) writeSchemaItemsSpec(sb *strings.Builder, items map[str
 	}
 }
 
-func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[string]any) {
+// writeSchemaProperties renders a properties map. filterKeys drops the JSON
+// Schema keywords, and is only correct where the map being rendered is itself a
+// schema rather than a map of parameter names. The reference template makes the
+// same distinction: format_parameters defaults to filter_keys=false and only one
+// call site, the OBJECT branch that falls back to the property map itself,
+// passes filter_keys=true.
+func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[string]any, filterKeys bool) {
 	keys := make([]string, 0, len(props))
 	for k := range props {
 		keys = append(keys, k)
@@ -348,7 +354,7 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 
 	first := true
 	for _, name := range keys {
-		if isSchemaStandardKey(name) {
+		if filterKeys && isSchemaStandardKey(name) {
 			continue
 		}
 		prop, ok := r.asSchemaMap(props[name])
@@ -421,7 +427,7 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 					addComma = true
 				}
 				sb.WriteString("properties:{")
-				r.writeSchemaProperties(sb, nestedProps)
+				r.writeSchemaProperties(sb, nestedProps, false)
 				sb.WriteString("}")
 			} else {
 				if addComma {
@@ -430,7 +436,9 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 					addComma = true
 				}
 				sb.WriteString("properties:{")
-				r.writeSchemaProperties(sb, prop)
+				// The schema-shaped fallback: no "properties" key, so this map is
+				// the schema itself and its keywords are not parameter names.
+				r.writeSchemaProperties(sb, prop, true)
 				sb.WriteString("}")
 			}
 
