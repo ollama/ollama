@@ -66,9 +66,9 @@ the explorer window by hitting `<Ctrl>+R` and type in:
 - `explorer %LOCALAPPDATA%\Ollama` contains logs, and downloaded updates
   - _app.log_ contains most resent logs from the GUI application
   - _server.log_ contains the most recent server logs
-  - _upgrade.log_ contains log output for upgrades
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
+  - _logs\upgrade.log_ contains log output for the most recent upgrade, and older upgrades are kept in _logs\upgrade-#.log_. These are kept when Ollama is uninstalled
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
 ## Uninstall
