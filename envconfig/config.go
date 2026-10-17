@@ -228,6 +228,12 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 0)
+	// ParallelHybrid lets OLLAMA_NUM_PARALLEL apply to the architectures the scheduler otherwise
+	// pins to one slot (qwen35moe and the other hybrid or recurrent families). Off by default.
+	// llama-server runs these with a KV cache per sequence (kv_unified=false); on one box with
+	// several editor sessions, one slot meant one prompt cache and every turn re-read its
+	// conversation.
+	ParallelHybrid = Bool("OLLAMA_PARALLEL_HYBRID")
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
 	// EnableVulkan controls Vulkan backend discovery.
@@ -336,6 +342,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_ORIGINS":              {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":         {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_CONTEXT_LENGTH":       {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
+		"OLLAMA_PARALLEL_HYBRID":      {"OLLAMA_PARALLEL_HYBRID", ParallelHybrid(), "Let OLLAMA_NUM_PARALLEL apply to hybrid architectures the scheduler pins to one slot (default false)"},
 		"OLLAMA_CREATE_REMOTE":        {"OLLAMA_CREATE_REMOTE", CreateRemote(), "Force model creation through the server API even when the server is local"},
 		"OLLAMA_EDITOR":               {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_REMOTES":              {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
