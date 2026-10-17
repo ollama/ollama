@@ -862,6 +862,31 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler with unrecognized fields",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"foo_field":   "ignored",
+				"bar_field":   7
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
 			name: "chat handler with options",
 			body: `{
 				"model": "test-model",
@@ -1389,6 +1414,30 @@ func TestCompletionsMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "completions handler with unrecognized fields",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix",
+				"foo_field": "ignored"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &False,
+			},
+		},
+		{
 			name: "completions handler stream",
 			body: `{
 				"model": "test-model",
@@ -1508,6 +1557,18 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 			body: `{
 				"input": "Hello",
 				"model": "test-model"
+			}`,
+			req: api.EmbedRequest{
+				Input: "Hello",
+				Model: "test-model",
+			},
+		},
+		{
+			name: "embed handler with unrecognized fields",
+			body: `{
+				"input": "Hello",
+				"model": "test-model",
+				"foo_field": "ignored"
 			}`,
 			req: api.EmbedRequest{
 				Input: "Hello",
@@ -1808,6 +1869,71 @@ func TestResponsesMiddlewareZstd(t *testing.T) {
 			}
 			if len(capturedRequest.Messages) != 1 || capturedRequest.Messages[0].Content != tt.wantMessage {
 				t.Fatalf("expected single user message %q, got %+v", tt.wantMessage, capturedRequest.Messages)
+			}
+		})
+	}
+}
+
+func TestUnrecognizedJSONFields(t *testing.T) {
+	chat := reflect.TypeOf(openai.ChatCompletionRequest{})
+	embed := reflect.TypeOf(openai.EmbedRequest{})
+
+	tests := []struct {
+		name string
+		typ  reflect.Type
+		data string
+		want []string
+	}{
+		{
+			name: "all recognized",
+			typ:  chat,
+			data: `{"model":"qwen3","messages":[],"keep_alive":"5m"}`,
+		},
+		{
+			name: "unrecognized fields reported sorted",
+			typ:  chat,
+			data: `{"foo_field":8,"bar_field":true}`,
+			want: []string{"bar_field", "foo_field"},
+		},
+		{
+			name: "case-insensitive known fields decode and are not reported",
+			typ:  chat,
+			data: `{"Max_Tokens":16}`,
+		},
+		{
+			name: "case-changed unknown keys are still unrecognized",
+			typ:  chat,
+			data: `{"FooField":true}`, // encoding/json drops this too; the report matches the drop
+			want: []string{"FooField"},
+		},
+		{
+			name: "embeddings recognize a different field set",
+			typ:  embed,
+			data: `{"model":"m","input":"hi","bogus_field":5}`,
+			want: []string{"bogus_field"},
+		},
+		{
+			name: "empty object",
+			typ:  chat,
+			data: `{}`,
+		},
+		{
+			name: "non-object body",
+			typ:  chat,
+			data: `[]`,
+		},
+		{
+			name: "malformed body",
+			typ:  chat,
+			data: `{`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := unrecognizedJSONFields([]byte(tt.data), tt.typ)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("unrecognizedJSONFields() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
