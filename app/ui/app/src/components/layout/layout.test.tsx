@@ -25,7 +25,7 @@ describe("SidebarLayout", () => {
     vi.stubGlobal("window", { OLLAMA_PLATFORM: "darwin" });
 
     const html = renderToStaticMarkup(
-      <SidebarLayout sidebar={<nav />}>
+      <SidebarLayout title="Apps" sidebar={<nav />}>
         <div />
       </SidebarLayout>,
     );
