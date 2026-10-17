@@ -1020,13 +1020,21 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	var encoding string
-	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" || m.Config.Renderer == "kev" {
+	switch m.Config.Renderer {
+	case "tev1", "clef", "strands", "kev", "pplx":
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if encoding == "pplx" {
+		if m.System == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Perplexity decision models require their publisher system prompt in the Modelfile"})
+			return
+		}
+		compiled.Request.System = m.System
 	}
 	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {

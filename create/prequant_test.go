@@ -120,6 +120,114 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 	}
 }
 
+func TestPlanPrequantizedModelOptMixedPrecision(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"fp4.weight":         "U8",
+		"fp4.weight_scale":   "F8_E4M3",
+		"fp4.weight_scale_2": "F32",
+		"fp8.weight":         "F8_E4M3",
+		"fp8.weight_scale":   "U8",
+	})
+	classification, err := Classify(inv, "")
+	if err != nil || classification.Kind != SourcePrequantized || classification.Quantize != "" {
+		t.Fatalf("mixed ModelOpt classification = %+v, %v", classification, err)
+	}
+
+	specs, err := Plan(inv, classification, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("got %d specs %v, want two fused weights", len(specs), specNames(specs))
+	}
+	fp4, _ := specByName(specs, "fp4.weight")
+	if fp4.Metadata["quant_type"] != "nvfp4" {
+		t.Errorf("FP4 metadata = %v", fp4.Metadata)
+	}
+	fp8, _ := specByName(specs, "fp8.weight")
+	if fp8.Metadata["quant_type"] != "mxfp8" || fp8.Metadata["group_size"] != "32" {
+		t.Errorf("FP8 metadata = %v", fp8.Metadata)
+	}
+	weight, _ := inputByOutput(fp8, "fp8.weight")
+	scale, _ := inputByOutput(fp8, "fp8.weight.scale")
+	if weight.Transform != TransformRepackFP8 || weight.OutDtype != "U32" || !slices.Equal(weight.OutShape, []int32{128, 32}) || scale.Transform != TransformNone || scale.OutDtype != "" {
+		t.Errorf("FP8 weight must pack into U32 and exponent scale must keep source bytes: weight=%+v scale=%+v", weight, scale)
+	}
+	if q := detectPrequantizedQuantization(inv); q != "" {
+		t.Errorf("mixed precision classification = %q, want no single file type", q)
+	}
+}
+
+func TestClassifyModelOptMXFP8WithoutNVFP4(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":       "F8_E4M3",
+		"l.weight_scale": "U8",
+	})
+	classification, err := Classify(inv, "")
+	if err != nil || classification.Kind != SourcePrequantized || classification.Quantize != "mxfp8" {
+		t.Fatalf("ModelOpt MXFP8 classification = %+v, %v", classification, err)
+	}
+	specs, err := Plan(inv, classification, defaultQuantPolicy{})
+	if err != nil || len(specs) != 1 || specs[0].Metadata["quant_type"] != "mxfp8" {
+		t.Fatalf("ModelOpt MXFP8 plan = %+v, %v", specs, err)
+	}
+}
+
+func TestPlanPrequantizedModelOptPackedNVFP4(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":         "U32",
+		"l.weight_scale":   "F8_E4M3",
+		"l.weight_scale_2": "F32",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs %v, want one fused weight", len(specs), specNames(specs))
+	}
+	weight, ok := inputByOutput(specs[0], "l.weight")
+	if !ok || weight.Transform != TransformNone || weight.OutDtype != "" || len(weight.OutShape) != 0 {
+		t.Errorf("already-packed U32 weight must keep its source shape: %+v ok=%v", weight, ok)
+	}
+	if specs[0].Metadata["quant_type"] != "nvfp4" {
+		t.Errorf("quant_type = %q, want nvfp4", specs[0].Metadata["quant_type"])
+	}
+}
+
+func TestPlanPrequantizedModelOptDropsActivationScale(t *testing.T) {
+	// ModelOpt ships per-weight activation scales (.input_scale and, in some
+	// variants, .input_global_scale) that are unused for weight-only
+	// inference. They must be consumed, not emitted as their own blobs.
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":             "U8",
+		"l.weight_scale":       "F8_E4M3",
+		"l.weight_scale_2":     "F32",
+		"l.input_scale":        "F32",
+		"l.input_global_scale": "F32",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs %v, want 1 (activation scales must not become blobs)", len(specs), specNames(specs))
+	}
+	w := specs[0]
+	for _, act := range []string{"l.input_scale", "l.input_global_scale"} {
+		if _, leaked := inputByOutput(w, act); leaked {
+			t.Errorf("activation scale %s leaked into the fused blob", act)
+		}
+		for _, s := range specs {
+			if s.Name == act {
+				t.Errorf("activation scale %s emitted as its own blob", act)
+			}
+		}
+	}
+}
+
 func TestPlanPrequantizedCompressedNVFP4(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"l.weight_packed":       "U8",

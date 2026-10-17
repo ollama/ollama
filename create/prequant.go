@@ -16,8 +16,10 @@ import "strings"
 type prequantPattern struct {
 	name string
 
-	weightSuffix string // source suffix identifying the weight (".weight" or ".weight_packed")
-	repackWeight bool   // repack a U8 fp4 weight into U32 words
+	weightSuffix string   // source suffix identifying the weight (".weight" or ".weight_packed")
+	weightDtypes []string // accepted source dtypes; empty accepts any dtype
+	scaleDtypes  []string // accepted scale dtypes; empty accepts any dtype
+	repackWeight bool     // reinterpret four one-byte weight values as one U32 word
 
 	scaleSuffix    string // required per-block / affine scale companion
 	scaleRelabelU8 bool   // relabel an F8_E4M3 scale as U8 for the loader
@@ -57,8 +59,19 @@ var prequantPatterns = []prequantPattern{
 		defaultGroupSize: "16",
 	},
 	{
+		name:             "modelopt-mxfp8",
+		weightSuffix:     ".weight",
+		weightDtypes:     []string{"F8_E4M3", "F8_E4M3FN"},
+		repackWeight:     true,
+		scaleSuffix:      ".weight_scale",
+		scaleDtypes:      []string{"U8"},
+		forceQuantType:   "mxfp8",
+		defaultGroupSize: "32",
+	},
+	{
 		name:           "modelopt-nvfp4",
 		weightSuffix:   ".weight",
+		weightDtypes:   []string{"U8", "U32"},
 		repackWeight:   true,
 		scaleSuffix:    ".weight_scale",
 		scaleRelabelU8: true,
@@ -115,21 +128,27 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 		if !inv.Has(scaleSrc) {
 			continue
 		}
+		weight := inv.Tensors[name]
+		scale := inv.Tensors[scaleSrc]
+		if !matchesDtype(weight.Dtype, p.weightDtypes) || !matchesDtype(scale.Dtype, p.scaleDtypes) {
+			continue
+		}
 
 		outWeight := base + ".weight"
-		weight := inv.Tensors[name]
 		var tensors []TensorSpec
 		var consumed []string
 
 		weightTensor := TensorSpec{Name: outWeight, Sources: []SourceTensor{weight}}
-		if p.repackWeight && strings.EqualFold(weight.Dtype, "U8") && len(weight.Shape) == 2 {
+		if p.repackWeight && len(weight.Shape) == 2 && (strings.EqualFold(weight.Dtype, "U8") || isE4M3Dtype(weight.Dtype)) {
 			weightTensor.Transform = TransformRepackFP4
+			if isE4M3Dtype(weight.Dtype) {
+				weightTensor.Transform = TransformRepackFP8
+			}
 			weightTensor.OutDtype = "U32"
 			weightTensor.OutShape = []int32{weight.Shape[0], weight.Shape[1] / 4}
 		}
 		tensors = append(tensors, weightTensor)
 
-		scale := inv.Tensors[scaleSrc]
 		scaleTensor := TensorSpec{Name: outWeight + ".scale", Sources: []SourceTensor{scale}}
 		if p.scaleRelabelU8 && isE4M3Dtype(scale.Dtype) {
 			scaleTensor.Transform = TransformRelabelU8
@@ -175,6 +194,18 @@ func f32ScaleTransform(t SourceTensor) Transform {
 		}
 	}
 	return TransformScalarF32
+}
+
+func matchesDtype(dtype string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, want := range allowed {
+		if strings.EqualFold(dtype, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // prequantMetadata builds the fused blob's metadata: the source config's quant
