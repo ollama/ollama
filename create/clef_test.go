@@ -171,7 +171,7 @@ func TestClefMetadata(t *testing.T) {
 				v := map[string]any{}
 				inv.Config.VisionConfig = &v
 			}
-			cfg, err := inferSafetensorsConfig(dir, inv.Config, "", "clef")
+			cfg, _, err := inferSafetensorsConfig(dir, inv.Config, "", "clef")
 			if err != nil {
 				t.Fatal(err)
 			}
