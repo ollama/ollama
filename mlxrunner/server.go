@@ -28,13 +28,17 @@ func Execute(args []string) error {
 	var (
 		modelName string
 		port      int
+		profile   bool
 	)
 
 	flagSet := flag.NewFlagSet("mlxrunner", flag.ExitOnError)
 	flagSet.StringVar(&modelName, "model", "", "Model name")
 	flagSet.IntVar(&port, "port", 0, "Port to listen on")
+	flagSet.BoolVar(&profile, "profile", false, "Emit GPU profiler phase markers (os_signpost/NVTX) around prefill and decode")
 	_ = flagSet.Bool("verbose", false, "Enable debug logging")
 	flagSet.Parse(args)
+
+	mlx.SetProfilingEnabled(profile)
 
 	worker, err := mlxthread.Start("mlxrunner", func() error {
 		if err := mlx.CheckInit(); err != nil {
@@ -63,9 +67,10 @@ func Execute(args []string) error {
 	defer cancelRunner()
 
 	runner := Runner{
-		parallel:  max(1, int(envconfig.NumParallel())),
-		Requests:  make(chan queuedRequest),
-		mlxThread: worker,
+		parallel:         max(1, int(envconfig.NumParallel())),
+		parallelExplicit: envconfig.NumParallelExplicit(),
+		Requests:         make(chan queuedRequest),
+		mlxThread:        worker,
 	}
 
 	if err := worker.Do(context.Background(), func() error {
@@ -96,10 +101,12 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /v1/score", runner.scoreHandler)
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		resp := statusResponse{
-			Status:        0,
-			Progress:      100,
-			ContextLength: runner.contextLength,
-			Memory:        memoryCache.Memory(),
+			Status:           0,
+			Progress:         100,
+			ContextLength:    runner.contextLength,
+			Memory:           memoryCache.Memory(),
+			Parallel:         runner.parallel,
+			ParallelExplicit: runner.parallelExplicit,
 		}
 		if em, ok := runner.Model.(interface{ EmbeddingDimensions() []int }); ok {
 			resp.EmbeddingDimensions = em.EmbeddingDimensions()

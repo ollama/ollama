@@ -437,3 +437,15 @@ func TestNoCloud(t *testing.T) {
 		})
 	}
 }
+
+func TestNumParallelExplicit(t *testing.T) {
+	t.Setenv("OLLAMA_NUM_PARALLEL", "")
+	if NumParallelExplicit() {
+		t.Error("unset OLLAMA_NUM_PARALLEL reported as explicit")
+	}
+
+	t.Setenv("OLLAMA_NUM_PARALLEL", "1")
+	if !NumParallelExplicit() {
+		t.Error("OLLAMA_NUM_PARALLEL=1 reported as defaulted")
+	}
+}
