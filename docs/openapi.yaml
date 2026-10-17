@@ -634,6 +634,15 @@ components:
         template:
           type: string
           description: The template used by the model to render prompts
+        renderer:
+          type: string
+          description: The effective chat renderer of the model (aliases resolved), when one is set
+        parser:
+          type: string
+          description: The output parser configured on the model, when one is set
+        template_source:
+          type: string
+          description: Where the chat prompt actually comes from; one of `renderer_parser`, `renderer`, `parser` (a Go renderer runs and any packaged template is inert), `harmony`, `go_template`, `gguf_chat_template` (the runner renders the GGUF's embedded jinja), or `none`
         capabilities:
           type: array
           items:

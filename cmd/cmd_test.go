@@ -138,6 +138,48 @@ func TestShowInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("renderer and template source", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Renderer:       "gemma4-large",
+			Parser:         "gemma4",
+			TemplateSource: "renderer_parser",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{"renderer", "gemma4-large", "template source", "renderer_parser"} {
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("expected output to contain %q:\n%s", want, b.String())
+			}
+		}
+	})
+
+	t.Run("renderer fields omitted when empty", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			TemplateSource: "none",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, unwanted := range []string{"renderer", "template source"} {
+			if strings.Contains(b.String(), unwanted) {
+				t.Errorf("expected output to omit %q:\n%s", unwanted, b.String())
+			}
+		}
+	})
+
 	t.Run("bare model info", func(t *testing.T) {
 		var b bytes.Buffer
 		if err := showInfo(&api.ShowResponse{

@@ -2325,3 +2325,70 @@ func TestShowOmitsNonFiniteGGUFValues(t *testing.T) {
 		t.Fatalf("activation_sparsity_scale = %v, want omitted", resp.ModelInfo["test.activation_sparsity_scale"])
 	}
 }
+
+func TestShowRendererParserAndTemplateSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	create := func(t *testing.T, name string, kv gguftest.KV) {
+		t.Helper()
+		_, digest := createBinFile(t, kv, nil)
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:   name,
+			Files:  map[string]string{"test.gguf": digest},
+			Stream: &stream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("create %s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	show := func(t *testing.T, name string) api.ShowResponse {
+		t.Helper()
+		w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name})
+		if w.Code != http.StatusOK {
+			t.Fatalf("show %s: %d %s", name, w.Code, w.Body.String())
+		}
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// gemma4 auto-resolves the legacy alias by model size; "12b" in the name
+	// selects the large renderer.
+	create(t, "show-gemma4-12b", gguftest.KV{
+		"general.architecture":    "gemma4",
+		"tokenizer.chat_template": "{{ not a named template }}",
+	})
+	resp := show(t, "show-gemma4-12b")
+	if resp.Renderer != gemma4RendererLarge || resp.Parser != "gemma4" {
+		t.Errorf("renderer/parser = %q/%q, want %s/gemma4 (legacy alias resolved)", resp.Renderer, resp.Parser, gemma4RendererLarge)
+	}
+	if resp.TemplateSource != "renderer_parser" {
+		t.Errorf("template source = %q, want renderer_parser", resp.TemplateSource)
+	}
+
+	// A GGUF with an embedded chat template and no renderer/parser hands the
+	// jinja template to llama-server.
+	create(t, "show-plain", gguftest.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": "{{ not a named template }}",
+	})
+	resp = show(t, "show-plain")
+	if resp.Renderer != "" || resp.Parser != "" {
+		t.Errorf("renderer/parser = %q/%q, want both empty", resp.Renderer, resp.Parser)
+	}
+	if resp.TemplateSource != "gguf_chat_template" {
+		t.Errorf("template source = %q, want gguf_chat_template", resp.TemplateSource)
+	}
+
+	// No template of any kind: nothing renders a chat prompt.
+	create(t, "show-bare", gguftest.KV{"general.architecture": "test"})
+	resp = show(t, "show-bare")
+	if resp.TemplateSource != "none" {
+		t.Errorf("template source = %q, want none", resp.TemplateSource)
+	}
+}
