@@ -198,6 +198,7 @@
               "/integrations/cline",
               "/integrations/jetbrains",
               "/integrations/roo-code",
+              "/integrations/gradum",
               "/integrations/xcode",
               "/integrations/zed"
             ]
