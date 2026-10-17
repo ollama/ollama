@@ -3190,3 +3190,50 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }
+
+func TestFromResponsesRequestRejectsPreviousResponseID(t *testing.T) {
+	// Nothing resolves the id, so the conversation it names never reaches the
+	// prompt. Ignoring it returned a completed response with no output, which a
+	// client reads as a finished turn.
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(`{
+		"model": "test",
+		"previous_response_id": "resp_123",
+		"input": [
+			{"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"}
+		]
+	}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := FromResponsesRequest(req)
+	if err == nil {
+		t.Fatal("expected an error naming previous_response_id")
+	}
+	if !strings.Contains(err.Error(), "previous_response_id") {
+		t.Fatalf("error does not name the parameter: %v", err)
+	}
+}
+
+func TestFromResponsesRequestAllowsAbsentPreviousResponseID(t *testing.T) {
+	for name, body := range map[string]string{
+		"absent":       `{"model": "test", "input": "hi"}`,
+		"null":         `{"model": "test", "previous_response_id": null, "input": "hi"}`,
+		"empty string": `{"model": "test", "previous_response_id": "", "input": "hi"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var req ResponsesRequest
+			if err := json.Unmarshal([]byte(body), &req); err != nil {
+				t.Fatal(err)
+			}
+
+			chat, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(chat.Messages) != 1 || chat.Messages[0].Content != "hi" {
+				t.Fatalf("messages = %#v", chat.Messages)
+			}
+		})
+	}
+}
