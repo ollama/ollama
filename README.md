@@ -258,6 +258,7 @@ console.log(response.message.content);
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama) - AI gateway
 - [Testcontainers](https://testcontainers.com/modules/ollama/) - Container-based testing
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama) - PHP AI framework
+- [Ethora](https://github.com/dappros/ethora) - Self-hosted chat and AI agent SDK that works with local Ollama models
 
 ### Frameworks & Agents
 
