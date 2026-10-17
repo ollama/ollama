@@ -24,6 +24,15 @@ type quantizeItem struct {
 	decodeFP8 bool
 }
 
+type sizedFile struct {
+	*os.File
+	size int64
+}
+
+func (f *sizedFile) Size() int64 {
+	return f.size
+}
+
 // quantizeBlob loads, optionally quantizes, and packs the given tensors into a
 // single safetensors blob (weight + scale + optional bias per quantized
 // tensor). All MLX work runs on the pinned MLX thread.
@@ -120,10 +129,9 @@ func quantizeItemArrays(it quantizeItem, arrays map[string]*mlx.Array, tmpDir st
 // arrays keyed by name. With quantize == "" the (decoded) tensor is kept as-is.
 // It must be called on the MLX thread.
 //
-// TODO: MLX's safetensors loader takes a file path, so we spill each tensor to a
-// temp file. Wiring a streaming mlx_load_safetensors_reader into the CGO wrapper
-// would let us load from the reader directly and drop the temp files.
-func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, nativeHandle *mlx.SafetensorsFile, err error) {
+// The input is streaming but MLX reads lazily at arbitrary offsets, so each
+// tensor is first staged in a random-access temp file.
+func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, arrays map[string]*mlx.Array, tmpDir string) (tmpPath string, toEval []*mlx.Array, st *mlx.SafetensorsFile, err error) {
 	if quantize != "" && quant.Canonical(quantize) == "" {
 		return "", nil, nil, fmt.Errorf("unsupported quantization type: %s", quantize)
 	}
@@ -137,11 +145,13 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, decodeFP8 bool, ar
 		_ = tmpFile.Close()
 		return tmpPath, nil, nil, fmt.Errorf("failed to write temp file for %s: %w", name, err)
 	}
-	if err := tmpFile.Close(); err != nil {
-		return tmpPath, nil, nil, fmt.Errorf("failed to close temp file for %s: %w", name, err)
+	info, err := tmpFile.Stat()
+	if err != nil {
+		_ = tmpFile.Close()
+		return tmpPath, nil, nil, fmt.Errorf("failed to stat temp file for %s: %w", name, err)
 	}
 
-	st, err := mlx.LoadSafetensorsNative(tmpPath)
+	st, err = mlx.LoadSafetensors(&sizedFile{File: tmpFile, size: info.Size()})
 	if err != nil {
 		return tmpPath, nil, nil, fmt.Errorf("failed to load safetensors for %s: %w", name, err)
 	}
