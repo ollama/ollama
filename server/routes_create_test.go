@@ -458,8 +458,8 @@ func TestCreateModelRetainsSplitGGUF(t *testing.T) {
 	if got := created.Config.ModelType; got != "2" {
 		t.Fatalf("model parameter size = %q, want 2", got)
 	}
-	if got := created.Config.Requires; got != splitGGUFMinOllamaVersion {
-		t.Fatalf("minimum Ollama version = %q, want %q", got, splitGGUFMinOllamaVersion)
+	if got := created.Config.Requires; got != ggufDefaultMinOllamaVersion {
+		t.Fatalf("minimum Ollama version = %q, want %q", got, ggufDefaultMinOllamaVersion)
 	}
 	kv, tensors, err := getModelData(created.modelPaths(), true)
 	if err != nil {
@@ -498,8 +498,8 @@ func TestCreateModelRetainsSplitGGUF(t *testing.T) {
 	if !slices.Equal(derived.Config.ModelFamilies, []string{"llama"}) {
 		t.Fatalf("derived model families = %q, want llama", derived.Config.ModelFamilies)
 	}
-	if got := derived.Config.Requires; got != splitGGUFMinOllamaVersion {
-		t.Fatalf("derived minimum Ollama version = %q, want %q", got, splitGGUFMinOllamaVersion)
+	if got := derived.Config.Requires; got != ggufDefaultMinOllamaVersion {
+		t.Fatalf("derived minimum Ollama version = %q, want %q", got, ggufDefaultMinOllamaVersion)
 	}
 
 	explicitName := model.ParseName("test-create-explicit-version-split-gguf:latest")
@@ -566,8 +566,8 @@ func TestCreateModelRetainsSplitDraftGGUF(t *testing.T) {
 	if created.Config.Draft == nil || created.Config.Draft.Architecture != "llama" {
 		t.Fatalf("draft config = %#v, want llama architecture", created.Config.Draft)
 	}
-	if got := created.Config.Requires; got != splitGGUFMinOllamaVersion {
-		t.Fatalf("minimum Ollama version = %q, want %q", got, splitGGUFMinOllamaVersion)
+	if got := created.Config.Requires; got != ggufDefaultMinOllamaVersion {
+		t.Fatalf("minimum Ollama version = %q, want %q", got, ggufDefaultMinOllamaVersion)
 	}
 }
 
@@ -815,7 +815,7 @@ func TestCreateFromBin(t *testing.T) {
 	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -901,7 +901,7 @@ func TestCreateFromModel(t *testing.T) {
 	checkManifestFiles(t, "test", "test2")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 }
@@ -1000,7 +1000,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-b507b9c2f6ca642bffcd06665ea7c91f235fd32daeefdf875a0f938db05fb315"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -1017,7 +1017,7 @@ func TestCreateRemovesLayers(t *testing.T) {
 	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
@@ -1308,7 +1308,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-f29e82a8284dbdf5910b1555580ff60b04238b8da9d5e51159ada67a4d0d5851"),
 	})
@@ -1327,7 +1327,7 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 }
@@ -1359,7 +1359,7 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -1398,7 +1398,7 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-e29a7b3c47287a2489c895d21fe413c20f859a85d20e749492f52a838e36e1ba"),
 	})
@@ -1438,7 +1438,7 @@ func TestCreateMergeParameters(t *testing.T) {
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-12f58bb75cb3042d69a7e013ab87fb3c3c7088f50ddc62f0c77bd332f0d44d35"),
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
 
@@ -1494,7 +1494,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -1525,7 +1525,7 @@ func TestCreateReplacesMessages(t *testing.T) {
 
 	// Old layers will not have been pruned
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-a60ecc9da299ec7ede453f99236e5577fd125e143689b646d9f0ddc9971bf4db"),
@@ -1581,7 +1581,7 @@ func TestCreateTemplateSystem(t *testing.T) {
 	checkManifestFiles(t, "test")
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-4c5f51faac758fecaff8db42f0b7382891a4d0c0bb885f7b86be88c814a7cc86"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
@@ -1808,7 +1808,7 @@ func TestCreateLicenses(t *testing.T) {
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-2af71558e438db0b73a20beab92dc278a94e1bbe974c00c1a33e3ab62d53a608"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
-		filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+		filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		filepath.Join(p, "blobs", "sha256-e5dcffe836b6ec8a58e492419b550e65fb8cbdc308503979e5dacb33ac7ea3b7"),
 	})
 
@@ -1856,7 +1856,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 			filepath.Join(p, "blobs", "sha256-0d79f567714c62c048378f2107fb332dabee0135d080c302d884317da9433cc5"),
 			filepath.Join(p, "blobs", "sha256-3322a0c650c758b7386ff55629d27d07c07b6c3d3515e259dc3e5598c41e9f4e"),
 			filepath.Join(p, "blobs", "sha256-35360843d0c84fb1506952a131bbef13cd2bb4a541251f22535170c05b56e672"),
-			filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+			filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 		})
 	})
 
@@ -1873,7 +1873,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 		}
 
 		checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-			filepath.Join(p, "blobs", "sha256-eb4aa77a05d4846c309cc5ccf00a3eeda12d4d207bde3ec2b597bed8a73c3a9d"),
+			filepath.Join(p, "blobs", "sha256-feaf7fbe87032cb53ea92403a10a52aee39030b7ce774f53700c0c05338ee2fe"),
 			filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		})
 	})
@@ -3467,5 +3467,279 @@ func TestCreateClefDecisionHead(t *testing.T) {
 		if m.metadata.String("decision.type") != "clef" || !slices.Contains(m.Capabilities(), model.CapabilityDecision) {
 			t.Fatalf("encoding/capability not preserved: %+v", m.Config)
 		}
+	}
+}
+
+var streamTrue = true
+
+// createStatuses runs a streaming create and returns the progress status
+// lines the client would print.
+func createStatuses(t *testing.T, body api.CreateRequest) []string {
+	t.Helper()
+	var s Server
+	body.Stream = &streamTrue
+	w := createRequest(t, s.CreateHandler, body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+	var statuses []string
+	dec := json.NewDecoder(w.Body)
+	for {
+		var resp api.ProgressResponse
+		if err := dec.Decode(&resp); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatalf("decode progress response: %v", err)
+		}
+		statuses = append(statuses, resp.Status)
+	}
+	return statuses
+}
+
+func hasStatusContaining(statuses []string, substr string) bool {
+	return slices.ContainsFunc(statuses, func(s string) bool { return strings.Contains(s, substr) })
+}
+
+func TestCreateNoticesGemma4AutoDetection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture":    "gemma4",
+		"tokenizer.chat_template": "{{ not a named template }}",
+	}, nil)
+
+	statuses := createStatuses(t, api.CreateRequest{
+		Name:  "notice-gemma4",
+		Files: map[string]string{"test.gguf": digest},
+	})
+
+	if !hasStatusContaining(statuses, `using autodetected renderer/parser "gemma4" for architecture "gemma4"`) {
+		t.Errorf("missing renderer/parser notice: %v", statuses)
+	}
+	if !hasStatusContaining(statuses, create.GGUFTemplateBypassed) {
+		t.Errorf("missing template bypass note: %v", statuses)
+	}
+	if !hasStatusContaining(statuses, `using autodetected stop token "<turn|>"`) {
+		t.Errorf("missing stop token notice: %v", statuses)
+	}
+}
+
+func TestCreateNoticesSamplerDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("unset", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:  "notice-sampler-unset",
+			Files: map[string]string{"test.gguf": digest},
+		})
+		for _, want := range []string{"temperature unset", "temperature=0.8", "top_p unset", "top_p=0.9"} {
+			if !hasStatusContaining(statuses, want) {
+				t.Errorf("missing sampler notice containing %q: %v", want, statuses)
+			}
+		}
+	})
+
+	t.Run("parameter set", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:       "notice-sampler-param",
+			Files:      map[string]string{"test.gguf": digest},
+			Parameters: map[string]any{"temperature": 0.5},
+		})
+		if hasStatusContaining(statuses, "temperature unset") {
+			t.Errorf("unexpected temperature notice when PARAMETER sets it: %v", statuses)
+		}
+		if !hasStatusContaining(statuses, "top_p unset") {
+			t.Errorf("missing top_p notice: %v", statuses)
+		}
+	})
+
+	t.Run("gguf metadata default", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":   "test",
+			"general.sampling.temp":  float32(0.6),
+			"general.sampling.top_p": float32(0.95),
+		}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:  "notice-sampler-metadata",
+			Files: map[string]string{"test.gguf": digest},
+		})
+		if hasStatusContaining(statuses, "temperature unset") || hasStatusContaining(statuses, "top_p unset") {
+			t.Errorf("unexpected sampler notices when GGUF declares defaults: %v", statuses)
+		}
+	})
+}
+
+func TestCreateNoticesEmbeddedDraft(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("without draft_num_predict", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":            "nemotron_h",
+			"nemotron_h.nextn_predict_layers": uint32(1),
+		}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:  "notice-embedded-draft",
+			Files: map[string]string{"test.gguf": digest},
+		})
+		if !hasStatusContaining(statuses, "drafting model detected") {
+			t.Errorf("missing embedded draft notice: %v", statuses)
+		}
+	})
+
+	t.Run("with draft_num_predict", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{
+			"general.architecture":            "nemotron_h",
+			"nemotron_h.nextn_predict_layers": uint32(1),
+		}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:       "notice-embedded-draft-on",
+			Files:      map[string]string{"test.gguf": digest},
+			Parameters: map[string]any{"draft_num_predict": 4},
+		})
+		if hasStatusContaining(statuses, "drafting model detected") {
+			t.Errorf("unexpected embedded draft notice when draft_num_predict is set: %v", statuses)
+		}
+	})
+
+	t.Run("no embedded draft", func(t *testing.T) {
+		t.Setenv("OLLAMA_MODELS", t.TempDir())
+		_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:  "notice-no-draft",
+			Files: map[string]string{"test.gguf": digest},
+		})
+		if hasStatusContaining(statuses, "drafting model detected") {
+			t.Errorf("unexpected embedded draft notice for plain model: %v", statuses)
+		}
+	})
+}
+
+func TestCreateNoticesDistinctDraft(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+	_, draftDigest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+
+	t.Run("default depth", func(t *testing.T) {
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:       "notice-distinct-draft",
+			Files:      map[string]string{"test.gguf": digest},
+			DraftFiles: map[string]string{"draft.gguf": draftDigest},
+		})
+		if !hasStatusContaining(statuses, "using default draft_num_predict=4") {
+			t.Errorf("missing distinct draft notice: %v", statuses)
+		}
+	})
+
+	t.Run("explicit depth", func(t *testing.T) {
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:       "notice-distinct-draft-set",
+			Files:      map[string]string{"test.gguf": digest},
+			DraftFiles: map[string]string{"draft.gguf": draftDigest},
+			Parameters: map[string]any{"draft_num_predict": 8},
+		})
+		if hasStatusContaining(statuses, "default draft_num_predict") {
+			t.Errorf("unexpected distinct draft notice when depth is explicit: %v", statuses)
+		}
+	})
+}
+
+func TestCreateNoticesRequires(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+
+	t.Run("unset", func(t *testing.T) {
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:  "notice-requires-unset",
+			Files: map[string]string{"test.gguf": digest},
+		})
+		if !hasStatusContaining(statuses, "no REQUIRES") ||
+			!hasStatusContaining(statuses, "using default "+ggufDefaultMinOllamaVersion) {
+			t.Errorf("missing REQUIRES notice naming the default floor: %v", statuses)
+		}
+		if cfg := readCreatedModelConfig(t, "notice-requires-unset"); cfg.Requires != ggufDefaultMinOllamaVersion {
+			t.Errorf("requires = %q, want default %q", cfg.Requires, ggufDefaultMinOllamaVersion)
+		}
+	})
+
+	t.Run("explicit", func(t *testing.T) {
+		statuses := createStatuses(t, api.CreateRequest{
+			Name:     "notice-requires-set",
+			Files:    map[string]string{"test.gguf": digest},
+			Requires: "0.40.0",
+		})
+		if hasStatusContaining(statuses, "REQUIRES") {
+			t.Errorf("unexpected REQUIRES notice when set explicitly: %v", statuses)
+		}
+	})
+}
+
+func TestCreateNoticesRemoteModelSilent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	statuses := createStatuses(t, api.CreateRequest{
+		Model: "notice-remote",
+		From:  "gpt-oss:20b:cloud",
+		Info:  map[string]any{"capabilities": []any{"completion"}},
+	})
+	if hasStatusContaining(statuses, "warning:") {
+		t.Errorf("unexpected notices for remote model create: %v", statuses)
+	}
+}
+
+func TestCreateNoticesSplitGGUFFloor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	firstDigest := createSplitGGUFShard(t, 0, 2, 2, "blk.0.attn_q.weight")
+	secondDigest := createSplitGGUFShard(t, 1, 2, 2, "blk.1.attn_q.weight")
+
+	statuses := createStatuses(t, api.CreateRequest{
+		Name: "notice-split",
+		Files: map[string]string{
+			"model-00001-of-00002.gguf": firstDigest,
+			"model-00002-of-00002.gguf": secondDigest,
+		},
+	})
+	if !hasStatusContaining(statuses, "no REQUIRES") ||
+		!hasStatusContaining(statuses, ggufDefaultMinOllamaVersion) {
+		t.Errorf("missing REQUIRES floor notice naming the default floor: %v", statuses)
+	}
+
+	cfg := readCreatedModelConfig(t, "notice-split")
+	if cfg.Requires != ggufDefaultMinOllamaVersion {
+		t.Fatalf("requires = %q, want %q", cfg.Requires, ggufDefaultMinOllamaVersion)
+	}
+}
+
+func TestCreateNoticesMultipleModelGGUFs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, mainDigest := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
+	_, draftLikeDigest := createBinFile(t, gguftest.KV{"general.architecture": "llama"}, nil)
+
+	statuses := createStatuses(t, api.CreateRequest{
+		Name: "notice-two-models",
+		Files: map[string]string{
+			"Demo-7B-Q4_K_M.gguf":         mainDigest,
+			"Demo-0.6B-Draft-Q4_K_M.gguf": draftLikeDigest,
+		},
+	})
+	if !hasStatusContaining(statuses, "multiple model GGUFs") ||
+		!hasStatusContaining(statuses, "Demo-0.6B-Draft-Q4_K_M.gguf") {
+		t.Errorf("missing multiple-model notice naming the files: %v", statuses)
 	}
 }

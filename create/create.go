@@ -303,7 +303,11 @@ type sourceModelConfig struct {
 	AudioConfig   *map[string]any `json:"audio_config"`
 	HasVision     bool            `json:"has_vision"`
 	SoundConfig   *map[string]any `json:"sound_config"`
-	LLMConfig     struct {
+	// NumNextNPredictLayers declares an embedded multi-token-prediction
+	// draft head (deepseek/qwen3.5/nemotron-h style). Safetensors imports
+	// use it to surface draft capability at create time.
+	NumNextNPredictLayers int `json:"num_nextn_predict_layers"`
+	LLMConfig             struct {
 		ModelType string `json:"model_type"`
 	} `json:"llm_config"`
 	Quantization       sourceQuantization `json:"quantization"`

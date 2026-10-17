@@ -55,6 +55,11 @@ var (
 const (
 	maxSafetensorsMetadataSize = 64 << 20
 	maxCreateFiles             = 1024
+	// ggufDefaultMinOllamaVersion is the requires floor recorded for local
+	// GGUF creates that name no REQUIRES: new enough that loader, render, and
+	// split-GGUF plumbing are all in place, old enough not to gate anyone
+	// current.
+	ggufDefaultMinOllamaVersion = "0.40.0"
 )
 
 type manifestListRequestError struct {
@@ -393,6 +398,7 @@ func createSafetensorsModel(ctx context.Context, r api.CreateRequest, name model
 		Requires:      r.Requires,
 		DraftDir:      draftDir,
 		DraftQuantize: r.DraftQuantize,
+		Parameters:    r.Parameters,
 	}, store, writeSafetensorsManifest(r, draftDir, fn), progressFn)
 }
 
@@ -834,10 +840,9 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 	}
 
 	var layers []manifest.Layer
-	hasSplitGGUF := false
+	var ggufFacts ggufCreateFacts
 	for _, layer := range baseLayers {
 		if len(layer.splitLayers) > 0 {
-			hasSplitGGUF = true
 			layers = append(layers, layer.splitLayers...)
 		} else {
 			layers = append(layers, layer.Layer)
@@ -865,10 +870,20 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 				if !slices.Contains(config.ModelFamilies, architecture) {
 					config.ModelFamilies = append(config.ModelFamilies, architecture)
 				}
+				if ggufFacts.metadata == nil {
+					ggufFacts.metadata = layer.GGUF
+					ggufFacts.arch = architecture
+				}
+				if name := cmp.Or(layer.From, layer.Name); name != "" {
+					ggufFacts.modelFiles = append(ggufFacts.modelFiles, path.Base(name))
+				}
 
 				// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
 				if config.Renderer == "" || config.Parser == "" {
 					arch := layer.GGUF.Architecture()
+					hadRenderer := config.Renderer != ""
+					hadParser := config.Parser != ""
+					_, hadStop := r.Parameters["stop"]
 					switch arch {
 					case "gemma4":
 						config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
@@ -886,18 +901,40 @@ func createModel(ctx context.Context, r api.CreateRequest, name model.Name, base
 						config.Renderer = cmp.Or(config.Renderer, "nemotron-3-nano")
 						config.Parser = cmp.Or(config.Parser, "nemotron-3-nano")
 					}
+					if !hadRenderer && config.Renderer != "" {
+						ggufFacts.inferredRenderer = config.Renderer
+					}
+					if !hadParser && config.Parser != "" {
+						ggufFacts.inferredParser = config.Parser
+					}
+					if !hadStop {
+						if stops, ok := r.Parameters["stop"].([]string); ok && len(stops) > 0 {
+							ggufFacts.autoStops = stops
+						}
+					}
 				}
 			case manifest.MediaTypeImageDraft:
 				config.Draft = &model.Draft{
 					ModelFormat:  "gguf",
 					Architecture: layer.GGUF.Architecture(),
 				}
+				ggufFacts.hasDraftLayer = true
 			}
 		}
 	}
-	if hasSplitGGUF {
+
+	// Remote models have no local files to introspect; notices and the
+	// requires floor are for local packaging only.
+	if config.RemoteHost == "" {
 		if config.Requires == "" {
-			config.Requires = splitGGUFMinOllamaVersion
+			config.Requires = ggufDefaultMinOllamaVersion
+			ggufFacts.requiresAuto = true
+		}
+		ggufFacts.requires = config.Requires
+		ggufFacts.hasDraftLayer = ggufFacts.hasDraftLayer || config.Draft != nil
+		ggufFacts.params = createParams(baseLayers, r.Parameters)
+		for _, notice := range ggufCreateNotices(ggufFacts) {
+			fn(api.ProgressResponse{Status: notice})
 		}
 	}
 

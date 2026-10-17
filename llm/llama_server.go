@@ -865,11 +865,19 @@ func externalDraftType(path string, shards ...string) (string, error) {
 	return "", nil
 }
 
-func hasMTPDraft(f *gguf.Model) bool {
-	if f.KV().Uint("nextn_predict_layers") > 0 {
+// HasEmbeddedDraft reports whether GGUF metadata shows an embedded draft
+// (multi-token-prediction) head: a nextn_predict_layers declaration or
+// legacy qwen3.5 mtp.* tensors. Presence alone does not enable drafting;
+// speculative decoding engages only with a positive DraftNumPredict.
+func HasEmbeddedDraft(md *gguf.Metadata) bool {
+	if md.Uint("nextn_predict_layers") > 0 {
 		return true
 	}
-	return hasLegacyQwenMTPDraft(f.KV().Architecture(), f.Tensors().Items("mtp."))
+	return hasLegacyQwenMTPDraft(md.Architecture(), md.TensorInfos("mtp."))
+}
+
+func hasMTPDraft(f *gguf.Model) bool {
+	return HasEmbeddedDraft(f.KV())
 }
 
 func hasLegacyQwenMTPDraft(arch string, tensors []gguf.TensorInfo) bool {

@@ -300,3 +300,172 @@ func testPipelineOptions() PipelineOptions {
 		Warning: func(string) {},
 	}}
 }
+
+// pipelineStatuses runs Create over dir and returns the status lines it
+// emitted, so tests can assert which packaging notices surfaced.
+func pipelineStatuses(t *testing.T, dir string, opts PipelineOptions) []string {
+	t.Helper()
+	var statuses []string
+	err := Create(context.Background(), "mymodel", dir, opts, newCaptureStore(),
+		func(context.Context, string, ManifestInfo) error { return nil },
+		func(s string) { statuses = append(statuses, s) })
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	return statuses
+}
+
+func hasStatusContaining(statuses []string, substr string) bool {
+	return slices.ContainsFunc(statuses, func(s string) bool { return strings.Contains(s, substr) })
+}
+
+func TestCreatePipelineEmitsNotices(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		for _, want := range []string{"temperature unset", "top_p unset", "no REQUIRES", "0.19.0"} {
+			if !hasStatusContaining(statuses, want) {
+				t.Errorf("missing status containing %q: %v", want, statuses)
+			}
+		}
+		if hasStatusContaining(statuses, "using autodetected renderer") {
+			t.Errorf("unexpected renderer notice for unmapped architecture: %v", statuses)
+		}
+	})
+
+	t.Run("renderer parser inference", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["NemotronHForCausalLM"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		want := `using autodetected renderer/parser "nemotron-3-nano" for architecture "NemotronHForCausalLM"`
+		if !hasStatusContaining(statuses, want) {
+			t.Errorf("missing status containing %q: %v", want, statuses)
+		}
+		if hasStatusContaining(statuses, tokenizerTemplateBypassed) {
+			t.Errorf("unexpected template bypass note without a source chat template: %v", statuses)
+		}
+	})
+
+	t.Run("tokenizer chat template note", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["NemotronHForCausalLM"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+		if err := os.WriteFile(filepath.Join(dir, "tokenizer_config.json"), []byte(`{"chat_template":"{{ x }}"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		if !hasStatusContaining(statuses, tokenizerTemplateBypassed) {
+			t.Errorf("missing template bypass note: %v", statuses)
+		}
+	})
+
+	t.Run("explicit renderer parser are silent", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["NemotronHForCausalLM"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		opts := testPipelineOptions()
+		opts.Renderer = "custom"
+		opts.Parser = "custom-parser"
+		statuses := pipelineStatuses(t, dir, opts)
+		if hasStatusContaining(statuses, "using autodetected renderer") || hasStatusContaining(statuses, "using autodetected parser") {
+			t.Errorf("unexpected autodetect notices for explicit renderer/parser: %v", statuses)
+		}
+	})
+
+	t.Run("generation config suppresses top_p warning", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+		if err := os.WriteFile(filepath.Join(dir, "generation_config.json"), []byte(`{"top_p": 0.95}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		if hasStatusContaining(statuses, "top_p unset") {
+			t.Errorf("unexpected top_p notice when generation_config.json sets it: %v", statuses)
+		}
+		if !hasStatusContaining(statuses, "temperature unset") {
+			t.Errorf("missing temperature notice: %v", statuses)
+		}
+	})
+
+	t.Run("modelfile parameters suppress warnings", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		opts := testPipelineOptions()
+		opts.Requires = "0.20.0"
+		opts.Parameters = map[string]any{"temperature": 0.7, "top_p": 0.9}
+		statuses := pipelineStatuses(t, dir, opts)
+		if hasStatusContaining(statuses, " unset;") || hasStatusContaining(statuses, "REQUIRES") {
+			t.Errorf("unexpected notices when parameters and requires are set: %v", statuses)
+		}
+	})
+
+	t.Run("embedded draft tensors", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+			st.NewTensorDataFromBytes("mtp.fc.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
+		})
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		if !hasStatusContaining(statuses, "drafting model detected") {
+			t.Errorf("missing embedded draft notice: %v", statuses)
+		}
+	})
+
+	t.Run("embedded draft config declaration", func(t *testing.T) {
+		dir := t.TempDir()
+		writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16","num_nextn_predict_layers":1}`)
+		createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		statuses := pipelineStatuses(t, dir, testPipelineOptions())
+		if !hasStatusContaining(statuses, "drafting model detected") {
+			t.Errorf("missing embedded draft notice: %v", statuses)
+		}
+	})
+
+	t.Run("distinct draft reports default depth", func(t *testing.T) {
+		modelDir := t.TempDir()
+		writeConfigJSON(t, modelDir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
+		createTestSafetensors(t, filepath.Join(modelDir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+		draftDir := t.TempDir()
+		writeConfigJSON(t, draftDir, `{"architectures":["DFlashDraftModel"]}`)
+		createTestSafetensors(t, filepath.Join(draftDir, "model.safetensors"), []*st.TensorData{
+			st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 16)),
+		})
+
+		opts := testPipelineOptions()
+		opts.DraftDir = draftDir
+		statuses := pipelineStatuses(t, modelDir, opts)
+		if !hasStatusContaining(statuses, "using default draft_num_predict=4") {
+			t.Errorf("missing distinct draft notice: %v", statuses)
+		}
+	})
+}
