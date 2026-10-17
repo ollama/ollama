@@ -675,10 +675,11 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 	if len(savedMappings) > 0 {
 		selected = proxy.MapClaudeDesktopModels(selectable, savedMappings)
 	} else if len(selectedNames) == 0 {
-		selected = proxy.MapClaudeDesktopModels(
-			selectable,
-			proxy.DefaultClaudeDesktopMappingsForModels(selectable),
-		)
+		localNames, localErr := claudeLocalModelsResolver(ctx)
+		if localErr != nil {
+			slog.Debug("could not load local models for Claude startup defaults", "error", localErr)
+		}
+		selected = defaultClaudeDesktopSelection(selectable, state, localNames, localErr == nil)
 	} else {
 		selected = proxy.SelectClaudeDesktopModels(selectable, selectedNames)
 	}
@@ -1079,6 +1080,36 @@ func hasCloudClaudeDesktopModel(models []proxy.ClaudeDesktopModel) bool {
 	return false
 }
 
+// defaultClaudeDesktopSelection returns the models Claude Desktop starts with
+// when the user has not chosen any. The recommended cloud default is used
+// whenever this account can use it. If it cannot (Cloud is off, the user is
+// signed out, the plan is too low, or the catalog has no default), the first
+// installed local model takes its place so the integration still connects.
+// An unverifiable account keeps the cloud default so the caller's retry loop
+// can try again, and with no local model installed the cloud default is
+// returned as-is so the caller reports why it is unusable.
+func defaultClaudeDesktopSelection(selectable []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState, localNames []string, inventoryKnown bool) []proxy.ClaudeDesktopModel {
+	cloudDefault := proxy.MapClaudeDesktopModels(selectable, proxy.DefaultClaudeDesktopMappingsForModels(selectable))
+	err := validateClaudeDesktopModels(cloudDefault, state, localNames, inventoryKnown)
+	if err == nil || errors.Is(err, errClaudeDesktopAccessUnavailable) || len(localNames) == 0 {
+		return cloudDefault
+	}
+	return proxy.MapClaudeDesktopModels(nil, map[string]string{
+		defaultClaudeDesktopRouteID(): localNames[0],
+	})
+}
+
+// defaultClaudeDesktopRouteID is the route the default model is assigned to.
+func defaultClaudeDesktopRouteID() string {
+	defaults := proxy.DefaultClaudeDesktopMappings()
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if _, ok := defaults[route.ID]; ok {
+			return route.ID
+		}
+	}
+	return ""
+}
+
 func validateClaudeDesktopModels(models []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState, localNames []string, inventoryKnown bool) error {
 	installed := make(map[string]struct{}, len(localNames))
 	for _, name := range localNames {
@@ -1399,13 +1430,21 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 	for _, model := range selectedModels {
 		selected[model.Name] = struct{}{}
 	}
+	// With nothing mapped yet, Settings shows the default mapping, which can be
+	// an installed local model that is not part of the recommendation catalog.
+	showDefaults := used && len(proxy.ClaudeDesktopMappings(selectedModels)) == 0 && len(launch.ClaudeDesktopModels()) == 0
 	var localNames []string
 	var localErr error
-	if len(availableModels) > 0 {
+	if len(availableModels) > 0 || showDefaults {
 		localNames, localErr = claudeLocalModelsResolver(ctx)
 		if localErr != nil {
 			slog.Debug("could not load local models for Claude Settings", "error", localErr)
 		}
+	}
+	var defaultSelection []proxy.ClaudeDesktopModel
+	if showDefaults {
+		defaultSelection = defaultClaudeDesktopSelection(availableModels, accessState, localNames, localErr == nil)
+		availableModels = includeSelectedClaudeDesktopModels(availableModels, defaultSelection)
 	}
 	localModels := make(map[string]struct{}, len(localNames))
 	for _, name := range localNames {
@@ -1433,8 +1472,8 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 		})
 	}
 	mappedModels := proxy.ClaudeDesktopMappings(selectedModels)
-	if len(mappedModels) == 0 && len(launch.ClaudeDesktopModels()) == 0 {
-		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(availableModels)
+	if showDefaults {
+		mappedModels = proxy.ClaudeDesktopMappings(defaultSelection)
 	}
 	mappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)
 	for _, route := range proxy.ClaudeDesktopRoutes() {
