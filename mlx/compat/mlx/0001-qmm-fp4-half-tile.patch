@@ -1,0 +1,389 @@
+diff --git a/mlx/backend/metal/kernels/fp_quantized.h b/mlx/backend/metal/kernels/fp_quantized.h
+index bd001c335..19affeaa3 100644
+--- a/mlx/backend/metal/kernels/fp_quantized.h
++++ b/mlx/backend/metal/kernels/fp_quantized.h
+@@ -268,6 +268,95 @@ struct QuantizedBlockLoader {
+   }
+ };
+ 
++template <
++    short BROWS,
++    short BCOLS,
++    short dst_ld,
++    short tgp_size,
++    short group_size>
++struct Fp4HalfLoader {
++  MLX_MTL_CONST short BCOLS_PACKED = BCOLS / 2;
++  MLX_MTL_CONST short n_reads = (BCOLS_PACKED * BROWS) / tgp_size;
++  MLX_MTL_CONST short n_words = n_reads / 4;
++
++  static_assert(
++      n_reads == 4 || n_reads == 8,
++      "Each thread reads one or two words of one group");
++  static_assert(BCOLS % group_size == 0, "The block holds whole groups");
++
++  const int src_ld;
++  const short bi;
++  const short bj;
++
++  threadgroup half* dst;
++  const device uint8_t* src;
++  const device uint8_t* scales;
++
++  Fp4HalfLoader(
++      const device uint8_t* src_,
++      const device uint8_t* scales_,
++      const int src_ld_,
++      threadgroup half* dst_,
++      ushort simd_group_id [[simdgroup_index_in_threadgroup]],
++      ushort simd_lane_id [[thread_index_in_simdgroup]],
++      const device float* global_scale = nullptr) thread
++      : src_ld(src_ld_),
++        bi(n_reads*(simd_group_id * 32 + simd_lane_id) / BCOLS_PACKED),
++        bj((n_reads * (simd_group_id * 32 + simd_lane_id)) % BCOLS_PACKED),
++        dst(dst_ + bi * dst_ld + 2 * bj),
++        src(src_ + bi * src_ld / 2 + bj),
++        scales(scales_ + bi * src_ld / group_size + 2 * bj / group_size) {
++    (void)global_scale;
++  }
++
++  void load_unsafe() const thread {
++    const half2 s = half2(dequantize_scale<half, group_size>(*scales));
++    for (short i = 0; i < n_words; i++) {
++      const uint q = ((const device uint*)src)[i];
++      half2 v0 =
++          as_type<half2>(((q & 0x00070007) << 9) | ((q & 0x00080008) << 12));
++      half2 v1 =
++          as_type<half2>(((q & 0x00700070) << 5) | ((q & 0x00800080) << 8));
++      half2 v2 =
++          as_type<half2>(((q & 0x07000700) << 1) | ((q & 0x08000800) << 4));
++      half2 v3 = as_type<half2>(((q & 0x70007000) >> 3) | (q & 0x80008000));
++      v0 = (v0 * half2(16384.0h)) * s;
++      v1 = (v1 * half2(16384.0h)) * s;
++      v2 = (v2 * half2(16384.0h)) * s;
++      v3 = (v3 * half2(16384.0h)) * s;
++      *(threadgroup uint4*)(dst + 8 * i) = uint4(
++          as_type<uint>(half2(v0.x, v1.x)),
++          as_type<uint>(half2(v2.x, v3.x)),
++          as_type<uint>(half2(v0.y, v1.y)),
++          as_type<uint>(half2(v2.y, v3.y)));
++    }
++  }
++
++  void load_safe(short2 src_tile_dim) const thread {
++    if (bi < src_tile_dim.y && 2 * bj < src_tile_dim.x) {
++      load_unsafe();
++    } else {
++      for (short i = 0; i < n_words; i++) {
++        *(threadgroup uint4*)(dst + 8 * i) = uint4(0);
++      }
++    }
++  }
++
++  void next() thread {
++    src += BCOLS_PACKED;
++    scales += BCOLS / group_size;
++  }
++};
++
++// nvfp4 weights are exact in half; mxfp4 scales can exceed half's range, so
++// bfloat16 inputs take the half tile only with nvfp4.
++template <typename T, int group_size, int bits, bool has_global_scale>
++inline constexpr bool use_half_tile() {
++  return !has_global_scale &&
++      ((metal::is_same_v<T, half> && bits == 4) ||
++       (metal::is_same_v<T, bfloat16_t> && bits == 4 && group_size == 16));
++}
++
+ template <typename T, int group_size, int bits, int D>
+ METAL_FUNC void fp_qmv_quad_impl(
+     const device uint32_t* w,
+@@ -814,7 +903,8 @@ template <
+     const bool has_global_scale = false,
+     const int BM = 32,
+     const int BK = 32,
+-    const int BN = 32>
++    const int BN = 32,
++    const bool half_tile>
+ METAL_FUNC void fp_qmm_t_impl(
+     const device uint32_t* w,
+     const device uint8_t* scales,
+@@ -822,7 +912,7 @@ METAL_FUNC void fp_qmm_t_impl(
+     const device T* x,
+     device U* y,
+     threadgroup T* Xs,
+-    threadgroup T* Ws,
++    threadgroup metal::conditional_t<half_tile, half, T>* Ws,
+     const constant int& K,
+     const constant int& N,
+     const constant int& M,
+@@ -833,6 +923,9 @@ METAL_FUNC void fp_qmm_t_impl(
+     uint simd_lid [[thread_index_in_simdgroup]]) {
+   static_assert(BK >= SIMD_SIZE, "BK should be larger than SIMD_SIZE");
+   static_assert(BK % SIMD_SIZE == 0, "BK should be divisible by SIMD_SIZE");
++  static_assert(
++      !half_tile || (bits == 4 && !has_global_scale && sizeof(T) == 2),
++      "The half weight tile holds fp4 without a global scale");
+ 
+   (void)lid;
+ 
+@@ -848,16 +941,19 @@ METAL_FUNC void fp_qmm_t_impl(
+       BlockMMA<T, U, BM, BN, BK, WM, WN, false, true, BK_padded, BK_padded>;
+   using loader_x_t =
+       mlx::steel::BlockLoader<T, BM, BK, BK_padded, 1, WM * WN * SIMD_SIZE>;
+-  using loader_w_t = QuantizedBlockLoader<
+-      T,
+-      BN,
+-      BK,
+-      BK_padded,
+-      1,
+-      WM * WN * SIMD_SIZE,
+-      group_size,
+-      bits,
+-      has_global_scale>;
++  using loader_w_t = metal::conditional_t<
++      half_tile,
++      Fp4HalfLoader<BN, BK, BK_padded, WM * WN * SIMD_SIZE, group_size>,
++      QuantizedBlockLoader<
++          T,
++          BN,
++          BK,
++          BK_padded,
++          1,
++          WM * WN * SIMD_SIZE,
++          group_size,
++          bits,
++          has_global_scale>>;
+ 
+   // Set the block
+   const int K_w = K * bytes_per_pack / pack_factor;
+@@ -1560,9 +1656,11 @@ template <
+   (void)lid;
+ 
+   constexpr int BK_padded = (BK + 16 / sizeof(T));
++  constexpr bool half_tile =
++      use_half_tile<T, group_size, bits, has_global_scale>();
+ 
+   threadgroup T Xs[BM * BK_padded];
+-  threadgroup T Ws[BN * BK_padded];
++  threadgroup metal::conditional_t<half_tile, half, T> Ws[BN * BK_padded];
+ 
+   if (batched) {
+     adjust_matrix_offsets(
+@@ -1589,7 +1687,8 @@ template <
+       has_global_scale,
+       BM,
+       BK,
+-      BN>(
++      BN,
++      half_tile>(
+       w,
+       scales,
+       global_scale,
+@@ -1917,7 +2016,8 @@ template <
+       has_global_scale,
+       BM,
+       BK,
+-      BN>(
++      BN,
++      false>(
+       w,
+       scales,
+       global_scale,
+@@ -1962,8 +2062,9 @@ template <
+   constexpr int BK_padded = (BK + 16 / sizeof(T));
+   constexpr int pack_factor = get_pack_factor<8, bits>();
+   constexpr int bytes_per_pack = get_bytes_per_pack();
++  constexpr bool half_tile = use_half_tile<T, group_size, bits, false>();
+   threadgroup T Xs[BM * BK_padded];
+-  threadgroup T Ws[BN * BK_padded];
++  threadgroup metal::conditional_t<half_tile, half, T> Ws[BN * BK_padded];
+   const int k_start = tid.z * k_partition_size;
+   x += k_start;
+ 
+@@ -1972,7 +2073,17 @@ template <
+   scales += k_start / group_size;
+   y += tid.z * static_cast<int64_t>(split_k_partition_stride);
+ 
+-  fp_qmm_t_impl<T, group_size, bits, aligned_N, float, false, BM, BK, BN>(
++  fp_qmm_t_impl<
++      T,
++      group_size,
++      bits,
++      aligned_N,
++      float,
++      false,
++      BM,
++      BK,
++      BN,
++      half_tile>(
+       (const device uint32_t*)wl,
+       scales,
+       nullptr,
+diff --git a/mlx/backend/metal/kernels/fp_quantized.metal b/mlx/backend/metal/kernels/fp_quantized.metal
+index ffd8b5b9c..5b8c8ba8d 100644
+--- a/mlx/backend/metal/kernels/fp_quantized.metal
++++ b/mlx/backend/metal/kernels/fp_quantized.metal
+@@ -253,8 +253,31 @@
+   instantiate_quantized_qmv_wrap(qmv_fast, type, nvfp4, 16, 4, 1, 2) \
+   instantiate_quantized_qmv_wrap(qmv_fast, type, nvfp4, 16, 4, 0, 2)
+ 
++#define instantiate_quantized_qmm_t_64(type, mode, group_size, aligned, batched) \
++  instantiate_kernel( \
++      #mode "_qmm_t_" #type "_gs_" #group_size "_b_4_bm_64_bn_64_alN_" #aligned "_batch_" #batched, \
++      fp_qmm_t, \
++      type, \
++      group_size, \
++      4, \
++      aligned, \
++      batched, \
++      false, \
++      64, \
++      32, \
++      64)
++
++#define instantiate_quantized_all_qmm_t_64(type, mode, group_size) \
++  instantiate_quantized_qmm_t_64(type, mode, group_size, true, 0) \
++  instantiate_quantized_qmm_t_64(type, mode, group_size, true, 1) \
++  instantiate_quantized_qmm_t_64(type, mode, group_size, false, 0) \
++  instantiate_quantized_qmm_t_64(type, mode, group_size, false, 1)
++
+ instantiate_quantized_types(float)
+ instantiate_quantized_types(bfloat16_t)
+ instantiate_quantized_types(float16_t)
+ instantiate_quantized_qmm_hgs(bfloat16_t)
++instantiate_quantized_all_qmm_t_64(bfloat16_t, nvfp4, 16)
++instantiate_quantized_all_qmm_t_64(float16_t, nvfp4, 16)
++instantiate_quantized_all_qmm_t_64(float16_t, mxfp4, 32)
+     // clang-format on
+diff --git a/mlx/backend/metal/kernels/steel/gemm/mma.h b/mlx/backend/metal/kernels/steel/gemm/mma.h
+index 1d9e0a782..a5c0503ec 100644
+--- a/mlx/backend/metal/kernels/steel/gemm/mma.h
++++ b/mlx/backend/metal/kernels/steel/gemm/mma.h
+@@ -510,7 +510,9 @@ struct BlockMMA {
+   }
+ 
+   /* (BM, BK) X (BK, BN) multiply accumulate function */
+-  METAL_FUNC void mma(const threadgroup T* As, const threadgroup T* Bs) thread {
++  template <typename TB = T>
++  METAL_FUNC void mma(const threadgroup T* As, const threadgroup TB* Bs)
++      thread {
+     // Adjust for simdgroup and thread location
+     As += As_offset;
+     Bs += Bs_offset;
+@@ -524,7 +526,7 @@ struct BlockMMA {
+ 
+       simdgroup_barrier(mem_flags::mem_none);
+ 
+-      Btile.template load<T, 1, WN, B_str_k, B_str_n>(Bs);
++      Btile.template load<TB, 1, WN, B_str_k, B_str_n>(Bs);
+ 
+       simdgroup_barrier(mem_flags::mem_none);
+ 
+diff --git a/mlx/backend/metal/quantized.cpp b/mlx/backend/metal/quantized.cpp
+index 052dd761c..432666d36 100644
+--- a/mlx/backend/metal/quantized.cpp
++++ b/mlx/backend/metal/quantized.cpp
+@@ -1053,6 +1053,16 @@ void gather_qmm_nax(
+   compute_encoder.dispatch_threadgroups(grid_dims, group_dims);
+ }
+ 
++// Must match use_half_tile in fp_quantized.h; only those have 64x64 tiles.
++inline bool use_half_tile(
++    const array& x,
++    const std::string& mode,
++    const std::optional<array>& global_scale,
++    int bits) {
++  return mode != "affine" && bits == 4 && !global_scale &&
++      (x.dtype() == float16 || (x.dtype() == bfloat16 && mode == "nvfp4"));
++}
++
+ void qmm(
+     const array& x,
+     const array& w,
+@@ -1102,12 +1112,22 @@ void qmm(
+   int wn = 2;
+   int bm = 32;
+   int bn = 32;
++  bool half_tile = use_half_tile(x, mode, global_scale, bits) && transpose;
++  bool ultra = d.get_architecture().back() == 'd';
++  bool pad_free = (M + 31) / 32 % 2 == 0;
++  bool pad_ok = M > (d.get_architecture_gen() < 15 && !ultra ? 256 : 2048);
++  int tgs_64 = ((N + 63) / 64) * ((M + 63) / 64) * B;
++  int min_tgs_64 = ultra ? 1024 : 160;
++  if (half_tile && (pad_free || pad_ok) && tgs_64 >= min_tgs_64) {
++    bm = 64;
++    bn = 64;
++  }
+   MTL::Size group_dims(32, wn, wm);
+   MTL::Size grid_dims((N + bn - 1) / bn, (M + bm - 1) / bm, B);
+ 
+   std::string kname;
+   kname.reserve(64);
+-  bool aligned = N % 32 == 0;
++  bool aligned = N % bn == 0;
+   bool batched = B > 1;
+   std::string type_string = get_type_string(x.dtype());
+   concatenate(
+@@ -1118,6 +1138,7 @@ void qmm(
+       group_size,
+       "_b_",
+       bits,
++      bm == 64 ? "_bm_64_bn_64" : "",
+       transpose ? (aligned ? "_alN_true" : "_alN_false") : "",
+       batched ? "_batch_1" : "_batch_0",
+       global_scale ? "_hgs" : "");
+@@ -1134,7 +1155,10 @@ void qmm(
+         bits,
+         aligned,
+         batched,
+-        global_scale.has_value());
++        global_scale.has_value(),
++        bm,
++        32,
++        bn);
+   } else {
+     kernel = get_quantized_kernel_wrapped(
+         d, kname, "qmm_n", mode, type_string, group_size, bits, batched);
+diff --git a/python/tests/test_quantized.py b/python/tests/test_quantized.py
+index 3c1bf0bbf..ffb59a559 100644
+--- a/python/tests/test_quantized.py
++++ b/python/tests/test_quantized.py
+@@ -685,6 +685,37 @@ class TestQuantized(mlx_tests.MLXTestCase):
+                 rounding = (y_ref.astype(dtype).astype(mx.float32) - y_ref).abs().mean()
+                 self.assertLess(error.item(), 1.1 * rounding.item())
+ 
++    def test_qmm_fp4_half_tile(self):
++        if mx.default_device() == mx.cpu:
++            self.skipTest("Covers GPU kernels only")
++        mx.random.seed(0)
++
++        def rel_err(got, expected):
++            d = mx.abs(got.astype(mx.float32) - expected.astype(mx.float32))
++            return d.max() / mx.abs(expected.astype(mx.float32)).max()
++
++        tests = [
++            (512, 8192, 1040, ()),  # 64 x 64
++            (552, 8224, 1040, ()),  # 64 x 64, M % 64 == 40, N % 64 == 32
++            (300, 8192, 1040, (2,)),  # 64 x 64, batched w
++            (40, 1040, 1200, ()),  # 32 x 32, N % 32 == 16
++            (40, 512, 1024, ()),  # split K
++            (40, 528, 1024, ()),  # split K, N % 32 == 16
++        ]
++        modes = [("nvfp4", 16), ("mxfp4", 32)]
++        dtypes = [mx.bfloat16, mx.float16]
++        for (M, N, K, batch), (mode, group_size), dtype in product(
++            tests, modes, dtypes
++        ):
++            K -= K % group_size
++            with self.subTest(M=M, N=N, K=K, batch=batch, mode=mode, dtype=dtype):
++                w = mx.random.normal(batch + (N, K)).astype(dtype)
++                w_q, scales = mx.quantize(w, mode=mode)
++                w_hat = mx.dequantize(w_q, scales, mode=mode, dtype=dtype)
++                x = (mx.random.normal(batch + (M, K)) / K**0.5).astype(dtype)
++                out = mx.quantized_matmul(x, w_q, scales, mode=mode)
++                self.assertLess(rel_err(out, x @ w_hat.swapaxes(-1, -2)), 3e-2)
++
+     def test_qmm_vjp(self):
+         key = mx.random.key(0)
+         k1, k2 = mx.random.split(key)
