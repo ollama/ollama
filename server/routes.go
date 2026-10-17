@@ -3175,7 +3175,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
-			// Set think to nil when being used with Anthropic API to connect to tools like claude code
+			// Clients may retain thinking settings when switching models.
 			if _, ok := c.Get("relax_thinking"); ok {
 				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
 				req.Think = nil
@@ -3218,6 +3218,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				req.Think.Value = "high"
 			}
 		}
+	}
+
+	// Reuse resolved thinking for server-side tool follow-ups.
+	if w, ok := c.Writer.(interface{ SetThinking(*api.ThinkValue) }); ok {
+		w.SetThinking(req.Think)
 	}
 
 	if chatModeForModel(m) == chatExecutionModeNative {
