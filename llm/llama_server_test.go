@@ -2589,6 +2589,7 @@ func TestAppendDraftArgs(t *testing.T) {
 		draftType string
 		draftPath string
 		opts      api.Options
+		gpus      []ml.DeviceInfo
 		want      []string
 	}{
 		{
@@ -2610,6 +2611,13 @@ func TestAppendDraftArgs(t *testing.T) {
 			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
+			name:      "MTP draft disables backend sampling on Metal",
+			draftType: draftTypeMTP,
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			gpus:      []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}}},
+			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "4", "--no-spec-draft-backend-sampling"},
+		},
+		{
 			name:      "DFlash draft omits MTP backend sampling",
 			draftType: draftTypeDFlash,
 			draftPath: "draft.gguf",
@@ -2627,7 +2635,7 @@ func TestAppendDraftArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := appendDraftArgs([]string{"base"}, tt.draftType, tt.draftPath, tt.opts)
+			got := appendDraftArgs([]string{"base"}, tt.draftType, tt.draftPath, tt.opts, tt.gpus)
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendDraftArgs = %v, want %v", got, tt.want)
 			}
