@@ -68,6 +68,21 @@ type SelfDraft interface {
 	SelfDraft() DraftModel
 }
 
+// BlockSelector is a BlockDraft with a learned selector that chooses each
+// proposal conditional on its predecessor. The runner owns sampling policy
+// and RNG; the model owns candidate scores.
+type BlockSelector interface {
+	BlockDraft
+
+	// Select proposes a block from the draft's hidden rows [B,L,H], their
+	// logits [B,L,V] and the anchor token [B] preceding the block. choose
+	// samples one of each row's unique candidate IDs, taking IDs and scores
+	// [N,K] and returning tokens [N] and probabilities [N,K]. Select returns
+	// tokens [B,L] and each position's candidate IDs and probabilities [B,L,K],
+	// which verification uses to correct the proposal.
+	Select(hidden, logits, anchor *mlx.Array, choose func(ids, scores *mlx.Array) (tokens, probs *mlx.Array)) (tokens, ids, probs *mlx.Array)
+}
+
 var (
 	mu            sync.Mutex
 	registry      = make(map[string]func(root *Root) (Model, error))
