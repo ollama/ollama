@@ -176,12 +176,12 @@ func ExpandResponsesCompactionInput(body []byte) ([]byte, bool, error) {
 		return body, changed, err
 	}
 
-	input, err := json.Marshal(items)
+	input, err := marshalNoHTMLEscape(items)
 	if err != nil {
 		return nil, false, err
 	}
 	req.Fields["input"] = input
-	rewritten, err := json.Marshal(req.Fields)
+	rewritten, err := marshalNoHTMLEscape(req.Fields)
 	return rewritten, true, err
 }
 
@@ -334,7 +334,7 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	result, err := json.Marshal(map[string]any{
+	result, err := marshalNoHTMLEscape(map[string]any{
 		"type": "function_call_output", "call_id": callID, "output": payload.Summary,
 	})
 	if err != nil {
@@ -407,16 +407,16 @@ func messageToResponsesItems(message api.Message, standaloneName compactionFunct
 		if call.ID == "" || call.Function.Name == "" {
 			return nil, errors.New("retained function call is missing call_id or name")
 		}
+		arguments, err := marshalCompactionArguments(call.Function.Arguments)
+		if err != nil {
+			return nil, err
+		}
 		if call.Function.Name == "tool_search" {
 			values = append(values, map[string]any{
 				"type": "tool_search_call", "call_id": call.ID,
-				"execution": "client", "status": "completed", "arguments": call.Function.Arguments,
+				"execution": "client", "status": "completed", "arguments": arguments,
 			})
 		} else {
-			arguments, err := json.Marshal(call.Function.Arguments)
-			if err != nil {
-				return nil, err
-			}
 			values = append(values, map[string]any{
 				"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": string(arguments),
 			})
@@ -425,13 +425,33 @@ func messageToResponsesItems(message api.Message, standaloneName compactionFunct
 
 	items := make([]json.RawMessage, 0, len(values))
 	for _, value := range values {
-		item, err := json.Marshal(value)
+		item, err := marshalNoHTMLEscape(value)
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// marshalCompactionArguments bypasses the argument type's HTML-escaping
+// marshaler while preserving its insertion order.
+func marshalCompactionArguments(arguments api.ToolCallFunctionArguments) (json.RawMessage, error) {
+	body := []byte{'{'}
+	for name, value := range arguments.All() {
+		key, _ := marshalNoHTMLEscape(name)
+		field, err := marshalNoHTMLEscape(value)
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 1 {
+			body = append(body, ',')
+		}
+		body = append(body, key...)
+		body = append(body, ':')
+		body = append(body, field...)
+	}
+	return append(body, '}'), nil
 }
 
 func responsesContentValue(text string, images []api.ImageData) (any, error) {

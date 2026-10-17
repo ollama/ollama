@@ -490,6 +490,8 @@ func TestNormalizeFullAccessNamespaceBoundaries(t *testing.T) {
 		{"null members", `[{"type":"namespace","name":"functions","tools":null}]`, false},
 		{"empty members", `[{"type":"namespace","name":"functions","tools":[]}]`, false},
 		{"no escalation arguments", `[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"exec_command","parameters":{"properties":{"cmd":{"type":"string"}},"required":["cmd"]}}]}]`, false},
+		{"no escalation with malformed required", `[{"type":"function","name":"exec_command","parameters":{"properties":{"cmd":{"type":"string"}},"required":42}}]`, false},
+		{"escalation with malformed required", `[{"type":"function","name":"exec_command","parameters":{"properties":{"sandbox_permissions":{"type":"string"}},"required":42}}]`, true},
 		{"malformed members", `[{"type":"namespace","name":"functions","tools":{}}]`, true},
 		{"malformed parameters", `[{"type":"namespace","name":"functions","tools":[{"type":"function","name":"exec_command","parameters":42}]}]`, true},
 	} {
