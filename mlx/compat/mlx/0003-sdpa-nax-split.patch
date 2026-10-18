@@ -1,0 +1,1315 @@
+diff --git a/mlx/backend/metal/jit_kernels.cpp b/mlx/backend/metal/jit_kernels.cpp
+index aad94eba1..9b5095dee 100644
+--- a/mlx/backend/metal/jit_kernels.cpp
++++ b/mlx/backend/metal/jit_kernels.cpp
+@@ -1401,6 +1401,38 @@ MTL::ComputePipelineState* get_steel_attention_kernel(
+   return d.get_kernel(kernel_name, lib, hash_name, func_consts);
+ }
+ 
++MTL::ComputePipelineState* get_steel_attention_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array& q,
++    int bq,
++    int bk,
++    int bd,
++    int wm,
++    int wn) {
++  const auto& lib_name = kernel_name;
++  auto lib = d.get_library(lib_name, [&]() {
++    std::string kernel_source;
++    concatenate(
++        kernel_source,
++        metal::utils(),
++        metal::steel_attention(),
++        get_template_definition(
++            lib_name,
++            "attention_split",
++            get_type_string(q.dtype()),
++            bq,
++            bk,
++            bd,
++            wm,
++            wn));
++    return kernel_source;
++  });
++  return d.get_kernel(kernel_name, lib, hash_name, func_consts);
++}
++
+ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+@@ -1438,6 +1470,34 @@ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+   return d.get_kernel(kernel_name, lib, hash_name, func_consts);
+ }
+ 
++MTL::ComputePipelineState* get_steel_attention_nax_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array& q,
++    int bk,
++    int bd,
++    int wn) {
++  const auto& lib_name = kernel_name;
++  auto lib = d.get_library(lib_name, [&]() {
++    std::string kernel_source;
++    concatenate(
++        kernel_source,
++        metal::utils(),
++        metal::steel_attention_nax(),
++        get_template_definition(
++            lib_name,
++            "attention_nax_split",
++            get_type_string(q.dtype()),
++            bk,
++            bd,
++            wn));
++    return kernel_source;
++  });
++  return d.get_kernel(kernel_name, lib, hash_name, func_consts);
++}
++
+ MTL::ComputePipelineState* get_sdpa_vjp_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+diff --git a/mlx/backend/metal/kernels.h b/mlx/backend/metal/kernels.h
+index ded6c834a..2166fc9fb 100644
+--- a/mlx/backend/metal/kernels.h
++++ b/mlx/backend/metal/kernels.h
+@@ -430,6 +430,18 @@ MTL::ComputePipelineState* get_steel_attention_kernel(
+     int wn,
+     const array& m);
+ 
++MTL::ComputePipelineState* get_steel_attention_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array& q,
++    int bq,
++    int bk,
++    int bd,
++    int wm,
++    int wn);
++
+ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+@@ -445,6 +457,16 @@ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+     const array& m,
+     bool split_d);
+ 
++MTL::ComputePipelineState* get_steel_attention_nax_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array& q,
++    int bk,
++    int bd,
++    int wn);
++
+ MTL::ComputePipelineState* get_gated_delta_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+diff --git a/mlx/backend/metal/kernels/scaled_dot_product_attention.metal b/mlx/backend/metal/kernels/scaled_dot_product_attention.metal
+index d7862d256..ba9149ec6 100644
+--- a/mlx/backend/metal/kernels/scaled_dot_product_attention.metal
++++ b/mlx/backend/metal/kernels/scaled_dot_product_attention.metal
+@@ -92,4 +92,24 @@ instantiate_sdpa_vector_heads(float16_t)
+ instantiate_sdpa_vector_tk1(bfloat16_t, 256)
+ instantiate_sdpa_vector_tk1(float, 192)
+ instantiate_sdpa_vector_tk1(float, 256)
++
++#define instantiate_sdpa_split_reduce(type, value_dim) \
++  instantiate_kernel(                                  \
++      "sdpa_split_reduce_" #type "_" #value_dim,       \
++      sdpa_split_reduce,                               \
++      type,                                            \
++      value_dim)
++
++#define instantiate_sdpa_split_reduce_heads(type) \
++  instantiate_sdpa_split_reduce(type, 64)         \
++  instantiate_sdpa_split_reduce(type, 72)         \
++  instantiate_sdpa_split_reduce(type, 80)         \
++  instantiate_sdpa_split_reduce(type, 96)         \
++  instantiate_sdpa_split_reduce(type, 128)        \
++  instantiate_sdpa_split_reduce(type, 192)        \
++  instantiate_sdpa_split_reduce(type, 256)
++
++instantiate_sdpa_split_reduce_heads(float)
++instantiate_sdpa_split_reduce_heads(bfloat16_t)
++instantiate_sdpa_split_reduce_heads(float16_t)
+ // clang-format on
+diff --git a/mlx/backend/metal/kernels/sdpa_vector.h b/mlx/backend/metal/kernels/sdpa_vector.h
+index 1d312038c..d794f55cb 100644
+--- a/mlx/backend/metal/kernels/sdpa_vector.h
++++ b/mlx/backend/metal/kernels/sdpa_vector.h
+@@ -602,3 +602,65 @@ template <typename T, int D>
+     }
+   }
+ }
++
++template <typename T, int D>
++[[kernel]] void sdpa_split_reduce(
++    const device float* partials [[buffer(0)]],
++    const device float* sums [[buffer(1)]],
++    const device float* maxs [[buffer(2)]],
++    device T* out [[buffer(3)]],
++    const constant int& blocks [[buffer(4)]],
++    const constant int64_t* out_strides [[buffer(5)]],
++    uint3 tid [[threadgroup_position_in_grid]],
++    uint3 tpg [[threadgroups_per_grid]],
++    uint simd_lid [[thread_index_in_simdgroup]]) {
++  constexpr int BN = 32;
++  constexpr int elem_per_thread = (D + BN - 1) / BN;
++  constexpr bool full_lanes = D % BN == 0;
++  const int lane_elems = full_lanes
++      ? elem_per_thread
++      : clamp(D - int(simd_lid) * elem_per_thread, 0, elem_per_thread);
++
++  typedef float U;
++
++  const int q_seq_idx = tid.x;
++  const int head_idx = tid.y;
++  const int batch_idx = tid.z;
++  const int64_t row =
++      (int64_t(batch_idx) * tpg.y + head_idx) * tpg.x + q_seq_idx;
++  partials += row * blocks * D + simd_lid * elem_per_thread;
++  sums += row * blocks;
++  maxs += row * blocks;
++  out += batch_idx * out_strides[0] + head_idx * out_strides[1] +
++      q_seq_idx * out_strides[2] + simd_lid * elem_per_thread;
++
++  U max_score = Limits<U>::finite_min;
++  for (int b = simd_lid; b < blocks; b += BN) {
++    max_score = max(max_score, maxs[b]);
++  }
++  max_score = simd_max(max_score);
++
++  U sum_exp_score = 0;
++  for (int b = simd_lid; b < blocks; b += BN) {
++    sum_exp_score += fast::exp(maxs[b] - max_score) * sums[b];
++  }
++  sum_exp_score = simd_sum(sum_exp_score);
++
++  U o[elem_per_thread] = {0};
++  for (int b = 0; b < blocks; b++) {
++    U factor = fast::exp(maxs[b] - max_score);
++    for (int i = 0; i < elem_per_thread; i++) {
++      if (full_lanes || i < lane_elems) {
++        o[i] += factor * static_cast<U>(partials[i]);
++      }
++    }
++    partials += D;
++  }
++
++  U scale = sum_exp_score == 0 ? 0 : 1 / sum_exp_score;
++  for (int i = 0; i < elem_per_thread; i++) {
++    if (full_lanes || i < lane_elems) {
++      out[i] = static_cast<T>(o[i] * scale);
++    }
++  }
++}
+diff --git a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.h b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.h
+index d8f5efdc1..0f8e11d17 100644
+--- a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.h
++++ b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.h
+@@ -567,4 +567,303 @@ template <
+   } else {
+     Otile.template store<T, 1, 1>(O, params->O_strides[2]);
+   }
++}
++
++///////////////////////////////////////////////////////////////////////////////
++// Split KV attention kernel
++///////////////////////////////////////////////////////////////////////////////
++
++// clang-format off
++template <
++    typename T,
++    int BQ,
++    int BK,
++    int BD,
++    int WM,
++    int WN,
++    typename AccumType = float>
++[[kernel, max_total_threads_per_threadgroup(WM * WN * 32)]] void attention_split(
++    const device T* Q [[buffer(0)]],
++    const device T* K [[buffer(1)]],
++    const device T* V [[buffer(2)]],
++    device float* O [[buffer(3)]],
++    device float* sums [[buffer(4)]],
++    device float* maxs [[buffer(5)]],
++    const constant AttnParams* params [[buffer(6)]],
++    const constant int& split_blocks [[buffer(7)]],
++    uint simd_lane_id [[thread_index_in_simdgroup]],
++    uint simd_group_id [[simdgroup_index_in_threadgroup]],
++    uint3 tid [[threadgroup_position_in_grid]],
++    uint3 tpg [[threadgroups_per_grid]]) { // clang-format on
++
++  constexpr short kFragSize = 8;
++  constexpr int BV = BD;
++  static_assert(WN == 1 || WN == 2, "A row tile spans one or two simdgroups");
++  static_assert(BQ == WM * kFragSize, "Each simdgroup takes one row tile");
++
++  const int qL = params->qL;
++  const int gqa = params->gqa_factor;
++  const int n_rows = gqa * qL;
++  const int row_blocks = (n_rows + BQ - 1) / BQ;
++
++  const int split = tid.x / row_blocks;
++  const int blocks = tpg.x / row_blocks;
++  const int tq = BQ * (tid.x % row_blocks);
++  const int kv_head = tid.y;
++  const int batch = tid.z;
++
++  constexpr short padK = 16 / sizeof(T);
++  constexpr short padV = 16 / sizeof(T);
++  constexpr short LDK_tgp = BK + padK;
++  constexpr short LDV_tgp = BV + padV;
++  constexpr short tgp_mem_0 = (BK + padK) * (BD);
++  constexpr short tgp_mem_1 = BK * (BV + padV);
++  constexpr short tgp_mem_s = tgp_mem_0 > tgp_mem_1 ? tgp_mem_0 : tgp_mem_1;
++
++  threadgroup T KV_smem[tgp_mem_s];
++  threadgroup T* Ks = KV_smem;
++  threadgroup T* Vs = KV_smem;
++
++  const int kb_start = split * split_blocks;
++  const int kb_end = min(kb_start + split_blocks, params->NK);
++
++  K += batch * params->K_strides[0] + kv_head * params->K_strides[1] +
++      int64_t(kb_start) * BK * params->K_strides[2];
++  V += batch * params->V_strides[0] + kv_head * params->V_strides[1] +
++      int64_t(kb_start) * BK * params->V_strides[2];
++
++  constexpr short kThreads = WM * WN * 32;
++  constexpr short kLoadThreads =
++      kThreads >= 256 ? 256 : (kThreads >= 128 ? 128 : kThreads);
++  const bool loads =
++      kThreads == kLoadThreads || simd_group_id * 32 < kLoadThreads;
++
++  using KBlockLoader = BlockLoaderT<
++      /* typename T = */ T,
++      /* short BROWS = */ BK,
++      /* short BCOLS = */ BD,
++      /* short kDstStrRow = */ 1,
++      /* short kDstStrCol = */ LDK_tgp,
++      /* short reduction_dim = */ 0,
++      /* short tgp_size = */ kLoadThreads>;
++
++  using VBlockLoader = BlockLoaderT<
++      /* typename T = */ T,
++      /* short BROWS = */ BK,
++      /* short BCOLS = */ BV,
++      /* short kDstStrRow = */ LDV_tgp,
++      /* short kDstStrCol = */ 1,
++      /* short reduction_dim = */ 0,
++      /* short tgp_size = */ kLoadThreads>;
++
++  KBlockLoader loader_k(
++      K, params->K_strides[2], Ks, simd_group_id, simd_lane_id);
++  VBlockLoader loader_v(
++      V, params->V_strides[2], Vs, simd_group_id, simd_lane_id);
++
++  const AccumType scale = params->scale * M_LOG2E_F;
++
++  using MMAFrag_acc_t = BaseMMAFrag<AccumType, kFragSize, kFragSize>;
++  using MMAFrag_in_t = BaseMMAFrag<T, kFragSize, kFragSize>;
++
++  constexpr int TK = BK / kFragSize;
++  constexpr int TD = BD / kFragSize;
++  constexpr int TDh = TD / WN;
++  constexpr int BDh = BD / WN;
++  constexpr int TVh = BV / (kFragSize * WN);
++  constexpr int BVh = BV / WN;
++
++  MMATile<T, 1, TK, MMAFrag_in_t> Ktile;
++  MMATile<AccumType, 1, TK, MMAFrag_acc_t> Stile;
++  MMATile<T, 1, 1, MMAFrag_in_t> Vtile;
++  MMATile<AccumType, 1, TVh, MMAFrag_acc_t> Otile;
++  MMATile<T, 1, 1, MMAFrag_in_t> Qtiles[TDh];
++
++  Otile.clear();
++
++  const short2 simd_coord = MMAFrag_acc_t::get_coord(simd_lane_id);
++  const short sm = simd_coord.y;
++  const short sn = simd_coord.x;
++  const short row_group = simd_group_id / WN;
++  const short d_half = simd_group_id % WN;
++  const short tm = kFragSize * row_group;
++
++  const short Ks_offset = d_half * BDh * LDK_tgp + sm * LDK_tgp + sn;
++  const short Vs_offset = sm * LDV_tgp + d_half * BVh + sn;
++  constexpr short Ks_tile_stride = kFragSize * LDK_tgp;
++
++  const int row = tq + tm + sm;
++  const int r = row % qL;
++  const int q_pos = params->qL_off + r;
++  const bool row_valid = row < n_rows;
++  const device T* q_src = Q + batch * params->Q_strides[0] +
++      (kv_head * gqa + row / qL) * params->Q_strides[1] +
++      r * params->Q_strides[2] + d_half * BDh + sn;
++  STEEL_PRAGMA_UNROLL
++  for (short dd = 0; dd < TDh; dd++) {
++    if (row_valid) {
++      MMAFrag_in_t::load(
++          Qtiles[dd].frag_at(0, 0),
++          q_src + dd * kFragSize,
++          params->Q_strides[2],
++          Int<1>{});
++    } else {
++      Qtiles[dd].frag_at(0, 0) = typename MMAFrag_in_t::frag_type(0);
++    }
++  }
++
++  AccumType max_score = Limits<AccumType>::finite_min;
++  AccumType sum_score = 0;
++
++  for (int kb = kb_start; kb < kb_end; kb++) {
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++    if (loads) {
++      if (!align_K && kb == (params->NK_aligned)) {
++        loader_k.load_safe(short2(BD, params->kL_rem));
++      } else {
++        loader_k.load_unsafe();
++      }
++    }
++
++    Stile.clear();
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    STEEL_PRAGMA_UNROLL
++    for (short dd = 0; dd < TDh; dd++) {
++      simdgroup_barrier(mem_flags::mem_none);
++      Ktile.template load<T, 1, 1, LDK_tgp, 1>(
++          &Ks[Ks_offset + dd * Ks_tile_stride]);
++      simdgroup_barrier(mem_flags::mem_none);
++      tile_matmad(Stile, Qtiles[dd], Ktile, Stile);
++    }
++
++    if constexpr (WN == 2) {
++      constexpr int s_xchg_stride = decltype(Stile)::kElemsPerTile * 32;
++      constexpr int s_xchg_size = WM * WN * s_xchg_stride;
++      static_assert(
++          s_xchg_size * sizeof(AccumType) <= tgp_mem_s * sizeof(T),
++          "The score exchange must fit in KV_smem");
++
++      threadgroup_barrier(mem_flags::mem_threadgroup);
++      threadgroup AccumType* s_xchg =
++          reinterpret_cast<threadgroup AccumType*>(KV_smem);
++      threadgroup AccumType* slot =
++          s_xchg + (row_group * WN + d_half) * s_xchg_stride;
++      const short base = short(simd_lane_id) * decltype(Stile)::kElemsPerTile;
++
++      STEEL_PRAGMA_UNROLL
++      for (short ii = 0; ii < decltype(Stile)::kElemsPerTile; ii++) {
++        slot[base + ii] = Stile.elems()[ii];
++      }
++      threadgroup_barrier(mem_flags::mem_threadgroup);
++
++      const threadgroup AccumType* peer =
++          s_xchg + (row_group * WN + 1 - d_half) * s_xchg_stride;
++      STEEL_PRAGMA_UNROLL
++      for (short ii = 0; ii < decltype(Stile)::kElemsPerTile; ii++) {
++        Stile.elems()[ii] += peer[base + ii];
++      }
++    }
++
++    STEEL_PRAGMA_UNROLL
++    for (short ii = 0; ii < decltype(Stile)::kElemsPerTile; ii++) {
++      Stile.elems()[ii] *= scale;
++    }
++
++    using stile_t = decltype(Stile);
++    constexpr auto neg_inf = Limits<AccumType>::finite_min;
++
++    if (!align_K && kb == (params->NK_aligned)) {
++      STEEL_PRAGMA_UNROLL
++      for (short j = 0; j < stile_t::kTileCols; j++) {
++        short col_pos = sn + (j * stile_t::kFragCols);
++        STEEL_PRAGMA_UNROLL
++        for (short jj = 0; jj < stile_t::MMAFrag_t::kElemCols; jj++) {
++          if ((col_pos + jj) >= params->kL_rem) {
++            Stile.frag_at(0, j)[jj] = neg_inf;
++          }
++        }
++      }
++    }
++
++    if (do_causal && (kb + 1) * BK > params->qL_off + 1) {
++      STEEL_PRAGMA_UNROLL
++      for (short j = 0; j < stile_t::kTileCols; j++) {
++        const int col_pos = kb * BK + sn + (j * stile_t::kFragCols);
++        STEEL_PRAGMA_UNROLL
++        for (short jj = 0; jj < stile_t::MMAFrag_t::kElemCols; jj++) {
++          if (q_pos < (col_pos + jj)) {
++            Stile.frag_at(0, j)[jj] = neg_inf;
++          }
++        }
++      }
++    }
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    if (loads) {
++      if (!align_K && kb == (params->NK_aligned)) {
++        loader_v.load_safe(short2(BV, params->kL_rem));
++      } else {
++        loader_v.load_unsafe();
++      }
++    }
++
++    AccumType new_max = max_score;
++    Stile.template row_reduce<MaxOp>(&new_max);
++    Stile.template row_bin_op<ExpSubOp>(&new_max);
++    AccumType factor = fast::exp2(max_score - new_max);
++    max_score = new_max;
++
++    AccumType sum_score_tmp = 0;
++    Stile.template row_reduce<SumOp>(&sum_score_tmp);
++    sum_score = sum_score * factor + sum_score_tmp;
++
++    Otile.template row_bin_op<MulOp>(&factor);
++
++    threadgroup_barrier(mem_flags::mem_threadgroup);
++
++    STEEL_PRAGMA_UNROLL
++    for (short id = 0; id < TVh; id++) {
++      STEEL_PRAGMA_UNROLL
++      for (short ik = 0; ik < TK; ik++) {
++        simdgroup_barrier(mem_flags::mem_none);
++        Vtile.template load<T, 1, 1, LDV_tgp, 1>(
++            &Vs[Vs_offset + ik * kFragSize * LDV_tgp + id * kFragSize]);
++        simdgroup_barrier(mem_flags::mem_none);
++        MMAFrag_acc_t::mma(
++            Otile.frag_at(0, id),
++            Stile.frag_at(0, ik),
++            Vtile.frag_at(0, 0),
++            Otile.frag_at(0, id));
++      }
++    }
++
++    loader_k.next();
++    loader_v.next();
++  }
++
++  AccumType keep = (max_score == Limits<AccumType>::finite_min) ? 0 : 1;
++  sum_score *= keep;
++  Otile.template row_bin_op<MulOp>(&keep);
++
++  if (!row_valid) {
++    return;
++  }
++
++  const int64_t idx = (int64_t(batch) * params->H + kv_head * gqa) * qL + row;
++  if (d_half == 0 && sn == 0) {
++    sums[idx * blocks + split] = sum_score;
++    maxs[idx * blocks + split] = max_score * M_LN2_F;
++  }
++
++  O += (idx * blocks + split) * BD + d_half * BVh + sn;
++  STEEL_PRAGMA_UNROLL
++  for (short id = 0; id < TVh; id++) {
++    STEEL_PRAGMA_UNROLL
++    for (short jj = 0; jj < 2; jj++) {
++      O[id * kFragSize + jj] = Otile.frag_at(0, id)[jj];
++    }
++  }
+ }
+\ No newline at end of file
+diff --git a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.metal b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.metal
+index 44ed0b61e..6796a3d63 100644
+--- a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.metal
++++ b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention.metal
+@@ -33,4 +33,29 @@ instantiate_attn_helper(float16, half, 32, 32, 256, 256, 4, 2);
+ instantiate_attn_helper(bfloat16, bfloat16_t, 32, 16, 256, 256, 4, 2);
+ instantiate_attn_helper(bfloat16, bfloat16_t, 32, 32, 256, 256, 4, 2);
+ instantiate_attn_helper(float32, float, 32, 16, 256, 256, 4, 2);
++
++#define instantiate_attn_split(tname, dtype, bq, bk, bd, wm, wn)            \
++  instantiate_kernel(                                                        \
++      "steel_attention_split_" #tname "_bq" #bq "_bk" #bk "_bd" #bd "_wm" #wm \
++      "_wn" #wn,                                                             \
++  attention_split, dtype, bq, bk, bd, wm, wn, float)
++
++#define instantiate_attn_split_heads(tname, dtype)          \
++  instantiate_attn_split(tname, dtype, 32, 32, 64, 4, 1);  \
++  instantiate_attn_split(tname, dtype, 32, 32, 72, 4, 1);  \
++  instantiate_attn_split(tname, dtype, 32, 32, 80, 4, 1);  \
++  instantiate_attn_split(tname, dtype, 32, 32, 96, 4, 1);  \
++  instantiate_attn_split(tname, dtype, 32, 32, 128, 4, 2); \
++  instantiate_attn_split(tname, dtype, 32, 32, 192, 4, 2); \
++  instantiate_attn_split(tname, dtype, 32, 16, 256, 4, 2);
++
++#define instantiate_attn_split_types(tname, dtype)          \
++  instantiate_attn_split_heads(tname, dtype)               \
++  instantiate_attn_split(tname, dtype, 32, 32, 256, 4, 2); \
++  instantiate_attn_split(tname, dtype, 48, 32, 256, 6, 2); \
++  instantiate_attn_split(tname, dtype, 48, 32, 256, 6, 1);
++
++instantiate_attn_split_types(float16, half)
++instantiate_attn_split_types(bfloat16, bfloat16_t)
++instantiate_attn_split_heads(float32, float)
+ // clang-format on
+diff --git a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h
+index 13cf24f78..542fd03b7 100644
+--- a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h
++++ b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.h
+@@ -948,3 +948,291 @@ template <
+     Otile.store(O, int(params->O_strides[2]));
+   }
+ }
++
++///////////////////////////////////////////////////////////////////////////////
++// Split KV attention kernel
++///////////////////////////////////////////////////////////////////////////////
++
++// clang-format off
++template <
++    typename T,
++    int BK,
++    int BD,
++    int WN,
++    typename AccumType = float>
++[[kernel, max_total_threads_per_threadgroup(WN * 32)]] void attention_nax_split(
++    const device T* Q [[buffer(0)]],
++    const device T* K [[buffer(1)]],
++    const device T* V [[buffer(2)]],
++    device float* O [[buffer(3)]],
++    device float* sums [[buffer(4)]],
++    device float* maxs [[buffer(5)]],
++    const constant AttnParams* params [[buffer(6)]],
++    const constant int& split_blocks [[buffer(7)]],
++    uint simd_lane_id [[thread_index_in_simdgroup]],
++    uint simd_group_id [[simdgroup_index_in_threadgroup]],
++    uint3 tid [[threadgroup_position_in_grid]],
++    uint3 tpg [[threadgroups_per_grid]]) { // clang-format on
++
++  constexpr short kU = 16;
++  constexpr int BDh = BD / WN;
++  constexpr int TDh = BDh / kU;
++  constexpr short TK = BK / kU;
++
++  static_assert(WN == 1 || WN == 2, "The split kernel needs WN == 1 or 2");
++  static_assert(TDh % 2 == 0, "P@V accumulates output fragments in pairs");
++  static_assert(TK % 2 == 0, "S fragments are computed pair by pair");
++
++  const int qL = params->qL;
++  const int gqa = params->gqa_factor;
++  const int n_rows = gqa * qL;
++  const int row_groups = (n_rows + kU - 1) / kU;
++
++  const int split = tid.x / row_groups;
++  const int blocks = tpg.x / row_groups;
++  const int tm = kU * (tid.x % row_groups);
++  const int kv_head = tid.y;
++  const int batch = tid.z;
++  const short d_group = simd_group_id;
++
++  using otile_t = NAXTile<AccumType, 1, TDh>;
++  using stile_t = NAXTile<AccumType, 1, TK>;
++  constexpr short kRowsPT = otile_t::kRowsPerThread;
++  constexpr short kElemsPT = stile_t::kElemsPerTile;
++
++  const short2 simd_coord = otile_t::NAXFrag_t::get_coord();
++  const short sm = simd_coord.y;
++  const short sn = simd_coord.x;
++
++  NAXTile<T, 1, 1> Qtiles[TDh];
++  int q_pos[kRowsPT];
++  STEEL_PRAGMA_UNROLL
++  for (short i = 0; i < kRowsPT; i++) {
++    const int row = tm + i * otile_t::kFragRowsJump + sm;
++    const int r = row % qL;
++    q_pos[i] = params->qL_off + r;
++    if (row < n_rows) {
++      const device T* q = Q + batch * params->Q_strides[0] +
++          (kv_head * gqa + row / qL) * params->Q_strides[1] +
++          r * params->Q_strides[2] + d_group * BDh + sn;
++      STEEL_PRAGMA_UNROLL
++      for (short id = 0; id < TDh; id++) {
++        STEEL_PRAGMA_UNROLL
++        for (short j = 0; j < otile_t::kFragThrCols; j++) {
++          Qtiles[id].elems()[i * otile_t::kFragThrCols + j] = q[id * kU + j];
++        }
++      }
++    } else {
++      STEEL_PRAGMA_UNROLL
++      for (short id = 0; id < TDh; id++) {
++        STEEL_PRAGMA_UNROLL
++        for (short j = 0; j < otile_t::kFragThrCols; j++) {
++          Qtiles[id].elems()[i * otile_t::kFragThrCols + j] = T(0);
++        }
++      }
++    }
++  }
++
++  const int kb_start = split * split_blocks;
++  const int kb_end = min(kb_start + split_blocks, params->NK);
++
++  K += batch * params->K_strides[0] + kv_head * params->K_strides[1] +
++      int64_t(kb_start) * BK * params->K_strides[2] + d_group * BDh;
++  V += batch * params->V_strides[0] + kv_head * params->V_strides[1] +
++      int64_t(kb_start) * BK * params->V_strides[2] + d_group * BDh;
++
++  const metal::uniform<float> scale2 =
++      make_uniform(params->scale) * make_uniform(1.44269504089f);
++
++  otile_t Otile;
++  Otile.clear();
++
++  metal::vec<AccumType, kRowsPT> max_score;
++  metal::vec<AccumType, kRowsPT> sum_score{0};
++
++  STEEL_PRAGMA_UNROLL
++  for (short i = 0; i < kRowsPT; ++i) {
++    max_score[i] = Limits<AccumType>::finite_min;
++  }
++
++  const short lim_rows_k = params->kL_rem;
++
++  threadgroup AccumType s_xchg[kElemsPT * 32];
++
++  for (int kb = kb_start; kb < kb_end; kb++) {
++    const bool is_last_k = (kb == params->NK_aligned);
++
++    stile_t Stile;
++    Stile.clear();
++
++    STEEL_PRAGMA_UNROLL
++    for (short ik = 0; ik < TK; ik += 2) {
++      STEEL_PRAGMA_UNROLL
++      for (short id = 0; id < TDh; id++) {
++        NAXTile<T, 2, 1> Ktile;
++        const int K_load_off = ik * kU * int(params->K_strides[2]) + id * kU;
++
++        if (!align_K && is_last_k) {
++          Ktile.load_rows(
++              K + K_load_off, int(params->K_strides[2]), lim_rows_k - ik * kU);
++        } else {
++          Ktile.load(K + K_load_off, int(params->K_strides[2]));
++        }
++
++        stile_t::NAXFrag_t::mma(
++            Stile.frag_at(0, ik),
++            Stile.frag_at(0, ik + 1),
++            Qtiles[id].frag_at(0, 0),
++            metal::false_type{},
++            Ktile.frag_at(0, 0),
++            Ktile.frag_at(1, 0),
++            metal::true_type{});
++      }
++    }
++
++    if constexpr (WN > 1) {
++      if (d_group == 1) {
++        STEEL_PRAGMA_UNROLL
++        for (short ii = 0; ii < kElemsPT; ii++) {
++          s_xchg[ii * 32 + simd_lane_id] = Stile.elems()[ii];
++        }
++      }
++      threadgroup_barrier(mem_flags::mem_threadgroup);
++      if (d_group == 0) {
++        STEEL_PRAGMA_UNROLL
++        for (short ii = 0; ii < kElemsPT; ii++) {
++          Stile.elems()[ii] += s_xchg[ii * 32 + simd_lane_id];
++          s_xchg[ii * 32 + simd_lane_id] = Stile.elems()[ii];
++        }
++      }
++      threadgroup_barrier(mem_flags::mem_threadgroup);
++      if (d_group == 1) {
++        STEEL_PRAGMA_UNROLL
++        for (short ii = 0; ii < kElemsPT; ii++) {
++          Stile.elems()[ii] = s_xchg[ii * 32 + simd_lane_id];
++        }
++      }
++    }
++
++    STEEL_PRAGMA_UNROLL
++    for (short ii = 0; ii < kElemsPT; ii++) {
++      Stile.elems()[ii] *= float(scale2);
++    }
++
++    constexpr auto neg_inf = Limits<AccumType>::finite_min;
++
++    if (!align_K && is_last_k) {
++      STEEL_PRAGMA_UNROLL
++      for (short ik = 0; ik < TK; ik++) {
++        const short col_pos = ik * kU + sn;
++        thread auto& fg = Stile.frag_at(0, ik);
++
++        STEEL_PRAGMA_UNROLL
++        for (short ii = 0; ii < stile_t::kFragThrRows; ii++) {
++          STEEL_PRAGMA_UNROLL
++          for (short jj = 0; jj < stile_t::kFragThrCols; jj++) {
++            const auto loc = ii * stile_t::kFragThrCols + jj;
++            fg[loc] = ((col_pos + jj) < lim_rows_k) ? fg[loc] : neg_inf;
++          }
++        }
++      }
++    }
++
++    if (do_causal && (kb + 1) * BK > params->qL_off + 1) {
++      STEEL_PRAGMA_UNROLL
++      for (short ik = 0; ik < TK; ik++) {
++        const int col_pos = kb * BK + ik * kU + sn;
++        thread auto& fg = Stile.frag_at(0, ik);
++
++        STEEL_PRAGMA_UNROLL
++        for (short ii = 0; ii < stile_t::kFragThrRows; ii++) {
++          STEEL_PRAGMA_UNROLL
++          for (short jj = 0; jj < stile_t::kFragThrCols; jj++) {
++            const auto loc = ii * stile_t::kFragThrCols + jj;
++            fg[loc] = (col_pos + jj > q_pos[ii]) ? neg_inf : fg[loc];
++          }
++        }
++      }
++    }
++
++    metal::vec<AccumType, kRowsPT> new_max;
++    metal::vec<AccumType, kRowsPT> factor;
++    STEEL_PRAGMA_UNROLL
++    for (short i = 0; i < kRowsPT; ++i) {
++      new_max[i] = max_score[i];
++    }
++
++    Stile.template row_reduce<MaxOp>(new_max);
++    Stile.template row_bin_op<ExpSubOp>(new_max);
++
++    STEEL_PRAGMA_UNROLL
++    for (short i = 0; i < kRowsPT; ++i) {
++      factor[i] = fast::exp2(max_score[i] - new_max[i]);
++      max_score[i] = new_max[i];
++    }
++
++    STEEL_PRAGMA_UNROLL
++    for (short i = 0; i < kRowsPT; ++i) {
++      sum_score[i] = sum_score[i] * factor[i];
++    }
++
++    Stile.template row_reduce<SumOp>(sum_score);
++
++    Otile.template row_bin_op<MulOp>(factor);
++
++    simdgroup_barrier(mem_flags::mem_none);
++
++    STEEL_PRAGMA_UNROLL
++    for (short id = 0; id < TDh; id += 2) {
++      STEEL_PRAGMA_UNROLL
++      for (short ik = 0; ik < TK; ik++) {
++        NAXTile<T, 1, 2> Vtile;
++
++        const int V_load_off = ik * kU * int(params->V_strides[2]) + id * kU;
++
++        if (!align_K && is_last_k) {
++          Vtile.load_rows(
++              V + V_load_off, int(params->V_strides[2]), lim_rows_k - ik * kU);
++        } else {
++          Vtile.load(V + V_load_off, int(params->V_strides[2]));
++        }
++
++        otile_t::NAXFrag_t::mma(
++            Otile.frag_at(0, id),
++            Otile.frag_at(0, id + 1),
++            Stile.frag_at(0, ik),
++            metal::false_type{},
++            Vtile.frag_at(0, 0),
++            Vtile.frag_at(0, 1),
++            metal::false_type{});
++      }
++    }
++
++    K += BK * int(params->K_strides[2]);
++    V += BK * int(params->V_strides[2]);
++  }
++
++  metal::vec<AccumType, kRowsPT> keep;
++  STEEL_PRAGMA_UNROLL
++  for (short i = 0; i < kRowsPT; ++i) {
++    keep[i] = (max_score[i] == Limits<AccumType>::finite_min) ? 0 : 1;
++    sum_score[i] *= keep[i];
++  }
++  Otile.template row_bin_op<MulOp>(keep);
++
++  const int64_t row0 = (int64_t(batch) * params->H + kv_head * gqa) * qL;
++  if (d_group == 0 && sn == 0) {
++    STEEL_PRAGMA_UNROLL
++    for (short i = 0; i < kRowsPT; ++i) {
++      const int row = tm + i * otile_t::kFragRowsJump + sm;
++      if (row < n_rows) {
++        const int64_t idx = (row0 + row) * blocks + split;
++        sums[idx] = sum_score[i];
++        maxs[idx] = max_score[i] * M_LN2_F;
++      }
++    }
++  }
++
++  O += (row0 + tm) * blocks * BD + split * BD + d_group * BDh;
++  Otile.store_rows(O, blocks * BD, n_rows - tm);
++}
+diff --git a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.metal b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.metal
+index eba254155..b1c4543f2 100644
+--- a/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.metal
++++ b/mlx/backend/metal/kernels/steel/attn/kernels/steel_attention_nax.metal
+@@ -36,4 +36,20 @@
+ instantiate_attn_mask_helper(float16, half);
+ instantiate_attn_mask_helper(bfloat16, bfloat);
+ instantiate_attn_mask_helper(float32, float);
++
++#define instantiate_attn_split(tname, dtype, bk, bd, wn)             \
++  instantiate_kernel(                                                \
++      "steel_attention_split_" #tname "_bk" #bk "_bd" #bd "_wn" #wn, \
++  attention_nax_split, dtype, bk, bd, wn, float)
++
++#define instantiate_attn_split_helper(tname, dtype) \
++    instantiate_attn_split(tname, dtype, 32, 64, 1)  \
++    instantiate_attn_split(tname, dtype, 32, 96, 1)  \
++    instantiate_attn_split(tname, dtype, 32, 128, 1) \
++    instantiate_attn_split(tname, dtype, 32, 192, 1) \
++    instantiate_attn_split(tname, dtype, 32, 256, 2)
++
++instantiate_attn_split_helper(float16, half);
++instantiate_attn_split_helper(bfloat16, bfloat);
++instantiate_attn_split_helper(float32, float);
+ // clang-format on
+diff --git a/mlx/backend/metal/nojit_kernels.cpp b/mlx/backend/metal/nojit_kernels.cpp
+index 93f8cf311..c4e4a193b 100644
+--- a/mlx/backend/metal/nojit_kernels.cpp
++++ b/mlx/backend/metal/nojit_kernels.cpp
+@@ -511,6 +511,20 @@ MTL::ComputePipelineState* get_steel_attention_kernel(
+   return d.get_kernel(kernel_name, hash_name, func_consts);
+ }
+ 
++MTL::ComputePipelineState* get_steel_attention_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array&,
++    int,
++    int,
++    int,
++    int,
++    int) {
++  return d.get_kernel(kernel_name, hash_name, func_consts);
++}
++
+ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+@@ -528,6 +542,18 @@ MTL::ComputePipelineState* get_steel_attention_nax_kernel(
+   return d.get_kernel(kernel_name, hash_name, func_consts);
+ }
+ 
++MTL::ComputePipelineState* get_steel_attention_nax_split_kernel(
++    metal::Device& d,
++    const std::string& kernel_name,
++    const std::string& hash_name,
++    const metal::MTLFCList& func_consts,
++    const array&,
++    int,
++    int,
++    int) {
++  return d.get_kernel(kernel_name, hash_name, func_consts);
++}
++
+ MTL::ComputePipelineState* get_gated_delta_kernel(
+     metal::Device& d,
+     const std::string& kernel_name,
+diff --git a/mlx/backend/metal/scaled_dot_product_attention.cpp b/mlx/backend/metal/scaled_dot_product_attention.cpp
+index 5b157c6c5..0f41bfb21 100644
+--- a/mlx/backend/metal/scaled_dot_product_attention.cpp
++++ b/mlx/backend/metal/scaled_dot_product_attention.cpp
+@@ -32,6 +32,34 @@ bool use_blocked_d512(
+       do_causal && !has_arr_mask && !has_sinks && !output_logsumexp;
+ }
+ 
++bool use_nax_split(const array& q) {
++  return metal::is_nax_available() && q.shape(-1) % 32 == 0 &&
++      (env::enable_tf32() || q.dtype() != float32);
++}
++
++// Queries of up to 8 tokens whose heads sharing a KV head stack to more than
++// the vector kernels' 32 rows.
++bool use_split(
++    const array& q,
++    const array& k,
++    const array& v,
++    bool has_arr_mask,
++    bool has_sinks,
++    bool output_logsumexp,
++    Stream s) {
++  if (s.device != Device::gpu) {
++    return false;
++  }
++  const int D = q.shape(-1);
++  const int rows = q.shape(2) * (q.shape(1) / k.shape(1));
++  const bool supported_head_dim = v.shape(-1) == D &&
++      (D == 64 || D == 72 || D == 80 || D == 96 || D == 128 || D == 192 ||
++       D == 256);
++  return supported_head_dim && q.shape(2) <= 8 && rows > 32 && rows <= 128 &&
++      (use_nax_split(q) || k.shape(1) > 1) && k.shape(2) >= 128 &&
++      !has_arr_mask && !has_sinks && !output_logsumexp;
++}
++
+ void sdpa_blocked_softmax(const Stream& s, metal::Device& d, array& scores) {
+   constexpr int looped_limit = 4096;
+   constexpr int simd_size = 32;
+@@ -393,6 +421,180 @@ void sdpa_full_self_attention_nax(
+   compute_encoder.dispatch_threadgroups(grid_dims, group_dims);
+ }
+ 
++void sdpa_split(
++    const Stream& s,
++    metal::Device& d,
++    const array& q,
++    const array& k,
++    const array& v,
++    const float scale,
++    array& o,
++    bool do_causal) {
++  using namespace mlx::steel;
++
++  int B = q.shape(0);
++  int H = q.shape(1);
++  int kvH = k.shape(1);
++  int gqa_factor = H / kvH;
++  int qL = q.shape(2);
++  int kL = k.shape(2);
++
++  const char devc = d.get_architecture().back();
++  int bk = 32;
++  int bd = q.shape(-1);
++  const bool nax = use_nax_split(q);
++  int bq = nax ? 16 : 32;
++  int wm = nax ? 1 : 4;
++  int wn = nax ? (bd == 256 ? 2 : 1) : (bd >= 128 ? 2 : 1);
++  int target_tgs = nax ? 320 : 160;
++
++  if (!nax && bd == 256) {
++    const bool before_m3 = d.get_architecture_gen() < 15;
++    const bool ultra = devc == 'd';
++    if (q.dtype() == float32) {
++      bk = 16;
++    } else if (gqa_factor * qL <= 48 && kL >= 8192) {
++      bq = 48;
++      wm = 6;
++      wn = (before_m3 && q.dtype() == bfloat16) ? 2 : 1;
++      target_tgs = (before_m3 && ultra) ? 320 : 160;
++    } else if (kL >= 1024 && !(before_m3 && ultra)) {
++      bk = 16;
++    }
++  }
++  // Base GPUs fill with half as many threadgroups.
++  if (devc == 'g' || devc == 'p') {
++    target_tgs /= 2;
++  }
++
++  int row_groups = (gqa_factor * qL + bq - 1) / bq;
++
++  const int NK = (kL + bk - 1) / bk;
++  const int NK_aligned = kL / bk;
++
++  int current_tgs = B * kvH * row_groups;
++  int blocks = std::max(1, target_tgs / current_tgs);
++  int split_blocks = (NK + blocks - 1) / blocks;
++  blocks = (NK + split_blocks - 1) / split_blocks;
++
++  array partials({B, H, qL, blocks, bd}, float32, nullptr, {});
++  array sums({B, H, qL, blocks}, float32, nullptr, {});
++  array maxs({B, H, qL, blocks}, float32, nullptr, {});
++  partials.set_data(allocator::malloc(partials.nbytes()));
++  sums.set_data(allocator::malloc(sums.nbytes()));
++  maxs.set_data(allocator::malloc(maxs.nbytes()));
++  auto& compute_encoder = metal::get_command_encoder(s);
++  compute_encoder.add_temporary(partials);
++  compute_encoder.add_temporary(sums);
++  compute_encoder.add_temporary(maxs);
++
++  const bool align_K = (kL % bk) == 0;
++  metal::MTLFCList func_consts = {
++      {&align_K, MTL::DataType::DataTypeBool, 201},
++      {&do_causal, MTL::DataType::DataTypeBool, 301}};
++
++  std::string base_name;
++  if (nax) {
++    concatenate(
++        base_name,
++        "steel_attention_split_",
++        type_to_name(q),
++        "_bk",
++        bk,
++        "_bd",
++        bd,
++        "_wn",
++        wn);
++  } else {
++    concatenate(
++        base_name,
++        "steel_attention_split_",
++        type_to_name(q),
++        "_bq",
++        bq,
++        "_bk",
++        bk,
++        "_bd",
++        bd,
++        "_wm",
++        wm,
++        "_wn",
++        wn);
++  }
++  std::string hash_name;
++  concatenate(
++      hash_name,
++      base_name,
++      "_align_K_",
++      (align_K ? 't' : 'n'),
++      "_do_causal_",
++      (do_causal ? 't' : 'n'));
++
++  auto kernel = nax
++      ? get_steel_attention_nax_split_kernel(
++            d, base_name, hash_name, func_consts, q, bk, bd, wn)
++      : get_steel_attention_split_kernel(
++            d, base_name, hash_name, func_consts, q, bq, bk, bd, wm, wn);
++  compute_encoder.set_compute_pipeline_state(kernel);
++
++  AttnParams params{
++      /* int B = */ B,
++      /* int H = */ H,
++      /* int D = */ bd,
++
++      /* int qL = */ qL,
++      /* int kL = */ kL,
++
++      /* int gqa_factor = */ gqa_factor,
++      /* float scale = */ scale,
++
++      /* int NQ = */ 1,
++      /* int NK = */ NK,
++
++      /* int NQ_aligned = */ 0,
++      /* int NK_aligned = */ NK_aligned,
++
++      /* int qL_rem = */ qL,
++      /* int kL_rem = */ (kL - NK_aligned * bk),
++      /* int qL_off = */ (kL - qL),
++
++      /* int64_t Q_strides[3] = */ {q.strides(0), q.strides(1), q.strides(2)},
++      /* int64_t K_strides[3] = */ {k.strides(0), k.strides(1), k.strides(2)},
++      /* int64_t V_strides[3] = */ {v.strides(0), v.strides(1), v.strides(2)},
++      /* int64_t O_strides[3] = */ {o.strides(0), o.strides(1), o.strides(2)}};
++
++  compute_encoder.set_input_array(q, 0);
++  compute_encoder.set_input_array(k, 1);
++  compute_encoder.set_input_array(v, 2);
++  compute_encoder.set_output_array(partials, 3);
++  compute_encoder.set_output_array(sums, 4);
++  compute_encoder.set_output_array(maxs, 5);
++  compute_encoder.set_bytes(params, 6);
++  compute_encoder.set_bytes(split_blocks, 7);
++
++  MTL::Size grid_dims = MTL::Size(blocks * row_groups, kvH, B);
++  MTL::Size group_dims = MTL::Size(32, wm * wn, 1);
++  check_kernel_threadgroup_size(kernel, group_dims, hash_name);
++  compute_encoder.dispatch_threadgroups(grid_dims, group_dims);
++
++  std::string kname;
++  concatenate(kname, "sdpa_split_reduce_", get_type_string(q.dtype()), "_", bd);
++  kernel = d.get_kernel(kname);
++  compute_encoder.set_compute_pipeline_state(kernel);
++
++  compute_encoder.set_input_array(partials, 0);
++  compute_encoder.set_input_array(sums, 1);
++  compute_encoder.set_input_array(maxs, 2);
++  compute_encoder.set_output_array(o, 3);
++  compute_encoder.set_bytes(blocks, 4);
++  compute_encoder.set_vector_bytes(o.strides(), 3, 5);
++
++  grid_dims = MTL::Size(qL, H, B);
++  group_dims = MTL::Size(32, 1, 1);
++  check_kernel_threadgroup_size(kernel, group_dims, kname);
++  compute_encoder.dispatch_threadgroups(grid_dims, group_dims);
++}
++
+ void sdpa_full_self_attention_metal(
+     const Stream& s,
+     metal::Device& d,
+@@ -1399,10 +1601,12 @@ bool ScaledDotProductAttention::use_fallback(
+     bool output_logsumexp,
+     bool force_fused,
+     Stream s) {
++  const bool split =
++      use_split(q, k, v, has_arr_mask, has_sinks, output_logsumexp, s);
+   auto [has_fused, reason] = has_fused_kernel(
+       q, k, v, has_mask, has_arr_mask, do_causal, output_logsumexp, s);
+   if (force_fused) {
+-    if (!has_fused) {
++    if (!has_fused && !split) {
+       std::ostringstream msg;
+       msg << "[scaled_dot_product_attention] force_fused=True but no fused "
+              "kernel is available: "
+@@ -1411,7 +1615,8 @@ bool ScaledDotProductAttention::use_fallback(
+     }
+     return false;
+   }
+-  if (use_blocked_d512(
++  if (split ||
++      use_blocked_d512(
+           q, k, v, has_arr_mask, do_causal, has_sinks, output_logsumexp, s)) {
+     return false;
+   }
+@@ -1504,8 +1709,43 @@ void ScaledDotProductAttention::eval_gpu(
+   }
+   bool has_arr_mask = inputs.size() > (3 + has_sinks_);
+ 
++  auto set_transposed_output = [&o]() {
++    int64_t str_oD = 1;
++    int64_t str_oH = o.shape(3);
++    int64_t str_oL = o.shape(1) * str_oH;
++    int64_t str_oB = o.shape(2) * str_oL;
++    size_t data_size = o.shape(0) * str_oB;
++
++    array::Flags flags{
++        /* bool contiguous = */ 1,
++        /* bool row_contiguous = */ 0,
++        /* bool col_contiguous = */ 0,
++    };
++
++    o.set_data(
++        allocator::malloc(o.nbytes()),
++        data_size,
++        {str_oB, str_oH, str_oL, str_oD},
++        flags);
++  };
++
++  if (use_split(
++          q_pre,
++          k_pre,
++          v_pre,
++          has_arr_mask,
++          has_sinks_,
++          outputs.size() > 1,
++          s)) {
++    const auto& q = copy_unless(is_matrix_contiguous, q_pre);
++    const auto& k = copy_unless(is_matrix_contiguous, k_pre);
++    const auto& v = copy_unless(is_matrix_contiguous, v_pre);
++    set_transposed_output();
++    sdpa_split(s, d, q, k, v, scale_, o, do_causal_);
++  }
++
+   // We are in vector mode ie single query
+-  if (q_pre.shape(2) <= 8) {
++  else if (q_pre.shape(2) <= 8) {
+     if (outputs.size() > 1) {
+       throw std::runtime_error(
+           "[scaled_dot_product_attention] the vector kernels do not produce a "
+@@ -1588,23 +1828,7 @@ void ScaledDotProductAttention::eval_gpu(
+     const auto& k = copy_unless(is_matrix_contiguous, k_pre);
+     const auto& v = copy_unless(is_matrix_contiguous, v_pre);
+ 
+-    int64_t str_oD = 1;
+-    int64_t str_oH = o.shape(3);
+-    int64_t str_oL = o.shape(1) * str_oH;
+-    int64_t str_oB = o.shape(2) * str_oL;
+-    size_t data_size = o.shape(0) * str_oB;
+-
+-    array::Flags flags{
+-        /* bool contiguous = */ 1,
+-        /* bool row_contiguous = */ 0,
+-        /* bool col_contiguous = */ 0,
+-    };
+-
+-    o.set_data(
+-        allocator::malloc(o.nbytes()),
+-        data_size,
+-        {str_oB, str_oH, str_oL, str_oD},
+-        flags);
++    set_transposed_output();
+ 
+     auto mask = has_arr_mask
+         ? std::optional<array>{copy_unless(is_matrix_contiguous, inputs[3])}
+diff --git a/python/tests/test_fast_sdpa.py b/python/tests/test_fast_sdpa.py
+index b2d7e9121..c788e8abf 100644
+--- a/python/tests/test_fast_sdpa.py
++++ b/python/tests/test_fast_sdpa.py
+@@ -835,6 +835,62 @@ class TestFastSDPA(mlx_tests.MLXTestCase):
+             )
+             self.assertTrue(mx.allclose(ref, out, atol=1e-4, rtol=1e-4))
+ 
++    @unittest.skipIf(not mx.is_available(mx.gpu), "GPU kernel path only")
++    def test_sdpa_short_query_many_heads(self):
++        key = mx.random.key(0)
++        for D, (qH, kH), qL, kL, mask, dtype in product(
++            (64, 72, 80, 96, 128, 192, 256),
++            ((24, 4), (28, 4), (16, 1)),
++            (6, 8),
++            (128, 1985, 8192),
++            (None, "causal"),
++            (mx.bfloat16, mx.float16, mx.float32),
++        ):
++            with self.subTest(D=D, qH=qH, kH=kH, qL=qL, kL=kL, mask=mask, dtype=dtype):
++                key, k1, k2 = mx.random.split(key, 3)
++                q = mx.random.normal((1, qL, qH, D), dtype, key=k1).swapaxes(1, 2)
++                cache = mx.random.normal((2, 1, kH, kL + 64, D), dtype, key=k2)
++                k = cache[0, :, :, :kL]
++                v = cache[1, :, :, :kL]
++                scale = D**-0.5
++                ref = mlx_ref_attn(
++                    q.astype(mx.float32),
++                    k.astype(mx.float32),
++                    v.astype(mx.float32),
++                    scale=scale,
++                    mask=mask,
++                )
++                out = mx.fast.scaled_dot_product_attention(
++                    q, k, v, scale=scale, mask=mask
++                )
++                tol = {mx.bfloat16: 2e-2, mx.float16: 5e-3, mx.float32: 1e-4}[dtype]
++                self.assertTrue(
++                    mx.allclose(ref, out.astype(mx.float32), atol=tol, rtol=tol)
++                )
++
++        k1, k2, k3 = mx.random.split(key, 3)
++        q = mx.random.normal((2, 24, 8, 256), mx.bfloat16, key=k1)
++        k = mx.random.normal((2, 4, 1000, 256), mx.bfloat16, key=k2)
++        v = mx.random.normal((2, 4, 1000, 256), mx.bfloat16, key=k3)
++        ref = mlx_ref_attn(
++            q.astype(mx.float32),
++            k.astype(mx.float32),
++            v.astype(mx.float32),
++            scale=0.0625,
++            mask="causal",
++        )
++        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=0.0625, mask="causal")
++        self.assertTrue(mx.allclose(ref, out.astype(mx.float32), atol=2e-2, rtol=2e-2))
++
++    @unittest.skipIf(not mx.is_available(mx.gpu), "GPU kernel path only")
++    def test_sdpa_split_large_values(self):
++        q = mx.zeros((1, 24, 6, 128), dtype=mx.float16)
++        k = mx.zeros((1, 4, 128, 128), dtype=mx.float16)
++        v = mx.full((1, 4, 128, 128), 10000, dtype=mx.float16)
++        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=128**-0.5)
++        self.assertTrue(mx.all(mx.isfinite(out)))
++        self.assertTrue(mx.allclose(out, mx.full_like(out, 10000)))
++
+     @unittest.skip("Different head and value dims is not enabled")
+     def test_sdpa_vector_value_dims(self):
+         D = 192
+@@ -1319,7 +1375,7 @@ class TestFastSDPA(mlx_tests.MLXTestCase):
+                 q, k, v, scale=72**-0.5, force_fused=True
+             )
+         with self.assertRaisesRegex(ValueError, "GQA factor to be at most 32"):
+-            q, k, v = make_qkv(8, 128, 64, qH=8, kH=1)
++            q, k, v = make_qkv(8, 128, 64, qH=32, kH=1)
+             mx.fast.scaled_dot_product_attention(
+                 q, k, v, scale=64**-0.5, force_fused=True
+             )
