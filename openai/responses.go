@@ -1428,7 +1428,7 @@ type ResponsesStreamConverter struct {
 
 	// State tracking (mutated across Process calls)
 	firstWrite      bool
-	createdAt       int64 // pinned from the first response; OpenAI keeps one created_at per response
+	createdAt       int64
 	outputIndex     int
 	contentIndex    int
 	contentStarted  bool
@@ -1479,9 +1479,11 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// First chunk - emit initial events
 	if c.firstWrite {
 		c.firstWrite = false
-		// Every event of a response carries the same created_at. Pin it from the
-		// first response (the server stamps each one) and fall back to now when
-		// the response carries none (e.g. synthetic responses).
+		// created_at is the creation time of the response, so pin it once from
+		// the first response (the server stamps each one). The middleware calls
+		// Process with an empty response on the web search failure path to emit
+		// response.created and response.in_progress before response.failed, so
+		// fall back to now when the response carries no timestamp.
 		c.createdAt = r.CreatedAt.Unix()
 		if r.CreatedAt.IsZero() {
 			c.createdAt = time.Now().Unix()
