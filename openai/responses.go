@@ -1428,6 +1428,7 @@ type ResponsesStreamConverter struct {
 
 	// State tracking (mutated across Process calls)
 	firstWrite      bool
+	createdAt       int64 // pinned from the first response; OpenAI keeps one created_at per response
 	outputIndex     int
 	contentIndex    int
 	contentStarted  bool
@@ -1478,6 +1479,13 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// First chunk - emit initial events
 	if c.firstWrite {
 		c.firstWrite = false
+		// Every event of a response carries the same created_at. Pin it from the
+		// first response (the server stamps each one) and fall back to now when
+		// the response carries none (e.g. synthetic responses).
+		c.createdAt = r.CreatedAt.Unix()
+		if r.CreatedAt.IsZero() {
+			c.createdAt = time.Now().Unix()
+		}
 		events = append(events, c.createResponseCreatedEvent())
 		events = append(events, c.createResponseInProgressEvent())
 	}
@@ -1568,7 +1576,7 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
-		"created_at":           time.Now().Unix(),
+		"created_at":           c.createdAt,
 		"completed_at":         nil,
 		"status":               status,
 		"incomplete_details":   nil,
