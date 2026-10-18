@@ -2229,6 +2229,39 @@ func TestStreamConverter_ThinkingAfterTextOrToolCallOpensNewBlock(t *testing.T) 
 		}
 	})
 
+	t.Run("stream ends right after the second thinking block", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+		got := collect(conv, []api.ChatResponse{
+			{Message: api.Message{Role: "assistant", Thinking: "First thought."}},
+			{Message: api.Message{Role: "assistant", Content: "Partial answer."}},
+			{Message: api.Message{Role: "assistant", Thinking: "Second thought."}},
+			{
+				Message:    api.Message{Role: "assistant"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			},
+		})
+
+		want := []string{
+			"message_start",
+			"content_block_start:thinking:0",
+			"content_block_delta:thinking_delta:0",
+			"content_block_stop:0",
+			"content_block_start:text:1",
+			"content_block_delta:text_delta:1",
+			"content_block_stop:1",
+			"content_block_start:thinking:2",
+			"content_block_delta:thinking_delta:2",
+			"content_block_stop:2",
+			"message_delta",
+			"message_stop",
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("unexpected stream events (-want +got):\n%s", diff)
+		}
+	})
+
 	t.Run("thinking after tool call", func(t *testing.T) {
 		conv := NewStreamConverter("msg_123", "test-model", 0)
 		got := collect(conv, []api.ChatResponse{
