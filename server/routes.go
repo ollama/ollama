@@ -3188,7 +3188,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if req.Think != nil && req.Think.Bool() {
 			// Clients may retain thinking settings when switching models.
 			if _, ok := c.Get("relax_thinking"); ok {
-				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
+				slog.Debug("model does not support thinking, relaxing thinking to nil", "model", req.Model)
 				req.Think = nil
 			} else {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
