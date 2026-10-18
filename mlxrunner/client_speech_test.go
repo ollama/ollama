@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -31,7 +32,7 @@ func TestClientSpeech(t *testing.T) {
 		}))
 		client := &Client{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client()}
 		var got bytes.Buffer
-		err := client.Speech(t.Context(), llm.SpeechRequest{Input: "hello", Voice: "alba"}, func(b []byte) error { _, err := got.Write(b); return err })
+		err := client.Speech(t.Context(), llm.SpeechRequest{Input: "hello", Voice: "Freya"}, func(b []byte) error { _, err := got.Write(b); return err })
 		srv.Close()
 		if status == 200 {
 			if err != nil || !bytes.Equal(got.Bytes(), []byte{1, 0, 2, 0}) {
@@ -71,5 +72,83 @@ func TestPCM16(t *testing.T) {
 	want := []byte{1, 128, 1, 128, 0, 0, 255, 127, 255, 127}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("PCM: %x, want %x", got, want)
+	}
+}
+
+func TestClientSpeechInterruptedStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte{1, 0})
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	}))
+	defer srv.Close()
+	client := &Client{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client()}
+	var got bytes.Buffer
+	err := client.Speech(t.Context(), llm.SpeechRequest{}, func(b []byte) error { _, err := got.Write(b); return err })
+	if !errors.Is(err, io.ErrUnexpectedEOF) || !bytes.Equal(got.Bytes(), []byte{1, 0}) {
+		t.Fatalf("interrupted audio: %x, %v", got.Bytes(), err)
+	}
+}
+
+func TestClientSpeechConsumerFailure(t *testing.T) {
+	canceled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Write([]byte{1, 0})
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(canceled)
+	}))
+	defer srv.Close()
+	client := &Client{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client()}
+	stop := errors.New("consumer stopped reading")
+	err := client.Speech(t.Context(), llm.SpeechRequest{}, func([]byte) error { return stop })
+	if !errors.Is(err, stop) {
+		t.Fatalf("consumer error lost: %v", err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner request was not canceled")
+	}
+}
+
+// The runner's logging wrapper must preserve HTTP controls for streaming.
+type controlledSpeechWriter struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+	flushErr error
+}
+
+func (w *controlledSpeechWriter) SetWriteDeadline(t time.Time) error {
+	w.deadline = t
+	return nil
+}
+
+func (w *controlledSpeechWriter) FlushError() error { return w.flushErr }
+
+func TestSpeechResponseControls(t *testing.T) {
+	want := errors.New("write failed")
+	w := &controlledSpeechWriter{ResponseRecorder: httptest.NewRecorder(), flushErr: want}
+	controller := http.NewResponseController(&statusRecorder{ResponseWriter: w})
+	deadline := time.Now().Add(time.Second)
+	if err := controller.SetWriteDeadline(deadline); err != nil || !w.deadline.Equal(deadline) {
+		t.Fatalf("write deadline lost: %v, %v", w.deadline, err)
+	}
+	if err := controller.Flush(); !errors.Is(err, want) {
+		t.Fatalf("flush error lost: %v", err)
+	}
+}
+
+func TestSpeechModelRejectsTextTokenization(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "this model does not support text tokenization", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	client := &Client{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client()}
+	_, err := client.Tokenize(t.Context(), "hello")
+	var status api.StatusError
+	if !errors.As(err, &status) || status.StatusCode != 400 || status.ErrorMessage != "this model does not support text tokenization" {
+		t.Fatalf("tokenization error lost: %v", err)
 	}
 }

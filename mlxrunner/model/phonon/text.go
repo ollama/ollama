@@ -1,11 +1,11 @@
-package pockettts
+package phonon
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -20,7 +20,8 @@ const metaspace = "▁"
 type unigram struct {
 	pieces   []string
 	scores   []float64
-	bytes    []int // byte value of each <0xNN> piece, or -1
+	byteIDs  [256]int32 // token ID for each byte, or -1
+	bytes    []int      // byte value of each <0xNN> piece, or -1
 	ids      map[string]int32
 	maxLen   int
 	unkID    int32
@@ -49,6 +50,9 @@ func newUnigram(data []byte) (*unigram, error) {
 		return nil, fmt.Errorf("unsupported tokenizer model %q", t.Model.Type)
 	}
 	u := &unigram{ids: make(map[string]int32, len(t.Model.Vocab)), unkID: t.Model.UnkID}
+	for i := range u.byteIDs {
+		u.byteIDs[i] = -1
+	}
 	minScore := math.Inf(1)
 	if len(t.Model.Vocab) == 0 || t.Model.UnkID < 0 || int(t.Model.UnkID) >= len(t.Model.Vocab) {
 		return nil, fmt.Errorf("invalid unigram vocabulary or unknown token")
@@ -66,6 +70,7 @@ func newUnigram(data []byte) (*unigram, error) {
 		if len(piece) == 6 && strings.HasPrefix(piece, "<0x") && piece[5] == '>' {
 			if v, err := strconv.ParseUint(piece[3:5], 16, 8); err == nil {
 				b = int(v)
+				u.byteIDs[b] = int32(i)
 			}
 		}
 		u.pieces = append(u.pieces, piece)
@@ -109,20 +114,11 @@ func (u *unigram) encode(text string) []int32 {
 }
 
 func (u *unigram) encodeText(text string) []int32 {
-	s := metaspace + strings.ReplaceAll(text, " ", metaspace)
 	var ids []int32
-	start := 0
-	for i := len(metaspace); i < len(s); {
-		if strings.HasPrefix(s[i:], metaspace) {
-			ids = u.encodeWord(s[start:i], ids)
-			start = i
-			i += len(metaspace)
-			continue
-		}
-		_, n := utf8.DecodeRuneInString(s[i:])
-		i += n
+	for word := range strings.SplitSeq(strings.ReplaceAll(text, " ", metaspace), metaspace) {
+		ids = u.encodeWord(metaspace+word, ids)
 	}
-	return u.encodeWord(s[start:], ids)
+	return ids
 }
 
 // encodeWord appends the Viterbi segmentation of s.
@@ -155,29 +151,24 @@ func (u *unigram) encodeWord(s string, ids []int32) []int32 {
 		i += size
 	}
 
-	var rev []int32
+	start := len(ids)
 	for j := n; j > 0; j = from[j] {
 		if tok[j] != u.unkID {
-			rev = append(rev, tok[j])
+			ids = append(ids, tok[j])
 			continue
 		}
-		piece := s[from[j]:j]
-		bytes := make([]int32, 0, len(piece))
-		for k := range len(piece) {
-			if id, ok := u.ids[fmt.Sprintf("<0x%02X>", piece[k])]; ok {
-				bytes = append(bytes, id)
+		// Backtracking visits pieces and their fallback bytes in reverse.
+		mark := len(ids)
+		for k := j - 1; k >= from[j]; k-- {
+			if id := u.byteIDs[s[k]]; id >= 0 {
+				ids = append(ids, id)
+			} else {
+				ids = append(ids[:mark], u.unkID)
+				break
 			}
 		}
-		if len(bytes) != len(piece) {
-			bytes = []int32{u.unkID}
-		}
-		for k := len(bytes) - 1; k >= 0; k-- {
-			rev = append(rev, bytes[k])
-		}
 	}
-	for k := len(rev) - 1; k >= 0; k-- {
-		ids = append(ids, rev[k])
-	}
+	slices.Reverse(ids[start:])
 	return ids
 }
 
@@ -203,70 +194,30 @@ const maxChunkTokens = 50
 
 var errEmptyText = errors.New("input text is empty")
 
-// textOptions are the per-language text rewrites in the upstream config.
-type textOptions struct {
-	PadShortInputs    bool              `json:"pad_with_spaces_for_short_inputs"`
-	RemoveSemicolons  bool              `json:"remove_semicolons"`
-	ReplaceCharacters map[string]string `json:"replace_characters"`
-}
-
-var punctuationAfterSentence = regexp.MustCompile(`([.!?\x{2026}])\s*[,;:]`)
-
-// prepare mirrors pocket_tts.prepare_text_prompt. It returns the text and the
-// frames to keep after EOS.
-func (o textOptions) prepare(text string) (string, int, error) {
-	text = strings.TrimSpace(text)
-	if len(o.ReplaceCharacters) > 0 {
-		var b strings.Builder
-		for _, r := range text {
-			if v, ok := o.ReplaceCharacters[string(r)]; ok {
-				b.WriteString(v)
-			} else {
-				b.WriteRune(r)
-			}
-		}
-		text = punctuationAfterSentence.ReplaceAllString(strings.Join(strings.Fields(b.String()), " "), "$1")
-	}
+// prepareText follows Phonon's prepare_text_prompt. The reference runtime's
+// optional language-specific number expansion is not applied here.
+func prepareText(text string) (string, int, error) {
+	words := strings.Fields(text)
+	text = strings.Join(words, " ")
 	if text == "" {
 		return "", 0, errEmptyText
 	}
-	text = strings.NewReplacer("\n", " ", "\r", " ").Replace(text)
-	text = strings.ReplaceAll(text, "  ", " ")
-	if o.RemoveSemicolons {
-		text = strings.ReplaceAll(text, ";", ",")
-	}
-
 	framesAfterEOS := 1
-	if len(strings.Fields(text)) <= 4 {
+	if len(words) <= 4 {
 		framesAfterEOS = 3
 	}
-
-	if r, n := utf8.DecodeRuneInString(text); !unicode.IsUpper(r) {
-		text = string(unicode.ToUpper(r)) + text[n:]
-	}
-
-	const terminal, weak, closers = ".!?…", ",;:-–—", "\"'”’)]»"
-	core := strings.TrimRight(text, closers+" ")
-	if core != "" {
-		last, _ := utf8.DecodeLastRuneInString(core)
-		switch {
-		case strings.ContainsRune(terminal, last):
-		case strings.ContainsRune(weak, last):
-			text = strings.TrimRight(core, weak+" ") + "." + strings.TrimSpace(text[len(core):])
-		default:
-			text += "."
-		}
-	}
-	if o.PadShortInputs && len(strings.Fields(text)) < 5 {
-		text = strings.Repeat(" ", 8) + text
+	_, n := utf8.DecodeRuneInString(text)
+	text = strings.ToUpper(text[:n]) + text[n:]
+	if last, _ := utf8.DecodeLastRuneInString(text); unicode.IsLetter(last) || unicode.IsNumber(last) {
+		text += "."
 	}
 	return text, framesAfterEOS, nil
 }
 
 // chunks splits text into sentence groups of at most maxChunkTokens tokens,
-// as pocket_tts.split_into_best_sentences does.
-func (u *unigram) chunks(text string, opts textOptions) ([]string, error) {
-	text, _, err := opts.prepare(text)
+// as Phonon split_into_best_sentences does. Long individual sentences remain intact.
+func (u *unigram) chunks(text string) ([]string, error) {
+	text, _, err := prepareText(text)
 	if err != nil {
 		return nil, err
 	}
@@ -276,37 +227,24 @@ func (u *unigram) chunks(text string, opts textOptions) ([]string, error) {
 		n    int
 		text string
 	}
-	split := func(tokens []int32, delimiters string, skipDecimal bool) []segment {
-		boundary := map[int32]bool{}
-		for _, id := range u.encode(delimiters)[1:] {
-			boundary[id] = true
-		}
-		var segs []segment
-		start, after := 0, false
-		for i, id := range tokens {
-			if boundary[id] {
-				after = true
-				continue
-			}
-			if after && !(skipDecimal && u.decimalPoint(tokens, i)) {
-				segs = append(segs, segment{i - start, u.decode(tokens[start:i])})
-				start = i
-			}
-			after = false
-		}
-		return append(segs, segment{len(tokens) - start, u.decode(tokens[start:])})
+	boundary := map[int32]bool{}
+	for _, id := range u.encode(".!...?")[1:] {
+		boundary[id] = true
 	}
-
 	var segs []segment
-	for _, s := range split(tokens, ".!...?", true) {
-		if s.n > maxChunkTokens {
-			if sub := split(u.encode(strings.TrimSpace(s.text)), ",;:", false); len(sub) > 1 {
-				segs = append(segs, sub...)
-				continue
-			}
+	start, after := 0, false
+	for i, id := range tokens {
+		if boundary[id] {
+			after = true
+			continue
 		}
-		segs = append(segs, s)
+		if after {
+			segs = append(segs, segment{i - start, u.decode(tokens[start:i])})
+			start = i
+		}
+		after = false
 	}
+	segs = append(segs, segment{len(tokens) - start, u.decode(tokens[start:])})
 
 	var chunks []string
 	var cur string
@@ -328,11 +266,3 @@ func (u *unigram) chunks(text string, opts textOptions) ([]string, error) {
 	}
 	return chunks, nil
 }
-
-func (u *unigram) decimalPoint(tokens []int32, i int) bool {
-	prefix, suffix := u.decode(tokens[:i]), u.decode(tokens[i:])
-	return len(prefix) >= 2 && prefix[len(prefix)-1] == '.' && isDigit(prefix[len(prefix)-2]) &&
-		suffix != "" && isDigit(suffix[0])
-}
-
-func isDigit(c byte) bool { return c >= '0' && c <= '9' }

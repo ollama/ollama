@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -26,10 +27,16 @@ func (r *Runner) speechHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	controller := http.NewResponseController(w)
+	defer controller.SetWriteDeadline(time.Time{})
 	streaming := false
 	err := r.mlxThread.Do(req.Context(), func() error {
 		defer mlx.ClearCache()
 		return speaker.Speak(req.Context(), input, func(samples []float32) error {
+			// A stalled reader must not hold the shared MLX worker forever.
+			if err := controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+				return err
+			}
 			if !streaming {
 				w.Header().Set("Content-Type", "audio/pcm")
 				streaming = true
@@ -37,7 +44,7 @@ func (r *Runner) speechHandler(w http.ResponseWriter, req *http.Request) {
 			if _, err := w.Write(pcm16(samples)); err != nil {
 				return err
 			}
-			return http.NewResponseController(w).Flush()
+			return controller.Flush()
 		})
 	})
 	switch {

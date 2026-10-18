@@ -1,10 +1,12 @@
-package pockettts
+package phonon
 
 import (
 	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
@@ -25,11 +27,6 @@ type Transformer struct {
 	Layers    []*Layer
 	NumHeads  int32
 	MaxPeriod float32
-}
-
-// attention appends a layer's keys and values and attends over its history.
-type attention interface {
-	attend(q, k, v *mlx.Array, scale float32) *mlx.Array
 }
 
 func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads int32, period float32) (*Transformer, error) {
@@ -59,8 +56,14 @@ func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads
 }
 
 // forward runs x [1, L, D] at absolute position offset.
-func (t *Transformer) forward(x *mlx.Array, offset int, caches []attention) *mlx.Array {
+func (t *Transformer) forward(x *mlx.Array, offset int, caches []cache.Attention) *mlx.Array {
 	L, D := int32(x.Dim(1)), int32(x.Dim(2))
+	// Attention uses the batch shape and positions for both text and audio frames.
+	b := &batch.Batch{
+		InputIDs:     mlx.Zeros(mlx.DTypeInt32, 1, int(L)),
+		SeqOffsets:   []int32{int32(offset)},
+		SeqQueryLens: []int32{L},
+	}
 	H, hd := t.NumHeads, D/t.NumHeads
 	scale := float32(1 / math.Sqrt(float64(hd)))
 	pos := mlx.FromValues([]int32{int32(offset)}, 1)
@@ -72,7 +75,8 @@ func (t *Transformer) forward(x *mlx.Array, offset int, caches []attention) *mlx
 		qkv := l.InProj.Forward(l.Norm1.Forward(x))
 		q := mlx.RoPEWithBase(split(qkv, 0), int(hd), true, t.MaxPeriod, 1, pos)
 		k := mlx.RoPEWithBase(split(qkv, 1), int(hd), true, t.MaxPeriod, 1, pos)
-		a := caches[i].attend(q, k, split(qkv, 2), scale)
+		history := caches[i].Update(b, k, split(qkv, 2))
+		a := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(nn.CausalMask()))
 		a = mlx.Reshape(mlx.Transpose(a, 0, 2, 1, 3), 1, L, D)
 		x = residual(x, l.OutProj.Forward(a), l.Scale1)
 		h := l.Linear2.Forward(mlx.GELUApprox(l.Linear1.Forward(l.Norm2.Forward(x))))

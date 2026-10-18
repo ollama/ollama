@@ -3537,19 +3537,24 @@ func countChatImages(msgs []api.Message) int {
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
+	status, message := scheduleError(name, err)
+	c.JSON(status, gin.H{"error": message})
+}
+
+// scheduleError keeps native and OpenAI-compatible endpoints consistent while
+// allowing each to use its own error response format.
+func scheduleError(name string, err error) (int, string) {
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case errors.Is(err, manifest.ErrNoCompatibleManifest):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest):
+		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
-		c.JSON(499, gin.H{"error": "request canceled"})
+		return 499, "request canceled"
 	case errors.Is(err, ErrMaxQueue):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return http.StatusServiceUnavailable, err.Error()
 	case errors.Is(err, os.ErrNotExist):
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found, try pulling it first", name)})
+		return http.StatusNotFound, fmt.Sprintf("model %q not found, try pulling it first", name)
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return http.StatusInternalServerError, err.Error()
 	}
 }
 

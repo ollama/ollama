@@ -1,4 +1,4 @@
-package pockettts
+package phonon
 
 import (
 	"encoding/json"
@@ -12,21 +12,22 @@ import (
 func TestPrepareText(t *testing.T) {
 	for _, tc := range []struct {
 		input, want string
-		options     textOptions
+		tail        int
 	}{
-		{"  hello\nworld  ", "Hello world.", textOptions{}},
-		{"wait—", "Wait.", textOptions{}},
-		{"\"Hello?\"", "\"Hello?\"", textOptions{}},
-		{"hello", "        Hello.", textOptions{PadShortInputs: true}},
-		{"hello; world", "Hello, world.", textOptions{RemoveSemicolons: true}},
-		{"\"hi?\", she said", "Hi? she said.", textOptions{ReplaceCharacters: map[string]string{"\"": ""}}},
+		{"  hello\nworld  ", "Hello world.", 3},
+		{"wait—", "Wait—", 3},
+		{"\"Hello?\"", "\"Hello?\"", 3},
+		{"it's ready", "It's ready.", 3},
+		{"it’s ready", "It’s ready.", 3},
+		{"hello; world", "Hello; world.", 3},
+		{"one  two\tthree\rfour five", "One two three four five.", 1},
 	} {
-		got, _, err := tc.options.prepare(tc.input)
-		if err != nil || got != tc.want {
-			t.Errorf("prepare(%q) = %q, %v; want %q", tc.input, got, err, tc.want)
+		got, tail, err := prepareText(tc.input)
+		if err != nil || got != tc.want || tail != tc.tail {
+			t.Errorf("prepare(%q) = %q, %d, %v; want %q, %d", tc.input, got, tail, err, tc.want, tc.tail)
 		}
 	}
-	if _, _, err := (textOptions{}).prepare(" \n\t"); err == nil {
+	if _, _, err := prepareText(" \n\t"); err == nil {
 		t.Fatal("accepted empty text")
 	}
 }
@@ -57,11 +58,11 @@ func TestUnigramByteFallback(t *testing.T) {
 }
 
 // Run against a real checkpoint and fixtures generated with Hugging Face
-// tokenizers: POCKET_TTS_TOKENIZER=... POCKET_TTS_TOKEN_CASES=... go test ...
+// tokenizers: PHONON_TOKENIZER=... PHONON_TOKEN_CASES=... go test ...
 func TestCheckpointTokenizer(t *testing.T) {
-	path := os.Getenv("POCKET_TTS_TOKENIZER")
+	path := os.Getenv("PHONON_TOKENIZER")
 	if path == "" {
-		t.Skip("set POCKET_TTS_TOKENIZER for checkpoint parity")
+		t.Skip("set PHONON_TOKENIZER for checkpoint parity")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -71,7 +72,7 @@ func TestCheckpointTokenizer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(os.Getenv("POCKET_TTS_TOKEN_CASES"))
+	data, err = os.ReadFile(os.Getenv("PHONON_TOKEN_CASES"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +88,13 @@ func TestCheckpointTokenizer(t *testing.T) {
 			t.Errorf("%q: got %v; want %v", tc.Text, got, tc.IDs)
 		}
 	}
-	chunks, err := u.chunks(strings.Repeat("The value is 3.14, and it matters. ", 20), textOptions{})
+	chunks, err := u.chunks(strings.Repeat("Hello from the new Phonon model. ", 20))
 	if err != nil || len(chunks) < 2 {
 		t.Fatalf("chunking: %v %v", chunks, err)
 	}
 	for _, chunk := range chunks {
-		if !strings.Contains(chunk, "3.14") {
-			t.Fatalf("split decimal: %q", chunk)
+		if !strings.HasSuffix(chunk, ".") {
+			t.Fatalf("split inside sentence: %q", chunk)
 		}
 	}
 }

@@ -209,8 +209,8 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config: `{"architectures":["LlamaForCausalLM"]}`,
 		},
 		{
-			name:     "pocket tts",
-			config:   `{"architectures":["PocketTTS"],"model_type":"pocket_tts"}`,
+			name:     "phonon",
+			config:   `{"architectures":["Phonon"],"model_type":"phonon"}`,
 			wantCaps: []string{"speech"},
 		},
 		{

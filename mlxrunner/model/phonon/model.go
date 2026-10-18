@@ -1,4 +1,4 @@
-package pockettts
+package phonon
 
 import (
 	"context"
@@ -20,43 +20,32 @@ import (
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-func init() { model.Register("PocketTTS", newModel) }
+func init() { model.Register("Phonon", newModel) }
 
-// config is the upstream pocket_tts YAML config as JSON.
+// config follows the upstream Phonon config.json.
 type config struct {
 	FlowLM struct {
-		Transformer struct {
-			NumHeads  int32   `json:"num_heads"`
-			NumLayers int32   `json:"num_layers"`
-			MaxPeriod float32 `json:"max_period"`
-		} `json:"transformer"`
-		Flow struct {
-			Depth int32  `json:"depth"`
-			Type  string `json:"type"`
-		} `json:"flow"`
+		NumHeads  int32   `json:"num_heads"`
+		NumLayers int32   `json:"num_layers"`
+		MaxPeriod float32 `json:"max_period"`
+		FlowDepth int32   `json:"flow_depth"`
 	} `json:"flow_lm"`
 	Mimi struct {
-		SampleRate int     `json:"sample_rate"`
-		FrameRate  float64 `json:"frame_rate"`
-		Seanet     struct {
-			DilationBase int `json:"dilation_base"`
-		} `json:"seanet"`
-		Transformer struct {
-			NumHeads  int32   `json:"num_heads"`
-			NumLayers int32   `json:"num_layers"`
-			Context   int     `json:"context"`
-			MaxPeriod float32 `json:"max_period"`
-		} `json:"transformer"`
+		SampleRate   int     `json:"sample_rate"`
+		FrameRate    float64 `json:"frame_rate"`
+		DilationBase int     `json:"dilation_base"`
+		NumHeads     int32   `json:"transformer_num_heads"`
+		NumLayers    int32   `json:"transformer_num_layers"`
+		Context      int     `json:"transformer_context"`
+		MaxPeriod    float32 `json:"transformer_max_period"`
 	} `json:"mimi"`
-	DefaultTemperature *float32 `json:"default_temperature"`
-	textOptions
+	Temperature  float32 `json:"temp"`
+	DecodeSteps  int     `json:"lsd_decode_steps"`
+	EOSThreshold float32 `json:"eos_threshold"`
 }
 
 const (
-	sampleRate   = 24000
-	eosThreshold = -4
-	// EOS is ignored on the first frames, where some voices cross the threshold before speaking.
-	minFramesBeforeEOS = 6
+	sampleRate = 24000
 	// mimiBatch is how many frames the codec decodes per call after the first.
 	mimiBatch = 8
 )
@@ -65,6 +54,7 @@ type Model struct {
 	Embed       *nn.Embedding
 	InputLinear *nn.Linear
 	BOS         *mlx.Array
+	NumSpeakers *mlx.Array
 	Flow        *Transformer
 	OutNorm     *nn.LayerNorm
 	EOS         *nn.Linear
@@ -93,29 +83,8 @@ func newModel(root *model.Root) (model.Model, error) {
 	if err := root.Manifest.ReadConfigJSON("config.json", &cfg); err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	if cfg.Mimi.SampleRate != sampleRate || cfg.Mimi.FrameRate != 12.5 {
-		return nil, fmt.Errorf("unsupported mimi rates: %d Hz, %g frames/s", cfg.Mimi.SampleRate, cfg.Mimi.FrameRate)
-	}
-	if cfg.FlowLM.Transformer.NumLayers <= 0 || cfg.FlowLM.Transformer.NumHeads <= 0 ||
-		cfg.FlowLM.Transformer.MaxPeriod <= 0 || cfg.FlowLM.Flow.Depth <= 0 ||
-		cfg.Mimi.Transformer.NumLayers <= 0 || cfg.Mimi.Transformer.NumHeads <= 0 || cfg.Mimi.Transformer.Context <= 0 {
-		return nil, fmt.Errorf("invalid pocket-tts transformer configuration")
-	}
-	if t := cfg.FlowLM.Flow.Type; t != "" && t != "lsd" {
-		return nil, fmt.Errorf("unsupported flow type %q", t)
-	}
-	if cfg.Mimi.Transformer.MaxPeriod == 0 {
-		cfg.Mimi.Transformer.MaxPeriod = 10000
-	}
-	if cfg.Mimi.Seanet.DilationBase == 0 {
-		cfg.Mimi.Seanet.DilationBase = 2
-	}
-	if cfg.DefaultTemperature == nil {
-		temperature := float32(0.3)
-		cfg.DefaultTemperature = &temperature
-	}
-	if *cfg.DefaultTemperature < 0 || math.IsInf(float64(*cfg.DefaultTemperature), 0) {
-		return nil, fmt.Errorf("invalid default_temperature")
+	if err := cfg.validate(); err != nil {
+		return nil, err
 	}
 	data, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {
@@ -128,13 +97,31 @@ func newModel(root *model.Root) (model.Model, error) {
 	return &Model{cfg: &cfg, tok: tok}, nil
 }
 
+func (c *config) validate() error {
+	if c.Mimi.SampleRate != sampleRate || c.Mimi.FrameRate != 12.5 {
+		return fmt.Errorf("unsupported mimi rates: %d Hz, %g frames/s", c.Mimi.SampleRate, c.Mimi.FrameRate)
+	}
+	if c.FlowLM.NumLayers <= 0 || c.FlowLM.NumHeads <= 0 || c.FlowLM.MaxPeriod <= 0 || c.FlowLM.FlowDepth <= 0 ||
+		c.Mimi.NumLayers <= 0 || c.Mimi.NumHeads <= 0 || c.Mimi.Context <= 0 || c.Mimi.MaxPeriod <= 0 || c.Mimi.DilationBase <= 0 {
+		return fmt.Errorf("invalid phonon transformer configuration")
+	}
+	if c.DecodeSteps != 1 {
+		return fmt.Errorf("phonon requires one LSD decode step, got %d", c.DecodeSteps)
+	}
+	if c.Temperature < 0 || math.IsNaN(float64(c.Temperature)) || math.IsInf(float64(c.Temperature), 0) ||
+		math.IsNaN(float64(c.EOSThreshold)) || math.IsInf(float64(c.EOSThreshold), 0) {
+		return fmt.Errorf("invalid phonon sampling configuration")
+	}
+	return nil
+}
+
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	// The flow LM transformer is bandwidth bound and runs in bfloat16; the
 	// flow head and the Mimi decoder stay in float32.
 	for name, t := range tensors {
 		dtype := mlx.DTypeFloat32
 		if strings.HasPrefix(name, "flow_lm.transformer.") || strings.HasPrefix(name, "voices.") ||
-			name == "flow_lm.conditioner.embed.weight" || name == "flow_lm.input_linear.weight" {
+			name == "flow_lm.num_speakers" || name == "flow_lm.conditioner.embed.weight" || name == "flow_lm.input_linear.weight" {
 			dtype = mlx.DTypeBFloat16
 		}
 		if t.DType() != dtype {
@@ -143,10 +130,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	f := m.cfg.FlowLM
 	var err error
-	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.Transformer.NumLayers, f.Transformer.NumHeads, f.Transformer.MaxPeriod); err != nil {
+	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.NumLayers, f.NumHeads, f.MaxPeriod); err != nil {
 		return err
 	}
-	if m.Head, err = loadFlowHead(tensors, "flow_lm.flow_net", f.Flow.Depth); err != nil {
+	if m.Head, err = loadFlowHead(tensors, "flow_lm.flow_net", f.FlowDepth); err != nil {
 		return err
 	}
 	if m.Mimi, err = loadMimi(tensors, m.cfg); err != nil {
@@ -162,35 +149,30 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if m.Embed == nil || m.InputLinear == nil || m.OutNorm == nil || m.EOS == nil || m.BOS == nil || m.EmbMean == nil || m.EmbStd == nil {
 		return fmt.Errorf("missing flow_lm weights")
 	}
+	m.NumSpeakers = tensors["flow_lm.num_speakers"]
+	if m.NumSpeakers == nil || !slices.Equal(m.NumSpeakers.Dims(), []int{1, 1, m.Embed.Weight.Dim(1)}) {
+		return fmt.Errorf("missing or invalid num_speakers conditioning")
+	}
 	m.BOS = mlx.Reshape(m.BOS, 1, 1, -1)
-	m.sample = mlx.Compile("pockettts_sample", func(in ...*mlx.Array) []*mlx.Array {
+	m.sample = mlx.Compile("phonon_sample", func(in ...*mlx.Array) []*mlx.Array {
 		h := m.OutNorm.Forward(mlx.Reshape(in[0].AsType(mlx.DTypeFloat32), 1, -1))
 		latent := m.Head.sample(h, in[1])
 		return []*mlx.Array{mlx.ExpandDims(latent, 0), m.EOS.Forward(h)}
 	})
 
-	// Voices are stored as voices.<name> [layers, 2, 1, frames, heads, head_dim].
+	// The packager projects each speaker prompt into the flow LM's embedding
+	// space. Prefill it once at load time; requests start from these cached keys
+	// and values, without sharing mutable generation state.
 	m.Voices = map[string]*Voice{}
 	for name, t := range tensors {
 		voice, ok := strings.CutPrefix(name, "voices.")
 		if !ok {
 			continue
 		}
-		if t.NumDims() != 6 || t.Dim(0) != len(m.Flow.Layers) || t.Dim(1) != 2 || t.Dim(2) != 1 ||
-			t.Dim(3) == 0 || t.Dim(4) != int(f.Transformer.NumHeads) || t.Dim(4)*t.Dim(5) != m.Embed.Weight.Dim(1) {
+		if voice == "" || t.NumDims() != 3 || t.Dim(0) != 1 || t.Dim(1) == 0 || t.Dim(2) != m.Embed.Weight.Dim(1) {
 			return fmt.Errorf("voice %q has shape %v", voice, t.Dims())
 		}
-		T, H, D := int32(t.Dim(3)), int32(t.Dim(4)), int32(t.Dim(5))
-		kv := func(l, i int) *mlx.Array {
-			x := t.Slice(mlx.Slice(l), mlx.Slice(i), mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice())
-			return mlx.Transpose(mlx.Reshape(x, 1, T, H, D), 0, 2, 1, 3)
-		}
-		v := &Voice{}
-		for l := range t.Dim(0) {
-			v.Keys = append(v.Keys, kv(l, 0))
-			v.Values = append(v.Values, kv(l, 1))
-		}
-		m.Voices[voice] = v
+		m.Voices[voice] = m.prefillVoice(t)
 	}
 	if len(m.Voices) == 0 {
 		return fmt.Errorf("model has no voices")
@@ -198,10 +180,32 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
+func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
+	caches := make([]cache.Attention, len(m.Flow.Layers))
+	for i := range caches {
+		caches[i] = cache.NewKVCache()
+		defer caches[i].Free()
+	}
+	kv := mlx.ScopedEval(func() []*mlx.Array {
+		m.Flow.forward(prompt, 0, caches)
+		var kv []*mlx.Array
+		for _, c := range caches {
+			kv = append(kv, c.State()...)
+		}
+		return kv
+	})
+	v := &Voice{}
+	for i := 0; i < len(kv); i += 2 {
+		v.Keys = append(v.Keys, kv[i])
+		v.Values = append(v.Values, kv[i+1])
+	}
+	return v
+}
+
 // Speech models load through model.Model but never run the text pipeline.
 func (m *Model) NewCaches() []cache.Cache { return nil }
 func (m *Model) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
-	panic("pockettts: text forward is not supported")
+	panic("phonon: text forward is not supported")
 }
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array { return x }
 func (m *Model) Tokenizer() *tokenizer.Tokenizer { return nil }
@@ -218,7 +222,7 @@ func (m *Model) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]fl
 	if !ok {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: fmt.Sprintf("voice %q not found; available voices: %s", req.Voice, strings.Join(m.VoiceNames(), ", "))}
 	}
-	chunks, err := m.tok.chunks(req.Input, m.cfg.textOptions)
+	chunks, err := m.tok.chunks(req.Input)
 	if err != nil {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
@@ -233,19 +237,16 @@ func (m *Model) Speak(ctx context.Context, req llm.SpeechRequest, emit func([]fl
 
 // speak generates one chunk from a fresh copy of the voice state.
 func (m *Model) speak(ctx context.Context, text string, voice *Voice, rng *rand.Rand, emit func([]float32) error) error {
-	text, framesAfterEOS, err := m.cfg.prepare(text)
+	text, framesAfterEOS, err := prepareText(text)
 	if err != nil {
 		return err
 	}
-	framesAfterEOS += 2
 	tokens := m.tok.encode(text)
 	maxFrames := int(math.Ceil((float64(len(tokens))/3 + 2) * m.cfg.Mimi.FrameRate))
 
-	caches := make([]*cache.KVCache, len(m.Flow.Layers))
-	attn := make([]attention, len(caches))
+	caches := make([]cache.Attention, len(m.Flow.Layers))
 	for i := range caches {
 		caches[i] = cache.NewKVCache()
-		attn[i] = flowCache{caches[i]}
 		defer caches[i].Free()
 	}
 	mimi := m.Mimi.newState()
@@ -261,73 +262,58 @@ func (m *Model) speak(ctx context.Context, text string, voice *Voice, rng *rand.
 			c.Update(nil, voice.Keys[i], voice.Values[i])
 		}
 		ids := mlx.FromValues(tokens, 1, len(tokens))
-		m.Flow.forward(m.Embed.Forward(ids), offset, attn)
+		m.Flow.forward(m.Embed.Forward(ids), offset, caches)
 	})
 	offset += len(tokens)
 
-	std := math.Sqrt(float64(*m.cfg.DefaultTemperature))
+	std := math.Sqrt(float64(m.cfg.Temperature))
 	noise := make([]float32, m.BOS.Dim(2))
-	var latents, logits []*mlx.Array
-	decoded, eosStep, stop := 0, -1, maxFrames
-	for step := 0; step < stop; step++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		for i := range noise {
-			noise[i] = float32(rng.NormFloat64() * std)
-		}
-		out := mlx.ScopedArrays(func() []*mlx.Array {
-			h := m.Flow.forward(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), offset+step, attn)
-			out := m.sample(h, mlx.FromValues(noise, 1, len(noise)))
-			prev.Set(out[0])
-			return out
-		})
-		held.Attach(out...)
-		mlx.AsyncEval(out...)
-		latents, logits = append(latents, out[0]), append(logits, out[1])
-
+	for generated, stop := 0, maxFrames; generated < stop; {
 		// Decode the first frame alone for latency, then in batches. EOS
 		// is read at the same sync points; frames past it are dropped.
-		if decoded > 0 && len(latents) < mimiBatch && step+1 < stop {
-			continue
+		n := min(mimiBatch, stop-generated)
+		if generated == 0 {
+			n = 1
+		}
+		var latents, logits []*mlx.Array
+		for step := generated; step < generated+n; step++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			for i := range noise {
+				noise[i] = float32(rng.NormFloat64() * std)
+			}
+			out := mlx.ScopedArrays(func() []*mlx.Array {
+				input := mlx.Add(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), m.NumSpeakers)
+				h := m.Flow.forward(input, offset+step, caches)
+				out := m.sample(h, mlx.FromValues(noise, 1, len(noise)))
+				prev.Set(out[0])
+				return out
+			})
+			held.Attach(out...)
+			mlx.AsyncEval(out...)
+			latents, logits = append(latents, out[0]), append(logits, out[1])
 		}
 		var eos []float32
 		mlx.Scoped(func() { eos = mlx.Concatenate(logits, 0).Floats() })
 		for i, e := range eos {
-			if f := decoded + i; eosStep < 0 && f >= minFramesBeforeEOS && e > eosThreshold {
-				eosStep = f
-				stop = min(stop, f+framesAfterEOS)
+			if e > m.cfg.EOSThreshold {
+				stop = min(stop, generated+i+1+framesAfterEOS)
+				break
 			}
 		}
-		n := min(len(latents), stop-decoded)
+		n = min(n, stop-generated)
 		var samples []float32
 		mlx.Scoped(func() {
 			z := mlx.Add(mlx.Mul(mlx.Concatenate(latents[:n], 1), m.EmbStd), m.EmbMean)
 			samples = m.Mimi.decode(mimi, z).Floats()
 		})
-		held.Discard(append(latents, logits...)...)
-		latents, logits = latents[:0], logits[:0]
-		if decoded == 0 {
-			fade := min(len(samples), sampleRate/200)
-			for i := range fade {
-				samples[i] *= float32(i) / float32(fade-1)
-			}
-		}
-		decoded += n
+		held.Discard(latents...)
+		held.Discard(logits...)
+		generated += n
 		if err := emit(samples); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-type flowCache struct{ *cache.KVCache }
-
-func (c flowCache) attend(q, k, v *mlx.Array, scale float32) *mlx.Array {
-	h := c.Update(nil, k, v)
-	mode := ""
-	if q.Dim(2) > 1 {
-		mode = "causal"
-	}
-	return mlx.FastScaledDotProductAttention(q, h.K(), h.V(), scale, mode, nil)
 }

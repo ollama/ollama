@@ -1,12 +1,12 @@
-package pockettts
+package phonon
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlxrunner/cache"
 )
 
 // Mimi is the streaming decoder half of the Mimi codec: latent frames in,
@@ -44,7 +44,7 @@ type ConvTr struct {
 }
 
 func loadMimi(tensors map[string]*mlx.Array, cfg *config) (*Mimi, error) {
-	t := cfg.Mimi.Transformer
+	t := cfg.Mimi
 	m := &Mimi{Context: t.Context}
 	if w := tensors["mimi.quantizer.output_proj.weight"]; w != nil {
 		m.OutputProj = mlx.Transpose(mlx.Squeeze(w, 2), 1, 0)
@@ -91,7 +91,7 @@ func loadMimi(tensors map[string]*mlx.Array, cfg *config) (*Mimi, error) {
 				return nil, fmt.Errorf("missing residual weights for %s", p)
 			}
 			l.Res = []*Conv{conv(tensors, p+".block.1.conv", dilation), conv(tensors, p+".block.3.conv", 1)}
-			dilation *= cfg.Mimi.Seanet.DilationBase
+			dilation *= cfg.Mimi.DilationBase
 		}
 		m.Decoder = append(m.Decoder, l)
 	}
@@ -108,43 +108,38 @@ func conv(tensors map[string]*mlx.Array, prefix string, dilation int) *Conv {
 // mimiState is one stream's decoder state: convolution context, transposed
 // convolution overlap, and the transformer's attention window.
 type mimiState struct {
-	scope  *mlx.Scope
-	arrays []*mlx.Array
-	next   int
-	window []*windowCache
-	pos    int
+	scope     *mlx.Scope
+	conv      map[*Conv]*mlx.Array
+	transpose map[*ConvTr]*mlx.Array
+	attention []cache.Attention
+	pos       int
 }
 
 func (m *Mimi) newState() *mimiState {
-	s := &mimiState{scope: mlx.NewScope()}
+	s := &mimiState{
+		scope:     mlx.NewScope(),
+		conv:      make(map[*Conv]*mlx.Array),
+		transpose: make(map[*ConvTr]*mlx.Array),
+	}
 	for range m.Transformer.Layers {
-		s.window = append(s.window, &windowCache{state: s, context: m.Context})
+		s.attention = append(s.attention, cache.NewRotatingKVCache(m.Context))
 	}
 	return s
 }
 
-func (s *mimiState) close() { s.scope.Close() }
-
-// carry returns the state slot for the next stateful op, created from init
-// on the stream's first frame, and a function to store its new value.
-func (s *mimiState) carry(init func() *mlx.Array) (*mlx.Array, func(*mlx.Array)) {
-	if s.next == len(s.arrays) {
-		a := init()
-		s.scope.Attach(a)
-		s.arrays = append(s.arrays, a)
+func (s *mimiState) close() {
+	for _, c := range s.attention {
+		c.Free()
 	}
-	a := s.arrays[s.next]
-	s.next++
-	return a, a.Set
+	s.scope.Close()
 }
 
 // decode turns normalized latents [1, T, latent] into samples [1, T*frame, 1].
 func (m *Mimi) decode(s *mimiState, latents *mlx.Array) *mlx.Array {
-	s.next = 0
 	x := latents.Matmul(m.OutputProj)
 	x = m.Upsample.forward(s, x)
 	steps := x.Dim(1)
-	x = m.Transformer.forward(x, s.pos, windowAttention(s.window))
+	x = m.Transformer.forward(x, s.pos, s.attention)
 	s.pos += steps
 	for _, l := range m.Decoder {
 		switch {
@@ -163,9 +158,14 @@ func (m *Mimi) decode(s *mimiState, latents *mlx.Array) *mlx.Array {
 
 func (c *Conv) forward(s *mimiState, x *mlx.Array) *mlx.Array {
 	if pad := (c.Weight.Dim(1) - 1) * c.Dilation; pad > 0 {
-		prev, store := s.carry(func() *mlx.Array { return mlx.Zeros(x.DType(), 1, pad, x.Dim(2)) })
+		prev := s.conv[c]
+		if prev == nil {
+			prev = mlx.Zeros(x.DType(), 1, pad, x.Dim(2))
+			s.scope.Attach(prev)
+			s.conv[c] = prev
+		}
 		x = prev.Concatenate(1, x)
-		store(x.Slice(mlx.Slice(), mlx.Slice(x.Dim(1)-pad, x.Dim(1)), mlx.Slice()))
+		prev.Set(x.Slice(mlx.Slice(), mlx.Slice(x.Dim(1)-pad, x.Dim(1)), mlx.Slice()))
 	}
 	return mlx.Conv1d(x, c.Weight, c.Bias, 1, 0, int32(c.Dilation), 1)
 }
@@ -183,9 +183,14 @@ func (c *ConvTr) forward(s *mimiState, x *mlx.Array) *mlx.Array {
 	C := z.Dim(3)
 	head := z.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, S), mlx.Slice())
 	tail := z.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(S, 2*S), mlx.Slice())
-	prev, store := s.carry(func() *mlx.Array { return mlx.Zeros(x.DType(), 1, 1, S, C) })
+	prev := s.transpose[c]
+	if prev == nil {
+		prev = mlx.Zeros(x.DType(), 1, 1, S, C)
+		s.scope.Attach(prev)
+		s.transpose[c] = prev
+	}
 	shifted := prev.Concatenate(1, tail.Slice(mlx.Slice(), mlx.Slice(0, T-1), mlx.Slice(), mlx.Slice()))
-	store(tail.Slice(mlx.Slice(), mlx.Slice(T-1, T), mlx.Slice(), mlx.Slice()))
+	prev.Set(tail.Slice(mlx.Slice(), mlx.Slice(T-1, T), mlx.Slice(), mlx.Slice()))
 	y := mlx.Reshape(mlx.Add(head, shifted), 1, int32(T*S), int32(C))
 	if c.Bias != nil {
 		y = mlx.Add(y, c.Bias)
@@ -197,50 +202,3 @@ var elu = mlx.Compile1("ELU", func(x *mlx.Array) *mlx.Array {
 	zero := mlx.FromValue[float32](0).AsType(x.DType())
 	return mlx.Where(x.Greater(zero), x, mlx.AddScalar(mlx.Exp(mlx.Minimum(x, zero)), -1))
 }, mlx.Shapeless())
-
-// windowCache keeps the last context-1 keys and values of one Mimi layer.
-type windowCache struct {
-	state   *mimiState
-	context int
-	k, v    *mlx.Array
-	n       int
-}
-
-func windowAttention(w []*windowCache) []attention {
-	a := make([]attention, len(w))
-	for i := range w {
-		a[i] = w[i]
-	}
-	return a
-}
-
-func (c *windowCache) attend(q, k, v *mlx.Array, scale float32) *mlx.Array {
-	L, n := k.Dim(2), c.n
-	if c.k != nil {
-		k = c.k.Concatenate(2, k)
-		v = c.v.Concatenate(2, v)
-	}
-	K := n + L
-	keep := min(c.context-1, K)
-	c.n = keep
-	ks := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(K-keep, K), mlx.Slice())
-	vs := v.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(K-keep, K), mlx.Slice())
-	if c.k == nil {
-		c.k, c.v = ks.Clone(), vs.Clone()
-		c.state.scope.Attach(c.k, c.v)
-	} else {
-		c.k.Set(ks)
-		c.v.Set(vs)
-	}
-
-	// Query i sits at key index n+i and sees keys in (n+i-context, n+i].
-	mask := make([]float32, L*K)
-	for i := range L {
-		for j := range K {
-			if j > n+i || j <= n+i-c.context {
-				mask[i*K+j] = float32(math.Inf(-1))
-			}
-		}
-	}
-	return mlx.FastScaledDotProductAttention(q, k, v, scale, "", mlx.FromValues(mask, 1, 1, L, K).AsType(q.DType()))
-}

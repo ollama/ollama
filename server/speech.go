@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -65,14 +65,8 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, "", []model.Capability{model.CapabilitySpeech}, nil, nil, nil)
 	if err != nil {
-		switch {
-		case errors.Is(err, os.ErrNotExist):
-			speechError(c, http.StatusNotFound, fmt.Sprintf("model %q not found, try pulling it first", req.Model))
-		case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
-			speechError(c, http.StatusBadRequest, err.Error())
-		default:
-			speechError(c, http.StatusInternalServerError, err.Error())
-		}
+		status, message := scheduleError(req.Model, err)
+		speechError(c, status, message)
 		return
 	}
 	speaker, ok := r.(llm.Speaker)
@@ -85,10 +79,17 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 }
 
 func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, format string) {
+	controller := http.NewResponseController(c.Writer)
+	defer controller.SetWriteDeadline(time.Time{})
 	started := false
 	err := speaker.Speech(c.Request.Context(), req, func(pcm []byte) error {
 		if len(pcm) == 0 {
 			return nil
+		}
+		// Bound a stalled client's writes so it cannot hold the model and
+		// back up the runner indefinitely. Reset for each chunk, not request.
+		if err := controller.SetWriteDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			return err
 		}
 		if !started {
 			started = true
@@ -116,7 +117,7 @@ func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, fo
 		// Close the connection rather than end the stream, so clients don't
 		// mistake partial audio for a complete response.
 		slog.Warn("speech stream failed", "error", err)
-		if conn, _, err := http.NewResponseController(c.Writer).Hijack(); err == nil {
+		if conn, _, err := controller.Hijack(); err == nil {
 			conn.Close()
 		}
 		return

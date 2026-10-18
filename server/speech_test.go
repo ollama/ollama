@@ -6,15 +6,18 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 )
 
 type speechFunc func(context.Context, llm.SpeechRequest, func([]byte) error) error
@@ -70,6 +73,7 @@ func TestSpeechStreamsBeforeCompletion(t *testing.T) {
 				return nil
 			})
 			router := gin.New()
+			router.Use(gin.Recovery())
 			router.POST("/", func(c *gin.Context) { streamSpeech(c, speaker, llm.SpeechRequest{}, format) })
 			srv := httptest.NewServer(router)
 			defer srv.Close()
@@ -114,6 +118,7 @@ func TestSpeechErrors(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			router := gin.New()
+			router.Use(gin.Recovery())
 			router.POST("/", func(c *gin.Context) {
 				streamSpeech(c, speechFunc(func(_ context.Context, _ llm.SpeechRequest, emit func([]byte) error) error {
 					if tc.emitted {
@@ -141,6 +146,41 @@ func TestSpeechErrors(t *testing.T) {
 				}
 			} else if err != nil || !bytes.Contains(body, []byte(`"error"`)) {
 				t.Fatalf("error response: %s, %v", body, err)
+			}
+		})
+	}
+}
+
+func TestSpeechScheduleErrors(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		status  int
+		message string
+	}{
+		{fmt.Errorf("model %w", errRequired), 400, "model is required"},
+		{errCapabilities, 400, errCapabilities.Error()},
+		{manifest.ErrNoCompatibleManifest, 400, manifest.ErrNoCompatibleManifest.Error()},
+		{context.Canceled, 499, "request canceled"},
+		{ErrMaxQueue, 503, ErrMaxQueue.Error()},
+		{os.ErrNotExist, 404, `model "phonon" not found, try pulling it first`},
+		{errors.New("load failed"), 500, "load failed"},
+	} {
+		t.Run(tc.err.Error(), func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			status, message := scheduleError("phonon", tc.err)
+			speechError(c, status, message)
+			var body struct {
+				Error struct {
+					Message string
+					Type    string
+				}
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if w.Code != tc.status || body.Error.Message != tc.message || body.Error.Type == "" {
+				t.Fatalf("got %d %s; want %d %q", w.Code, w.Body, tc.status, tc.message)
 			}
 		})
 	}
