@@ -562,3 +562,46 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeRunCloudContextWindow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	dir := t.TempDir()
+	output := filepath.Join(dir, "context")
+	t.Setenv("PATH", dir)
+	t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "12345")
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
+	script := `#!/bin/sh
+printf '%s\n' "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" "$CLAUDE_CODE_AUTO_COMPACT_WINDOW" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		model LaunchModel
+		want  string
+	}{
+		{name: "cloud model absent from fallback table", model: LaunchModel{Name: "muse-spark-open:cloud", ContextLength: 1048576}, want: "1048576"},
+		{name: "remote model without cloud suffix", model: LaunchModel{Name: "custom-cloud", Remote: true, ContextLength: 262144}, want: "262144"},
+		{name: "local trained maximum is not the allocated context", model: LaunchModel{Name: "qwen3:8b", ContextLength: 131072}, want: "12345"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			models := []LaunchModel{{Name: "other:cloud", ContextLength: 65536}, tt.model}
+			if err := (&Claude{}).Run(tt.model.Name, models, nil); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := tt.want + "\n150000\n"; string(got) != want {
+				t.Fatalf("child context settings = %q, want %q", got, want)
+			}
+		})
+	}
+}

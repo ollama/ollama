@@ -49,7 +49,7 @@ func (c *Claude) findPath() (string, error) {
 	return "", fmt.Errorf("claude binary not found")
 }
 
-func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
+func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
 		return err
@@ -61,6 +61,9 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 	cmd.Stderr = os.Stderr
 
 	cmd.Env = append(os.Environ(), c.envVars(model)...)
+	if m, ok := findLaunchModel(models, model); ok && (m.Remote || isCloudModelName(model)) && m.ContextLength > 0 {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(m.ContextLength))
+	}
 	return cmd.Run()
 }
 
