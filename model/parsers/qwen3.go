@@ -214,8 +214,9 @@ func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
 				p.buffer.WriteString(after)
 				p.maybeThinkingOpenAtBOL = false
 				if after == "" {
-					// <think> is a preserved token, so the newline the model
-					// puts after it usually arrives in a later chunk.
+					// <think> is a preserved token and is delivered on its own,
+					// so the newline the model puts after it arrives in the
+					// next chunk.
 					p.state = qwen3ParserStateThinkingStartedEatingWhitespace
 					return events, false
 				}

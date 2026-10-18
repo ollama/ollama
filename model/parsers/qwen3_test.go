@@ -78,12 +78,17 @@ func TestQwen3ParserThinkingEnabledWithExplicitOpeningTagStreamed(t *testing.T) 
 	// <think> is a preserved token, so the newline the model puts after it
 	// arrives in a later chunk than the tag itself.
 	for _, tt := range []struct {
-		name   string
-		chunks []string
+		name         string
+		chunks       []string
+		wantThinking string
+		wantContent  string
 	}{
-		{name: "newline in its own chunk", chunks: []string{"<think>", "\n", "Let me think...", "</think>", "\n\n", "Answer."}},
-		{name: "whitespace only chunks", chunks: []string{"<think>", "\n", " ", "\n", "Let me think...</think>Answer."}},
-		{name: "newline with the first word", chunks: []string{"<think>", "\nLet me think...", "</think>Answer."}},
+		{name: "newline in its own chunk", chunks: []string{"<think>", "\n", "Let me think...", "</think>", "\n\n", "Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "whitespace only chunks", chunks: []string{"<think>", "\n", " ", "\n", "Let me think...</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "newline with the first word", chunks: []string{"<think>", "\nLet me think...", "</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "tag and newline in one chunk", chunks: []string{"<think>\n", "Let me", " think...", "</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		// Only one leading tag is stripped; a second one is part of the thinking.
+		{name: "second tag is kept", chunks: []string{"<think>", "\n\n", "<think>\nnested</think>Answer"}, wantThinking: "<think>\nnested", wantContent: "Answer"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
@@ -101,11 +106,11 @@ func TestQwen3ParserThinkingEnabledWithExplicitOpeningTagStreamed(t *testing.T) 
 				content.WriteString(c)
 				thinking.WriteString(th)
 			}
-			if thinking.String() != "Let me think..." {
-				t.Fatalf("expected thinking %q, got %q", "Let me think...", thinking.String())
+			if thinking.String() != tt.wantThinking {
+				t.Fatalf("expected thinking %q, got %q", tt.wantThinking, thinking.String())
 			}
-			if content.String() != "Answer." {
-				t.Fatalf("expected content %q, got %q", "Answer.", content.String())
+			if content.String() != tt.wantContent {
+				t.Fatalf("expected content %q, got %q", tt.wantContent, content.String())
 			}
 		})
 	}
