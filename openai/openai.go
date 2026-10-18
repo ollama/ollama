@@ -619,12 +619,12 @@ func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*a
 // An optional thinking descriptor preserves model-defined effort names for rendering.
 func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
-	for _, msg := range r.Messages {
+	for i, msg := range r.Messages {
 		toolName := ""
 		if strings.ToLower(msg.Role) == "tool" {
 			toolName = msg.Name
 			if toolName == "" && msg.ToolCallID != "" {
-				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
+				toolName = nameFromToolCallID(r.Messages[:i], msg.ToolCallID)
 			}
 		}
 		switch content := msg.Content.(type) {
