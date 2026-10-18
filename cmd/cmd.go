@@ -1448,6 +1448,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		if resp.Requires != "" {
 			rows = append(rows, []string{"", "requires", resp.Requires})
 		}
+		if resp.Renderer != "" {
+			rows = append(rows, []string{"", "renderer", resp.Renderer})
+		}
+		if resp.Parser != "" {
+			rows = append(rows, []string{"", "parser", resp.Parser})
+		}
+		if resp.TemplateSource != "" && resp.TemplateSource != "none" {
+			rows = append(rows, []string{"", "template source", resp.TemplateSource})
+		}
 		if len(resp.Manifests) > 0 {
 			if runner, ok := showSelectedRunner(resp.Manifests); ok {
 				rows = append(rows, []string{"", "runner", runner})

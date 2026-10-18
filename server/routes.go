@@ -1939,6 +1939,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		// default we return an empty map.
 		ModelInfo: make(map[string]any),
 	}
+	resp.Renderer = resolveRendererName(m)
+	resp.Parser = m.Config.Parser
+	resp.TemplateSource = m.templateSource()
 	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
 		resp.Thinking = m.Thinking()
 	}
