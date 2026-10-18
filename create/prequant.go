@@ -1,6 +1,12 @@
 package create
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
+	"strings"
+)
 
 // prequantPattern describes how one producer packs an already-quantized weight
 // and its scale companions into safetensors files, and how to fuse them into
@@ -98,18 +104,149 @@ func planPrequantized(inv Inventory) ([]BlobSpec, error) {
 			consumed[s] = true
 		}
 	}
+	if slices.Contains(inv.Config.Architectures, "FlintForCausalLM") {
+		const embedding = "model.embed_tokens.weight"
+		if spec, ok := fused[embedding]; ok && spec.Metadata["quant_type"] == "int4" {
+			var config struct {
+				MLXExport struct {
+					EmbeddingBits int `json:"embedding_bits"`
+				} `json:"mlx_export"`
+			}
+			if err := json.Unmarshal(inv.RawConfig, &config); err != nil {
+				return nil, fmt.Errorf("Flint embedding quantization: %w", err)
+			}
+			// The packed embedding has the same shape at INT8/group64 as at
+			// INT4/group128; only the publisher's export metadata identifies it.
+			bits := config.MLXExport.EmbeddingBits
+			if bits != 4 && bits != 8 {
+				return nil, fmt.Errorf("Flint embedding quantization: unsupported mlx_export.embedding_bits %d", bits)
+			}
+			if bits == 8 {
+				spec.Metadata["quant_type"] = "int8"
+			}
+			fused[embedding] = spec
+		}
+	}
 
-	specs := make([]BlobSpec, 0, len(inv.Tensors))
+	// Model Optimizer keeps Flint's publisher-native per-expert tensor names.
+	// As with float imports, the Ollama artifact needs one bank per projection.
+	// Stack its packed words and calibrated scales without requantizing them.
+	expertGroups := make(map[string][]SourceTensor)
+	if slices.Contains(inv.Config.Architectures, "FlintForCausalLM") {
+		for _, name := range sortedTensorNames(inv) {
+			if group, ok := perExpertGroup(name); ok && strings.HasSuffix(name, ".weight") {
+				expertGroups[group] = append(expertGroups[group], inv.Tensors[name])
+			}
+		}
+	}
+	var specs []BlobSpec
+	for _, group := range sortedKeys(expertGroups) {
+		experts := expertGroups[group]
+		quantized := 0
+		for _, weight := range experts {
+			if _, ok := fused[weight.Name]; ok {
+				quantized++
+			}
+		}
+		if quantized != 0 && quantized != len(experts) {
+			return nil, fmt.Errorf("prequantized expert group %s has %d of %d projections with scales", group, quantized, len(experts))
+		}
+		var groupSpecs []BlobSpec
+		var err error
+		if quantized == 0 {
+			groupSpecs, err = planExpertGroup(group, experts, "", defaultQuantPolicy{})
+		} else {
+			groupSpecs, err = planPrequantExpertGroup(group, experts, fused)
+		}
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, groupSpecs...)
+		for _, weight := range experts {
+			consumed[weight.Name] = true
+		}
+	}
+
 	for _, name := range sortedTensorNames(inv) {
+		if consumed[name] {
+			continue
+		}
 		if spec, ok := fused[name]; ok {
 			specs = append(specs, spec)
 			continue
 		}
-		if consumed[name] {
-			continue
-		}
 		t := inv.Tensors[name]
 		specs = append(specs, BlobSpec{Name: name, Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}}}})
+	}
+	return specs, nil
+}
+
+func planPrequantExpertGroup(group string, weights []SourceTensor, fused map[string]BlobSpec) ([]BlobSpec, error) {
+	// The float importer's expert planner validates contiguous indices. Stacking
+	// copies the source bytes, so the output dtype and shape also perform the
+	// header-only U8 weight repack and FP8 scale relabeling.
+	specs, err := planExpertGroup(group, weights, "", defaultQuantPolicy{})
+	if err != nil {
+		return nil, err
+	}
+	bank := &specs[0]
+	weightsByProjection := bank.Tensors
+	bank.Tensors = nil
+	for _, packed := range weightsByProjection {
+		count := len(packed.Sources)
+		scaleSources := make([]SourceTensor, count)
+		globalSources := make([]SourceTensor, count)
+		for index, weight := range packed.Sources {
+			part, ok := fused[weight.Name]
+			if !ok || part.Metadata["quant_type"] != "nvfp4" || len(part.Tensors) != 3 ||
+				len(weight.Shape) != 2 {
+				return nil, fmt.Errorf("prequantized expert %s has unsupported NVFP4 layout", weight.Name)
+			}
+			wordShape := weight.Shape
+			normalized := part.Tensors[0]
+			switch weight.Dtype {
+			case "U32":
+				if normalized.Transform != TransformNone {
+					return nil, fmt.Errorf("prequantized expert %s has unsupported NVFP4 weight transform", weight.Name)
+				}
+			case "U8":
+				if normalized.Transform != TransformRepackFP4 || normalized.OutDtype != "U32" ||
+					len(normalized.OutShape) != 2 || weight.Shape[1]%4 != 0 {
+					return nil, fmt.Errorf("prequantized expert %s has unsupported NVFP4 weight transform", weight.Name)
+				}
+				wordShape = normalized.OutShape
+			default:
+				return nil, fmt.Errorf("prequantized expert %s has unsupported NVFP4 weight dtype %s", weight.Name, weight.Dtype)
+			}
+			if index == 0 {
+				packed.OutDtype = "U32"
+				packed.OutShape = append([]int32{int32(count)}, wordShape...)
+			} else if !slices.Equal(wordShape, packed.OutShape[1:]) {
+				return nil, fmt.Errorf("prequantized expert %s differs from the NVFP4 bank layout", weight.Name)
+			}
+			scale, global := part.Tensors[1], part.Tensors[2]
+			if scale.Name != weight.Name+".scale" || global.Name != weight.Name+".global_scale" ||
+				len(scale.Sources) != 1 || len(global.Sources) != 1 ||
+				global.Transform != TransformScalarF32 {
+				return nil, fmt.Errorf("prequantized expert %s has unsupported NVFP4 companions", weight.Name)
+			}
+			s, g := scale.Sources[0], global.Sources[0]
+			scaleIsU8 := s.Dtype == "U8" && scale.Transform == TransformNone
+			scaleIsFP8 := isE4M3Dtype(s.Dtype) && scale.Transform == TransformRelabelU8 && scale.OutDtype == "U8"
+			if (!scaleIsU8 && !scaleIsFP8) || len(s.Shape) != 2 || g.Dtype != "F32" || !slices.Equal(g.Shape, []int32{1}) ||
+				(index > 0 && (s.Dtype != scaleSources[0].Dtype || !slices.Equal(s.Shape, scaleSources[0].Shape) || !slices.Equal(g.Shape, globalSources[0].Shape))) {
+				return nil, fmt.Errorf("prequantized expert %s differs from the NVFP4 bank layout", weight.Name)
+			}
+			if bank.Metadata != nil && !maps.Equal(bank.Metadata, part.Metadata) {
+				return nil, fmt.Errorf("prequantized expert %s has different quantization metadata", weight.Name)
+			}
+			bank.Metadata = part.Metadata
+			scaleSources[index], globalSources[index] = s, g
+		}
+		bank.Tensors = append(bank.Tensors, packed,
+			TensorSpec{Name: packed.Name + ".scale", Sources: scaleSources, Transform: TransformStackExperts, OutDtype: "U8", OutShape: append([]int32{int32(count)}, scaleSources[0].Shape...)},
+			TensorSpec{Name: packed.Name + ".global_scale", Sources: globalSources, Transform: TransformStackExperts, OutDtype: "F32", OutShape: []int32{int32(count)}},
+		)
 	}
 	return specs, nil
 }
