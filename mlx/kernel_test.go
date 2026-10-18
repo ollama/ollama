@@ -33,6 +33,10 @@ func patternArray(dtype DType, shape []int, bias, scale float32, stride, modulus
 // Reduction order differs from the graph path, so bf16 y can land one ULP (6.1e-5) away.
 const gatedDeltaGraphTol = 2e-4
 
+// Float16 y lands up to 3.1e-5 away, one ULP at the largest outputs; this
+// keeps the bf16 margin.
+const gatedDeltaGraphTolF16 = 1e-4
+
 // requireClose compares two arrays within tol after widening to float32.
 // NaN never compares close, so a kernel that produces NaN fails.
 func requireClose(label string, got, want *Array, tol float64) error {
