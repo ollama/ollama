@@ -1,6 +1,8 @@
 package create
 
 import (
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -38,6 +40,40 @@ func specNames(specs []BlobSpec) []string {
 		names[i] = s.Name
 	}
 	return names
+}
+
+// setShape overrides the fixture's default shape for one inventory tensor.
+func setShape(inv Inventory, name string, shape ...int32) {
+	t := inv.Tensors[name]
+	t.Shape = shape
+	inv.Tensors[name] = t
+}
+
+// mlxAffineInventory builds an MLX prequantized layer "l" with 128 inputs
+// packed at bits per value in groups of groupSize.
+func mlxAffineInventory(q sourceQuantization, bits, groupSize int32) Inventory {
+	inv := newInventory(sourceModelConfig{Quantization: q}, map[string]string{
+		"l.weight":    "U32",
+		"l.scales":    "BF16",
+		"l.biases":    "BF16",
+		"norm.weight": "BF16",
+	})
+	setShape(inv, "l.weight", 128, 128*bits/32)
+	setShape(inv, "l.scales", 128, 128/groupSize)
+	setShape(inv, "l.biases", 128, 128/groupSize)
+	return inv
+}
+
+// checkPlanErr fails the test unless Plan's err contains want, or is nil when
+// want is empty.
+func checkPlanErr(t *testing.T, err error, want string) {
+	t.Helper()
+	switch {
+	case want == "" && err != nil:
+		t.Fatalf("Plan() error = %v", err)
+	case want != "" && (err == nil || !strings.Contains(err.Error(), want)):
+		t.Fatalf("Plan() error = %v, want %q", err, want)
+	}
 }
 
 func TestPlanPrequantizedMLX(t *testing.T) {
@@ -426,5 +462,222 @@ func TestPlanPrequantizedRetainsKVCacheScales(t *testing.T) {
 		if !ok || len(spec.Tensors) != 1 || sourceName(spec.Tensors[0]) != name {
 			t.Errorf("%s = %+v ok=%v, want unchanged standalone tensor", name, spec, ok)
 		}
+	}
+}
+
+// mlx-lm releases from before the "mode" field write only bits and group_size
+// for affine weights. The loader cannot tell 4-bit
+// group-64 from 8-bit group-32 by shape, and it reads 4-bit group-128 as 8-bit
+// group-64, so the blob must record the type.
+func TestPlanPrequantizedMLXWithoutMode(t *testing.T) {
+	tests := []struct {
+		name          string
+		q             sourceQuantization
+		wantQuant     string
+		wantGroupSize string
+	}{
+		{"4-bit group-64", sourceQuantization{Bits: 4, GroupSize: 64}, "int4", "64"},
+		{"4-bit group-128", sourceQuantization{Bits: 4, GroupSize: 128}, "int4", "128"},
+		{"8-bit group-32", sourceQuantization{Bits: 8, GroupSize: 32}, "int8", "32"},
+		// Other producers name themselves with quant_method, and their bits
+		// alone do not imply MLX affine packing.
+		{"with quant_method", sourceQuantization{Bits: 4, GroupSize: 64, QuantMethod: "awq"}, "", ""},
+		{"unsupported width", sourceQuantization{Bits: 7, GroupSize: 64}, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inv := mlxAffineInventory(tt.q, int32(tt.q.Bits), int32(tt.q.GroupSize))
+			specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatalf("Plan() error = %v", err)
+			}
+			w, ok := specByName(specs, "l.weight")
+			if !ok {
+				t.Fatal("missing l.weight blob")
+			}
+			if w.Metadata["quant_type"] != tt.wantQuant || w.Metadata["group_size"] != tt.wantGroupSize {
+				t.Errorf("metadata = %v, want quant_type=%q group_size=%q", w.Metadata, tt.wantQuant, tt.wantGroupSize)
+			}
+		})
+	}
+}
+
+// A config without a mode whose per-module entries differ from the default
+// records no type, so the loader reads each weight from its shapes. Weights at
+// layouts it can't read that way are refused at import.
+func TestPlanPrequantizedMLXModuleEntries(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		q               sourceQuantization
+		bits, groupSize int32
+		wantErr         string
+	}{
+		{
+			name:      "restates the default",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"l": {Bits: 4, GroupSize: 64, Mode: "affine"}}},
+			bits:      4,
+			groupSize: 64,
+		},
+		{
+			name:      "omitted fields restating the default",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"l": {Bits: 4}}},
+			bits:      4,
+			groupSize: 64,
+		},
+		{
+			name:      "not an MLX config",
+			q:         sourceQuantization{Bits: 4, GroupSize: 128, QuantMethod: "gptq", Modules: map[string]moduleQuantization{"l": {Bits: 8}}},
+			bits:      4,
+			groupSize: 128,
+		},
+		{
+			// A config with a mode records the default, as before.
+			name:      "mode stated",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Mode: "affine", Modules: map[string]moduleQuantization{"e": {Bits: 8, GroupSize: 64}}},
+			bits:      4,
+			groupSize: 64,
+		},
+		{
+			name:      "entry readable from shapes",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"l": {Bits: 8, GroupSize: 64}}},
+			bits:      8,
+			groupSize: 64,
+		},
+		{
+			name:      "default readable from shapes",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"e": {Bits: 8, GroupSize: 64}}},
+			bits:      4,
+			groupSize: 32,
+		},
+		{
+			// mlx-lm's AWQ tool writes a placeholder default and an entry for
+			// every module, so only the entries' layouts matter.
+			name:      "default unused by any weight",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"l": {Bits: 4, GroupSize: 32}}},
+			bits:      4,
+			groupSize: 32,
+		},
+		{
+			// The loader can't place int4/64 from its shapes.
+			name:      "an int4/64 default",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"e": {Bits: 8, GroupSize: 64}}},
+			bits:      4,
+			groupSize: 64,
+			wantErr:   "l: config.json quantizes this module as int4 with group size 64 and e differently; mixed-precision checkpoints are not supported yet",
+		},
+		{
+			// It reads int4/128 as int8/64.
+			name:      "an int4/128 default",
+			q:         sourceQuantization{Bits: 4, GroupSize: 128, Modules: map[string]moduleQuantization{"e": {Bits: 8, GroupSize: 64}}},
+			bits:      4,
+			groupSize: 128,
+			wantErr:   "l: config.json quantizes this module as int4 with group size 128 and e differently",
+		},
+		{
+			name:      "entry shapes can't resolve",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"l": {Bits: 8, GroupSize: 32}}},
+			bits:      8,
+			groupSize: 32,
+			wantErr:   "l: config.json quantizes this module as int8 with group size 32, unlike the model's int4 with group size 32; mixed-precision checkpoints are not supported yet",
+		},
+		{
+			name:      "omitted group size takes the MLX default",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"l": {Bits: 4}}},
+			bits:      4,
+			groupSize: 64,
+			wantErr:   "as int4 with group size 64, unlike the model's int4 with group size 32",
+		},
+		{
+			// {"bits": null} decodes to an empty entry.
+			name:      "null bits take the MLX default",
+			q:         sourceQuantization{Bits: 8, GroupSize: 128, Modules: map[string]moduleQuantization{"l": {}}},
+			bits:      4,
+			groupSize: 64,
+			wantErr:   "as int4 with group size 64, unlike the model's int8 with group size 128",
+		},
+		{
+			name:      "omitted bits take the MLX default",
+			q:         sourceQuantization{Bits: 8, GroupSize: 128, Modules: map[string]moduleQuantization{"l": {GroupSize: 128}}},
+			bits:      4,
+			groupSize: 128,
+			wantErr:   "as int4 with group size 128",
+		},
+		{
+			name:      "different mode",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"l": {Bits: 4, GroupSize: 32, Mode: "mxfp4"}}},
+			bits:      4,
+			groupSize: 32,
+			wantErr:   "as mxfp4 with group size 32",
+		},
+		{
+			name:      "unreadable entry",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"l": {Unreadable: true}}},
+			bits:      4,
+			groupSize: 32,
+			wantErr:   "l: config.json's quantization entry for this module has unreadable bits, group_size or mode",
+		},
+		{
+			name:      "unreadable entry no weight uses",
+			q:         sourceQuantization{Bits: 4, GroupSize: 32, Modules: map[string]moduleQuantization{"e": {Unreadable: true}}},
+			bits:      4,
+			groupSize: 32,
+		},
+		{
+			name:      "unsupported width",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"l": {Bits: 7}}},
+			bits:      4,
+			groupSize: 64,
+			wantErr:   "l: config.json quantizes this module with 7 bits, which is not supported",
+		},
+		{
+			name:      "unknown mode",
+			q:         sourceQuantization{Bits: 4, GroupSize: 64, Modules: map[string]moduleQuantization{"l": {Mode: "fp4"}}},
+			bits:      4,
+			groupSize: 64,
+			wantErr:   `l: config.json quantizes this module with mode "fp4", which is not supported`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			inv := mlxAffineInventory(tt.q, tt.bits, tt.groupSize)
+			_, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			checkPlanErr(t, err, tt.wantErr)
+		})
+	}
+}
+
+// mlx-lm's AWQ tool writes a placeholder default and an entry, or false, for
+// every leaf module. Its layers default to 4-bit group-64, which shapes can't
+// identify, and its embeddings to group 32.
+func TestPlanPrequantizedMLXAWQConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		groupSize int
+		wantErr   string
+	}{
+		{"default group size", 64, "model.layers.0.mlp.down_proj: config.json quantizes this module as int4 with group size 64 and model.embed_tokens differently"},
+		{"group size 32", 32, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg sourceModelConfig
+			if err := json.Unmarshal(fmt.Appendf(nil, `{"quantization": {
+				"group_size": 64, "bits": 4,
+				"model.embed_tokens": {"group_size": 32, "bits": 4},
+				"model.layers.0.mlp.down_proj": {"group_size": %d, "bits": 4},
+				"model.layers.0.input_layernorm": false
+			}}`, tt.groupSize), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			inv := newInventory(cfg, map[string]string{
+				"model.embed_tokens.weight":             "U32",
+				"model.embed_tokens.scales":             "BF16",
+				"model.embed_tokens.biases":             "BF16",
+				"model.layers.0.mlp.down_proj.weight":   "U32",
+				"model.layers.0.mlp.down_proj.scales":   "BF16",
+				"model.layers.0.mlp.down_proj.biases":   "BF16",
+				"model.layers.0.input_layernorm.weight": "BF16",
+			})
+			_, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			checkPlanErr(t, err, tt.wantErr)
+		})
 	}
 }
