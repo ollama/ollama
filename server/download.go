@@ -34,6 +34,7 @@ const maxRetries = 6
 var (
 	errMaxRetriesExceeded   = errors.New("max retries exceeded")
 	errPartStalled          = errors.New("part stalled")
+	errRangeNotSupported    = errors.New("server does not support byte ranges")
 	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
 )
 
@@ -274,41 +275,24 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	client := transfer.NewRedirectClient(requestURL.String(), opts.Insecure)
 	defer client.CloseIdleConnections()
 
-	g, inner := errgroup.WithContext(ctx)
-	g.SetLimit(numDownloadParts)
-	for i := range b.Parts {
-		part := b.Parts[i]
-		if part.Completed.Load() == part.Size {
-			continue
-		}
-
-		g.Go(func() error {
-			var err error
-			for try := 0; try < maxRetries; try++ {
-				w := io.NewOffsetWriter(file, part.StartsAt())
-				err = b.downloadChunk(inner, client, directURL, w, part)
-				switch {
-				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
-					// return immediately if the context is canceled or the device is out of space
-					return err
-				case errors.Is(err, errPartStalled):
-					try--
-					continue
-				case err != nil:
-					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
-					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
-					time.Sleep(sleep)
-					continue
-				default:
-					return nil
-				}
+	err = b.downloadParts(ctx, client, directURL, file)
+	if errors.Is(err, errRangeNotSupported) {
+		// All part writers have stopped. Restart with one part so a full
+		// response is written at offset zero instead of repeated per chunk.
+		slog.Info("server does not support byte ranges; restarting download", "digest", b.Digest)
+		for _, part := range b.Parts {
+			if err := os.Remove(part.Name()); err != nil {
+				return err
 			}
-
-			return fmt.Errorf("%w: %w", errMaxRetriesExceeded, err)
-		})
+		}
+		b.Parts = nil
+		b.Completed.Store(0)
+		if err := b.newPart(0, b.Total); err != nil {
+			return err
+		}
+		err = b.downloadParts(ctx, client, directURL, file)
 	}
-
-	if err := g.Wait(); err != nil {
+	if err != nil {
 		return err
 	}
 
@@ -328,6 +312,44 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	}
 
 	return nil
+}
+
+func (b *blobDownload) downloadParts(ctx context.Context, client *http.Client, directURL *url.URL, file *os.File) error {
+	g, inner := errgroup.WithContext(ctx)
+	g.SetLimit(numDownloadParts)
+	for i := range b.Parts {
+		part := b.Parts[i]
+		if part.Completed.Load() == part.Size {
+			continue
+		}
+
+		g.Go(func() error {
+			var err error
+			for try := 0; try < maxRetries; try++ {
+				w := io.NewOffsetWriter(file, part.StartsAt())
+				err = b.downloadChunk(inner, client, directURL, w, part)
+				switch {
+				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC), errors.Is(err, errRangeNotSupported):
+					// Stop all parts before retrying without ranges or returning a fatal error.
+					return err
+				case errors.Is(err, errPartStalled):
+					try--
+					continue
+				case err != nil:
+					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
+					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
+					time.Sleep(sleep)
+					continue
+				default:
+					return nil
+				}
+			}
+
+			return fmt.Errorf("%w: %w", errMaxRetriesExceeded, err)
+		})
+	}
+
+	return g.Wait()
 }
 
 // downloadDiscoveryRedirect follows only redirects within the original
@@ -381,6 +403,16 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 			return err
 		}
 		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusPartialContent:
+		case http.StatusOK:
+			if part.StartsAt() != 0 || part.Size != b.Total {
+				return errRangeNotSupported
+			}
+		default:
+			return fmt.Errorf("unexpected status code %d", resp.StatusCode)
+		}
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
