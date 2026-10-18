@@ -368,6 +368,10 @@ func (s *llamaServerRunner) RunnerOptions() map[string]any {
 		switch fv.Kind() {
 		case reflect.Int:
 			options[jsonTag] = fv.Int()
+		case reflect.String:
+			if s := fv.String(); s != "" {
+				options[jsonTag] = s
+			}
 		case reflect.Pointer:
 			if fv.IsNil() {
 				continue
