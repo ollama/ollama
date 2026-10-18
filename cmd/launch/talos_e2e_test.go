@@ -18,7 +18,7 @@ import (
 // This opt-in test downloads and executes the public, signature-verifying Talos
 // installer in a temporary prefix. Only the model server is a fixture; the
 // installer, config CLI, Python runtime, chat and event log are real.
-// Run with TALOS_TEST_INSTALLER=1 go test ./cmd/launch -run TestTalosReleasedInstaller -v.
+// Run with TALOS_TEST_INSTALLER=1 go test -timeout 20m ./cmd/launch -run TestTalosReleasedInstaller -v.
 func TestTalosReleasedInstaller(t *testing.T) {
 	if os.Getenv("TALOS_TEST_INSTALLER") != "1" {
 		t.Skip("set TALOS_TEST_INSTALLER=1 to test the published installer")
