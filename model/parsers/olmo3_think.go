@@ -136,8 +136,9 @@ func (p *Olmo3ThinkParser) eat() ([]olmo3Event, bool) {
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
-			// </think> is a preserved token, so the whitespace the model puts
-			// after it usually arrives in a later chunk; keep eating it.
+			// </think> is a preserved token and is delivered on its own, so the
+			// whitespace the model puts after it arrives in the next chunk;
+			// keep eating it.
 			p.state = olmo3ThinkDoneEatingWhitespace
 
 			if len(thinking) > 0 {
