@@ -1430,12 +1430,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 
-	timeout := 10 * time.Second
-	if runner.loading {
-		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
-	}
-
-	if runner.Options == nil {
+	// Startup holds refMu. If loading is still set here startup failed.
+	if runner.loading || runner.Options == nil {
 		return true
 	}
 
@@ -1465,7 +1461,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 		return true
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
