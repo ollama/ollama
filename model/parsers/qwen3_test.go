@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -70,6 +71,43 @@ func TestQwen3ParserThinkingEnabledWithSplitOpeningTag(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3ParserThinkingEnabledWithExplicitOpeningTagStreamed(t *testing.T) {
+	// <think> is a preserved token, so the newline the model puts after it
+	// arrives in a later chunk than the tag itself.
+	for _, tt := range []struct {
+		name   string
+		chunks []string
+	}{
+		{name: "newline in its own chunk", chunks: []string{"<think>", "\n", "Let me think...", "</think>", "\n\n", "Answer."}},
+		{name: "whitespace only chunks", chunks: []string{"<think>", "\n", " ", "\n", "Let me think...</think>Answer."}},
+		{name: "newline with the first word", chunks: []string{"<think>", "\nLet me think...", "</think>Answer."}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			var content, thinking strings.Builder
+			for i, chunk := range tt.chunks {
+				c, th, calls, err := parser.Add(chunk, i == len(tt.chunks)-1)
+				if err != nil {
+					t.Fatalf("parse failed on chunk %d: %v", i, err)
+				}
+				if len(calls) != 0 {
+					t.Fatalf("expected no tool calls, got %d", len(calls))
+				}
+				content.WriteString(c)
+				thinking.WriteString(th)
+			}
+			if thinking.String() != "Let me think..." {
+				t.Fatalf("expected thinking %q, got %q", "Let me think...", thinking.String())
+			}
+			if content.String() != "Answer." {
+				t.Fatalf("expected content %q, got %q", "Answer.", content.String())
+			}
+		})
 	}
 }
 
