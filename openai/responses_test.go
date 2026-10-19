@@ -2476,6 +2476,30 @@ func TestToResponse_WithReasoning(t *testing.T) {
 	}
 }
 
+func TestToResponse_TextWithToolCalls(t *testing.T) {
+	response := ToResponse("test", "resp_1", "item_1", api.ChatResponse{
+		Message: api.Message{
+			Thinking: "let me look",
+			Content:  "I will run ls.",
+			ToolCalls: []api.ToolCall{{
+				ID:       "call_1",
+				Function: api.ToolCallFunction{Name: "exec_command", Arguments: testArgs(map[string]any{"cmd": "ls"})},
+			}},
+		},
+	}, ResponsesRequest{})
+
+	var types []string
+	for _, item := range response.Output {
+		types = append(types, item.Type)
+	}
+	if want := []string{"reasoning", "message", "function_call"}; !slices.Equal(types, want) {
+		t.Fatalf("output types = %q, want %q", types, want)
+	}
+	if got := response.Output[1].Content[0].Text; got != "I will run ls." {
+		t.Fatalf("message text = %q, want %q", got, "I will run ls.")
+	}
+}
+
 func TestToResponse_UsageIncludesCachedTokens(t *testing.T) {
 	response := ToResponse("gpt-oss:20b", "resp_123", "msg_456", api.ChatResponse{
 		CreatedAt: time.Now(),
@@ -3253,6 +3277,19 @@ func TestResponsesStreamConverter_OutputItemOrder(t *testing.T) {
 				"added 2 message", "done 2 message",
 			},
 			wantOutput: []string{"message first", "reasoning", "message second"},
+		},
+		{
+			name: "text in a tool call chunk",
+			chunks: []api.ChatResponse{
+				{Message: api.Message{Content: "I will "}},
+				{Message: api.Message{Content: "run ls.", ToolCalls: []api.ToolCall{ls}}},
+				{Done: true},
+			},
+			wantItems: []string{
+				"added 0 message", "done 0 message",
+				"added 1 function_call", "done 1 function_call",
+			},
+			wantOutput: []string{"message I will run ls.", "function_call"},
 		},
 	}
 	for _, tt := range tests {

@@ -1316,6 +1316,23 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		})
 	}
 
+	if chatResponse.Message.Content != "" || len(chatResponse.Message.ToolCalls) == 0 {
+		output = append(output, ResponsesOutputItem{
+			ID:     itemID,
+			Type:   "message",
+			Status: "completed",
+			Role:   "assistant",
+			Content: []ResponsesOutputContent{
+				{
+					Type:        "output_text",
+					Text:        chatResponse.Message.Content,
+					Annotations: []any{},
+					Logprobs:    []any{},
+				},
+			},
+		})
+	}
+
 	if len(chatResponse.Message.ToolCalls) > 0 {
 		toolCalls := ToToolCalls(chatResponse.Message.ToolCalls)
 		availableTools := responsesRequestTools(request)
@@ -1342,21 +1359,6 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 				Arguments: tc.Function.Arguments,
 			})
 		}
-	} else {
-		output = append(output, ResponsesOutputItem{
-			ID:     itemID,
-			Type:   "message",
-			Status: "completed",
-			Role:   "assistant",
-			Content: []ResponsesOutputContent{
-				{
-					Type:        "output_text",
-					Text:        chatResponse.Message.Content,
-					Annotations: []any{},
-					Logprobs:    []any{},
-				},
-			},
-		})
 	}
 
 	var instructions *string
@@ -1522,15 +1524,15 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 		events = append(events, c.processThinking(r.Message.Thinking)...)
 	}
 
+	// Handle text content (text after tool calls is dropped)
+	if !c.toolCallsSent && r.Message.Content != "" {
+		events = append(events, c.processTextContent(r.Message.Content)...)
+	}
+
 	// Handle tool calls
 	if hasToolCalls {
 		events = append(events, c.processToolCalls(r.Message.ToolCalls)...)
 		c.toolCallsSent = true
-	}
-
-	// Handle text content (only if no tool calls)
-	if !hasToolCalls && !c.toolCallsSent && r.Message.Content != "" {
-		events = append(events, c.processTextContent(r.Message.Content)...)
 	}
 
 	// Done - emit closing events
