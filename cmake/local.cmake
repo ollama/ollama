@@ -114,9 +114,16 @@ else()
     string(STRIP "${OLLAMA_LLAMA_CPP_GIT_TAG}" OLLAMA_LLAMA_CPP_GIT_TAG)
     include(${CMAKE_SOURCE_DIR}/llama/compat/compat.cmake)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" STREQUAL "")
-        get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR
+        get_filename_component(_llama_cpp_override
             "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
-        message(STATUS "Using llama.cpp source override: ${OLLAMA_LLAMA_CPP_SOURCE_DIR}")
+        message(STATUS "Using llama.cpp source override: ${_llama_cpp_override}")
+        # The llama-server sub-builds skip the compat patch, so prepare the
+        # override here (staged copy by default; see the included file).
+        option(OLLAMA_LLAMA_CPP_OVERRIDE_PATCH_IN_PLACE
+            "Apply llama/compat patches directly to FETCHCONTENT_SOURCE_DIR_LLAMA_CPP instead of a staged copy"
+            OFF)
+        include(${CMAKE_SOURCE_DIR}/cmake/stage-llama-cpp-source.cmake)
+        ollama_prepare_llama_cpp_override("${_llama_cpp_override}" OLLAMA_LLAMA_CPP_SOURCE_DIR)
         add_custom_target(ollama-llama-cpp-source)
     elseif(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
         get_filename_component(OLLAMA_LLAMA_CPP_SOURCE_DIR

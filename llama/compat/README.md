@@ -12,9 +12,21 @@ tensor layouts on disk, and this directory can be removed.
 
 The layer is applied automatically at build time via CMake `FetchContent`'s
 `PATCH_COMMAND` for normal fetched builds. If CMake is pointed at a source
-override through `FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the same patch is applied
-during configure. If `OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is
-intentionally skipped so a developer can iterate on a local llama.cpp tree.
+override through `FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the top-level configure
+(`cmake/local.cmake`, via `cmake/stage-llama-cpp-source.cmake`) copies the
+override to `<build>/_deps/llama_cpp-override-src` (without `.git` and
+top-level `build*` directories) and applies the patch to that copy, so the
+override tree itself is never modified. The copy is refreshed when the
+override's git HEAD, its uncommitted tracked changes, or the patch files
+change (always, if the override is not a git checkout); re-run the configure
+step after editing the override. Pass
+`-DOLLAMA_LLAMA_CPP_OVERRIDE_PATCH_IN_PLACE=ON` to patch the override in place
+instead; that is idempotent (already-applied patches are skipped) and a tree
+that conflicts with the patch fails the configure. A
+`FETCHCONTENT_SOURCE_DIR_LLAMA_CPP` given directly to a standalone
+`llama/server` configure is still patched in place there. If
+`OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is intentionally skipped so a
+developer can iterate on a local llama.cpp tree.
 
 ## Files
 
