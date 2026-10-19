@@ -148,6 +148,7 @@ type llamaServerRunner struct {
 	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
 	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
 	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
+	memCPUModel        uint64 // all host-resident model weight bytes (CPU_Mapped, CPU_REPACK, CPU, *_Host), parsed from llama-server logs
 	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
 	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
 	status             *StatusWriter
@@ -1157,6 +1158,7 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memGPU = 0
 	s.memModelFileBacked = 0
 	s.memCPUMappedModel = 0
+	s.memCPUModel = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -2793,6 +2795,7 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	memGPU := s.memGPU
 	memModelFileBacked := s.memModelFileBacked
 	memCPUMappedModel := s.memCPUMappedModel
+	memCPUModel := s.memCPUModel
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2808,12 +2811,21 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 		// repacked copies such as CPU_REPACK are separate real allocations and
 		// must be left intact. Weights cannot exceed the model file on disk, so
 		// trim that overlap from the mmap-backed (reclaimable page cache) portion.
+		hostModel := memCPUModel
 		if memCPUMappedModel > 0 {
 			if modelSize := modelFileSize(s.modelPath, s.metadata); modelSize > 0 && memModelFileBacked > modelSize {
-				total -= min(memCPUMappedModel, memModelFileBacked-modelSize)
+				trim := min(memCPUMappedModel, memModelFileBacked-modelSize)
+				total -= trim
+				hostModel -= min(hostModel, trim)
 			}
 		}
-		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
+		// A full offload is reported as 100% GPU: the host-side model buffers
+		// left behind are normally just input embeddings. Some architectures
+		// keep large weight tables on the host by design (DeepSeek V4.1
+		// Engram per_layer_token_embd is ~126 GiB in CPU_Mapped). Those are
+		// real resident memory, so only mask when the host share is small.
+		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 &&
+			hostModel <= fullOffloadHostModelSlack(vram) {
 			total = vram
 		}
 		return total, vram
@@ -2827,11 +2839,30 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
+// fullOffloadHostModelSlack is the host-resident model weight size still
+// treated as negligible on a full GPU offload: 1/8 of the GPU footprint or
+// 2 GiB, whichever is larger.
+func fullOffloadHostModelSlack(vram uint64) uint64 {
+	return max(vram/8, 2<<30)
+}
+
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Uses model file size as a proxy for weights plus a rough KV cache estimate.
 // This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
+//
+// Weights are the aggregate size of every GGUF shard (f must be loaded with
+// its shard paths). When projector paths are given, the multimodal projector
+// weights are added as well; an inline projector (projectors[0] == modelPath)
+// is already part of the model file size.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int, projectors ...string) uint64 {
 	weights := modelFileSize(modelPath, f)
+	if len(projectors) > 0 && projectors[0] != modelPath {
+		if mmproj, err := mmprojMemoryRequirement(modelPath, f, projectors); err == nil {
+			weights += mmproj
+		} else {
+			slog.Debug("projector size unavailable for memory prediction", "projector", projectors[0], "error", err)
+		}
+	}
 
 	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
 	layers := f.KV().BlockCount()
@@ -2864,6 +2895,18 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+
+	// last is the most recently parsed buffer line. Consecutive buffer lines
+	// of one kind from one component belong to one allocation step and are
+	// summed: llama.cpp prints a model buffer per mmap'd file (split GGUFs)
+	// and per contiguous tensor range, and one KV buffer per cache (iSWA,
+	// DSV4 raw/CSA/HCA). A line after a different kind or component starts a
+	// new step (fit probe followed by the real load) and replaces the earlier
+	// buffers of that component and kind.
+	last      memoryBufferKey
+	hasLast   bool
+	clipIndex int    // number of mtmd/CLIP contexts seen
+	clipBack  string // backend of the current mtmd/CLIP context
 }
 
 type memoryBufferKey struct {
@@ -2886,6 +2929,16 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
 var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+
+// clipBackendRegex and clipModelSizeRegex capture mtmd/CLIP projector weights,
+// which are not printed as "model buffer size" lines:
+//
+//	clip_ctx: CLIP using MTL0 backend
+//	load_hparams: model size:         926.00 MiB
+var (
+	clipBackendRegex   = regexp.MustCompile(`CLIP using (\S+) backend`)
+	clipModelSizeRegex = regexp.MustCompile(`load_hparams:\s+model size:\s*([\d.]+)\s*MiB`)
+)
 
 var (
 	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
@@ -2951,15 +3004,28 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
-					if w.buffers == nil {
-						w.buffers = make(map[memoryBufferKey]memoryBuffer)
-					}
-					w.buffers[memoryBufferKey{
+					w.recordBufferLocked(memoryBufferKey{
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
-					w.updateRunnerMemoryLocked()
+					}, uint64(mib*1024*1024))
+				}
+			}
+			if match := clipBackendRegex.FindSubmatch(b); match != nil {
+				w.clipIndex++
+				w.clipBack = string(match[1])
+			}
+			if match := clipModelSizeRegex.FindSubmatch(b); match != nil {
+				if mib, err := strconv.ParseFloat(string(match[1]), 64); err == nil {
+					backend := w.clipBack
+					if backend == "" {
+						backend = "CPU"
+					}
+					w.recordBufferLocked(memoryBufferKey{
+						component: "clip#" + strconv.Itoa(max(w.clipIndex, 1)),
+						backend:   backend,
+						kind:      memoryKindProjector,
+					}, uint64(mib*1024*1024))
 				}
 			}
 		}()
@@ -2967,8 +3033,29 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 	return w.inner.Write(b)
 }
 
+// memoryKindProjector marks mtmd/CLIP projector weights. They live in their
+// own file, so they never overlap the model's mmap spans.
+const memoryKindProjector = "projector"
+
+func (w *memoryParsingWriter) recordBufferLocked(key memoryBufferKey, bytes uint64) {
+	if w.buffers == nil {
+		w.buffers = make(map[memoryBufferKey]memoryBuffer)
+	}
+	continuing := w.hasLast && w.last.kind == key.kind && w.last.component == key.component
+	if !continuing {
+		for k := range w.buffers {
+			if k.kind == key.kind && k.component == key.component {
+				delete(w.buffers, k)
+			}
+		}
+	}
+	w.buffers[key] = memoryBuffer{bytes: w.buffers[key].bytes + bytes}
+	w.last, w.hasLast = key, true
+	w.updateRunnerMemoryLocked()
+}
+
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu, modelFileBacked, cpuMappedModel uint64
+	var total, gpu, modelFileBacked, cpuMappedModel, cpuModel uint64
 	byDevice := make(map[string]uint64)
 
 	for key, buffer := range w.buffers {
@@ -2986,6 +3073,9 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 			if !onGPU && mmapBacked {
 				cpuMappedModel += buffer.bytes
 			}
+			if !onGPU {
+				cpuModel += buffer.bytes
+			}
 		}
 		if isGPUBuffer(key.backend) {
 			gpu += buffer.bytes
@@ -2997,6 +3087,7 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	w.runner.memGPU = gpu
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
+	w.runner.memCPUModel = cpuModel
 	w.runner.vramByDevice = byDevice
 }
 
