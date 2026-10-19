@@ -16,12 +16,12 @@ jobs:
     env:
       CGO_ENABLED: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Cache MLX Darwin release payload
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/mlx-darwin-release
           key: mlx-darwin-${{ hashFiles('MLX_VERSION', 'MLX_C_VERSION', 'cmake/local.cmake', 'cmake/apply-git-patches.cmake', 'cmake/mlx/CMakeLists.txt', 'cmake/mlx/CMakePresets.json', 'mlx/CMakeLists.txt', 'mlx/compat/**', 'mlxrunner/xgrammar/native/**') }}

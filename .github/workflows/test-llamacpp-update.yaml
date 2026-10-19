@@ -24,7 +24,7 @@ jobs:
       VERSION: ${{ steps.goflags.outputs.VERSION }}
       vendorsha: ${{ steps.goflags.outputs.vendorsha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set environment
         id: goflags
         shell: bash
@@ -47,8 +47,8 @@ jobs:
       CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
       CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -110,7 +110,7 @@ jobs:
             target: publish-llama-server-cuda_jetpack6
             payload: cuda_jetpack6
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -145,7 +145,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -182,7 +182,7 @@ jobs:
       matrix:
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           pattern: linux-payload-${{ matrix.arch }}-*
@@ -438,8 +438,8 @@ jobs:
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
           key: ${{ matrix.install }}
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
@@ -490,8 +490,8 @@ jobs:
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
             throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
           }
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -511,9 +511,9 @@ jobs:
           }
           $ErrorActionPreference='Stop'
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
       - name: Build Windows binaries and app launchers
         run: ./scripts/build_windows.ps1 ollama ollamaArm64 app appArm64
       - name: Verify Windows build payloads
@@ -542,8 +542,8 @@ jobs:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
