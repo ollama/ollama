@@ -442,7 +442,7 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 
 	params = appendMainGPUArgs(params, launch.opts)
 
-	params = appendContextShiftArgs(params, launch.opts, launch.config.ContextShift)
+	params = appendContextShiftArgs(params, launch.opts, launch.serverContextShift())
 
 	// Set up library paths for GPU backend discovery
 	cmd = exec.Command(exe, params...)
