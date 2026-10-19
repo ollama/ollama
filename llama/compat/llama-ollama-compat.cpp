@@ -22,6 +22,15 @@
 #include <utility>
 #include <vector>
 
+// The vendored llama.cpp (unslothai/llama.cpp b11724-mix, incl. unslothai/llama.cpp#239)
+// loads Unsloth's legacy "glm5next" arch/KV prefix and clip.projector_type=glm5next
+// (swiglu_limit, default pixel budget) natively. Keep our remap compiled but out of the
+// load path so the two don't both handle these files. Build with
+// -DOLLAMA_COMPAT_NATIVE_GLM5NEXT=0 to re-enable the remap on a stock llama.cpp pin.
+#ifndef OLLAMA_COMPAT_NATIVE_GLM5NEXT
+#define OLLAMA_COMPAT_NATIVE_GLM5NEXT 1
+#endif
+
 namespace llama_ollama_compat {
 
 using namespace llama_ollama_compat::detail; // pull detail:: helpers into scope
@@ -1554,7 +1563,7 @@ void handle_gptoss(const llama_model_loader * ml, gguf_context * meta,
 // and KV prefix "glm5next.*". llama.cpp uses "glm5-next" / "glm5-next.*".
 // Same tensor layout otherwise — only the arch string and KV prefix differ.
 
-bool detect_ollama_glm5next(const gguf_context * meta) {
+[[maybe_unused]] bool detect_ollama_glm5next(const gguf_context * meta) {
     const int64_t arch_kid = gguf_find_key(meta, "general.architecture");
     if (arch_kid < 0) return false;
     return std::strcmp(gguf_get_val_str(meta, arch_kid), "glm5next") == 0;
@@ -1562,7 +1571,7 @@ bool detect_ollama_glm5next(const gguf_context * meta) {
 
 // `arch_name` is mutated to "glm5-next" so the caller's subsequent
 // LLM_KV lookups query the renamed prefix.
-void handle_glm5next(const llama_model_loader * ml, gguf_context * meta,
+[[maybe_unused]] void handle_glm5next(const llama_model_loader * ml, gguf_context * meta,
                      ggml_context * ctx, std::string & arch_name) {
     if (!detect_ollama_glm5next(meta)) return;
     (void) ml;
@@ -3261,7 +3270,7 @@ void handle_missing_llava_projector_type(gguf_context * meta) {
 // (PROJECTOR_TYPE_GLM5V) and the swiglu_clamp / image_*_pixels keys.
 // Remap at mmproj load so vision works without rewriting on-disk GGUFs.
 // Matches Unsloth llama.cpp clip.cpp legacy GLM5V branch.
-void handle_glm5next_projector_type(gguf_context * meta) {
+[[maybe_unused]] void handle_glm5next_projector_type(gguf_context * meta) {
     const int64_t kid = gguf_find_key(meta, "clip.projector_type");
     if (kid < 0) return;
     if (gguf_get_kv_type(meta, kid) != GGUF_TYPE_STRING) return;
@@ -3334,7 +3343,9 @@ bool translate_metadata(const llama_model_loader * ml,
     if (arch_name == "laguna")   handle_laguna   (meta, ctx);
     if (arch_name == "gptoss")        handle_gptoss        (ml, meta, ctx, arch_name);
     // glm5next switches arch_name to "glm5-next" — same pattern as gptoss.
+#if !OLLAMA_COMPAT_NATIVE_GLM5NEXT
     if (arch_name == "glm5next")      handle_glm5next      (ml, meta, ctx, arch_name);
+#endif
     if (arch_name == "lfm2")          handle_lfm2          (ml, meta, ctx);
     if (arch_name == "olmo3")         handle_olmo3         (meta, arch_name);
     if (arch_name == "mistral3")      handle_mistral3      (ml, meta, ctx);
@@ -3365,7 +3376,9 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     if (compat_disabled()) return;
 
     handle_missing_llava_projector_type(meta);
+#if !OLLAMA_COMPAT_NATIVE_GLM5NEXT
     handle_glm5next_projector_type(meta);
+#endif
 
     if (!any_tensor_with_prefix(ctx, "v.")) return; // nothing to translate
 

@@ -151,6 +151,16 @@ const (
 	TensorTypeMXFP4
 	TensorTypeNVFP4
 	TensorTypeQ1_0
+	TensorTypeQ2_0
+	TensorTypeMXFP8 // gather-only in llama.cpp (DeepSeek-V4.1 Engram table)
+)
+
+// Fork-local llama.cpp types (unslothai/llama.cpp#61). Upstream reserves 42..63,
+// so these start at 64; a stock llama.cpp rejects files that use them.
+const (
+	TensorTypeIQ1_XS   TensorType = 64
+	TensorTypeIQ1_XXS  TensorType = 65
+	TensorTypeIQ1_XXXS TensorType = 66
 )
 
 func (tt TensorType) NumBytes() float64 {
@@ -223,6 +233,21 @@ func (tt TensorType) typeSize() int64 {
 		return 4 + tt.blockSize()/2
 	case TensorTypeQ1_0:
 		return 2 + tt.blockSize()/8
+	case TensorTypeQ2_0:
+		// block_q2_0: ggml_half d + qs[QK2_0/4]
+		return 2 + tt.blockSize()/4
+	case TensorTypeMXFP8:
+		// block_mxfp8: uint8 e (E8M0) + qs[QK_MXFP8] (E4M3)
+		return 1 + tt.blockSize()
+	case TensorTypeIQ1_XS:
+		// block_iq1_xs: ggml_half d + qs[QK_K/8] + qh[QK_K/32] + QK_K/64
+		return 2 + tt.blockSize()/8 + tt.blockSize()/32 + tt.blockSize()/64
+	case TensorTypeIQ1_XXS:
+		// block_iq1_xxs: ggml_half d + qs[QK_K/8] + qh[QK_K/32]
+		return 2 + tt.blockSize()/8 + tt.blockSize()/32
+	case TensorTypeIQ1_XXXS:
+		// block_iq1_xxxs: ggml_half d + qs[QK_K/8] + sc[QK_K/64]
+		return 2 + tt.blockSize()/8 + tt.blockSize()/64
 	default:
 		return 0
 	}
@@ -239,7 +264,8 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeF64,
 		TensorTypeBF16:
 		return 1
-	case TensorTypeNVFP4:
+	case TensorTypeNVFP4,
+		TensorTypeQ2_0:
 		return 64
 	case TensorTypeQ1_0:
 		return 128
@@ -250,7 +276,8 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeQ8_0,
 		TensorTypeQ8_1,
 		tensorTypeIQ4_NL,
-		TensorTypeMXFP4:
+		TensorTypeMXFP4,
+		TensorTypeMXFP8:
 		return 32
 	default:
 		return 256
@@ -343,6 +370,16 @@ func (tt TensorType) String() string {
 		return "nvfp4"
 	case TensorTypeQ1_0:
 		return "q1_0"
+	case TensorTypeQ2_0:
+		return "q2_0"
+	case TensorTypeMXFP8:
+		return "mxfp8"
+	case TensorTypeIQ1_XS:
+		return "iq1_xs"
+	case TensorTypeIQ1_XXS:
+		return "iq1_xxs"
+	case TensorTypeIQ1_XXXS:
+		return "iq1_xxxs"
 	default:
 		return "unknown"
 	}

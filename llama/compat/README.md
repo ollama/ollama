@@ -79,7 +79,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and hides unused embedded vision/audio/projector tensors. | n/a |
 | `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 vision/audio projector translation for GGUF blobs. |
 | `gptoss` | Maps to `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
-| `glm5next` | Maps to `glm5-next` and renames the `glm5next.*` KV prefix. | Remaps Unsloth `clip.projector_type=glm5next` to `glm5v`. |
+| `glm5next` | Maps to `glm5-next` and renames the `glm5next.*` KV prefix (disabled by default on ds41-test: handled natively by unslothai/llama.cpp#239; `-DOLLAMA_COMPAT_NATIVE_GLM5NEXT=0` re-enables). | Remaps Unsloth `clip.projector_type=glm5next` to `glm5v` (same guard). |
 | `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
 | `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |
 | `mistral3` | Fixes RoPE/YaRN metadata and hides embedded vision/projector tensors. | Pixtral-style projector translation. |
