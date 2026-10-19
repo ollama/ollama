@@ -1364,6 +1364,50 @@ func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
 	}
 }
 
+func TestGetModelInfo_ManifestVoices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// Voices described in the prompt rather than stored as voice tensors are
+	// named in the manifest config.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-voices", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion", "speech"}, Voices: []string{"default", "male-french"},
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-voices"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resp.Voices, []string{"default", "male-french"}) {
+		t.Fatalf("voices %v, want default and male-french", resp.Voices)
+	}
+}
+
+func TestGetModelInfo_SafetensorsManifestLengthsWin(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// The language model config is nested where config.json reading doesn't
+	// look; create recorded its lengths in the manifest.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test","lm":{"max_position_embeddings":128000,"hidden_size":2048}}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-lengths", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion"}, ContextLen: 128000, EmbedLen: 2048,
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-lengths"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelInfo["test.context_length"] != 128000 || resp.ModelInfo["test.embedding_length"] != 2048 {
+		t.Fatalf("context_length %v, embedding_length %v, want 128000 and 2048", resp.ModelInfo["test.context_length"], resp.ModelInfo["test.embedding_length"])
+	}
+}
+
 func casingShuffle(s string) string {
 	rr := []rune(s)
 	for i := range rr {

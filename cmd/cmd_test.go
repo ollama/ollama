@@ -579,6 +579,125 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+// Output written to a pipe or file is plain text: word wrapping's cursor
+// escapes would reach whatever reads it, such as a speech model.
+func TestRunPipedOutputIsPlain(t *testing.T) {
+	text := "The sky is blue because of a phenomenon called Rayleigh scattering. When sunlight enters the atmosphere it travels through countless tiny gas molecules."
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			json.NewEncoder(w).Encode(api.ShowResponse{Capabilities: []model.Capability{model.CapabilityCompletion}})
+		case "/api/generate":
+			for _, word := range strings.SplitAfter(text, " ") {
+				json.NewEncoder(w).Encode(api.GenerateResponse{Response: word})
+			}
+			json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	for _, f := range []string{"keepalive", "format", "think", "voice"} {
+		cmd.Flags().String(f, "", "")
+	}
+	for _, f := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
+		cmd.Flags().Bool(f, false, "")
+	}
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"chat-model", "Why is the sky blue?"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1b") || strings.TrimSpace(out) != text {
+		t.Fatalf("piped output %q, want the plain response", out)
+	}
+}
+
+// A model that both chats and speaks chats in ollama run, and speaks the text
+// when --voice is given.
+func TestRunChatSpeechModelVoice(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		voice  string
+		speaks bool
+	}{
+		{name: "chat by default"},
+		{name: "speak with voice", voice: "default", speaks: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var speech []map[string]string
+			chats := 0
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch r.URL.Path {
+				case "/api/show":
+					json.NewEncoder(w).Encode(api.ShowResponse{
+						Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio, model.CapabilitySpeech},
+					})
+				case "/v1/audio/speech":
+					var req map[string]string
+					json.NewDecoder(r.Body).Decode(&req)
+					speech = append(speech, req)
+					w.Write(append([]byte("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"), make([]byte, 64)...))
+				case "/api/generate", "/api/chat":
+					chats++
+					json.NewEncoder(w).Encode(api.GenerateResponse{Response: "hi", Done: true})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+			t.Cleanup(mockServer.Close)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			for _, f := range []string{"keepalive", "format", "think", "voice"} {
+				cmd.Flags().String(f, "", "")
+			}
+			for _, f := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
+				cmd.Flags().Bool(f, false, "")
+			}
+			if tt.voice != "" {
+				if err := cmd.Flags().Set("voice", tt.voice); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var err error
+			out := captureStdout(t, func() {
+				err = RunHandler(cmd, []string{"chat-speech-model", "Hello from Ollama."})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !tt.speaks {
+				if len(speech) != 0 || chats != 1 {
+					t.Fatalf("%d speech and %d chat requests, want a chat", len(speech), chats)
+				}
+				return
+			}
+			if chats != 0 || len(speech) != 1 {
+				t.Fatalf("%d speech and %d chat requests, want speech", len(speech), chats)
+			}
+			if got := speech[0]; got["voice"] != tt.voice || !strings.Contains(got["input"], "Hello from Ollama.") {
+				t.Fatalf("speech request %v", got)
+			}
+			if !strings.HasPrefix(out, "RIFF") {
+				t.Fatalf("output %q, want a WAV", out[:min(len(out), 16)])
+			}
+		})
+	}
+}
+
 func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

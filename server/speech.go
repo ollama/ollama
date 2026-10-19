@@ -2,10 +2,10 @@ package server
 
 import (
 	"cmp"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/mlxrunner/model/audio"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
@@ -37,31 +38,31 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 	}
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
 	if err := c.ShouldBindJSON(&req); err != nil {
-		speechError(c, http.StatusBadRequest, err.Error())
+		openAIError(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	format := cmp.Or(req.ResponseFormat, "wav")
 	switch {
 	case strings.TrimSpace(req.Model) == "":
-		speechError(c, http.StatusBadRequest, "model is required")
+		openAIError(c, http.StatusBadRequest, "model is required")
 		return
 	case strings.TrimSpace(req.Input) == "":
-		speechError(c, http.StatusBadRequest, "input is required")
+		openAIError(c, http.StatusBadRequest, "input is required")
 		return
 	case utf8.RuneCountInString(req.Input) > 4096:
-		speechError(c, http.StatusBadRequest, "input must be at most 4096 characters")
+		openAIError(c, http.StatusBadRequest, "input must be at most 4096 characters")
 		return
 	case format != "wav" && format != "pcm":
-		speechError(c, http.StatusBadRequest, fmt.Sprintf("response_format %q is not supported, use wav or pcm", format))
+		openAIError(c, http.StatusBadRequest, fmt.Sprintf("response_format %q is not supported, use wav or pcm", format))
 		return
 	case req.Speed != nil && *req.Speed != 1:
-		speechError(c, http.StatusBadRequest, "only speed 1 is supported")
+		openAIError(c, http.StatusBadRequest, "only speed 1 is supported")
 		return
 	case req.Instructions != "":
-		speechError(c, http.StatusBadRequest, "instructions are not supported")
+		openAIError(c, http.StatusBadRequest, "instructions are not supported")
 		return
 	case req.StreamFormat != "" && req.StreamFormat != "audio":
-		speechError(c, http.StatusBadRequest, "only stream_format audio is supported")
+		openAIError(c, http.StatusBadRequest, "only stream_format audio is supported")
 		return
 	}
 
@@ -69,11 +70,11 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 	speaker, ok := r.(llm.Speaker)
 	switch {
 	case errors.Is(err, errCapabilities), err == nil && !ok:
-		speechError(c, http.StatusBadRequest, fmt.Sprintf("%q does not support speech", req.Model))
+		openAIError(c, http.StatusBadRequest, fmt.Sprintf("%q does not support speech", req.Model))
 		return
 	case err != nil:
 		status, message := scheduleError(req.Model, err)
-		speechError(c, status, message)
+		openAIError(c, status, message)
 		return
 	}
 
@@ -139,10 +140,10 @@ func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, fo
 	if errors.As(err, &statusErr) {
 		status, message = statusErr.StatusCode, statusErr.ErrorMessage
 	}
-	speechError(c, status, message)
+	openAIError(c, status, message)
 }
 
-func speechError(c *gin.Context, status int, message string) {
+func openAIError(c *gin.Context, status int, message string) {
 	c.AbortWithStatusJSON(status, openai.NewError(status, message))
 }
 
@@ -160,18 +161,5 @@ func speechVoices(mf *manifest.Manifest) []string {
 
 // wavHeader describes 16-bit mono PCM of unknown length, as streamed WAV is.
 func wavHeader() []byte {
-	h := make([]byte, 44)
-	copy(h[0:], "RIFF")
-	binary.LittleEndian.PutUint32(h[4:], 0xffffffff)
-	copy(h[8:], "WAVEfmt ")
-	binary.LittleEndian.PutUint32(h[16:], 16)
-	binary.LittleEndian.PutUint16(h[20:], 1)
-	binary.LittleEndian.PutUint16(h[22:], 1)
-	binary.LittleEndian.PutUint32(h[24:], speechSampleRate)
-	binary.LittleEndian.PutUint32(h[28:], speechSampleRate*2)
-	binary.LittleEndian.PutUint16(h[32:], 2)
-	binary.LittleEndian.PutUint16(h[34:], 16)
-	copy(h[36:], "data")
-	binary.LittleEndian.PutUint32(h[40:], 0xffffffff)
-	return h
+	return audio.WAVHeader(speechSampleRate, math.MaxUint32)
 }

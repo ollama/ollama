@@ -170,7 +170,7 @@ func TestSpeechScheduleErrors(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			status, message := scheduleError("phonon", tc.err)
-			speechError(c, status, message)
+			openAIError(c, status, message)
 			var body struct {
 				Error struct {
 					Message string

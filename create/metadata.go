@@ -53,6 +53,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		rendererName, decisionModel = "kev", true
 	case "LayaForDecision":
 		decisionModel = true
+	case "D1Model":
+		rendererName, decisionModel, decisionVision = "d1", true, true
 	default:
 		parserName, err = parserNameForConfig(modelDir, cfg, chatTemplate)
 		if err != nil {
@@ -79,10 +81,16 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		if decisionVision {
 			capabilities = append(capabilities, "vision")
 		}
+		if cfg.Architecture() == "D1Model" && cfg.ModelType == "lfm3_omni" {
+			capabilities = append(capabilities, "audio")
+		}
 	} else if isPhononArchitecture(cfg.Architecture()) {
 		capabilities = []string{"speech"}
 	} else {
 		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	}
+	if rendererName == "lfm3-omni" || rendererName == "lfm3-audio" {
+		capabilities = lfm3AudioCapabilities(capabilities)
 	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
@@ -271,6 +279,8 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	switch {
 	case strings.Contains(s, "flint"):
 		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -309,6 +319,8 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 	switch {
 	case strings.Contains(s, "flint"):
 		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -334,4 +346,29 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 	default:
 		return "", nil
 	}
+}
+
+// lfm3RendererParserName maps an LFM3 identifier to its template branch.
+func lfm3RendererParserName(s string) string {
+	switch {
+	case strings.Contains(s, "omni"):
+		return "lfm3-omni"
+	case strings.Contains(s, "audio"):
+		return "lfm3-audio"
+	default:
+		return "lfm3"
+	}
+}
+
+// lfm3AudioCapabilities marks LFM3 Audio and Omni as audio-input models served
+// without thinking (their templates mention <think>) that also speak through
+// /v1/audio/speech.
+func lfm3AudioCapabilities(caps []string) []string {
+	out := []string{}
+	for _, c := range caps {
+		if c != "audio" && c != "thinking" {
+			out = append(out, c)
+		}
+	}
+	return append(out, "audio", "speech")
 }

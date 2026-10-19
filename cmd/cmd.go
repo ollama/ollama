@@ -921,7 +921,9 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	opts.WordWrap = !nowrap
+	// Wrapping rewrites the line with cursor escapes, which only a terminal
+	// can interpret; piped or redirected output stays plain text.
+	opts.WordWrap = !nowrap && term.IsTerminal(int(os.Stdout.Fd()))
 
 	// Fill out the rest of the options based on information about the
 	// model.
@@ -956,8 +958,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	applyShowResponseToRunOptions(&opts, info)
 
 	// prepend stdin to the prompt if provided; speech models read it as it
-	// arrives instead
-	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech)
+	// arrives instead. Models that also chat speak when --voice is given and
+	// chat otherwise.
+	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech) &&
+		(!slices.Contains(info.Capabilities, model.CapabilityCompletion) || cmd.Flags().Changed("voice"))
 	if stdinPiped && !speech {
 		in, err := io.ReadAll(os.Stdin)
 		if err != nil {

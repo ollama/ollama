@@ -109,6 +109,41 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantRenderer: "qwen3-coder",
 		},
 		{
+			name:         "lfm3 text architecture",
+			config:       `{"architectures":["Lfm3ForCausalLM"],"model_type":"lfm3"}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:         "lfm3 vision architecture",
+			config:       `{"architectures":["Lfm3VlForConditionalGeneration"],"model_type":"lfm3_vl","vision_config":{}}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+		},
+		{
+			name:         "lfm3 omni architecture",
+			config:       `{"architectures":["Lfm3OmniForConditionalGeneration"],"model_type":"lfm3_omni","vision_config":{}}`,
+			wantParser:   "lfm3-omni",
+			wantRenderer: "lfm3-omni",
+			wantCaps:     []string{"completion", "vision", "tools", "audio", "speech"},
+		},
+		{
+			name:         "lfm3 audio architecture",
+			config:       `{"architectures":["Lfm3AudioForConditionalGeneration"],"model_type":"lfm3_audio"}`,
+			wantParser:   "lfm3-audio",
+			wantRenderer: "lfm3-audio",
+			wantCaps:     []string{"completion", "tools", "audio", "speech"},
+		},
+		{
+			name:         "lfm3 model type fallback",
+			config:       `{"model_type":"lfm3"}`,
+			wantParser:   "lfm3",
+			wantRenderer: "lfm3",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
 			name:         "qwen3.5 text",
 			config:       `{"architectures":["Qwen3_5ForCausalLM"],"model_type":"qwen3"}`,
 			wantParser:   "qwen3.5",
@@ -332,5 +367,24 @@ func TestStrandsDecisionMetadata(t *testing.T) {
 	}
 	if got.Parser != "" || got.Renderer != "strands" || len(got.Capabilities) != 1 || got.Capabilities[0] != "decision" {
 		t.Fatalf("unexpected Strands metadata: %+v", got)
+	}
+}
+
+func TestD1DecisionMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		modelType string
+		want      []string
+	}{
+		{"lfm3_vl", []string{"decision", "vision"}},
+		{"lfm3_omni", []string{"decision", "vision", "audio"}},
+	} {
+		cfg := sourceModelConfig{Architectures: []string{"D1Model"}, ModelType: tc.modelType}
+		got, err := inferSafetensorsConfig(t.TempDir(), cfg, "", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Parser != "" || got.Renderer != "d1" || !slices.Equal(got.Capabilities, tc.want) {
+			t.Fatalf("%s: unexpected d1 metadata: %+v", tc.modelType, got)
+		}
 	}
 }

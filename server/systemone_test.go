@@ -179,6 +179,8 @@ func TestSystemOneHandler(t *testing.T) {
 	createSafetensorsTestModel(t, "safetensors-clef-text", config, []manifest.Layer{params})
 	config.Capabilities = []string{"decision", "vision"}
 	createSafetensorsTestModel(t, "safetensors-clef", config, []manifest.Layer{params})
+	config.Capabilities = []string{"decision", "vision", "audio"}
+	createSafetensorsTestModel(t, "safetensors-clef-audio", config, []manifest.Layer{params})
 	config.Renderer = "kev"
 	config.Capabilities = []string{"decision"}
 	createSafetensorsTestModel(t, "safetensors-kev", config, []manifest.Layer{params})
@@ -285,6 +287,8 @@ func TestSystemOneHandler(t *testing.T) {
 		{"Clef decision only text", `{"model":"safetensors-clef-text","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
 		{"Clef decision only image", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-text", 1) + `aW1hZ2U="]}`, nil, 400, 0, false},
 		{"Clef image above text limit", imagePrefix + image + `"]}`, nil, 200, 1, false},
+		{"audio without audio capability", imagePrefix + `UklGRnh4eHhXQVZF"]}`, nil, 400, 0, false},
+		{"audio with audio capability", strings.Replace(imagePrefix, "safetensors-clef", "safetensors-clef-audio", 1) + `aW1hZ2U=","UklGRnh4eHhXQVZF"]}`, nil, 200, 1, false},
 		{"other model image", `{"model":"decision-test","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}},"images":["aW1hZ2U="]}`, nil, 400, 0, false},
 		{"invalid image base64", imagePrefix + `!not-base64"]}`, nil, 400, 0, false},
 		{"image data URL", imagePrefix + `data:image/png;base64,aW1hZ2U="]}`, nil, 400, 0, false},
@@ -355,6 +359,9 @@ func TestSystemOneHandler(t *testing.T) {
 			}
 			if tt.name == "Clef decision only image" && !strings.Contains(w.Body.String(), "vision") {
 				t.Fatalf("expected missing vision capability: %s", w.Body)
+			}
+			if tt.name == "audio without audio capability" && !strings.Contains(w.Body.String(), "audio") {
+				t.Fatalf("expected missing audio capability: %s", w.Body)
 			}
 			if tt.calls > 0 {
 				want := time.Hour

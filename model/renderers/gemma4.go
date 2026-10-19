@@ -18,6 +18,9 @@ type Gemma4Renderer struct {
 	// Render assistant content before its tool calls instead of after the
 	// tool responses.
 	contentBeforeToolCalls bool
+	// Ask for speech translation in the model card's transcribe-then-translate
+	// format, which the large models follow and the small ones don't.
+	transcribeThenTranslate bool
 }
 
 const (

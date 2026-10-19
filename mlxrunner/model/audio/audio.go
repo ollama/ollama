@@ -12,6 +12,10 @@ import (
 // untrusted; this is what bounds Resample's output length.
 const maxAudioSeconds = 600
 
+// maxSampleRate is the highest common studio rate. Above it the duration cap
+// stops bounding decoded samples, and Resample's kernel grows with the rate.
+const maxSampleRate = 384000
+
 // Decode decodes a supported audio container into mono PCM samples at
 // the container's declared sample rate, downmixing multiple channels by
 // averaging. The supported containers are decided here so all models accept
@@ -19,20 +23,57 @@ const maxAudioSeconds = 600
 // maxAudioSeconds are rejected. Models resample to their own rate with
 // Resample.
 func Decode(data []byte) ([]float32, int, error) {
-	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
-		return nil, 0, errors.New("unrecognized audio format")
-	}
-	samples, rate, err := decodeWAV(data)
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(samples) > maxAudioSeconds*rate {
-		return nil, 0, fmt.Errorf("audio longer than %d seconds", maxAudioSeconds)
-	}
-	return samples, rate, nil
+	return DecodeLimit(data, maxAudioSeconds)
 }
 
-func decodeWAV(data []byte) ([]float32, int, error) {
+// ErrUnrecognized reports audio in a container Decode doesn't support.
+var ErrUnrecognized = errors.New("unrecognized audio format")
+
+// DecodeLimit is Decode with a caller-chosen duration cap in seconds.
+func DecodeLimit(data []byte, maxSeconds int) ([]float32, int, error) {
+	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
+		return nil, 0, ErrUnrecognized
+	}
+	return decodeWAV(data, maxSeconds)
+}
+
+// EncodeWAV encodes mono samples as 16-bit PCM WAV, clipping to [-1, 1].
+func EncodeWAV(samples []float32, rate int) []byte {
+	out := append(make([]byte, 0, wavHeaderSize+2*len(samples)), WAVHeader(rate, uint32(2*len(samples)))...)
+	out = out[:cap(out)]
+	for i, s := range samples {
+		v := int16(math.Round(float64(max(-1, min(1, s))) * math.MaxInt16))
+		binary.LittleEndian.PutUint16(out[wavHeaderSize+2*i:], uint16(v))
+	}
+	return out
+}
+
+const wavHeaderSize = 44
+
+// WAVHeader describes dataBytes of 16-bit mono PCM at rate. A stream of
+// unknown length passes math.MaxUint32, which the RIFF size saturates to.
+func WAVHeader(rate int, dataBytes uint32) []byte {
+	h := make([]byte, wavHeaderSize)
+	copy(h[0:], "RIFF")
+	riff := uint32(math.MaxUint32)
+	if dataBytes <= math.MaxUint32-(wavHeaderSize-8) {
+		riff = dataBytes + wavHeaderSize - 8
+	}
+	binary.LittleEndian.PutUint32(h[4:], riff)
+	copy(h[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(h[16:], 16)
+	binary.LittleEndian.PutUint16(h[20:], 1) // PCM
+	binary.LittleEndian.PutUint16(h[22:], 1) // mono
+	binary.LittleEndian.PutUint32(h[24:], uint32(rate))
+	binary.LittleEndian.PutUint32(h[28:], uint32(rate*2))
+	binary.LittleEndian.PutUint16(h[32:], 2)
+	binary.LittleEndian.PutUint16(h[34:], 16)
+	copy(h[36:], "data")
+	binary.LittleEndian.PutUint32(h[40:], dataBytes)
+	return h
+}
+
+func decodeWAV(data []byte, maxSeconds int) ([]float32, int, error) {
 	var format uint16
 	var channels, rate, bits int
 	var pcm []byte
@@ -76,6 +117,9 @@ func decodeWAV(data []byte) ([]float32, int, error) {
 	if channels < 1 || rate < 1 {
 		return nil, 0, fmt.Errorf("wav: invalid fmt: %d channels at %d Hz", channels, rate)
 	}
+	if rate > maxSampleRate {
+		return nil, 0, fmt.Errorf("wav: unsupported sample rate %d Hz, the maximum is %d Hz", rate, maxSampleRate)
+	}
 
 	var sample func([]byte) float64
 	switch {
@@ -104,6 +148,10 @@ func decodeWAV(data []byte) ([]float32, int, error) {
 
 	stride := bits / 8
 	n := len(pcm) / (stride * channels)
+	// Check before allocating, so an over-long clip costs nothing to reject.
+	if n > maxSeconds*rate {
+		return nil, 0, fmt.Errorf("audio longer than %d seconds", maxSeconds)
+	}
 	mono := make([]float32, n)
 	for i := range n {
 		var sum float64

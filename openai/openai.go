@@ -941,43 +941,25 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}, nil
 }
 
-// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+// TranscriptionResponse is the response format for /v1/audio/transcriptions
+// and /v1/audio/translations.
 type TranscriptionResponse struct {
 	Text string `json:"text"`
 }
 
-// TranscriptionRequest holds parsed fields from the multipart form.
-type TranscriptionRequest struct {
-	Model          string
-	AudioData      []byte
-	ResponseFormat string // "json", "text", "verbose_json"
-	Language       string
-	Prompt         string
+// TranscriptionVerboseResponse is the verbose_json response format, with one
+// segment per transcribed clip.
+type TranscriptionVerboseResponse struct {
+	Task     string                 `json:"task"`
+	Language string                 `json:"language,omitempty"`
+	Duration float64                `json:"duration"`
+	Text     string                 `json:"text"`
+	Segments []TranscriptionSegment `json:"segments"`
 }
 
-// FromTranscriptionRequest converts a transcription request into a ChatRequest
-// by wrapping the audio with a system prompt for transcription.
-func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	// The audio may itself contain a question or instruction. Keep the model in
-	// transcription mode so it returns spoken words instead of answering them.
-	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
-	if r.Language != "" {
-		systemPrompt += " The audio is in " + r.Language + "."
-	}
-	if r.Prompt != "" {
-		systemPrompt += " Context: " + r.Prompt
-	}
-
-	stream := true
-	return &api.ChatRequest{
-		Model: r.Model,
-		Messages: []api.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
-		},
-		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-		},
-	}, nil
+type TranscriptionSegment struct {
+	ID    int     `json:"id"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
 }
