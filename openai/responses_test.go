@@ -2,7 +2,9 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -3209,6 +3211,65 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 		if got, want := item["id"], doneIDs[outputIndex]; got != want {
 			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
 		}
+	}
+}
+
+func TestResponsesStreamConverter_OutputItemOrder(t *testing.T) {
+	ls := api.ToolCall{ID: "call_1", Function: api.ToolCallFunction{Name: "exec_command", Arguments: testArgs(map[string]any{"cmd": "ls"})}}
+	pwd := api.ToolCall{ID: "call_2", Function: api.ToolCallFunction{Name: "exec_command", Arguments: testArgs(map[string]any{"cmd": "pwd"})}}
+	tests := []struct {
+		name       string
+		chunks     []api.ChatResponse
+		wantItems  []string
+		wantOutput []string
+	}{
+		{
+			name: "text before tool calls",
+			chunks: []api.ChatResponse{
+				{Message: api.Message{Thinking: "let me look"}},
+				{Message: api.Message{Content: "I will run ls."}},
+				{Message: api.Message{ToolCalls: []api.ToolCall{ls, pwd}}},
+				{Done: true},
+			},
+			wantItems: []string{
+				"added 0 reasoning", "done 0 reasoning",
+				"added 1 message", "done 1 message",
+				"added 2 function_call", "done 2 function_call",
+				"added 3 function_call", "done 3 function_call",
+			},
+			wantOutput: []string{"reasoning", "message I will run ls.", "function_call", "function_call"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesStreamConverter("resp_123", "msg_456", "test-model", ResponsesRequest{})
+			var items, output []string
+			for _, chunk := range tt.chunks {
+				for _, event := range converter.Process(chunk) {
+					data := event.Data.(map[string]any)
+					switch event.Event {
+					case "response.output_item.added", "response.output_item.done":
+						item := data["item"].(map[string]any)
+						items = append(items, fmt.Sprintf("%s %d %s", strings.TrimPrefix(event.Event, "response.output_item."), data["output_index"], item["type"]))
+					case "response.completed":
+						for _, item := range data["response"].(map[string]any)["output"].([]any) {
+							item := item.(map[string]any)
+							s := item["type"].(string)
+							if s == "message" {
+								s += " " + item["content"].([]map[string]any)[0]["text"].(string)
+							}
+							output = append(output, s)
+						}
+					}
+				}
+			}
+			if !slices.Equal(items, tt.wantItems) {
+				t.Errorf("output items = %q, want %q", items, tt.wantItems)
+			}
+			if !slices.Equal(output, tt.wantOutput) {
+				t.Errorf("completed output = %q, want %q", output, tt.wantOutput)
+			}
+		})
 	}
 }
 

@@ -1720,7 +1720,9 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	events := c.finishReasoning()
+	events = append(events, c.FinishMessageItem()...)
+	return append(events, c.emitFunctionCallEvents(toolCalls)...)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
