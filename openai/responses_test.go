@@ -3239,6 +3239,21 @@ func TestResponsesStreamConverter_OutputItemOrder(t *testing.T) {
 			},
 			wantOutput: []string{"reasoning", "message I will run ls.", "function_call", "function_call"},
 		},
+		{
+			name: "thinking after text",
+			chunks: []api.ChatResponse{
+				{Message: api.Message{Content: "first"}},
+				{Message: api.Message{Thinking: "hmm"}},
+				{Message: api.Message{Content: "second"}},
+				{Done: true},
+			},
+			wantItems: []string{
+				"added 0 message", "done 0 message",
+				"added 1 reasoning", "done 1 reasoning",
+				"added 2 message", "done 2 message",
+			},
+			wantOutput: []string{"message first", "reasoning", "message second"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
