@@ -168,6 +168,14 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 	}
 }
 
+// As of 2026-10-19 (cc version 2.1.304), claude code warns the following:
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW="1048576" is too large, so Claude Code treats it as the 1M maximum.
+// Set it to a size from 100k to 1M, such as 200k or 200000, or unset it.
+const (
+	claudeMinAutoCompactWindow = 100_000
+	claudeMaxAutoCompactWindow = 1_000_000
+)
+
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
 func (c *Claude) modelEnvVars(model string) []string {
 	env := []string{
@@ -179,10 +187,9 @@ func (c *Claude) modelEnvVars(model string) []string {
 
 	if isCloudModelName(model) {
 		if l, ok := lookupCloudModelLimit(model); ok {
-			window := strconv.Itoa(l.Context)
-			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+window)
-			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" {
-				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+window)
+			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(l.Context))
+			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && l.Context >= claudeMinAutoCompactWindow {
+				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(l.Context, claudeMaxAutoCompactWindow)))
 			}
 		}
 	}
