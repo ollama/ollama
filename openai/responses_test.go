@@ -2017,6 +2017,91 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_EmitFunctionCallItems(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		thinking string
+		text     string
+	}{
+		{name: "without reasoning"},
+		{name: "reasoning before client tools", thinking: "Check both cities."},
+		{name: "text after client tools", thinking: "Check both cities.", text: "The weather is ready."},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			converter := NewResponsesStreamConverter("resp_test", "msg_test", "test", ResponsesRequest{})
+			events := converter.Process(api.ChatResponse{Message: api.Message{Thinking: tt.thinking}})
+			events = append(events, converter.EmitFunctionCallItems([]api.ToolCall{
+				{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+				{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+			})...)
+			events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: tt.text}, Done: true})...)
+
+			wantTypes := []string{"function_call", "function_call"}
+			if tt.thinking != "" {
+				wantTypes = append([]string{"reasoning"}, wantTypes...)
+			}
+			if tt.text != "" {
+				wantTypes = append(wantTypes, "message")
+			}
+			var added, completed []any
+			indices := make(map[string]int)
+			var output []any
+			for i, event := range events {
+				data := event.Data.(map[string]any)
+				if data["sequence_number"] != i {
+					t.Errorf("event %d sequence_number = %v", i, data["sequence_number"])
+				}
+				switch event.Event {
+				case "response.output_item.added":
+					item := data["item"].(map[string]any)
+					if data["output_index"] != len(added) {
+						t.Errorf("%s added at index %v, want %d", item["type"], data["output_index"], len(added))
+					}
+					id := item["id"].(string)
+					if _, exists := indices[id]; exists {
+						t.Errorf("duplicate item ID %q", id)
+					}
+					indices[id] = len(added)
+					added = append(added, item)
+				case "response.output_item.done":
+					item := data["item"].(map[string]any)
+					if data["output_index"] != len(completed) {
+						t.Errorf("%s completed at index %v, want %d", item["type"], data["output_index"], len(completed))
+					}
+					if index, ok := indices[item["id"].(string)]; !ok || data["output_index"] != index {
+						t.Errorf("item completion does not match its added index: %#v", data)
+					}
+					completed = append(completed, item)
+				case "response.completed":
+					output = data["response"].(map[string]any)["output"].([]any)
+				}
+				if id, ok := data["item_id"].(string); ok {
+					if index, exists := indices[id]; !exists || data["output_index"] != index {
+						t.Errorf("%s has inconsistent item index: %#v", event.Event, data)
+					}
+				}
+			}
+			if len(added) != len(wantTypes) || len(completed) != len(wantTypes) {
+				t.Fatalf("added %d and completed %d items, want %d", len(added), len(completed), len(wantTypes))
+			}
+			for i, want := range wantTypes {
+				if got := completed[i].(map[string]any)["type"]; got != want {
+					t.Errorf("completed item %d type = %v, want %s", i, got, want)
+				}
+			}
+			if !reflect.DeepEqual(output, completed) {
+				t.Errorf("final output = %#v, want completed items %#v", output, completed)
+			}
+			if tt.thinking != "" && output[0].(map[string]any)["encrypted_content"] != tt.thinking {
+				t.Errorf("reasoning not preserved before client calls: %#v", output)
+			}
+			if tt.text != "" && output[len(output)-1].(map[string]any)["content"].([]map[string]any)[0]["text"] != tt.text {
+				t.Errorf("text after client calls was lost: %#v", output)
+			}
+		})
+	}
+}
+
 func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", request)
