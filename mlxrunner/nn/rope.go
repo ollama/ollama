@@ -19,6 +19,10 @@ type RopeParameters struct {
 	AttentionFactor               float32 `json:"attention_factor"`
 	Mscale                        float32 `json:"mscale"`
 	MscaleAllDim                  float32 `json:"mscale_all_dim"`
+	// AttnFactor is the YaRN attn_factor that SGLang, and vLLM before 0.30,
+	// read. Some checkpoints set it to cancel the mscale, keeping only the
+	// frequency scaling.
+	AttnFactor float32 `json:"attn_factor"`
 }
 
 // TypeName returns rope_type when present, falling back to type.
@@ -42,12 +46,16 @@ func BuildYarnRopeFreqs(dim int, base float32, rp *RopeParameters) (*mlx.Array, 
 		factor = 1
 	}
 	// As in transformers: an explicit attention_factor wins, then the
-	// mscale/mscale_all_dim ratio when both are set.
+	// mscale/mscale_all_dim ratio when both are set. As in SGLang, attn_factor
+	// scales the computed value; transformers ignores it.
 	attentionFactor := rp.AttentionFactor
 	if attentionFactor == 0 {
 		attentionFactor = yarnMscale(factor, 1)
 		if rp.Mscale != 0 && rp.MscaleAllDim != 0 {
 			attentionFactor = yarnMscale(factor, rp.Mscale) / yarnMscale(factor, rp.MscaleAllDim)
+		}
+		if rp.AttnFactor != 0 {
+			attentionFactor *= rp.AttnFactor
 		}
 	}
 	if factor <= 1 {

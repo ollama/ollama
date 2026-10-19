@@ -34,6 +34,11 @@ func TestConfigureRope(t *testing.T) {
 		{"rope_scaling wins", `{"rope_scaling": {"rope_type": "default"}, "rope_parameters": {` + yarn + `}}`, 1000000, false, baseScale},
 		{"explicit attention_factor", `{"rope_scaling": {` + yarn + `, "attention_factor": 1.0}}`, 1000000, true, baseScale},
 		{"mscale ratio", `{"rope_scaling": {` + yarn + `, "mscale": 1.0, "mscale_all_dim": 1.0}}`, 1000000, true, baseScale},
+		// DeepSeek-R1-0528-Qwen3-8B sets attn_factor to cancel the mscale.
+		{"attn_factor canceling the mscale", `{"rope_scaling": {` + yarn + `, "attn_factor": 0.8782488562869419}}`, 1000000, true, baseScale},
+		{"attn_factor scaling the mscale", `{"rope_scaling": {` + yarn + `, "attn_factor": 0.5}}`, 1000000, true, baseScale * float32(0.5*1.138629436111989*0.5*1.138629436111989)},
+		{"attn_factor scaling the mscale ratio", `{"rope_scaling": {` + yarn + `, "mscale": 1.0, "mscale_all_dim": 0.5, "attn_factor": 0.5}}`, 1000000, true, baseScale * float32(0.5*1.138629436111989/1.0693147180559945*0.5*1.138629436111989/1.0693147180559945)},
+		{"explicit attention_factor ignores attn_factor", `{"rope_scaling": {` + yarn + `, "attention_factor": 1.0, "attn_factor": 0.8782488562869419}}`, 1000000, true, baseScale},
 		{"yarn without factor", `{"rope_scaling": {"rope_type": "yarn", "original_max_position_embeddings": 8192}}`, 1000000, false, baseScale},
 		{"unsupported scaling", `{"rope_scaling": {"rope_type": "linear", "factor": 2.0}}`, 1000000, false, baseScale},
 	} {
