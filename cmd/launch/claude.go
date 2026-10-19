@@ -60,14 +60,11 @@ func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.Env = append(os.Environ(), c.envVars(model)...)
-	if m, ok := findLaunchModel(models, model); ok && (m.Remote || isCloudModelName(model)) && m.ContextLength > 0 {
-		cmd.Env = append(cmd.Env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(m.ContextLength))
-	}
+	cmd.Env = append(os.Environ(), c.envVars(model, models)...)
 	return cmd.Run()
 }
 
-func (c *Claude) envVars(model string) []string {
+func (c *Claude) envVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
@@ -86,7 +83,7 @@ func (c *Claude) envVars(model string) []string {
 		env = append(env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
 	}
 
-	env = append(env, c.modelEnvVars(model)...)
+	env = append(env, c.modelEnvVars(model, models)...)
 	return env
 }
 
@@ -172,7 +169,7 @@ func claudeInstallerCommand(goos string) (string, []string, error) {
 }
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
-func (c *Claude) modelEnvVars(model string) []string {
+func (c *Claude) modelEnvVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
@@ -180,13 +177,20 @@ func (c *Claude) modelEnvVars(model string) []string {
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
 	}
 
-	if isCloudModelName(model) {
-		if l, ok := lookupCloudModelLimit(model); ok {
-			window := strconv.Itoa(l.Context)
-			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+window)
-			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" {
-				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+window)
-			}
+	var contextLength int
+	if m, ok := findLaunchModel(models, model); ok && (m.Remote || isCloudModelName(model)) {
+		contextLength = m.ContextLength
+	}
+	if contextLength <= 0 {
+		if limit, ok := lookupCloudModelLimit(model); ok {
+			contextLength = limit.Context
+		}
+	}
+	if contextLength > 0 {
+		window := strconv.Itoa(contextLength)
+		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+window)
+		if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" {
+			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+window)
 		}
 	}
 
