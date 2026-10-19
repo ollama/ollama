@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/envconfig"
@@ -138,5 +139,12 @@ func TestMuxRunUsesConfiguredBinaryAndForwardsExit(t *testing.T) {
 	os.Remove(path)
 	if err := (&Mux{}).Run("qwen3:8b", nil, nil); err == nil {
 		t.Fatal("expected missing binary error")
+	}
+}
+
+func TestMuxLaunchHelp(t *testing.T) {
+	cmd := LaunchCmd(nil, nil)
+	if !strings.Contains(cmd.Long, "mux             Mux") {
+		t.Fatal("Mux missing from launch help")
 	}
 }
