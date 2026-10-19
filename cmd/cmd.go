@@ -2742,6 +2742,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		performanceCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -2793,6 +2794,7 @@ func NewCLI() *cobra.Command {
 		deleteCmd,
 		runnerCmd,
 		gpuDiscoverCmd,
+		performanceCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
