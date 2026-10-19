@@ -1464,6 +1464,7 @@ func NewResponsesStreamConverter(responseID, itemID, model string, request Respo
 		model:      model,
 		request:    request,
 		firstWrite: true,
+		createdAt:  time.Now().Unix(),
 	}
 }
 
@@ -1479,14 +1480,10 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// First chunk - emit initial events
 	if c.firstWrite {
 		c.firstWrite = false
-		// created_at is the creation time of the response, so pin it once from
-		// the first response (the server stamps each one). The middleware calls
-		// Process with an empty response on the web search failure path to emit
-		// response.created and response.in_progress before response.failed, so
-		// fall back to now when the response carries no timestamp.
-		c.createdAt = r.CreatedAt.Unix()
-		if r.CreatedAt.IsZero() {
-			c.createdAt = time.Now().Unix()
+		// Prefer the server timestamp from the first response. The constructor
+		// timestamp also covers callers that build stream events without Process.
+		if !r.CreatedAt.IsZero() {
+			c.createdAt = r.CreatedAt.Unix()
 		}
 		events = append(events, c.createResponseCreatedEvent())
 		events = append(events, c.createResponseInProgressEvent())
