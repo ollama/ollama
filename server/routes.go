@@ -450,7 +450,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Generate(c, &req, fn)
+		err = client.Generate(c.Request.Context(), &req, fn)
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
@@ -3136,7 +3136,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Chat(c, &req, fn)
+		err = client.Chat(c.Request.Context(), &req, fn)
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
