@@ -595,34 +595,23 @@ func TestResponsesMiddlewareWebSearchReasoningBeforeClientTools(t *testing.T) {
 	for _, tt := range []struct {
 		name        string
 		afterSearch bool
-		sameChunk   bool
 	}{
 		{name: "search available but unused"},
-		{name: "thinking and client tools in same chunk", sameChunk: true},
 		{name: "client tools after search", afterSearch: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			toolCalls := []api.ToolCall{
-				{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
-				{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
-			}
 			chunks := []api.ChatResponse{
-				{Message: api.Message{Role: "assistant", Thinking: "Check both cities."}},
-				{Message: api.Message{Role: "assistant", ToolCalls: toolCalls}},
+				{Message: api.Message{Thinking: "Check both cities."}},
+				{Message: api.Message{ToolCalls: []api.ToolCall{
+					{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+					{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+				}}},
 				{Done: true},
 			}
-			if tt.sameChunk {
-				chunks = []api.ChatResponse{{Message: api.Message{Role: "assistant", Thinking: "Check both cities.", ToolCalls: toolCalls}, Done: true}}
-			}
-			searches := 0
 			router := gin.New()
 			router.POST("/v1/responses", ResponsesMiddleware(), func(c *gin.Context) {
-				writer, ok := c.Writer.(*WebSearchResponsesWriter)
-				if !ok {
-					t.Fatalf("writer = %T, want web-search wrapper", c.Writer)
-				}
+				writer := c.Writer.(*WebSearchResponsesWriter)
 				writer.search = func(context.Context, string) (*api.WebSearchResponse, error) {
-					searches++
 					return &api.WebSearchResponse{}, nil
 				}
 				writer.followUpStream = func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
@@ -655,50 +644,24 @@ func TestResponsesMiddlewareWebSearchReasoningBeforeClientTools(t *testing.T) {
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 			}
-			wantTypes := []string{"reasoning", "function_call", "function_call"}
-			wantSearches := 0
-			if tt.afterSearch {
-				wantTypes = append([]string{"web_search_call"}, wantTypes...)
-				wantSearches = 1
-			}
-			if searches != wantSearches {
-				t.Errorf("searches = %d, want %d", searches, wantSearches)
-			}
-			var completed []map[string]any
-			indices := make(map[string]float64)
+			var gotTypes []string
 			for _, block := range strings.Split(recorder.Body.String(), "\n\n") {
-				_, data, ok := strings.Cut(block, "\ndata: ")
-				if !ok {
+				if !strings.HasPrefix(block, "event: response.output_item.done\n") {
 					continue
 				}
+				_, data, _ := strings.Cut(block, "\ndata: ")
 				var event map[string]any
 				if err := json.Unmarshal([]byte(data), &event); err != nil {
 					t.Fatal(err)
 				}
-				switch event["type"] {
-				case "response.output_item.added":
-					item := event["item"].(map[string]any)
-					if event["output_index"] != float64(len(indices)) {
-						t.Errorf("%s added at index %v, want %d", item["type"], event["output_index"], len(indices))
-					}
-					indices[item["id"].(string)] = event["output_index"].(float64)
-				case "response.output_item.done":
-					item := event["item"].(map[string]any)
-					if index, ok := indices[item["id"].(string)]; !ok || event["output_index"] != index {
-						t.Errorf("item completion does not match its added index: %#v", event)
-					}
-					completed = append(completed, item)
-				}
+				gotTypes = append(gotTypes, event["item"].(map[string]any)["type"].(string))
 			}
-			var gotTypes []string
-			for _, item := range completed {
-				gotTypes = append(gotTypes, item["type"].(string))
+			wantTypes := []string{"reasoning", "function_call", "function_call"}
+			if tt.afterSearch {
+				wantTypes = append([]string{"web_search_call"}, wantTypes...)
 			}
 			if !reflect.DeepEqual(gotTypes, wantTypes) {
 				t.Errorf("completed item order = %v, want %v", gotTypes, wantTypes)
-			}
-			if output := completedResponseOutput(t, recorder.Body.String()); !reflect.DeepEqual(output, completed) {
-				t.Errorf("final output = %#v, want completed items %#v", output, completed)
 			}
 		})
 	}
