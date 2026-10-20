@@ -218,7 +218,6 @@ jobs:
             copy_payload cuda_jetpack6
           fi
 
-          ./scripts/deduplicate_cuda_libs.sh "${dest}"
       - name: Verify Linux build payloads
         shell: bash
         run: |
