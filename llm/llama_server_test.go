@@ -3816,6 +3816,77 @@ func TestLlamaServerChatMessageConvertsMediaParts(t *testing.T) {
 	}
 }
 
+func TestLlamaServerSanitizeText(t *testing.T) {
+	const img = "<\uff5cdeepseek_image\uff5c>"
+	cases := map[string]string{
+		"":                                 "",
+		"plain text":                       "plain text",
+		"deepseek_image without bars":      "deepseek_image without bars",
+		"<|deepseek_image|> already ascii": "<|deepseek_image|> already ascii",
+		"see " + img + " here":             "see <|deepseek_image|> here",
+		img + img:                          "<|deepseek_image|><|deepseek_image|>",
+		"<\uff5cbegin\u2581of\u2581sentence\uff5c>": "<\uff5cbegin\u2581of\u2581sentence\uff5c>",
+	}
+	for in, want := range cases {
+		if got := llamaServerSanitizeText(in); got != want {
+			t.Errorf("llamaServerSanitizeText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLlamaServerChatRequestSanitizesImageToken(t *testing.T) {
+	const img = "<\uff5cdeepseek_image\uff5c>"
+	png := []byte("\x89PNG\r\n\x1a\n")
+	s := &llamaServerRunner{}
+	req, err := s.llamaServerChatRequest(ChatRequest{
+		Messages: []api.Message{
+			{Role: "system", Content: "system " + img},
+			{Role: "user", Content: "log line: " + img},
+			{Role: "assistant", Content: "answer " + img, Thinking: "thought " + img},
+			{Role: "tool", Content: "tool output " + img, ToolCallID: "call_1", ToolName: "bash"},
+			{Role: "user", Content: "look " + img, Images: []api.ImageData{png}},
+		},
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "deepseek_image\uff5c") || strings.Contains(string(body), `deepseek_image\uff5c`) {
+		t.Fatalf("request still contains the literal image token: %s", body)
+	}
+
+	messages := req["messages"].([]map[string]any)
+	if len(messages) != 5 {
+		t.Fatalf("expected 5 messages, got %d", len(messages))
+	}
+	for i, want := range []string{"system <|deepseek_image|>", "log line: <|deepseek_image|>", "answer <|deepseek_image|>", "tool output <|deepseek_image|>"} {
+		if got := messages[i]["content"]; got != want {
+			t.Errorf("message %d content = %#v, want %q", i, got, want)
+		}
+	}
+	if messages[3]["tool_call_id"] != "call_1" {
+		t.Errorf("tool message lost tool_call_id: %#v", messages[3])
+	}
+
+	parts, ok := messages[4]["content"].([]map[string]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("expected text + image parts, got %#v", messages[4]["content"])
+	}
+	if parts[0]["type"] != "text" || parts[0]["text"] != "look <|deepseek_image|>" {
+		t.Errorf("unexpected text part: %#v", parts[0])
+	}
+	if parts[1]["type"] != "image_url" {
+		t.Fatalf("expected image_url part, got %#v", parts[1])
+	}
+	if url := parts[1]["image_url"].(map[string]any)["url"]; url != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(png) {
+		t.Errorf("image part was modified: %#v", url)
+	}
+}
+
 func TestFindLlamaServer(t *testing.T) {
 	// This just tests that the function doesn't panic and returns a reasonable error
 	// when the binary doesn't exist in the expected locations

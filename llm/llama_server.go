@@ -2355,16 +2355,17 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 		converted["tool_calls"] = toolCalls
 	}
 
+	content := llamaServerSanitizeText(msg.Content)
 	if len(msg.Media) == 0 {
-		converted["content"] = msg.Content
+		converted["content"] = content
 		return converted, nil
 	}
 
 	parts := make([]map[string]any, 0, len(msg.Media)+1)
-	if msg.Content != "" {
+	if content != "" {
 		parts = append(parts, map[string]any{
 			"type": "text",
-			"text": msg.Content,
+			"text": content,
 		})
 	}
 	for _, media := range msg.Media {
@@ -2376,6 +2377,25 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 	}
 	converted["content"] = parts
 	return converted, nil
+}
+
+// llamaServerReservedTextTokens are special-token strings that some GGUF chat
+// templates reject (or that would be parsed as special tokens) when they
+// appear literally in message text. DeepSeek V4.x templates raise
+// "Message content contains image special token" if user-supplied text
+// (for example a pasted log or a tool result) contains the image
+// placeholder. Real images are sent as separate media parts and are not
+// affected. Each token is replaced by a harmless look-alike that uses ASCII
+// pipes instead of fullwidth bars.
+var llamaServerReservedTextTokens = strings.NewReplacer(
+	"<\uff5cdeepseek_image\uff5c>", "<|deepseek_image|>",
+)
+
+func llamaServerSanitizeText(s string) string {
+	if !strings.Contains(s, "deepseek_image") {
+		return s
+	}
+	return llamaServerReservedTextTokens.Replace(s)
 }
 
 func llamaServerChatMediaPart(media MediaData) (map[string]any, error) {
