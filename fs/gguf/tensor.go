@@ -264,8 +264,7 @@ func (tt TensorType) blockSize() int64 {
 		TensorTypeF64,
 		TensorTypeBF16:
 		return 1
-	case TensorTypeNVFP4,
-		TensorTypeQ2_0:
+	case TensorTypeNVFP4, TensorTypeQ2_0:
 		return 64
 	case TensorTypeQ1_0:
 		return 128
