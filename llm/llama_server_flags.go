@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// llama.cpp renamed --webui/--no-webui to --ui/--no-ui and now warns on the
-// old spelling. The vendored llama.cpp (LLAMA_CPP_VERSION b11521 and the
-// Unsloth b11724-mix source) accepts both, so --no-ui is the default. A
+// llama.cpp renamed --webui/--no-webui to --ui/--no-ui and documents the
+// old spelling as deprecated. The vendored llama.cpp (LLAMA_CPP_VERSION b11724-unsloth-ds41,
+// and upstream b11521 before it) accepts both, so --no-ui is the default. A
 // runner directory can still carry an older llama-server (for example a
 // FETCHCONTENT_SOURCE_DIR_LLAMA_CPP or OLLAMA_LLAMA_CPP_SOURCE build), and
 // the Go side has no compiled-in llama.cpp version, so the binary's own
