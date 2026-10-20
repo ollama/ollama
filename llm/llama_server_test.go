@@ -4061,4 +4061,16 @@ func TestLlamaServerChatMessageCarriesThinking(t *testing.T) {
 	if _, ok := plain["reasoning_content"]; ok {
 		t.Fatalf("reasoning_content present on a message with no thinking: %#v", plain)
 	}
+
+	// Reasoning belongs to the assistant: thinking left on any other message
+	// must not reach the template.
+	for _, role := range []string{"user", "tool", "system"} {
+		other, err := llamaServerChatMessage(Message{Role: role, Content: "OK", Thinking: "not mine"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := other["reasoning_content"]; ok {
+			t.Fatalf("reasoning_content present on a %s message: %#v", role, other)
+		}
+	}
 }

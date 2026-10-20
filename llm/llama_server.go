@@ -2357,7 +2357,11 @@ func llamaServerChatMessage(msg Message) (map[string]any, error) {
 	// assistant turn since the task was set. Dropping the field here leaves
 	// those blocks empty, so a model re-derives each turn what it already
 	// worked out, and describes its own earlier turns as someone else's.
-	if msg.Thinking != "" {
+	//
+	// Only an assistant turn carries reasoning. llama-server passes the field
+	// through on any role, so thinking a client left on a user or tool message
+	// would reach any template that does not check the role itself.
+	if msg.Role == "assistant" && msg.Thinking != "" {
 		converted["reasoning_content"] = msg.Thinking
 	}
 	if msg.ToolCallID != "" {
