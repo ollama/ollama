@@ -290,8 +290,36 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 		t.Errorf("expected prompt 'Hello', got %q", result.Prompt)
 	}
 
+	if !result.Raw {
+		t.Error("expected completions without a suffix to use raw mode")
+	}
+	if result.Think == nil || result.Think.Bool() {
+		t.Error("expected raw completions to preserve generated thinking tags")
+	}
+
 	if tempVal, ok := result.Options["temperature"].(float32); !ok || tempVal != 0.8 {
 		t.Errorf("expected temperature 0.8, got %v", result.Options["temperature"])
+	}
+}
+
+func TestFromCompleteRequest_WithSuffix(t *testing.T) {
+	result, err := FromCompleteRequest(CompletionRequest{
+		Model:  "test-model",
+		Prompt: "def add(",
+		Suffix: "    return c",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Raw {
+		t.Error("expected completions with a suffix to use the model's insert template")
+	}
+	if result.Think != nil {
+		t.Errorf("expected suffix completions to use the model's thinking default, got %v", result.Think)
+	}
+	if result.Suffix != "    return c" {
+		t.Errorf("expected suffix to be preserved, got %q", result.Suffix)
 	}
 }
 
