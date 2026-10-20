@@ -461,7 +461,7 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	if libPathEnvVar != "" {
-		libraryPaths := mlx.LibraryPathsForLoadedLibrary(ml.LibOllamaPath, loadedLibraryPath)
+		libraryPaths := mlx.LibraryPathsForLoadedLibrary(loadedLibraryPath)
 		pathEnvVal := libraryPathEnv(libraryPaths, os.Getenv(libPathEnvVar))
 
 		found := false

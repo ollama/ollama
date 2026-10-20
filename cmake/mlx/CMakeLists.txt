@@ -48,9 +48,7 @@ elseif(WIN32)
     if(OLLAMA_DEPENDENCY_INSTALL_DIR)
         set(OLLAMA_MLX_SHARED_CUDA_INSTALL_DIR "${OLLAMA_DEPENDENCY_INSTALL_DIR}")
         set(OLLAMA_MLX_PRIVATE_CUDA_INSTALL_DIR "${OLLAMA_DEPENDENCY_INSTALL_DIR}")
-    endif()
-    if(OLLAMA_RUNNER_DIR MATCHES "^mlx_(cuda.*)$")
-        set(MLX_CUDA_BIN_DIR "../${CMAKE_MATCH_1}" CACHE STRING "" FORCE)
+        set(MLX_CUDA_BIN_DIR "../${OLLAMA_DEPENDENCY_RUNNER_DIR}" CACHE STRING "" FORCE)
         set(MLX_CUDNN_BIN_DIR "." CACHE STRING "" FORCE)
     endif()
 elseif(UNIX)
@@ -136,7 +134,7 @@ add_subdirectory(${OLLAMA_SOURCE_DIR}/mlxrunner/xgrammar/native ${CMAKE_BINARY_D
 find_package(CUDAToolkit)
 
 # Build list of directories for runtime dependency resolution.
-set(MLX_RUNTIME_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
+set(MLX_RUNTIME_SEARCH_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
 # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds).
 # CUDNN_ROOT_DIR is the standard CMake variable for cuDNN location.
 if(CUDNN_ROOT_DIR)
@@ -148,20 +146,20 @@ if(_cudnn_root)
     file(TO_CMAKE_PATH "${_cudnn_root}" _cudnn_root)
     # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/).
     file(GLOB CUDNN_BIN_SUBDIRS "${_cudnn_root}/bin/*")
-    list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
+    list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CUDNN_BIN_SUBDIRS})
 endif()
 # Add build output directory and MLX dependency build directories.
-list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_BUILD_DIR})
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${OLLAMA_BUILD_DIR})
 if(UNIX AND NOT APPLE)
-    list(APPEND MLX_RUNTIME_DIRS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
+    list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES})
 endif()
 # OpenBLAS DLL location (pre-built zip extracts into openblas-src/bin/).
-list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
 # NCCL: on Linux, if real NCCL is found, cmake bundles libnccl.so via the
 # regex below. If NCCL is not found, MLX links a static stub (OBJECT lib)
 # so there is no runtime dependency. This path covers the stub build dir
 # for windows so we include the DLL in our dependencies.
-list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
+list(APPEND MLX_RUNTIME_SEARCH_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
 
 # Non-link-time deps stay explicit; link-time deps derive from the mlx target.
 set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl cusolver cusparse nv[Jj]it[Ll]ink openblas gfortran quadmath)
@@ -170,7 +168,7 @@ if(WIN32)
     list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
 endif()
 set(MLX_RUNTIME_DEPENDENCY_FILTERS
-    DIRECTORIES ${MLX_RUNTIME_DIRS}
+    DIRECTORIES ${MLX_RUNTIME_SEARCH_DIRS}
     PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
     PRE_EXCLUDE_REGEXES ".*")
 set(MLX_EXPLICIT_CUDA_RUNTIME_REGEXES)

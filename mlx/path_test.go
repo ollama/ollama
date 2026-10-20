@@ -20,9 +20,8 @@ func TestLibraryPathsForLoadedLibraryAddsOnlySelectedMLXDependency(t *testing.T)
 		}
 	}
 
-	got := LibraryPathsForLoadedLibrary(root, filepath.Join(root, "mlx_cuda_v13", "mlxc.dll"))
+	got := LibraryPathsForLoadedLibrary(filepath.Join(root, "mlx_cuda_v13", "mlxc.dll"))
 	want := []string{
-		root,
 		filepath.Join(root, "mlx_cuda_v13"),
 		filepath.Join(root, "cuda_v13"),
 	}
@@ -34,8 +33,8 @@ func TestLibraryPathsForLoadedLibraryAddsOnlySelectedMLXDependency(t *testing.T)
 func TestLibraryPathsForLoadedLibraryAddsStandaloneDir(t *testing.T) {
 	root := t.TempDir()
 	libDir := filepath.Join(root, "standalone")
-	got := LibraryPathsForLoadedLibrary(root, filepath.Join(libDir, "libmlxc.so"))
-	want := []string{root, libDir}
+	got := LibraryPathsForLoadedLibrary(filepath.Join(libDir, "libmlxc.so"))
+	want := []string{libDir}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("LibraryPathsForLoadedLibrary() = %#v, want %#v", got, want)
 	}

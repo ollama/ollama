@@ -308,16 +308,12 @@ func findMLXLibrary(forcedVariant string) bool {
 			if tryLoadFromMLXSubdirs(root) {
 				return true
 			}
-			if tryLoadFromStandaloneDir(root) {
+			if tryLoadFromDir(root) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-func tryLoadFromStandaloneDir(dir string) bool {
-	return tryLoadFromDir(dir)
 }
 
 // mlxVariantPattern matches the variant directory names we ship, e.g.

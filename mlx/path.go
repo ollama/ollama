@@ -8,8 +8,8 @@ import (
 
 // LibraryPathsForLoadedLibrary returns the runtime library search paths needed
 // for the selected MLX dynamic library.
-func LibraryPathsForLoadedLibrary(root, libraryPath string) []string {
-	return libraryPathsForLibrary(root, libraryPath)
+func LibraryPathsForLoadedLibrary(libraryPath string) []string {
+	return libraryPathsForLibrary(libraryPath)
 }
 
 // CUDAToolkitDirForLoadedLibrary returns the selected MLX CUDA variant
@@ -18,7 +18,7 @@ func CUDAToolkitDirForLoadedLibrary(libraryPath string) (string, bool) {
 	return cudaToolkitDirForLibrary(libraryPath)
 }
 
-func libraryPathsForLibrary(root, libraryPath string) []string {
+func libraryPathsForLibrary(libraryPath string) []string {
 	var paths []string
 	seen := map[string]bool{}
 	add := func(path string) {
@@ -32,7 +32,6 @@ func libraryPathsForLibrary(root, libraryPath string) []string {
 		}
 	}
 
-	add(root)
 	dir := filepath.Dir(libraryPath)
 	add(dir)
 	if strings.HasPrefix(filepath.Base(dir), "mlx_") {
