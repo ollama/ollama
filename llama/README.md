@@ -2,7 +2,10 @@
 
 ## Updating llama.cpp
 
-`LLAMA_CPP_VERSION` pins Ollama's llama.cpp source. An update can change more
+`LLAMA_CPP_VERSION` pins Ollama's llama.cpp source and `LLAMA_CPP_REPO` names
+the Git repository that hosts that ref (this fork: `maxkongerskov/llama.cpp`,
+a fork of `ggml-org/llama.cpp` carrying the Unsloth import). Override the
+repository for one build with `-DLLAMA_CPP_REPO=<url>`. An update can change more
 than compilation: it can affect model loading, GPU discovery, scheduler inputs,
 runtime logs, streaming, and compatibility patches. Validate the upstream diff,
 the patched source Ollama actually builds, and the affected local paths.

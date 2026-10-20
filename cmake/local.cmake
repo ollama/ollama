@@ -112,6 +112,12 @@ if(NOT OLLAMA_HAVE_LLAMA_SERVER)
 else()
     file(READ "${CMAKE_SOURCE_DIR}/LLAMA_CPP_VERSION" OLLAMA_LLAMA_CPP_GIT_TAG)
     string(STRIP "${OLLAMA_LLAMA_CPP_GIT_TAG}" OLLAMA_LLAMA_CPP_GIT_TAG)
+    # LLAMA_CPP_REPO (file) names the repository that hosts the pinned tag;
+    # override with -DLLAMA_CPP_REPO=<url> (forwarded to llama/server builds).
+    file(READ "${CMAKE_SOURCE_DIR}/LLAMA_CPP_REPO" _llama_cpp_repo_default)
+    string(STRIP "${_llama_cpp_repo_default}" _llama_cpp_repo_default)
+    set(LLAMA_CPP_REPO "${_llama_cpp_repo_default}" CACHE STRING
+        "Git repository for the llama.cpp ref in LLAMA_CPP_VERSION")
     include(${CMAKE_SOURCE_DIR}/llama/compat/compat.cmake)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP AND NOT "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" STREQUAL "")
         get_filename_component(_llama_cpp_override
@@ -132,8 +138,9 @@ else()
         add_custom_target(ollama-llama-cpp-source)
     else()
         set(OLLAMA_LLAMA_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/llama_cpp-src")
+        message(STATUS "Fetching llama.cpp ${OLLAMA_LLAMA_CPP_GIT_TAG} from ${LLAMA_CPP_REPO}")
         ExternalProject_Add(ollama-llama-cpp-source
-            GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
+            GIT_REPOSITORY "${LLAMA_CPP_REPO}"
             GIT_TAG ${OLLAMA_LLAMA_CPP_GIT_TAG}
             GIT_SHALLOW TRUE
             SOURCE_DIR ${OLLAMA_LLAMA_CPP_SOURCE_DIR}

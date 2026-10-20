@@ -114,6 +114,10 @@ include(FetchContent)
 # Read pinned llama.cpp commit from version file (shared with Dockerfile)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../LLAMA_CPP_VERSION" LLAMA_CPP_GIT_TAG)
 string(STRIP "${LLAMA_CPP_GIT_TAG}" LLAMA_CPP_GIT_TAG)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../LLAMA_CPP_REPO" _llama_cpp_repo_default)
+string(STRIP "${_llama_cpp_repo_default}" _llama_cpp_repo_default)
+set(LLAMA_CPP_REPO "${_llama_cpp_repo_default}" CACHE STRING
+    "Git repository for the llama.cpp ref in LLAMA_CPP_VERSION")
 
 # Allow local source override via environment variable (like OLLAMA_MLX_SOURCE)
 if(DEFINED ENV{OLLAMA_LLAMA_CPP_SOURCE})
@@ -180,7 +184,7 @@ set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     llama_cpp
-    GIT_REPOSITORY "https://github.com/ggml-org/llama.cpp.git"
+    GIT_REPOSITORY "${LLAMA_CPP_REPO}"
     GIT_TAG ${LLAMA_CPP_GIT_TAG}
     GIT_SHALLOW TRUE
     ${_ollama_compat_patch_cmd}

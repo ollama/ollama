@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - 'LLAMA_CPP_VERSION'
+      - 'LLAMA_CPP_REPO'
 
 permissions:
   contents: read
@@ -54,6 +55,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - name: Build unsigned Darwin runtime
@@ -497,6 +499,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - name: Verify gcc is actually clang
@@ -549,6 +552,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - uses: actions/download-artifact@v4

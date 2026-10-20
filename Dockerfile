@@ -84,6 +84,7 @@ ENV VULKAN_SDK=/usr/local
 
 FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -105,6 +106,7 @@ COPY --from=llama-server-cpu dist/lib/ollama /lib/ollama/
 
 FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -119,6 +121,7 @@ COPY --from=llama-server-cuda_v12 dist/lib/ollama /lib/ollama/
 
 FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -134,6 +137,7 @@ COPY --from=llama-server-cuda_v13 dist/lib/ollama /lib/ollama/
 FROM rocm-7-deps AS llama-server-rocm_v7_2
 ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/usr
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -149,6 +153,7 @@ COPY --from=llama-server-rocm_v7_2 dist/lib/ollama /lib/ollama/
 
 FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -177,6 +182,7 @@ RUN apt-get update && apt-get install -y curl ccache git unzip \
     && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
@@ -201,6 +207,7 @@ RUN apt-get update && apt-get install -y curl ccache git unzip \
     && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
+COPY LLAMA_CPP_REPO .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
 COPY llama/clef llama/clef
