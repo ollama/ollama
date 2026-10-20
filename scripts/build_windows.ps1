@@ -840,7 +840,8 @@ function mlxCuda13 {
                     $cudaFlags += "-DCMAKE_CUDA_FLAGS=$env:OLLAMA_CMAKE_CUDA_FLAGS"
                 }
                 $cudaToolsetArgs = cudaCMakeArgs $cuda
-                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "--install-prefix", "$script:DIST_DIR")
+                $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
+                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "--install-prefix", "$script:DIST_DIR")
                 & cmake @configureArgs
                 if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
                 $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
@@ -1037,6 +1038,7 @@ function installer {
         Write-Output "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
         exit 1
     }
+    restoreDistComponentStaging
     Write-Output "Building Ollama Installer"
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
@@ -1080,7 +1082,7 @@ function newDependencyAuditJob($payloadDir, $label, $reportPath, $dependencyDirs
             "gdi32full.dll", "imm32.dll", "iphlpapi.dll", "kernel32.dll",
             "mpr.dll", "msasn1.dll", "msvcrt.dll", "ncrypt.dll",
             "normaliz.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll",
-            "powrprof.dll", "propsys.dll", "rpcrt4.dll", "sechost.dll",
+            "powrprof.dll", "propsys.dll", "psapi.dll", "rpcrt4.dll", "sechost.dll",
             "secur32.dll", "setupapi.dll", "shell32.dll", "shlwapi.dll",
             "ucrtbase.dll", "user32.dll", "userenv.dll", "version.dll",
             "winhttp.dll", "winmm.dll", "ws2_32.dll"
@@ -1204,70 +1206,142 @@ function verifyWindowsArm64Binaries {
     Write-Output "Verified $($binaries.Count) Windows ARM64/ARM64X binaries under $payloadDir ($arm64xCount ARM64X)"
 }
 
-function stageComponents($mainDir, $stagingDir, $pattern, $readmePrefix) {
-    $components = Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -Filter $pattern -ErrorAction SilentlyContinue
+function getZipComponents {
+    return @(
+        [pscustomobject]@{ Name = "cuda-v12"; Patterns = @("cuda_v12"); DisplayName = "CUDA v12"; Requires = @(); PreStaged = $false }
+        [pscustomobject]@{ Name = "cuda-v13"; Patterns = @("cuda_v13"); DisplayName = "CUDA v13"; Requires = @(); PreStaged = $false }
+        [pscustomobject]@{ Name = "rocm"; Patterns = @("rocm_v*"); DisplayName = "ROCm"; Requires = @(); PreStaged = $false }
+        [pscustomobject]@{ Name = "vulkan"; Patterns = @("vulkan*"); DisplayName = "Vulkan"; Requires = @(); PreStaged = $false }
+        [pscustomobject]@{ Name = "mlx"; Patterns = @(); DisplayName = "MLX"; Requires = @("cuda-v13"); PreStaged = $true }
+    )
+}
+
+function stageComponents($mainDir, $stagingDir, $patterns, $readmeName, $baseZipName) {
+    $components = @($patterns | ForEach-Object {
+        Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -Filter $_ -ErrorAction SilentlyContinue
+    } | Sort-Object FullName -Unique)
     if ($components) {
         Remove-Item -ea 0 -r $stagingDir
         mkdir -Force -path "${stagingDir}\lib\ollama" | Out-Null
-        Write-Output "Extract this ${readmePrefix} zip file to the same location where you extracted ollama-windows-amd64.zip" > "${stagingDir}\README_${readmePrefix}.txt"
+        Write-Output "Extract this zip file to the same location where you extracted ${baseZipName}." > "${stagingDir}\README_${readmeName}.txt"
         foreach ($dir in $components) {
             Write-Output "  Staging $($dir.Name)"
-            Move-Item -path $dir.FullName -destination "${stagingDir}\lib\ollama\$($dir.Name)"
+            Move-Item -LiteralPath $dir.FullName -destination "${stagingDir}\lib\ollama\$($dir.Name)"
         }
         return $true
     }
     return $false
 }
 
+function moveDirectoryContents($sourceDir, $destinationDir) {
+    mkdir -Force -path $destinationDir | Out-Null
+    foreach ($item in (Get-ChildItem -LiteralPath $sourceDir -Force)) {
+        $destination = Join-Path $destinationDir $item.Name
+        if ($item.PSIsContainer) {
+            moveDirectoryContents $item.FullName $destination
+            Remove-Item -ea 0 -r $item.FullName
+        } else {
+            Move-Item -LiteralPath $item.FullName -destination $destination -Force
+        }
+    }
+}
+
 function restoreComponents($mainDir, $stagingDir) {
     if (Test-Path -Path "${stagingDir}\lib\ollama") {
+        mkdir -Force -path "${mainDir}\lib\ollama" | Out-Null
         foreach ($dir in (Get-ChildItem -Path "${stagingDir}\lib\ollama" -Directory)) {
-            Move-Item -path $dir.FullName -destination "${mainDir}\lib\ollama\$($dir.Name)"
+            $destinationDir = "${mainDir}\lib\ollama\$($dir.Name)"
+            if (Test-Path -Path $destinationDir) {
+                moveDirectoryContents $dir.FullName $destinationDir
+                Remove-Item -ea 0 -r $dir.FullName
+            } else {
+                Move-Item -LiteralPath $dir.FullName -destination $destinationDir
+            }
         }
     }
     Remove-Item -ea 0 -r $stagingDir
 }
 
+function restoreDistComponentStaging {
+    $distDir = "${script:SRC_DIR}\dist"
+    foreach ($arch in @("amd64", "arm64")) {
+        $mainDir = "${distDir}\windows-${arch}"
+        foreach ($component in (getZipComponents)) {
+            if ($component.PreStaged) {
+                continue
+            }
+            restoreComponents $mainDir "${distDir}\windows-${arch}-$($component.Name)"
+        }
+    }
+}
+
 function zip {
     $jobs = @()
     $distDir = "${script:SRC_DIR}\dist"
-    $amd64Dir = "${distDir}\windows-amd64"
+    $components = @(getZipComponents)
+    restoreDistComponentStaging
 
     # Remove any stale zip files before starting
     Remove-Item -ea 0 "${distDir}\ollama-windows-*.zip"
 
     try {
-        if (Test-Path -Path $amd64Dir) {
-            # Stage ROCm into its own directory for independent compression.
-            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm_v*" "ROCm") {
-                Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
-                $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
-                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-rocm" "windows-amd64-rocm" "${distDir}\dependency-audit-windows-amd64-rocm.txt" $amd64Dir
+        foreach ($arch in @("amd64", "arm64")) {
+            $mainDir = "${distDir}\windows-${arch}"
+            if (-not (Test-Path -Path $mainDir)) {
+                continue
             }
 
-            # Stage MLX into its own directory for independent compression
-            if (stageComponents $amd64Dir "${distDir}\windows-amd64-mlx" "mlx_*" "MLX") {
-                Write-Output "Generating ${distDir}\ollama-windows-amd64-mlx.zip"
-                $jobs += newZipJob "${distDir}\windows-amd64-mlx" "${distDir}\ollama-windows-amd64-mlx.zip"
-                $jobs += newDependencyAuditJob "${distDir}\windows-amd64-mlx" "windows-amd64-mlx" "${distDir}\dependency-audit-windows-amd64-mlx.txt" $amd64Dir
+            if (-not (Test-Path -Path "${mainDir}\ollama.exe") -or -not (Test-Path -Path "${mainDir}\lib\ollama\llama-server.exe")) {
+                Write-Output "Skipping Windows ${arch} zips; missing ollama.exe or llama-server.exe"
+                continue
+            }
+            if ($arch -eq "arm64") {
+                verifyWindowsArm64Binaries $mainDir
             }
 
-            # Compress the main amd64 zip (without rocm/mlx)
-            Write-Output "Generating ${distDir}\ollama-windows-amd64.zip"
-            $jobs += newZipJob $amd64Dir "${distDir}\ollama-windows-amd64.zip"
-            $jobs += newDependencyAuditJob $amd64Dir "windows-amd64" "${distDir}\dependency-audit-windows-amd64.txt"
-        }
-
-        $arm64Dir = "${distDir}\windows-arm64"
-        if (Test-Path -Path $arm64Dir) {
-            if ((Test-Path -Path "${arm64Dir}\ollama.exe") -and (Test-Path -Path "${arm64Dir}\lib\ollama\llama-server.exe")) {
-                verifyWindowsArm64Binaries $arm64Dir
-                Write-Output "Generating ${distDir}\ollama-windows-arm64.zip"
-                $jobs += newZipJob $arm64Dir "${distDir}\ollama-windows-arm64.zip"
-                $jobs += newDependencyAuditJob $arm64Dir "windows-arm64" "${distDir}\dependency-audit-windows-arm64.txt"
-            } else {
-                Write-Output "Skipping ${distDir}\ollama-windows-arm64.zip; missing ARM64 ollama.exe or llama-server.exe"
+            $staged = @{}
+            $baseZipName = "ollama-windows-${arch}-cpu.zip"
+            foreach ($component in $components) {
+                $stagingDir = "${distDir}\windows-${arch}-$($component.Name)"
+                if ($component.PreStaged) {
+                    if (Test-Path -Path "${stagingDir}\lib\ollama") {
+                        $staged[$component.Name] = $stagingDir
+                    }
+                    continue
+                }
+                $readmeName = $component.Name.ToUpperInvariant().Replace("-", "_")
+                if (stageComponents $mainDir $stagingDir $component.Patterns $readmeName $baseZipName) {
+                    $staged[$component.Name] = $stagingDir
+                }
             }
+
+            $unclassified = @(Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -ErrorAction SilentlyContinue)
+            if ($unclassified) {
+                throw "Unclassified Windows payload directories: $($unclassified.Name -join ', ')"
+            }
+
+            foreach ($component in $components) {
+                if (-not $staged.ContainsKey($component.Name)) {
+                    continue
+                }
+                $dependencyDirs = @($mainDir)
+                foreach ($requirement in $component.Requires) {
+                    if (-not $staged.ContainsKey($requirement)) {
+                        throw "$($component.DisplayName) requires the missing $requirement payload"
+                    }
+                    $dependencyDirs += $staged[$requirement]
+                }
+
+                $zipPath = "${distDir}\ollama-windows-${arch}-$($component.Name).zip"
+                Write-Output "Generating ${zipPath}"
+                $jobs += newZipJob $staged[$component.Name] $zipPath
+                $jobs += newDependencyAuditJob $staged[$component.Name] "windows-${arch}-$($component.Name)" "${distDir}\dependency-audit-windows-${arch}-$($component.Name).txt" $dependencyDirs
+            }
+
+            $baseZipPath = "${distDir}\${baseZipName}"
+            Write-Output "Generating ${baseZipPath}"
+            $jobs += newZipJob $mainDir $baseZipPath
+            $jobs += newDependencyAuditJob $mainDir "windows-${arch}-cpu" "${distDir}\dependency-audit-windows-${arch}-cpu.txt"
         }
 
         if ($jobs.Count -gt 0) {
@@ -1284,10 +1358,16 @@ function zip {
             }
             if ($failed) { throw "One or more zip jobs failed" }
         }
+
+        $limit = 2GB
+        foreach ($archive in (Get-ChildItem -Path "${distDir}\ollama-windows-*.zip" -File)) {
+            if ($archive.Length -gt $limit) {
+                throw "$($archive.FullName) is $($archive.Length) bytes, over the 2 GiB GitHub release-asset limit"
+            }
+        }
     } finally {
         # Always restore staged components back into the main tree
-        restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm"
-        restoreComponents $amd64Dir "${distDir}\windows-amd64-mlx"
+        restoreDistComponentStaging
     }
 }
 
