@@ -1926,12 +1926,11 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	}
 }
 
-// EmitFunctionCallItems emits function_call events for client-provided tool
-// calls that accompanied a web_search call (mixed responses). Unlike
-// processToolCalls, this does not set toolCallsSent, so subsequent text
-// content can still be processed.
+// EmitFunctionCallItems emits client-provided tool calls from the web-search
+// wrapper, closing any open reasoning item first. It does not set toolCallsSent,
+// so subsequent text content can still be processed.
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return c.emitFunctionCallEvents(toolCalls)
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {

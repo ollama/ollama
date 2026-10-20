@@ -194,8 +194,9 @@ func TestLoadedModelLookupConcurrent(t *testing.T) {
 			defer wg.Done()
 			for range 20 {
 				got, err := s.getExistingModelForRunner(name.String(), "")
-				if err != nil || got != cached {
-					t.Errorf("concurrent warm lookup = %p, %v; want %p", got, err, cached)
+				// Lock contention can fall back to loading an equivalent model.
+				if err != nil || got == nil || got.Name != cached.Name || got.Digest != cached.Digest {
+					t.Errorf("concurrent warm lookup = %+v, %v; want model %q with digest %q", got, err, cached.Name, cached.Digest)
 					return
 				}
 			}
