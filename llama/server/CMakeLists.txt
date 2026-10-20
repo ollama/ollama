@@ -182,6 +182,37 @@ set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
 set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
 set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
 
+# Build info for llama-server --version. llama.cpp derives the commit with
+# `git rev-parse` in its source dir, which walks up into an enclosing
+# repository when the source has no .git of its own (a staged override in
+# the Ollama build tree reported the Ollama commit), and derives the build
+# number from `git rev-list --count`, which is 1 for shallow fetches.
+# Take the number from the bN prefix of the pinned tag and the commit from the
+# source itself: its own .git, or the marker the staged override carries.
+if(NOT DEFINED LLAMA_BUILD_NUMBER AND LLAMA_CPP_GIT_TAG MATCHES "^b([0-9]+)")
+    set(LLAMA_BUILD_NUMBER ${CMAKE_MATCH_1})
+endif()
+if(NOT DEFINED LLAMA_BUILD_COMMIT AND DEFINED FETCHCONTENT_SOURCE_DIR_LLAMA_CPP
+        AND NOT FETCHCONTENT_SOURCE_DIR_LLAMA_CPP STREQUAL "")
+    get_filename_component(_llama_cpp_info_src "${FETCHCONTENT_SOURCE_DIR_LLAMA_CPP}" ABSOLUTE)
+    if(EXISTS "${_llama_cpp_info_src}/.ollama-llama-cpp-commit")
+        file(READ "${_llama_cpp_info_src}/.ollama-llama-cpp-commit" _llama_cpp_info_commit)
+        string(STRIP "${_llama_cpp_info_commit}" _llama_cpp_info_commit)
+    elseif(EXISTS "${_llama_cpp_info_src}/.git")
+        find_package(Git QUIET)
+        if(GIT_FOUND)
+            execute_process(COMMAND ${GIT_EXECUTABLE} -C "${_llama_cpp_info_src}" rev-parse --short HEAD
+                OUTPUT_VARIABLE _llama_cpp_info_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        endif()
+    endif()
+    if(_llama_cpp_info_commit)
+        set(LLAMA_BUILD_COMMIT "${_llama_cpp_info_commit}")
+    endif()
+endif()
+if(DEFINED LLAMA_BUILD_COMMIT)
+    message(STATUS "llama.cpp build info: build ${LLAMA_BUILD_NUMBER}, commit ${LLAMA_BUILD_COMMIT}")
+endif()
+
 FetchContent_Declare(
     llama_cpp
     GIT_REPOSITORY "${LLAMA_CPP_REPO}"

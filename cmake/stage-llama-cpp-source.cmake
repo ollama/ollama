@@ -32,6 +32,13 @@ function(ollama_prepare_llama_cpp_override src out_var)
                 OUTPUT_VARIABLE _diff RESULT_VARIABLE _diff_rc ERROR_QUIET)
             if(_head_rc EQUAL 0 AND _diff_rc EQUAL 0)
                 string(SHA256 _diff_hash "${_diff}")
+                # The copy has no .git; record the commit for build info
+                # (read by llama/server/CMakeLists.txt).
+                string(SUBSTRING "${_head}" 0 9 _short_head)
+                set(_commit_marker "${_short_head}")
+                if(NOT _diff STREQUAL "")
+                    string(APPEND _commit_marker "-dirty")
+                endif()
                 string(APPEND _identity ";head=${_head};diff=${_diff_hash}")
             else()
                 string(TIMESTAMP _now "%s")
@@ -65,6 +72,9 @@ function(ollama_prepare_llama_cpp_override src out_var)
                 endif()
                 file(COPY "${src}/${_entry}" DESTINATION "${_dst}")
             endforeach()
+            if(DEFINED _commit_marker)
+                file(WRITE "${_dst}/.ollama-llama-cpp-commit" "${_commit_marker}\n")
+            endif()
             # Written only after the patch succeeds (below) so a failed patch
             # forces a fresh copy next time.
             set(_write_stamp TRUE)

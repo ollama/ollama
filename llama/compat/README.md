@@ -19,7 +19,9 @@ top-level `build*` directories) and applies the patch to that copy, so the
 override tree itself is never modified. The copy is refreshed when the
 override's git HEAD, its uncommitted tracked changes, or the patch files
 change (always, if the override is not a git checkout); re-run the configure
-step after editing the override. Pass
+step after editing the override. The copy carries the override's commit in
+`.ollama-llama-cpp-commit` so `llama-server --version` reports the llama.cpp
+commit rather than the enclosing Ollama checkout. Pass
 `-DOLLAMA_LLAMA_CPP_OVERRIDE_PATCH_IN_PLACE=ON` to patch the override in place
 instead; that is idempotent (already-applied patches are skipped) and a tree
 that conflicts with the patch fails the configure. A
