@@ -76,6 +76,12 @@ type LlamaServer interface {
 	ContextLength() int
 }
 
+// PrefillCachePersistor saves and restores a runner's processed prompt state.
+type PrefillCachePersistor interface {
+	SavePrefillCache(context.Context) error
+	RestorePrefillCache(context.Context) error
+}
+
 type LlamaServerConfig struct {
 	DisableJinja         bool
 	ContextShift         bool
@@ -83,6 +89,7 @@ type LlamaServerConfig struct {
 	ManifestDigest       string
 	DraftModelPath       string
 	DraftModelShardPaths []string
+	PrefillCachePath     string
 }
 
 // IsLlamaCPP reports whether the server is backed by the llama.cpp
