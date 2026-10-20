@@ -74,6 +74,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - run: |
@@ -356,6 +357,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - name: Verify gcc is actually clang
@@ -426,6 +428,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - uses: actions/download-artifact@v4

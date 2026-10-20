@@ -48,6 +48,7 @@ jobs:
             'llama/compat/**/*' \
             'llama/clef/**/*' \
             'LLAMA_CPP_VERSION' \
+            'LLAMA_CPP_REPO' \
             'MLX_VERSION' \
             'MLX_C_VERSION' \
             'mlx/CMakeLists.txt' \
@@ -419,6 +420,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - uses: actions/setup-node@v4
@@ -487,6 +489,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
+            LLAMA_CPP_REPO
             MLX_VERSION
             MLX_C_VERSION
       - name: Cache MLX Darwin release payload

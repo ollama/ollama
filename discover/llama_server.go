@@ -59,7 +59,7 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 	cmd := exec.CommandContext(ctx, llamaServer,
 		"--port", strconv.FormatInt(port, 10),
 		"--host", "127.0.0.1",
-		"--no-webui",
+		llm.LlamaServerNoUIFlag(llamaServer),
 		"--offline",
 		"--verbose",
 	)

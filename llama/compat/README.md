@@ -12,9 +12,23 @@ tensor layouts on disk, and this directory can be removed.
 
 The layer is applied automatically at build time via CMake `FetchContent`'s
 `PATCH_COMMAND` for normal fetched builds. If CMake is pointed at a source
-override through `FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the same patch is applied
-during configure. If `OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is
-intentionally skipped so a developer can iterate on a local llama.cpp tree.
+override through `FETCHCONTENT_SOURCE_DIR_LLAMA_CPP`, the top-level configure
+(`cmake/local.cmake`, via `cmake/stage-llama-cpp-source.cmake`) copies the
+override to `<build>/_deps/llama_cpp-override-src` (without `.git` and
+top-level `build*` directories) and applies the patch to that copy, so the
+override tree itself is never modified. The copy is refreshed when the
+override's git HEAD, its uncommitted tracked changes, or the patch files
+change (always, if the override is not a git checkout); re-run the configure
+step after editing the override. The copy carries the override's commit in
+`.ollama-llama-cpp-commit` so `llama-server --version` reports the llama.cpp
+commit rather than the enclosing Ollama checkout. Pass
+`-DOLLAMA_LLAMA_CPP_OVERRIDE_PATCH_IN_PLACE=ON` to patch the override in place
+instead; that is idempotent (already-applied patches are skipped) and a tree
+that conflicts with the patch fails the configure. A
+`FETCHCONTENT_SOURCE_DIR_LLAMA_CPP` given directly to a standalone
+`llama/server` configure is still patched in place there. If
+`OLLAMA_LLAMA_CPP_SOURCE` is set, the patch is intentionally skipped so a
+developer can iterate on a local llama.cpp tree.
 
 ## Files
 
@@ -79,7 +93,7 @@ This table tracks the dispatch surface. Keep it brief; the handler comments in
 | `gemma3n` | Normalizes tokenizer/EOS metadata, truncates vocab-shaped tensors, and hides unused embedded vision/audio/projector tensors. | n/a |
 | `gemma4` | Normalizes tokenizer metadata and hides embedded audio/vision/projector tensors from the text loader. | Gemma 4 vision/audio projector translation for GGUF blobs. |
 | `gptoss` | Maps to `gpt-oss`, copies KVs, injects missing expert FFN metadata, and renames tensors. | n/a |
-| `glm5next` | Maps to `glm5-next` and renames the `glm5next.*` KV prefix. | Remaps Unsloth `clip.projector_type=glm5next` to `glm5v`. |
+| `glm5next` | Maps to `glm5-next` and renames the `glm5next.*` KV prefix (disabled by default on ds41-test: handled natively by unslothai/llama.cpp#239; `-DOLLAMA_COMPAT_NATIVE_GLM5NEXT=0` re-enables). | Remaps Unsloth `clip.projector_type=glm5next` to `glm5v` (same guard). |
 | `lfm2` | Renames norm tensors and fixes feed-forward metadata. | n/a |
 | `olmo3` | Maps to the OLMo2-compatible loader path. | n/a |
 | `mistral3` | Fixes RoPE/YaRN metadata and hides embedded vision/projector tensors. | Pixtral-style projector translation. |
