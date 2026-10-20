@@ -71,7 +71,7 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5", "tev1":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
-	case "qwen3.8":
+	case "qwen3.8", "d3":
 		return newQwen38Renderer()
 	case "ornith":
 		return newOrnithRenderer()
