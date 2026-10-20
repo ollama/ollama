@@ -55,6 +55,19 @@ func TestUnigramByteFallback(t *testing.T) {
 			t.Errorf("round trip %q => %q", text, got)
 		}
 	}
+	text := strings.Repeat("hello ", 300)
+	prepared, _, _ := prepareText(text)
+	chunks, err := u.chunks(text)
+	if err != nil || len(chunks) < 2 || strings.Join(chunks, " ") != prepared {
+		t.Fatalf("long sentence was not split losslessly: %v", err)
+	}
+	for _, chunk := range chunks {
+		prepared, _, _ := prepareText(chunk)
+		if n := len(u.encode(prepared)); n > 200 {
+			t.Fatalf("long sentence chunk has %d tokens", n)
+		}
+	}
+
 }
 
 // Run against a real checkpoint and fixtures generated with Hugging Face
@@ -95,6 +108,52 @@ func TestCheckpointTokenizer(t *testing.T) {
 	for _, chunk := range chunks {
 		if !strings.HasSuffix(chunk, ".") {
 			t.Fatalf("split inside sentence: %q", chunk)
+		}
+	}
+}
+
+// Fixtures come from xn-ptts plan::chunks + plan::fit_or_error, using the same
+// checkpoint tokenizer. They cover oversized sentences, clauses and UTF-8 words.
+func TestCheckpointChunking(t *testing.T) {
+	path := os.Getenv("PHONON_CHUNK_CASES")
+	if path == "" {
+		t.Skip("set PHONON_CHUNK_CASES for upstream chunking parity")
+	}
+	data, err := os.ReadFile(os.Getenv("PHONON_TOKENIZER"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := newUnigram(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Text   string
+		Chunks []string
+	}
+	if err := json.Unmarshal(data, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		got, err := u.chunks(tc.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got, tc.Chunks) {
+			t.Errorf("chunks for %.40q differ: got %d chunks, want %d", tc.Text, len(got), len(tc.Chunks))
+		}
+		for _, chunk := range got {
+			prepared, _, err := prepareText(chunk)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := len(u.encode(prepared)); n > 200 {
+				t.Errorf("chunk has %d tokens", n)
+			}
 		}
 	}
 }

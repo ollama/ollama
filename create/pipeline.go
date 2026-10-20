@@ -65,6 +65,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if inv.Config.Architecture() == "LayaForDecision" && opts.Quantize != "" {
 		return fmt.Errorf("Laya currently requires unquantized weights")
 	}
+	if inv.Config.Architecture() == "Phonon" && opts.Quantize != "" {
+		return fmt.Errorf("Phonon currently requires unquantized weights")
+	}
 	class, err := Classify(inv, opts.Quantize)
 	if err != nil {
 		return err

@@ -8,11 +8,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/mlx/mlxtest"
+	"github.com/ollama/ollama/mlxrunner/model"
 )
 
 func TestClientSpeech(t *testing.T) {
@@ -72,6 +75,44 @@ func TestPCM16(t *testing.T) {
 	want := []byte{1, 128, 1, 128, 0, 0, 255, 127, 255, 127}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("PCM: %x, want %x", got, want)
+	}
+}
+
+type speechTestModel struct {
+	model.Model
+	chunks    int
+	generated chan struct{}
+}
+
+func (m speechTestModel) Speak(_ context.Context, _ llm.SpeechRequest, emit func([]float32) error) error {
+	defer close(m.generated)
+	samples := make([]float32, 1<<16)
+	for range m.chunks {
+		if err := emit(samples); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A client reading at playback speed must not hold the MLX worker.
+func TestSpeechDoesNotWaitForClient(t *testing.T) {
+	m := speechTestModel{chunks: 256, generated: make(chan struct{})} // 32 MiB, more than socket buffers hold
+	r := &Runner{Model: m, mlxThread: mlxtest.Worker(t)}
+	srv := httptest.NewServer(http.HandlerFunc(r.speechHandler))
+	defer srv.Close()
+	res, err := srv.Client().Post(srv.URL, "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	select {
+	case <-m.generated:
+	case <-time.After(10 * time.Second):
+		t.Fatal("generation waited for the client to read")
+	}
+	if n, err := io.Copy(io.Discard, res.Body); err != nil || n != 256<<17 {
+		t.Fatalf("read %d bytes: %v", n, err)
 	}
 }
 

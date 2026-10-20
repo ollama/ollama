@@ -27,10 +27,11 @@ type Transformer struct {
 	Layers    []*Layer
 	NumHeads  int32
 	MaxPeriod float32
+	GELU      string
 }
 
-func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads int32, period float32) (*Transformer, error) {
-	t := &Transformer{NumHeads: heads, MaxPeriod: period}
+func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads int32, period float32, gelu string) (*Transformer, error) {
+	t := &Transformer{NumHeads: heads, MaxPeriod: period, GELU: gelu}
 	for i := range layers {
 		p := fmt.Sprintf("%s.layers.%d.", prefix, i)
 		l := &Layer{
@@ -79,7 +80,13 @@ func (t *Transformer) forward(x *mlx.Array, offset int, caches []cache.Attention
 		a := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(history), nn.WithMask(nn.CausalMask()))
 		a = mlx.Reshape(mlx.Transpose(a, 0, 2, 1, 3), 1, L, D)
 		x = residual(x, l.OutProj.Forward(a), l.Scale1)
-		h := l.Linear2.Forward(mlx.GELUApprox(l.Linear1.Forward(l.Norm2.Forward(x))))
+		h := l.Linear1.Forward(l.Norm2.Forward(x))
+		if t.GELU == "erf" {
+			h = mlx.GELU(h)
+		} else {
+			h = mlx.GELUApprox(h)
+		}
+		h = l.Linear2.Forward(h)
 		x = residual(x, h, l.Scale2)
 	}
 	return x
@@ -112,7 +119,7 @@ type FlowBlock struct {
 	MLP2 *nn.Linear
 }
 
-func loadFlowHead(tensors map[string]*mlx.Array, prefix string, depth int32) (*FlowHead, error) {
+func loadFlowHead(tensors map[string]*mlx.Array, prefix string, depth int32, norm string) (*FlowHead, error) {
 	f := &FlowHead{
 		CondEmbed: linear(tensors, prefix+".cond_embed"),
 		InputProj: linear(tensors, prefix+".input_proj"),
@@ -137,7 +144,7 @@ func loadFlowHead(tensors map[string]*mlx.Array, prefix string, depth int32) (*F
 
 	// LSD conditions on a start and a target time; with one step they are
 	// always 0 and 1.
-	t0, t1 := timeEmbed(tensors, prefix+".time_embed.0", 0), timeEmbed(tensors, prefix+".time_embed.1", 1)
+	t0, t1 := timeEmbed(tensors, prefix+".time_embed.0", 0, norm), timeEmbed(tensors, prefix+".time_embed.1", 1, norm)
 	if t0 == nil || t1 == nil {
 		return nil, fmt.Errorf("missing time embedding for %s", prefix)
 	}
@@ -145,9 +152,8 @@ func loadFlowHead(tensors map[string]*mlx.Array, prefix string, depth int32) (*F
 	return f, nil
 }
 
-// timeEmbed evaluates a TimestepEmbedder at t. Its final norm divides by
-// the unbiased standard deviation, not the RMS.
-func timeEmbed(tensors map[string]*mlx.Array, prefix string, t float32) *mlx.Array {
+// timeEmbed evaluates a TimestepEmbedder at t with the checkpoint's norm.
+func timeEmbed(tensors map[string]*mlx.Array, prefix string, t float32, norm string) *mlx.Array {
 	freqs := tensors[prefix+".freqs"]
 	l0, l2, alpha := linear(tensors, prefix+".mlp.0"), linear(tensors, prefix+".mlp.2"), tensors[prefix+".mlp.3.alpha"]
 	if freqs == nil || l0 == nil || l2 == nil || alpha == nil {
@@ -156,6 +162,14 @@ func timeEmbed(tensors map[string]*mlx.Array, prefix string, t float32) *mlx.Arr
 	args := mlx.MulScalar(freqs, t)
 	x := mlx.Concatenate([]*mlx.Array{mlx.Cos(args), mlx.Sin(args)}, 0)
 	x = l2.Forward(mlx.SiLU(l0.Forward(x)))
+	return timeNorm(x, alpha, norm)
+}
+
+func timeNorm(x, alpha *mlx.Array, norm string) *mlx.Array {
+	if norm == "rms" {
+		return mlx.RMSNormFn(x, alpha, 1e-5)
+	}
+	// Legacy checkpoints divide by the unbiased standard deviation, without centering x.
 	n := float32(x.Dim(0))
 	centered := mlx.Sub(x, mlx.Mean(x, -1, true))
 	variance := mlx.DivScalar(mlx.Sum(mlx.Mul(centered, centered), -1, true), n-1)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
@@ -183,5 +184,31 @@ func TestSpeechScheduleErrors(t *testing.T) {
 				t.Fatalf("got %d %s; want %d %q", w.Code, w.Body, tc.status, tc.message)
 			}
 		})
+	}
+}
+
+// Gin's Flush method drops errors; speech must reach the underlying writer's
+// FlushError so a failed write stops the producer immediately.
+type speechFlushErrorWriter struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (w *speechFlushErrorWriter) SetWriteDeadline(time.Time) error { return nil }
+func (w *speechFlushErrorWriter) FlushError() error                { return w.err }
+func (w *speechFlushErrorWriter) Flush()                           { _ = w.FlushError() }
+
+func TestSpeechFlushErrorStopsProducer(t *testing.T) {
+	want := errors.New("connection write failed")
+	w := &speechFlushErrorWriter{ResponseRecorder: httptest.NewRecorder(), err: want}
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", nil)
+	var got error
+	streamSpeech(c, speechFunc(func(_ context.Context, _ llm.SpeechRequest, emit func([]byte) error) error {
+		got = emit([]byte{1, 0})
+		return got
+	}), llm.SpeechRequest{}, "pcm")
+	if !errors.Is(got, want) {
+		t.Fatalf("flush error did not reach producer: got %v, want %v", got, want)
 	}
 }

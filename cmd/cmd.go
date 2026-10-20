@@ -1013,6 +1013,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
 	}
 
+	if slices.Contains(info.Capabilities, model.CapabilitySpeech) {
+		return runSpeech(cmd.Context(), name, opts.Prompt, interactive)
+	}
+
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
 		return errors.New("image generation models are not currently supported")
 	}

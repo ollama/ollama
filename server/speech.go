@@ -79,7 +79,13 @@ func (s *Server) SpeechHandler(c *gin.Context) {
 }
 
 func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, format string) {
-	controller := http.NewResponseController(c.Writer)
+	// Write through Gin for status/byte accounting, but bypass its Flush
+	// method so ResponseController can return the underlying flush error.
+	var writer http.ResponseWriter = c.Writer
+	if w, ok := writer.(interface{ Unwrap() http.ResponseWriter }); ok {
+		writer = w.Unwrap()
+	}
+	controller := http.NewResponseController(writer)
 	defer controller.SetWriteDeadline(time.Time{})
 	started := false
 	err := speaker.Speech(c.Request.Context(), req, func(pcm []byte) error {
@@ -104,8 +110,7 @@ func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, fo
 		if _, err := c.Writer.Write(pcm); err != nil {
 			return err
 		}
-		c.Writer.Flush()
-		return nil
+		return controller.Flush()
 	})
 	if err == nil && !started {
 		err = errors.New("speech model produced no audio")
@@ -122,13 +127,12 @@ func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, fo
 		}
 		return
 	}
-	status := http.StatusInternalServerError
+	status, message := http.StatusInternalServerError, err.Error()
 	var statusErr api.StatusError
 	if errors.As(err, &statusErr) {
-		status = statusErr.StatusCode
-		err = errors.New(statusErr.ErrorMessage)
+		status, message = statusErr.StatusCode, statusErr.ErrorMessage
 	}
-	speechError(c, status, err.Error())
+	speechError(c, status, message)
 }
 
 func speechError(c *gin.Context, status int, message string) {

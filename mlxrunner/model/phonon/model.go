@@ -24,11 +24,17 @@ func init() { model.Register("Phonon", newModel) }
 
 // config follows the upstream Phonon config.json.
 type config struct {
+	ModelID *struct {
+		Sig   string `json:"sig"`
+		Epoch int    `json:"epoch"`
+	} `json:"model_id"`
 	FlowLM struct {
-		NumHeads  int32   `json:"num_heads"`
-		NumLayers int32   `json:"num_layers"`
-		MaxPeriod float32 `json:"max_period"`
-		FlowDepth int32   `json:"flow_depth"`
+		NumHeads    int32   `json:"num_heads"`
+		NumLayers   int32   `json:"num_layers"`
+		MaxPeriod   float32 `json:"max_period"`
+		FlowDepth   int32   `json:"flow_depth"`
+		GELU        string  `json:"gelu"`
+		TimeRMSNorm string  `json:"time_rms_norm"`
 	} `json:"flow_lm"`
 	Mimi struct {
 		SampleRate   int     `json:"sample_rate"`
@@ -38,6 +44,7 @@ type config struct {
 		NumLayers    int32   `json:"transformer_num_layers"`
 		Context      int     `json:"transformer_context"`
 		MaxPeriod    float32 `json:"transformer_max_period"`
+		GELU         string  `json:"gelu"`
 	} `json:"mimi"`
 	Temperature  float32 `json:"temp"`
 	DecodeSteps  int     `json:"lsd_decode_steps"`
@@ -79,7 +86,7 @@ type Voice struct {
 }
 
 func newModel(root *model.Root) (model.Model, error) {
-	var cfg config
+	cfg := config{Temperature: 0.3}
 	if err := root.Manifest.ReadConfigJSON("config.json", &cfg); err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -97,7 +104,26 @@ func newModel(root *model.Root) (model.Model, error) {
 	return &Model{cfg: &cfg, tok: tok}, nil
 }
 
+// gelu follows upstream's checkpoint defaults; an explicit activation wins.
+func (c *config) gelu(value string) string {
+	if value != "" {
+		return value
+	}
+	if c.ModelID != nil {
+		return "erf"
+	}
+	return "tanh"
+}
+
 func (c *config) validate() error {
+	for _, value := range []string{c.FlowLM.GELU, c.Mimi.GELU} {
+		if value != "" && value != "erf" && value != "tanh" {
+			return fmt.Errorf("unsupported phonon GELU %q", value)
+		}
+	}
+	if value := c.FlowLM.TimeRMSNorm; value != "" && value != "rms_var" && value != "rms" {
+		return fmt.Errorf("unsupported phonon time norm %q", value)
+	}
 	if c.Mimi.SampleRate != sampleRate || c.Mimi.FrameRate != 12.5 {
 		return fmt.Errorf("unsupported mimi rates: %d Hz, %g frames/s", c.Mimi.SampleRate, c.Mimi.FrameRate)
 	}
@@ -119,6 +145,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	// The flow LM transformer is bandwidth bound and runs in bfloat16; the
 	// flow head and the Mimi decoder stay in float32.
 	for name, t := range tensors {
+		if d := t.DType(); d != mlx.DTypeFloat32 && d != mlx.DTypeBFloat16 && d != mlx.DTypeFloat16 {
+			return fmt.Errorf("phonon requires unquantized floating-point weights: %s", name)
+		}
 		dtype := mlx.DTypeFloat32
 		if strings.HasPrefix(name, "flow_lm.transformer.") || strings.HasPrefix(name, "voices.") ||
 			name == "flow_lm.num_speakers" || name == "flow_lm.conditioner.embed.weight" || name == "flow_lm.input_linear.weight" {
@@ -130,10 +159,10 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	f := m.cfg.FlowLM
 	var err error
-	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.NumLayers, f.NumHeads, f.MaxPeriod); err != nil {
+	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.NumLayers, f.NumHeads, f.MaxPeriod, m.cfg.gelu(f.GELU)); err != nil {
 		return err
 	}
-	if m.Head, err = loadFlowHead(tensors, "flow_lm.flow_net", f.FlowDepth); err != nil {
+	if m.Head, err = loadFlowHead(tensors, "flow_lm.flow_net", f.FlowDepth, f.TimeRMSNorm); err != nil {
 		return err
 	}
 	if m.Mimi, err = loadMimi(tensors, m.cfg); err != nil {

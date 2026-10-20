@@ -18,20 +18,22 @@ const metaspace = "▁"
 // Prepend("▁") normalizer, Metaspace pre-tokenizer and byte fallback the
 // released checkpoints use.
 type unigram struct {
-	pieces   []string
-	scores   []float64
-	byteIDs  [256]int32 // token ID for each byte, or -1
-	bytes    []int      // byte value of each <0xNN> piece, or -1
-	ids      map[string]int32
-	maxLen   int
-	unkID    int32
-	unkScore float64
-	specials []specialToken
+	pieces     []string
+	scores     []float64
+	byteIDs    [256]int32 // token ID for each byte, or -1
+	bytes      []int      // byte value of each <0xNN> piece, or -1
+	ids        map[string]int32
+	maxLen     int
+	unkID      int32
+	unkScore   float64
+	specials   []specialToken
+	specialIDs []bool
 }
 
 type specialToken struct {
 	ID      int32  `json:"id"`
 	Content string `json:"content"`
+	Special bool   `json:"special"`
 }
 
 func newUnigram(data []byte) (*unigram, error) {
@@ -49,7 +51,7 @@ func newUnigram(data []byte) (*unigram, error) {
 	if t.Model.Type != "Unigram" {
 		return nil, fmt.Errorf("unsupported tokenizer model %q", t.Model.Type)
 	}
-	u := &unigram{ids: make(map[string]int32, len(t.Model.Vocab)), unkID: t.Model.UnkID}
+	u := &unigram{ids: make(map[string]int32, len(t.Model.Vocab)), unkID: t.Model.UnkID, specialIDs: make([]bool, len(t.Model.Vocab))}
 	for i := range u.byteIDs {
 		u.byteIDs[i] = -1
 	}
@@ -86,6 +88,7 @@ func newUnigram(data []byte) (*unigram, error) {
 			return nil, fmt.Errorf("invalid added token %q", token.Content)
 		}
 		u.specials = append(u.specials, token)
+		u.specialIDs[token.ID] = token.Special
 	}
 	return u, nil
 }
@@ -174,18 +177,24 @@ func (u *unigram) encodeWord(s string, ids []int32) []int32 {
 
 func (u *unigram) decode(ids []int32) string {
 	var b []byte
-	for i, id := range ids {
+	first := true
+	for _, id := range ids {
+		if u.specialIDs[id] {
+			continue
+		}
 		if c := u.bytes[id]; c >= 0 {
 			b = append(b, byte(c))
+			first = false
 			continue
 		}
 		piece := u.pieces[id]
-		if i == 0 {
+		if first {
 			piece = strings.ReplaceAll(piece, metaspace, "")
 		} else {
 			piece = strings.ReplaceAll(piece, metaspace, " ")
 		}
 		b = append(b, piece...)
+		first = false
 	}
 	return strings.ToValidUTF8(string(b), "�")
 }
@@ -194,8 +203,7 @@ const maxChunkTokens = 50
 
 var errEmptyText = errors.New("input text is empty")
 
-// prepareText follows Phonon's prepare_text_prompt. The reference runtime's
-// optional language-specific number expansion is not applied here.
+// prepareText follows the reference prepare_text_prompt, after normalization.
 func prepareText(text string) (string, int, error) {
 	words := strings.Fields(text)
 	text = strings.Join(words, " ")
@@ -215,9 +223,10 @@ func prepareText(text string) (string, int, error) {
 }
 
 // chunks splits text into sentence groups of at most maxChunkTokens tokens,
-// as Phonon split_into_best_sentences does. Long individual sentences remain intact.
+// as Phonon split_into_best_sentences does, then fits oversized sentences
+// to the reference runtime's hard limit.
 func (u *unigram) chunks(text string) ([]string, error) {
-	text, _, err := prepareText(text)
+	text, _, err := prepareText(normalizeText(text))
 	if err != nil {
 		return nil, err
 	}
@@ -264,5 +273,72 @@ func (u *unigram) chunks(text string) ([]string, error) {
 	if cur != "" {
 		chunks = append(chunks, strings.TrimSpace(cur))
 	}
-	return chunks, nil
+	return u.fitChunks(chunks)
+}
+
+// fitChunks mirrors upstream plan::fit_or_error. Long prompts otherwise outlast
+// the model's training segments and can lose words even with enough KV space.
+func (u *unigram) fitChunks(chunks []string) ([]string, error) {
+	const limit = 200
+	slices.Reverse(chunks)
+	var fitted []string
+	for len(chunks) > 0 {
+		text := chunks[len(chunks)-1]
+		chunks = chunks[:len(chunks)-1]
+		prepared, _, err := prepareText(text)
+		if err != nil {
+			return nil, err
+		}
+		if len(u.encode(prepared)) <= limit {
+			fitted = append(fitted, text)
+			continue
+		}
+		words := strings.Fields(text)
+		var left, right string
+		if len(words) > 1 {
+			cut := u.cutWords(words, limit/4)
+			left, right = strings.Join(words[:cut], " "), strings.Join(words[cut:], " ")
+		} else {
+			runes := []rune(text)
+			if len(runes) < 2 {
+				return nil, fmt.Errorf("text cannot fit the %d-token limit", limit)
+			}
+			left, right = string(runes[:len(runes)/2]), string(runes[len(runes)/2:])
+		}
+		chunks = append(chunks, right, left)
+	}
+	return fitted, nil
+}
+
+// Prefer a sentence end, then a clause end, then the most balanced word split.
+func (u *unigram) cutWords(words []string, minSide int) int {
+	ends := make([]int, len(words))
+	total := 0
+	for i, word := range words {
+		total += len(u.encode(word))
+		ends[i] = total
+	}
+	for _, marks := range []string{".!?", ",;:", ""} {
+		best, distance := 0, total+1
+		for i, end := range ends[:len(ends)-1] {
+			if marks != "" {
+				word := strings.TrimRight(words[i], "\"')]”’»")
+				last, _ := utf8.DecodeLastRuneInString(word)
+				if !strings.ContainsRune(marks, last) || end < minSide || total-end < minSide {
+					continue
+				}
+			}
+			d := end - (total - end)
+			if d < 0 {
+				d = -d
+			}
+			if d < distance {
+				best, distance = i+1, d
+			}
+		}
+		if best != 0 {
+			return best
+		}
+	}
+	return 1
 }

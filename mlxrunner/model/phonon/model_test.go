@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"math"
 	"testing"
+
+	"github.com/ollama/ollama/mlx"
+	"github.com/ollama/ollama/mlx/mlxtest"
 )
 
 func TestConfig(t *testing.T) {
@@ -22,6 +25,8 @@ func TestConfig(t *testing.T) {
 		name   string
 		change func(*config)
 	}{
+		{"GELU", func(c *config) { c.FlowLM.GELU = "relu" }},
+		{"time norm", func(c *config) { c.FlowLM.TimeRMSNorm = "other" }},
 		{"sample rate", func(c *config) { c.Mimi.SampleRate = 48000 }},
 		{"layers", func(c *config) { c.FlowLM.NumLayers = 0 }},
 		{"multiple LSD steps", func(c *config) { c.DecodeSteps = 2 }},
@@ -36,4 +41,51 @@ func TestConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckpointDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		json, gelu  string
+		temperature float32
+	}{
+		{`{}`, "tanh", .3},
+		{`{"model_id":{"sig":"7e71a02d","epoch":200},"temp":0.8}`, "erf", .8},
+		{`{"model_id":{"sig":"test","epoch":1},"flow_lm":{"gelu":"tanh"},"temp":0}`, "tanh", 0},
+		{`{"flow_lm":{"gelu":"erf"}}`, "erf", .3},
+	} {
+		cfg := config{Temperature: .3}
+		if err := json.Unmarshal([]byte(tc.json), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if got := cfg.gelu(cfg.FlowLM.GELU); got != tc.gelu {
+			t.Errorf("GELU = %q, want %q", got, tc.gelu)
+		}
+		if cfg.Temperature != tc.temperature {
+			t.Errorf("temperature = %v, want %v", cfg.Temperature, tc.temperature)
+		}
+	}
+}
+
+func TestTimeNorm(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		values := []float32{1, 2, 3, 6}
+		x, alpha := mlx.FromValues(values, 4), mlx.FromValues([]float32{2, 2, 2, 2}, 4)
+		for _, tc := range []struct {
+			norm        string
+			denominator float64
+		}{
+			{"", math.Sqrt(14.0/3 + 1e-5)},
+			{"rms_var", math.Sqrt(14.0/3 + 1e-5)},
+			{"rms", math.Sqrt(12.5 + 1e-5)},
+		} {
+			out := timeNorm(x, alpha, tc.norm)
+			mlx.Eval(out)
+			for i, got := range out.Floats() {
+				want := 2 * float64(values[i]) / tc.denominator
+				if math.Abs(float64(got)-want) > 1e-5 {
+					t.Errorf("%s[%d] = %v, want %v", tc.norm, i, got, want)
+				}
+			}
+		}
+	})
 }
