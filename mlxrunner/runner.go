@@ -137,6 +137,9 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 
 		r.Model = m
+		if _, ok := m.(model.SpeechModel); ok {
+			return w
+		}
 		r.Tokenizer = m.Tokenizer()
 		r.contextLength = m.MaxContextLength()
 		caches := m.NewCaches()
