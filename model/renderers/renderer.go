@@ -105,6 +105,8 @@ func rendererForName(name string) Renderer {
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "gemma4-large":
 		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
+	case "gemma4-nemotron":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
