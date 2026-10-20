@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -95,14 +96,7 @@ func (s *Scheduler) loadedModelsForName(name model.Name, requestedRunner string)
 
 	var models []*Model
 	for _, runner := range runners {
-		// A loading runner holds refMu until it is ready. Do not make lookup
-		// for another model wait for that startup; a miss falls back to a
-		// verified manifest lookup. Keep refMu separate from loadedMu.
-		if !runner.refMu.TryLock() {
-			continue
-		}
-		m := runner.model
-		runner.refMu.Unlock()
+		m := runner.model.Load()
 		if m == nil || !model.ParseName(m.Name).EqualFold(name) {
 			continue
 		}
@@ -753,7 +747,6 @@ iGPUScan:
 		runnerName = manifest.RunnerLlamaCPP
 	}
 	runner := &runnerRef{
-		model:           req.model,
 		modelPath:       req.model.ModelPath,
 		modelKey:        schedulerModelKey(req.model),
 		llama:           llama,
@@ -772,6 +765,7 @@ iGPUScan:
 		contextShift:    req.contextShift,
 		trainContext:    trainContext,
 	}
+	runner.model.Store(req.model)
 	runner.numParallel = numParallel
 	runner.refMu.Lock() // hold lock until running or aborted
 
@@ -1322,7 +1316,7 @@ func (s *Scheduler) loadedMmapModelSizeLocked() uint64 {
 		if !runnerUsesMmap(r) {
 			continue
 		}
-		if size := modelFileSize(r.model.modelPaths()...); size > 0 {
+		if size := modelFileSize(r.model.Load().modelPaths()...); size > 0 {
 			total += size
 		} else {
 			total += r.totalSize
@@ -1398,7 +1392,8 @@ type runnerRef struct {
 	expireTimer     *time.Timer
 	expiresAt       time.Time
 
-	model        *Model
+	// model is atomic so lookups can read it without contending on refMu.
+	model        atomic.Pointer[Model]
 	modelPath    string
 	modelKey     string
 	numParallel  int
@@ -1419,7 +1414,7 @@ func (runner *runnerRef) unload() {
 	if runner.llama != nil {
 		runner.llama.Close()
 	}
-	runner.model = nil
+	runner.model.Store(nil)
 	runner.Options = nil
 	runner.gpus = nil
 	runner.contextShift = false
@@ -1467,9 +1462,11 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
+	loaded := runner.model.Load()
+	if loaded == nil ||
+		!reflect.DeepEqual(loaded.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
+		!reflect.DeepEqual(loaded.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
+		(!loaded.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
@@ -1558,8 +1555,8 @@ func (runner *runnerRef) LogValue() slog.Value {
 	}
 	attrs := []slog.Attr{}
 	if runner.refMu.TryLock() {
-		if runner.model != nil {
-			attrs = append(attrs, slog.String("name", runner.model.Name))
+		if m := runner.model.Load(); m != nil {
+			attrs = append(attrs, slog.String("name", m.Name))
 		}
 		if len(runner.gpus) > 0 {
 			attrs = append(attrs,
@@ -1772,7 +1769,7 @@ func (s *Scheduler) expireRunner(model *Model) {
 		runners = append(runners, runner)
 	} else if model != nil && model.Name != "" {
 		for _, runner := range s.loaded {
-			if runner.model != nil && runner.model.Name == model.Name {
+			if m := runner.model.Load(); m != nil && m.Name == model.Name {
 				runners = append(runners, runner)
 			}
 		}
@@ -1820,13 +1817,14 @@ func (s *Scheduler) loadedModels() []loadedModel {
 	models := make([]loadedModel, 0, len(runners))
 	for _, r := range runners {
 		r.refMu.Lock()
-		if r.model == nil {
+		m := r.model.Load()
+		if m == nil {
 			// Unloaded after the snapshot above was taken
 			r.refMu.Unlock()
 			continue
 		}
 		lm := loadedModel{
-			model:     r.model,
+			model:     m,
 			runner:    r.runner,
 			size:      int64(r.totalSize),
 			sizeVRAM:  int64(r.vramSize),
