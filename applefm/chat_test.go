@@ -188,6 +188,13 @@ func TestChatErrors(t *testing.T) {
 			message: "The model's safety guardrails were triggered.",
 		},
 		{
+			name: "stream ends early",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				writeSSE(w, `data: {"choices":[{"delta":{"content":"Once upon"},"index":0}]}`)
+			},
+			message: "ended the response early",
+		},
+		{
 			name: "json format",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				t.Error("fm should not be called")

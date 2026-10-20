@@ -136,7 +136,7 @@ func newChatCompletionRequest(msgs []api.Message, format json.RawMessage, opts *
 			req.MaxCompletionTokens = &opts.NumPredict
 		}
 		if len(opts.Stop) > 0 {
-			slog.Debug("apple foundation models do not support stop sequences, ignoring", "stop", opts.Stop)
+			slog.Warn("apple foundation models do not support stop sequences, ignoring", "stop", opts.Stop)
 		}
 	}
 	return req, nil
@@ -158,21 +158,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	for _, m := range req.Media {
 		msg.Images = append(msg.Images, m.Data)
 	}
-	creq, err := newChatCompletionRequest([]api.Message{msg}, req.Format, req.Options)
-	if err != nil {
-		return err
-	}
-	return c.stream(ctx, creq, func(r llm.ChatResponse) {
-		fn(llm.CompletionResponse{
-			Content:            r.Message.Content,
-			Done:               r.Done,
-			DoneReason:         r.DoneReason,
-			PromptEvalCount:    r.PromptEvalCount,
-			PromptEvalDuration: r.PromptEvalDuration,
-			EvalCount:          r.EvalCount,
-			EvalDuration:       r.EvalDuration,
-		})
-	})
+	return llm.CompleteWithChat(c, []api.Message{msg})(ctx, req, fn)
 }
 
 func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn func(llm.ChatResponse)) error {
@@ -209,6 +195,7 @@ func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn fun
 
 	final := llm.ChatResponse{Done: true, DoneReason: llm.DoneReasonStop}
 	var firstToken time.Time
+	var finished bool
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -221,6 +208,7 @@ func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn fun
 		}
 		data = strings.TrimSpace(data)
 		if data == "[DONE]" {
+			finished = true
 			break
 		}
 
@@ -251,6 +239,9 @@ func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn fun
 	}
 	if err := scanner.Err(); err != nil {
 		return err
+	}
+	if !finished {
+		return errors.New("fm serve ended the response early")
 	}
 
 	if firstToken.IsZero() {

@@ -160,3 +160,26 @@ func TestGenerateHandlerAppleFMSendsMessages(t *testing.T) {
 		t.Errorf("response = %+v", resp)
 	}
 }
+
+func TestGenerateHandlerAppleFMRejectsPromptFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	stubAppleFMAvailable(t, nil)
+	if err := registerAppleFoundationModel(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s := newServerWithMockRunner(t, &mockRunner{})
+
+	stream := false
+	for name, req := range map[string]api.GenerateRequest{
+		"context":  {Model: appleFMModelName, Prompt: "hi", Context: []int{1, 2}, Stream: &stream},
+		"template": {Model: appleFMModelName, Prompt: "hi", Template: "{{ .Prompt }}", Stream: &stream},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := createRequest(t, s.GenerateHandler, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}

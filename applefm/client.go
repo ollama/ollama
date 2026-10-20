@@ -154,7 +154,12 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 		case <-timeout:
 			return errors.New("timeout waiting for fm serve to start")
 		case <-ticker.C:
-			if err := c.Ping(ctx); err == nil {
+			// fm may accept connections before it can answer, so don't let
+			// one health check outlast the load timeout.
+			pingCtx, cancel := context.WithTimeout(ctx, time.Second)
+			err := c.Ping(pingCtx)
+			cancel()
+			if err == nil {
 				slog.Info("apple foundation model server is ready")
 				return nil
 			}

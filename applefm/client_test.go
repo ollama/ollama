@@ -2,6 +2,7 @@ package applefm
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -41,5 +42,17 @@ func TestWaitUntilRunningReportsExit(t *testing.T) {
 	c.Close()
 	if _, err := os.Stat(sockDir); !os.IsNotExist(err) {
 		t.Errorf("socket directory not removed: %v", err)
+	}
+}
+
+func TestWaitUntilRunningTimesOutOnHungHealthCheck(t *testing.T) {
+	t.Setenv("OLLAMA_LOAD_TIMEOUT", "1500ms")
+	c := newFakeFM(t, func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+
+	err := c.WaitUntilRunning(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("error = %v, want timeout", err)
 	}
 }

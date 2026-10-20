@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/applefm"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
@@ -49,22 +47,4 @@ func registerAppleFoundationModel(ctx context.Context) error {
 
 	slog.Info("registering apple foundation model", "model", name.DisplayShortest())
 	return manifest.WriteManifestWithMetadata(name, layer, nil, applefm.RunnerName, applefm.ModelFormat)
-}
-
-// completeWithChat sends msgs to r.Chat in place of a rendered prompt, for
-// runners that take messages rather than a prompt.
-func completeWithChat(r llm.LlamaServer, msgs []api.Message) func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error {
-	return func(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-		return r.Chat(ctx, llm.ChatRequest{Messages: msgs, Format: req.Format, Options: req.Options}, func(cr llm.ChatResponse) {
-			fn(llm.CompletionResponse{
-				Content:            cr.Message.Content,
-				Done:               cr.Done,
-				DoneReason:         cr.DoneReason,
-				PromptEvalCount:    cr.PromptEvalCount,
-				PromptEvalDuration: cr.PromptEvalDuration,
-				EvalCount:          cr.EvalCount,
-				EvalDuration:       cr.EvalDuration,
-			})
-		})
-	}
 }
