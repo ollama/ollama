@@ -62,6 +62,49 @@ func TestFromChatRequest_Basic(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
+	tests := []struct {
+		name                string
+		maxTokens           *int
+		maxCompletionTokens *int
+		want                any
+		wantErr             string
+	}{
+		{name: "unset"},
+		{name: "max_tokens", maxTokens: testIntPtr(5), want: 5},
+		{name: "max_completion_tokens", maxCompletionTokens: testIntPtr(7), want: 7},
+		{name: "new field takes precedence", maxTokens: testIntPtr(5), maxCompletionTokens: testIntPtr(7), want: 7},
+		{name: "negative max_tokens", maxTokens: testIntPtr(-1), wantErr: "max_tokens must be non-negative"},
+		{name: "negative max_completion_tokens", maxCompletionTokens: testIntPtr(-1), wantErr: "max_completion_tokens must be non-negative"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FromChatRequest(ChatCompletionRequest{
+				Messages:            []Message{{Role: "user", Content: "Hello"}},
+				MaxTokens:           tt.maxTokens,
+				MaxCompletionTokens: tt.maxCompletionTokens,
+			})
+			if tt.wantErr != "" {
+				if err == nil || err.Error() != tt.wantErr {
+					t.Fatalf("FromChatRequest() error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("FromChatRequest() error = %v", err)
+			}
+			if value, ok := got.Options["num_predict"]; tt.want == nil {
+				if ok {
+					t.Fatalf("num_predict = %v, want unset", value)
+				}
+			} else if !ok || value != tt.want {
+				t.Fatalf("num_predict = %v, want %v", value, tt.want)
+			}
+		})
+	}
+}
+
 func TestFromChatRequest_ReasoningEffort(t *testing.T) {
 	effort := func(s string) *string { return &s }
 
