@@ -88,7 +88,7 @@ func (p *PLE) lookup(globalIDs *mlx.Array) *mlx.Array {
 
 // Forward implements the published Engram dataflow against the checkpoint's
 // fused four-stream projections and split embedding table.
-func (p *PLE) Forward(hidden *mlx.Array, b *batch.Batch, tokens *engramCache, cfg *Config) *mlx.Array {
+func (p *PLE) Forward(hidden *mlx.Array, b *batch.Batch, tokens engramState, cfg *Config) *mlx.Array {
 	dims := hidden.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	streams := mlx.Reshape(hidden, B, L, cfg.HCCount, cfg.HiddenSize)

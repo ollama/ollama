@@ -244,7 +244,7 @@ func (m *VLModel) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Ar
 	return m.Vision.Forward(data, geometry.Height, geometry.Width)
 }
 
-func (m *VLModel) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *VLModel) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	for _, item := range b.Media {
 		if item.Features == nil {

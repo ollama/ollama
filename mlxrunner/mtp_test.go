@@ -52,7 +52,7 @@ type forwardCall struct {
 	n      int32
 }
 
-func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *fakeMTPModel) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs)
 	ids := b.InputIDs.Ints()
 	m.forwards = append(m.forwards, forwardCall{offset: b.SeqOffsets[0], n: int32(len(ids))})
@@ -105,7 +105,7 @@ func (d *fakeMTPDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
 func (d *fakeMTPDraft) NewCaches() []cache.Cache { return nil }
 
-func (d *fakeMTPDraft) Forward(b *batch.Batch, _, _ []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (d *fakeMTPDraft) Forward(b *batch.Batch, _, _ []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	d.layouts = append(d.layouts, b.Layout)
 	mlx.Eval(b.InputIDs)
 	prev := b.InputIDs.Ints()[0]
@@ -145,7 +145,7 @@ func (d *fakeKVDraft) LoadWeights(map[string]*mlx.Array) error { return nil }
 
 func (d *fakeKVDraft) NewCaches() []cache.Cache { return d.draftCaches }
 
-func (d *fakeKVDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (d *fakeKVDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	mlx.Eval(b.InputIDs, b.Hidden)
 	ids := b.InputIDs.Ints()
 
@@ -238,7 +238,10 @@ func collectResponses(ch chan CompletionResponse) (content string, final Complet
 	var b strings.Builder
 	for {
 		select {
-		case resp := <-ch:
+		case resp, ok := <-ch:
+			if !ok {
+				return b.String(), final
+			}
 			if resp.Done {
 				return b.String(), resp
 			}
@@ -381,7 +384,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		position := 1 // one prefill token already processed
 
@@ -443,7 +446,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{Temperature: 1, Seed: 42, UseSeed: true})
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict}, caches, nil)
+		r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, caches, nil)
 		session, ch := newMTPTestSession(caches)
 		position := 1
 
@@ -488,7 +491,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		position := 1 // one prefill token already processed
 
@@ -550,7 +553,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict}, caches, nil)
+		r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, caches, nil)
 		session, ch := newMTPTestSession(caches)
 		position := 1
 
@@ -657,7 +660,7 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 		caches, tr := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict}, caches, nil)
+		r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, caches, nil)
 		session := &cacheSession{caches: caches}
 		ch := make(chan CompletionResponse) // unbuffered: every send must rendezvous
 
@@ -711,7 +714,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, &fakeMTPDraft{predict: predict}, caches, nil)
+		r.spec = newSpeculation(r, pipelineSlot, &fakeMTPDraft{predict: predict}, caches, nil)
 		session, ch := newMTPTestSession(caches)
 
 		req := Request{
@@ -768,7 +771,7 @@ func testDecoder(t *mlxtest.T, r *Runner, req Request, caches []cache.Cache, see
 		}
 		return spec.decoder(mlx.FromValues(seed, len(seed)), position, nil)
 	}
-	return r.pipelinedDecoder(nil, caches, mlx.FromValues(seed, 1, len(seed)), position, nil, nil)
+	return r.pipelinedDecoder(pipelineSlot, nil, caches, mlx.FromValues(seed, 1, len(seed)), position, nil, nil)
 }
 
 func TestDecodeKVDraft(t *testing.T) {
@@ -787,7 +790,7 @@ func TestDecodeKVDraft(t *testing.T) {
 		caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft KV
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		position := 0
 
@@ -873,7 +876,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 		caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft KV
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		position := 0
 
@@ -944,7 +947,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		position := 0
 
@@ -1008,7 +1011,7 @@ func TestSettleLevelsDraftCacheWithPrefill(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := Request{
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 			SamplerOpts:       sampler.Options{},
@@ -1046,7 +1049,7 @@ func TestFlushMediaHeldUntilEmbedded(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 
 		d := r.spec.drafter.open(nil).(*mtpDraftSession)
 		item := batch.MediaItem{Pos: 1, Features: mlx.Zeros(mlx.DTypeFloat32, 4, 4)}
@@ -1092,7 +1095,7 @@ func TestCommittedRunBatchesPastFlushCap(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := Request{
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
 			SamplerOpts:       sampler.Options{},
@@ -1132,7 +1135,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 		req := Request{
 			Responses:         ch,
@@ -1189,7 +1192,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := Request{
 			Tokens:            []int32{1},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -1200,7 +1203,7 @@ func TestDecodeParkedDraftResume(t *testing.T) {
 			t.Fatalf("want a drafting speculationSession, got %+v", spec)
 		}
 		pinDraftLimit(spec, 0)
-		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil).(*speculativeDecoder)
+		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
 
 		// Two parked calls arrive pipelined, one token each.
 		for _, want := range []int32{2, 3} {

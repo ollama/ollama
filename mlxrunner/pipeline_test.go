@@ -19,7 +19,7 @@ type textOnlyModel struct{}
 
 func (textOnlyModel) LoadWeights(map[string]*mlx.Array) error { return nil }
 func (textOnlyModel) NewCaches() []cache.Cache                { return nil }
-func (textOnlyModel) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (textOnlyModel) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return nil, nil
 }
 func (textOnlyModel) Unembed(x *mlx.Array) *mlx.Array { return x }

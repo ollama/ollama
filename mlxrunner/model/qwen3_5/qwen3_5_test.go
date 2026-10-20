@@ -349,7 +349,7 @@ func TestForwardTapsMatchLayerLoop(t *testing.T) {
 				c.Free()
 			}
 		}()
-		hidden, aux := m.Forward(b, caches)
+		hidden, aux := m.Forward(b, cache.Layers(caches))
 		h := m.EmbedTokens.Forward(b.InputIDs)
 		positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 		var taps []*mlx.Array

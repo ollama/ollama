@@ -23,6 +23,12 @@ type Layer struct {
 	Scale2  *mlx.Array
 }
 
+// attentionCache is owned by a voice prefill or speech stream.
+type attentionCache interface {
+	cache.Attention
+	Free()
+}
+
 type Transformer struct {
 	Layers    []*Layer
 	NumHeads  int32
@@ -57,7 +63,7 @@ func loadTransformer(tensors map[string]*mlx.Array, prefix string, layers, heads
 }
 
 // forward runs x [1, L, D] at absolute position offset.
-func (t *Transformer) forward(x *mlx.Array, offset int, caches []cache.Attention) *mlx.Array {
+func (t *Transformer) forward(x *mlx.Array, offset int, caches []attentionCache) *mlx.Array {
 	L, D := int32(x.Dim(1)), int32(x.Dim(2))
 	// Attention uses the batch shape and positions for both text and audio frames.
 	b := &batch.Batch{

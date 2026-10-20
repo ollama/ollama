@@ -34,7 +34,7 @@ func init() {
 		integrationTestCase("context-long-input", smol, runLongInputContext),
 		integrationTestCase("context-exhaustion", smol, runContextExhaustion),
 		integrationTestCase("generate-history", smol, runGenerateWithHistory),
-		integrationTestCase("concurrent-chat", smol, runConcurrentChat),
+		integrationModelTestCase("concurrent-chat", smol, runConcurrentChat),
 	)
 
 	// Model-parametric cases

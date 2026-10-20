@@ -48,6 +48,7 @@ type prefixCache struct {
 	root          *trieNode   // root of the prefix trie
 	activePath    []*trieNode // current root→leaf path with live MLX arrays
 	caches        []cache.Cache
+	limitBytes    int64 // zero uses the default snapshot budget
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 
 	// draftLookahead is how far the draft caches' entries reference past
@@ -657,11 +658,15 @@ func (s *cacheSession) close() {
 
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
 func (c *prefixCache) enforceEvictionPolicy() {
-	if c.pagedOutBytes <= maxPagedOutBytes {
+	limit := c.limitBytes
+	if limit == 0 {
+		limit = maxPagedOutBytes
+	}
+	if c.pagedOutBytes <= limit {
 		return
 	}
 
-	for c.pagedOutBytes > maxPagedOutBytes {
+	for c.pagedOutBytes > limit {
 		// Evicting the frontier's parent merges the frontier into it, so
 		// resolve the frontier again after every eviction.
 		frontier := c.activePath[len(c.activePath)-1]

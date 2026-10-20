@@ -23,7 +23,7 @@ type stubModel struct{}
 
 func (s *stubModel) LoadWeights(map[string]*mlx.Array) error { return nil }
 func (s *stubModel) NewCaches() []cache.Cache                { return nil }
-func (s *stubModel) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubModel) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	return nil, nil
 }
 func (s *stubModel) Unembed(*mlx.Array) *mlx.Array   { return nil }
@@ -243,7 +243,7 @@ func (s *stubEmbedMediaModel) EncodeMedia(prepared *model.PreparedRequest) ([]ba
 	return items, nil
 }
 
-func (s *stubEmbedMediaModel) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubEmbedMediaModel) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	s.lastBatch = b
 	// Scope-safe capture: runEmbed frees the batch's arrays at scope exit,
 	// so copy what the assertions need as CPU data now.
@@ -391,7 +391,7 @@ type stubLongEmbedModel struct{ stubEmbeddingModel }
 
 func (s *stubLongEmbedModel) MaxContextLength() int { return 1 << 24 }
 
-func (s *stubLongEmbedModel) Forward(b *batch.Batch, _ []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (s *stubLongEmbedModel) Forward(b *batch.Batch, _ []cache.Layer) (*mlx.Array, *mlx.Array) {
 	L := b.InputIDs.Dim(1)
 	h := mlx.Zeros(mlx.DTypeFloat32, len(b.SeqOffsets), L, 1)
 	return h, h
