@@ -29,7 +29,7 @@ type preparedAudio struct {
 // unused aux). The returned hidden is [B, L, embedding_dim]: final RMSNorm
 // followed by the per-token embedding_projection. Pooling and L2
 // normalization are the runner pipeline's job.
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	dims := b.InputIDs.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))

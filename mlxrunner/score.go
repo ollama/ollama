@@ -230,7 +230,7 @@ func (r *Runner) scoreForward(ctx context.Context, tokens []int32, offset int, c
 					SeqQueryLens: []int32{int32(n)},
 					Media:        media.batchMedia(offset, n),
 					Layout:       media.rowLayout(),
-				}, caches[:len(caches)-1])
+				}, cache.Layers(caches[:len(caches)-1]))
 				r.scoreHidden.Append(hidden)
 			})
 			var state []*mlx.Array

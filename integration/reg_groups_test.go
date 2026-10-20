@@ -114,6 +114,7 @@ func TestContext(t *testing.T) {
 func TestConcurrency(t *testing.T) {
 	runIntegrationGroup(t,
 		"concurrent-chat",
+		"mlx-batching",
 		"scheduler-multimodel",
 		"scheduler-max-queue",
 	)

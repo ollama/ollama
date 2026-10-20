@@ -234,6 +234,56 @@ func TestSeededSamplingIsReproducible(t *testing.T) {
 	})
 }
 
+func TestSeededBatchSamplingPreservesSlotStreams(t *testing.T) {
+	for _, history := range []bool{false, true} {
+		mlxtest.RunSubtest(t, map[bool]string{false: "without-history", true: "with-history"}[history], func(t *mlxtest.T) {
+			opts := Options{Temperature: 1, TopK: 4, Seed: 1234, UseSeed: true}
+			if history {
+				opts.RepeatLastN, opts.PresencePenalty = 3, .2
+			}
+			batched := New(16)
+			defer batched.Free()
+			refs := make(map[int]*Sampler)
+			add := func(id int) {
+				batched.Add(id, opts, []int32{1, 2, 3})
+				refs[id] = New(16)
+				refs[id].Add(id, opts, []int32{1, 2, 3})
+				deferFree := refs[id]
+				t.Cleanup(deferFree.Free)
+			}
+			add(10)
+			add(20)
+			logits := []float32{.1, .2, .3, .4}
+			for step := range 32 {
+				active := []int{10, 20}
+				switch step % 4 {
+				case 1:
+					active = []int{20, 10}
+				case 2:
+					active = []int{10}
+				}
+				if step == 16 {
+					batched.Remove(20)
+					add(20)
+				}
+				var rows [][]float32
+				want := make([]int32, len(active))
+				for i, id := range active {
+					rows = append(rows, logits)
+					token := refs[id].Sample([]int{id}, slotLogits(logits)).Token
+					mlx.Eval(token)
+					want[i] = token.Int()
+				}
+				token := batched.Sample(active, batchLogits(rows...)).Token
+				mlx.Eval(token)
+				if got := token.Ints(); !slices.Equal(got, want) {
+					t.Fatalf("step %d rows %v: got %v, want independent draws %v", step, active, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestSeededBernoulliIsReproducible(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		seededMask := func() []int32 {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
+	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 )
 
@@ -133,7 +134,7 @@ func (d *dflashDraftSession) flush() {
 			SeqOffsets: []int32{int32(offset)},
 			Hidden:     d.takePending(),
 			Layout:     d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 		state := make([]*mlx.Array, 0, 2*len(spec.draftKV))
 		for _, c := range spec.draftKV {
 			state = append(state, c.State()...)
@@ -178,14 +179,14 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 			SeqQueryLens: []int32{int32(n + 1)},
 			Hidden:       features,
 			Layout:       d.layout,
-		}, spec.targets, spec.draftKV)
+		}, cache.Layers(spec.targets), cache.Layers(spec.draftKV))
 
 		// Row i predicts the token at its own position, so the anchor row is
 		// unused. Rows 1..n are sampled from one batched distribution; penalties
 		// see only the committed history, not the other rows of the block.
 		logits := spec.draft.Unembed(hidden.Slice(mlx.Slice(), mlx.Slice(1, n+1), mlx.Slice()))
-		dist := r.Sampler.Distribution(pipelineSlot, logits, nil)
-		tokens := r.Sampler.SampleDistribution(pipelineSlot, dist)
+		dist := r.Sampler.Distribution(spec.slotID, logits, nil)
+		tokens := r.Sampler.SampleDistribution(spec.slotID, dist)
 		candidates = &draftCandidates{
 			tokens: tokens.ExpandDims(0),
 			dist:   dist,

@@ -37,15 +37,16 @@ type draftSession interface {
 }
 
 // speculation is the persistent speculative-decoding subsystem of a Runner —
-// one per loaded model, holding everything that outlives a request: the draft
+// one per cache slot, holding everything that outlives a request: the draft
 // model, the target-cache partition, and the depth state learned across
 // requests so each request starts at the proven-out depth. Each request opens a
 // short-lived speculationSession cursor over it; nothing here is rebuilt per request. A
 // nil *speculation means the checkpoint ships no draft head, so every request
 // decodes plainly.
 type speculation struct {
-	r     *Runner
-	draft model.DraftModel
+	r      *Runner
+	slotID int
+	draft  model.DraftModel
 
 	// targets are the model's cache slots, which speculation snapshots and
 	// rolls back; draftKV are the drafter's. Both are built at load and
@@ -62,7 +63,7 @@ type speculation struct {
 	depth *depthController
 }
 
-// drafter is the per-model half of a drafting implementation, opening each
+// drafter is the persistent half of a drafting implementation, opening each
 // request's drafting session with the request's per-row layout state.
 type drafter interface {
 	open(layout []any) draftSession
@@ -75,11 +76,11 @@ type drafter interface {
 
 // newSpeculation builds the speculative-decoding subsystem for a loaded model,
 // or nil when the checkpoint ships no draft head.
-func newSpeculation(r *Runner, draft model.DraftModel, targets, draftKV []cache.Cache) *speculation {
+func newSpeculation(r *Runner, slotID int, draft model.DraftModel, targets, draftKV []cache.Cache) *speculation {
 	if draft == nil {
 		return nil
 	}
-	s := &speculation{r: r, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
+	s := &speculation{r: r, slotID: slotID, draft: draft, targets: targets, draftKV: draftKV, depth: newDepthController()}
 	if bd, ok := draft.(model.BlockDraft); ok {
 		s.drafter = newDFlashDrafter(s, bd)
 	} else {
@@ -207,7 +208,7 @@ type speculativeDecoder struct {
 // decoder returns the decoder for this engine's session. A speculationSession that
 // cannot draft (logprobs) has no depth controller and permanently parks,
 // running the inner pipelined decoder whose reports keep the draft KV level.
-func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) decoder {
+func (s *speculationSession) decoder(seed *mlx.Array, position int, grammar *grammar) *speculativeDecoder {
 	current := sampler.Result{Token: seed}
 	scope := mlx.NewScope()
 	scope.Attach(current.Arrays()...)
@@ -287,11 +288,27 @@ func (st *speculativeDecoder) resume() ([]sampler.Result, error) {
 // is a depth-0 round in the controller's accounting, and the inner decoder's
 // reports keep the drafter primed and maintained.
 func (st *speculativeDecoder) park(remaining int) ([]sampler.Result, error) {
-	s := st.s
+	return st.pipeline().next(remaining)
+}
+
+// pipeline parks at the same boundary used by plain single-request decoding.
+// A scheduler may advance this decoder together with other requests; next then
+// resumes speculative decoding through the existing drain path.
+func (st *speculativeDecoder) pipeline() *pipelinedDecoder {
 	if st.inner == nil {
-		st.inner = s.spec.r.pipelinedDecoder(s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout, st.grammar)
+		s := st.s
+		st.inner = s.spec.r.pipelinedDecoder(s.spec.slotID, s, s.spec.targets, st.current.Token.ExpandDims(-1), st.position, s.layout, st.grammar)
 	}
-	return st.inner.next(remaining)
+	return st.inner
+}
+
+func (st *speculativeDecoder) batched(result sampler.Result) {
+	st.advance(result)
+	// Contention is not a sample of this request's isolated drafting cost.
+	st.s.lastRoundStart = time.Time{}
+	st.s.prevDrafts, st.s.roundDrafts = -1, -1
+	st.s.stats.recordRound(0)
+	st.s.stats.iterations++
 }
 
 // drain surrenders the inner decoder's undelivered sample while parked; a
@@ -418,7 +435,7 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 			SeqOffsets:   []int32{int32(before)},
 			SeqQueryLens: []int32{int32(draftCount + 1)},
 			Layout:       s.layout,
-		}, s.spec.targets)
+		}, cache.Layers(s.spec.targets))
 
 		// Row i of the fused hidden is the state after the token at before+i, so
 		// the rows already line up with the drafts: row 0 (current's state)
@@ -436,17 +453,17 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 			}
 		}
 
-		targetDist := r.Sampler.Distribution(pipelineSlot, logits, candidates.tokens)
+		targetDist := r.Sampler.Distribution(s.spec.slotID, logits, candidates.tokens)
 		draftDist := candidates.dist
-		acceptedMask = r.sampleAcceptedMask(targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
+		acceptedMask = r.sampleAcceptedMask(s.spec.slotID, targetDist.SliceRows(0, draftCount), draftDist, candidates.tokens)
 
 		// The next token is sampled for every possible outcome before anything
 		// is evaluated — the residual at each rejection point in one batched
 		// draw, plus the bonus row — so a single Eval covers acceptance and the
 		// next token instead of a second host round trip after the rejection
 		// point is known.
-		residualTokens = r.Sampler.SampleDistribution(pipelineSlot, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
-		bonusToken = r.sampleTokenAt(targetDist, draftCount)
+		residualTokens = r.Sampler.SampleDistribution(s.spec.slotID, targetDist.SliceRows(0, draftCount).ResidualAgainst(draftDist))
+		bonusToken = r.sampleTokenAt(s.spec.slotID, targetDist, draftCount)
 		return []*mlx.Array{auxHiddenSeq, acceptedMask, residualTokens, bonusToken}
 	})
 	if maskErr != nil {
@@ -522,19 +539,19 @@ func (s *speculationSession) accept(position *int, current sampler.Result, candi
 	if !done {
 		results = append(results, sampler.Result{Token: mlx.FromValues([]int32{nextID}, 1)})
 	}
-	r.Sampler.Commit(pipelineSlot, commitIDs)
+	r.Sampler.Commit(s.spec.slotID, commitIDs)
 	return results, accepted, observed, nil
 }
 
-func (r *Runner) sampleAcceptedMask(targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
+func (r *Runner) sampleAcceptedMask(slotID int, targetDist, draftDist sampler.Distribution, draftTokens *mlx.Array) *mlx.Array {
 	p := targetDist.Prob(draftTokens)
 	q := draftDist.Prob(draftTokens)
 	acceptP := mlx.Minimum(p.Divide(q), mlx.FromValue(float32(1)))
-	return r.Sampler.Bernoulli(pipelineSlot, acceptP).AsType(mlx.DTypeInt32)
+	return r.Sampler.Bernoulli(slotID, acceptP).AsType(mlx.DTypeInt32)
 }
 
-func (r *Runner) sampleTokenAt(dist sampler.Distribution, index int) *mlx.Array {
-	return r.Sampler.SampleDistribution(pipelineSlot, dist.SliceRows(index, index+1))
+func (r *Runner) sampleTokenAt(slotID int, dist sampler.Distribution, index int) *mlx.Array {
+	return r.Sampler.SampleDistribution(slotID, dist.SliceRows(index, index+1))
 }
 
 // draftResults wraps accepted draft ids as sampler results; drafts carry no
