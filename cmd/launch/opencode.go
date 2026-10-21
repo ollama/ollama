@@ -53,10 +53,15 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	if err != nil {
 		return err
 	}
-	args = openCodeRunArgs(model, models, args)
 	content, err := o.runContent(model, models, args...)
 	if err != nil {
 		return err
+	}
+	if len(args) == 0 && model != "" {
+		if primary, ok := findLaunchModel(models, model); ok {
+			model = primary.Name
+		}
+		args = []string{"--model", "ollama/" + model}
 	}
 
 	cmd := exec.Command(opencodePath, args...)
@@ -77,7 +82,11 @@ var openCodeLoadedContextLength = loadedContextLength
 // limits must not inherit the selected model's allocation.
 func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string) (string, error) {
 	content := o.resolveContent(model, models)
-	model, _ = openCodeStartupModel(model, args)
+	// Forwarded arguments may select another model, resume a session, or run a
+	// utility. Leave those invocations entirely to OpenCode.
+	if len(args) > 0 {
+		return content, nil
+	}
 	primary, _ := findLaunchModel(models, model)
 	if model == "" || primary.Remote || isCloudModelName(model) {
 		return content, nil
@@ -95,8 +104,6 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 	entries, _ := provider["models"].(map[string]any)
 	entry, _ := entries[model].(map[string]any)
 	if entry == nil {
-		// An explicit CLI model may belong to OpenCode's own configuration.
-		// Leave its selection and validation to OpenCode.
 		return content, nil
 	}
 
@@ -128,116 +135,6 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 	entry["limit"] = limit
 	data, err := json.Marshal(config)
 	return string(data), err
-}
-
-func openCodeRunArgs(model string, models []LaunchModel, args []string) []string {
-	startup, needsModel := openCodeStartupModel(model, args)
-	if startup == "" || !needsModel {
-		return args
-	}
-	if primary, ok := findLaunchModel(models, startup); ok {
-		startup = primary.Name
-	}
-	return append([]string{"--model", "ollama/" + startup}, args...)
-}
-
-// openCodeStartupModel returns the selected model and whether a fresh session
-// needs an explicit --model to honor the launcher selection over agent defaults.
-func openCodeStartupModel(model string, args []string) (string, bool) {
-	args = slices.Clone(args)
-	commandSeen, runCommand := false, false
-	explicitModel, continued, sessionSpecified := false, false, false
-arguments:
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		// Expand short boolean groups only in this parsing copy. Stop at a
-		// value-taking alias so model names and file paths remain intact.
-		if len(arg) > 2 && arg[0] == '-' && strings.ContainsRune("hvci", rune(arg[1])) && arg[2] != '=' {
-			args = slices.Insert(args, i+1, "-"+arg[2:])
-			arg = arg[:2]
-		}
-		flag, value, assigned := strings.Cut(arg, "=")
-		boolean := strings.TrimPrefix(strings.TrimPrefix(flag, "--"), "no-")
-		switch {
-		case arg == "--":
-			break arguments
-		case flag == "--help" || flag == "-h" || flag == "--version" || flag == "-v":
-			if !assigned && i+1 < len(args) && args[i+1] == "false" {
-				i++
-			} else if value != "false" {
-				return "", false
-			}
-		case arg == "--no-help" || arg == "--no-h" || arg == "--no-version" || arg == "--no-v":
-		case flag == "--get-yargs-completions":
-			return "", false
-		case arg == "--attach" || strings.HasPrefix(arg, "--attach=") || arg == "--command" || strings.HasPrefix(arg, "--command="):
-			return "", false
-		case arg == "--model" || arg == "-m":
-			i++
-			if i == len(args) {
-				return "", false
-			}
-			model = strings.TrimPrefix(args[i], "ollama/")
-			if model == args[i] {
-				return "", false
-			}
-			explicitModel = true
-		case strings.HasPrefix(arg, "--model=") || strings.HasPrefix(arg, "-m=") || strings.HasPrefix(arg, "-m"):
-			value := strings.TrimPrefix(strings.TrimPrefix(arg, "--model="), "-m")
-			value = strings.TrimPrefix(value, "=")
-			model = strings.TrimPrefix(value, "ollama/")
-			if model == value {
-				return "", false
-			}
-			explicitModel = true
-		case arg == "--no-continue" || arg == "--no-c":
-			continued = false
-		case flag == "--continue" || flag == "-c":
-			continued = value != "false"
-			if !assigned && i+1 < len(args) && (args[i+1] == "true" || args[i+1] == "false") {
-				i++
-				continued = args[i] == "true"
-			}
-		case arg == "--session" || arg == "-s":
-			sessionSpecified = true
-			i++
-		case strings.HasPrefix(arg, "--session=") || strings.HasPrefix(arg, "-s"):
-			sessionSpecified = true
-		case flag == "--agent" || flag == "--log-level" || flag == "--prompt" || flag == "--format" || flag == "--title" || flag == "--dir" || flag == "--variant" || flag == "--replay-limit" ||
-			flag == "--port" || flag == "--hostname" || flag == "--mdns-domain" || flag == "--cors" ||
-			flag == "--file" || flag == "-f" || flag == "--password" || flag == "-p" || flag == "--username" || flag == "-u":
-			if !assigned {
-				i++
-			}
-		case strings.HasPrefix(arg, "-f") || strings.HasPrefix(arg, "-p") || strings.HasPrefix(arg, "-u"):
-		case boolean == "print-logs" || boolean == "pure" || boolean == "mdns" || boolean == "fork" || boolean == "share" || boolean == "thinking" || boolean == "mini" || boolean == "replay" || boolean == "interactive" || boolean == "-i" || boolean == "auto" || boolean == "yolo" || boolean == "dangerously-skip-permissions" || boolean == "demo":
-			if !assigned && i+1 < len(args) && (args[i+1] == "true" || args[i+1] == "false") {
-				i++
-			}
-		case strings.HasPrefix(arg, "-"):
-			// Unknown options may affect command or model selection. Leave
-			// them to OpenCode instead of preloading an unrelated model.
-			return "", false
-		case !commandSeen:
-			commandSeen = true
-			switch arg {
-			case "run":
-				runCommand = true
-			case "serve", "web", "acp", "completion", "attach", "mcp", "generate", "debug", "console", "providers", "auth", "agent", "upgrade", "uninstall", "models", "stats", "export", "import", "github", "pr", "session", "plugin", "plug", "db":
-				return "", false
-			default:
-				if info, err := os.Stat(arg); err != nil || !info.IsDir() {
-					return "", false
-				}
-			}
-		}
-	}
-	// TUI resume restores its prior model even over --model. Headless run
-	// honors an explicit model; otherwise the session chooses its own.
-	if (continued || sessionSpecified) && (!runCommand || !explicitModel) {
-		return "", false
-	}
-	return model, !explicitModel
 }
 
 // openCodeRuntimeModels carries recommended output ceilings to Run after Edit

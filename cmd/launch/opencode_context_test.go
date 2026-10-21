@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -192,7 +190,7 @@ func TestOpenCodeConfigureOnlySkipsLoad(t *testing.T) {
 	}
 }
 
-func TestOpenCodeRunSkipsUnrelatedLoads(t *testing.T) {
+func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	bin := t.TempDir()
 	writeFakeBinary(t, bin, "opencode")
@@ -203,183 +201,34 @@ func TestOpenCodeRunSkipsUnrelatedLoads(t *testing.T) {
 		return 0, errors.New("model does not fit in memory")
 	}
 	t.Cleanup(func() { openCodeLoadedContextLength = previous })
-	models := []LaunchModel{{Name: "local"}, {Name: "remote-alias", Remote: true}}
+	models := []LaunchModel{{Name: "local"}, {Name: "other"}}
+	o := &OpenCode{}
+	before := o.resolveContent("local", models)
 	for _, args := range [][]string{
 		{"--help"},
-		{"-v"},
-		{"run", "--help"},
-		{"--help=true"},
-		{"--version=true"},
-		{"-h=true"},
-		{"-v=true"},
-		{"-vh"},
-		{"-hv"},
-		{"-hc=false"},
-		{"run", "-ch", "-m", "ollama/local"},
-		{"run", "--help=true"},
-		{"run", "-ih"},
+		{"--version"},
 		{"serve"},
-		{"web"},
-		{"acp"},
-		{"completion"},
-		{"--port", "4999", "serve"},
-		{"--hostname", "127.0.0.1", "web"},
-		{"--cors", "https://example.com", "acp"},
-		{"--mdns", "false", "serve"},
-		{"--get-yargs-completions", "opencode", "run"},
-		{"--no-pure", "completion"},
-		{"--no-print-logs", "completion"},
-		{"--help=false", "--version=false", "completion"},
-		{"--no-help", "--no-version", "completion"},
 		{"debug", "config"},
-		{"export", "session-id"},
-		{"models"},
-		{"--log-level", "debug", "--print-logs", "debug", "config"},
-		{"--pure=true", "--print-logs=true", "session", "list"},
+		{"run", "hello"},
+		{"--model", "ollama/other"},
+		{"run", "-m", "other/model", "hello"},
 		{"--continue"},
-		{"-c", "--model", "ollama/local"},
 		{"--session", "session-id"},
-		{"-ssession-id", "-m", "ollama/local"},
-		{"--session", "session-id", "--no-continue"},
-		{"run", "--session=session-id", "hello"},
-		{"run", "-c", "hello"},
-		{"run", "-ic", "hello"},
-		{"run", "-ci", "hello"},
-		{"run", "-imother/model", "hello"},
-		{"run", "--command", "custom", "hello"},
-		{"run", "--command=custom", "-m", "ollama/local"},
-		{"attach", "http://remote"},
-		{"run", "--attach=http://remote", "hello"},
-		{"--model", "ollama/cloud:cloud"},
-		{"run", "-m", "ollama/remote-alias", "hello"},
-		{"run", "--model=other/model", "hello"},
-		{"run", "-mollama/from-user-config", "hello"},
+		{"--agent", "custom"},
+		{"project"},
+		{"--new-option"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			if err := (&OpenCode{}).Run("local", models, args); err != nil {
+			original := append([]string(nil), args...)
+			content, err := o.runContent("local", models, args...)
+			if err != nil || content != before {
+				t.Fatalf("forwarded arguments changed the configuration: %q, %v", content, err)
+			}
+			if err := o.Run("local", models, args); err != nil {
 				t.Fatal(err)
 			}
-		})
-	}
-}
-
-func TestOpenCodeStartupModelCommandDirectoryNames(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	for _, name := range []string{"completion", "auth", "plug", "project"} {
-		if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"completion", "auth", "plug"} {
-		if got, _ := openCodeStartupModel("local", []string{name}); got != "" {
-			t.Fatalf("utility %q selected a model: %q", name, got)
-		}
-	}
-	if got, _ := openCodeStartupModel("local", []string{"project"}); got != "local" {
-		t.Fatalf("project directory lost its startup model: %q", got)
-	}
-}
-
-func TestOpenCodeRunArgsHonorsFreshSelection(t *testing.T) {
-	models := []LaunchModel{{Name: "local:latest"}}
-	for _, tt := range []struct {
-		args []string
-		add  bool
-	}{
-		{nil, true},
-		{[]string{"run", "hello"}, true},
-		{[]string{"--agent", "custom"}, true},
-		{[]string{"run", "--agent=custom", "hello"}, true},
-		{[]string{"--model", "other/model"}, false},
-		{[]string{"run", "-m", "ollama/other", "hello"}, false},
-		{[]string{"--continue"}, false},
-		{[]string{"run", "-ic", "hello"}, false},
-		{[]string{"run", "-ci", "hello"}, false},
-		{[]string{"run", "-ic=false", "hello"}, true},
-		{[]string{"run", "-imollama/other", "hello"}, false},
-		{[]string{"run", "-cmollama/other", "hello"}, false},
-		{[]string{"run", "--session", "session-id", "hello"}, false},
-		{[]string{"run", "--session", "session-id", "-m", "ollama/other", "hello"}, false},
-		{[]string{"--help"}, false},
-		{[]string{"--help=true"}, false},
-		{[]string{"run", "--help=true"}, false},
-		{[]string{"-vh"}, false},
-		{[]string{"run", "-ch", "-m", "ollama/other"}, false},
-		{[]string{"--no-pure", "completion"}, false},
-		{[]string{"--no-print-logs", "completion"}, false},
-		{[]string{"--help=false", "--version=false", "run", "hello"}, true},
-		{[]string{"-h=false", "-v=false", "run", "hello"}, true},
-		{[]string{"--no-help", "--no-version", "run", "hello"}, true},
-		{[]string{"run", "-fhave.txt", "hello"}, true},
-		{[]string{"run", "--", "--help=true"}, true},
-		{[]string{"serve"}, false},
-		{[]string{"--port", "4999", "serve"}, false},
-		{[]string{"--hostname=127.0.0.1", "web"}, false},
-		{[]string{"--cors", "https://example.com", "acp"}, false},
-		{[]string{"--new-option", "serve"}, false},
-		{[]string{"--prompt", "serve"}, true},
-		{[]string{"--no-pure", "--mini", "--agent", "build"}, true},
-		{[]string{"run", "--command", "custom"}, false},
-	} {
-		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
-			original := append([]string(nil), tt.args...)
-			want := original
-			if tt.add {
-				want = append([]string{"--model", "ollama/local:latest"}, original...)
-			}
-			if got := openCodeRunArgs("local", models, tt.args); !reflect.DeepEqual(got, want) {
-				t.Fatalf("OpenCode args = %v, want %v", got, want)
-			}
-			if !reflect.DeepEqual(tt.args, original) {
+			if !reflect.DeepEqual(args, original) {
 				t.Fatal("modified caller-owned arguments")
-			}
-		})
-	}
-}
-
-func TestOpenCodeRunContentExplicitStartupModel(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	previous := openCodeLoadedContextLength
-	openCodeLoadedContextLength = func(model string) (int, error) {
-		if model != "other:latest" {
-			t.Fatalf("loaded %q instead of the explicit startup model", model)
-		}
-		return 8192, nil
-	}
-	t.Cleanup(func() { openCodeLoadedContextLength = previous })
-	models := []LaunchModel{{Name: "default"}, {Name: "other:latest"}}
-	o := &OpenCode{}
-	if err := o.Edit(models); err != nil {
-		t.Fatal(err)
-	}
-	for _, args := range [][]string{
-		{"--model", "ollama/other:latest"},
-		{"run", "--model=ollama/other:latest", "hello"},
-		{"-m", "ollama/other:latest"},
-		{"-m=ollama/other:latest"},
-		{"-mollama/other:latest"},
-		{"--log-level=debug", "run", "-m", "ollama/other:latest", "--", "--model", "other/provider"},
-		{"run", "--session", "session-id", "-m", "ollama/other:latest", "hello"},
-		{"run", "--continue", "--model=ollama/other:latest", "hello"},
-		{"run", "-imollama/other:latest", "hello"},
-		{"run", "-cmollama/other:latest", "hello"},
-		{"run", "-icmollama/other:latest", "hello"},
-		{"--agent", "custom", "--model", "ollama/other:latest"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			content, err := o.runContent("default", models, args...)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var cfg map[string]any
-			if err := json.Unmarshal([]byte(content), &cfg); err != nil {
-				t.Fatal(err)
-			}
-			entries := cfg["provider"].(map[string]any)["ollama"].(map[string]any)["models"].(map[string]any)
-			limit := entries["other:latest"].(map[string]any)["limit"].(map[string]any)
-			if limit["context"] != float64(8192) || limit["output"] != float64(2048) || entries["default"].(map[string]any)["limit"] != nil {
-				t.Fatalf("limits were not applied only to the explicit startup model: %s", content)
 			}
 		})
 	}
