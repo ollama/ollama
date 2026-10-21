@@ -584,6 +584,72 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 	}
 }
 
+// TestAnthropicWriter_StreamErrorAfterFirstChunk tests that an error routes.go
+// sends in-band after the stream has started reaches the client as an error
+// event instead of being dropped.
+func TestAnthropicWriter_StreamErrorAfterFirstChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
+
+	tests := []struct {
+		name  string
+		tools string
+	}{
+		{name: "no tools", tools: `[]`},
+		{name: "web search tool", tools: `[{"type":"web_search_20250305","name":"web_search"}]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(AnthropicMessagesMiddleware())
+			router.POST("/v1/messages", func(c *gin.Context) {
+				// Simulate what streamResponse in routes.go does when an error
+				// arrives after the first chunk was written
+				data, _ := json.Marshal(api.ChatResponse{
+					Model:   "test-model",
+					Message: api.Message{Role: "assistant", Content: "Hel"},
+				})
+				c.Writer.WriteHeader(http.StatusOK)
+				_, _ = c.Writer.Write(data)
+				data, _ = json.Marshal(gin.H{"error": "model runner has unexpectedly stopped"})
+				_, _ = c.Writer.Write(data)
+			})
+
+			body := `{"model": "test-model:cloud", "max_tokens": 100, "stream": true, "messages": [{"role": "user", "content": "Hi"}], "tools": ` + tt.tools + `}`
+			req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			events := parseSSEEvents(t, resp.Body.String())
+			if len(events) == 0 {
+				t.Fatal("expected SSE events, got none")
+			}
+
+			last := events[len(events)-1]
+			if last.event != "error" {
+				t.Fatalf("expected last event to be error, got %q\nbody: %s", last.event, resp.Body.String())
+			}
+
+			var errEvent anthropic.StreamErrorEvent
+			if err := json.Unmarshal([]byte(last.data), &errEvent); err != nil {
+				t.Fatalf("failed to unmarshal error event: %v", err)
+			}
+			if errEvent.Type != "error" {
+				t.Errorf("expected type 'error', got %q", errEvent.Type)
+			}
+			if errEvent.Error.Type != "api_error" {
+				t.Errorf("expected error type 'api_error', got %q", errEvent.Error.Type)
+			}
+			if errEvent.Error.Message != "model runner has unexpectedly stopped" {
+				t.Errorf("expected error message to be forwarded, got %q", errEvent.Error.Message)
+			}
+		})
+	}
+}
+
 func TestAnthropicMessagesMiddleware_SetsRelaxThinkingFlag(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

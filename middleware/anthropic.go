@@ -50,6 +50,27 @@ func (w *AnthropicWriter) writeEvent(eventType string, data any) error {
 	return writeSSE(w.ResponseWriter, eventType, data)
 }
 
+// writeStreamError forwards an error that the server sent in-band after the
+// stream had started (server.streamResponse writes {"error": "..."} once the
+// status line is out) as an Anthropic error event. It reports false when data
+// is not such an error.
+func (w *AnthropicWriter) writeStreamError(data []byte) (bool, error) {
+	var errData struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &errData); err != nil {
+		return false, err
+	}
+	if errData.Error == "" {
+		return false, nil
+	}
+
+	return true, w.writeEvent("error", anthropic.StreamErrorEvent{
+		Type:  "error",
+		Error: anthropic.NewError(http.StatusInternalServerError, errData.Error).Error,
+	})
+}
+
 func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
@@ -59,6 +80,14 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 
 	if w.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+
+		ok, err := w.writeStreamError(data)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			return len(data), nil
+		}
 
 		events := w.converter.Process(chatResponse)
 		logutil.Trace("anthropic middleware: stream chunk", "resp", anthropic.TraceChatResponse(chatResponse), "events", len(events))
@@ -143,6 +172,17 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	code := w.Status()
 	if code != http.StatusOK {
 		return w.inner.writeError(data)
+	}
+
+	if w.stream {
+		ok, err := w.inner.writeStreamError(data)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			w.terminalSent = true
+			return len(data), nil
+		}
 	}
 
 	var chatResponse api.ChatResponse
