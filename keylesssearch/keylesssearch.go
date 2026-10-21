@@ -1,6 +1,11 @@
 // Package keylesssearch provides a web search backend that requires no
 // account, API key, or ollama.com sign-in. It scrapes DuckDuckGo's HTML
-// endpoint and is enabled with OLLAMA_KEYLESS_WEB_SEARCH=true.
+// endpoint.
+//
+// It is on by default: apps launched from Finder never see a shell
+// environment, so an env-only opt-in would leave GUI builds on the quota-bound
+// ollama.com path. Set OLLAMA_KEYLESS_WEB_SEARCH=0 (or false) to use
+// ollama.com instead.
 package keylesssearch
 
 import (
@@ -22,7 +27,7 @@ func lookupEnv(name string) (string, bool) {
 }
 
 // Enabled reports whether the keyless backend should replace the default
-// ollama.com web search.
+// ollama.com web search. It defaults to true; the env var only opts out.
 func Enabled() bool {
 	return envconfigKeyless()
 }
@@ -145,9 +150,11 @@ func text(n *html.Node) string {
 }
 
 // envconfigKeyless reads OLLAMA_KEYLESS_WEB_SEARCH without importing
-// envconfig, keeping this package dependency-light.
-var envconfigKeyless = func() bool {
-	// replaced in tests
+// envconfig, keeping this package dependency-light. Absent means enabled.
+func envconfigKeyless() bool {
+	if _, ok := lookupEnv("OLLAMA_KEYLESS_WEB_SEARCH"); !ok {
+		return true
+	}
 	return envBool("OLLAMA_KEYLESS_WEB_SEARCH")
 }
 
