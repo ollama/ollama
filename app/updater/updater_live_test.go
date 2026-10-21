@@ -52,6 +52,15 @@ func TestLiveAppUpdate(t *testing.T) {
 		t.Fatalf("unsupported updater live test OS %q", runtime.GOOS)
 	}
 
+	// getStagedUpdate globs the stage dir, so any asset name installs. The
+	// staged name comes from the download's Content-Disposition header (see
+	// updater.go), which GitHub serves as the real release asset name —
+	// e.g. Ollama-<version>-darwin-universal.zip — not the legacy Installer
+	// constant. Assert on the extension and that the name is non-empty.
+	if runtime.GOOS == "darwin" {
+		expectedFilename = "*.zip"
+	}
+
 	UpdateStageDir = filepath.Join(t.TempDir(), "updates")
 	UpdateDownloaded = false
 	verifyCalled := false
@@ -83,12 +92,8 @@ func TestLiveAppUpdate(t *testing.T) {
 	t.Logf("staged production update at %s", staged)
 
 	assertPathInsideDir(t, UpdateStageDir, staged)
-	if filepath.Base(staged) != expectedFilename {
-		t.Fatalf("expected staged %s update filename to be %q, got %q", runtime.GOOS, expectedFilename, filepath.Base(staged))
-	}
-	expectedExt := filepath.Ext(expectedFilename)
-	if filepath.Ext(staged) != expectedExt {
-		t.Fatalf("expected staged %s update to be a %s artifact, got %s", runtime.GOOS, expectedExt, staged)
+	if ok, _ := filepath.Match(expectedFilename, filepath.Base(staged)); !ok {
+		t.Fatalf("expected staged %s update filename to match %q, got %q", runtime.GOOS, expectedFilename, filepath.Base(staged))
 	}
 
 	info, err := os.Stat(staged)
