@@ -606,23 +606,23 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		}
 		return api.Message{Role: "assistant", Content: content}, "web_search_call", nil
 	case ResponsesReasoningInput:
-		var summary strings.Builder
-		for _, part := range value.Summary {
-			summary.WriteString(part.Text)
-		}
-		thinking := summary.String()
+		thinking := value.text()
 		if thinking == "" && value.EncryptedContent != "" {
 			thinking = "[opaque reasoning state omitted during Ollama compaction]"
 		}
 		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
 	case ResponsesAgentMessageInput:
-		content, _, err := convertResponsesContent(value.Content)
+		if err := validateCompactionContent(value.Content); err != nil {
+			return api.Message{}, "", err
+		}
+		content, images, err := convertResponsesContent(value.Content)
 		if err != nil {
 			return api.Message{}, "", err
 		}
 		return api.Message{
 			Role:    "user",
 			Content: agentMessageContent(value.Author, value.Recipient, content),
+			Images:  images,
 		}, "message", nil
 	case ResponsesCompactionItem, ResponsesCompactionTrigger:
 		return api.Message{}, "", errors.New("unexpected compaction control item")
