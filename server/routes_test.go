@@ -593,6 +593,64 @@ func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
 	}
 }
 
+func TestPsHandlerReportsEvictingRunners(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now()
+	s := Server{
+		sched: &Scheduler{
+			loaded: map[string]*runnerRef{
+				"resident": withModel(&runnerRef{
+					totalSize: 1024,
+					vramSize:  1024,
+					expiresAt: now.Add(time.Hour),
+				}, &Model{ShortName: "resident:latest", Digest: strings.Repeat("c", 64)}),
+				"draining": withModel(&runnerRef{
+					totalSize: 2048,
+					vramSize:  2048,
+					expiresAt: now.Add(-time.Second),
+					state:     runnerStateEvictRequested,
+				}, &Model{ShortName: "draining:latest", Digest: strings.Repeat("d", 64)}),
+			},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/ps", nil)
+
+	s.PsHandler(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp api.ProcessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Models) != 2 {
+		t.Fatalf("model count = %d, want 2", len(resp.Models))
+	}
+
+	want := map[string]bool{"resident:latest": false, "draining:latest": true}
+	for _, m := range resp.Models {
+		evicting, ok := want[m.Model]
+		if !ok {
+			t.Fatalf("unexpected model %q", m.Model)
+		}
+		if m.Evicting != evicting {
+			t.Fatalf("%s evicting = %v, want %v", m.Model, m.Evicting, evicting)
+		}
+		if evicting != m.ExpiresAt.Before(now) {
+			t.Fatalf("%s evicting = %v but expires_at = %v", m.Model, evicting, m.ExpiresAt)
+		}
+	}
+	if got := strings.Count(w.Body.String(), `"evicting":true`); got != 1 {
+		t.Fatalf("evicting markers = %d, want 1: %s", got, w.Body.String())
+	}
+}
+
 func TestNormalizeRunner(t *testing.T) {
 	tests := []struct {
 		name    string

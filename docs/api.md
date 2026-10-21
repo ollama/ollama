@@ -27,6 +27,12 @@ Model names follow a `model:tag` format, where `model` can have an optional name
 
 All durations are returned in nanoseconds.
 
+### Model lifetime and `keep_alive`
+
+A loaded model stays in memory until it has been idle for its `keep_alive` (default `5m`). A negative `keep_alive` keeps the model loaded indefinitely, and `0` unloads it once no requests are in flight.
+
+The scheduler can also unload a model to make room for another one, for example when `OLLAMA_MAX_LOADED_MODELS` is reached. It claims the resident model for eviction and waits for that model's in-flight requests to finish. A request for the evicted model that arrives during this wait is still served, but its `keep_alive` does not cancel the pending unload: the model is unloaded as soon as it has no requests in flight. `/api/ps` reports `evicting: true` for a model in this state.
+
 ### Streaming responses
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
@@ -459,6 +465,8 @@ A single JSON object is returned:
 #### Unload a model
 
 If an empty prompt is provided and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
+
+The model is unloaded once its in-flight requests finish. A non-zero `keep_alive` does not prevent the scheduler from unloading the model when it needs the slot for another model; see [Model lifetime and `keep_alive`](#model-lifetime-and-keep_alive).
 
 ##### Request
 
@@ -1142,6 +1150,8 @@ curl http://localhost:11434/api/chat -d '{
 
 If the messages array is empty and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
 
+The model is unloaded once its in-flight requests finish. A non-zero `keep_alive` does not prevent the scheduler from unloading the model when it needs the slot for another model; see [Model lifetime and `keep_alive`](#model-lifetime-and-keep_alive).
+
 ##### Request
 
 ```shell
@@ -1802,6 +1812,10 @@ A single JSON object will be returned.
   ]
 }
 ```
+
+`expires_at` is the time the model will be unloaded. It is in the past when the model is no longer kept alive, including while the scheduler is unloading it.
+
+A model the scheduler has claimed for eviction to make room for another model reports `"evicting": true` and is listed last. Its `expires_at` is already in the past, but it keeps serving requests until its in-flight requests finish. See [Model lifetime and `keep_alive`](#model-lifetime-and-keep_alive).
 
 ## Generate Embedding
 
