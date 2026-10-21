@@ -3,10 +3,30 @@ package middleware
 import (
 	"context"
 
+	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/keylesssearch"
 )
 
 const maxWebSearchLoops = 10
+
+func init() {
+	// Keyless web search: replace the ollama.com backend (requires a cloud
+	// account with quota) with a keyless one when OLLAMA_KEYLESS_WEB_SEARCH is set.
+	if keylesssearch.Enabled() {
+		anthropic.WebSearchEndpointOverride(func(ctx context.Context, query string, maxResults int) (*anthropic.OllamaWebSearchResponse, error) {
+			resp, err := keylesssearch.Search(ctx, query, maxResults)
+			if err != nil {
+				return nil, err
+			}
+			results := make([]anthropic.OllamaWebSearchResult, len(resp.Results))
+			for i, r := range resp.Results {
+				results[i] = anthropic.OllamaWebSearchResult{Title: r.Title, URL: r.URL, Content: r.Content}
+			}
+			return &anthropic.OllamaWebSearchResponse{Results: results}, nil
+		})
+	}
+}
 
 // doFollowUpChat sends a non-streaming /api/chat request with the accumulated
 // messages and tools so the model can continue after a web search result.

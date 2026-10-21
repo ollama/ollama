@@ -1221,7 +1221,22 @@ type OllamaWebSearchResponse struct {
 
 var WebSearchEndpoint = "https://ollama.com/api/web_search"
 
+// WebSearchBackend allows tests and alternative builds to replace the search
+// backend. When keyless mode is enabled it takes precedence over ollama.com.
+var webSearchOverride func(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error)
+
+// WebSearchEndpointOverride installs an alternative search backend used by
+// WebSearch. Not safe for concurrent use; intended for init-time wiring.
+func WebSearchEndpointOverride(fn func(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error)) {
+	webSearchOverride = fn
+}
+
 func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
+	// Keyless backend: no cloud policy check, no ollama.com, no sign-in.
+	if webSearchOverride != nil {
+		return webSearchOverride(ctx, query, maxResults)
+	}
+
 	if internalcloud.Disabled() {
 		logutil.TraceContext(ctx, "anthropic: web search blocked", "reason", "cloud_disabled")
 		return nil, errors.New(internalcloud.DisabledError("web search is unavailable"))

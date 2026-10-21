@@ -18,6 +18,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/keylesssearch"
 	"github.com/ollama/ollama/openai"
 )
 
@@ -933,6 +934,10 @@ func (w *WebSearchResponsesWriter) loopContext() (context.Context, context.Cance
 func (w *WebSearchResponsesWriter) webSearch(ctx context.Context, query string) (*api.WebSearchResponse, error) {
 	if w.search != nil {
 		return w.search(ctx, query)
+	}
+	// Keyless backend takes precedence over the ollama.com proxy when enabled.
+	if keylesssearch.Enabled() {
+		return keylesssearch.Search(ctx, query, 5)
 	}
 	client, err := api.ClientFromEnvironment()
 	if err != nil {

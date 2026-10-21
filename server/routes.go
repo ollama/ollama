@@ -32,6 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/keylesssearch"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/discover"
@@ -2661,6 +2662,27 @@ func (s *Server) UsageHandler(c *gin.Context) {
 }
 
 func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {
+	// Keyless backend: serve searches locally instead of proxying to ollama.com
+	// (which requires a cloud account with remaining quota).
+	if keylesssearch.Enabled() {
+		var req api.WebSearchRequest
+		body, err := readRequestBody(c.Request)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		resp, err := keylesssearch.Search(c.Request.Context(), req.Query, req.MaxResults)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+		return
+	}
 	s.webExperimentalProxyHandler(c, "/api/web_search", cloudErrWebSearchUnavailable)
 }
 

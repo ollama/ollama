@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/keylesssearch"
 )
 
 type WebSearch struct{}
@@ -96,6 +97,19 @@ func (w *WebSearch) Execute(ctx context.Context, args map[string]any) (any, stri
 }
 
 func performWebSearch(ctx context.Context, query string, maxResults int) (*SearchResponse, error) {
+	// Keyless backend: when enabled, skip cloud policy and ollama.com entirely.
+	if keylesssearch.Enabled() {
+		resp, err := keylesssearch.Search(ctx, query, maxResults)
+		if err != nil {
+			return nil, err
+		}
+		results := make([]SearchResult, len(resp.Results))
+		for i, r := range resp.Results {
+			results[i] = SearchResult{Title: r.Title, URL: r.URL, Content: r.Content}
+		}
+		return &SearchResponse{Results: results}, nil
+	}
+
 	if err := ensureCloudEnabledForTool(ctx, "web search is unavailable"); err != nil {
 		return nil, err
 	}
