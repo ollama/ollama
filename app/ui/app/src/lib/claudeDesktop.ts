@@ -1,4 +1,5 @@
 import type {
+  ClaudeDesktopMappingStatus,
   ClaudeDesktopModelStatus,
   ClaudeDesktopStatus,
 } from "@/types/webview";
@@ -130,4 +131,14 @@ export function addClaudeModelSelection(
     return { selection, error: claudeDesktopMaxModelsMessage(maxModels) };
   }
   return { selection: [...selection, name] };
+}
+
+// sharedMappingModel returns the model every Claude route uses, or undefined
+// when the routes are unassigned or point at different models.
+export function sharedMappingModel(
+  mappings: ClaudeDesktopMappingStatus[],
+): string | undefined {
+  const first = mappings[0]?.model;
+  if (!first) return undefined;
+  return mappings.every((route) => route.model === first) ? first : undefined;
 }

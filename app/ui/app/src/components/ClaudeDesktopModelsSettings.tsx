@@ -6,7 +6,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Switch } from "@/components/ui/switch";
-import { claudeDesktopRecoveryMessage } from "@/lib/claudeDesktop";
+import {
+  claudeDesktopRecoveryMessage,
+  sharedMappingModel,
+} from "@/lib/claudeDesktop";
 import { claudeDesktopModelStatusLabel } from "@/lib/claudeDesktopModelStatus";
 import type {
   ClaudeDesktopActionResult,
@@ -144,6 +147,7 @@ interface ClaudeModelPickerProps {
   onChange: (model: string) => void;
   onOpen: () => void;
   loading: boolean;
+  placeholder?: string;
 }
 
 function ClaudeModelPicker({
@@ -155,6 +159,7 @@ function ClaudeModelPicker({
   onChange,
   onOpen,
   loading,
+  placeholder = "Select a model",
 }: ClaudeModelPickerProps) {
   return (
     <Popover className="relative min-w-0">
@@ -168,7 +173,7 @@ function ClaudeModelPicker({
         <span
           className={`min-w-0 flex-1 truncate ${value ? "" : "text-neutral-400"}`}
         >
-          {value || "Select a model"}
+          {value || placeholder}
         </span>
         <ChevronUpDownIcon className="h-4 w-4 flex-shrink-0 text-neutral-400" />
       </PopoverButton>
@@ -467,6 +472,14 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     );
   };
 
+  const updateAllMappings = (model: string) => {
+    setError(null);
+    setMappings((current) =>
+      current.map((route) => ({ ...route, model: model || undefined })),
+    );
+  };
+  const sharedModel = sharedMappingModel(mappings);
+
   const runMappingAction = useCallback(
     async (
       action: (restartConfirmed: boolean) => Promise<ClaudeDesktopActionResult>,
@@ -704,6 +717,40 @@ export const ClaudeDesktopModelsSettings = forwardRef<
             </div>
 
             <div className="mt-4 w-full max-w-xl space-y-1">
+              {mappings.length > 1 && (
+                <div className="mb-1 border-b border-neutral-200 pb-2 dark:border-neutral-700">
+                  <div className="relative grid min-h-12 grid-cols-[5.5rem_3.75rem_minmax(0,1fr)] items-center gap-2 py-1 max-sm:grid-cols-1 max-sm:gap-2">
+                    <div className="min-w-0">
+                      <span className="block text-sm font-medium text-neutral-800 dark:text-neutral-200">
+                        All
+                      </span>
+                    </div>
+                    <ArrowRightIcon
+                      aria-hidden="true"
+                      className="absolute left-[6.6625rem] h-4 w-4 -translate-x-1/2 text-neutral-300 dark:text-neutral-500 max-sm:hidden"
+                    />
+                    <div className="col-start-3 w-2/3 min-w-0 max-sm:col-start-auto max-sm:w-full">
+                      <ClaudeModelPicker
+                        id="claude-route-all"
+                        routeName="all model options"
+                        value={sharedModel ?? ""}
+                        placeholder={
+                          assignedModels.length > 0 ? "Mixed" : "Select a model"
+                        }
+                        disabled={busy}
+                        loading={catalogLoading}
+                        onOpen={openCatalog}
+                        models={catalogModels}
+                        onChange={updateAllMappings}
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs leading-5 text-neutral-500 dark:text-neutral-400">
+                    Use one model for all options. You can still change each
+                    option below.
+                  </p>
+                </div>
+              )}
               {mappings.map((mapping) => (
                 <div
                   key={mapping.routeId}
