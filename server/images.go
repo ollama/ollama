@@ -109,19 +109,6 @@ func (m *Model) IsAppleFM() bool {
 	return m.Config.ModelFormat == applefm.ModelFormat
 }
 
-// hasTokenizer reports whether Ollama can tokenize for the model's runner.
-// Models without one are sent messages instead of a rendered prompt and
-// manage their own context window.
-func (m *Model) hasTokenizer() bool {
-	return !m.IsAppleFM()
-}
-
-// hasLocalWeights reports whether the model's weights are stored by Ollama,
-// as opposed to being provided by the operating system.
-func (m *Model) hasLocalWeights() bool {
-	return !m.IsAppleFM()
-}
-
 func (m *Model) isGGUF() bool {
 	return m.Config.ModelFormat == "" || m.Config.ModelFormat == "gguf"
 }
