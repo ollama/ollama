@@ -283,7 +283,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			}
 			logutil.Trace("processing incoming request", "model", pending.model.ModelPath)
 
-		pendingLoop:
 			for {
 				var runnerToExpire *runnerRef
 				pendingKey := schedulerModelKey(pending.model)
@@ -390,27 +389,34 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				}
 				// Wait for the unload to happen
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
-				select {
-				case <-ctx.Done():
-					slog.Debug("shutting down scheduler pending loop")
-					return
-				case <-pending.ctx.Done():
-					// Drop the claim so the runner keeps its normal keep_alive instead of being unloaded
-					// the moment it goes idle, then move on to the next request.
-					runnerToExpire.refMu.Lock()
-					s.cancelEvictionLocked(runnerToExpire)
-					runnerToExpire.refMu.Unlock()
-					slog.Debug("pending request cancelled while waiting for unload", "runner", runnerToExpire)
-					break pendingLoop
-				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
-					continue
+				if !s.awaitUnload(ctx, pending, runnerToExpire) {
+					break
 				}
 			}
 		case <-s.unloadedCh:
 			// An unload request when there are no pending request can be ignored
 			slog.Debug("ignoring unload event with no pending requests")
 		}
+	}
+}
+
+// awaitUnload waits for runner to unload. If pending is cancelled first it drops
+// the eviction claim, so the runner keeps its normal keep_alive. Returns false to
+// stop scheduling pending.
+func (s *Scheduler) awaitUnload(ctx context.Context, pending *LlmRequest, runner *runnerRef) bool {
+	select {
+	case <-s.unloadedCh:
+		slog.Debug("unload completed", "runner", runner)
+		return true
+	case <-pending.ctx.Done():
+		runner.refMu.Lock()
+		s.cancelEvictionLocked(runner)
+		runner.refMu.Unlock()
+		slog.Debug("pending request cancelled while waiting for unload", "runner", runner)
+		return false
+	case <-ctx.Done():
+		slog.Debug("shutting down scheduler pending loop")
+		return false
 	}
 }
 
