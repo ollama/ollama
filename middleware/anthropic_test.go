@@ -509,6 +509,8 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 		errorPayload  any
 		wantErrorType string
 		wantMessage   string
+		stream        bool
+		webSearch     bool
 	}{
 		// routes.go sends errors without StatusCode in JSON, so we must use HTTP status
 		{
@@ -542,6 +544,31 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 			wantErrorType: "not_found_error",
 			wantMessage:   "model not found via StatusError",
 		},
+		{
+			name:          "500 before streaming",
+			statusCode:    http.StatusInternalServerError,
+			errorPayload:  gin.H{"error": "model runner failed to start"},
+			wantErrorType: "api_error",
+			wantMessage:   "model runner failed to start",
+			stream:        true,
+		},
+		{
+			name:          "429 before web search streaming",
+			statusCode:    http.StatusTooManyRequests,
+			errorPayload:  gin.H{"error": "rate limit exceeded"},
+			wantErrorType: "rate_limit_error",
+			wantMessage:   "rate limit exceeded",
+			stream:        true,
+			webSearch:     true,
+		},
+		{
+			name:          "500 with non-streaming web search",
+			statusCode:    http.StatusInternalServerError,
+			errorPayload:  gin.H{"error": "model runner failed to start"},
+			wantErrorType: "api_error",
+			wantMessage:   "model runner failed to start",
+			webSearch:     true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -555,7 +582,11 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 				_, _ = c.Writer.Write(data)
 			})
 
-			body := `{"model": "test-model", "max_tokens": 100, "messages": [{"role": "user", "content": "Hi"}]}`
+			tools := ""
+			if tt.webSearch {
+				tools = `,"tools":[{"type":"web_search_20250305","name":"web_search"}]`
+			}
+			body := fmt.Sprintf(`{"model":"test-model","max_tokens":100,"stream":%t,"messages":[{"role":"user","content":"Hi"}]%s}`, tt.stream, tools)
 			req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 
@@ -564,6 +595,9 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 
 			if resp.Code != tt.statusCode {
 				t.Errorf("expected status %d, got %d", tt.statusCode, resp.Code)
+			}
+			if got := resp.Result().Header.Get("Content-Type"); got != "application/json" {
+				t.Errorf("expected JSON error, got Content-Type %q", got)
 			}
 
 			var errResp anthropic.ErrorResponse
@@ -581,6 +615,84 @@ func TestAnthropicWriter_ErrorFromRoutes(t *testing.T) {
 				t.Errorf("expected message %q, got %q", tt.wantMessage, errResp.Error.Message)
 			}
 		})
+	}
+}
+
+func TestAnthropicWriter_StreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const errorMessage = "model runner has unexpectedly stopped"
+
+	for _, webSearch := range []bool{false, true} {
+		for _, forwarded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("web_search=%t/forwarded=%t", webSearch, forwarded), func(t *testing.T) {
+				resp := httptest.NewRecorder()
+				router := gin.New()
+				router.Use(AnthropicMessagesMiddleware())
+				router.POST("/v1/messages", func(c *gin.Context) {
+					enc := json.NewEncoder(c.Writer)
+					if err := enc.Encode(api.ChatResponse{
+						Model:   "test-model",
+						Message: api.Message{Role: "assistant", Content: "Hel"},
+					}); err != nil {
+						t.Fatal(err)
+					}
+					if !c.Writer.Written() || c.Writer.Status() != http.StatusOK {
+						t.Fatal("first chunk did not commit HTTP 200")
+					}
+					resp.Flushed = false
+
+					if forwarded {
+						// ChatHandler writes a remote client error after forwarding content.
+						c.JSON(http.StatusInternalServerError, gin.H{"error": errorMessage})
+					} else if err := enc.Encode(gin.H{"error": errorMessage}); err != nil {
+						// streamResponse writes a local runner error in-band.
+						t.Fatal(err)
+					}
+				})
+
+				tools := ""
+				if webSearch {
+					tools = `,"tools":[{"type":"web_search_20250305","name":"web_search"}]`
+				}
+				body := `{"model":"test-model","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"Hi"}]` + tools + `}`
+				req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(resp, req)
+
+				if resp.Code != http.StatusOK {
+					t.Errorf("expected committed status 200, got %d", resp.Code)
+				}
+				if got := resp.Result().Header.Get("Content-Type"); got != "text/event-stream" {
+					t.Errorf("expected SSE, got Content-Type %q", got)
+				}
+				if !resp.Flushed {
+					t.Error("error event was not flushed")
+				}
+				events := parseSSEEvents(t, resp.Body.String())
+				wantEvents := []string{"message_start", "content_block_start", "content_block_delta", "error"}
+				if diff := cmp.Diff(wantEvents, eventNames(events)); diff != "" {
+					t.Fatalf("stream events mismatch (-want +got):\n%s", diff)
+				}
+				var delta anthropic.ContentBlockDeltaEvent
+				if err := json.Unmarshal([]byte(events[2].data), &delta); err != nil {
+					t.Fatal(err)
+				}
+				if delta.Delta.Text != "Hel" {
+					t.Errorf("expected partial text Hel, got %q", delta.Delta.Text)
+				}
+				var streamError anthropic.StreamErrorEvent
+				if err := json.Unmarshal([]byte(events[3].data), &streamError); err != nil {
+					t.Fatal(err)
+				}
+				wantError := anthropic.StreamErrorEvent{
+					Type:  "error",
+					Error: anthropic.Error{Type: "api_error", Message: errorMessage},
+				}
+				if diff := cmp.Diff(wantError, streamError); diff != "" {
+					t.Errorf("stream error mismatch (-want +got):\n%s", diff)
+				}
+			})
+		}
 	}
 }
 
