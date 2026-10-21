@@ -2875,7 +2875,13 @@ type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+	// partial holds output after the last newline. Pipe reads end anywhere
+	// in a line, so lines are matched only once they are complete.
+	partial []byte
 }
+
+// maxPartialLine bounds the unterminated output kept between writes.
+const maxPartialLine = 64 * 1024
 
 type memoryBufferKey struct {
 	component string
@@ -2935,17 +2941,21 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 			w.runner.noteLoadActivity(time.Now())
 		}
 
+		// Pipe reads end anywhere in a line, so match complete lines only and
+		// keep the unterminated tail for the next write.
+		lines := w.completeLines(b)
+
 		func() {
 			w.runner.memoryMu.Lock()
 			defer w.runner.memoryMu.Unlock()
 
-			if match := deviceFreeRegex.FindSubmatch(b); match != nil {
+			if match := deviceFreeRegex.FindSubmatch(lines); match != nil {
 				devName := string(match[1])
 				if mib, err := strconv.ParseUint(string(match[2]), 10, 64); err == nil {
 					w.runner.systemFreeAtLoad[devName] = mib * 1024 * 1024
 				}
 			}
-			for _, match := range offloadedLayersRegex.FindAllSubmatch(b, -1) {
+			for _, match := range offloadedLayersRegex.FindAllSubmatch(lines, -1) {
 				loaded, loadedErr := strconv.ParseUint(string(match[1]), 10, 64)
 				total, totalErr := strconv.ParseUint(string(match[2]), 10, 64)
 				if loadedErr == nil && totalErr == nil {
@@ -2953,13 +2963,13 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					w.runner.totalLayers = total
 				}
 			}
-			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(b, -1) {
+			for _, match := range fitOverflowingLayersRegex.FindAllSubmatch(lines, -1) {
 				overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
 				if err == nil && overflowing > 0 {
 					w.runner.gpuLayerOverflow += int(overflowing)
 				}
 			}
-			for _, match := range bufferSizeRegex.FindAllSubmatch(b, -1) {
+			for _, match := range bufferSizeRegex.FindAllSubmatch(lines, -1) {
 				backendName := string(match[2])
 				if mib, err := strconv.ParseFloat(string(match[4]), 64); err == nil {
 					if w.buffers == nil {
@@ -2976,6 +2986,25 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 		}()
 	}
 	return w.inner.Write(b)
+}
+
+// completeLines returns the complete lines that b finishes, keeping any
+// unterminated tail for the next write.
+func (w *memoryParsingWriter) completeLines(b []byte) []byte {
+	data := b
+	if len(w.partial) > 0 {
+		data = append(w.partial, b...)
+	}
+	end := bytes.LastIndexByte(data, '\n')
+	tail := data[end+1:]
+	if len(tail) > maxPartialLine {
+		tail = tail[len(tail)-maxPartialLine:]
+	}
+	w.partial = append([]byte(nil), tail...)
+	if end < 0 {
+		return nil
+	}
+	return data[:end+1]
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
