@@ -338,6 +338,7 @@ func (c *ResponsesReasoningContent) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &part); err != nil {
 		return err
 	}
+	// Codex history can mix reasoning_text and text parts in the same item.
 	if part.Type != "reasoning_text" && part.Type != "text" {
 		return fmt.Errorf("unsupported reasoning content type %q", part.Type)
 	}
@@ -1187,10 +1188,10 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 		case ResponsesEncryptedContent:
 			content += v.EncryptedContent
 		case ResponsesImageContent:
-			if v.FileID != "" {
-				return "", nil, fmt.Errorf("content[%d]: file_id image inputs are not supported; send image_url as a base64 data URL", i)
-			}
 			if v.ImageURL == "" {
+				if v.FileID != "" {
+					return "", nil, fmt.Errorf("content[%d]: file_id image inputs are not supported; send image_url as a base64 data URL", i)
+				}
 				return "", nil, fmt.Errorf("content[%d]: image input requires image_url as a base64 data URL", i)
 			}
 			img, err := decodeImageURL(v.ImageURL)

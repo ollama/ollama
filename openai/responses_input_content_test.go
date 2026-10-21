@@ -79,38 +79,45 @@ func TestResponsesReadableHistory(t *testing.T) {
 }
 
 func TestResponsesAgentImages(t *testing.T) {
-	body := []byte(`{"model":"test","input":[{"type":"agent_message","author":"worker","recipient":"root","content":[
-		{"type":"input_text","text":"Inspect this pixel."},
-		{"type":"input_image","image_url":"` + compactionTestPNG + `"}
-	]}]}`)
-	var req ResponsesRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatal(err)
-	}
-	chat, err := FromResponsesRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	image, err := decodeImageURL(compactionTestPNG)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := api.Message{Role: "user", Content: "Agent message from \"worker\" to \"root\":\nInspect this pixel.", Images: []api.ImageData{image}}
-	if diff := cmp.Diff([]api.Message{want}, chat.Messages); diff != "" {
-		t.Fatalf("agent content changed (-want +got):\n%s", diff)
-	}
-	plan, err := PrepareStandaloneCompaction(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-		"summary": "Inspect the pixel.", "retain_item_ids": []string{"item_000001"},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff := cmp.Diff([]api.Message{want}, decodeResultPayload(t, result).Retained); diff != "" {
-		t.Fatalf("compaction lost agent content (-want +got):\n%s", diff)
+	for _, tt := range []struct{ name, fileID string }{
+		{"inline image", ""},
+		{"inline image with file ID", "file_stale"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"agent_message","author":"worker","recipient":"root","content":[
+				{"type":"input_text","text":"Inspect this pixel."},
+				{"type":"input_image","file_id":"` + tt.fileID + `","image_url":"` + compactionTestPNG + `"}
+			]}]}`)
+			var req ResponsesRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			chat, err := FromResponsesRequest(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			image, err := decodeImageURL(compactionTestPNG)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := api.Message{Role: "user", Content: "Agent message from \"worker\" to \"root\":\nInspect this pixel.", Images: []api.ImageData{image}}
+			if diff := cmp.Diff([]api.Message{want}, chat.Messages); diff != "" {
+				t.Fatalf("agent content changed (-want +got):\n%s", diff)
+			}
+			plan, err := PrepareStandaloneCompaction(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+				"summary": "Inspect the pixel.", "retain_item_ids": []string{"item_000001"},
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff([]api.Message{want}, decodeResultPayload(t, result).Retained); diff != "" {
+				t.Fatalf("compaction lost agent content (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 

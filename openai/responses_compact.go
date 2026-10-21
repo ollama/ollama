@@ -634,15 +634,13 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 func validateCompactionContent(contents []ResponsesContent) error {
 	for _, content := range contents {
 		image, ok := content.(ResponsesImageContent)
-		if !ok {
+		if !ok || image.ImageURL != "" {
 			continue
 		}
 		if image.FileID != "" {
 			return errors.New("file_id image inputs are not supported by Ollama compaction")
 		}
-		if image.ImageURL == "" {
-			return errors.New("compaction image input is missing image_url")
-		}
+		return errors.New("compaction image input is missing image_url")
 	}
 	return nil
 }
