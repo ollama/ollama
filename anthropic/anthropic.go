@@ -1219,7 +1219,9 @@ type OllamaWebSearchResponse struct {
 	Results []OllamaWebSearchResult `json:"results"`
 }
 
-var WebSearchEndpoint = "https://ollama.com/api/web_search"
+const defaultWebSearchEndpoint = "https://ollama.com/api/web_search"
+
+var WebSearchEndpoint = defaultWebSearchEndpoint
 
 // WebSearchBackend allows tests and alternative builds to replace the search
 // backend. When keyless mode is enabled it takes precedence over ollama.com.
@@ -1232,8 +1234,9 @@ func WebSearchEndpointOverride(fn func(ctx context.Context, query string, maxRes
 }
 
 func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
-	// Keyless backend: no cloud policy check, no ollama.com, no sign-in.
-	if webSearchOverride != nil {
+	// An explicitly configured endpoint wins over the built-in override, so
+	// tests and alternative deployments keep control of where searches go.
+	if WebSearchEndpoint == defaultWebSearchEndpoint && webSearchOverride != nil {
 		return webSearchOverride(ctx, query, maxResults)
 	}
 

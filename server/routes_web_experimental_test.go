@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/keylesssearch"
 	"github.com/ollama/ollama/version"
 )
 
@@ -39,7 +41,15 @@ func newWebExperimentalUpstream(t *testing.T, responseBody string) (*httptest.Se
 	return srv, capture
 }
 
+// disableKeylessSearch points the proxy tests at the ollama.com backend they
+// were written for; keyless serving has its own test below.
+func disableKeylessSearch(t *testing.T) {
+	t.Helper()
+	t.Setenv("OLLAMA_KEYLESS_WEB_SEARCH", "0")
+}
+
 func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
@@ -125,6 +135,7 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 }
 
 func TestExperimentalWebEndpointPreservesUpstreamRateLimit(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
@@ -214,6 +225,7 @@ func TestExperimentalWebEndpointsMissingBody(t *testing.T) {
 }
 
 func TestExperimentalWebEndpointsCloudDisabled(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 	t.Setenv("OLLAMA_NO_CLOUD", "1")
@@ -278,6 +290,7 @@ func TestExperimentalWebEndpointsCloudDisabled(t *testing.T) {
 }
 
 func TestExperimentalWebEndpointSigningFailureReturnsUnauthorized(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
@@ -332,6 +345,7 @@ func TestExperimentalWebEndpointSigningFailureReturnsUnauthorized(t *testing.T) 
 }
 
 func TestExperimentalWebEndpointSigningFailureWithoutSigninURL(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 
@@ -382,5 +396,88 @@ func TestExperimentalWebEndpointSigningFailureWithoutSigninURL(t *testing.T) {
 	}
 	if _, ok := got["signin_url"]; ok {
 		t.Fatalf("did not expect signin_url when helper fails, got %v", got["signin_url"])
+	}
+}
+
+func TestExperimentalWebSearchServedLocallyWhenKeyless(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_KEYLESS_WEB_SEARCH", "1")
+
+	origSearch := keylesssearch.Search
+	keylesssearch.Search = func(ctx context.Context, query string, maxResults int) (*api.WebSearchResponse, error) {
+		if query != "who wrote hamlet" {
+			t.Fatalf("query = %q", query)
+		}
+		if maxResults != 3 {
+			t.Fatalf("maxResults = %d, want 3", maxResults)
+		}
+		return &api.WebSearchResponse{Results: []api.WebSearchResult{{Title: "Hamlet", URL: "https://example.com/hamlet"}}}, nil
+	}
+	t.Cleanup(func() { keylesssearch.Search = origSearch })
+
+	// Any upstream request means the local backend did not serve it.
+	upstream, capture := newWebExperimentalUpstream(t, `{"results":[]}`)
+	defer upstream.Close()
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/experimental/web_search", bytes.NewBufferString(`{"query":"who wrote hamlet","max_results":3}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", resp.StatusCode, body)
+	}
+	if capture.path != "" {
+		t.Fatalf("expected no upstream call, got %q", capture.path)
+	}
+	if !bytes.Contains(body, []byte("https://example.com/hamlet")) {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestExperimentalWebSearchKeylessErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_KEYLESS_WEB_SEARCH", "1")
+
+	origSearch := keylesssearch.Search
+	keylesssearch.Search = func(context.Context, string, int) (*api.WebSearchResponse, error) {
+		return nil, errors.New("upstream unavailable")
+	}
+	t.Cleanup(func() { keylesssearch.Search = origSearch })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	resp, err := local.Client().Post(local.URL+"/api/experimental/web_search", "application/json", bytes.NewBufferString(`{"query":"x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", resp.StatusCode)
 	}
 }

@@ -34,10 +34,17 @@ func Enabled() bool {
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-// Search runs a DuckDuckGo HTML search and converts the top results to the
-// shared api.WebSearchResponse shape so all existing call sites can consume
-// it unchanged.
-func Search(ctx context.Context, query string, maxResults int) (*api.WebSearchResponse, error) {
+// SearchFunc runs a keyless search. Tests replace Search to run without
+// network access, mirroring how the cloud proxy's seams are swappable.
+type SearchFunc func(ctx context.Context, query string, maxResults int) (*api.WebSearchResponse, error)
+
+// Search runs a DuckDuckGo HTML search. It is a variable so tests can stub it.
+var Search SearchFunc = duckDuckGoSearch
+
+// duckDuckGoSearch converts the top results to the shared
+// api.WebSearchResponse shape so all existing call sites can consume it
+// unchanged.
+func duckDuckGoSearch(ctx context.Context, query string, maxResults int) (*api.WebSearchResponse, error) {
 	if maxResults <= 0 {
 		maxResults = 5
 	}

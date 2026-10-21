@@ -817,6 +817,7 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 }
 
 func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
+	disableKeylessSearch(t)
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
 

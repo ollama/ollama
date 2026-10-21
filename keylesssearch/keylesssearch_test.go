@@ -79,7 +79,7 @@ func TestSearchLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	resp, err := Search(context.Background(), "hamlet", 3)
+	resp, err := duckDuckGoSearch(context.Background(), "hamlet", 3)
 	if err != nil {
 		t.Skipf("network unavailable: %v", err)
 	}

@@ -32,7 +32,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/keylesssearch"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/discover"
@@ -41,6 +40,7 @@ import (
 	"github.com/ollama/ollama/fs/gguf"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/internal/proxy"
+	"github.com/ollama/ollama/keylesssearch"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -2669,6 +2669,12 @@ func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {
 		body, err := readRequestBody(c.Request)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Match the proxy path's contract for an absent body, so clients see
+		// the same message whichever backend serves the request.
+		if len(bytes.TrimSpace(body)) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 			return
 		}
 		if err := json.Unmarshal(body, &req); err != nil {
