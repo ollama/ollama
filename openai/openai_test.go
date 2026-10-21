@@ -72,10 +72,13 @@ func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
 	}{
 		{name: "unset"},
 		{name: "max_tokens", maxTokens: testIntPtr(5), want: 5},
+		{name: "zero max_tokens", maxTokens: testIntPtr(0), want: 0},
+		{name: "negative max_tokens", maxTokens: testIntPtr(-1), want: -1},
 		{name: "max_completion_tokens", maxCompletionTokens: testIntPtr(7), want: 7},
 		{name: "new field takes precedence", maxTokens: testIntPtr(5), maxCompletionTokens: testIntPtr(7), want: 7},
-		{name: "negative max_tokens", maxTokens: testIntPtr(-1), wantErr: "max_tokens must be non-negative"},
-		{name: "negative max_completion_tokens", maxCompletionTokens: testIntPtr(-1), wantErr: "max_completion_tokens must be non-negative"},
+		{name: "new field takes precedence over negative legacy limit", maxTokens: testIntPtr(-1), maxCompletionTokens: testIntPtr(7), want: 7},
+		{name: "zero max_completion_tokens", maxCompletionTokens: testIntPtr(0), wantErr: "Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got 0 instead."},
+		{name: "negative max_completion_tokens", maxCompletionTokens: testIntPtr(-1), wantErr: "Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got -1 instead."},
 	}
 
 	for _, tt := range tests {
@@ -86,8 +89,17 @@ func TestFromChatRequest_MaxCompletionTokens(t *testing.T) {
 				MaxCompletionTokens: tt.maxCompletionTokens,
 			})
 			if tt.wantErr != "" {
-				if err == nil || err.Error() != tt.wantErr {
-					t.Fatalf("FromChatRequest() error = %v, want %q", err, tt.wantErr)
+				code := "integer_below_min_value"
+				wantErr := Error{Message: tt.wantErr, Type: "invalid_request_error", Param: "max_completion_tokens", Code: &code}
+				gotErr, ok := err.(Error)
+				if !ok {
+					t.Fatalf("FromChatRequest() error = %T (%v), want openai.Error", err, err)
+				}
+				if diff := cmp.Diff(wantErr, gotErr); diff != "" {
+					t.Fatalf("FromChatRequest() error mismatch (-want +got):\n%s", diff)
+				}
+				if got != nil {
+					t.Fatalf("FromChatRequest() = %+v on error, want nil", got)
 				}
 				return
 			}
