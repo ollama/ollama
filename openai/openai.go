@@ -26,6 +26,10 @@ type Error struct {
 	Code    *string `json:"code"`
 }
 
+func (e Error) Error() string {
+	return e.Message
+}
+
 type ErrorResponse struct {
 	Error Error `json:"error"`
 }
@@ -745,11 +749,14 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		options["stop"] = stops
 	}
 
-	if r.MaxTokens != nil && *r.MaxTokens < 0 {
-		return nil, fmt.Errorf("max_tokens must be non-negative")
-	}
-	if r.MaxCompletionTokens != nil && *r.MaxCompletionTokens < 0 {
-		return nil, fmt.Errorf("max_completion_tokens must be non-negative")
+	if r.MaxCompletionTokens != nil && *r.MaxCompletionTokens <= 0 {
+		code := "integer_below_min_value"
+		return nil, Error{
+			Message: fmt.Sprintf("Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got %d instead.", *r.MaxCompletionTokens),
+			Type:    "invalid_request_error",
+			Param:   "max_completion_tokens",
+			Code:    &code,
+		}
 	}
 	if r.MaxCompletionTokens != nil {
 		options["num_predict"] = *r.MaxCompletionTokens

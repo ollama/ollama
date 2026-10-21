@@ -465,7 +465,12 @@ func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 		thinking := modelThinking(thinkingLookup, req.Model)
 		chatReq, err := openai.FromChatRequest(req, thinking)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			var requestErr openai.Error
+			if errors.As(err, &requestErr) {
+				c.AbortWithStatusJSON(http.StatusBadRequest, openai.ErrorResponse{Error: requestErr})
+			} else {
+				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			}
 			return
 		}
 
