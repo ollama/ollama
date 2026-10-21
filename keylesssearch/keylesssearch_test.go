@@ -63,7 +63,7 @@ func TestParseResultsUnwrapsRedirects(t *testing.T) {
 
 func TestParseResultsHonorsMax(t *testing.T) {
 	var b strings.Builder
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		b.WriteString(`<a class="result__a" href="https://example.com/` + string(rune('a'+i)) + `">T</a>`)
 	}
 	results, err := parseResults(strings.NewReader(b.String()), 3)
