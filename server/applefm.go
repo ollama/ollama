@@ -1,9 +1,7 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	"github.com/ollama/ollama/applefm"
@@ -25,17 +23,12 @@ func registerAppleFoundationModel(ctx context.Context) error {
 		return nil
 	}
 
-	config := model.ConfigV2{
+	layer, err := createConfigLayer(model.ConfigV2{
 		ModelFormat:  applefm.ModelFormat,
 		ModelFamily:  applefm.ModelFormat,
 		Capabilities: []string{string(model.CapabilityCompletion), string(model.CapabilityVision)},
 		ContextLen:   applefm.ContextLength,
-	}
-	b, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	layer, err := manifest.NewLayer(bytes.NewReader(b), manifest.MediaTypeImageConfig)
+	})
 	if err != nil {
 		return err
 	}
@@ -46,5 +39,5 @@ func registerAppleFoundationModel(ctx context.Context) error {
 	}
 
 	slog.Info("registering apple foundation model", "model", name.DisplayShortest())
-	return manifest.WriteManifestWithMetadata(name, layer, nil, applefm.RunnerName, applefm.ModelFormat)
+	return manifest.WriteManifestWithMetadata(name, *layer, nil, applefm.RunnerName, applefm.ModelFormat)
 }

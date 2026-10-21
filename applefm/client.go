@@ -1,7 +1,7 @@
 // Package applefm runs Apple's on-device Foundation Model through the `fm`
 // command line tool that ships with macOS 27 and later. The model weights are
 // managed by the operating system, so there is nothing to download: the
-// client starts `fm serve` on a unix socket and translates Ollama chat
+// client starts `fm serve` on a local port and translates Ollama chat
 // requests to its OpenAI-compatible chat completions endpoint.
 package applefm
 
@@ -14,8 +14,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -66,8 +66,8 @@ func Available(ctx context.Context) error {
 // Client manages an `fm serve` subprocess and implements llm.LlamaServer.
 type Client struct {
 	modelName string
-	sockDir   string
-	client    *http.Client
+	port      int
+	baseURL   string // empty until Load
 	status    *llm.StatusWriter
 
 	mu      sync.Mutex
@@ -78,38 +78,21 @@ type Client struct {
 
 // NewClient prepares a client for modelName. The subprocess is not started
 // until Load is called.
-func NewClient(modelName string) (*Client, error) {
-	if _, err := os.Stat(fmPath); err != nil {
-		return nil, fmt.Errorf("apple foundation models require macOS 27 or later: %w", err)
-	}
-	return &Client{modelName: modelName, done: make(chan struct{})}, nil
-}
-
-func (c *Client) socketPath() string {
-	return filepath.Join(c.sockDir, "fm.sock")
-}
-
-func newSocketClient(path string) *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", path)
-			},
-		},
-	}
+func NewClient(modelName string) *Client {
+	return &Client{modelName: modelName, done: make(chan struct{})}
 }
 
 // Load starts `fm serve`. The model's memory is owned by the operating system,
 // so there is no fit check and no GPU assignment.
 func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
-	// macOS limits unix socket paths to 104 bytes, so keep this short.
-	dir, err := os.MkdirTemp("", "ollama-fm-")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to find a free port: %w", err)
 	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
 
-	cmd := exec.Command(fmPath, "serve", "--socket", filepath.Join(dir, "fm.sock"))
+	cmd := exec.Command(fmPath, "serve", "--host", "127.0.0.1", "--port", strconv.Itoa(port))
 	status := llm.NewStatusWriter(os.Stderr)
 	cmd.Stdout = status
 	cmd.Stderr = status
@@ -117,16 +100,14 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, _ []ml.DeviceInfo, _
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.sockDir = dir
-	c.client = newSocketClient(c.socketPath())
-	c.status = status
-
-	slog.Info("starting apple foundation model server", "socket", c.socketPath())
+	slog.Info("starting apple foundation model server", "port", port)
 	if err := cmd.Start(); err != nil {
-		os.RemoveAll(dir)
 		return nil, fmt.Errorf("failed to start fm serve: %w", err)
 	}
 	c.cmd = cmd
+	c.port = port
+	c.baseURL = "http://127.0.0.1:" + strconv.Itoa(port)
+	c.status = status
 
 	go func() {
 		c.doneErr = cmd.Wait()
@@ -169,14 +150,14 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 
 // Ping implements llm.LlamaServer.
 func (c *Client) Ping(ctx context.Context) error {
-	if c.client == nil {
+	if c.baseURL == "" {
 		return errors.New("fm serve is not running")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://fm/health", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
 	if err != nil {
 		return err
 	}
-	resp, err := c.client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -187,7 +168,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Close stops the subprocess and removes its socket.
+// Close stops the subprocess.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -197,10 +178,6 @@ func (c *Client) Close() error {
 		c.cmd.Process.Kill()
 		<-c.done
 		c.cmd = nil
-	}
-	if c.sockDir != "" {
-		os.RemoveAll(c.sockDir)
-		c.sockDir = ""
 	}
 	return nil
 }
@@ -232,7 +209,7 @@ func (c *Client) ModelPath() string { return c.modelName }
 func (c *Client) ContextLength() int                             { return ContextLength }
 func (c *Client) MemorySize() (total, vram uint64)               { return 0, 0 }
 func (c *Client) VRAMByGPU(ml.DeviceID) uint64                   { return 0 }
-func (c *Client) GetPort() int                                   { return -1 }
+func (c *Client) GetPort() int                                   { return c.port }
 func (c *Client) GetDeviceInfos(context.Context) []ml.DeviceInfo { return nil }
 
 func (c *Client) ApplyChatTemplate(context.Context, llm.ChatRequest) (string, error) {

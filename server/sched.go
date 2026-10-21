@@ -567,7 +567,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	if llama == nil {
 		var err error
 		if req.model.IsAppleFM() {
-			llama, err = applefm.NewClient(req.model.ShortName)
+			llama = applefm.NewClient(req.model.ShortName)
 		} else if !req.model.IsMLX() {
 			var loadErr error
 			f, loadErr = llm.LoadModel(req.model.ModelPath, 1024, req.model.ModelShardPaths...)

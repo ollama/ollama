@@ -4,11 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,28 +15,12 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-// newFakeFM returns a client connected to handler over a unix socket, the way
-// it talks to `fm serve`.
+// newFakeFM returns a client connected to handler in place of `fm serve`.
 func newFakeFM(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
-
-	dir, err := os.MkdirTemp("", "fm") //nolint:usetesting // t.TempDir can exceed the 104 byte unix socket path limit on macOS
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-
-	sock := filepath.Join(dir, "fm.sock")
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := httptest.NewUnstartedServer(handler)
-	srv.Listener = ln
-	srv.Start()
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-
-	return &Client{client: newSocketClient(sock), done: make(chan struct{})}
+	return &Client{baseURL: srv.URL, done: make(chan struct{})}
 }
 
 func writeSSE(w http.ResponseWriter, events ...string) {
@@ -63,20 +44,12 @@ func collectChat(t *testing.T, c *Client, req llm.ChatRequest) (string, llm.Chat
 }
 
 func TestChat(t *testing.T) {
-	png := []byte("\x89PNG\r\n\x1a\n")
-
-	var got chatCompletionRequest
-	var gotRaw map[string]any
+	var got map[string]any
 	c := newFakeFM(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("path = %q", r.URL.Path)
 		}
-		var raw json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
-			t.Fatal(err)
-		}
-		json.Unmarshal(raw, &got)
-		json.Unmarshal(raw, &gotRaw)
+		json.NewDecoder(r.Body).Decode(&got)
 		writeSSE(w,
 			`data: {"choices":[{"delta":{"role":"assistant"},"index":0}]}`,
 			`data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}`,
@@ -87,19 +60,18 @@ func TestChat(t *testing.T) {
 		)
 	})
 
-	schema := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}}}`)
+	schema := `{"type":"object","properties":{"city":{"type":"string"}}}`
 	content, final, err := collectChat(t, c, llm.ChatRequest{
 		Messages: []api.Message{
 			{Role: "system", Content: "be terse"},
-			{Role: "user", Content: "what is this?", Images: []api.ImageData{png}},
+			{Role: "user", Content: "what is this?", Images: []api.ImageData{[]byte("\x89PNG\r\n\x1a\n")}},
 		},
-		Format:  schema,
-		Options: &api.Options{Temperature: 0.5, TopK: 40, TopP: 0.9, Seed: -1, NumPredict: -1},
+		Format:  json.RawMessage(schema),
+		Options: &api.Options{Temperature: 0.5, TopK: 40, TopP: 0.5, Seed: -1, NumPredict: -1},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	if content != "Hello world" {
 		t.Errorf("content = %q", content)
 	}
@@ -107,32 +79,32 @@ func TestChat(t *testing.T) {
 		t.Errorf("final = %+v", final)
 	}
 
-	if got.Model != "system" || !got.Stream || !got.StreamOptions["include_usage"] {
-		t.Errorf("request = %+v", got)
+	// The unset seed and num_predict are left out.
+	var want map[string]any
+	if err := json.Unmarshal([]byte(`{
+		"model": "system",
+		"stream": true,
+		"stream_options": {"include_usage": true},
+		"temperature": 0.5,
+		"top_k": 40,
+		"top_p": 0.5,
+		"response_format": {"type": "json_schema", "json_schema": {"name": "response", "schema": `+schema+`}},
+		"messages": [
+			{"role": "system", "content": "be terse"},
+			{"role": "user", "content": [
+				{"type": "text", "text": "what is this?"},
+				{"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+			]}
+		]
+	}`), &want); err != nil {
+		t.Fatal(err)
 	}
-	if *got.Temperature != 0.5 || *got.TopK != 40 || *got.TopP != 0.9 {
-		t.Errorf("sampling = %v %v %v", *got.Temperature, *got.TopK, *got.TopP)
-	}
-	if got.Seed != nil || got.MaxCompletionTokens != nil {
-		t.Errorf("unset options were sent: seed=%v max=%v", got.Seed, got.MaxCompletionTokens)
-	}
-	if got.ResponseFormat == nil || got.ResponseFormat.Type != "json_schema" || string(got.ResponseFormat.JSONSchema.Schema) != string(schema) {
-		t.Errorf("response_format = %+v", got.ResponseFormat)
-	}
-
-	wantMessages := []any{
-		map[string]any{"role": "system", "content": "be terse"},
-		map[string]any{"role": "user", "content": []any{
-			map[string]any{"type": "text", "text": "what is this?"},
-			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,iVBORw0KGgo="}},
-		}},
-	}
-	if diff := cmp.Diff(wantMessages, gotRaw["messages"]); diff != "" {
-		t.Errorf("messages mismatch (-want +got):\n%s", diff)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("request mismatch (-want +got):\n%s", diff)
 	}
 }
 
-func TestChatTokenLimit(t *testing.T) {
+func TestCompletion(t *testing.T) {
 	var got chatCompletionRequest
 	c := newFakeFM(t, func(w http.ResponseWriter, r *http.Request) {
 		json.NewDecoder(r.Body).Decode(&got)
@@ -145,18 +117,28 @@ func TestChatTokenLimit(t *testing.T) {
 		)
 	})
 
-	_, final, err := collectChat(t, c, llm.ChatRequest{
-		Messages: []api.Message{{Role: "user", Content: "tell a story"}},
-		Options:  &api.Options{NumPredict: 2},
+	var content strings.Builder
+	var final llm.CompletionResponse
+	err := c.Completion(t.Context(), llm.CompletionRequest{
+		Prompt:  "tell a story",
+		Options: &api.Options{Seed: 7, NumPredict: 2},
+	}, func(r llm.CompletionResponse) {
+		content.WriteString(r.Content)
+		if r.Done {
+			final = r
+		}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MaxCompletionTokens == nil || *got.MaxCompletionTokens != 2 {
-		t.Errorf("max_completion_tokens = %v", got.MaxCompletionTokens)
+	if len(got.Messages) != 1 || got.Messages[0].Role != "user" || got.Messages[0].Content != "tell a story" {
+		t.Errorf("messages = %+v", got.Messages)
 	}
-	if final.DoneReason != llm.DoneReasonLength {
-		t.Errorf("done reason = %v, want length", final.DoneReason)
+	if got.Seed == nil || *got.Seed != 7 || got.MaxCompletionTokens == nil || *got.MaxCompletionTokens != 2 {
+		t.Errorf("seed = %v, max_completion_tokens = %v", got.Seed, got.MaxCompletionTokens)
+	}
+	if content.String() != "Once upon" || final.DoneReason != llm.DoneReasonLength || final.PromptEvalCount != 5 || final.EvalCount != 2 {
+		t.Errorf("content = %q final = %+v", content.String(), final)
 	}
 }
 
@@ -219,38 +201,5 @@ func TestChatErrors(t *testing.T) {
 				t.Fatalf("error = %#v, want status %d", err, tc.status)
 			}
 		})
-	}
-}
-
-func TestCompletionSendsPromptAsUserMessage(t *testing.T) {
-	var got chatCompletionRequest
-	c := newFakeFM(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&got)
-		writeSSE(w,
-			`data: {"choices":[{"delta":{"content":"hi"},"index":0}]}`,
-			`data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1}}`,
-			`data: [DONE]`,
-		)
-	})
-
-	var content strings.Builder
-	var final llm.CompletionResponse
-	err := c.Completion(t.Context(), llm.CompletionRequest{Prompt: "say hi", Options: &api.Options{Seed: 7}}, func(r llm.CompletionResponse) {
-		content.WriteString(r.Content)
-		if r.Done {
-			final = r
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Messages) != 1 || got.Messages[0].Role != "user" || got.Messages[0].Content != "say hi" {
-		t.Errorf("messages = %+v", got.Messages)
-	}
-	if got.Seed == nil || *got.Seed != 7 {
-		t.Errorf("seed = %v", got.Seed)
-	}
-	if content.String() != "hi" || !final.Done || final.PromptEvalCount != 4 || final.EvalCount != 1 {
-		t.Errorf("content = %q final = %+v", content.String(), final)
 	}
 }

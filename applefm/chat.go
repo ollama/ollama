@@ -162,7 +162,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 }
 
 func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn func(llm.ChatResponse)) error {
-	if c.client == nil {
+	if c.baseURL == "" {
 		return errors.New("fm serve is not running")
 	}
 
@@ -170,14 +170,14 @@ func (c *Client) stream(ctx context.Context, creq *chatCompletionRequest, fn fun
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://fm/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	start := time.Now()
-	resp, err := c.client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("fm serve request failed: %w", err)
 	}

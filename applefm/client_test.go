@@ -1,9 +1,7 @@
 package applefm
 
 import (
-	"context"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -20,17 +18,14 @@ func TestWaitUntilRunningReportsExit(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	t.Cleanup(func(old string) func() { return func() { fmPath = old } }(fmPath))
+	old := fmPath
 	fmPath = path
+	t.Cleanup(func() { fmPath = old })
 
-	c, err := NewClient("apple-foundation-model")
-	if err != nil {
+	c := NewClient("apple-foundation-model")
+	if _, err := c.Load(t.Context(), ml.SystemInfo{}, nil, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Load(context.Background(), ml.SystemInfo{}, nil, false); err != nil {
-		t.Fatal(err)
-	}
-	sockDir := c.sockDir
 
 	if err := c.WaitUntilRunning(t.Context()); err == nil || !strings.Contains(err.Error(), "exited") {
 		t.Fatalf("error = %v, want exit error", err)
@@ -38,11 +33,7 @@ func TestWaitUntilRunningReportsExit(t *testing.T) {
 	if !c.HasExited() {
 		t.Error("HasExited = false after exit")
 	}
-
 	c.Close()
-	if _, err := os.Stat(sockDir); !os.IsNotExist(err) {
-		t.Errorf("socket directory not removed: %v", err)
-	}
 }
 
 func TestWaitUntilRunningTimesOutOnHungHealthCheck(t *testing.T) {

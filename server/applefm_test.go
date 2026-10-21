@@ -25,6 +25,19 @@ func stubAppleFMAvailable(t *testing.T, err error) {
 	t.Cleanup(func() { appleFMAvailable = old })
 }
 
+// newAppleFMServer registers the model in a fresh model store and serves it
+// with mock as the runner.
+func newAppleFMServer(t *testing.T, mock *mockRunner) *Server {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	stubAppleFMAvailable(t, nil)
+	if err := registerAppleFoundationModel(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return newServerWithMockRunner(t, mock)
+}
+
 func TestRegisterAppleFoundationModel(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	stubAppleFMAvailable(t, nil)
@@ -69,13 +82,6 @@ func TestRegisterAppleFoundationModelUnavailable(t *testing.T) {
 }
 
 func TestChatHandlerAppleFMSendsAllMessages(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	stubAppleFMAvailable(t, nil)
-	if err := registerAppleFoundationModel(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
 	mock := mockRunner{
 		TemplateFn: func(context.Context, llm.ChatRequest) (string, error) {
 			t.Error("chat template rendered for truncation")
@@ -86,7 +92,7 @@ func TestChatHandlerAppleFMSendsAllMessages(t *testing.T) {
 			return nil
 		},
 	}
-	s := newServerWithMockRunner(t, &mock)
+	s := newAppleFMServer(t, &mock)
 
 	msgs := []api.Message{
 		{Role: "system", Content: "sys"},
@@ -113,13 +119,6 @@ func TestChatHandlerAppleFMSendsAllMessages(t *testing.T) {
 }
 
 func TestGenerateHandlerAppleFMSendsMessages(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	stubAppleFMAvailable(t, nil)
-	if err := registerAppleFoundationModel(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-
 	mock := mockRunner{
 		CompletionFn: func(context.Context, llm.CompletionRequest, func(llm.CompletionResponse)) error {
 			t.Error("rendered prompt sent to completion")
@@ -130,7 +129,7 @@ func TestGenerateHandlerAppleFMSendsMessages(t *testing.T) {
 			return nil
 		},
 	}
-	s := newServerWithMockRunner(t, &mock)
+	s := newAppleFMServer(t, &mock)
 
 	stream := false
 	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
@@ -162,13 +161,7 @@ func TestGenerateHandlerAppleFMSendsMessages(t *testing.T) {
 }
 
 func TestGenerateHandlerAppleFMRejectsPromptFields(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	stubAppleFMAvailable(t, nil)
-	if err := registerAppleFoundationModel(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	s := newServerWithMockRunner(t, &mockRunner{})
+	s := newAppleFMServer(t, &mockRunner{})
 
 	stream := false
 	for name, req := range map[string]api.GenerateRequest{
