@@ -899,7 +899,7 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
 		return
 	}
-	if err := decision.ValidateLimits(req); err != nil {
+	if err := decision.ValidateLimits(req, decisionType); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
