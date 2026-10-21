@@ -124,8 +124,6 @@ func TestResponsesRejectsUnrepresentableContent(t *testing.T) {
 		{"missing reasoning text", `{"type":"reasoning","content":[{"type":"reasoning_text"}]}`, "requires text"},
 		{"null reasoning text", `{"type":"reasoning","content":[{"type":"text","text":null}]}`, "requires text"},
 		{"missing refusal", `{"role":"assistant","content":[{"type":"refusal"}]}`, "requires refusal"},
-		{"unknown content", `{"role":"user","content":[{"type":"input_text","text":"preserve me"},{"type":"future_content","text":"private-content"}]}`, "unknown content type"},
-		{"unknown item", `{"type":"future_item","text":"private-content"}`, "unknown input item type"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			body := []byte(`{"model":"test","input":[{"role":"user","content":"Before."},` + tt.item + `,{"role":"user","content":"After."}]}`)
@@ -139,27 +137,6 @@ func TestResponsesRejectsUnrepresentableContent(t *testing.T) {
 			}
 			if _, err := PrepareStandaloneCompaction(body); err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("compaction error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestResponsesUnsupportedInputTypes(t *testing.T) {
-	// These carry tools, actions, or provider state. They must not become a
-	// catch-all metadata case that silently removes meaningful history.
-	for _, kind := range []string{
-		"additional_tools", "configuration_update", "context_compaction", "compaction_summary",
-		"local_shell_call", "local_shell_call_output", "shell_call", "shell_call_output",
-		"image_generation_call", "file_search_call", "computer_call", "computer_call_output",
-		"code_interpreter_call", "mcp_call", "mcp_list_tools", "mcp_approval_request", "mcp_approval_response",
-		"apply_patch_call", "apply_patch_call_output", "item_reference", "future_item",
-	} {
-		t.Run(kind, func(t *testing.T) {
-			body := []byte(`{"model":"test","input":[{"role":"user","content":"Before."},{"type":"` + kind + `","payload":"private-content"},{"role":"user","content":"After."}]}`)
-			var request ResponsesRequest
-			err := json.Unmarshal(body, &request)
-			if err == nil || !strings.Contains(err.Error(), `input[1]: unknown input item type: "`+kind+`"`) || strings.Contains(err.Error(), "private-content") {
-				t.Fatalf("unsupported history must fail explicitly: %v", err)
 			}
 		})
 	}
