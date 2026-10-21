@@ -258,6 +258,8 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -294,6 +296,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"path/filepath"
@@ -289,6 +290,81 @@ func TestWriteBlobsModelOptMXFP8(t *testing.T) {
 	}
 	if md := blobMetadata(t, blob); md["quant_type"] != "mxfp8" || md["group_size"] != "32" {
 		t.Errorf("metadata = %v, want mxfp8 group 32", md)
+	}
+}
+
+func TestWriteBlobsFlintModelOptExpertBank(t *testing.T) {
+	for _, tc := range []struct {
+		weightDtype string
+		weightShape []int32
+		scaleDtype  string
+	}{
+		{"U32", []int32{2, 2}, "U8"},
+		{"U8", []int32{2, 8}, "U8"},
+		{"U32", []int32{2, 2}, "F8_E4M3"},
+		{"U8", []int32{2, 8}, "F8_E4M3"},
+	} {
+		t.Run(tc.weightDtype+"/"+tc.scaleDtype, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfigJSON(t, dir, `{"architectures":["FlintForCausalLM"]}`)
+			const prefix = "model.layers.2.mlp.experts"
+			var tensors []*st.TensorData
+			for expert := range 2 {
+				stem := fmt.Sprintf("%s.%d.gate_proj", prefix, expert)
+				tensors = append(tensors,
+					st.NewTensorDataFromBytes(stem+".weight", tc.weightDtype, tc.weightShape, bytes.Repeat([]byte{byte(expert + 1)}, 16)),
+					st.NewTensorDataFromBytes(stem+".weight_scale", tc.scaleDtype, []int32{2, 1}, []byte{byte(expert + 3), byte(expert + 4)}),
+					st.NewTensorDataFromBytes(stem+".weight_scale_2", "F32", []int32{1}, f32le(float32(expert+1)/4)),
+					st.NewTensorDataFromBytes(stem+".input_scale", "F32", []int32{1}, f32le(8)),
+				)
+			}
+			createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), tensors)
+			inv, err := ReadInventory(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			class, err := Classify(inv, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			specs, err := Plan(inv, class, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := newCaptureStore()
+			if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+				t.Fatal(err)
+			}
+			if names := store.names(); !slices.Equal(names, []string{prefix}) {
+				t.Fatalf("blob names = %v, want one expert bank", names)
+			}
+			blob := store.blobs[prefix]
+			name := prefix + ".gate_proj.weight"
+			header := blobHeader(t, blob)
+			for _, tt := range []struct {
+				name  string
+				dtype string
+				shape []int32
+			}{
+				{name, "U32", []int32{2, 2, 2}},
+				{name + ".scale", "U8", []int32{2, 2, 1}},
+				{name + ".global_scale", "F32", []int32{2}},
+			} {
+				got, ok := header[tt.name]
+				if !ok || got.Dtype != tt.dtype || !slices.Equal(got.Shape, tt.shape) {
+					t.Errorf("%s header = %+v, want %s %v", tt.name, got, tt.dtype, tt.shape)
+				}
+			}
+			if got := readPackedTensorRaw(t, blob, name); !bytes.Equal(got, append(bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{2}, 16)...)) {
+				t.Error("packed expert words changed or were stacked out of order")
+			}
+			if got := readPackedTensorRaw(t, blob, name+".scale"); !bytes.Equal(got, []byte{3, 4, 4, 5}) {
+				t.Error("expert scale bytes changed or were stacked out of order")
+			}
+			if got := readPackedTensorRaw(t, blob, name+".global_scale"); !bytes.Equal(got, append(f32le(0.25), f32le(0.5)...)) {
+				t.Error("ModelOpt global scales changed or were stacked out of order")
+			}
+		})
 	}
 }
 
