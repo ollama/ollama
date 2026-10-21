@@ -189,6 +189,150 @@ function textContent(node: ReactTestInstance): string {
     .join("");
 }
 
+describe("ClaudeDesktopModelsSettings all-routes picker", () => {
+  const routes = [
+    { routeId: "claude-fable-5", routeName: "Fable 5" },
+    { routeId: "claude-opus-5", routeName: "Opus 5" },
+    { routeId: "claude-sonnet-5", routeName: "Sonnet 5" },
+    { routeId: "claude-haiku-4-5-20251001", routeName: "Haiku 4.5" },
+    { routeId: "claude-sonnet-4-6", routeName: "Sonnet 4.6" },
+  ];
+
+  function allRoutesStatus(models: (string | undefined)[]) {
+    const base = testStatus();
+    return {
+      ...base,
+      mappings: routes.map((route, index) => ({
+        ...route,
+        model: models[index],
+      })),
+    };
+  }
+
+  function buttonFor(renderer: ReactTestRenderer, label: string) {
+    const button = renderer.root
+      .findAllByType("button")
+      .find((candidate) => candidate.props["aria-label"] === label);
+    if (!button) throw new Error(`button ${label} not found`);
+    return button;
+  }
+
+  async function render(status: ReturnType<typeof allRoutesStatus>) {
+    vi.mocked(getClaudeDesktopModelsSettings).mockResolvedValue(status);
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(<ClaudeDesktopModelsSettings initialStatus={status} />);
+    });
+    return renderer!;
+  }
+
+  async function choose(
+    renderer: ReactTestRenderer,
+    label: string,
+    model: string,
+  ) {
+    await act(async () => buttonFor(renderer, label).props.onClick());
+    await act(async () => {
+      renderer.root
+        .findAllByProps({ role: "option" })
+        .find((option) => textContent(option).includes(model))!
+        .props.onClick();
+    });
+  }
+
+  it("shows the shared model, or Mixed when routes differ", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    try {
+      const same = await render(
+        allRoutesStatus(routes.map(() => "glm-5.2:cloud")),
+      );
+      expect(
+        textContent(buttonFor(same, "Ollama model for all model options")),
+      ).toBe("glm-5.2:cloud");
+      await act(async () => same.unmount());
+
+      const mixed = await render(
+        allRoutesStatus([
+          "glm-5.2:cloud",
+          "kimi-k3:cloud",
+          "glm-5.2:cloud",
+          "glm-5.2:cloud",
+          "glm-5.2:cloud",
+        ]),
+      );
+      expect(
+        textContent(buttonFor(mixed, "Ollama model for all model options")),
+      ).toBe("Mixed");
+      await act(async () => mixed.unmount());
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sets every route at once, keeps routes editable and applies through the normal mapping action", async () => {
+    const apply = vi.fn().mockImplementation(async () => ({
+      status: allRoutesStatus(routes.map(() => "kimi-k3:cloud")),
+      mappingsApplied: true,
+    }));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      applyClaudeDesktopMappings: apply,
+    });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      renderer = await render(
+        allRoutesStatus([
+          "glm-5.2:cloud",
+          "kimi-k3:cloud",
+          "glm-5.2:cloud",
+          undefined,
+          "glm-5.2:cloud",
+        ]),
+      );
+      await choose(renderer, "Ollama model for all model options", "kimi-k3");
+      for (const route of routes) {
+        expect(
+          textContent(
+            buttonFor(renderer, `Ollama model for ${route.routeName}`),
+          ),
+        ).toBe("kimi-k3:cloud");
+      }
+      expect(
+        textContent(buttonFor(renderer, "Ollama model for all model options")),
+      ).toBe("kimi-k3:cloud");
+
+      // A single route stays editable afterwards and the shared picker turns
+      // back to Mixed.
+      await choose(renderer, "Ollama model for Opus 5", "glm-5.2");
+      expect(textContent(buttonFor(renderer, "Ollama model for Opus 5"))).toBe(
+        "glm-5.2:cloud",
+      );
+      expect(
+        textContent(buttonFor(renderer, "Ollama model for all model options")),
+      ).toBe("Mixed");
+
+      await choose(renderer, "Ollama model for all model options", "kimi-k3");
+      await act(async () => actionButton(renderer!).props.onClick());
+      expect(apply).toHaveBeenCalledTimes(1);
+      expect(apply).toHaveBeenCalledWith(
+        Object.fromEntries(
+          routes.map((route) => [route.routeId, "kimi-k3:cloud"]),
+        ),
+        false,
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("ClaudeDesktopModelsSettings interactions", () => {
   it.each(["catalog", "inventory"])(
     "keeps the successful %s usable while the other request is pending or fails",

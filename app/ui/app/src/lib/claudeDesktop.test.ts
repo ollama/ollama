@@ -10,6 +10,7 @@ import {
   defaultClaudeDesktopMaxModels,
   isClaudeConfigured,
   optimisticClaudeConnectionState,
+  sharedMappingModel,
   withClaudeConnectionTimeout,
 } from "./claudeDesktop";
 
@@ -250,5 +251,30 @@ describe("claudeDesktopUsableSelection", () => {
         },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("sharedMappingModel", () => {
+  const route = (routeId: string, model?: string) => ({
+    routeId,
+    routeName: routeId,
+    model,
+  });
+
+  it("returns the model when every route uses it", () => {
+    expect(
+      sharedMappingModel([route("a", "deepseek"), route("b", "deepseek")]),
+    ).toBe("deepseek");
+  });
+
+  it("returns undefined for mixed, partially or fully unassigned routes", () => {
+    expect(
+      sharedMappingModel([route("a", "deepseek"), route("b", "glm")]),
+    ).toBeUndefined();
+    expect(
+      sharedMappingModel([route("a", "deepseek"), route("b")]),
+    ).toBeUndefined();
+    expect(sharedMappingModel([route("a"), route("b")])).toBeUndefined();
+    expect(sharedMappingModel([])).toBeUndefined();
   });
 });

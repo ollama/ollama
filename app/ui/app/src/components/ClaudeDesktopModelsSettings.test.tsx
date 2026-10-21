@@ -96,7 +96,10 @@ describe("ClaudeDesktopModelsSettings", () => {
       expect(html).toContain(route.routeName);
       expect(html).not.toContain(`>${route.routeId}<`);
     }
-    expect((html.match(/aria-haspopup="listbox"/g) ?? []).length).toBe(5);
+    // One picker per route plus the shared "all model options" picker.
+    expect((html.match(/aria-haspopup="listbox"/g) ?? []).length).toBe(6);
+    expect(html).toContain('aria-label="Ollama model for all model options"');
+    expect(html).toContain("Use one model for all options.");
     expect(html).not.toContain('for="claude-route-');
     expect(html).toContain(
       "Choose which Ollama model Claude uses for each model option.",
@@ -119,7 +122,9 @@ describe("ClaudeDesktopModelsSettings", () => {
       />,
     );
 
-    expect((html.match(/>qwen3:8b<\/span>/g) ?? []).length).toBe(5);
+    // Five routes plus the shared picker, which shows the common model.
+    expect((html.match(/>qwen3:8b<\/span>/g) ?? []).length).toBe(6);
+    expect(html).not.toContain(">Mixed</span>");
   });
 
   it("keeps an unavailable default visible with its access status", () => {
