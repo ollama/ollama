@@ -42,8 +42,9 @@ func TestDiscoveryConsoleChild(t *testing.T) {
 // TestDiscoveryConsoleNative launches a real child process with the same
 // SysProcAttr that the GPU-discovery launch sites use (discoverSysProcAttr),
 // and asserts the child has no console window while stdout/stderr are intact.
-// This guards against a future regression where a call site forgets to apply
-// the helper.
+// It verifies the helper's behavior (a child launched with discoverSysProcAttr
+// gets no console window); it does not assert that every production call site
+// applies the helper.
 func TestDiscoveryConsoleNative(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
