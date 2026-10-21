@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -1053,5 +1054,50 @@ func TestThinkValueTransportTypes(t *testing.T) {
 				t.Fatal("named effort must express intent to think")
 			}
 		})
+	}
+}
+
+func TestToolCallFunctionArgumentsPreserveIntegerTypes(t *testing.T) {
+	var arguments ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(`{"integer":30000,"one":1.0,"nested":{"value":1},"list":[1,1.5]}`), &arguments); err != nil {
+		t.Fatal(err)
+	}
+	assertType := func(key string, want any) {
+		t.Helper()
+		got, ok := arguments.Get(key)
+		if !ok {
+			t.Fatalf("missing key %q", key)
+		}
+		if fmt.Sprintf("%T %v", got, got) != fmt.Sprintf("%T %v", want, want) {
+			t.Errorf("key %q = %T %v, want %T %v", key, got, got, want, want)
+		}
+	}
+	assertType("integer", int64(30000))
+	assertType("one", float64(1))
+	nested, _ := arguments.Get("nested")
+	nestedMap, ok := nested.(map[string]any)
+	if !ok {
+		t.Fatalf("nested = %T, want map[string]any", nested)
+	}
+	if value, ok := nestedMap["value"].(int64); !ok || value != 1 {
+		t.Errorf("nested.value = %T %v, want int64 1", nestedMap["value"], nestedMap["value"])
+	}
+	list, _ := arguments.Get("list")
+	items, ok := list.([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("list = %T %v, want []any of length 2", list, list)
+	}
+	if _, ok := items[0].(int64); !ok {
+		t.Errorf("list[0] = %T, want int64", items[0])
+	}
+	if _, ok := items[1].(float64); !ok {
+		t.Errorf("list[1] = %T, want float64", items[1])
+	}
+	var keys []string
+	for key := range arguments.All() {
+		keys = append(keys, key)
+	}
+	if strings.Join(keys, ",") != "integer,one,nested,list" {
+		t.Errorf("key order = %v", keys)
 	}
 }
