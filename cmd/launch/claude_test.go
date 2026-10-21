@@ -352,6 +352,7 @@ func TestClaudeEnvVars(t *testing.T) {
 		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
 		"ANTHROPIC_API_KEY":                   "",
 		"ANTHROPIC_AUTH_TOKEN":                "ollama",
+		"ENABLE_CLAUDEAI_MCP_SERVERS":         "false",
 		"CLAUDE_CODE_ATTRIBUTION_HEADER":      "0",
 		"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":   "off",
 		"DISABLE_ERROR_REPORTING":             "1",
@@ -372,6 +373,48 @@ func TestClaudeEnvVars(t *testing.T) {
 		if _, ok := got[key]; ok {
 			t.Errorf("%s must not be set by Ollama", key)
 		}
+	}
+}
+
+func TestClaudeRunDisablesClaudeAiConnectors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	for _, model := range []string{"llama3.2", "kimi-k3:cloud"} {
+		t.Run(model, func(t *testing.T) {
+			t.Setenv("ENABLE_CLAUDEAI_MCP_SERVERS", "true")
+			t.Setenv("OLLAMA_HOST", "http://127.0.0.1:12345")
+			t.Setenv("ANTHROPIC_API_KEY", "test-api-key")
+			t.Setenv("ANTHROPIC_AUTH_TOKEN", "test-auth-token")
+
+			dir := t.TempDir()
+			output := filepath.Join(dir, "env-and-args")
+			t.Setenv("PATH", dir)
+			t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+			script := `#!/bin/sh
+printf '%s\n' "$ENABLE_CLAUDEAI_MCP_SERVERS" "$ANTHROPIC_BASE_URL" "${ANTHROPIC_API_KEY-unset}" "$ANTHROPIC_AUTH_TOKEN" "$@" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+			if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			mcpConfig := filepath.Join(dir, "mcp.json")
+			if err := (&Claude{}).Run(model, nil, []string{"--mcp-config", mcpConfig}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Join([]string{"false", "http://127.0.0.1:12345", "", "ollama", "--model", model, "--mcp-config", mcpConfig, ""}, "\n")
+			if string(got) != want {
+				t.Fatalf("child environment and arguments = %q, want %q", got, want)
+			}
+			if got := os.Getenv("ENABLE_CLAUDEAI_MCP_SERVERS"); got != "true" {
+				t.Fatalf("parent ENABLE_CLAUDEAI_MCP_SERVERS = %q, want true", got)
+			}
+		})
 	}
 }
 
@@ -494,6 +537,19 @@ func TestClaudeModelEnvVars(t *testing.T) {
 				if got[key] != want {
 					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
 				}
+			}
+		}
+	})
+
+	t.Run("keeps the auto compact window within Claude Code's range", func(t *testing.T) {
+		setDynamicCloudModelLimits(map[string]cloudModelLimit{"tiny": {Context: 65_536}})
+		t.Cleanup(func() { setDynamicCloudModelLimits(nil) })
+		for model, want := range map[string]string{
+			"nemotron-3-nano:30b:cloud": "1000000",
+			"tiny:cloud":                "",
+		} {
+			if got := envMap(c.modelEnvVars(model))["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; got != want {
+				t.Errorf("%s: AUTO_COMPACT_WINDOW = %q, want %q", model, got, want)
 			}
 		}
 	})

@@ -46,6 +46,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 			return err
 		}
 	}
+	if inv.Config.Architecture() == "Qwen3_5Model" {
+		inv, err = preparePplxInventory(inv)
+		if err != nil {
+			return err
+		}
+	}
 	modelConfig, err := inferSafetensorsConfig(modelDir, inv.Config, opts.Parser, opts.Renderer)
 	if err != nil {
 		return err
@@ -68,6 +74,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	class, err := Classify(inv, opts.Quantize)
 	if err != nil {
 		return err
+	}
+	if inv.Config.Architecture() == "KevForDecision" && class.Kind == SourceFloat && class.Quantize == "" {
+		modelConfig.FileType, err = kevFileType(inv)
+		if err != nil {
+			return err
+		}
 	}
 	policy, err := newTensorImportTransform(inv)
 	if err != nil {

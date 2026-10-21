@@ -331,24 +331,12 @@ func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return s, nil
 }
 
-// Embedding implements llm.LlamaServer.
-func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return c.embed(ctx, embedWireRequest{Content: input})
-}
-
-// EmbedWithMedia embeds a single text input with media blobs alongside.
-func (c *Client) EmbedWithMedia(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
-	if len(media) == 0 {
-		return c.Embedding(ctx, input)
+func (c *Client) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
+	wire := embedWireRequest{Content: input}
+	for _, blob := range media {
+		wire.Media = append(wire.Media, base64.StdEncoding.EncodeToString(blob))
 	}
-	wire := embedWireRequest{Content: input, Media: make([]string, len(media))}
-	for i, blob := range media {
-		wire.Media[i] = base64.StdEncoding.EncodeToString(blob)
-	}
-	return c.embed(ctx, wire)
-}
 
-func (c *Client) embed(ctx context.Context, wire embedWireRequest) ([]float32, int, error) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(wire); err != nil {
 		return nil, 0, err
@@ -450,6 +438,10 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	// Spawn subprocess: ollama runner --model <name> --port <port>
 	cmd := exec.Command(exe, "runner", "--model", c.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
+	loadedLibraryPath, err := mlx.LoadedLibraryPath()
+	if err != nil {
+		return nil, fmt.Errorf("unable to determine loaded MLX library path: %w", err)
+	}
 
 	// Keep Metal weights resident between requests until MLX fixes idle eviction.
 	if runtime.GOOS == "darwin" {
@@ -469,16 +461,8 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	}
 
 	if libPathEnvVar != "" {
-		libraryPaths := []string{ml.LibOllamaPath}
-		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
-			libraryPaths = append(libraryPaths, mlxDirs...)
-		}
-
-		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
-		}
-
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+		libraryPaths := mlx.LibraryPathsForLoadedLibrary(loadedLibraryPath)
+		pathEnvVal := libraryPathEnv(libraryPaths, os.Getenv(libPathEnvVar))
 
 		found := false
 		for i := range cmd.Env {
@@ -502,15 +486,10 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	// MLX resolves headers via $CUDA_PATH/include/*.h (and checks CUDA_HOME first).
 	// Always use bundled headers to avoid version mismatches with any
 	// system-installed CUDA toolkit.
-	if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_cuda_*")); err == nil {
-		for _, d := range mlxDirs {
-			if _, err := os.Stat(filepath.Join(d, "include")); err == nil {
-				setEnv(cmd, "CUDA_PATH", d)
-				setEnv(cmd, "CUDA_HOME", d)
-				slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", d)
-				break
-			}
-		}
+	if cudaPath, ok := mlx.CUDAToolkitDirForLoadedLibrary(loadedLibraryPath); ok {
+		setEnv(cmd, "CUDA_PATH", cudaPath)
+		setEnv(cmd, "CUDA_HOME", cudaPath)
+		slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", cudaPath)
 	}
 
 	status := llm.NewStatusWriter(os.Stderr)
@@ -529,6 +508,11 @@ func (c *Client) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.D
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
+	}
+	if err := llm.AddRunnerToJob(cmd.Process.Pid); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("assign mlx runner to runner job: %w", err)
 	}
 	c.cmd = cmd
 
@@ -659,4 +643,32 @@ func setEnv(cmd *exec.Cmd, key, value string) {
 		}
 	}
 	cmd.Env = append(cmd.Env, entry)
+}
+
+func libraryPathEnv(preferred []string, existing string) string {
+	var paths []string
+	seen := map[string]bool{}
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		path = filepath.Clean(path)
+		key := path
+		if runtime.GOOS == "windows" {
+			key = strings.ToUpper(key)
+		}
+		if !seen[key] {
+			seen[key] = true
+			paths = append(paths, path)
+		}
+	}
+
+	for _, path := range preferred {
+		add(path)
+	}
+	for _, path := range filepath.SplitList(existing) {
+		add(path)
+	}
+
+	return strings.Join(paths, string(filepath.ListSeparator))
 }

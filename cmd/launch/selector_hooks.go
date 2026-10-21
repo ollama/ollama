@@ -71,10 +71,6 @@ var DefaultMultiSelectorWithUpdates MultiSelectorWithUpdates
 // Returns the signed-in username or an error.
 var DefaultSignIn func(modelName, signInURL string) (string, error)
 
-// DefaultUpgrade provides a TUI-based upgrade flow.
-// Returns the updated plan or an error.
-var DefaultUpgrade func(modelName, requiredPlan string) (string, error)
-
 type launchConfirmPolicy struct {
 	yes               bool
 	requireYesMessage bool

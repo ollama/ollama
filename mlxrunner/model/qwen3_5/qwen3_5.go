@@ -80,10 +80,12 @@ type Config struct {
 	MropeSection []int32 `json:"-"`
 
 	// Quantization metadata.
-	QuantGroupSize int                               `json:"-"`
-	QuantBits      int                               `json:"-"`
-	QuantMode      string                            `json:"-"`
-	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
+	QuantGroupSize         int                               `json:"-"`
+	QuantBits              int                               `json:"-"`
+	QuantMode              string                            `json:"-"`
+	TensorQuant            map[string]*model.TensorQuantInfo `json:"-"`
+	PreciseGatedDeltaDecay bool                              `json:"-"`
+	NoncausalFullAttention bool                              `json:"-"`
 
 	// Computed fields.
 	Scale   float32 `json:"-"`
@@ -103,6 +105,8 @@ type Model struct {
 	Vision      *VisionConfig
 	VisionTower *VisionTower
 	MM          multimodalConfig
+	// Zero uses the Qwen family default. Decision checkpoints may save a lower cap.
+	VisionMaxPixels int32
 
 	tok *tokenizer.Tokenizer
 	*Config
@@ -350,6 +354,7 @@ func (l tensorPathLayout) modelPath(suffix string) string {
 func resolveTensorPathLayout(tensors map[string]*mlx.Array) tensorPathLayout {
 	for _, layout := range []tensorPathLayout{
 		{containerPrefix: "", modelPrefix: "model."},
+		{containerPrefix: "", modelPrefix: ""},
 		{containerPrefix: "language_model.", modelPrefix: "model."},
 		{containerPrefix: "language_model.", modelPrefix: ""},
 		{containerPrefix: "model.language_model.", modelPrefix: "model."},
@@ -1145,7 +1150,11 @@ func (a *FullAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, pos
 	} else {
 		kv = nn.WithKV(k, v, b.SeqQueryLens)
 	}
-	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(nn.CausalMask()))
+	mask := nn.CausalMask()
+	if cfg.NoncausalFullAttention {
+		mask = nn.AttentionMask{}
+	}
+	out := nn.ScaledDotProductAttention(b, q, cfg.Scale, kv, nn.WithMask(mask))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	gateSigmoid := mlx.Sigmoid(gate)
 	out = mlx.Mul(out, gateSigmoid)
@@ -1167,6 +1176,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, 
 	var rc *cache.RecurrentCache
 	opts := make([]nn.RecurrentOption, 0, 3)
 	opts = append(opts, nn.WithConvSiLU())
+	if cfg.PreciseGatedDeltaDecay {
+		opts = append(opts, nn.WithPreciseGatedDeltaDecay())
+	}
 	if typed, ok := c.(*cache.RecurrentCache); ok {
 		rc = typed
 		opts = append(opts, nn.WithRecurrentHistory(rc.Get(b, x.DType())))

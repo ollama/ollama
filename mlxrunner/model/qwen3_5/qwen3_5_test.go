@@ -261,6 +261,12 @@ func TestResolveTensorPathLayout(t *testing.T) {
 			wantModel:     "model.",
 		},
 		{
+			name:          "text-only full checkpoint",
+			key:           "embed_tokens.weight",
+			wantContainer: "",
+			wantModel:     "",
+		},
+		{
 			name:          "nested language model with inner model",
 			key:           "model.language_model.model.embed_tokens.weight",
 			wantContainer: "model.language_model.",

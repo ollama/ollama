@@ -210,6 +210,15 @@ func (o *ResponsesFunctionCallOutput) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
+	if aux.Type == "custom_tool_call_output" {
+		if aux.CallID == nil || strings.TrimSpace(*aux.CallID) == "" {
+			return errors.New("custom tool output requires a non-empty call_id")
+		}
+		if len(aux.Output) == 0 || string(aux.Output) == "null" {
+			return errors.New("custom tool output requires output")
+		}
+	}
+
 	if aux.CallID != nil && strings.TrimSpace(*aux.CallID) == "" {
 		return errors.New("function output call_id must not be empty")
 	}
@@ -372,11 +381,36 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 			return nil, err
 		}
 		return fc, nil
-	case "function_call_output":
+	case "custom_tool_call":
+		var call struct {
+			ResponsesFunctionCall
+			Input *string `json:"input"`
+		}
+		if err := json.Unmarshal(data, &call); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(call.CallID) == "" {
+			return nil, errors.New("custom tool call requires a non-empty call_id")
+		}
+		if strings.TrimSpace(call.Name) == "" {
+			return nil, errors.New("custom tool call requires a non-empty name")
+		}
+		if call.Input == nil {
+			return nil, errors.New("custom tool call requires input")
+		}
+		arguments, err := json.Marshal(map[string]string{"input": *call.Input})
+		if err != nil {
+			return nil, err
+		}
+		call.Type = "function_call"
+		call.Arguments = string(arguments)
+		return call.ResponsesFunctionCall, nil
+	case "function_call_output", "custom_tool_call_output":
 		var output ResponsesFunctionCallOutput
 		if err := json.Unmarshal(data, &output); err != nil {
 			return nil, err
 		}
+		output.Type = "function_call_output"
 		return output, nil
 	case "tool_search_call":
 		var call ResponsesToolSearchCall
@@ -577,12 +611,47 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 	// Handle array of input items
 	// Track pending reasoning to merge with the next assistant message
 	var pendingThinking string
+	flushThinking := func() {
+		if pendingThinking == "" {
+			return
+		}
+		if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && len(messages[len(messages)-1].ToolCalls) > 0 {
+			last := &messages[len(messages)-1]
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += pendingThinking
+		} else {
+			messages = append(messages, api.Message{Role: "assistant", Thinking: pendingThinking})
+		}
+		pendingThinking = ""
+	}
 
 	for i, item := range r.Input.Items {
 		switch v := item.(type) {
+		case ResponsesInputMessage:
+			if v.Role != "assistant" {
+				flushThinking()
+			}
+		case ResponsesReasoningInput, ResponsesWebSearchCall, ResponsesFunctionCall, ResponsesToolSearchCall:
+			// These items can carry the preceding reasoning.
+		default:
+			flushThinking()
+		}
+		switch v := item.(type) {
 		case ResponsesReasoningInput:
-			// Store thinking to merge with the next assistant message
-			pendingThinking = v.EncryptedContent
+			// Ollama writes the same text to summary and encrypted_content. Only
+			// the summary is portable; another provider's ciphertext is opaque.
+			var parts []string
+			for _, part := range v.Summary {
+				parts = append(parts, part.Text)
+			}
+			if summary := strings.Join(parts, "\n"); summary != "" {
+				if pendingThinking != "" {
+					pendingThinking += "\n"
+				}
+				pendingThinking += summary
+			}
 		case ResponsesAgentMessageInput:
 			content, _, err := convertResponsesContent(v.Content)
 			if err != nil {
@@ -625,7 +694,10 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 						lastMsg.Content += msg.Content
 						lastMsg.Images = append(lastMsg.Images, msg.Images...)
 						if msg.Thinking != "" {
-							lastMsg.Thinking = msg.Thinking
+							if lastMsg.Thinking != "" {
+								lastMsg.Thinking += "\n"
+							}
+							lastMsg.Thinking += msg.Thinking
 						}
 						merged = true
 						break
@@ -716,13 +788,7 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		}
 	}
 
-	// If there's trailing reasoning without a following message, emit it
-	if pendingThinking != "" {
-		messages = append(messages, api.Message{
-			Role:     "assistant",
-			Thinking: pendingThinking,
-		})
-	}
+	flushThinking()
 
 	options := make(map[string]any)
 
@@ -825,7 +891,10 @@ func appendResponseToolCall(messages []api.Message, toolCall api.ToolCall, pendi
 		last := &messages[len(messages)-1]
 		last.ToolCalls = append(last.ToolCalls, toolCall)
 		if *pendingThinking != "" {
-			last.Thinking = *pendingThinking
+			if last.Thinking != "" {
+				last.Thinking += "\n"
+			}
+			last.Thinking += *pendingThinking
 			*pendingThinking = ""
 		}
 		return messages
@@ -1857,12 +1926,11 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	}
 }
 
-// EmitFunctionCallItems emits function_call events for client-provided tool
-// calls that accompanied a web_search call (mixed responses). Unlike
-// processToolCalls, this does not set toolCallsSent, so subsequent text
-// content can still be processed.
+// EmitFunctionCallItems emits client-provided tool calls from the web-search
+// wrapper, closing any open reasoning item first. It does not set toolCallsSent,
+// so subsequent text content can still be processed.
 func (c *ResponsesStreamConverter) EmitFunctionCallItems(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return c.emitFunctionCallEvents(toolCalls)
+	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
 }
 
 func (c *ResponsesStreamConverter) processTextContent(content string) []ResponsesStreamEvent {

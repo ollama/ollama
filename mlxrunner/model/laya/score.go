@@ -74,11 +74,10 @@ func (m *Model) sequence(state string, q llm.ScoreQuestion, maxLen int) (ids, ma
 	if len(ids)+1 > maxLen {
 		return nil, nil, 0, fmt.Errorf("decision question requires %d tokens; context limit is %d", len(ids)+1, maxLen)
 	}
+	// Like the publisher's build_sequence, keep the start of a state that
+	// doesn't fit.
 	stateTokens := m.tok.Encode(state, false)
-	if limit := maxLen - len(ids) - 1; len(stateTokens) > limit {
-		return nil, nil, 0, fmt.Errorf("state has %d tokens; limit is %d with this question", len(stateTokens), limit)
-	}
-	ids = append(ids, stateTokens...)
+	ids = append(ids, stateTokens[:min(len(stateTokens), maxLen-len(ids)-1)]...)
 	ids = append(ids, m.sep)
 	return ids, markers, qtype, nil
 }

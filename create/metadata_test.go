@@ -93,13 +93,14 @@ func TestInferSafetensorsConfigIncludesGenerationDefaults(t *testing.T) {
 
 func TestInferSafetensorsConfigFamilies(t *testing.T) {
 	tests := []struct {
-		name         string
-		config       string
-		chatTemplate string
-		standalone   bool
-		wantParser   string
-		wantRenderer string
-		wantCaps     []string
+		name            string
+		config          string
+		chatTemplate    string
+		standalone      bool
+		decisionSidecar bool
+		wantParser      string
+		wantRenderer    string
+		wantCaps        []string
 	}{
 		{
 			name:         "qwen3",
@@ -120,6 +121,20 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "qwen3.5",
 			wantRenderer: "qwen3.5",
 			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+		},
+		{
+			name:            "pplx decision text",
+			config:          `{"architectures":["Qwen3_5Model"]}`,
+			decisionSidecar: true,
+			wantRenderer:    "pplx",
+			wantCaps:        []string{"decision"},
+		},
+		{
+			name:            "pplx decision vision",
+			config:          `{"architectures":["Qwen3_5Model"],"vision_config":{}}`,
+			decisionSidecar: true,
+			wantRenderer:    "pplx",
+			wantCaps:        []string{"decision", "vision"},
 		},
 		{
 			name:         "qwen3.8 embedded template",
@@ -182,7 +197,7 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config:       `{"architectures":["NemotronHForCausalLM"],"model_type":"nemotron_h"}`,
 			chatTemplate: "{reasoning effort: efficient}",
 			standalone:   true,
-			wantParser:   "nemotron-3.5-nano",
+			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3.5-nano",
 		},
 		{
@@ -191,6 +206,13 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			wantParser:   "nemotron-3-nano",
 			wantRenderer: "nemotron-3-nano",
 			wantCaps:     []string{"completion", "vision", "audio", "tools", "thinking"},
+		},
+		{
+			name:         "nemotron super published architecture",
+			config:       `{"architectures":["NemotronH_Omni_Reasoning_V3"],"model_type":"nemotron_h_omni","vision_config":{},"sound_config":null,"llm_config":{"model_type":"nemotron_h"}}`,
+			wantParser:   "nemotron-3-nano",
+			wantRenderer: "nemotron-3.5-super",
+			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
 		},
 		{
 			name:         "deepseek",
@@ -221,6 +243,11 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.config), 0o600); err != nil {
 				t.Fatal(err)
+			}
+			if tt.decisionSidecar {
+				if err := os.WriteFile(filepath.Join(dir, "decision_config.json"), []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tt.chatTemplate != "" {
 				name := "tokenizer_config.json"

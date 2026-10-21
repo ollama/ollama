@@ -224,7 +224,7 @@ func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	}
 
 	catalogPath := codexModelCatalogPathForConfig(configPath)
-	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModels(modelName, models)); err != nil {
 		return err
 	}
 
@@ -673,11 +673,29 @@ func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
 	return fallbackLaunchModel(modelName)
 }
 
-func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
-	entry := buildCodexModelEntry(model)
+func codexCatalogModels(modelName string, models []LaunchModel) []LaunchModel {
+	selected := codexCatalogModel(modelName, models)
+	catalogModels := []LaunchModel{selected}
+	seen := map[string]bool{launchModelRecommendationKey(selected.Name): true}
+	for _, model := range models {
+		key := launchModelRecommendationKey(model.Name)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		catalogModels = append(catalogModels, model.WithCloudLimits())
+	}
+	return catalogModels
+}
+
+func writeCodexModelCatalog(catalogPath string, models []LaunchModel) error {
+	entries := make([]any, 0, len(models))
+	for _, model := range models {
+		entries = append(entries, buildCodexModelEntry(model))
+	}
 
 	catalog := map[string]any{
-		"models": []any{entry},
+		"models": entries,
 	}
 
 	data, err := json.MarshalIndent(catalog, "", "  ")

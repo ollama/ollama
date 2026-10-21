@@ -29,9 +29,11 @@ ENV CC=clang CXX=clang++
 FROM base-${TARGETARCH} AS base
 ARG CMAKEVERSION
 ARG NINJAVERSION
-RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl --retry 3 -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz -o /tmp/cmake.tar.gz \
+    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components 1 \
+    && rm /tmp/cmake.tar.gz
 RUN dnf install -y unzip \
-    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux$([ "$(uname -m)" = "aarch64" ] && echo "-aarch64").zip \
+    && curl --retry 3 -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux$([ "$(uname -m)" = "aarch64" ] && echo "-aarch64").zip \
     && unzip /tmp/ninja.zip -d /usr/local/bin \
     && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
@@ -61,7 +63,7 @@ ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:$P
 FROM base AS vulkan-deps
 ARG VULKANVERSION
 RUN ln -s /usr/bin/python3 /usr/bin/python \
-    && wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk.tar.xz \
+    && curl --retry 3 -fsSL https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -o /tmp/vulkansdk.tar.xz \
     && tar xvf /tmp/vulkansdk.tar.xz -C /tmp \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
     && /tmp/${VULKANVERSION}/vulkansdk -j 8 spirv-headers \
@@ -84,7 +86,6 @@ FROM cpu-deps AS llama-server-cpu
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset cpu \
@@ -105,7 +106,6 @@ FROM cuda-12-deps AS llama-server-cuda_v12
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v12_linux \
@@ -119,7 +119,6 @@ FROM cuda-13-deps AS llama-server-cuda_v13
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_v13_linux \
@@ -134,7 +133,6 @@ ENV CC=clang CXX=clang++ CXXFLAGS=--gcc-toolchain=/opt/rh/gcc-toolset-13/root/us
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset rocm_v7_2_linux \
@@ -149,7 +147,6 @@ FROM vulkan-deps AS llama-server-vulkan
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset vulkan \
@@ -167,15 +164,16 @@ FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jet
 ARG CMAKEVERSION
 ARG NINJAVERSION
 RUN apt-get update && apt-get install -y curl ccache git unzip \
-    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
-    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && curl --retry 3 -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz -o /tmp/cmake.tar.gz \
+    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components 1 \
+    && rm /tmp/cmake.tar.gz \
+    && curl --retry 3 -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
     && unzip /tmp/ninja.zip -d /usr/local/bin \
     && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack5 \
@@ -189,15 +187,16 @@ FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jet
 ARG CMAKEVERSION
 ARG NINJAVERSION
 RUN apt-get update && apt-get install -y curl ccache git unzip \
-    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1 \
-    && curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
+    && curl --retry 3 -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz -o /tmp/cmake.tar.gz \
+    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components 1 \
+    && rm /tmp/cmake.tar.gz \
+    && curl --retry 3 -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux-aarch64.zip \
     && unzip /tmp/ninja.zip -d /usr/local/bin \
     && rm /tmp/ninja.zip
 ENV CMAKE_GENERATOR=Ninja
 COPY LLAMA_CPP_VERSION .
 COPY llama/server llama/server
 COPY llama/compat llama/compat
-COPY llama/clef llama/clef
 COPY cmake cmake
 RUN --mount=type=cache,target=/root/.ccache \
     cmake -S llama/server --preset llama_cuda_jetpack6 \
@@ -231,7 +230,9 @@ COPY mlx mlx
 COPY mlxrunner/xgrammar/native mlxrunner/xgrammar/native
 COPY go.mod go.sum .
 COPY MLX_VERSION MLX_C_VERSION .
-RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+RUN curl --retry 3 -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz -o /tmp/go.tar.gz \
+    && tar xzf /tmp/go.tar.gz -C /usr/local \
+    && rm /tmp/go.tar.gz
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 RUN --mount=type=cache,target=/root/.ccache \
@@ -256,7 +257,9 @@ COPY --from=mlx /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum .
-RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+RUN curl --retry 3 -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz -o /tmp/go.tar.gz \
+    && tar xzf /tmp/go.tar.gz -C /usr/local \
+    && rm /tmp/go.tar.gz
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .

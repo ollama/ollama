@@ -742,10 +742,20 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 }
 
 func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	previous := editorPreCheckedModels(saved, "")
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
+	if !needsConfigure && req.ModelOverride != "" && !slices.Contains(previous, req.ModelOverride) {
+		if err := c.confirmCloudModelPayment(ctx, req.ModelOverride); err != nil {
+			if !errors.Is(err, errModelPaymentDeclined) {
+				return err
+			}
+			models = previous
+			needsConfigure = true
+		}
+	}
 
 	if needsConfigure {
-		selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models)
+		selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models, previous)
 		if err != nil {
 			return err
 		}
@@ -755,7 +765,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 			if !errors.Is(err, errDeprecatedLaunchModelDeclined) || req.ModelOverride != "" {
 				return err
 			}
-			selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models)
+			selected, err := c.selectMultiModelsForIntegration(ctx, name, runner, models, previous)
 			if err != nil {
 				return err
 			}
@@ -973,6 +983,16 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, nam
 	if skipper, ok := runner.(ManagedModelReadinessSkipper); ok {
 		skipReadiness = skipper.SkipModelReadiness()
 	}
+	if !skipReadiness && req.ModelOverride != "" && target != current {
+		if err := c.confirmCloudModelPayment(ctx, target); err != nil {
+			if !errors.Is(err, errModelPaymentDeclined) {
+				return "", false, err
+			}
+			req.ModelOverride = ""
+			target = current
+			needsConfigure = true
+		}
+	}
 
 	if target == "" {
 		target = current
@@ -1065,6 +1085,7 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 		return "", err
 	}
 
+	previous := current
 	for {
 		accountState := c.latestAccountState()
 		selectionItems := SelectionItemsWithAccountState(items, accountState)
@@ -1080,11 +1101,16 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 			return "", ErrCancelled
 		}
 		if ensureReady {
-			if err := c.ensureModelsReadyFor(ctx, []string{selected}, label, commandName); err != nil {
-				if errors.Is(err, errUpgradeCancelled) {
-					current = selected
-					continue
+			if selected != previous {
+				if err := c.confirmCloudModelPayment(ctx, selected); err != nil {
+					if errors.Is(err, errModelPaymentDeclined) {
+						current = selected
+						continue
+					}
+					return "", err
 				}
+			}
+			if err := c.ensureModelsReadyFor(ctx, []string{selected}, label, commandName); err != nil {
 				if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 					current = selected
 					continue
@@ -1096,7 +1122,7 @@ func (c *launcherClient) selectSingleModelWithSelectorReady(ctx context.Context,
 	}
 }
 
-func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, name string, runner Runner, preChecked []string) ([]string, error) {
+func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, name string, runner Runner, preChecked, previous []string) ([]string, error) {
 	if DefaultMultiSelector == nil && DefaultMultiSelectorWithUpdates == nil {
 		return nil, fmt.Errorf("no selector configured")
 	}
@@ -1118,9 +1144,9 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, na
 		if err != nil {
 			return nil, err
 		}
-		accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected, runner.String(), name)
+		accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected, previous, runner.String(), name)
 		if err != nil {
-			if errors.Is(err, errUpgradeCancelled) {
+			if errors.Is(err, errModelPaymentDeclined) {
 				orderedChecked = append([]string(nil), selected...)
 				continue
 			}
@@ -1273,9 +1299,6 @@ func (c *launcherClient) ensureModelsReadyFor(ctx context.Context, models []stri
 		isCloudModel := isCloudModelName(model)
 		if isCloudModel {
 			cloudModels[model] = true
-			if err := c.ensureCloudModelAccess(ctx, model); err != nil {
-				return err
-			}
 		}
 		if err := showOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy(), isCloudModel); err != nil {
 			return err
@@ -1323,16 +1346,23 @@ type skippedModel struct {
 	reason string
 }
 
-func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected []string, label, commandName string) ([]string, []skippedModel, error) {
+func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected, previous []string, label, commandName string) ([]string, []skippedModel, error) {
 	selected = dedupeModelList(selected)
 	accepted := make([]string, 0, len(selected))
 	skipped := make([]skippedModel, 0, len(selected))
 
 	for _, model := range selected {
-		if err := c.ensureModelsReadyFor(ctx, []string{model}, label, commandName); err != nil {
-			if errors.Is(err, errUpgradeCancelled) {
+		var err error
+		if !slices.Contains(previous, model) {
+			err = c.confirmCloudModelPayment(ctx, model)
+			if errors.Is(err, errModelPaymentDeclined) {
 				return nil, nil, err
 			}
+		}
+		if err == nil {
+			err = c.ensureModelsReadyFor(ctx, []string{model}, label, commandName)
+		}
+		if err != nil {
 			if errors.Is(err, errDeprecatedLaunchModelDeclined) {
 				return nil, nil, err
 			}
@@ -1352,9 +1382,6 @@ func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected 
 }
 
 func skippedModelReason(model string, err error) string {
-	if errors.Is(err, errUpgradeCancelled) {
-		return "upgrade was cancelled"
-	}
 	if errors.Is(err, ErrCancelled) {
 		if isCloudModelName(model) {
 			return "sign in was cancelled"
@@ -1455,6 +1482,28 @@ func hasLocalModel(inventory []LaunchModel, name string) bool {
 
 func (c *launcherClient) resolveRunModels(ctx context.Context, integration string, models []string) []LaunchModel {
 	recommendations := c.recommendations(ctx)
+	if integration == "codex" {
+		// Codex reads its /model choices from the generated catalog. Include
+		// installed tool-capable models as well as the requested starting model.
+		if inventory, err := c.modelInventory().Load(ctx); err == nil {
+			cloudDisabled := false
+			if slices.ContainsFunc(inventory, func(model LaunchModel) bool { return model.Remote || isCloudModelName(model.Name) }) {
+				cloudDisabled, _ = cloudStatusDisabled(ctx, c.apiClient)
+			}
+			models = slices.Clone(models)
+			for _, model := range inventory {
+				if !model.ToolCapable || isDeprecatedLaunchModel(model.Name) || (cloudDisabled && (model.Remote || isCloudModelName(model.Name))) {
+					continue
+				}
+				if slices.ContainsFunc(models, func(name string) bool {
+					return launchModelRecommendationKey(name) == launchModelRecommendationKey(model.Name)
+				}) {
+					continue
+				}
+				models = append(models, model.Name)
+			}
+		}
+	}
 	resolved := c.modelInventory().Resolve(ctx, models)
 	byName := make(map[string]*api.ModelRecommendationThinking, len(recommendations))
 	for _, recommendation := range recommendations {

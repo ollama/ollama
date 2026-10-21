@@ -138,6 +138,48 @@ func TestShowInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("renderer and template source", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Renderer:       "gemma4-large",
+			Parser:         "gemma4",
+			TemplateSource: "renderer_parser",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{"renderer", "gemma4-large", "template source", "renderer_parser"} {
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("expected output to contain %q:\n%s", want, b.String())
+			}
+		}
+	})
+
+	t.Run("renderer fields omitted when empty", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			TemplateSource: "none",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, unwanted := range []string{"renderer", "template source"} {
+			if strings.Contains(b.String(), unwanted) {
+				t.Errorf("expected output to omit %q:\n%s", unwanted, b.String())
+			}
+		}
+	})
+
 	t.Run("bare model info", func(t *testing.T) {
 		var b bytes.Buffer
 		if err := showInfo(&api.ShowResponse{
@@ -2494,6 +2536,44 @@ func TestApplyShowResponseToRunOptions(t *testing.T) {
 	info.Messages[0].Content = "modified"
 	if opts.LoadedMessages[0].Content == "modified" {
 		t.Fatal("LoadedMessages should be copied independently from ShowResponse")
+	}
+}
+
+func TestApplyShowResponseRefreshesMultimodal(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info api.ShowResponse
+	}{
+		{
+			name: "decision vision",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityDecision, model.CapabilityVision}},
+		},
+		{
+			name: "audio",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityAudio}},
+		},
+		{
+			name: "legacy projector",
+			info: api.ShowResponse{ProjectorInfo: map[string]any{"general.architecture": "clip"}},
+		},
+		{
+			name: "legacy vision",
+			info: api.ShowResponse{ModelInfo: map[string]any{"mllama.vision.block_count": 32}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := runOptions{}
+			applyShowResponseToRunOptions(&opts, &tt.info)
+			if !opts.MultiModal {
+				t.Fatal("loading a multimodal model did not enable media input")
+			}
+			applyShowResponseToRunOptions(&opts, &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityDecision},
+			})
+			if opts.MultiModal {
+				t.Fatal("loading a text-only model did not disable media input")
+			}
+		})
 	}
 }
 

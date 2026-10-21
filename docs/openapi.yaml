@@ -634,6 +634,15 @@ components:
         template:
           type: string
           description: The template used by the model to render prompts
+        renderer:
+          type: string
+          description: The effective chat renderer of the model (aliases resolved), when one is set
+        parser:
+          type: string
+          description: The output parser configured on the model, when one is set
+        template_source:
+          type: string
+          description: Where the chat prompt actually comes from; one of `renderer_parser`, `renderer`, `parser` (a Go renderer runs and any packaged template is inert), `harmony`, `go_template`, `gguf_chat_template` (the runner renders the GGUF's embedded jinja), or `none`
         capabilities:
           type: array
           items:
@@ -872,10 +881,8 @@ components:
           properties:
             "false":
               type: string
-              default: "No"
             "true":
               type: string
-              default: "Yes"
           additionalProperties: false
     SystemOneScoreQuestion:
       title: Score
@@ -889,9 +896,9 @@ components:
           $ref: "#/components/schemas/SystemOneContent"
         criteria:
           type: array
-          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1. The maximum number of levels depends on the model.
+          description: Descriptions ordered from the lowest score (index 0) to the highest. Defines a scale from 0 to the number of criteria minus 1.
           minItems: 2
-          maxItems: 26
+          maxItems: 10
           items:
             type: string
     SystemOneRequest:
@@ -901,18 +908,18 @@ components:
         model:
           type: string
           pattern: '\S'
-          description: Local model trained for System One, such as nimble. Requires compatible GGUF weights and a scoring-capable runner; cloud and MLX/Safetensors models are not supported.
+          description: Model trained for System One, such as nimble, or clef:cloud for Ollama's cloud.
         state:
           $ref: "#/components/schemas/SystemOneContent"
         images:
           type: array
-          description: Base64-encoded images shared by all questions, in request order. Requires Clef or Clef Flash with vision weights. URLs and data URLs are not supported.
+          description: Base64-encoded images shared by all questions, in request order. Requires a model with vision, such as Clef. URLs and data URLs are not supported.
           items:
             type: string
             format: byte
         questions:
           type: object
-          description: Named questions about the shared state. Answers are not passed to later questions.
+          description: Named questions about the shared state. Answers are not passed to later questions. Cloud models accept names of up to 100 ASCII letters, digits, `_`, `.`, or `-`.
           minProperties: 1
           maxProperties: 64
           propertyNames:
@@ -978,7 +985,7 @@ components:
         score:
           type: number
           minimum: 0
-          maximum: 25
+          maximum: 9
           description: Probability-weighted average of the zero-based criterion indices, from 0 to the number of criteria minus 1. Not rounded to a level or normalized to 0–1.
         legend:
           type: object
@@ -1037,9 +1044,31 @@ components:
         output_tokens:
           type: integer
           description: Recorded output tokens.
-    UsageBucket:
+    UsageGroup:
       allOf:
         - $ref: "#/components/schemas/UsageMetrics"
+        - type: object
+          required: [model]
+          properties:
+            model:
+              type: string
+              description: Model name.
+    UsageSummary:
+      allOf:
+        - $ref: "#/components/schemas/UsageMetrics"
+        - type: object
+          properties:
+            groups:
+              type: array
+              description: Present when group_by is requested. Currently returns up to 10 groups selected across the entire range, ranked by usage_usd or by request_count when the range includes legacy requests. Groups use the same order in every bucket; groups without requests in a bucket are omitted.
+              items:
+                $ref: "#/components/schemas/UsageGroup"
+            remainder:
+              $ref: "#/components/schemas/UsageMetrics"
+              description: Combined usage from groups outside the current limit. Omitted when there are no requests from additional groups.
+    UsageBucket:
+      allOf:
+        - $ref: "#/components/schemas/UsageSummary"
         - type: object
           required: [from, until]
           properties:
@@ -1070,6 +1099,10 @@ components:
           type: string
           enum: [hour, day]
           description: "Set automatically: hour for 24h, day for 7d and 30d."
+        group_by:
+          type: string
+          enum: [model]
+          description: Selected grouping. Present when group_by is requested.
         from:
           type: string
           format: date-time
@@ -1079,8 +1112,8 @@ components:
           format: date-time
           description: End of the range in UTC, exclusive.
         totals:
-          $ref: "#/components/schemas/UsageMetrics"
-          description: Usage across the entire range.
+          $ref: "#/components/schemas/UsageSummary"
+          description: Usage across the entire range, including groups in the remainder.
         buckets:
           type: array
           description: Usage in chronological order, including buckets with no recorded requests.
@@ -1157,20 +1190,25 @@ paths:
     post:
       summary: Answer typed questions
       description: |
-        Answer choice, yes/no, and scoring questions with a local System One model. Requires Ollama v0.35.0 or later. See the [decision guide](/capabilities/decision) for examples.
+        Answer choice, yes/no, and scoring questions with a System One model, locally or in Ollama's cloud. Requires Ollama v0.35.0 or later, or v0.40.5 or later for cloud models. See the [decision guide](/capabilities/decision) for examples.
       operationId: systemone
+      servers:
+        - url: http://localhost:11434
+          description: Ollama
+        - url: https://ollama.com
+          description: Ollama's cloud
+      security:
+        - {}
+        - bearerAuth: []
       x-mint:
         href: /api/systemone
         metadata:
           title: System One
           sidebarTitle: /v1/systemone
         content: |
-          <Note>
-          Currently available locally in Ollama.
-          </Note>
-
           - Returns one JSON response; streaming, video, tools, and generation controls are not supported.
-          - Requests without images must fit within 64 KiB; requests with images must fit within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+          - Local requests' text and schema, excluding images, must fit within 64 KiB, and the whole request within 32 MiB, including base64 and JSON. The complete input must fit the loaded context window. Nimble and Tev also require two token positions for scoring. Input is never truncated.
+          - Cloud models need a paid plan or purchased [usage credits](https://ollama.com/pricing). Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Requests must fit within 13 MiB, and input must fit the model's 65,536-token context window.
       x-codeSamples:
         - lang: bash
           label: Choose a label
@@ -1231,25 +1269,37 @@ paths:
                   input_tokens: 174
                   output_tokens: 1
         "400":
-          description: Invalid request, unsupported model or runner, or a rendered prompt that exceeds the loaded context. Cloud models are rejected.
+          description: Invalid request, unsupported model or runner, or a rendered prompt that exceeds the loaded context or a cloud model's token limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: A cloud model was requested without signing in, or with an invalid API key. Through a local server, the response includes a `signin_url`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: The cloud model isn't included in the Free plan. Add usage credits or upgrade. Also returned when a payment fails.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Local model not found. Download the model before making a request.
+          description: Model not found. Download a local model before making a request.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: Request body exceeds 64 KiB without images or 32 MiB with images.
+          description: Local text and schema exceed 64 KiB or the request exceeds 32 MiB, or a cloud request exceeds 13 MiB or the model's context window.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
-                error: request body must not exceed 64 KiB without images
+                error: text and schema must not exceed 64 KiB
         "500":
           description: Model loading, rendering, or scoring failed.
           content:
@@ -2118,7 +2168,7 @@ paths:
       operationId: usage
       servers:
         - url: https://ollama.com
-          description: Ollama Cloud
+          description: Ollama's cloud
       security:
         - bearerAuth: []
       parameters:
@@ -2136,6 +2186,12 @@ paths:
             type: string
             enum: [self, team]
             default: self
+        - name: group_by
+          in: query
+          description: "How to group usage within totals and buckets. Supported values: model."
+          schema:
+            type: string
+            enum: [model]
       responses:
         "200":
           description: Usage for the selected range and scope.
@@ -2186,7 +2242,7 @@ paths:
       operationId: balance
       servers:
         - url: https://ollama.com
-          description: Ollama Cloud
+          description: Ollama's cloud
       security:
         - bearerAuth: []
       responses:

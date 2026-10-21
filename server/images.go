@@ -93,6 +93,9 @@ type Model struct {
 	// metadata files when the model is loaded.
 	metadata          ggufMetadata
 	projectorMetadata []ggufMetadata
+	// runnerSelection is empty when the platform's default preference selected
+	// the manifest, or the explicitly requested runner otherwise.
+	runnerSelection string
 }
 
 func (m *Model) IsMLX() bool {
@@ -164,13 +167,14 @@ func (m *Model) Capabilities() []model.Capability {
 	return capabilities
 }
 
-// publicCapabilities limits decision models to decision and explicitly declared
-// vision support. Serving still uses Capabilities.
+// publicCapabilities limits decision models to decision and the vision they
+// declare or ship a projector for, not vision inherited from a base model.
+// Serving still uses Capabilities.
 func (m *Model) publicCapabilities() []model.Capability {
 	capabilities := m.Capabilities()
 	if slices.Contains(capabilities, model.CapabilityDecision) {
 		public := []model.Capability{model.CapabilityDecision}
-		if slices.Contains(m.Config.Capabilities, "vision") && slices.Contains(capabilities, model.CapabilityVision) {
+		if slices.Contains(m.Config.Capabilities, "vision") || len(m.ProjectorPaths) > 0 {
 			public = append(public, model.CapabilityVision)
 		}
 		return public
@@ -367,6 +371,12 @@ func capabilityNames(capabilities []model.Capability) []string {
 	return names
 }
 
+// templateSource names which chat prompt source actually runs for the model,
+// reusing the same predicate the template-selection log line reports.
+func (m *Model) templateSource() string {
+	return selectedTemplateSource(m, m.Template != nil && shouldUseHarmony(m))
+}
+
 func selectedTemplateSource(m *Model, usesHarmony bool) string {
 	switch {
 	case m.Config.Renderer != "" && m.Config.Parser != "":
@@ -417,7 +427,7 @@ func logTemplateSelection(m *Model) {
 
 	slog.Info("template selection",
 		"model", m.Name,
-		"selected", selectedTemplateSource(m, usesHarmony),
+		"selected", m.templateSource(),
 		"renderer", m.Config.Renderer,
 		"parser", m.Config.Parser,
 		"go_template", capabilityLogValue(m.HasGoTemplate, goTemplateCapabilities),
@@ -715,7 +725,10 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	return modelFromManifest(n, mf)
+}
 
+func modelFromManifest(n model.Name, mf *manifest.Manifest) (*Model, error) {
 	manifestDigest := mf.SelectedDigest()
 	if manifestDigest == "" {
 		manifestDigest = mf.Digest()
@@ -731,19 +744,23 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 	}
 
 	if mf.Config.Digest != "" {
-		filename, err := manifest.BlobsPath(mf.Config.Digest)
-		if err != nil {
-			return nil, err
-		}
+		if parsed, ok := mf.ParsedConfig(); ok {
+			m.Config = parsed
+		} else {
+			filename, err := manifest.BlobsPath(mf.Config.Digest)
+			if err != nil {
+				return nil, err
+			}
 
-		configFile, err := os.Open(filename)
-		if err != nil {
-			return nil, err
-		}
-		defer configFile.Close()
+			configFile, err := os.Open(filename)
+			if err != nil {
+				return nil, err
+			}
+			defer configFile.Close()
 
-		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
-			return nil, err
+			if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
+				return nil, err
+			}
 		}
 		m.GenerationDefaults = m.Config.GenerationDefaults
 	}
@@ -859,7 +876,7 @@ func GetModelForRunner(name, runner string) (*Model, error) {
 		m.PreferChatTemplate = true
 	}
 
-	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony {
+	if m.ModelPath != "" && m.isGGUF() && !modelHasPooling && !m.HasChatTemplate && (!m.HasGoTemplate || !envconfig.GoTemplate(true)) && m.Config.Renderer == "" && m.Config.Parser == "" && !usesHarmony && m.metadata.String("decision.type") == "" {
 		slog.Warn("model is missing tokenizer.chat_template and Go TEMPLATE support is unavailable; chat responses may be poorly formatted", "model", m.Name, "env", "OLLAMA_GO_TEMPLATE=1")
 	}
 

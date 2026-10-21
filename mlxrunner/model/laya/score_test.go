@@ -31,7 +31,7 @@ func TestPrepareScoreInputLimits(t *testing.T) {
 		wantError    string
 	}{
 		{"context boundary", strings.Repeat("x", 36), "x", []string{"x", "x"}, 64, 64, ""},
-		{"state overflow", strings.Repeat("x", 37), "x", []string{"x", "x"}, 64, 0, "state has 37 tokens; limit is 36"},
+		{"state clipped to the context", strings.Repeat("x", 37), "x", []string{"x", "x"}, 64, 64, ""},
 		{"question overflow", "", "x", []string{"x", "x"}, 27, 0, "decision question requires 28 tokens; context limit is 27"},
 		{"option boundary", "x", "x", []string{strings.Repeat("x", 47), "x"}, 512, 75, ""},
 		{"option overflow", "x", "x", []string{strings.Repeat("x", 48), "x"}, 512, 0, "option 0 has 49 tokens; limit is 48"},
