@@ -77,8 +77,10 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	return cmd.Run()
 }
 
-var openCodeLoadedContextLength = loadedContextLength
-var openCodeReadConfig = readOpenCodeConfig
+var (
+	openCodeLoadedContextLength = loadedContextLength
+	openCodeReadConfig          = readOpenCodeConfig
+)
 
 // Let OpenCode resolve its configuration layers, including JSONC and project settings.
 func readOpenCodeConfig() ([]byte, error) {
