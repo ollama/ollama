@@ -1469,6 +1469,7 @@ type ResponsesStreamConverter struct {
 	toolCallsSent   bool
 	accumulatedText string
 	sequenceNumber  int
+	terminated      bool
 
 	// Reasoning/thinking state
 	accumulatedThinking string
@@ -1477,6 +1478,10 @@ type ResponsesStreamConverter struct {
 
 	// Items completed before the final message, in streamed output-index order.
 	completedItems []any
+
+	// A server-side search reserves its output index before execution finishes.
+	webSearchCall        *ResponsesWebSearchCall
+	webSearchOutputIndex int
 }
 
 // newEvent creates a ResponsesStreamEvent with the sequence number included in the data.
@@ -1505,6 +1510,9 @@ func NewResponsesStreamConverter(responseID, itemID, model string, request Respo
 // Events are returned in order. The caller is responsible for serializing
 // and sending these events.
 func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
 	var events []ResponsesStreamEvent
 
 	hasToolCalls := len(r.Message.ToolCalls) > 0
@@ -1536,6 +1544,7 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// Done - emit closing events
 	if r.Done {
 		events = append(events, c.processCompletion(r)...)
+		c.terminated = true
 	}
 
 	return events
@@ -1720,7 +1729,10 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 }
 
 func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []ResponsesStreamEvent {
-	return append(c.finishReasoning(), c.emitFunctionCallEvents(toolCalls)...)
+	events := c.finishReasoning()
+	// A preceding text item must close before a tool uses the next output index.
+	events = append(events, c.FinishMessageItem()...)
+	return append(events, c.emitFunctionCallEvents(toolCalls)...)
 }
 
 // emitFunctionCallEvents emits function_call stream events for the given tool
@@ -1821,6 +1833,8 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 	events := c.finishReasoning()
 	outputIndex := c.outputIndex
 	c.outputIndex++
+	c.webSearchCall = &call
+	c.webSearchOutputIndex = outputIndex
 	events = append(events,
 		c.newEvent("response.output_item.added", map[string]any{
 			"output_index": outputIndex,
@@ -1841,6 +1855,7 @@ func (c *ResponsesStreamConverter) StartWebSearchCall(call ResponsesWebSearchCal
 
 // FinishWebSearchCall emits the events that follow a successful server-side search.
 func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCall, outputIndex int) []ResponsesStreamEvent {
+	c.webSearchCall = nil
 	item := webSearchCallMap(call)
 	c.completedItems = append(c.completedItems, item)
 	return []ResponsesStreamEvent{
@@ -1854,9 +1869,34 @@ func (c *ResponsesStreamConverter) FinishWebSearchCall(call ResponsesWebSearchCa
 	}
 }
 
-// ResponseFailed emits a terminal failure using this stream's sequence counter.
-func (c *ResponsesStreamConverter) ResponseFailed(response map[string]any) ResponsesStreamEvent {
-	return c.newEvent("response.failed", map[string]any{"response": response})
+// ResponseFailed closes open output items and ends the response, preserving
+// partial output and the supplied error/usage metadata. Late failures are ignored.
+func (c *ResponsesStreamConverter) ResponseFailed(details map[string]any) []ResponsesStreamEvent {
+	if c.terminated {
+		return nil
+	}
+	// A failure can arrive before the first model chunk.
+	events := c.Process(api.ChatResponse{})
+	events = append(events, c.finishReasoning()...)
+	events = append(events, c.finishMessageItem("incomplete")...)
+	if c.webSearchCall != nil {
+		item := webSearchCallMap(*c.webSearchCall)
+		item["status"] = "failed"
+		c.completedItems = append(c.completedItems, item)
+		events = append(events, c.newEvent("response.output_item.done", map[string]any{
+			"output_index": c.webSearchOutputIndex,
+			"item":         item,
+		}))
+		c.webSearchCall = nil
+	}
+	output := c.buildFinalOutput()
+	response := c.buildResponseObject("failed", output, nil)
+	for key, value := range details {
+		response[key] = value
+	}
+	response["output"] = output
+	c.terminated = true
+	return append(events, c.newEvent("response.failed", map[string]any{"response": response}))
 }
 
 func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
@@ -1873,6 +1913,10 @@ func webSearchCallMap(call ResponsesWebSearchCall) map[string]any {
 // and reserves its place in the final output. This allows pre-search content
 // to be emitted as a distinct message item before web_search_call events.
 func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
+	return c.finishMessageItem("completed")
+}
+
+func (c *ResponsesStreamConverter) finishMessageItem(status string) []ResponsesStreamEvent {
 	if !c.contentStarted {
 		return nil
 	}
@@ -1886,7 +1930,7 @@ func (c *ResponsesStreamConverter) FinishMessageItem() []ResponsesStreamEvent {
 	item := map[string]any{
 		"id":     itemID,
 		"type":   "message",
-		"status": "completed",
+		"status": status,
 		"role":   "assistant",
 		"content": []map[string]any{{
 			"type":        "output_text",
@@ -1985,7 +2029,7 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 }
 
 func (c *ResponsesStreamConverter) buildFinalOutput() []any {
-	output := append([]any(nil), c.completedItems...)
+	output := append([]any{}, c.completedItems...)
 	if c.contentStarted {
 		// Add message item if we had text content
 		output = append(output, map[string]any{
