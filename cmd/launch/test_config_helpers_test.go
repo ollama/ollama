@@ -22,6 +22,7 @@ func init() {
 func useServerContextLookup(t *testing.T) {
 	old := lookupServerModelMetadata
 	lookupServerModelMetadata = cachedServerModelMetadata
+	serverModelMetadataCache.Clear()
 	serverModelMetadataUnavailable.Store(false)
 	t.Cleanup(func() {
 		lookupServerModelMetadata = old

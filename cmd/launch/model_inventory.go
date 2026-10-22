@@ -63,7 +63,7 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 }
 
 func (m LaunchModel) WithServerMetadata() LaunchModel {
-	if !isCloudModelName(m.Name) || (m.ContextLength > 0 && len(m.Capabilities) > 0) {
+	if (!m.Remote && !isCloudModelName(m.Name)) || (m.ContextLength > 0 && len(m.Capabilities) > 0) {
 		return m
 	}
 	meta, ok := lookupServerModelMetadata(m.Name)
@@ -99,7 +99,8 @@ func cachedServerModelMetadata(model string) (serverModelMetadata, bool) {
 	meta, err := showModelMetadata(model)
 	if err != nil {
 		var statusErr api.StatusError
-		if !errors.As(err, &statusErr) {
+		var authErr api.AuthorizationError
+		if !errors.As(err, &statusErr) && !errors.As(err, &authErr) {
 			serverModelMetadataUnavailable.Store(true)
 		}
 	}

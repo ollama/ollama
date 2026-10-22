@@ -374,12 +374,14 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				}
 			}
 		}
+		limit := make(map[string]any)
+		if model.ContextLength > 0 && (model.MaxOutputTokens > 0 || model.Remote || isCloudModelName(model.Name)) {
+			limit["context"] = model.ContextLength
+		}
 		if model.MaxOutputTokens > 0 {
-			limit := make(map[string]any)
-			if model.ContextLength > 0 {
-				limit["context"] = model.ContextLength
-			}
 			limit["output"] = model.MaxOutputTokens
+		}
+		if len(limit) > 0 {
 			entry["limit"] = limit
 		}
 		models[model.Name] = entry
