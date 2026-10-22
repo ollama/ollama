@@ -8,6 +8,23 @@ title: CLI Reference
 ollama run gemma4
 ```
 
+#### Multiline input
+
+For multiline input, you can wrap text with `"""`:
+
+```
+>>> """Hello,
+... world!
+... """
+I'm a basic program that prints the famous "Hello, world!" message to the console.
+```
+
+#### Multimodal models
+
+```
+ollama run gemma4 "What's in this image? /Users/jmorgan/Desktop/smile.png"
+```
+
 ### Launch integrations
 
 ```
@@ -23,6 +40,12 @@ Configure and launch external applications to use Ollama models. This provides a
 - **Codex** - OpenAI's coding assistant
 - **VS Code** - Microsoft's IDE with built-in AI chat
 - **Droid** - Factory's AI coding agent
+- **OpenClaw** - Personal AI assistant with 100+ skills
+- **Copilot CLI** - GitHub's AI coding agent for the terminal
+- **Hermes** - Nous Research's self-improving AI agent
+- **DeepSeek Harness** - DeepSeek's open-source agent harness
+
+See the [integrations guide](/integrations) for more details.
 
 #### Examples
 
@@ -48,23 +71,6 @@ Configure without launching:
 
 ```
 ollama launch droid --config
-```
-
-#### Multiline input
-
-For multiline input, you can wrap text with `"""`:
-
-```
->>> """Hello,
-... world!
-... """
-I'm a basic program that prints the famous "Hello, world!" message to the console.
-```
-
-#### Multimodal models
-
-```
-ollama run gemma4 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
 ### Generate embeddings
