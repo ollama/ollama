@@ -63,7 +63,7 @@ func (c *Copilot) Run(model string, _ []LaunchModel, args []string) error {
 // to use Ollama as its model provider.
 func (c *Copilot) envVars(model string) []string {
 	env := []string{
-		"COPILOT_PROVIDER_BASE_URL=" + envconfig.Host().String() + "/v1",
+		"COPILOT_PROVIDER_BASE_URL=" + envconfig.ConnectableHost().String() + "/v1",
 		"COPILOT_PROVIDER_API_KEY=",
 		"COPILOT_PROVIDER_WIRE_API=responses",
 	}

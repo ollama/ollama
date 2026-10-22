@@ -66,7 +66,7 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 
 func (c *Claude) envVars(model string) []string {
 	env := []string{
-		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
+		"ANTHROPIC_BASE_URL=" + envconfig.ConnectableHost().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 		"ENABLE_CLAUDEAI_MCP_SERVERS=false",

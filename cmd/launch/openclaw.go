@@ -67,7 +67,7 @@ func (c *Openclaw) Run(model string, _ []LaunchModel, args []string) error {
 			"--non-interactive",
 			"--accept-risk",
 			"--auth-choice", "ollama",
-			"--custom-base-url", envconfig.Host().String(),
+			"--custom-base-url", envconfig.ConnectableHost().String(),
 			"--custom-model-id", model,
 			// Launch owns the first real gateway startup immediately after onboarding,
 			// so don't let OpenClaw fail the whole first-run flow on a transient
@@ -687,7 +687,7 @@ func (c *Openclaw) Edit(models []LaunchModel) error {
 		ollama = make(map[string]any)
 	}
 
-	ollama["baseUrl"] = envconfig.Host().String()
+	ollama["baseUrl"] = envconfig.ConnectableHost().String()
 	// needed to register provider
 	ollama["apiKey"] = "ollama-local"
 	ollama["api"] = "ollama"
