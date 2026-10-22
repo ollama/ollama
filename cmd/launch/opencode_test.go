@@ -255,12 +255,12 @@ func TestBuildModelEntries(t *testing.T) {
 		}
 	})
 
-	t.Run("writes a context-only limit for cloud models", func(t *testing.T) {
+	t.Run("fills in a default output limit for cloud models with unknown output", func(t *testing.T) {
 		models := buildModelEntries([]LaunchModel{{Name: "glm-5.3:cloud", Remote: true, ContextLength: 1_048_576}})
 		entry, _ := models["glm-5.3:cloud"].(map[string]any)
 		limit, _ := entry["limit"].(map[string]any)
-		if limit["context"] != 1_048_576 || limit["output"] != nil {
-			t.Fatalf("limit = %v, want context only", limit)
+		if limit["context"] != 1_048_576 || limit["output"] != openCodeDefaultMaxOutputTokens {
+			t.Fatalf("limit = %v, want context 1048576 and output %d", limit, openCodeDefaultMaxOutputTokens)
 		}
 	})
 }

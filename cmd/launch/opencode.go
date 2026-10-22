@@ -16,6 +16,8 @@ import (
 
 const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
 
+const openCodeDefaultMaxOutputTokens = 32_000
+
 var openCodeGOOS = runtime.GOOS
 
 // OpenCode implements Runner and Editor for OpenCode integration.
@@ -374,15 +376,12 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				}
 			}
 		}
-		limit := make(map[string]any)
 		if model.ContextLength > 0 && (model.MaxOutputTokens > 0 || model.Remote || isCloudModelName(model.Name)) {
-			limit["context"] = model.ContextLength
-		}
-		if model.MaxOutputTokens > 0 {
-			limit["output"] = model.MaxOutputTokens
-		}
-		if len(limit) > 0 {
-			entry["limit"] = limit
+			output := model.MaxOutputTokens
+			if output <= 0 {
+				output = openCodeDefaultMaxOutputTokens
+			}
+			entry["limit"] = map[string]any{"context": model.ContextLength, "output": output}
 		}
 		models[model.Name] = entry
 	}
