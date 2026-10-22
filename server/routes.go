@@ -132,6 +132,15 @@ func init() {
 
 var errRequired = errors.New("is required")
 
+func commonKeys(m1, m2 map[string]any) bool {
+	for k := range m1 {
+		if _, exists := m2[k]; exists {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	return s.modelOptionsWithEmbeddingBatchDefault(model, requestOpts, shouldApplyEmbeddingBatchDefault(model, requestOpts))
 }
@@ -157,6 +166,31 @@ func (s *Server) modelOptionsWithEmbeddingBatchDefault(model *Model, requestOpts
 	}
 
 	warnDeprecatedOptions(requestOpts)
+
+	// Inherit runtime-specific options from the current runner if not explicitly
+	// requested. These options affect resource usage (memory, threads) but not
+	// model behavior. We preserve these settings to avoid unnecessary model
+	// reloads when only generation parameters have changed.
+	var runnerOpts map[string]any
+	if model != nil && s.sched != nil {
+		s.sched.loadedMu.Lock()
+		if runner, ok := s.sched.loaded[model.ModelPath]; ok {
+			runnerOpts = runner.llama.RunnerOptions()
+		}
+		s.sched.loadedMu.Unlock()
+	}
+
+	// If the request sets any of the runner options, discard the runner options.
+	// This prevents runner options from accumulating and potentially creating a
+	// set of options that are incompatible.
+	if commonKeys(runnerOpts, requestOpts) {
+		runnerOpts = map[string]any{}
+	}
+
+	if err := opts.FromMap(runnerOpts); err != nil {
+		return api.Options{}, err
+	}
+
 	if err := opts.FromMap(requestOpts); err != nil {
 		return api.Options{}, err
 	}

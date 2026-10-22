@@ -286,6 +286,12 @@ func (c *Client) ContextLength() int {
 	return int(c.contextLength.Load())
 }
 
+func (c *Client) RunnerOptions() map[string]any {
+	return map[string]any{
+		"num_ctx": int64(c.contextLength.Load()),
+	}
+}
+
 func (c *Client) reportedContextLength(modelContextLength int) int {
 	if c.softContextLength > 0 && (modelContextLength == 0 || c.softContextLength < modelContextLength) {
 		return c.softContextLength

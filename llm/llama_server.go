@@ -33,6 +33,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -349,6 +350,56 @@ func contextShiftPromptLimit(numCtx, numKeep int) int {
 
 func (s *llamaServerRunner) ContextLength() int {
 	return s.options.NumCtx
+}
+
+// RunnerOptions returns the runner's current options as a map keyed by JSON
+// tag. Reflection is used so that changes to api.Runner are automatically
+// inherited without requiring updates here.
+func (s *llamaServerRunner) RunnerOptions() map[string]any {
+	options := map[string]any{}
+	t := reflect.TypeOf(s.options.Runner)
+	v := reflect.ValueOf(s.options.Runner)
+	for _, field := range reflect.VisibleFields(t) {
+		jsonTag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if jsonTag == "" || jsonTag == "-" {
+			continue
+		}
+		fv := v.FieldByIndex(field.Index)
+		switch fv.Kind() {
+		case reflect.Int:
+			options[jsonTag] = fv.Int()
+		case reflect.String:
+			if s := fv.String(); s != "" {
+				options[jsonTag] = s
+			}
+		case reflect.Pointer:
+			if fv.IsNil() {
+				continue
+			}
+			// Skip main_gpu — it's set by the placement logic during load,
+			// not by the user, and the loaded runner's Options.Runner.MainGPU
+			// may differ from the launch config's MainGPU.
+			if jsonTag == "main_gpu" {
+				continue
+			}
+			switch fv.Elem().Kind() {
+			case reflect.Bool:
+				b := fv.Elem().Bool()
+				options[jsonTag] = b
+			case reflect.Int:
+				options[jsonTag] = fv.Elem().Int()
+			}
+		case reflect.Slice:
+			if fv.Len() > 0 {
+				slice := make([]string, fv.Len())
+				for i := range fv.Len() {
+					slice[i] = fv.Index(i).String()
+				}
+				options[jsonTag] = slice
+			}
+		}
+	}
+	return options
 }
 
 // FindLlamaServer locates the llama-server binary in lib/ollama/.
