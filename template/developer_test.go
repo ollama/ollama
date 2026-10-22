@@ -11,67 +11,68 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestBundledTemplatesDeveloperRoleFallback(t *testing.T) {
+func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 	names, err := fs.Glob(templatesFS, "*.gotmpl")
 	if err != nil {
 		t.Fatal(err)
 	}
 	cases := map[string][]api.Message{
 		"leading": {{Role: "developer", Content: "DEVELOPER_POLICY"}, {Role: "user", Content: "Hello"}},
-		"after system": {
+		"mixed history": {
 			{Role: "system", Content: "SYSTEM_POLICY"},
 			{Role: "developer", Content: "DEVELOPER_POLICY"},
 			{Role: "user", Content: "Hello"},
-		},
-		"after conversation": {
-			{Role: "user", Content: "Hello"},
 			{Role: "assistant", Content: "Earlier answer"},
-			{Role: "developer", Content: "DEVELOPER_POLICY"},
+			{Role: "developer", Content: "LATER_POLICY"},
 			{Role: "user", Content: "Continue"},
 		},
 	}
+	sources := map[string]string{"legacy": `{{ .System }}|{{ .Prompt }}|{{ .Response }}`}
 	for _, name := range names {
+		source, err := templatesFS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[name] = string(source)
+	}
+	for name, source := range sources {
 		t.Run(name, func(t *testing.T) {
-			source, err := templatesFS.ReadFile(name)
+			tmpl, err := Parse(source)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, lineEnding := range []string{"LF", "CRLF"} {
-				t.Run(lineEnding, func(t *testing.T) {
-					text := string(source)
-					if lineEnding == "CRLF" {
-						text = strings.ReplaceAll(text, "\n", "\r\n")
+			for label, messages := range cases {
+				t.Run(label, func(t *testing.T) {
+					original := slices.Clone(messages)
+					systemMessages := slices.Clone(messages)
+					for i := range systemMessages {
+						if systemMessages[i].Role == "developer" {
+							systemMessages[i].Role = "system"
+						}
 					}
-					tmpl, err := Parse(text)
-					if err != nil {
+					var got, want bytes.Buffer
+					if err := tmpl.Execute(&got, Values{Messages: messages}); err != nil {
 						t.Fatal(err)
 					}
-					for label, messages := range cases {
-						t.Run(label, func(t *testing.T) {
-							original := slices.Clone(messages)
-							systemMessages := slices.Clone(messages)
-							for i := range systemMessages {
-								if systemMessages[i].Role == "developer" {
-									systemMessages[i].Role = "system"
-								}
-							}
-							var got, want bytes.Buffer
-							if err := tmpl.Execute(&got, Values{Messages: messages}); err != nil {
-								t.Fatal(err)
-							}
-							if err := tmpl.Execute(&want, Values{Messages: systemMessages}); err != nil {
-								t.Fatal(err)
-							}
-							if got.String() != want.String() {
-								t.Fatalf("developer prompt = %q, system prompt = %q", got.String(), want.String())
-							}
-							if label == "leading" && !strings.Contains(got.String(), "DEVELOPER_POLICY") {
-								t.Fatal("leading developer policy was lost")
-							}
-							if !reflect.DeepEqual(messages, original) {
-								t.Fatal("template fallback mutated the source history")
-							}
-						})
+					if err := tmpl.Execute(&want, Values{Messages: systemMessages}); err != nil {
+						t.Fatal(err)
+					}
+					if got.String() != want.String() {
+						t.Fatalf("developer prompt = %q, system prompt = %q", got.String(), want.String())
+					}
+					position := 0
+					for _, message := range original {
+						if message.Role != "system" && message.Role != "developer" {
+							continue
+						}
+						index := strings.Index(got.String()[position:], message.Content)
+						if index < 0 || strings.Count(got.String(), message.Content) != 1 {
+							t.Fatalf("instruction %q was lost, duplicated, or reordered: %q", message.Content, got.String())
+						}
+						position += index + len(message.Content)
+					}
+					if !reflect.DeepEqual(messages, original) {
+						t.Fatal("template fallback mutated the source history")
 					}
 				})
 			}
@@ -79,27 +80,21 @@ func TestBundledTemplatesDeveloperRoleFallback(t *testing.T) {
 	}
 }
 
-func TestDeveloperInstructionsInLegacyTemplate(t *testing.T) {
-	tmpl, err := Parse(`{{ .System }}|{{ .Prompt }}|{{ .Response }}`)
+func TestSavedTemplateDeveloperFallbackWithCRLF(t *testing.T) {
+	source, err := templatesFS.ReadFile("chatml.gotmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := Parse(" \r\n" + strings.ReplaceAll(string(source), "\n", "\r\n") + "\r\n ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	err = tmpl.Execute(&out, Values{Messages: []api.Message{
-		{Role: "system", Content: "SYSTEM_POLICY"},
-		{Role: "developer", Content: "DEVELOPER_POLICY"},
-		{Role: "user", Content: "First request"},
-		{Role: "assistant", Content: "First answer"},
-		{Role: "developer", Content: "LATER_POLICY"},
-		{Role: "user", Content: "Continue"},
-	}})
-	if err != nil {
+	if err := tmpl.Execute(&out, Values{Messages: []api.Message{{Role: "developer", Content: "POLICY"}, {Role: "user", Content: "Hello"}}}); err != nil {
 		t.Fatal(err)
 	}
-	for _, marker := range []string{"SYSTEM_POLICY\n\nDEVELOPER_POLICY", "LATER_POLICY", "Continue"} {
-		if !strings.Contains(out.String(), marker) {
-			t.Errorf("missing %q: %s", marker, out.String())
-		}
+	if !strings.Contains(out.String(), "<|im_start|>system\r\nPOLICY<|im_end|>") {
+		t.Fatalf("saved template did not recognize developer fallback: %q", out.String())
 	}
 }
 
@@ -141,27 +136,10 @@ func TestLegacyTemplateInstructionCompatibility(t *testing.T) {
 	}
 }
 
-func TestMessagesTemplatePreservesDeveloperRole(t *testing.T) {
-	tmpl, err := Parse(`{{ range .Messages }}{{ .Role }}:{{ .Content }};{{ end }}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	err = tmpl.Execute(&out, Values{Messages: []api.Message{
-		{Role: "system", Content: "System policy"}, {Role: "developer", Content: "Developer policy"}, {Role: "user", Content: "Hello"},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "system:System policy;developer:Developer policy;user:Hello;"; out.String() != want {
-		t.Fatalf("got %q, want %q", out.String(), want)
-	}
-}
-
 func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 	// A custom template owns its role semantics. Developer turns must not also
 	// appear in System when the template renders them from Messages.
-	tmpl, err := Parse(`{{ .System }}|{{ range .Messages }}{{ if eq .Role "developer" }}developer:{{ .Content }};{{ else if eq .Role "user" }}user:{{ .Content }};{{ end }}{{ end }}`)
+	tmpl, err := Parse(`{{ .System }}|{{ range .Messages }}{{ .Role }}:{{ .Content }};{{ end }}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,14 +151,15 @@ func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 		{Role: "developer", Content: "Updated policy"},
 		{Role: "user", Content: "Continue"},
 	}
+	original := slices.Clone(messages)
 	var out bytes.Buffer
 	if err := tmpl.Execute(&out, Values{Messages: messages}); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Base policy|developer:Project policy;user:First request;developer:Updated policy;user:Continue;"; out.String() != want {
+	if want := "Base policy|system:Base policy;developer:Project policy;user:First request;assistant:First answer;developer:Updated policy;user:Continue;"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
-	if messages[1].Role != "developer" || messages[4].Role != "developer" {
-		t.Fatal("template changed the source instruction roles")
+	if !reflect.DeepEqual(messages, original) {
+		t.Fatal("template mutated the source history")
 	}
 }

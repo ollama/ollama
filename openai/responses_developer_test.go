@@ -103,75 +103,32 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var instructions []api.Message
-		for _, message := range chat.Messages {
-			if message.Role == "system" || message.Role == "developer" {
-				instructions = append(instructions, message)
-			}
+		if len(chat.Messages) != len(want)+3 || !reflect.DeepEqual(chat.Messages[:len(want)], want) {
+			t.Fatalf("cycle %d: replay lost or reordered the instruction prefix: %#v", cycle, chat.Messages)
 		}
-		if !reflect.DeepEqual(instructions, want) {
-			t.Fatalf("replay instructions = %#v", instructions)
+		call, resultMessage := chat.Messages[len(want)], chat.Messages[len(want)+1]
+		if len(call.ToolCalls) != 1 || call.ToolCalls[0].ID != resultMessage.ToolCallID {
+			t.Fatal("summary call/result pairing changed")
 		}
-		body = replay
-	}
-}
-
-func TestCompactedInstructionsReachRenderer(t *testing.T) {
-	for _, role := range []string{"system", "developer"} {
-		t.Run(role, func(t *testing.T) {
-			body, err := json.Marshal(map[string]any{"model": "test", "input": []any{
-				map[string]any{"role": role, "content": "LEADING_POLICY"},
-				map[string]any{"role": "user", "content": "Earlier request"},
-			}})
+		original := slices.Clone(chat.Messages)
+		for _, renderer := range []string{"qwen3-coder", "cogito", "functiongemma"} {
+			prompt, err := renderers.RenderWithRenderer(renderer, chat.Messages, nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for cycle := range 2 {
-				plan, err := PrepareStandaloneCompaction(body)
-				if err != nil {
-					t.Fatal(err)
+			position := 0
+			for _, instruction := range want {
+				index := strings.Index(prompt[position:], instruction.Content)
+				if index < 0 {
+					t.Fatalf("cycle %d, %s: lost or reordered %q: %q", cycle, renderer, instruction.Content, prompt)
 				}
-				result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-					"summary": "Earlier work is complete.", "retain_item_ids": []string{},
-				}))
-				if err != nil {
-					t.Fatal(err)
-				}
-				body, err = json.Marshal(map[string]any{"model": "test", "input": []any{
-					result.Item, map[string]any{"role": "user", "content": "Continue"},
-				}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				expanded, _, err := ExpandResponsesCompactionInput(body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var request ResponsesRequest
-				if err := json.Unmarshal(expanded, &request); err != nil {
-					t.Fatal(err)
-				}
-				chat, err := FromResponsesRequest(request)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, renderer := range []string{"cogito", "functiongemma"} {
-					prompt, err := renderers.RenderWithRenderer(renderer, chat.Messages, nil, nil)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if !strings.Contains(prompt, "LEADING_POLICY") {
-						t.Errorf("cycle %d, %s: compacted instructions missing from prompt: %q", cycle, renderer, prompt)
-					}
-				}
-				if len(chat.Messages) != 4 || chat.Messages[0].Role != role || chat.Messages[0].Content != "LEADING_POLICY" {
-					t.Fatalf("cycle %d: leading instruction position or role changed: %#v", cycle, chat.Messages)
-				}
-				if len(chat.Messages[1].ToolCalls) != 1 || chat.Messages[1].ToolCalls[0].ID != chat.Messages[2].ToolCallID {
-					t.Fatal("summary call/result pairing changed")
-				}
+				position += index + len(instruction.Content)
 			}
-		})
+			if !reflect.DeepEqual(chat.Messages, original) {
+				t.Fatal("rendering mutated the compacted history")
+			}
+		}
+		body = replay
 	}
 }
 

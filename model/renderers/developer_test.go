@@ -9,25 +9,27 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestDeveloperRoleFallbackMatchesSystem(t *testing.T) {
+func TestDeveloperRoleFallbackPreservesInstructions(t *testing.T) {
 	names := []string{
 		"qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "qwen3.5", "tev1", "qwen3.8", "ornith",
 		"cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think",
 		"gemma4", "gemma4-small", "gemma4-large", "glm-4.7", "flint", "glm-ocr",
 		"laguna", "poolside-v1", "cohere", "glimmer",
 	}
-	const policy = "DEVELOPER_POLICY_7F3A"
+	cases := map[string][]api.Message{
+		"leading": {{Role: "developer", Content: "PROJECT_POLICY"}, {Role: "user", Content: "Continue"}},
+		"mixed history": {
+			{Role: "system", Content: "BASE_POLICY"},
+			{Role: "developer", Content: "PROJECT_POLICY"},
+			{Role: "user", Content: "Hello"},
+			{Role: "assistant", Content: "Hello."},
+			{Role: "developer", Content: "LATER_POLICY"},
+			{Role: "user", Content: "Continue"},
+		},
+	}
 	for _, name := range names {
-		for _, placement := range []string{"leading", "after_system", "after_conversation"} {
+		for placement, messages := range cases {
 			t.Run(name+"/"+placement, func(t *testing.T) {
-				var messages []api.Message
-				switch placement {
-				case "after_system":
-					messages = append(messages, api.Message{Role: "system", Content: "Base policy"})
-				case "after_conversation":
-					messages = append(messages, api.Message{Role: "user", Content: "Hello"}, api.Message{Role: "assistant", Content: "Hello."})
-				}
-				messages = append(messages, api.Message{Role: "developer", Content: policy}, api.Message{Role: "user", Content: "Continue"})
 				original := slices.Clone(messages)
 				system := slices.Clone(messages)
 				for i := range system {
@@ -48,8 +50,17 @@ func TestDeveloperRoleFallbackMatchesSystem(t *testing.T) {
 				if got != want {
 					t.Fatal("developer message did not use the model's system fallback")
 				}
-				if placement == "leading" && !strings.Contains(got, policy) {
-					t.Fatal("leading developer instruction disappeared")
+				// Equality alone can pass when both prompts drop the same policy.
+				position := 0
+				for _, message := range original {
+					if message.Role != "system" && message.Role != "developer" {
+						continue
+					}
+					index := strings.Index(got[position:], message.Content)
+					if index < 0 || strings.Count(got, message.Content) != 1 {
+						t.Fatalf("instruction %q was lost, duplicated, or reordered: %q", message.Content, got)
+					}
+					position += index + len(message.Content)
 				}
 				if !reflect.DeepEqual(messages, original) {
 					t.Fatal("renderer mutated the source history")

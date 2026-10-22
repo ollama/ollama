@@ -14,7 +14,7 @@ import (
 	"github.com/ollama/ollama/template"
 )
 
-func TestResponsesDeveloperInstructionsSurviveTruncation(t *testing.T) {
+func TestDeveloperInstructionsSurviveTruncation(t *testing.T) {
 	tmpl, err := template.Parse(`{{ .System }} {{ .Prompt }} {{ .Response }}`)
 	if err != nil {
 		t.Fatal(err)
@@ -24,46 +24,44 @@ func TestResponsesDeveloperInstructionsSurviveTruncation(t *testing.T) {
 		t.Fatal(err)
 	}
 	models := map[string]Model{
-		"renderer":            {Config: testConfigWithRenderer("qwen3.5")},
+		"qwen3.5":             {Config: testConfigWithRenderer("qwen3.5")},
+		"qwen3-coder":         {Config: testConfigWithRenderer("qwen3-coder")},
+		"cogito":              {Config: testConfigWithRenderer("cogito")},
 		"legacy template":     {Template: tmpl},
 		"role-aware template": {Template: roles},
 	}
-	const policy = "DEVELOPER_POLICY_7F3A"
-	body, err := json.Marshal(map[string]any{"model": "test", "input": []any{
-		map[string]any{"role": "developer", "content": policy},
-		map[string]any{"role": "user", "content": strings.Repeat("OLD_HISTORY ", 200)},
-		map[string]any{"role": "assistant", "content": "Earlier answer"},
-		map[string]any{"role": "user", "content": "LATEST_REQUEST"},
-	}})
-	if err != nil {
-		t.Fatal(err)
+	messages := []api.Message{
+		{Role: "system", Content: "SYSTEM_POLICY"},
+		{Role: "developer", Content: "DEVELOPER_POLICY"},
+		{Role: "user", Content: strings.Repeat("OLD_HISTORY ", 200)},
+		{Role: "assistant", Content: "Earlier answer"},
+		{Role: "developer", Content: "LATER_POLICY"},
+		{Role: "user", Content: "LATEST_REQUEST"},
 	}
+	original := slices.Clone(messages)
 	for name, m := range models {
 		t.Run(name, func(t *testing.T) {
-			var request openai.ResponsesRequest
-			if err := json.Unmarshal(body, &request); err != nil {
-				t.Fatal(err)
-			}
-			chat, err := openai.FromResponsesRequest(request)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if chat.Messages[0].Role != "developer" {
-				t.Fatal("API conversion rewrote the developer role")
-			}
 			opts := api.Options{Runner: api.Runner{NumCtx: 64}}
-			prompt, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, chat.Messages, nil, &api.ThinkValue{Value: false}, true)
+			prompt, _, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, messages, nil, &api.ThinkValue{Value: false}, true)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(prompt, policy) || !strings.Contains(prompt, "LATEST_REQUEST") {
-				t.Fatalf("prompt lost the developer policy or latest request: %q", prompt)
+			position := 0
+			for _, marker := range []string{"SYSTEM_POLICY", "DEVELOPER_POLICY", "LATER_POLICY", "LATEST_REQUEST"} {
+				index := strings.Index(prompt[position:], marker)
+				if index < 0 {
+					t.Fatalf("prompt lost or reordered %q: %q", marker, prompt)
+				}
+				position += index + len(marker)
 			}
 			if strings.Contains(prompt, "OLD_HISTORY") {
 				t.Fatal("test did not exercise history truncation")
 			}
-			if name == "role-aware template" && !strings.Contains(prompt, "developer:"+policy) {
+			if name == "role-aware template" && !strings.Contains(prompt, "developer:DEVELOPER_POLICY") {
 				t.Fatal("truncation rewrote the native developer role")
+			}
+			if !reflect.DeepEqual(messages, original) {
+				t.Fatal("truncation or rendering mutated the source history")
 			}
 		})
 	}

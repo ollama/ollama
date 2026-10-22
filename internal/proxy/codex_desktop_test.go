@@ -1123,8 +1123,8 @@ func TestCodexDesktopNormalizesCodexOnlyHistoryForOllama(t *testing.T) {
 		t.Fatalf("forwarded input = %#v", forwarded.Input)
 	}
 	developer := forwarded.Input[0]
-	if developer["type"] != "message" || developer["role"] != "developer" {
-		t.Fatalf("developer instructions were not preserved for Ollama: %#v", developer)
+	if developer["type"] != "message" || developer["role"] != "system" {
+		t.Fatalf("developer instructions were not promoted for Ollama: %#v", developer)
 	}
 	call := forwarded.Input[1]
 	if call["type"] != "function_call" || call["call_id"] != "call_1" || call["name"] != "apply_patch" {

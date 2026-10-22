@@ -451,7 +451,9 @@ You are Cogito, an AI assistant created by Deep Cogito, which is an AI research 
 			thinkValue: &api.ThinkValue{Value: false},
 			expected: `<｜begin▁of▁sentence｜>You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco.
 
-First instruction<｜User｜>Hello<｜Assistant｜>`,
+First instruction
+
+Second instruction<｜User｜>Hello<｜Assistant｜>`,
 		},
 		{
 			name: "special_characters_in_content",
