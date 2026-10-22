@@ -528,7 +528,8 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 		if suffix != "" && !strings.ContainsAny(suffix, `{}[],:"<>|`) {
 			// Another JSON value is additional structured output, not noise.
 			var extra json.RawMessage
-			if json.NewDecoder(strings.NewReader(suffix)).Decode(&extra) != nil {
+			hasExtraValue := json.NewDecoder(strings.NewReader(suffix)).Decode(&extra) == nil
+			if !hasExtraValue {
 				return args, nil
 			}
 		}

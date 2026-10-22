@@ -61,7 +61,7 @@ func TestGemma4ParserTrailingNoise(t *testing.T) {
 					check([]string{input[:split], input[split:]})
 				}
 				chunks := make([]string, 0, len(input)+1)
-				for i := 0; i < len(input); i++ {
+				for i := range len(input) {
 					chunks = append(chunks, input[i:i+1])
 				}
 				check(append(chunks, ""))
