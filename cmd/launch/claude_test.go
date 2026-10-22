@@ -541,6 +541,26 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps the auto compact window within Claude Code's range", func(t *testing.T) {
+		setDynamicCloudModelLimits(map[string]cloudModelLimit{"tiny": {Context: 65_536}})
+		t.Cleanup(func() { setDynamicCloudModelLimits(nil) })
+		for _, tt := range []struct {
+			model       LaunchModel
+			wantContext string
+			wantCompact string
+		}{
+			{model: LaunchModel{Name: "nemotron-3-nano:30b:cloud"}, wantContext: "1048576", wantCompact: "1000000"},
+			{model: LaunchModel{Name: "tiny:cloud"}, wantContext: "65536"},
+			{model: LaunchModel{Name: "new-large:cloud", ContextLength: 1_048_576}, wantContext: "1048576", wantCompact: "1000000"},
+			{model: LaunchModel{Name: "new-small:cloud", ContextLength: 65_536}, wantContext: "65536"},
+		} {
+			got := envMap(c.modelEnvVars(tt.model.Name, []LaunchModel{tt.model}))
+			if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != tt.wantContext || got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != tt.wantCompact {
+				t.Errorf("%s: context = %q, compact = %q; want %q, %q", tt.model.Name, got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], tt.wantContext, tt.wantCompact)
+			}
+		}
+	})
+
 	t.Run("keeps the user's auto compact window but not their context window", func(t *testing.T) {
 		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
 		t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "150000")

@@ -38,7 +38,7 @@ func (p preparedImage) numTokens(merge int32) int32 {
 
 // smartResize ports the reference resize rule: round each side to the patch
 // factor, then scale into the pixel budget, preserving aspect ratio.
-func smartResize(height, width, factor int32) (int32, int32, error) {
+func smartResize(height, width, factor, maxPixels int32) (int32, int32, error) {
 	if height <= 0 || width <= 0 {
 		return 0, 0, fmt.Errorf("invalid image size %dx%d", width, height)
 	}
@@ -51,8 +51,8 @@ func smartResize(height, width, factor int32) (int32, int32, error) {
 	// The reference uses Python round (half to even).
 	hBar := math.RoundToEven(float64(height)/f) * f
 	wBar := math.RoundToEven(float64(width)/f) * f
-	if hBar*wBar > visionMaxPixels {
-		beta := math.Sqrt(float64(height) * float64(width) / visionMaxPixels)
+	if hBar*wBar > float64(maxPixels) {
+		beta := math.Sqrt(float64(height) * float64(width) / float64(maxPixels))
 		hBar = math.Max(f, math.Floor(float64(height)/beta/f)*f)
 		wBar = math.Max(f, math.Floor(float64(width)/beta/f)*f)
 	} else if hBar*wBar < visionMinPixels {
@@ -76,7 +76,11 @@ func (m *Model) preprocessImage(data []byte) (pixels []float32, prep preparedIma
 	patch, merge, temporal := v.PatchSize, v.SpatialMergeSize, v.TemporalPatchSize
 	bounds := img.Bounds()
 	img = dropAlpha(img, bounds)
-	targetH, targetW, err := smartResize(int32(bounds.Dy()), int32(bounds.Dx()), patch*merge)
+	maxPixels := m.VisionMaxPixels
+	if maxPixels == 0 {
+		maxPixels = visionMaxPixels
+	}
+	targetH, targetW, err := smartResize(int32(bounds.Dy()), int32(bounds.Dx()), patch*merge, maxPixels)
 	if err != nil {
 		return nil, preparedImage{}, err
 	}

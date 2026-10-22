@@ -3,7 +3,9 @@ package architectures
 import (
 	_ "github.com/ollama/ollama/mlxrunner/model/clef"
 	_ "github.com/ollama/ollama/mlxrunner/model/cohere2_moe"
+	_ "github.com/ollama/ollama/mlxrunner/model/decisionqwen"
 	_ "github.com/ollama/ollama/mlxrunner/model/dflash"
+	_ "github.com/ollama/ollama/mlxrunner/model/flint"
 	_ "github.com/ollama/ollama/mlxrunner/model/gemma4"
 	_ "github.com/ollama/ollama/mlxrunner/model/gemma4embedding"
 	_ "github.com/ollama/ollama/mlxrunner/model/glimmer"

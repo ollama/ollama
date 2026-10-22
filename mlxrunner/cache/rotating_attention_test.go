@@ -218,6 +218,7 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 	}{
 		{"zero", nn.AttentionMask{}, nil, false},
 		{"causal", nn.CausalMask(), nil, true},
+		{"device-causal", nn.DeviceCausalMask(), nil, true},
 		{"causal+relax", nn.CausalMask().Relax(0, 1, 4, 2, 5), [][4]int{{1, 4, 2, 5}}, true},
 	}
 

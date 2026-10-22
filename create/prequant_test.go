@@ -2,6 +2,7 @@ package create
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,51 @@ func TestPlanPrequantizedMLX(t *testing.T) {
 	}
 }
 
+func TestPlanPrequantizedFlintEmbeddingBits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "int8 embedding", raw: `{"mlx_export":{"embedding_bits":8}}`, want: "int8"},
+		{name: "int4 embedding", raw: `{"mlx_export":{"embedding_bits":4}}`, want: "int4"},
+		{name: "missing bit width", raw: `{"mlx_export":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := newInventory(sourceModelConfig{
+				Architectures: []string{"FlintForCausalLM"},
+				Quantization:  sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 64},
+			}, map[string]string{
+				"model.embed_tokens.weight":              "U32",
+				"model.embed_tokens.scales":              "BF16",
+				"model.embed_tokens.biases":              "BF16",
+				"model.layers.0.self_attn.q_proj.weight": "U32",
+				"model.layers.0.self_attn.q_proj.scales": "BF16",
+				"model.layers.0.self_attn.q_proj.biases": "BF16",
+			})
+			inv.RawConfig = []byte(tc.raw)
+			specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if tc.want == "" {
+				if err == nil || !strings.Contains(err.Error(), "mlx_export.embedding_bits") {
+					t.Fatalf("Plan() error = %v, want missing embedding bit width", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			embedding, ok := specByName(specs, "model.embed_tokens.weight")
+			if !ok || embedding.Metadata["quant_type"] != tc.want {
+				t.Errorf("embedding quant_type = %q, want %q", embedding.Metadata["quant_type"], tc.want)
+			}
+			projection, ok := specByName(specs, "model.layers.0.self_attn.q_proj.weight")
+			if !ok || projection.Metadata["quant_type"] != "int4" {
+				t.Errorf("projection quant_type = %q, want int4", projection.Metadata["quant_type"])
+			}
+		})
+	}
+}
+
 func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 	inv := newInventory(sourceModelConfig{}, map[string]string{
 		"l.weight":         "U8",
@@ -117,6 +163,175 @@ func TestPlanPrequantizedModelOptNVFP4(t *testing.T) {
 	}
 	if _, ok := w.Metadata["group_size"]; ok {
 		t.Errorf("ModelOpt should not default group_size: %v", w.Metadata)
+	}
+}
+
+func TestPlanPrequantizedModelOptExpertBank(t *testing.T) {
+	inv := newInventory(sourceModelConfig{Architectures: []string{"FlintForCausalLM"}}, map[string]string{
+		"model.layers.2.mlp.experts.0.gate_proj.weight":         "U32",
+		"model.layers.2.mlp.experts.0.gate_proj.weight_scale":   "U8",
+		"model.layers.2.mlp.experts.0.gate_proj.weight_scale_2": "F32",
+		"model.layers.2.mlp.experts.1.gate_proj.weight":         "U32",
+		"model.layers.2.mlp.experts.1.gate_proj.weight_scale":   "U8",
+		"model.layers.2.mlp.experts.1.gate_proj.weight_scale_2": "F32",
+	})
+	for name, tensor := range inv.Tensors {
+		if slices.Contains([]string{"model.layers.2.mlp.experts.0.gate_proj.weight_scale_2", "model.layers.2.mlp.experts.1.gate_proj.weight_scale_2"}, name) {
+			tensor.Shape = []int32{1}
+		}
+		inv.Tensors[name] = tensor
+	}
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got blobs %v, want one expert bank", specNames(specs))
+	}
+	name := "model.layers.2.mlp.experts.gate_proj.weight"
+	bank := specs[0]
+	if bank.Name != "model.layers.2.mlp.experts" || bank.Metadata["quant_type"] != "nvfp4" {
+		t.Fatalf("expert bank = %+v", bank)
+	}
+	for _, tc := range []struct {
+		name  string
+		shape []int32
+	}{
+		{name, []int32{2, 128, 128}},
+		{name + ".scale", []int32{2, 128, 128}},
+		{name + ".global_scale", []int32{2}},
+	} {
+		tensor, ok := inputByOutput(bank, tc.name)
+		if !ok || tensor.Transform != TransformStackExperts || !slices.Equal(tensor.OutShape, tc.shape) || len(tensor.Sources) != 2 {
+			t.Errorf("%s = %+v, want stacked %v", tc.name, tensor, tc.shape)
+		}
+	}
+}
+
+func TestPlanPrequantizedModelOptExpertBankRejectsIncompleteScale(t *testing.T) {
+	inv := newInventory(sourceModelConfig{Architectures: []string{"FlintForCausalLM"}}, map[string]string{
+		"model.layers.2.mlp.experts.0.gate_proj.weight":         "U32",
+		"model.layers.2.mlp.experts.0.gate_proj.weight_scale":   "U8",
+		"model.layers.2.mlp.experts.0.gate_proj.weight_scale_2": "F32",
+		"model.layers.2.mlp.experts.1.gate_proj.weight":         "U32",
+		"model.layers.2.mlp.experts.1.gate_proj.weight_scale":   "U8",
+	})
+	global := inv.Tensors["model.layers.2.mlp.experts.0.gate_proj.weight_scale_2"]
+	global.Shape = []int32{1}
+	inv.Tensors[global.Name] = global
+
+	_, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err == nil || !strings.Contains(err.Error(), "model.layers.2.mlp.experts") {
+		t.Fatalf("Plan() error = %v, want named incomplete expert bank", err)
+	}
+}
+
+func TestPlanPrequantizedModelOptMixedPrecision(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"fp4.weight":         "U8",
+		"fp4.weight_scale":   "F8_E4M3",
+		"fp4.weight_scale_2": "F32",
+		"fp8.weight":         "F8_E4M3",
+		"fp8.weight_scale":   "U8",
+	})
+	classification, err := Classify(inv, "")
+	if err != nil || classification.Kind != SourcePrequantized || classification.Quantize != "" {
+		t.Fatalf("mixed ModelOpt classification = %+v, %v", classification, err)
+	}
+
+	specs, err := Plan(inv, classification, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("got %d specs %v, want two fused weights", len(specs), specNames(specs))
+	}
+	fp4, _ := specByName(specs, "fp4.weight")
+	if fp4.Metadata["quant_type"] != "nvfp4" {
+		t.Errorf("FP4 metadata = %v", fp4.Metadata)
+	}
+	fp8, _ := specByName(specs, "fp8.weight")
+	if fp8.Metadata["quant_type"] != "mxfp8" || fp8.Metadata["group_size"] != "32" {
+		t.Errorf("FP8 metadata = %v", fp8.Metadata)
+	}
+	weight, _ := inputByOutput(fp8, "fp8.weight")
+	scale, _ := inputByOutput(fp8, "fp8.weight.scale")
+	if weight.Transform != TransformRepackFP8 || weight.OutDtype != "U32" || !slices.Equal(weight.OutShape, []int32{128, 32}) || scale.Transform != TransformNone || scale.OutDtype != "" {
+		t.Errorf("FP8 weight must pack into U32 and exponent scale must keep source bytes: weight=%+v scale=%+v", weight, scale)
+	}
+	if q := detectPrequantizedQuantization(inv); q != "" {
+		t.Errorf("mixed precision classification = %q, want no single file type", q)
+	}
+}
+
+func TestClassifyModelOptMXFP8WithoutNVFP4(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":       "F8_E4M3",
+		"l.weight_scale": "U8",
+	})
+	classification, err := Classify(inv, "")
+	if err != nil || classification.Kind != SourcePrequantized || classification.Quantize != "mxfp8" {
+		t.Fatalf("ModelOpt MXFP8 classification = %+v, %v", classification, err)
+	}
+	specs, err := Plan(inv, classification, defaultQuantPolicy{})
+	if err != nil || len(specs) != 1 || specs[0].Metadata["quant_type"] != "mxfp8" {
+		t.Fatalf("ModelOpt MXFP8 plan = %+v, %v", specs, err)
+	}
+}
+
+func TestPlanPrequantizedModelOptPackedNVFP4(t *testing.T) {
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":         "U32",
+		"l.weight_scale":   "F8_E4M3",
+		"l.weight_scale_2": "F32",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs %v, want one fused weight", len(specs), specNames(specs))
+	}
+	weight, ok := inputByOutput(specs[0], "l.weight")
+	if !ok || weight.Transform != TransformNone || weight.OutDtype != "" || len(weight.OutShape) != 0 {
+		t.Errorf("already-packed U32 weight must keep its source shape: %+v ok=%v", weight, ok)
+	}
+	if specs[0].Metadata["quant_type"] != "nvfp4" {
+		t.Errorf("quant_type = %q, want nvfp4", specs[0].Metadata["quant_type"])
+	}
+}
+
+func TestPlanPrequantizedModelOptDropsActivationScale(t *testing.T) {
+	// ModelOpt ships per-weight activation scales (.input_scale and, in some
+	// variants, .input_global_scale) that are unused for weight-only
+	// inference. They must be consumed, not emitted as their own blobs.
+	inv := newInventory(sourceModelConfig{}, map[string]string{
+		"l.weight":             "U8",
+		"l.weight_scale":       "F8_E4M3",
+		"l.weight_scale_2":     "F32",
+		"l.input_scale":        "F32",
+		"l.input_global_scale": "F32",
+	})
+
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs %v, want 1 (activation scales must not become blobs)", len(specs), specNames(specs))
+	}
+	w := specs[0]
+	for _, act := range []string{"l.input_scale", "l.input_global_scale"} {
+		if _, leaked := inputByOutput(w, act); leaked {
+			t.Errorf("activation scale %s leaked into the fused blob", act)
+		}
+		for _, s := range specs {
+			if s.Name == act {
+				t.Errorf("activation scale %s emitted as its own blob", act)
+			}
+		}
 	}
 }
 

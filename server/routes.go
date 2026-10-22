@@ -450,7 +450,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Generate(c, &req, fn)
+		err = client.Generate(c.Request.Context(), &req, fn)
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
@@ -1020,13 +1020,21 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		return
 	}
 	var encoding string
-	if m.Config.Renderer == "tev1" || m.Config.Renderer == "clef" || m.Config.Renderer == "strands" || m.Config.Renderer == "kev" {
+	switch m.Config.Renderer {
+	case "tev1", "clef", "strands", "kev", "pplx", "d3":
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	if encoding == "pplx" {
+		if m.System == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Perplexity decision models require their publisher system prompt in the Modelfile"})
+			return
+		}
+		compiled.Request.System = m.System
 	}
 	caps := []model.Capability{model.CapabilityDecision}
 	if len(req.Images) > 0 {
@@ -1931,6 +1939,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		// default we return an empty map.
 		ModelInfo: make(map[string]any),
 	}
+	resp.Renderer = resolveRendererName(m)
+	resp.Parser = m.Config.Parser
+	resp.TemplateSource = m.templateSource()
 	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
 		resp.Thinking = m.Thinking()
 	}
@@ -3125,7 +3136,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Chat(c, &req, fn)
+		err = client.Chat(c.Request.Context(), &req, fn)
 		if err != nil {
 			var authError api.AuthorizationError
 			if errors.As(err, &authError) {
@@ -3175,7 +3186,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
-			// Set think to nil when being used with Anthropic API to connect to tools like claude code
+			// Clients may retain thinking settings when switching models.
 			if _, ok := c.Get("relax_thinking"); ok {
 				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
 				req.Think = nil
@@ -3218,6 +3229,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				req.Think.Value = "high"
 			}
 		}
+	}
+
+	// Reuse resolved thinking for server-side tool follow-ups.
+	if w, ok := c.Writer.(interface{ SetThinking(*api.ThinkValue) }); ok {
+		w.SetThinking(req.Think)
 	}
 
 	if chatModeForModel(m) == chatExecutionModeNative {

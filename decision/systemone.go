@@ -54,9 +54,18 @@ func ValidateLimits(req Request) error {
 	return nil
 }
 
+func validateImages(images []api.ImageData) error {
+	for i, image := range images {
+		if len(image) == 0 {
+			return fmt.Errorf("image %d must not be empty", i)
+		}
+	}
+	return nil
+}
+
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands", "kev":
+	case "", "tev1", "clef", "strands", "kev", "pplx", "d3":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -73,16 +82,34 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		return c, nil
 	}
+	if encoding == "pplx" {
+		if err := ValidateLimits(req); err != nil {
+			return nil, err
+		}
+		if err := validateImages(req.Images); err != nil {
+			return nil, err
+		}
+		c := &Compiled{encoding: encoding}
+		if err := encodePPLX(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "d3" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeD3(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
 	if err := ValidateLimits(req); err != nil {
 		return nil, err
 	}
 	if len(req.Images) != 0 && encoding != "clef" {
 		return nil, fmt.Errorf("image inputs are not supported by this decision model")
 	}
-	for i, image := range req.Images {
-		if len(image) == 0 {
-			return nil, fmt.Errorf("image %d must not be empty", i)
-		}
+	if err := validateImages(req.Images); err != nil {
+		return nil, err
 	}
 	var context string
 	var err error
@@ -319,6 +346,24 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			confidence = kevConfidence(p, f.typ)
 			confidence = roundKev(confidence)
 			score = roundKev(score)
+		} else if c.encoding == "pplx" {
+			winner := slices.Index(p, slices.Max(p))
+			if f.typ == "choice" {
+				confidence = 1
+				if len(p) > 1 {
+					baseline := 1 / float64(len(p))
+					confidence = max(0, min(1, (p[winner]-baseline)/(1-baseline)))
+				}
+			} else {
+				midpoint := float64(len(p)-1) / 2
+				var distance, baseline float64
+				for j, probability := range p {
+					distance += probability * math.Abs(float64(j-winner))
+					baseline += math.Abs(float64(j) - midpoint)
+				}
+				baseline /= float64(len(p))
+				confidence = max(0, 1-distance/baseline)
+			}
 		} else {
 			confidence = max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
 		}

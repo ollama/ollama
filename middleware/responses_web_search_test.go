@@ -590,6 +590,83 @@ func TestWebSearchResponsesWriterStreamsFollowUpBeforeSecondSearch(t *testing.T)
 	}
 }
 
+func TestResponsesMiddlewareWebSearchReasoningBeforeClientTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name        string
+		afterSearch bool
+	}{
+		{name: "search available but unused"},
+		{name: "client tools after search", afterSearch: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := []api.ChatResponse{
+				{Message: api.Message{Thinking: "Check both cities."}},
+				{Message: api.Message{ToolCalls: []api.ToolCall{
+					{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+					{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+				}}},
+				{Done: true},
+			}
+			router := gin.New()
+			router.POST("/v1/responses", ResponsesMiddleware(), func(c *gin.Context) {
+				writer := c.Writer.(*WebSearchResponsesWriter)
+				writer.search = func(context.Context, string) (*api.WebSearchResponse, error) {
+					return &api.WebSearchResponse{}, nil
+				}
+				writer.followUpStream = func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+					for _, chunk := range chunks {
+						if err := yield(chunk); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				initial := chunks
+				if tt.afterSearch {
+					initial = []api.ChatResponse{{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{
+						{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}},
+					}}}}
+				}
+				for _, chunk := range initial {
+					if err := json.NewEncoder(c.Writer).Encode(chunk); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+			request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+				"model":"test-model", "stream":true, "input":"Check the weather in both cities.",
+				"tools":[{"type":"web_search"},{"type":"function","name":"get_weather","parameters":{"type":"object"}}]
+			}`))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var gotTypes []string
+			for _, block := range strings.Split(recorder.Body.String(), "\n\n") {
+				if !strings.HasPrefix(block, "event: response.output_item.done\n") {
+					continue
+				}
+				_, data, _ := strings.Cut(block, "\ndata: ")
+				var event map[string]any
+				if err := json.Unmarshal([]byte(data), &event); err != nil {
+					t.Fatal(err)
+				}
+				gotTypes = append(gotTypes, event["item"].(map[string]any)["type"].(string))
+			}
+			wantTypes := []string{"reasoning", "function_call", "function_call"}
+			if tt.afterSearch {
+				wantTypes = append([]string{"web_search_call"}, wantTypes...)
+			}
+			if !reflect.DeepEqual(gotTypes, wantTypes) {
+				t.Errorf("completed item order = %v, want %v", gotTypes, wantTypes)
+			}
+		})
+	}
+}
+
 func TestWebSearchResponsesWriterStreamingMixedFollowUpDoesNotLatchText(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

@@ -15,30 +15,73 @@ import (
 
 // inferSafetensorsConfig derives the manifest config shared by local and
 // server-side safetensors imports. Explicit parser and renderer values take
-// precedence over the inferred values.
+// precedence when compatible with the source model's scoring format.
 func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverride, rendererOverride string) (model.ConfigV2, error) {
 	chatTemplate, err := readChatTemplateStrict(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
 	}
 
-	parserName, err := parserNameForConfig(modelDir, cfg, chatTemplate)
-	if err != nil {
-		return model.ConfigV2{}, err
+	var parserName, rendererName, sourceDecisionRenderer string
+	var decisionModel, decisionVision bool
+	switch cfg.Architecture() {
+	case "Qwen3_5Model":
+		hasSidecar, err := hasPplxSidecar(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		if !hasSidecar {
+			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
+		}
+		format, err := qwenDecisionFormat(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName = "pplx"
+		if format == d3FormatID {
+			rendererName = "d3"
+		}
+		sourceDecisionRenderer = rendererName
+		decisionModel = true
+		decisionVision = cfg.VisionConfig != nil
+	case "ClefForDecision":
+		rendererName, decisionModel = "clef", true
+		decisionVision = cfg.VisionConfig != nil
+	case "StrandsDeciderForDecision":
+		rendererName, decisionModel = "strands", true
+	case "KevForDecision":
+		rendererName, decisionModel = "kev", true
+	case "LayaForDecision":
+		decisionModel = true
+	default:
+		parserName, err = parserNameForConfig(modelDir, cfg, chatTemplate)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName, err = rendererNameForConfig(modelDir, cfg, chatTemplate)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
 	}
 	if parserOverride != "" {
 		parserName = parserOverride
 	}
-
-	rendererName, err := rendererNameForConfig(modelDir, cfg, chatTemplate)
-	if err != nil {
-		return model.ConfigV2{}, err
-	}
 	if rendererOverride != "" {
 		rendererName = rendererOverride
 	}
+	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != sourceDecisionRenderer || parserName != "") {
+		return model.ConfigV2{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
+	}
 
-	capabilities := inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	var capabilities []string
+	if decisionModel {
+		capabilities = []string{"decision"}
+		if decisionVision {
+			capabilities = append(capabilities, "vision")
+		}
+	} else {
+		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
@@ -97,17 +140,7 @@ func readChatTemplateStrict(modelDir string) (string, error) {
 	return "", fmt.Errorf("read %s: %w", chatTemplatePath, err)
 }
 
-func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
-	if cfg.Architecture() == "ClefForDecision" {
-		capabilities := []string{"decision"}
-		if cfg.VisionConfig != nil {
-			capabilities = append(capabilities, "vision")
-		}
-		return capabilities
-	}
-	if cfg.Architecture() == "LayaForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" || cfg.Architecture() == "KevForDecision" {
-		return []string{"decision"}
-	}
+func inferCompletionCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
 	capabilities := []string{"completion"}
 
 	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)
@@ -222,9 +255,6 @@ func sourceConfigIdentifiers(cfg sourceModelConfig) []string {
 }
 
 func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate string) (string, error) {
-	if cfg.Architecture() == "ClefForDecision" || cfg.Architecture() == "StrandsDeciderForDecision" || cfg.Architecture() == "KevForDecision" {
-		return "", nil
-	}
 	for _, id := range sourceConfigIdentifiers(cfg) {
 		name, err := parserNameForIdentifier(modelDir, id, chatTemplate)
 		if err != nil || name != "" {
@@ -237,6 +267,8 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -273,12 +305,8 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
-	case s == "kevfordecision":
-		return "kev", nil
-	case s == "strandsdeciderfordecision":
-		return "strands", nil
-	case s == "cleffordecision":
-		return "clef", nil
+	case strings.Contains(s, "flint"):
+		return "flint", nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):

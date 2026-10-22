@@ -827,18 +827,20 @@ func appendContextShiftArgs(params []string, opts api.Options, enabled bool) []s
 
 const (
 	draftTypeMTP    = "draft-mtp"
-	draftTypeDFlash = "draft-dflash"
+	draftTypeEagle3 = "draft-eagle3"
 )
 
 func appendDraftArgs(params []string, draftType, draftModelPath string, opts api.Options) []string {
-	if draftType == "" {
+	if draftType == "" && draftModelPath == "" {
 		return params
 	}
 	if opts.DraftNumPredict <= 0 {
 		return params
 	}
 
-	params = append(params, "--spec-type", draftType)
+	if draftType != "" {
+		params = append(params, "--spec-type", draftType)
+	}
 	params = append(params, "--spec-draft-n-max", strconv.Itoa(opts.DraftNumPredict))
 	if draftType == draftTypeMTP {
 		params = append(params, "--spec-draft-backend-sampling")
@@ -849,15 +851,18 @@ func appendDraftArgs(params []string, draftType, draftModelPath string, opts api
 	return params
 }
 
-func externalDraftType(path string) (string, error) {
-	f, err := LoadModel(path, 1)
+func externalDraftType(path string, shards ...string) (string, error) {
+	f, err := LoadModel(path, 1, shards...)
 	if err != nil {
 		return "", fmt.Errorf("load draft model metadata: %w", err)
 	}
-	if f.KV().Architecture() == "dflash" {
-		return draftTypeDFlash, nil
+	if hasMTPDraft(f) {
+		return draftTypeMTP, nil
 	}
-	return draftTypeMTP, nil
+	if f.KV().Architecture() == "eagle3" {
+		return draftTypeEagle3, nil
+	}
+	return "", nil
 }
 
 func hasMTPDraft(f *gguf.Model) bool {
@@ -934,7 +939,7 @@ func NewLlamaServerRunner(
 		draftType = draftTypeMTP
 	}
 	if config.DraftModelPath != "" {
-		draftType, err = externalDraftType(config.DraftModelPath)
+		draftType, err = externalDraftType(config.DraftModelPath, config.DraftModelShardPaths...)
 		if err != nil {
 			return nil, err
 		}

@@ -804,25 +804,26 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	Thinking      *model.Thinking    `json:"thinking,omitempty"`
-	License       string             `json:"license,omitempty"`
-	Modelfile     string             `json:"modelfile,omitempty"`
-	Parameters    string             `json:"parameters,omitempty"`
-	Template      string             `json:"template,omitempty"`
-	System        string             `json:"system,omitempty"`
-	Renderer      string             `json:"renderer,omitempty"`
-	Parser        string             `json:"parser,omitempty"`
-	Details       ModelDetails       `json:"details,omitempty"`
-	Messages      []Message          `json:"messages,omitempty"`
-	RemoteModel   string             `json:"remote_model,omitempty"`
-	RemoteHost    string             `json:"remote_host,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info"`
-	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
-	Tensors       []Tensor           `json:"tensors,omitempty"`
-	Capabilities  []model.Capability `json:"capabilities,omitempty"`
-	Manifests     []ManifestSummary  `json:"manifests,omitempty"`
-	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
-	Requires      string             `json:"requires,omitempty"`
+	Thinking       *model.Thinking    `json:"thinking,omitempty"`
+	License        string             `json:"license,omitempty"`
+	Modelfile      string             `json:"modelfile,omitempty"`
+	Parameters     string             `json:"parameters,omitempty"`
+	Template       string             `json:"template,omitempty"`
+	System         string             `json:"system,omitempty"`
+	Renderer       string             `json:"renderer,omitempty"`
+	Parser         string             `json:"parser,omitempty"`
+	TemplateSource string             `json:"template_source,omitempty"`
+	Details        ModelDetails       `json:"details,omitempty"`
+	Messages       []Message          `json:"messages,omitempty"`
+	RemoteModel    string             `json:"remote_model,omitempty"`
+	RemoteHost     string             `json:"remote_host,omitempty"`
+	ModelInfo      map[string]any     `json:"model_info"`
+	ProjectorInfo  map[string]any     `json:"projector_info,omitempty"`
+	Tensors        []Tensor           `json:"tensors,omitempty"`
+	Capabilities   []model.Capability `json:"capabilities,omitempty"`
+	Manifests      []ManifestSummary  `json:"manifests,omitempty"`
+	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
+	Requires       string             `json:"requires,omitempty"`
 }
 
 // ManifestSummary describes one child manifest available through a model tag.
