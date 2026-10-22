@@ -18,6 +18,8 @@ If Claude is not installed, Ollama offers to download it during setup.
 2. Connect **Claude**.
 3. Follow the setup prompts to install Claude if needed and restart it when prompted.
 
+Connecting opens a separate Ollama profile in Claude. Disconnect in Ollama to return to your usual Claude account and chats.
+
 ## Switch models
 
 Open Ollama **Settings → Apps**. Choose your models, then select **Restart Claude**. You can use the same model for more than one option.
@@ -31,9 +33,9 @@ Open Ollama **Settings → Apps**. Choose your models, then select **Restart Cla
 
 ## Disconnect Claude
 
-Open Ollama **Apps** and disconnect Claude. Ollama restores Claude's previous settings. Restart Claude when prompted.
+Open Ollama **Apps** and disconnect Claude. Ollama switches back to your usual Claude profile. Restart Claude when prompted.
 
-You can also restore Claude from the terminal:
+If Claude still opens the Ollama profile, fully quit Claude, then restore it from the terminal:
 
 ```shell
 ollama launch claude-desktop --restore
