@@ -940,7 +940,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		"content": [
 			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
 			{"type": "encrypted_content", "encrypted_content": "analyze the parser"},
-			{"type": "input_image", "image_url": "`+compactionTestPNG+`"}
+			{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 		]
 	}`), &item)
 	if err != nil {
@@ -953,11 +953,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	image, err := decodeImageURL(compactionTestPNG)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || !bytes.Equal(msg.Images[0], image) {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || string(msg.Images[0]) != "fixture" {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }

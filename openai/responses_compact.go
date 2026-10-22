@@ -553,9 +553,6 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 	switch value := item.(type) {
 	case ResponsesInputMessage:
-		if err := validateCompactionContent(value.Content); err != nil {
-			return api.Message{}, "", err
-		}
 		message, err := convertInputMessage(value)
 		return message, "message", err
 	case ResponsesFunctionCall:
@@ -573,9 +570,6 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		content := value.Output
 		var images []api.ImageData
 		if len(value.OutputItems) > 0 {
-			if err := validateCompactionContent(value.OutputItems); err != nil {
-				return api.Message{}, "", err
-			}
 			var err error
 			content, images, err = convertResponsesContent(value.OutputItems)
 			if err != nil {
@@ -612,9 +606,6 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 		}
 		return api.Message{Role: "assistant", Thinking: thinking}, "reasoning", nil
 	case ResponsesAgentMessageInput:
-		if err := validateCompactionContent(value.Content); err != nil {
-			return api.Message{}, "", err
-		}
 		content, images, err := convertResponsesContent(value.Content)
 		if err != nil {
 			return api.Message{}, "", err
@@ -629,20 +620,6 @@ func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
 	default:
 		return api.Message{}, "", fmt.Errorf("unsupported compaction input type %T", item)
 	}
-}
-
-func validateCompactionContent(contents []ResponsesContent) error {
-	for _, content := range contents {
-		image, ok := content.(ResponsesImageContent)
-		if !ok || image.ImageURL != "" {
-			continue
-		}
-		if image.FileID != "" {
-			return errors.New("file_id image inputs are not supported by Ollama compaction")
-		}
-		return errors.New("compaction image input is missing image_url")
-	}
-	return nil
 }
 
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {

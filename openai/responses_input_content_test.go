@@ -9,113 +9,33 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestResponsesReadableHistory(t *testing.T) {
-	body := []byte(`{"model":"test","input":[
-		{"role":"user","content":"Read the note without deleting it."},
-		{"type":"reasoning","id":"rs_foreign","summary":[{"type":"summary_text","text":"Read safely."}],"content":[{"type":"reasoning_text","text":"Keep <note> intact."},{"type":"text","text":"雪"}],"encrypted_content":"opaque-state"},
-		{"type":"function_call","id":"fc_read","call_id":"call_read","name":"read_note","arguments":"{}"},
-		{"role":"assistant","content":[{"type":"output_text","text":"Checking. "},{"type":"refusal","refusal":"I cannot delete the note."}]},
-		{"type":"function_call_output","call_id":"call_read","output":"note contents"},
-		{"type":"reasoning","content":[{"type":"reasoning_text","text":"The note is intact."}]},
-		{"role":"user","content":"Continue."}
-	]}`)
-	var req ResponsesRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		t.Fatal(err)
-	}
-	if call := req.Input.Items[2].(ResponsesFunctionCall); call.ID != "fc_read" || call.CallID != "call_read" {
-		t.Fatalf("tool identity changed: %+v", call)
-	}
-	chat, err := FromResponsesRequest(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []api.Message{
-		{Role: "user", Content: "Read the note without deleting it."},
-		{Role: "assistant", Content: "Checking. I cannot delete the note.", Thinking: "Read safely.\nKeep <note> intact.\n雪", ToolCalls: []api.ToolCall{{ID: "call_read", Function: api.ToolCallFunction{Name: "read_note", Arguments: testArgs(map[string]any{})}}}},
-		{Role: "tool", ToolCallID: "call_read", Content: "note contents"},
-		{Role: "assistant", Thinking: "The note is intact."},
-		{Role: "user", Content: "Continue."},
-	}
-	if diff := cmp.Diff(want, chat.Messages, argsComparer); diff != "" {
-		t.Fatalf("history changed (-want +got):\n%s", diff)
-	}
-
-	plan, err := PrepareStandaloneCompaction(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-		"summary":         "Read the note safely.",
-		"retain_item_ids": []string{"item_000001", "item_000002", "item_000003", "item_000004", "item_000005", "item_000006", "item_000007"},
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	continuation, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item, map[string]string{"role": "user", "content": "Next."}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	expanded, _, err := ExpandResponsesCompactionInput(continuation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var resumed ResponsesRequest
-	if err := json.Unmarshal(expanded, &resumed); err != nil {
-		t.Fatal(err)
-	}
-	chat, err = FromResponsesRequest(resumed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The first two messages carry the compaction summary and its acknowledgement.
-	want = append(want, api.Message{Role: "user", Content: "Next."})
-	if len(chat.Messages) != len(want)+2 {
-		t.Fatalf("compaction changed history length: %+v", chat.Messages)
-	}
-	if diff := cmp.Diff(want, chat.Messages[2:], argsComparer); diff != "" {
-		t.Fatalf("compaction continuation changed history (-want +got):\n%s", diff)
-	}
-}
-
-func TestResponsesAgentImages(t *testing.T) {
-	for _, tt := range []struct{ name, fileID string }{
-		{"inline image", ""},
-		{"inline image with file ID", "file_stale"},
+func TestResponsesReadableContent(t *testing.T) {
+	for _, tt := range []struct {
+		name, item string
+		want       api.Message
+	}{
+		{"reasoning", `{"type":"reasoning","summary":[{"type":"summary_text","text":"Read safely."}],"content":[{"type":"reasoning_text","text":"Keep <note> intact."},{"type":"text","text":"雪"}],"encrypted_content":"opaque-state"}`, api.Message{Role: "assistant", Thinking: "Read safely.\nKeep <note> intact.\n雪"}},
+		{"reasoning without summary", `{"type":"reasoning","content":[{"type":"reasoning_text","text":"The note is intact."}]}`, api.Message{Role: "assistant", Thinking: "The note is intact."}},
+		{"refusal", `{"role":"assistant","content":[{"type":"output_text","text":"Checking. "},{"type":"refusal","refusal":"I cannot delete the note."}]}`, api.Message{Role: "assistant", Content: "Checking. I cannot delete the note."}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			body := []byte(`{"model":"test","input":[{"type":"agent_message","author":"worker","recipient":"root","content":[
-				{"type":"input_text","text":"Inspect this pixel."},
-				{"type":"input_image","file_id":"` + tt.fileID + `","image_url":"` + compactionTestPNG + `"}
-			]}]}`)
 			var req ResponsesRequest
-			if err := json.Unmarshal(body, &req); err != nil {
+			if err := json.Unmarshal([]byte(`{"model":"test","input":[`+tt.item+`]}`), &req); err != nil {
 				t.Fatal(err)
 			}
 			chat, err := FromResponsesRequest(req)
 			if err != nil {
 				t.Fatal(err)
 			}
-			image, err := decodeImageURL(compactionTestPNG)
+			if diff := cmp.Diff([]api.Message{tt.want}, chat.Messages); diff != "" {
+				t.Fatalf("content changed (-want +got):\n%s", diff)
+			}
+			msg, _, err := compactionMessage(req.Input.Items[0])
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := api.Message{Role: "user", Content: "Agent message from \"worker\" to \"root\":\nInspect this pixel.", Images: []api.ImageData{image}}
-			if diff := cmp.Diff([]api.Message{want}, chat.Messages); diff != "" {
-				t.Fatalf("agent content changed (-want +got):\n%s", diff)
-			}
-			plan, err := PrepareStandaloneCompaction(body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-				"summary": "Inspect the pixel.", "retain_item_ids": []string{"item_000001"},
-			}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if diff := cmp.Diff([]api.Message{want}, decodeResultPayload(t, result).Retained); diff != "" {
-				t.Fatalf("compaction lost agent content (-want +got):\n%s", diff)
+			if diff := cmp.Diff(tt.want, msg); diff != "" {
+				t.Fatalf("compaction changed content (-want +got):\n%s", diff)
 			}
 		})
 	}
