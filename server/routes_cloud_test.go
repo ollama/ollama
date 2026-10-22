@@ -824,6 +824,8 @@ func TestCloudResponsesWebSearchUsesLocalOrchestration(t *testing.T) {
 	searchCalls := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/show":
+			json.NewEncoder(w).Encode(api.ShowResponse{})
 		case "/api/chat":
 			chatCalls++
 			w.Header().Set("Content-Type", "application/x-ndjson")

@@ -12,7 +12,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/middleware"
 )
 
 func TestResponsesNonthinkingEffort(t *testing.T) {
@@ -23,7 +22,7 @@ func TestResponsesNonthinkingEffort(t *testing.T) {
 	s := newServerWithMockRunner(t, &mock)
 	createMinimalGGUFModel(t, s, "nonthinking", nil, "{{ .Prompt }}", nil)
 	router := gin.New()
-	router.POST("/v1/responses", middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)
+	router.POST("/v1/responses", s.responsesMiddleware, s.ChatHandler)
 
 	for _, tt := range []struct {
 		name, fields string
@@ -71,7 +70,7 @@ func TestResponsesNonthinkingEffortWebSearch(t *testing.T) {
 {{ range .ToolCalls }}{"name":"{{ .Function.Name }}","arguments":{{ .Function.Arguments }}}{{ end }}
 {{ end }}`, nil)
 			router := gin.New()
-			router.POST("/v1/responses", middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)
+			router.POST("/v1/responses", s.responsesMiddleware, s.ChatHandler)
 			router.POST("/api/chat", s.ChatHandler)
 			router.POST("/api/experimental/web_search", func(c *gin.Context) {
 				searches.Add(1)

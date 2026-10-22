@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/gin-gonic/gin"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
 )
@@ -118,4 +121,37 @@ func lookupThinking(name string) *model.Thinking {
 		return nil
 	}
 	return m.genericThinking()
+}
+
+// Cloud Responses normally pass through unchanged. Local web-search conversion
+// needs the remote controls so it does not replace model-defined effort names
+// with legacy aliases or lose boolean thinking on default-off models.
+func (s *Server) responsesMiddleware(c *gin.Context) {
+	middleware.ResponsesMiddleware(func(name string) *model.Thinking {
+		ref, err := parseAndValidateModelRef(name)
+		if err != nil || ref.Source != modelSourceCloud {
+			return lookupThinking(name)
+		}
+		if disabled, _ := cloud.Status(); disabled {
+			return nil
+		}
+		cache := newModelShowCache()
+		if s.modelCaches != nil && s.modelCaches.show != nil {
+			cache = s.modelCaches.show
+		}
+		ctx := c.Request.Context()
+		info, ok := cache.GetCloudSWR(ctx, api.ShowRequest{Model: ref.Base})
+		if !ok {
+			info, err = cache.fetchCloudShow(ctx, ref.Base, false)
+			if err != nil {
+				return nil
+			}
+			cache.setCloud(modelShowCloudKeyForModel(ref.Base, false), info)
+		}
+		// Cloud Harmony, like local Harmony, retains legacy effort aliases.
+		if info.Details.Family == "gptoss" {
+			return nil
+		}
+		return info.Thinking
+	})(c)
 }
