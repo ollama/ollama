@@ -966,9 +966,6 @@ func TestChatMiddleware(t *testing.T) {
 					{
 						Role:    "user",
 						Content: "Hello",
-					},
-					{
-						Role: "user",
 						Images: []api.ImageData{
 							func() []byte {
 								img, _ := base64.StdEncoding.DecodeString(image)
