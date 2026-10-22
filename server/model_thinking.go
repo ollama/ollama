@@ -127,9 +127,6 @@ func lookupThinking(name string) *model.Thinking {
 	return m.genericThinking()
 }
 
-// Cloud Responses normally pass through unchanged. Local web-search conversion
-// needs the remote controls so it does not replace model-defined effort names
-// with legacy aliases or lose boolean thinking on default-off models.
 func (s *Server) responsesMiddleware(c *gin.Context) {
 	middleware.ResponsesMiddleware(func(name string) *model.Thinking {
 		ref, err := parseAndValidateModelRef(name)

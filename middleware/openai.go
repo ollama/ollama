@@ -1226,7 +1226,6 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
-		// Report a mapped named effort as the level the model actually receives.
 		if req.Think == nil && req.Reasoning.Effort != "" && chatReq.Think.IsString() {
 			req.Reasoning.Effort = chatReq.Think.String()
 		}
