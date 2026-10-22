@@ -3,14 +3,18 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -139,19 +143,73 @@ func (s *Server) responsesMiddleware(c *gin.Context) {
 		if s.modelCaches != nil && s.modelCaches.show != nil {
 			cache = s.modelCaches.show
 		}
-		ctx := c.Request.Context()
-		info, ok := cache.GetCloudSWR(ctx, api.ShowRequest{Model: ref.Base})
-		if !ok {
-			info, err = cache.fetchCloudShow(ctx, ref.Base, false)
-			if err != nil {
-				return nil
+		info, err := cache.cloudThinking(c.Request.Context(), ref.Base)
+		if err != nil {
+			status := http.StatusServiceUnavailable
+			code := "thinking_metadata_unavailable"
+			message := "Cloud thinking controls are temporarily unavailable; retry this request."
+			var authErr api.AuthorizationError
+			var statusErr api.StatusError
+			if errors.As(err, &authErr) {
+				status, code, message = http.StatusUnauthorized, "authentication_error", "Sign in to Ollama to use this cloud model."
+			} else if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusForbidden || statusErr.StatusCode == http.StatusNotFound || statusErr.StatusCode == http.StatusTooManyRequests) {
+				status, code, message = statusErr.StatusCode, "cloud_model_unavailable", "Cannot read this cloud model's thinking controls; check model availability and cloud access."
 			}
-			cache.setCloud(modelShowCloudKeyForModel(ref.Base, false), info)
-		}
-		// Cloud Harmony, like local Harmony, retains legacy effort aliases.
-		if info.Details.Family == "gptoss" {
+			if status == http.StatusServiceUnavailable || status == http.StatusTooManyRequests {
+				c.Header("Retry-After", "1")
+			}
+			response := openai.NewError(status, message)
+			response.Error.Code = &code
+			c.AbortWithStatusJSON(status, response)
 			return nil
 		}
 		return info.Thinking
 	})(c)
+}
+
+const cloudThinkingWait = 500 * time.Millisecond
+
+func (c *modelShowCache) cloudThinking(ctx context.Context, name string) (*api.ShowResponse, error) {
+	usable := func(info *api.ShowResponse) bool {
+		return info != nil && info.Thinking.Valid()
+	}
+	if info, ok := c.GetCloudSWR(ctx, api.ShowRequest{Model: name}); ok {
+		if !usable(info) {
+			return nil, errors.New("cloud thinking metadata is missing or invalid")
+		}
+		return info, nil
+	}
+	key := modelShowCloudKeyForModel(name, false)
+	result := c.cloudThinkingLoads.DoChan(key.Model, func() (any, error) {
+		if info, ok := c.getCloud(key); ok && usable(info) {
+			return info, nil
+		}
+		// A caller's short wait must not cancel the fetch that can serve its retry.
+		// fetchCloudShow bounds the background request with the cache's own timeout.
+		info, err := c.fetchCloudShow(context.WithoutCancel(ctx), key.Model, false)
+		if err != nil {
+			return nil, err
+		}
+		if !usable(info) {
+			return nil, errors.New("cloud thinking metadata is missing or invalid")
+		}
+		c.setCloud(key, info)
+		c.mu.Lock()
+		c.cloudNextReadRefreshAfter[key] = time.Now().Add(modelShowCloudReadRefreshCooldown)
+		c.mu.Unlock()
+		return info, nil
+	})
+	timer := time.NewTimer(cloudThinkingWait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return nil, context.DeadlineExceeded
+	case value := <-result:
+		if value.Err != nil {
+			return nil, value.Err
+		}
+		return value.Val.(*api.ShowResponse), nil
+	}
 }

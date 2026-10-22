@@ -829,6 +829,11 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 		}
 		think = converted
 	}
+	if len(thinking) > 0 {
+		if err := thinking[0].ValidateRequest(think); err != nil {
+			return nil, err
+		}
+	}
 
 	// Convert tools from Responses API format to api.Tool format
 	var tools []api.Tool

@@ -49,6 +49,29 @@ func (t *Thinking) Supports(value any) bool {
 	}
 }
 
+// ValidateRequest rejects explicit controls that a known model cannot honor.
+// A boolean true enables a named-level model using its existing default level.
+func (t *Thinking) ValidateRequest(requested *ThinkValue) error {
+	if !t.Valid() || requested == nil || requested.Value == nil {
+		return nil
+	}
+	if t.Supports(requested.Value) {
+		return nil
+	}
+	if requested.Value == true {
+		for _, value := range t.Values {
+			if _, named := value.(string); named {
+				return nil
+			}
+		}
+	}
+	values, _ := json.Marshal(t.Values)
+	if requested.Value == false {
+		return fmt.Errorf("this model cannot disable thinking; supported values: %s", values)
+	}
+	return fmt.Errorf("unsupported thinking value %v; supported values: %s", requested.Value, values)
+}
+
 // Clone returns an independent copy.
 func (t *Thinking) Clone() *Thinking {
 	if t == nil {

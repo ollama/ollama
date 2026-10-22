@@ -54,7 +54,7 @@ func TestThinkingCompatibilityScope(t *testing.T) {
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, req)
-				if name == "legacy" && tt.legacyError {
+				if (name == "legacy" && tt.legacyError) || (name == "generic" && tt.name == "responses future") {
 					if rec.Code != http.StatusBadRequest {
 						t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 					}

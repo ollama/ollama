@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -70,6 +71,12 @@ func TestThinkingConversionMetadata(t *testing.T) {
 						}
 						return
 					}
+					if protocol == "responses" && metadata.generic && tt.wantGeneric != nil && !metadata.thinking.Supports(tt.wantGeneric) {
+						if err == nil || !strings.Contains(err.Error(), "supported values") {
+							t.Fatalf("unsupported Responses control needs supported choices: %v", err)
+						}
+						return
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -105,6 +112,9 @@ func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
 				req.Reasoning.Effort = "xhigh"
 				got, err := FromResponsesRequest(req, metadata.thinking)
 				wantErr := value == 75 || (!metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "minimal" || value == "future"))
+				if metadata.thinking.Valid() && value != true && !metadata.thinking.Supports(value) {
+					wantErr = true
+				}
 				if wantErr {
 					if err == nil {
 						t.Fatal("invalid override must fail")
@@ -146,9 +156,6 @@ func TestThinkingBooleanOpenAIControls(t *testing.T) {
 						req.Reasoning.Effort = effort
 						got, err = FromResponsesRequest(req, metadata.thinking)
 					}
-					if err != nil {
-						t.Fatal(err)
-					}
 					var want any = effort
 					switch effort {
 					case "":
@@ -160,6 +167,15 @@ func TestThinkingBooleanOpenAIControls(t *testing.T) {
 						if metadata.boolean {
 							want = true
 						}
+					}
+					if protocol == "responses" && want != nil && !metadata.thinking.Supports(want) {
+						if err == nil || !strings.Contains(err.Error(), "supported values") {
+							t.Fatalf("unsupported Responses control needs supported choices: %v", err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatal(err)
 					}
 					var actual any
 					if got.Think != nil {

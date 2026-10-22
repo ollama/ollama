@@ -19,6 +19,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/types/model"
 )
 
 // maxDecompressedBodySize limits the size of a decompressed request body
@@ -1213,7 +1214,13 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 			return
 		}
 
-		thinking := modelThinking(thinkingLookup, req.Model)
+		var thinking *model.Thinking
+		if req.Think != nil || req.Reasoning.Effort != "" {
+			thinking = modelThinking(thinkingLookup, req.Model)
+			if c.IsAborted() {
+				return
+			}
+		}
 		chatReq, err := openai.FromResponsesRequest(req, thinking)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))

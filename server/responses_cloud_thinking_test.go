@@ -8,7 +8,10 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
@@ -43,24 +46,30 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 		{name: "supported low", thinking: named, fields: `,"reasoning":{"effort":"low"}`, want: "low"},
 		{name: "supported xhigh", thinking: named, fields: `,"reasoning":{"effort":"xhigh"}`, want: "xhigh"},
 		{name: "native named override", thinking: named, fields: `,"think":"xhigh","reasoning":{"effort":"low"}`, want: "xhigh"},
-		{name: "unsupported name reaches model", thinking: named, fields: `,"reasoning":{"effort":"max"}`, want: "max"},
-		{name: "unknown name reaches model", thinking: named, fields: `,"reasoning":{"effort":"future"}`, want: "future"},
+		{name: "unsupported name is rejected", thinking: named, fields: `,"reasoning":{"effort":"max"}`, wantCode: http.StatusBadRequest},
+		{name: "unknown name is rejected", thinking: named, fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusBadRequest},
 		{name: "always thinking omission", thinking: always},
-		{name: "always thinking explicit off", thinking: always, fields: `,"reasoning":{"effort":"none"}`, want: false},
-		{name: "nonthinking effort", thinking: &model.Thinking{Values: []any{false}, Default: false}, fields: `,"reasoning":{"effort":"high"}`, want: "high"},
-		{name: "Harmony retains aliases", thinking: &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, family: "gptoss", fields: `,"reasoning":{"effort":"xhigh"}`, want: "max"},
-		{name: "unknown metadata retains aliases", fields: `,"reasoning":{"effort":"xhigh"}`, want: "max"},
-		{name: "unavailable metadata retains aliases", showCode: http.StatusServiceUnavailable, fields: `,"reasoning":{"effort":"xhigh"}`, want: "max"},
-		{name: "invalid metadata retains validation", thinking: &model.Thinking{Values: []any{"high"}, Default: "missing"}, fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusBadRequest},
-		{name: "unknown metadata retains validation", fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusBadRequest},
+		{name: "always thinking explicit off", thinking: always, fields: `,"reasoning":{"effort":"none"}`, wantCode: http.StatusBadRequest},
+		{name: "always thinking native off", thinking: always, fields: `,"think":false`, wantCode: http.StatusBadRequest},
+		{name: "nonthinking effort", thinking: &model.Thinking{Values: []any{false}, Default: false}, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusBadRequest},
+		{name: "Harmony unsupported effort", thinking: &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, family: "gptoss", fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusBadRequest},
+		{name: "unknown metadata rejects conversion", fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusServiceUnavailable},
+		{name: "unavailable metadata rejects conversion", showCode: http.StatusServiceUnavailable, fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusServiceUnavailable},
+		{name: "metadata needs sign in", showCode: http.StatusUnauthorized, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusUnauthorized},
+		{name: "missing cloud model", showCode: http.StatusNotFound, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusNotFound},
+		{name: "metadata rate limit", showCode: http.StatusTooManyRequests, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusTooManyRequests},
+		{name: "invalid metadata rejects conversion", thinking: &model.Thinking{Values: []any{"high"}, Default: "missing"}, fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusServiceUnavailable},
+		{name: "unknown metadata rejects unknown effort", fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusServiceUnavailable},
 		{name: "invalid native type", thinking: named, fields: `,"think":75`, wantCode: http.StatusBadRequest},
 	} {
 		for _, streaming := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, streaming), func(t *testing.T) {
 				captured := make(chan *api.ThinkValue, 2)
+				var showCalls atomic.Int32
 				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					switch r.URL.Path {
 					case "/api/show":
+						showCalls.Add(1)
 						if tc.showCode != 0 {
 							w.WriteHeader(tc.showCode)
 							return
@@ -104,7 +113,16 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 					if w.Code != tc.wantCode || len(captured) != 0 {
 						t.Fatalf("status=%d model requests=%d, want %d with no inference: %s", w.Code, len(captured), tc.wantCode, w.Body.String())
 					}
+					if tc.wantCode == http.StatusServiceUnavailable && (!strings.Contains(w.Body.String(), "thinking_metadata_unavailable") || w.Header().Get("Retry-After") == "" || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json")) {
+						t.Fatalf("metadata failure needs a retryable JSON error: headers=%v body=%s", w.Header(), w.Body.String())
+					}
+					if tc.wantCode == http.StatusBadRequest && tc.thinking.Valid() && tc.name != "invalid native type" && !strings.Contains(w.Body.String(), "supported values") {
+						t.Fatalf("unsupported thinking needs supported choices: %s", w.Body.String())
+					}
 					return
+				}
+				if tc.fields == "" && showCalls.Load() != 0 {
+					t.Fatal("omitted thinking must not need cloud metadata")
 				}
 				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "answer") {
 					t.Fatalf("status %d: %s", w.Code, w.Body.String())
@@ -124,6 +142,90 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestCloudThinkingLookupWaitAndRecovery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+	originalSignRequest := cloudProxySignRequest
+	cloudProxySignRequest = func(context.Context, *http.Request) error { return nil }
+	t.Cleanup(func() { cloudProxySignRequest = originalSignRequest })
+
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	var showCalls, modelCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			showCalls.Add(1)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			json.NewEncoder(w).Encode(api.ShowResponse{Thinking: &model.Thinking{Values: []any{false, "xhigh"}, Default: "xhigh"}})
+		case "/api/chat":
+			modelCalls.Add(1)
+			var req api.ChatRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Think == nil || req.Think.Value != "xhigh" {
+				t.Errorf("incorrect recovered request: think=%v error=%v", req.Think, err)
+			}
+			fmt.Fprintln(w, `{"message":{"role":"assistant","content":"answer"},"done":true}`)
+		default:
+			t.Errorf("unexpected upstream path %q", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+	// Unblock before closing the test server, including on an assertion failure.
+	defer unblock()
+	withCloudProxyBaseURL(t, upstream.URL)
+	cache := newModelShowCache()
+	s := &Server{modelCaches: &modelCaches{show: cache}}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"thinking-test:cloud","input":"hello","tools":[{"type":"web_search"}],"reasoning":{"effort":"xhigh"}}`)))
+		return w
+	}
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { responses <- request() }()
+	}
+	deadline := time.NewTimer(1500 * time.Millisecond)
+	defer deadline.Stop()
+	for range 2 {
+		select {
+		case w := <-responses:
+			if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "thinking_metadata_unavailable") {
+				t.Fatalf("slow metadata must produce a retryable error: status=%d body=%s", w.Code, w.Body.String())
+			}
+		case <-deadline.C:
+			t.Fatal("inference request waited for the full metadata fetch")
+		}
+	}
+	if showCalls.Load() != 1 || modelCalls.Load() != 0 {
+		t.Fatalf("cold requests: metadata=%d inference=%d, want one shared metadata fetch and no inference", showCalls.Load(), modelCalls.Load())
+	}
+	unblock()
+	for deadline := time.Now().Add(time.Second); ; {
+		if _, ok := cache.getCloud(modelShowCloudKeyForModel("thinking-test", false)); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("metadata fetch did not complete after the caller stopped waiting")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	w := request()
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "answer") || modelCalls.Load() != 1 || showCalls.Load() != 1 {
+		t.Fatalf("retry did not recover: status=%d inference=%d body=%s", w.Code, modelCalls.Load(), w.Body.String())
 	}
 }
 

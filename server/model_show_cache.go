@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"golang.org/x/sync/singleflight"
 )
 
 /*
@@ -72,6 +73,7 @@ type modelShowCache struct {
 
 	cloudRefreshing           map[modelShowCloudKey]bool
 	cloudNextReadRefreshAfter map[modelShowCloudKey]time.Time
+	cloudThinkingLoads        singleflight.Group
 
 	once         sync.Once
 	client       *http.Client
