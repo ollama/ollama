@@ -49,8 +49,8 @@ type OllamaCompactionPayload struct {
 	Version  int           `json:"version"`
 	Summary  string        `json:"summary"`
 	Retained []api.Message `json:"retained"`
-	// LeadingInstructions records the original prefix, before conversation items
-	// are summarized away. Nil supports payloads written without this boundary.
+	// LeadingInstructions is accepted for continuations from earlier writers.
+	// New payloads use retained history to preserve the boundary within v1.
 	LeadingInstructions *int `json:"leading_instructions,omitempty"`
 	// StandaloneNames preserves Responses identities by retained-message index.
 	// Qualified native names alone cannot distinguish every namespace/member pair.
@@ -95,12 +95,11 @@ type ResponsesCompactionPlan struct {
 	Model  string
 	Stream bool
 
-	items               []CompactionTranscriptItem
-	tools               []compactionToolMetadata
-	groups              []compactionToolGroup
-	forcedRefs          map[string]struct{}
-	omittedItems        int
-	leadingInstructions int
+	items        []CompactionTranscriptItem
+	tools        []compactionToolMetadata
+	groups       []compactionToolGroup
+	forcedRefs   map[string]struct{}
+	omittedItems int
 }
 
 // ResponsesCompactionResult is the validated result of a compaction-model call.
@@ -575,18 +574,53 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 			forced[item.Ref] = struct{}{}
 		}
 	}
-	leadingInstructions := 0
-	for _, item := range items {
-		if item.Message.Role != "system" && item.Message.Role != "developer" {
-			break
-		}
-		leadingInstructions++
+	// Keep an existing conversation item before later instructions so v1
+	// readers can distinguish them from the original leading prefix.
+	for _, ref := range compactionInstructionBoundary(items) {
+		forced[ref] = struct{}{}
 	}
 	stream := req.Stream != nil && *req.Stream
 	return &ResponsesCompactionPlan{
 		Model: req.Model, Stream: stream, items: items, tools: collectCompactionToolMetadata(req.Tools), groups: groups, forcedRefs: forced,
-		leadingInstructions: leadingInstructions,
 	}, nil
+}
+
+func compactionInstructionBoundary(items []CompactionTranscriptItem) []string {
+	start := 0
+	for start < len(items) && (items[start].Message.Role == "system" || items[start].Message.Role == "developer") {
+		start++
+	}
+	end := start
+	for end < len(items) && items[end].Message.Role != "system" && items[end].Message.Role != "developer" {
+		end++
+	}
+	if end == len(items) {
+		return nil // No later instruction needs a boundary.
+	}
+	boundary := items[start:end]
+	summaryCalls := make(map[string]string)
+	for _, item := range boundary {
+		if isCompactionSummaryCall(item) {
+			summaryCalls[item.Message.ToolCalls[0].ID] = item.Ref
+		}
+	}
+	var priorSummary []string
+	for _, item := range boundary {
+		if isCompactionSummaryCall(item) {
+			continue
+		}
+		if callRef, ok := summaryCalls[item.Message.ToolCallID]; ok && item.Type == "function_call_output" {
+			if priorSummary == nil {
+				priorSummary = []string{callRef, item.Ref}
+			}
+			continue
+		}
+		return []string{item.Ref}
+	}
+	// Older continuations may contain only a prior summary before a later
+	// instruction. Keep one pair, preferring real history whenever available.
+	// Repeated compaction replaces this pair with the newly expanded summary.
+	return priorSummary
 }
 
 func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
@@ -686,6 +720,12 @@ func validateCompactionContent(contents []ResponsesContent) error {
 	return nil
 }
 
+func isCompactionSummaryCall(item CompactionTranscriptItem) bool {
+	return item.Type == "function_call" && len(item.Message.ToolCalls) == 1 &&
+		item.Message.ToolCalls[0].Function.Name == compactionSummaryToolName &&
+		strings.HasPrefix(item.Message.ToolCalls[0].ID, "call_ollama_compaction_")
+}
+
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {
 	type pendingGroup struct {
 		callIndex   int
@@ -704,7 +744,7 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			if call.ID == "" {
 				return nil, nil, fmt.Errorf("%s: function call is missing call_id", item.Ref)
 			}
-			if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
+			if isCompactionSummaryCall(item) {
 				ignoredCallIDs[call.ID] = struct{}{}
 				continue
 			}
@@ -1013,11 +1053,6 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	payload := OllamaCompactionPayload{
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: selection.Summary, Retained: retained,
 		StandaloneNames: standaloneNames,
-	}
-	// Older readers reject unknown fields. Only record the boundary when
-	// removing conversation items made a later instruction appear leading.
-	if p.leadingInstructions < len(retained) && (retained[p.leadingInstructions].Role == "system" || retained[p.leadingInstructions].Role == "developer") {
-		payload.LeadingInstructions = &p.leadingInstructions
 	}
 	if p.omittedItems > 0 {
 		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
