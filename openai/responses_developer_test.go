@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 func TestResponsesPreserveDeveloperRole(t *testing.T) {
@@ -112,5 +113,99 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 			t.Fatalf("replay instructions = %#v", instructions)
 		}
 		body = replay
+	}
+}
+
+func TestCompactedInstructionsReachRenderer(t *testing.T) {
+	for _, role := range []string{"system", "developer"} {
+		t.Run(role, func(t *testing.T) {
+			body, err := json.Marshal(map[string]any{"model": "test", "input": []any{
+				map[string]any{"role": role, "content": "LEADING_POLICY"},
+				map[string]any{"role": "user", "content": "Earlier request"},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for cycle := range 2 {
+				plan, err := PrepareStandaloneCompaction(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+					"summary": "Earlier work is complete.", "retain_item_ids": []string{},
+				}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err = json.Marshal(map[string]any{"model": "test", "input": []any{
+					result.Item, map[string]any{"role": "user", "content": "Continue"},
+				}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				expanded, _, err := ExpandResponsesCompactionInput(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var request ResponsesRequest
+				if err := json.Unmarshal(expanded, &request); err != nil {
+					t.Fatal(err)
+				}
+				chat, err := FromResponsesRequest(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, renderer := range []string{"cogito", "functiongemma"} {
+					prompt, err := renderers.RenderWithRenderer(renderer, chat.Messages, nil, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(prompt, "LEADING_POLICY") {
+						t.Errorf("cycle %d, %s: compacted instructions missing from prompt: %q", cycle, renderer, prompt)
+					}
+				}
+				if len(chat.Messages) != 4 || chat.Messages[0].Role != role || chat.Messages[0].Content != "LEADING_POLICY" {
+					t.Fatalf("cycle %d: leading instruction position or role changed: %#v", cycle, chat.Messages)
+				}
+				if len(chat.Messages[1].ToolCalls) != 1 || chat.Messages[1].ToolCalls[0].ID != chat.Messages[2].ToolCallID {
+					t.Fatal("summary call/result pairing changed")
+				}
+			}
+		})
+	}
+}
+
+func TestCompactionSummaryPreservesRetainedMessageOrder(t *testing.T) {
+	retained := []api.Message{
+		{Role: "system", Content: "Base policy"},
+		{Role: "developer", Content: "Project policy"},
+		{Role: "user", Content: "Earlier request"},
+		{Role: "developer", Content: "Later policy"},
+		{Role: "user", Content: "Continue"},
+	}
+	items, err := payloadToResponsesItems(OllamaCompactionPayload{
+		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion,
+		Summary: "Earlier work is complete.", Retained: retained,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"model": "test", "input": items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request ResponsesRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chat.Messages) != 7 || !reflect.DeepEqual(chat.Messages[:2], retained[:2]) || !reflect.DeepEqual(chat.Messages[4:], retained[2:]) {
+		t.Fatalf("summary displaced the leading prefix or reordered later instructions: %#v", chat.Messages)
+	}
+	if len(chat.Messages[2].ToolCalls) != 1 || chat.Messages[2].ToolCalls[0].ID != chat.Messages[3].ToolCallID {
+		t.Fatal("summary call/result pairing changed")
 	}
 }

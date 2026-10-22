@@ -55,6 +55,30 @@ var templatesOnce = sync.OnceValues(func() ([]*named, error) {
 	return templates, nil
 })
 
+// These bundled templates use system instructions. Match their saved source as
+// well, so existing models get the fallback without changing custom templates.
+var systemRoleTemplates = sync.OnceValues(func() (map[string]bool, error) {
+	sources := make(map[string]bool)
+	for _, name := range []string{
+		"alfred", "alpaca", "chatml", "chatqa", "codellama-70b-instruct",
+		"command-r", "falcon-instruct", "gemma-instruct", "gemma3-instruct",
+		"granite-instruct", "llama2-chat", "llama3-instruct", "magicoder",
+		"mistral-instruct", "openchat", "phi-3", "solar-instruct",
+		"starcoder2-instruct", "vicuna", "zephyr",
+	} {
+		source, err := templatesFS.ReadFile(name + ".gotmpl")
+		if err != nil {
+			return nil, err
+		}
+		sources[normalizeTemplateSource(string(source))] = true
+	}
+	return sources, nil
+})
+
+func normalizeTemplateSource(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(s, "\r\n", "\n"))
+}
+
 type named struct {
 	Name     string `json:"name"`
 	Template string `json:"template"`
@@ -95,7 +119,8 @@ var DefaultTemplate, _ = Parse("{{ .Prompt }}")
 
 type Template struct {
 	*template.Template
-	raw string
+	raw        string
+	systemRole bool
 }
 
 // response is a template node that can be added to templates that don't already have one
@@ -151,6 +176,11 @@ func Parse(s string) (*Template, error) {
 	}
 
 	t := Template{Template: tmpl, raw: s}
+	sources, err := systemRoleTemplates()
+	if err != nil {
+		return nil, err
+	}
+	t.systemRole = sources[normalizeTemplateSource(s)]
 	vars, err := t.Vars()
 	if err != nil {
 		return nil, err
@@ -255,11 +285,20 @@ func (t *Template) Subtree(fn func(parse.Node) bool) *template.Template {
 }
 
 func (t *Template) Execute(w io.Writer, v Values) error {
-	system, messages := collate(v.Messages)
 	vars, err := t.Vars()
 	if err != nil {
 		return err
 	}
+	useMessages := !v.forceLegacy && slices.Contains(vars, "messages")
+	if (t.systemRole || !useMessages) && slices.ContainsFunc(v.Messages, func(m api.Message) bool { return m.Role == "developer" }) {
+		v.Messages = slices.Clone(v.Messages)
+		for i := range v.Messages {
+			if v.Messages[i].Role == "developer" {
+				v.Messages[i].Role = "system"
+			}
+		}
+	}
+	system, messages := collate(v.Messages)
 	if v.Prompt != "" && v.Suffix != "" {
 		return t.Template.Execute(w, map[string]any{
 			"Prompt":     v.Prompt,
@@ -269,7 +308,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
 		})
-	} else if !v.forceLegacy && slices.Contains(vars, "messages") {
+	} else if useMessages {
 		return t.Template.Execute(w, map[string]any{
 			"System":     system,
 			"Messages":   convertMessagesForTemplate(messages),
@@ -304,18 +343,13 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		}
 
 		switch m.Role {
-		case "system", "developer":
+		case "system":
 			if prompt != "" || response != "" {
 				if err := execute(); err != nil {
 					return err
 				}
 			}
-			// Legacy templates have only a System slot. Preserve the order of
-			// instruction messages without changing roles for Messages templates.
-			if system != "" && m.Content != "" {
-				system += "\n\n"
-			}
-			system += m.Content
+			system = m.Content
 		case "user":
 			if response != "" {
 				if err := execute(); err != nil {
@@ -356,15 +390,14 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 // collate messages based on role. consecutive messages of the same role are merged
 // into a single message (except for tool messages which preserve individual metadata).
-// collate also collects system and developer instructions for the legacy System
-// slot. Messages templates still receive the original roles.
+// collate also collects system instructions for the System slot.
 // collate mutates message content adding image tags ([img-%d]) as needed
 // todo(parthsareen): revisit for contextual image support
 func collate(msgs []api.Message) (string, []*api.Message) {
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
-		if msgs[i].Role == "system" || msgs[i].Role == "developer" {
+		if msgs[i].Role == "system" {
 			system = append(system, msgs[i].Content)
 		}
 

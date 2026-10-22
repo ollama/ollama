@@ -387,13 +387,22 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	items = append(items, call, result)
+	// Leading instructions must stay ahead of the synthetic summary turn for
+	// renderers that only consume instructions at the start of the history.
+	summaryAdded := false
 	for i, message := range payload.Retained {
+		if !summaryAdded && message.Role != "system" && message.Role != "developer" {
+			items = append(items, call, result)
+			summaryAdded = true
+		}
 		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
 		if err != nil {
 			return nil, fmt.Errorf("invalid retained message: %w", err)
 		}
 		items = append(items, converted...)
+	}
+	if !summaryAdded {
+		items = append(items, call, result)
 	}
 	return items, nil
 }

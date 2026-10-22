@@ -69,6 +69,35 @@ func TestResponsesDeveloperInstructionsSurviveTruncation(t *testing.T) {
 	}
 }
 
+func TestResponsesDeveloperInstructionsOverrideModelSystem(t *testing.T) {
+	var request openai.ResponsesRequest
+	if err := json.Unmarshal([]byte(`{"model":"test","input":[
+		{"role":"developer","content":"CLIENT_POLICY"},
+		{"role":"user","content":"Continue"}
+	]}`), &request); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := openai.FromResponsesRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &Model{Config: testConfigWithRenderer("qwen3-coder"), System: "MODEL_DEFAULT"}
+	messages := chatMessagesForRequest(m, chat.Messages)
+	prompt, err := renderPrompt(m, messages, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "CLIENT_POLICY") || strings.Contains(prompt, "MODEL_DEFAULT") {
+		t.Fatalf("saved model instructions displaced the developer policy: %q", prompt)
+	}
+	if len(messages) != len(chat.Messages) || messages[0].Role != "developer" || chat.Messages[0].Role != "developer" {
+		t.Fatal("request preparation changed the developer role or added default instructions")
+	}
+	if m.System != "MODEL_DEFAULT" {
+		t.Fatal("request preparation changed the saved model instructions")
+	}
+}
+
 func TestNativeChatTruncationPreservesInstructionRoles(t *testing.T) {
 	messages := []api.Message{
 		{Role: "system", Content: "SYSTEM_POLICY"},
