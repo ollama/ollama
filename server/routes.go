@@ -33,6 +33,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/decision"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
@@ -249,24 +250,57 @@ func (s *Server) scheduleRunner(ctx context.Context, name, selectedRunner string
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	model, err = s.modelForLoad(ctx, model)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	return s.scheduleRunnerForModel(ctx, model, caps, requestOpts, keepAlive, shift)
 }
 
-// scheduleRunnerForModel retains the request's resolved model, including its selected
-// manifest-list child, without repeating model lookup and metadata loading.
-func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
-	// TODO: enable compatibility migration
-	// selectedName := model.ParseName(m.Name)
-	// if !manifest.IsDigestReferenceName(selectedName) {
-	// 	runner := m.Runner
-	// 	if runner == "" && m.isGGUF() {
-	// 		runner = manifest.RunnerGGML
-	// 	}
-	// 	if runner == manifest.RunnerGGML {
-	// 		compatmigrate.StartLocalCompatibilityMigration(selectedName)
-	// 	}
-	// }
+// Conversion must precede both scheduling and selection of prompt renderers/parsers.
+// Read-only operations deliberately do not call this.
+func (s *Server) modelForLoad(ctx context.Context, m *Model) (*Model, error) {
+	if !m.isGGUF() {
+		return m, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	selectedName := model.ParseName(m.Name)
+	if s.sched != nil {
+		for _, loaded := range s.sched.loadedModelsForName(selectedName, m.runnerSelection) {
+			// Every loaded GGUF has already passed conversion. Compare the
+			// selected manifest, including after a copied tag was re-read.
+			if m.ManifestDigest != "" && loaded.ManifestDigest == m.ManifestDigest {
+				return m, nil
+			}
+		}
+	}
+	digest, err := compatmigrate.WaitLocalCompatibilityMigration(ctx, selectedName, m.ManifestDigest)
+	if err != nil {
+		return nil, fmt.Errorf("convert model: %w", err)
+	}
+	if digest == "" {
+		return m, nil
+	}
+	// Keep the parent tag identity for warm lookup, without switching to a
+	// different runner or a tag replacement made while conversion completed.
+	converted, err := GetModelForRunner(m.Name, manifest.RunnerLlamaCPP)
+	if err != nil {
+		return nil, err
+	}
+	if !manifest.SameDigest(converted.ManifestDigest, digest) {
+		return nil, manifest.ErrManifestChanged
+	}
+	converted.runnerSelection = m.runnerSelection
+	if converted.runnerSelection == manifest.RunnerGGML {
+		converted.runnerSelection = manifest.RunnerLlamaCPP
+	}
+	return converted, nil
+}
 
+// scheduleRunnerForModel retains the request's converted model and selected child.
+func (s *Server) scheduleRunnerForModel(ctx context.Context, m *Model, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, shift *bool) (llm.LlamaServer, *Model, *api.Options, error) {
 	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(m.ProjectorPaths) > 0 {
 		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
@@ -500,6 +534,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	m, err = s.modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	thinking := m.genericThinking()
 	if thinking == nil {
 		if err := api.ValidateLegacyThinking(req.Think); err != nil {
@@ -1015,6 +1054,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		rejectText(textLimit)
 		return
 	}
+	m, err = s.modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	if m.isGGUF() {
 		s.systemOneLlamaServer(c, m, req, body)
 		return
@@ -1201,6 +1245,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	m, err = s.modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	r, m, opts, err := s.scheduleRunnerForModel(c.Request.Context(), m, []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -3162,6 +3211,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	m, err = s.modelForLoad(c.Request.Context(), m)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
 	thinking := m.genericThinking()
 	if thinking == nil {
 		if err := api.ValidateLegacyThinking(req.Think); err != nil {
@@ -3600,6 +3654,8 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, manifest.ErrNoCompatibleManifest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, manifest.ErrManifestChanged):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	case errors.Is(err, context.Canceled):
 		c.JSON(499, gin.H{"error": "request canceled"})
 	case errors.Is(err, ErrMaxQueue):

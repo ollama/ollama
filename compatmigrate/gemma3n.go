@@ -9,7 +9,6 @@ const gemma3nVocabSize = 262144
 
 type gemma3nMigrator struct{}
 
-// Mirrors detect_ollama_gemma3n in llama/compat/llama-ollama-compat.cpp; keep the two in sync.
 func (gemma3nMigrator) NeedsMigration(src *SourceModel) bool {
 	if src.GGUF.KeyValue("general.architecture").String() != "gemma3n" {
 		return false
