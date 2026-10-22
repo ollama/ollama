@@ -85,6 +85,9 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 		if !reflect.DeepEqual(payload.Retained, want) {
 			t.Fatalf("cycle %d: retained %#v, want %#v", cycle, payload.Retained, want)
 		}
+		if payload.LeadingInstructions == nil || *payload.LeadingInstructions != 2 {
+			t.Fatal("original leading instruction boundary was not recorded")
+		}
 		replay, err := json.Marshal(map[string]any{"model": "test-model", "input": []any{
 			result.Item, map[string]any{"role": "user", "content": "Continue"},
 		}})
@@ -103,10 +106,10 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(chat.Messages) != len(want)+3 || !reflect.DeepEqual(chat.Messages[:len(want)], want) {
+		if len(chat.Messages) != len(want)+3 || !reflect.DeepEqual(chat.Messages[:2], want[:2]) || !reflect.DeepEqual(chat.Messages[4], want[2]) {
 			t.Fatalf("cycle %d: replay lost or reordered the instruction prefix: %#v", cycle, chat.Messages)
 		}
-		call, resultMessage := chat.Messages[len(want)], chat.Messages[len(want)+1]
+		call, resultMessage := chat.Messages[2], chat.Messages[3]
 		if len(call.ToolCalls) != 1 || call.ToolCalls[0].ID != resultMessage.ToolCallID {
 			t.Fatal("summary call/result pairing changed")
 		}
@@ -129,6 +132,76 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 			}
 		}
 		body = replay
+	}
+}
+
+func TestCompactionPreservesLegacyPayloadShape(t *testing.T) {
+	for _, instructions := range []string{"", `{"role":"developer","content":"Policy"},`} {
+		plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[` + instructions + `{"role":"user","content":"Continue"}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "Earlier work.", "retain_item_ids": []string{},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Match the existing v1 reader, which rejects unknown JSON fields.
+		var legacy struct {
+			Type            string                         `json:"type"`
+			Version         int                            `json:"version"`
+			Summary         string                         `json:"summary"`
+			Retained        []api.Message                  `json:"retained"`
+			StandaloneNames map[int]compactionFunctionName `json:"standalone_names,omitempty"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(result.Item.EncryptedContent))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&legacy); err != nil {
+			t.Fatalf("unambiguous payload is incompatible with the v1 reader: %v", err)
+		}
+	}
+}
+
+func TestCompactionPreservesLaterInstructionPosition(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+        {"role":"user","content":"Start"},
+        {"role":"assistant","content":"Started."},
+        {"role":"developer","content":"LATER_POLICY"},
+        {"role":"user","content":"Continue"}
+    ]}`)
+	for cycle := range 2 {
+		plan, err := PrepareStandaloneCompaction(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+			"summary": "Work started.", "retain_item_ids": []string{},
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err = json.Marshal(map[string]any{"model": "test", "input": []any{
+			result.Item, map[string]any{"role": "user", "content": "Continue"},
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expanded, _, err := ExpandResponsesCompactionInput(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var request ResponsesRequest
+		if err := json.Unmarshal(expanded, &request); err != nil {
+			t.Fatal(err)
+		}
+		chat, err := FromResponsesRequest(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(chat.Messages) != 4 || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[1].ToolCallID != chat.Messages[0].ToolCalls[0].ID || chat.Messages[2].Role != "developer" || chat.Messages[2].Content != "LATER_POLICY" {
+			t.Fatalf("cycle %d: later instruction moved ahead of summarized history: %#v", cycle, chat.Messages)
+		}
 	}
 }
 
@@ -164,5 +237,18 @@ func TestCompactionSummaryPreservesRetainedMessageOrder(t *testing.T) {
 	}
 	if len(chat.Messages[2].ToolCalls) != 1 || chat.Messages[2].ToolCalls[0].ID != chat.Messages[3].ToolCallID {
 		t.Fatal("summary call/result pairing changed")
+	}
+}
+
+func TestCompactionRejectsInvalidInstructionBoundary(t *testing.T) {
+	for _, boundary := range []int{-1, 2, 3} {
+		_, err := payloadToResponsesItems(OllamaCompactionPayload{
+			Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion,
+			Summary: "Earlier work.", LeadingInstructions: &boundary,
+			Retained: []api.Message{{Role: "developer", Content: "Policy"}, {Role: "user", Content: "Continue"}},
+		})
+		if err == nil {
+			t.Fatalf("accepted invalid instruction boundary %d", boundary)
+		}
 	}
 }

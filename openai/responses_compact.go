@@ -49,6 +49,9 @@ type OllamaCompactionPayload struct {
 	Version  int           `json:"version"`
 	Summary  string        `json:"summary"`
 	Retained []api.Message `json:"retained"`
+	// LeadingInstructions records the original prefix, before conversation items
+	// are summarized away. Nil supports payloads written without this boundary.
+	LeadingInstructions *int `json:"leading_instructions,omitempty"`
 	// StandaloneNames preserves Responses identities by retained-message index.
 	// Qualified native names alone cannot distinguish every namespace/member pair.
 	StandaloneNames map[int]compactionFunctionName `json:"standalone_names,omitempty"`
@@ -92,11 +95,12 @@ type ResponsesCompactionPlan struct {
 	Model  string
 	Stream bool
 
-	items        []CompactionTranscriptItem
-	tools        []compactionToolMetadata
-	groups       []compactionToolGroup
-	forcedRefs   map[string]struct{}
-	omittedItems int
+	items               []CompactionTranscriptItem
+	tools               []compactionToolMetadata
+	groups              []compactionToolGroup
+	forcedRefs          map[string]struct{}
+	omittedItems        int
+	leadingInstructions int
 }
 
 // ResponsesCompactionResult is the validated result of a compaction-model call.
@@ -357,6 +361,19 @@ func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, 
 }
 
 func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage, error) {
+	leadingInstructions := 0
+	for _, message := range payload.Retained {
+		if message.Role != "system" && message.Role != "developer" {
+			break
+		}
+		leadingInstructions++
+	}
+	if payload.LeadingInstructions != nil {
+		if *payload.LeadingInstructions < 0 || *payload.LeadingInstructions > leadingInstructions {
+			return nil, errors.New("invalid leading instruction boundary in compaction payload")
+		}
+		leadingInstructions = *payload.LeadingInstructions
+	}
 	for index, name := range payload.StandaloneNames {
 		if index < 0 || index >= len(payload.Retained) {
 			return nil, fmt.Errorf("standalone name refers to invalid retained-message index %d", index)
@@ -387,13 +404,11 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	// Leading instructions must stay ahead of the synthetic summary turn for
-	// renderers that only consume instructions at the start of the history.
-	summaryAdded := false
+	// Keep the original instruction prefix ahead of the synthetic summary.
+	// Later instructions remain after it even if intervening items were removed.
 	for i, message := range payload.Retained {
-		if !summaryAdded && message.Role != "system" && message.Role != "developer" {
+		if i == leadingInstructions {
 			items = append(items, call, result)
-			summaryAdded = true
 		}
 		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
 		if err != nil {
@@ -401,7 +416,7 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 		}
 		items = append(items, converted...)
 	}
-	if !summaryAdded {
+	if leadingInstructions == len(payload.Retained) {
 		items = append(items, call, result)
 	}
 	return items, nil
@@ -560,9 +575,17 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 			forced[item.Ref] = struct{}{}
 		}
 	}
+	leadingInstructions := 0
+	for _, item := range items {
+		if item.Message.Role != "system" && item.Message.Role != "developer" {
+			break
+		}
+		leadingInstructions++
+	}
 	stream := req.Stream != nil && *req.Stream
 	return &ResponsesCompactionPlan{
 		Model: req.Model, Stream: stream, items: items, tools: collectCompactionToolMetadata(req.Tools), groups: groups, forcedRefs: forced,
+		leadingInstructions: leadingInstructions,
 	}, nil
 }
 
@@ -990,6 +1013,11 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	payload := OllamaCompactionPayload{
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: selection.Summary, Retained: retained,
 		StandaloneNames: standaloneNames,
+	}
+	// Older readers reject unknown fields. Only record the boundary when
+	// removing conversation items made a later instruction appear leading.
+	if p.leadingInstructions < len(retained) && (retained[p.leadingInstructions].Role == "system" || retained[p.leadingInstructions].Role == "developer") {
+		payload.LeadingInstructions = &p.leadingInstructions
 	}
 	if p.omittedItems > 0 {
 		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary

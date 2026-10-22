@@ -89,7 +89,7 @@ func TestDeveloperInstructionsSurviveTruncation(t *testing.T) {
 	})
 }
 
-func TestResponsesDeveloperInstructionsOverrideModelSystem(t *testing.T) {
+func TestResponsesDeveloperInstructionsPreserveModelSystem(t *testing.T) {
 	var request openai.ResponsesRequest
 	if err := json.Unmarshal([]byte(`{"model":"test","input":[
 		{"role":"developer","content":"CLIENT_POLICY"},
@@ -101,20 +101,25 @@ func TestResponsesDeveloperInstructionsOverrideModelSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &Model{Config: testConfigWithRenderer("qwen3-coder"), System: "MODEL_DEFAULT"}
-	messages := chatMessagesForRequest(m, chat.Messages)
-	prompt, err := renderPrompt(m, messages, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(prompt, "CLIENT_POLICY") || strings.Contains(prompt, "MODEL_DEFAULT") {
-		t.Fatalf("saved model instructions displaced the developer policy: %q", prompt)
-	}
-	if len(messages) != len(chat.Messages) || messages[0].Role != "developer" || chat.Messages[0].Role != "developer" {
-		t.Fatal("request preparation changed the developer role or added default instructions")
-	}
-	if m.System != "MODEL_DEFAULT" {
-		t.Fatal("request preparation changed the saved model instructions")
+	for _, renderer := range []string{"qwen3-coder", "functiongemma"} {
+		t.Run(renderer, func(t *testing.T) {
+			m := &Model{Config: testConfigWithRenderer(renderer), System: "MODEL_DEFAULT"}
+			messages := chatMessagesForRequest(m, chat.Messages)
+			want := append([]api.Message{{Role: "system", Content: m.System}}, chat.Messages...)
+			if !reflect.DeepEqual(messages, want) {
+				t.Fatalf("request preparation lost the saved system or changed instruction roles: %#v", messages)
+			}
+			prompt, err := renderPrompt(m, messages, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if system, developer := strings.Index(prompt, "MODEL_DEFAULT"), strings.Index(prompt, "CLIENT_POLICY"); system < 0 || developer <= system {
+				t.Fatalf("prompt lost or reordered the saved system and developer policy: %q", prompt)
+			}
+			if chat.Messages[0].Role != "developer" || m.System != "MODEL_DEFAULT" {
+				t.Fatal("request preparation changed the source role or saved model instructions")
+			}
+		})
 	}
 }
 

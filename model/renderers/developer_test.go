@@ -13,7 +13,7 @@ func TestDeveloperRoleFallbackPreservesInstructions(t *testing.T) {
 	names := []string{
 		"qwen3-coder", "qwen3-vl-instruct", "qwen3-vl-thinking", "qwen3.5", "tev1", "qwen3.8", "ornith",
 		"cogito", "deepseek3.1", "olmo3", "olmo3.1", "olmo3-think", "olmo3-32b-think",
-		"gemma4", "gemma4-small", "gemma4-large", "glm-4.7", "flint", "glm-ocr",
+		"glm-4.7", "glm-ocr",
 		"laguna", "poolside-v1", "cohere", "glimmer",
 	}
 	cases := map[string][]api.Message{
@@ -71,7 +71,7 @@ func TestDeveloperRoleFallbackPreservesInstructions(t *testing.T) {
 }
 
 func TestNativeDeveloperTurnIsPreserved(t *testing.T) {
-	for _, name := range []string{"functiongemma", "lfm2", "lfm2-thinking", "nemotron-3-nano", "nemotron-3.5-nano", "nemotron-3.5-super"} {
+	for _, name := range []string{"functiongemma", "gemma4", "gemma4-small", "gemma4-large", "lfm2", "lfm2-thinking", "nemotron-3-nano", "nemotron-3.5-nano", "nemotron-3.5-super"} {
 		t.Run(name, func(t *testing.T) {
 			messages := []api.Message{{Role: "user", Content: "Hello"}, {Role: "assistant", Content: "Hello."}, {Role: "developer", Content: "POLICY"}, {Role: "user", Content: "Continue"}}
 			original := slices.Clone(messages)

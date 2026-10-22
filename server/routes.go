@@ -3618,8 +3618,7 @@ func chatMessagesForRequest(m *Model, requestMessages []api.Message) []api.Messa
 
 	// Loaded runners retain m, so request messages must not share its backing slice.
 	msgs := append(slices.Clone(m.Messages), requestMessages...)
-	// Explicit instructions override the saved default without changing their role.
-	if requestMessages[0].Role != "system" && requestMessages[0].Role != "developer" && m.System != "" {
+	if requestMessages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 	return filterThinkTags(msgs, m)
