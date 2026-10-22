@@ -1,6 +1,7 @@
 package create
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -426,5 +427,81 @@ func TestPlanPrequantizedRetainsKVCacheScales(t *testing.T) {
 		if !ok || len(spec.Tensors) != 1 || sourceName(spec.Tensors[0]) != name {
 			t.Errorf("%s = %+v ok=%v, want unchanged standalone tensor", name, spec, ok)
 		}
+	}
+}
+
+func TestPlanPrequantizedMixedMLX(t *testing.T) {
+	var cfg sourceModelConfig
+	if err := json.Unmarshal([]byte(`{"quantization":{"bits":8,"group_size":64,"mode":"affine","expert":{"bits":3,"group_size":128,"mode":"affine"},"shared":{"bits":3,"group_size":32,"mode":"affine"},"attention":{"bits":8,"group_size":32,"mode":"mxfp8"}}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	inv := newInventory(cfg, map[string]string{
+		"expert.weight": "U32", "expert.scales": "BF16", "expert.biases": "BF16",
+		"shared.weight": "U32", "shared.scales": "BF16", "shared.biases": "BF16",
+		"attention.weight": "U32", "attention.scales": "U8",
+		"head.weight": "U32", "head.scales": "BF16", "head.biases": "BF16",
+	})
+	specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct{ name, kind, group string }{
+		{"expert.weight", "int3", "128"}, {"shared.weight", "int3", "32"}, {"attention.weight", "mxfp8", "32"}, {"head.weight", "int8", "64"},
+	} {
+		spec, ok := specByName(specs, tt.name)
+		if !ok || spec.Metadata["quant_type"] != tt.kind || spec.Metadata["group_size"] != tt.group {
+			t.Fatalf("%s metadata = %v, want %s group %s", tt.name, spec.Metadata, tt.kind, tt.group)
+		}
+		for _, tensor := range spec.Tensors {
+			if tensor.Transform != TransformNone || tensor.Quantize != "" {
+				t.Errorf("%s unexpectedly requantized: %+v", tensor.Name, tensor)
+			}
+		}
+	}
+}
+
+func TestQuantMetadataRequiresMLXFormat(t *testing.T) {
+	for _, input := range []string{
+		`{"quantization_config":{"bits":4,"group_size":128,"quant_method":"gptq"}}`,
+		`{"quantization_config":{"bits":4,"group_size":128,"quant_method":"awq"}}`,
+		`{"compression_config":{"bits":4,"group_size":128,"quant_method":"compressed-tensors"}}`,
+		`{"quantization":{"bits":4,"group_size":128,"quant_method":"awq"}}`,
+	} {
+		var cfg sourceModelConfig
+		if err := json.Unmarshal([]byte(input), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if metadata := cfg.QuantMetadata("layer.weight"); metadata != nil {
+			t.Errorf("non-MLX config %s has MLX metadata %v", input, metadata)
+		}
+	}
+}
+
+func TestPlanPrequantizedRejectsInconsistentExperts(t *testing.T) {
+	for _, tc := range []struct{ name, remove, dtype, want string }{
+		{"missing expert", "model.layers.0.mlp.experts.0.up.weight", "", "missing expert index 0"},
+		{"missing global", "model.layers.0.mlp.experts.1.up.weight_scale_2", "", "inconsistent quantization or companions"},
+		{"different layout", "", "F16", "mismatched layout"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := newInventory(sourceModelConfig{}, map[string]string{
+				"model.layers.0.mlp.experts.0.up.weight":         "U8",
+				"model.layers.0.mlp.experts.0.up.weight_scale":   "F8_E4M3",
+				"model.layers.0.mlp.experts.0.up.weight_scale_2": "F32",
+				"model.layers.0.mlp.experts.1.up.weight":         "U8",
+				"model.layers.0.mlp.experts.1.up.weight_scale":   "F8_E4M3",
+				"model.layers.0.mlp.experts.1.up.weight_scale_2": "F32",
+			})
+			delete(inv.Tensors, tc.remove)
+			if tc.dtype != "" {
+				tensor := inv.Tensors["model.layers.0.mlp.experts.1.up.weight_scale"]
+				tensor.Dtype = tc.dtype
+				inv.Tensors[tensor.Name] = tensor
+			}
+			_, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Plan error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
