@@ -97,7 +97,6 @@ interface ConnectAppsScreenProps {
   initialIntegrations?: IntegrationStatuses;
   initialClaudeStatus?: ClaudeDesktopStatus;
   initialCodexStatus?: CodexDesktopStatus;
-  onChooseClaudeModel?: () => void;
 }
 
 function TitleBar({ onSignIn }: { onSignIn?: () => void }) {
@@ -446,7 +445,6 @@ export function ConnectAppsScreen({
   initialIntegrations,
   initialClaudeStatus,
   initialCodexStatus,
-  onChooseClaudeModel,
 }: ConnectAppsScreenProps) {
   const isWindows = isWindowsPlatform();
   const [copyNotice, setCopyNotice] = useState<{
@@ -1076,16 +1074,6 @@ export function ConnectAppsScreen({
                             ? "We’ll download Claude and open its Ollama profile."
                             : "Use Ollama models in a separate Claude profile.")}
           </p>
-          {claudeStatus?.modelSelectionRequired && onChooseClaudeModel && (
-            <button
-              type="button"
-              onClick={onChooseClaudeModel}
-              disabled={isConnectingClaude}
-              className="mt-2 text-[13px] font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-500 disabled:opacity-50 dark:text-neutral-300 dark:hover:text-neutral-100"
-            >
-              Choose model
-            </button>
-          )}
         </div>
       </div>
       <IntegrationConnectButton

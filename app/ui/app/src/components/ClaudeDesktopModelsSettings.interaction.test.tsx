@@ -190,42 +190,6 @@ function textContent(node: ReactTestInstance): string {
 }
 
 describe("ClaudeDesktopModelsSettings interactions", () => {
-  it.each([
-    { model: "glm-5.2:cloud", availability: "unavailable", disabled: true },
-    { model: "removed-local", availability: "unavailable", disabled: true },
-    { model: "glm-5.2:cloud", availability: "unknown", disabled: false },
-  ] as const)(
-    "checks an unchanged saved $model with $availability access before starting",
-    async ({ model, availability, disabled }) => {
-      const summary = {
-        ...testStatus(model),
-        connected: false,
-        models: [{ name: model, selected: true, availability }],
-      };
-      const apply = vi.fn().mockResolvedValue({ ok: true, status: summary });
-      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-      vi.stubGlobal("window", {
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        applyClaudeDesktopMappings: apply,
-      });
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            <ClaudeDesktopModelsSettings initialStatus={summary} />,
-          );
-        });
-        expect(Boolean(actionButton(renderer!).props.disabled)).toBe(disabled);
-        await act(async () => actionButton(renderer!).props.onClick());
-        expect(apply).toHaveBeenCalledTimes(disabled ? 0 : 1);
-      } finally {
-        await act(async () => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
   it.each(["catalog", "inventory"])(
     "keeps the successful %s usable while the other request is pending or fails",
     async (successful) => {

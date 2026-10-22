@@ -22,7 +22,7 @@ func desktopModelSettingsHandler() http.Handler {
 		switch r.PathValue("integration") {
 		case "claude-desktop":
 			status := claudeDesktopSettingsSummary()
-			if catalog && status.Installed && (status.Used || status.Configured || status.ModelSelectionRequired) {
+			if catalog && status.Installed && status.Used {
 				status = claudeDesktopConnectionStatus(ctx)
 			}
 			result = status

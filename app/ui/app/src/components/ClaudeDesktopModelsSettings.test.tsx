@@ -167,15 +167,9 @@ describe("ClaudeDesktopModelsSettings", () => {
     expect(runningHTML).toContain("disabled");
   });
 
-  it("stays hidden until Claude has been used or needs model setup", () => {
+  it("stays hidden until Claude has been enabled once", () => {
     const html = renderToStaticMarkup(
-      <ClaudeDesktopModelsSettings
-        initialStatus={status({
-          used: false,
-          configured: false,
-          connected: false,
-        })}
-      />,
+      <ClaudeDesktopModelsSettings initialStatus={status({ used: false })} />,
     );
 
     expect(html).toBe("");

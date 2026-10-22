@@ -786,58 +786,6 @@ describe("ConnectAppsScreen interactions", () => {
     });
   }
 
-  it.each([true, false])(
-    "offers model settings only for a model-selection failure: %s",
-    async (modelSelectionRequired) => {
-      const failed = {
-        ...DISCONNECTED_CLAUDE,
-        used: true,
-        startFailed: true,
-        modelSelectionRequired,
-        error: "Claude could not connect.",
-      };
-      const connect = vi.fn().mockResolvedValue({ status: failed });
-      const chooseModel = vi.fn();
-      stubAppsWindow({
-        getClaudeDesktopConnectionSummary: vi
-          .fn()
-          .mockResolvedValue(DISCONNECTED_CLAUDE),
-        setClaudeDesktopConnected: connect,
-      });
-      let renderer: ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = create(
-            <ConnectAppsScreen
-              initialIntegrations={appsIntegrations(true)}
-              initialClaudeStatus={DISCONNECTED_CLAUDE}
-              onChooseClaudeModel={chooseModel}
-            />,
-          );
-          await settle();
-        });
-        await act(async () => {
-          await claudeConnectionButton(renderer!).props.onClick();
-        });
-        expect(claudeConnectionButton(renderer!).props["aria-pressed"]).toBe(
-          false,
-        );
-        const recovery = renderer!.root
-          .findAllByType("button")
-          .filter((button) => button.children.includes("Choose model"));
-        expect(recovery).toHaveLength(modelSelectionRequired ? 1 : 0);
-        if (modelSelectionRequired) {
-          await act(async () => recovery[0].props.onClick());
-          expect(chooseModel).toHaveBeenCalledOnce();
-        }
-        expect(connect).toHaveBeenCalledExactlyOnceWith(true, false);
-      } finally {
-        await act(async () => renderer?.unmount());
-        vi.unstubAllGlobals();
-      }
-    },
-  );
-
   it.each([false, true])(
     "honors the native Claude disconnect confirmation: %s",
     async (confirmed) => {

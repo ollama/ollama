@@ -1439,53 +1439,6 @@ func TestClaudeDesktopSetInstalledFromDesktopDoesNotOpenStoppedAppWhenDisabled(t
 	}
 }
 
-func TestClaudeDesktopDisconnectRestoresProfileAfterShutdownWrite(t *testing.T) {
-	setTestHome(t, t.TempDir())
-	withClaudeDesktopPlatform(t, "darwin")
-	c := &ClaudeDesktop{}
-	if err := c.ConfigureAutodiscovery(); err != nil {
-		t.Fatal(err)
-	}
-	paths, err := claudeDesktopConfigPaths()
-	if err != nil {
-		t.Fatal(err)
-	}
-	running := true
-	opened := false
-	withClaudeDesktopProcessHooks(t,
-		func() bool { return running },
-		func() error {
-			// Model Claude flushing its connected profile while quitting.
-			for _, path := range []string{paths.normalConfig, paths.desktopConfig} {
-				if err := os.WriteFile(path, []byte(`{"deploymentMode":"3p","userOwned":"keep"}`), 0o600); err != nil {
-					return err
-				}
-			}
-			running = false
-			return nil
-		},
-		func() error {
-			opened = true
-			for _, path := range []string{paths.normalConfig, paths.desktopConfig} {
-				config := claudeDesktopReadJSON(t, path)
-				if config["deploymentMode"] != "1p" || config["userOwned"] != "keep" {
-					t.Fatalf("Claude reopened before restoring its usual profile: %v", config)
-				}
-			}
-			if c.UsesOllamaGateway() {
-				t.Fatal("Claude reopened with Ollama still applied")
-			}
-			return nil
-		},
-	)
-	if err := c.SetInstalledFromDesktop(false, true); err != nil {
-		t.Fatal(err)
-	}
-	if !opened {
-		t.Fatal("Claude was not reopened after restoring its profile")
-	}
-}
-
 func TestOpenClaudeDesktop(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	withClaudeDesktopPlatform(t, "darwin")

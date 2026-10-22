@@ -127,22 +127,14 @@ describe("getClaudeDesktopAvailableModels", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns installed chat models while pruning remote and non-chat entries", async () => {
+  it("returns installed local models while pruning remote entries", async () => {
     listModels.mockResolvedValue({
       models: [
-        {
-          name: "llama3.2:latest",
-          digest: "local",
-          capabilities: ["completion"],
-        },
-        { name: "image:latest", capabilities: ["image"] },
-        { name: "embedding:latest", capabilities: ["embedding"] },
-        { name: "unreported:latest" },
+        { name: "llama3.2:latest", digest: "local" },
         {
           name: "remote-placeholder",
           digest: "remote",
           remote_host: "https://ollama.com",
-          capabilities: ["completion"],
         },
       ],
     });
@@ -158,7 +150,7 @@ describe("getClaudeDesktopAvailableModels", () => {
   it("does not request cloud models when they are unavailable to the user", async () => {
     listModels.mockResolvedValue({
       models: [
-        { name: "qwen3:8b", digest: "local", capabilities: ["completion"] },
+        { name: "qwen3:8b", digest: "local" },
         { name: "deepseek-v4-flash:cloud", digest: "cached-cloud" },
         { name: "gemma4:31b-cloud", digest: "legacy-cached-cloud" },
       ],
@@ -174,9 +166,7 @@ describe("getClaudeDesktopAvailableModels", () => {
 
   it("loads the account cloud list in parallel when Cloud is available", async () => {
     listModels.mockResolvedValue({
-      models: [
-        { name: "qwen3:8b", digest: "local", capabilities: ["completion"] },
-      ],
+      models: [{ name: "qwen3:8b", digest: "local" }],
     });
     const fetch = vi.fn().mockResolvedValue(
       new Response(
@@ -205,9 +195,7 @@ describe("getClaudeDesktopAvailableModels", () => {
 
   it("keeps local models when the account cloud list fails", async () => {
     listModels.mockResolvedValue({
-      models: [
-        { name: "qwen3:8b", digest: "local", capabilities: ["completion"] },
-      ],
+      models: [{ name: "qwen3:8b", digest: "local" }],
     });
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 

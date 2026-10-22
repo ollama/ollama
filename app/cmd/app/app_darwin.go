@@ -63,7 +63,6 @@ type claudeProxyFailure uint8
 const (
 	claudeProxyFailureNone claudeProxyFailure = iota
 	claudeProxyFailurePortConflict
-	claudeProxyFailureModelSelection
 )
 
 // claudeDesktopController abstracts launch's Claude Desktop profile management
@@ -549,6 +548,11 @@ func osRun(_ func(), hasCompletedFirstRun, startHidden, showOnboarding bool, _ s
 
 func reconcileClaudeAppProxy() error {
 	configured := claudeDesktop.UsesOllamaGateway()
+	if configured || len(launch.ClaudeDesktopModels()) > 0 {
+		if err := markClaudeDesktopIntegrationUsed(); err != nil {
+			slog.Warn("failed to remember existing Claude Desktop connection", "error", err)
+		}
+	}
 	if !claudeDesktopInstalled() || !configured {
 		stopClaudeAppProxy()
 		return nil
@@ -556,13 +560,7 @@ func reconcileClaudeAppProxy() error {
 	if err := startClaudeAppProxy(); err != nil {
 		return err
 	}
-	if err := updateClaudeDesktopProfile(); err != nil {
-		return err
-	}
-	if err := markClaudeDesktopIntegrationUsed(); err != nil {
-		slog.Warn("failed to remember existing Claude Desktop connection", "error", err)
-	}
-	return nil
+	return updateClaudeDesktopProfile()
 }
 
 func updateClaudeDesktopProfile() error {
@@ -624,11 +622,7 @@ func startClaudeAppProxy() error {
 		}
 	}
 	if accessErr != nil {
-		failure := claudeProxyFailureNone
-		if !errors.Is(accessErr, errClaudeDesktopAccessUnavailable) {
-			failure = claudeProxyFailureModelSelection
-		}
-		return recordClaudeProxyFailure(accessErr, failure)
+		return recordClaudeProxyFailure(accessErr, claudeProxyFailureNone)
 	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
 		ListenAddr:      claudeProxyListenAddr,
@@ -1052,9 +1046,6 @@ func listClaudeLocalModels(ctx context.Context, list func(context.Context) (*api
 	}
 	models := make([]api.ListModelResponse, 0, len(response.Models))
 	for _, model := range response.Models {
-		if !slices.Contains(model.Capabilities, modelpkg.CapabilityCompletion) {
-			continue
-		}
 		// Cloud placeholders and self-hosted remotes are not installed weights.
 		if model.RemoteModel != "" || model.RemoteHost != "" ||
 			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
@@ -1072,7 +1063,7 @@ func claudeLocalChatModels(ctx context.Context, list func(context.Context) (*api
 	}
 	var withTools, completionOnly []string
 	for _, model := range models {
-		if model.Name == "" {
+		if model.Name == "" || !slices.Contains(model.Capabilities, modelpkg.CapabilityCompletion) {
 			continue
 		}
 		if slices.Contains(model.Capabilities, modelpkg.CapabilityTools) {
@@ -1291,6 +1282,10 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 		return errors.New("Claude Desktop is not installed")
 	}
 	if installed {
+		// A failed first attempt must still expose Claude's Settings recovery UI.
+		if err := markClaudeDesktopIntegrationUsed(); err != nil {
+			return fmt.Errorf("remember Claude Desktop connection: %w", err)
+		}
 		if err := startClaudeAppProxy(); err != nil {
 			return err
 		}
@@ -1309,11 +1304,6 @@ func setClaudeGatewayInstalled(installed, restart bool) error {
 	}
 	if err != nil {
 		return err
-	}
-	if installed {
-		if err := markClaudeDesktopIntegrationUsed(); err != nil {
-			return fmt.Errorf("remember Claude Desktop connection: %w", err)
-		}
 	}
 	return nil
 }
@@ -1422,17 +1412,16 @@ func claudeDesktopConnectionSummary(used bool) claudeDesktopStatus {
 	installed := claudeDesktopInstalled()
 	configured := installed && claudeDesktop.UsesOllamaGateway()
 	status := claudeDesktopStatus{
-		Supported:              true,
-		Used:                   used,
-		Installed:              installed,
-		Configured:             configured,
-		Connected:              configured && proxyErr == nil,
-		Running:                launch.ClaudeDesktopRunning(),
-		StartFailed:            proxyErr != nil,
-		PortConflict:           proxyFailure == claudeProxyFailurePortConflict,
-		ModelSelectionRequired: proxyFailure == claudeProxyFailureModelSelection,
-		GatewayPort:            port,
-		RoutedRequests:         claudeDesktopRequestCount(),
+		Supported:      true,
+		Used:           used,
+		Installed:      installed,
+		Configured:     configured,
+		Connected:      configured && proxyErr == nil,
+		Running:        launch.ClaudeDesktopRunning(),
+		StartFailed:    proxyErr != nil,
+		PortConflict:   proxyFailure == claudeProxyFailurePortConflict,
+		GatewayPort:    port,
+		RoutedRequests: claudeDesktopRequestCount(),
 	}
 	if proxyErr != nil {
 		status.Error = proxyErr.Error()
@@ -1453,12 +1442,11 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 		Cloud:   proxy.ClaudeDesktopCloudUnknown,
 		Account: proxy.ClaudeDesktopAccountUnknown,
 	}
-	claudeProxyMu.Lock()
-	gateway := claudeAppProxy
-	cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
-	modelSelectionRequired := claudeProxyFail == claudeProxyFailureModelSelection
-	claudeProxyMu.Unlock()
-	if used || modelSelectionRequired || claudeDesktop.UsesOllamaGateway() {
+	if used {
+		claudeProxyMu.Lock()
+		gateway := claudeAppProxy
+		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
+		claudeProxyMu.Unlock()
 		showDefaults = gateway == nil && len(launch.ClaudeDesktopModels()) == 0
 		var accessErr error
 		accessState, accessErr = claudeAccessStateResolver(ctx)
@@ -1620,11 +1608,7 @@ func setClaudeDesktopAutoMode(enabled, restartConfirmed bool) error {
 }
 
 func applyClaudeDesktopMappings(mappings map[string]string, restartConfirmed bool) (bool, error) {
-	applied, err := applyClaudeDesktopMappingsWithOpen(mappings, restartConfirmed, true)
-	if err == nil {
-		err = markClaudeDesktopIntegrationUsed()
-	}
-	return applied, err
+	return applyClaudeDesktopMappingsWithOpen(mappings, restartConfirmed, true)
 }
 
 func resetClaudeDesktopMappings(restartConfirmed bool) (bool, error) {

@@ -22,7 +22,6 @@ import (
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/internal/proxy"
-	modelpkg "github.com/ollama/ollama/types/model"
 )
 
 func TestMain(m *testing.M) {
@@ -1322,8 +1321,6 @@ func TestSetClaudeDesktopAutoModeRejectsUnsupportedSelection(t *testing.T) {
 func TestApplyClaudeDesktopMappingsPersistsSelection(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	previousStore := appStore
-	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
 	previousInstalled := claudeDesktopInstalled
 	previousAddr := claudeProxyListenAddr
 	previousDesktop := claudeDesktop
@@ -1337,8 +1334,6 @@ func TestApplyClaudeDesktopMappingsPersistsSelection(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
-		_ = appStore.Close()
-		appStore = previousStore
 		claudeDesktopInstalled = previousInstalled
 		claudeProxyListenAddr = previousAddr
 		claudeDesktop = previousDesktop
@@ -1350,9 +1345,6 @@ func TestApplyClaudeDesktopMappingsPersistsSelection(t *testing.T) {
 	}
 	if !fake.installed {
 		t.Fatal("expected the Claude profile to be installed")
-	}
-	if !hasUsedClaudeDesktopIntegration() {
-		t.Fatal("successful model setup did not complete the first-use flow")
 	}
 	if !fake.autoMode {
 		t.Fatal("expected the account cloud model to keep Auto mode enabled")
@@ -1836,13 +1828,10 @@ func testResetClaudeDesktopMappingsSerializesLifecycleChange(t *testing.T, name 
 
 func TestApplyClaudeDesktopMappingsKeepsCommittedMappingsWhenOpenFails(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	previousStore := appStore
-	appStore = &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
 	previousInstalled := claudeDesktopInstalled
 	previousDesktop := claudeDesktop
 	previousAddr := claudeProxyListenAddr
 	previousCloudResolver := claudeCloudModelsResolver
-	previousAccess := claudeAccessStateResolver
 	claudeProxyMu.Lock()
 	previousGateway := claudeAppProxy
 	claudeAppProxy = nil
@@ -1856,13 +1845,10 @@ func TestApplyClaudeDesktopMappingsKeepsCommittedMappingsWhenOpenFails(t *testin
 	}
 	t.Cleanup(func() {
 		stopClaudeAppProxy()
-		_ = appStore.Close()
-		appStore = previousStore
 		claudeDesktopInstalled = previousInstalled
 		claudeDesktop = previousDesktop
 		claudeProxyListenAddr = previousAddr
 		claudeCloudModelsResolver = previousCloudResolver
-		claudeAccessStateResolver = previousAccess
 		claudeProxyMu.Lock()
 		claudeAppProxy = previousGateway
 		claudeProxyMu.Unlock()
@@ -1874,30 +1860,6 @@ func TestApplyClaudeDesktopMappingsKeepsCommittedMappingsWhenOpenFails(t *testin
 	}
 	if got := launch.ClaudeDesktopModelMappings(); !maps.Equal(got, sharedClaudeDesktopMappings("kimi-k3:cloud")) {
 		t.Fatalf("saved mappings after open failure = %v", got)
-	}
-	if hasUsedClaudeDesktopIntegration() {
-		t.Fatal("failed first launch completed setup history")
-	}
-
-	// Simulate Ollama restarting after the failed launch, with the saved
-	// profile still present but its selected cloud model now unavailable.
-	stopClaudeAppProxy()
-	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
-		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, nil
-	}
-	if err := reconcileClaudeAppProxy(); err == nil {
-		t.Fatal("startup reconciliation accepted the unavailable saved model")
-	}
-	if hasUsedClaudeDesktopIntegration() {
-		t.Fatal("failed startup retry completed first-use setup")
-	}
-
-	claudeAccessStateResolver = previousAccess
-	if err := reconcileClaudeAppProxy(); err != nil {
-		t.Fatal(err)
-	}
-	if !hasUsedClaudeDesktopIntegration() {
-		t.Fatal("successful startup reconciliation did not remember setup")
 	}
 }
 
@@ -2024,22 +1986,6 @@ func TestPrepareClaudeDesktopConnectionPreservesFirstUseIntro(t *testing.T) {
 	if localCalls != preparationLocalCalls {
 		t.Fatalf("local model lookups after status = %d, want %d", localCalls, preparationLocalCalls)
 	}
-
-	claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) {
-		return proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, nil
-	}
-	request := httptest.NewRequest("GET", "/api/v1/integrations/claude-desktop/models?catalog=true", nil)
-	request.SetPathValue("integration", "claude-desktop")
-	response := httptest.NewRecorder()
-	desktopModelSettingsHandler().ServeHTTP(response, request)
-	var settings claudeDesktopStatus
-	if err := json.Unmarshal(response.Body.Bytes(), &settings); err != nil {
-		t.Fatal(err)
-	}
-	if settings.Used || !settings.Configured || len(settings.Models) != 1 || settings.Models[0].Name != "qwen3:8b" || settings.Mappings[0].Model != "qwen3:8b" {
-		t.Fatalf("first-use catalog = %+v, want configured local mapping without completing the intro", settings)
-	}
-	preparationLocalCalls = localCalls
 
 	if err := setClaudeDesktopConnection(true, false); err != nil {
 		t.Fatal(err)
@@ -2367,16 +2313,11 @@ func TestResolveClaudeDesktopDefaultMappingsUsesContractWithoutAccountLookup(t *
 }
 
 func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
-	previousRetryWait := claudeAccessRetryWait
-	claudeAccessRetryWait = 0
-	t.Cleanup(func() { claudeAccessRetryWait = previousRetryWait })
 	tests := []struct {
-		name               string
-		state              proxy.ClaudeDesktopAccessState
-		selection          []string
-		prepare            bool
-		wantError          string
-		wantModelSelection bool
+		name      string
+		state     proxy.ClaudeDesktopAccessState
+		selection []string
+		wantError string
 	}{
 		{
 			name: "signed out",
@@ -2384,21 +2325,12 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 				Cloud:   proxy.ClaudeDesktopCloudOn,
 				Account: proxy.ClaudeDesktopAccountSignedOut,
 			},
-			wantError:          "Sign in to Ollama",
-			wantModelSelection: true,
+			wantError: "Sign in to Ollama",
 		},
 		{
-			name:               "OLLAMA_NO_CLOUD or Cloud setting disabled",
-			state:              proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
-			wantError:          "Cloud models are off",
-			wantModelSelection: true,
-		},
-		{
-			name:               "first-use preparation needs a model",
-			state:              proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
-			prepare:            true,
-			wantError:          "Cloud models are off",
-			wantModelSelection: true,
+			name:      "OLLAMA_NO_CLOUD or Cloud setting disabled",
+			state:     proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff},
+			wantError: "Cloud models are off",
 		},
 		{
 			name: "free account with only Pro selected",
@@ -2407,14 +2339,8 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 				Account: proxy.ClaudeDesktopAccountSignedIn,
 				Plan:    "free",
 			},
-			selection:          []string{"glm-5.2:cloud"},
-			wantError:          "Select another model in Settings",
-			wantModelSelection: true,
-		},
-		{
-			name:      "unverified account remains retryable",
-			state:     proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountUnknown},
-			wantError: "couldn't verify",
+			selection: []string{"glm-5.2:cloud"},
+			wantError: "Select another model in Settings",
 		},
 	}
 
@@ -2456,18 +2382,9 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 				claudeProxyMu.Unlock()
 			})
 
-			var err error
-			if tt.prepare {
-				err = prepareClaudeDesktopConnection()
-			} else {
-				err = setClaudeGatewayInstalled(true, false)
-			}
+			err := setClaudeGatewayInstalled(true, false)
 			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
 				t.Fatalf("setClaudeGatewayInstalled() error = %v, want %q", err, tt.wantError)
-			}
-			status := getClaudeDesktopConnectionSummary()
-			if status.ModelSelectionRequired != tt.wantModelSelection || status.Connected {
-				t.Fatalf("recovery status = %+v, want model selection required: %v and disconnected", status, tt.wantModelSelection)
 			}
 			if fake.installed {
 				t.Fatal("Claude profile changed without a usable model")
@@ -2475,39 +2392,22 @@ func TestSetClaudeGatewayInstalledRejectsEmptyUsableCatalog(t *testing.T) {
 			if claudeAppProxy != nil {
 				t.Fatal("Claude gateway started without a usable model")
 			}
-			if hasUsedClaudeDesktopIntegration() {
-				t.Fatal("failed enable completed the first-use flow")
-			}
-			if tt.wantModelSelection {
-				request := httptest.NewRequest("GET", "/api/v1/integrations/claude-desktop/models?catalog=true", nil)
-				request.SetPathValue("integration", "claude-desktop")
-				response := httptest.NewRecorder()
-				desktopModelSettingsHandler().ServeHTTP(response, request)
-				var settings claudeDesktopStatus
-				if err := json.Unmarshal(response.Body.Bytes(), &settings); err != nil {
-					t.Fatal(err)
-				}
-				if !settings.ModelSelectionRequired || settings.Used != status.Used || len(settings.Models) == 0 {
-					t.Fatalf("model recovery settings = %+v, want catalog without completing first-use setup", settings)
-				}
+			if !hasUsedClaudeDesktopIntegration() {
+				t.Fatal("failed enable did not expose Claude recovery settings")
 			}
 		})
 	}
 }
 
 func TestClaudeLocalModels(t *testing.T) {
-	chat := []modelpkg.Capability{modelpkg.CapabilityCompletion}
 	models, err := claudeLocalModels(context.Background(), func(context.Context) (*api.ListResponse, error) {
 		return &api.ListResponse{Models: []api.ListModelResponse{
-			{Name: "qwen3.8:27b-mlx", Model: "qwen3.8:27b-mlx", Capabilities: chat},
-			{Name: "alias:latest", Model: "original:latest", Capabilities: chat},
-			{Name: "remote-model:latest", Model: "remote-model:latest", RemoteModel: "upstream/model", Capabilities: chat},
-			{Name: "remote-host:latest", Model: "remote-host:latest", RemoteHost: "https://ollama.com", Capabilities: chat},
-			{Name: "cloud-source:cloud", Model: "cloud-source:cloud", Capabilities: chat},
-			{Name: "legacy-cloud:31b-cloud", Model: "legacy-cloud:31b-cloud", Capabilities: chat},
-			{Name: "image:latest", Capabilities: []modelpkg.Capability{modelpkg.CapabilityImage}},
-			{Name: "embedding:latest", Capabilities: []modelpkg.Capability{modelpkg.CapabilityEmbedding}},
-			{Name: "unreported:latest"},
+			{Name: "qwen3.8:27b-mlx", Model: "qwen3.8:27b-mlx"},
+			{Name: "alias:latest", Model: "original:latest"},
+			{Name: "remote-model:latest", Model: "remote-model:latest", RemoteModel: "upstream/model"},
+			{Name: "remote-host:latest", Model: "remote-host:latest", RemoteHost: "https://ollama.com"},
+			{Name: "cloud-source:cloud", Model: "cloud-source:cloud"},
+			{Name: "legacy-cloud:31b-cloud", Model: "legacy-cloud:31b-cloud"},
 		}}, nil
 	})
 	if err != nil {
