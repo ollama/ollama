@@ -265,9 +265,11 @@ export async function getClaudeDesktopAvailableModels(
       const response = model as ModelResponse & {
         remote_model?: string;
         remote_host?: string;
+        capabilities?: string[];
       };
       const name = model.name.replace(/:latest$/, "");
       return (
+        response.capabilities?.includes("completion") &&
         !response.remote_model &&
         !response.remote_host &&
         !name.endsWith("cloud")
@@ -288,9 +290,7 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name
-          .replace(/:latest$/, "")
-          .replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;

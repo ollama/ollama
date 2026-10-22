@@ -21,6 +21,7 @@ interface ClaudeDesktopStatus {
   running: boolean;
   startFailed: boolean;
   portConflict: boolean;
+  modelSelectionRequired?: boolean;
   gatewayPort?: number;
   routedRequests?: number;
   error?: string;

@@ -4,6 +4,7 @@ import {
   getClaudeDesktopModelsSettings,
 } from "@/api";
 import { Button } from "@/components/ui/button";
+import { ClaudeConnectedIntro } from "@/components/Onboarding";
 import { Description, Field, Label } from "@/components/ui/fieldset";
 import { Switch } from "@/components/ui/switch";
 import { claudeDesktopRecoveryMessage } from "@/lib/claudeDesktop";
@@ -312,10 +313,14 @@ export const ClaudeDesktopModelsSettings = forwardRef<
   const [accountCloudModels, setAccountCloudModels] = useState<string[]>(
     initialCloudModels ?? [],
   );
-  const catalogRequested = useRef(false);
+  const catalogRequested = useRef(
+    typeof window !== "undefined" &&
+      window.location?.hash === "#claude-settings",
+  );
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  const [showConnectedIntro, setShowConnectedIntro] = useState(false);
   const [resettingMappings, setResettingMappings] = useState(false);
   const [autoModeApplying, setAutoModeApplying] = useState(false);
   const [autoModeOverride, setAutoModeOverride] = useState<boolean | null>(
@@ -351,7 +356,15 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       try {
         const summary = await getClaudeDesktopModelsSettings(false);
         if (!isCurrent()) return;
-        const discover = catalog && summary.used && summary.installed;
+        const discover =
+          catalog &&
+          Boolean(
+            summary.used ||
+              summary.configured ||
+              summary.modelSelectionRequired ||
+              catalogRequested.current,
+          ) &&
+          summary.installed;
         setCatalogLoading(discover);
         const results = await Promise.allSettled([
           (discover
@@ -450,6 +463,15 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     const model = catalogModels.find((candidate) => candidate.name === name);
     return !model || !modelIsAvailable(model);
   });
+  const hasUnavailableMapping = assignedModels.some(
+    (name) =>
+      catalogModels.find((candidate) => candidate.name === name)
+        ?.availability === "unavailable",
+  );
+  const needsModelSelection =
+    hasUnavailableMapping ||
+    (hasInvalidMapping &&
+      (hasDraftChanges || Boolean(status?.modelSelectionRequired)));
   const busy = applying || resettingMappings || autoModeApplying;
 
   useEffect(() => {
@@ -501,7 +523,7 @@ export const ClaudeDesktopModelsSettings = forwardRef<
     [applyStatus],
   );
 
-  const applyChanges = async () => {
+  const applyChanges = async (introConfirmed = false) => {
     const applyMappings = window.applyClaudeDesktopMappings;
     if (!applyMappings) {
       setError(
@@ -513,11 +535,16 @@ export const ClaudeDesktopModelsSettings = forwardRef<
       setError("Choose at least one Ollama model for Claude.");
       return;
     }
-    if (hasDraftChanges && hasInvalidMapping) {
+    if (needsModelSelection) {
       setError("Choose models available to your account and device.");
       return;
     }
     if (operationInFlightRef.current) return;
+    if (!status?.used && !introConfirmed) {
+      setShowConnectedIntro(true);
+      return;
+    }
+    setShowConnectedIntro(false);
 
     const mappingsToApply = mappingRecord(mappings);
     setApplying(true);
@@ -608,7 +635,21 @@ export const ClaudeDesktopModelsSettings = forwardRef<
 
   useImperativeHandle(ref, () => ({ resetToDefaults }), [resetToDefaults]);
 
-  if (!status?.supported || !status.used) return null;
+  const focusSettings = useCallback((node: HTMLDivElement | null) => {
+    if (node && window.location?.hash === "#claude-settings") {
+      node.scrollIntoView({ block: "center" });
+      node.focus({ preventScroll: true });
+    }
+  }, []);
+
+  if (
+    !status?.supported ||
+    (!status.used &&
+      !status.configured &&
+      !status.modelSelectionRequired &&
+      !catalogRequested.current)
+  )
+    return null;
 
   const autoModeModelNames = Array.from(
     new Set([
@@ -654,8 +695,11 @@ export const ClaudeDesktopModelsSettings = forwardRef<
         </h2>
       )}
       <div
+        id="claude-settings"
+        ref={focusSettings}
+        tabIndex={-1}
         aria-labelledby="claude-settings-heading"
-        className="overflow-visible rounded-xl bg-white p-4 dark:bg-neutral-800"
+        className="overflow-visible rounded-xl bg-white p-4 outline-none dark:bg-neutral-800"
       >
         <div className="flex items-start space-x-3">
           <img
@@ -679,11 +723,11 @@ export const ClaudeDesktopModelsSettings = forwardRef<
               <Button
                 type="button"
                 color="white"
-                onClick={applyChanges}
+                onClick={() => void applyChanges()}
                 disabled={
                   busy ||
                   assignedModels.length === 0 ||
-                  (hasDraftChanges && hasInvalidMapping) ||
+                  needsModelSelection ||
                   (status.running && !hasDraftChanges)
                 }
                 className="flex-shrink-0"
@@ -702,6 +746,24 @@ export const ClaudeDesktopModelsSettings = forwardRef<
                       : "Start Claude"}
               </Button>
             </div>
+
+            {catalogRequested.current &&
+              !catalogLoading &&
+              !error &&
+              !catalogModels.some(modelIsAvailable) && (
+                <p className="mt-3 text-sm text-neutral-500 dark:text-neutral-400">
+                  Download a local model, then choose it here.{" "}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      window.open("https://ollama.com/search?c=tools", "_blank")
+                    }
+                    className="font-medium text-neutral-700 underline underline-offset-2 hover:text-neutral-950 dark:text-neutral-300 dark:hover:text-neutral-100"
+                  >
+                    Browse models
+                  </button>
+                </p>
+              )}
 
             <div className="mt-4 w-full max-w-xl space-y-1">
               {mappings.map((mapping) => (
@@ -762,6 +824,9 @@ export const ClaudeDesktopModelsSettings = forwardRef<
           </div>
         </div>
       </div>
+      {showConnectedIntro && (
+        <ClaudeConnectedIntro onDone={() => void applyChanges(true)} />
+      )}
     </div>
   );
 });

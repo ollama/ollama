@@ -8,9 +8,14 @@ export const Route = createFileRoute("/connect")({
 });
 
 function ConnectRoute() {
+  const navigate = Route.useNavigate();
   return (
     <SidebarLayout title="Apps" sidebar={<AppSidebar current="apps" />}>
-      <ConnectAppsScreen />
+      <ConnectAppsScreen
+        onChooseClaudeModel={() =>
+          void navigate({ to: "/settings", hash: "claude-settings" })
+        }
+      />
     </SidebarLayout>
   );
 }
