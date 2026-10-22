@@ -10,7 +10,7 @@ import (
 )
 
 func TestConfig(t *testing.T) {
-	const checkpoint = `{"flow_lm":{"num_heads":12,"num_layers":6,"max_period":10000,"flow_depth":6},"mimi":{"sample_rate":24000,"frame_rate":12.5,"dilation_base":2,"transformer_num_heads":8,"transformer_num_layers":2,"transformer_context":250,"transformer_max_period":10000},"temp":0.8,"lsd_decode_steps":1,"eos_threshold":4.0}`
+	const checkpoint = `{"flow_lm":{"d_model":512,"num_heads":8,"num_layers":6,"max_period":10000,"flow_depth":6,"gelu":"erf","time_rms_norm":"rms"},"mimi":{"sample_rate":24000,"frame_rate":12.5,"dilation_base":2,"transformer_num_heads":8,"transformer_num_layers":2,"transformer_context":250,"transformer_max_period":10000,"gelu":"erf"},"conditioners":[{"type":"lut","name":"num_speakers","lut":{"possible_values":["0","1","2"]}},{"type":"continuous","name":"duration_delta","continuous":{"dim":128}}],"fuser":{"sum":["num_speakers","duration_delta"],"prepend":["transcript_in_segment","speaker_wavs"]},"temp":0.8,"lsd_decode_steps":1,"eos_threshold":4.0}`
 	var cfg config
 	if err := json.Unmarshal([]byte(checkpoint), &cfg); err != nil {
 		t.Fatal(err)
@@ -43,26 +43,13 @@ func TestConfig(t *testing.T) {
 	}
 }
 
-func TestCheckpointDefaults(t *testing.T) {
-	for _, tc := range []struct {
-		json, gelu  string
-		temperature float32
-	}{
-		{`{}`, "tanh", .3},
-		{`{"model_id":{"sig":"7e71a02d","epoch":200},"temp":0.8}`, "erf", .8},
-		{`{"model_id":{"sig":"test","epoch":1},"flow_lm":{"gelu":"tanh"},"temp":0}`, "tanh", 0},
-		{`{"flow_lm":{"gelu":"erf"}}`, "erf", .3},
-	} {
-		cfg := config{Temperature: .3}
-		if err := json.Unmarshal([]byte(tc.json), &cfg); err != nil {
-			t.Fatal(err)
-		}
-		if got := cfg.gelu(cfg.FlowLM.GELU); got != tc.gelu {
-			t.Errorf("GELU = %q, want %q", got, tc.gelu)
-		}
-		if cfg.Temperature != tc.temperature {
-			t.Errorf("temperature = %v, want %v", cfg.Temperature, tc.temperature)
-		}
+func TestPrereleaseConfigRejected(t *testing.T) {
+	var cfg config
+	if err := json.Unmarshal([]byte(`{"flow_lm":{"num_heads":12,"num_layers":6,"max_period":10000,"flow_depth":6},"mimi":{"sample_rate":24000,"frame_rate":12.5}}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.validate() == nil {
+		t.Fatal("accepted prerelease Phonon configuration")
 	}
 }
 
@@ -74,8 +61,6 @@ func TestTimeNorm(t *testing.T) {
 			norm        string
 			denominator float64
 		}{
-			{"", math.Sqrt(14.0/3 + 1e-5)},
-			{"rms_var", math.Sqrt(14.0/3 + 1e-5)},
 			{"rms", math.Sqrt(12.5 + 1e-5)},
 		} {
 			out := timeNorm(x, alpha, tc.norm)

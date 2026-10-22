@@ -56,7 +56,7 @@ func loadMimi(tensors map[string]*mlx.Array, cfg *config) (*Mimi, error) {
 		return nil, fmt.Errorf("missing mimi projection weights")
 	}
 	var err error
-	if m.Transformer, err = loadTransformer(tensors, "mimi.decoder_transformer.transformer", t.NumLayers, t.NumHeads, t.MaxPeriod, cfg.gelu(t.GELU)); err != nil {
+	if m.Transformer, err = loadTransformer(tensors, "mimi.decoder_transformer.transformer", t.NumLayers, t.NumHeads, t.MaxPeriod, t.GELU); err != nil {
 		return nil, err
 	}
 

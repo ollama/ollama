@@ -128,6 +128,23 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err == nil {
+		cfg, _, err := readSourceModelConfig(dir)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Architecture() == gradiumPhononArchitecture {
+			files, err = appendWeightSidecar(dir, files, "default-voice.safetensors", "Phonon")
+			if err != nil {
+				return nil, err
+			}
+			if !slices.Contains(files, "default-voice.safetensors") {
+				return nil, fmt.Errorf("Phonon checkpoint requires default-voice.safetensors")
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if _, err := os.Stat(filepath.Join(dir, "readout.safetensors")); errors.Is(err, os.ErrNotExist) {
 		return files, nil
 	} else if err != nil {
