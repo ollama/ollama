@@ -25,7 +25,7 @@ const SafetensorsMinOllamaVersion = "0.19.0"
 
 // phononMinOllamaVersion is the first Ollama release that runs Phonon speech
 // models.
-const phononMinOllamaVersion = "0.40.8"
+const phononMinOllamaVersion = "0.40.9"
 
 // IsSafetensorsLLMModel checks for a safetensors completion or decision model.
 func IsSafetensorsLLMModel(modelName string) bool {
