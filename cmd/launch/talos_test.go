@@ -32,8 +32,151 @@ func withTalosUserHome(t *testing.T, dir string) {
 // installer-supported overrides would redirect prefix and secrets resolution.
 func clearTalosEnvVars(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"TALOS_PREFIX", "TALOS_SECRETS_ENV", "TALOS_MODEL_PROVIDER", "TALOS_MODEL", "OLLAMA_API_KEY"} {
+	for _, key := range []string{"TALOS_PREFIX", "TALOS_PROFILE_DIR", "TALOS_INSTALL_MANAGER", "TALOS_SECRETS_ENV", "TALOS_MODEL_PROVIDER", "TALOS_MODEL", "OLLAMA_API_KEY"} {
 		t.Setenv(key, "")
+	}
+}
+
+func TestTalosHomebrewProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name, marker, profile, secrets, missing string
+		managed                                 bool
+	}{
+		{name: "managed default", marker: "homebrew\n", managed: true},
+		{name: "custom profile", marker: "homebrew\n", profile: "~/private-profile", managed: true},
+		{name: "explicit secrets", marker: "homebrew\n", secrets: "custom-secrets.env", managed: true},
+		{name: "unmarked lookalike"},
+		{name: "unknown manager", marker: "other\n"},
+		{name: "marker without complete runtime", marker: "homebrew\n", missing: "libexec/talos/__main__.py"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			clearTalosEnvVars(t)
+			withTalosUserHome(t, home)
+			keg := filepath.Join(home, "Cellar", "talos", "0.20.0-beta.5_1")
+			for _, name := range []string{"bin/talos", "libexec/bin/talos", "libexec/.venv/bin/python", "libexec/talos/__main__.py"} {
+				if name == tc.missing {
+					continue
+				}
+				path := filepath.Join(keg, name)
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte("fixture"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.marker != "" {
+				if err := os.WriteFile(filepath.Join(keg, "libexec", ".talos-install-manager"), []byte(tc.marker), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			link := filepath.Join(home, "talos-link")
+			if err := os.Symlink(filepath.Join(keg, "bin", "talos"), link); err != nil {
+				t.Fatal(err)
+			}
+			before := talosLookPath
+			talosLookPath = func(string) (string, error) { return link, nil }
+			t.Cleanup(func() { talosLookPath = before })
+			profile := filepath.Join(home, "talos")
+			if tc.managed {
+				profile = filepath.Join(home, ".talos", "homebrew")
+			}
+			if tc.profile != "" {
+				t.Setenv("TALOS_PROFILE_DIR", tc.profile)
+				profile = filepath.Join(home, "private-profile")
+			}
+			configPath := filepath.Join(profile, "talos.env")
+			for path, content := range map[string]string{
+				configPath: "TALOS_MODEL_PROVIDER=ollama\nTALOS_MODEL=profile-model\n",
+				filepath.Join(home, ".secrets", "talos-telegram.env"): "TALOS_MODEL_PROVIDER=ollama\nTALOS_MODEL=legacy-model\nOLLAMA_API_KEY=legacy-fixture\n",
+			} {
+				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := "profile-model"
+			if !tc.managed {
+				want = "legacy-model"
+			}
+			if tc.secrets != "" {
+				path := filepath.Join(home, tc.secrets)
+				t.Setenv("TALOS_SECRETS_ENV", path)
+				if err := os.WriteFile(path, []byte("TALOS_MODEL_PROVIDER=ollama\nTALOS_MODEL=explicit-model\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				want = "explicit-model"
+			}
+			if got := (&Talos{}).Paths(); len(got) != 1 || got[0] != configPath {
+				t.Fatalf("Paths = %v, want %s", got, configPath)
+			}
+			if got := (&Talos{}).CurrentModel(); got != want {
+				t.Fatalf("CurrentModel = %q, want %q", got, want)
+			}
+			if tc.managed && talosCloudKeyPresent() {
+				t.Fatal("managed installation inherited unrelated legacy cloud credentials")
+			}
+		})
+	}
+}
+
+func TestTalosInvalidProfile(t *testing.T) {
+	for _, profile := range []string{"relative/profile", "~unsupported-user/profile"} {
+		t.Run(profile, func(t *testing.T) {
+			clearTalosEnvVars(t)
+			t.Setenv("TALOS_PROFILE_DIR", profile)
+			t.Setenv("TALOS_MODEL_PROVIDER", "ollama")
+			t.Setenv("TALOS_MODEL", "misleading-model")
+			if _, err := talosConfigPath(); err == nil {
+				t.Fatal("invalid profile must not fall back to another installation")
+			}
+			if got := (&Talos{}).CurrentModel(); got != "" {
+				t.Fatalf("invalid profile reported model %q", got)
+			}
+			if got := (&Talos{}).Paths(); got != nil {
+				t.Fatalf("invalid profile reported paths %v", got)
+			}
+		})
+	}
+}
+
+func TestTalosManagedProfileCannotEnterCode(t *testing.T) {
+	for _, symlink := range []bool{false, true} {
+		t.Run(fmt.Sprintf("symlink=%t", symlink), func(t *testing.T) {
+			clearTalosEnvVars(t)
+			root := t.TempDir()
+			prefix := filepath.Join(root, "code")
+			if err := os.Mkdir(prefix, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(prefix, ".talos-install-manager"), []byte("homebrew\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(prefix, "talos.env"), []byte("TALOS_MODEL_PROVIDER=ollama\nTALOS_MODEL=forbidden-model\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			profile := prefix
+			if symlink {
+				profile = filepath.Join(root, "profile-link")
+				if err := os.Symlink(prefix, profile); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("TALOS_PREFIX", prefix)
+			t.Setenv("TALOS_PROFILE_DIR", profile)
+			before := talosLookPath
+			talosLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+			t.Cleanup(func() { talosLookPath = before })
+			if _, err := talosConfigPath(); err == nil {
+				t.Fatal("managed profile inside code must be refused")
+			}
+			if got := (&Talos{}).CurrentModel(); got != "" {
+				t.Fatalf("invalid managed profile reported model %q", got)
+			}
+		})
 	}
 }
 

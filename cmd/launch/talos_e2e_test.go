@@ -2,6 +2,7 @@ package launch
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,6 +32,17 @@ func TestTalosReleasedInstaller(t *testing.T) {
 			t.Fatalf("installer prerequisite %s: %v", name, err)
 		}
 	}
+	// Keep the evidence tied to the reviewed release, even after the public
+	// installer advances. Its own checksum and signature checks still run.
+	const version = "0.20.0-beta.5"
+	const archiveSHA256 = "ddd24ce4d26f79640fe7ce9e9770a9aa770e8c73700895212fa253772cd63059"
+	archive, err := exec.Command("curl", "-fsSL", "--max-time", "120", "https://talos-agent.ch/dist/talos-"+version+".tar.gz").Output()
+	if err != nil {
+		t.Fatalf("download reviewed release: %v", err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(archive)); got != archiveSHA256 {
+		t.Fatalf("reviewed release archive checksum: got %s, want %s", got, archiveSHA256)
+	}
 	tmp := t.TempDir()
 	clearTalosEnvVars(t)
 	withLauncherHooks(t)
@@ -50,6 +62,10 @@ func TestTalosReleasedInstaller(t *testing.T) {
 	DefaultConfirmPrompt = func(_ string, _ ConfirmOptions) (bool, error) { return true, nil }
 	if err := (&Talos{}).ensureInstalled(); err != nil {
 		t.Fatal(err)
+	}
+	installedVersion, err := exec.Command(filepath.Join(prefix, "bin", "talos"), "--version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(installedVersion)) != version {
+		t.Fatalf("installed release version: %v, %q", err, installedVersion)
 	}
 
 	var calls, invalid atomic.Int32
@@ -143,4 +159,67 @@ func TestTalosReleasedInstaller(t *testing.T) {
 		t.Fatalf("event-log read-back: %v\n%s", err, out)
 	}
 	t.Log(strings.TrimSpace(string(out)))
+}
+
+// This separately exercises an existing real Homebrew keg, without installing,
+// upgrading or changing it. Only the temporary operator profile is writable.
+func TestTalosHomebrewRuntime(t *testing.T) {
+	keg := os.Getenv("TALOS_TEST_HOMEBREW_PREFIX")
+	if keg == "" {
+		t.Skip("set TALOS_TEST_HOMEBREW_PREFIX to test an existing Homebrew keg")
+	}
+	for _, custom := range []bool{false, true} {
+		t.Run(fmt.Sprintf("custom-profile=%t", custom), func(t *testing.T) {
+			talosHomebrewRuntime(t, keg, custom)
+		})
+	}
+}
+
+func talosHomebrewRuntime(t *testing.T, keg string, custom bool) {
+	t.Helper()
+	clearTalosEnvVars(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withTalosUserHome(t, home)
+	profile := filepath.Join(home, ".talos", "homebrew")
+	if custom {
+		profile = filepath.Join(home, "private-profile")
+		t.Setenv("TALOS_PROFILE_DIR", profile)
+	}
+	// Model the private directory created by the operator's interactive setup;
+	// this test does not approve terminal identity or emulate setup prompts.
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+	launcher := filepath.Join(keg, "bin", "talos")
+	prefix, ok := talosWrapperPrefix(launcher)
+	if !ok || prefix != filepath.Join(keg, "libexec") {
+		t.Fatalf("not a recognized Homebrew keg: %s", keg)
+	}
+	before := talosLookPath
+	talosLookPath = func(name string) (string, error) {
+		if name == "talos" {
+			return launcher, nil
+		}
+		return exec.LookPath(name)
+	}
+	t.Cleanup(func() { talosLookPath = before })
+	if err := (&Talos{}).Configure("homebrew-fixture-model"); err != nil {
+		t.Fatal(err)
+	}
+	if got := (&Talos{}).CurrentModel(); got != "homebrew-fixture-model" {
+		t.Fatalf("managed configuration read-back: %q", got)
+	}
+	paths := (&Talos{}).Paths()
+	if len(paths) != 1 || paths[0] != filepath.Join(profile, "talos.env") {
+		t.Fatalf("managed configuration path: %v", paths)
+	}
+	info, err := os.Stat(paths[0])
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("private managed config: %v, %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(keg, "libexec", "talos.env")); !os.IsNotExist(err) {
+		t.Fatalf("managed configuration must not enter the keg: %v", err)
+	}
 }
