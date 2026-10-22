@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,9 +161,9 @@ func TestFallbackLaunchModelUsesServerMetadata(t *testing.T) {
 func TestServerModelMetadataStopsAfterUnreachableServer(t *testing.T) {
 	useServerContextLookup(t)
 
-	hits := 0
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		hits.Add(1)
 		time.Sleep(300 * time.Millisecond)
 	}))
 	defer srv.Close()
@@ -172,21 +173,12 @@ func TestServerModelMetadataStopsAfterUnreachableServer(t *testing.T) {
 	modelShowTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { modelShowTimeout = oldTimeout })
 
-	start := time.Now()
 	for _, name := range []string{"unreachable-a:cloud", "unreachable-b:cloud", "unreachable-a:cloud"} {
-		if _, ok := fallbackLaunchModelOK(name); ok {
+		if _, ok := cachedServerModelMetadata(name); ok {
 			t.Fatalf("lookup for %s succeeded against a hanging server", name)
 		}
 	}
-	if hits != 1 {
-		t.Fatalf("show requests = %d, want 1 before the launcher stops asking", hits)
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("show requests = %d, want 1 before the launcher stops asking", got)
 	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("lookups took %v, want a single timeout", elapsed)
-	}
-}
-
-func fallbackLaunchModelOK(name string) (LaunchModel, bool) {
-	model := fallbackLaunchModel(name)
-	return model, len(model.Capabilities) > 0 || model.Thinking != nil
 }

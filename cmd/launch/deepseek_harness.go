@@ -27,6 +27,15 @@ const (
 	deepSeekHarnessMaxTokensContextFrac = 8
 )
 
+// deepSeekHarnessMaxTokens bounds the maxTokens dsh is told about so that its
+// automatic context compaction keeps working. dsh (0.2.x) reserves maxTokens
+// plus a 64k headroom out of the context window before it will compact, and
+// disables compaction entirely when that reservation reaches the window. Our
+// cloud limits often report an output limit equal to the full context window,
+// which would leave dsh running without compaction until the context is simply
+// full. Capping maxTokens to an eighth of the window keeps a real compaction
+// budget, and when even that leaves under two headrooms of room the value is
+// omitted so dsh falls back to its own default.
 func deepSeekHarnessMaxTokens(contextLength, maxOutputTokens int) int {
 	if maxOutputTokens <= 0 {
 		return 0

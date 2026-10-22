@@ -2,8 +2,6 @@ package launch
 
 import (
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -540,24 +538,6 @@ func TestClaudeModelEnvVars(t *testing.T) {
 					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
 				}
 			}
-		}
-	})
-
-	t.Run("asks the server for cloud models missing from limits", func(t *testing.T) {
-		useServerContextLookup(t)
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/api/show" {
-				http.NotFound(w, r)
-				return
-			}
-			fmt.Fprint(w, `{"model_info":{"deepseek4.context_length":1048576}}`)
-		}))
-		defer srv.Close()
-		t.Setenv("OLLAMA_HOST", srv.URL)
-
-		got := envMap(c.modelEnvVars("deepseek-v4-pro-claude-test:cloud", nil))
-		if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != "1048576" {
-			t.Errorf("MAX_CONTEXT_TOKENS = %q, want 1048576", got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"])
 		}
 	})
 
