@@ -140,7 +140,7 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 	if cfg.Architecture() != "Qwen3_5Model" {
 		return files, nil
 	}
-	return appendWeightSidecar(dir, files, "readout.safetensors", "Perplexity")
+	return appendWeightSidecar(dir, files, "readout.safetensors", "Qwen decision")
 }
 
 func appendWeightSidecar(dir string, files []string, name, modelName string) ([]string, error) {
@@ -206,6 +206,10 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 	if cfg.Architecture() != "Qwen3_5Model" {
 		return names, nil
 	}
+	format, err := qwenDecisionFormat(dir)
+	if err != nil {
+		return nil, err
+	}
 	// This checkpoint has extra JSON that does not configure inference. Keep
 	// only the files the importer or runner consumes.
 	modelMetadata := map[string]bool{
@@ -221,6 +225,11 @@ func SafetensorsConfigFiles(dir string) ([]string, error) {
 		"added_tokens.json":            true,
 		"hf_quant_config.json":         true,
 		"quantization_config.json":     true,
+	}
+	if format == d3FormatID {
+		modelMetadata["preprocessor_config.json"] = true
+		modelMetadata["video_preprocessor_config.json"] = true
+		modelMetadata["vocab.json"] = true
 	}
 	return slices.DeleteFunc(names, func(name string) bool {
 		return filepath.Ext(name) == ".json" && !modelMetadata[name]

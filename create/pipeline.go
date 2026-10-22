@@ -47,7 +47,15 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		}
 	}
 	if inv.Config.Architecture() == "Qwen3_5Model" {
-		inv, err = preparePplxInventory(inv)
+		format, formatErr := qwenDecisionFormat(modelDir)
+		if formatErr != nil {
+			return formatErr
+		}
+		if format == d3FormatID {
+			inv, err = prepareD3Inventory(inv)
+		} else {
+			inv, err = preparePplxInventory(inv)
+		}
 		if err != nil {
 			return err
 		}
