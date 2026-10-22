@@ -1226,6 +1226,10 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
+		// Report a mapped named effort as the level the model actually receives.
+		if req.Think == nil && req.Reasoning.Effort != "" && chatReq.Think.IsString() {
+			req.Reasoning.Effort = chatReq.Think.String()
+		}
 
 		// Clients can retain reasoning effort when switching to a non-thinking
 		// model. Ignore that effort, but preserve explicit Ollama think overrides.

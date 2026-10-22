@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -30,13 +32,14 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 	named := &model.Thinking{Values: []any{false, "low", "medium", "xhigh"}, Default: "medium"}
 	always := &model.Thinking{Values: []any{true}, Default: true}
 	for _, tc := range []struct {
-		name     string
-		thinking *model.Thinking
-		fields   string
-		want     any
-		family   string
-		showCode int
-		wantCode int
+		name       string
+		thinking   *model.Thinking
+		fields     string
+		want       any
+		wantEffort string
+		family     string
+		showCode   int
+		wantCode   int
 	}{
 		{name: "boolean effort", thinking: boolean, fields: `,"reasoning":{"effort":"high"}`, want: true},
 		{name: "omitted", thinking: boolean},
@@ -44,15 +47,16 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 		{name: "native off overrides effort", thinking: named, fields: `,"think":false,"reasoning":{"effort":"high"}`, want: false},
 		{name: "native on overrides off", thinking: named, fields: `,"think":true,"reasoning":{"effort":"none"}`, want: true},
 		{name: "supported low", thinking: named, fields: `,"reasoning":{"effort":"low"}`, want: "low"},
+		{name: "high maps to xhigh", thinking: named, fields: `,"reasoning":{"effort":"high"}`, want: "xhigh", wantEffort: "xhigh"},
 		{name: "supported xhigh", thinking: named, fields: `,"reasoning":{"effort":"xhigh"}`, want: "xhigh"},
 		{name: "native named override", thinking: named, fields: `,"think":"xhigh","reasoning":{"effort":"low"}`, want: "xhigh"},
-		{name: "unsupported name is rejected", thinking: named, fields: `,"reasoning":{"effort":"max"}`, wantCode: http.StatusBadRequest},
+		{name: "max maps to xhigh", thinking: named, fields: `,"reasoning":{"effort":"max"}`, want: "xhigh", wantEffort: "xhigh"},
 		{name: "unknown name is rejected", thinking: named, fields: `,"reasoning":{"effort":"future"}`, wantCode: http.StatusBadRequest},
 		{name: "always thinking omission", thinking: always},
 		{name: "always thinking explicit off", thinking: always, fields: `,"reasoning":{"effort":"none"}`, wantCode: http.StatusBadRequest},
 		{name: "always thinking native off", thinking: always, fields: `,"think":false`, wantCode: http.StatusBadRequest},
 		{name: "nonthinking effort", thinking: &model.Thinking{Values: []any{false}, Default: false}, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusBadRequest},
-		{name: "Harmony unsupported effort", thinking: &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, family: "gptoss", fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusBadRequest},
+		{name: "Harmony effort clamps to high", thinking: &model.Thinking{Values: []any{"low", "medium", "high"}, Default: "medium"}, family: "gptoss", fields: `,"reasoning":{"effort":"xhigh"}`, want: "high", wantEffort: "high"},
 		{name: "unknown metadata rejects conversion", fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusServiceUnavailable},
 		{name: "unavailable metadata rejects conversion", showCode: http.StatusServiceUnavailable, fields: `,"reasoning":{"effort":"xhigh"}`, wantCode: http.StatusServiceUnavailable},
 		{name: "metadata needs sign in", showCode: http.StatusUnauthorized, fields: `,"reasoning":{"effort":"high"}`, wantCode: http.StatusUnauthorized},
@@ -126,6 +130,9 @@ func TestCloudResponsesWebSearchThinking(t *testing.T) {
 				}
 				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "answer") {
 					t.Fatalf("status %d: %s", w.Code, w.Body.String())
+				}
+				if tc.wantEffort != "" && !strings.Contains(w.Body.String(), `"effort":"`+tc.wantEffort+`"`) {
+					t.Fatalf("response did not report effective effort %q: %s", tc.wantEffort, w.Body.String())
 				}
 				if len(captured) != 2 {
 					t.Fatalf("got %d model requests, want initial request and search follow-up", len(captured))
@@ -226,6 +233,73 @@ func TestCloudThinkingLookupWaitAndRecovery(t *testing.T) {
 	w := request()
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "answer") || modelCalls.Load() != 1 || showCalls.Load() != 1 {
 		t.Fatalf("retry did not recover: status=%d inference=%d body=%s", w.Code, modelCalls.Load(), w.Body.String())
+	}
+}
+
+func TestCloudResponsesThinkingAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const upstreamSignin = "https://ollama.com/connect?name=upstream&key=test"
+	const fallbackSignin = "https://ollama.com/connect?name=fallback&key=test"
+	for _, tc := range []struct {
+		name                     string
+		signingFails             bool
+		upstreamURL, fallbackURL string
+		wantURL                  string
+	}{
+		{"signing failure", true, "", fallbackSignin, fallbackSignin},
+		{"upstream sign in", false, upstreamSignin, fallbackSignin, upstreamSignin},
+		{"upstream needs fallback", false, "", fallbackSignin, fallbackSignin},
+		{"signing failure without URL", true, "", "", ""},
+	} {
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", tc.name, streaming), func(t *testing.T) {
+				setTestHome(t, t.TempDir())
+				t.Setenv("OLLAMA_NO_CLOUD", "")
+				originalSignRequest, originalSigninURL := cloudProxySignRequest, cloudProxySigninURL
+				cloudProxySignRequest = func(context.Context, *http.Request) error {
+					if tc.signingFails {
+						return errors.New("synthetic signing failure")
+					}
+					return nil
+				}
+				cloudProxySigninURL = func() (string, error) {
+					if tc.fallbackURL == "" {
+						return "", errors.New("synthetic sign-in URL failure")
+					}
+					return tc.fallbackURL, nil
+				}
+				t.Cleanup(func() {
+					cloudProxySignRequest, cloudProxySigninURL = originalSignRequest, originalSigninURL
+				})
+				upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path != "/api/show" || tc.signingFails {
+						t.Errorf("authentication failure reached %q", r.URL.Path)
+					}
+					w.WriteHeader(http.StatusUnauthorized)
+					json.NewEncoder(w).Encode(api.AuthorizationError{SigninURL: tc.upstreamURL})
+				}))
+				defer upstream.Close()
+				withCloudProxyBaseURL(t, upstream.URL)
+				s := &Server{modelCaches: &modelCaches{show: newModelShowCache()}}
+				router, err := s.GenerateRoutes()
+				if err != nil {
+					t.Fatal(err)
+				}
+				body := fmt.Sprintf(`{"model":"test:cloud","input":"hello","tools":[{"type":"web_search"}],"reasoning":{"effort":"high"},"stream":%t}`, streaming)
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body)))
+				var response openai.ResponsesErrorResponse
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if w.Code != http.StatusUnauthorized || !reflect.DeepEqual(response, openai.NewResponsesAuthenticationError(tc.wantURL)) {
+					t.Fatalf("authentication failure lost the sign-in response: status=%d body=%s", w.Code, w.Body.String())
+				}
+				if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") || w.Header().Get("Retry-After") != "" {
+					t.Fatalf("authentication failure needs a non-retryable JSON response: %v", w.Header())
+				}
+			})
+		}
 	}
 }
 

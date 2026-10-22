@@ -440,7 +440,7 @@ func (c *modelShowCache) doCloudJSON(ctx context.Context, method, path string, p
 	}
 
 	if err := cloudProxySignRequest(req.Context(), req); err != nil {
-		return err
+		return api.AuthorizationError{StatusCode: http.StatusUnauthorized, Status: err.Error()}
 	}
 
 	resp, err := c.client.Do(req)

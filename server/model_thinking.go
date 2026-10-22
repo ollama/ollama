@@ -151,8 +151,16 @@ func (s *Server) responsesMiddleware(c *gin.Context) {
 			var authErr api.AuthorizationError
 			var statusErr api.StatusError
 			if errors.As(err, &authErr) {
-				status, code, message = http.StatusUnauthorized, "authentication_error", "Sign in to Ollama to use this cloud model."
-			} else if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusForbidden || statusErr.StatusCode == http.StatusNotFound || statusErr.StatusCode == http.StatusTooManyRequests) {
+				signinURL := authErr.SigninURL
+				if signinURL == "" {
+					if fallback, err := cloudProxySigninURL(); err == nil {
+						signinURL = fallback
+					}
+				}
+				c.AbortWithStatusJSON(http.StatusUnauthorized, openai.NewResponsesAuthenticationError(signinURL))
+				return nil
+			}
+			if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusForbidden || statusErr.StatusCode == http.StatusNotFound || statusErr.StatusCode == http.StatusTooManyRequests) {
 				status, code, message = statusErr.StatusCode, "cloud_model_unavailable", "Cannot read this cloud model's thinking controls; check model availability and cloud access."
 			}
 			if status == http.StatusServiceUnavailable || status == http.StatusTooManyRequests {

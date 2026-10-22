@@ -49,27 +49,75 @@ func (t *Thinking) Supports(value any) bool {
 	}
 }
 
-// ValidateRequest rejects explicit controls that a known model cannot honor.
+// ResolveRequest maps recognized effort names to the nearest advertised level,
+// preferring the higher level on a tie and lexical order for same-rank aliases.
+// Exact model-defined names stay unchanged.
+// Off and unknown names are rejected when a known model cannot honor them.
 // A boolean true enables a named-level model using its existing default level.
-func (t *Thinking) ValidateRequest(requested *ThinkValue) error {
+func (t *Thinking) ResolveRequest(requested *ThinkValue) (*ThinkValue, error) {
 	if !t.Valid() || requested == nil || requested.Value == nil {
-		return nil
+		return requested, nil
 	}
 	if t.Supports(requested.Value) {
-		return nil
+		return requested, nil
 	}
 	if requested.Value == true {
 		for _, value := range t.Values {
 			if _, named := value.(string); named {
-				return nil
+				return requested, nil
+			}
+		}
+	}
+	if level, named := requested.Value.(string); named {
+		if rank := thinkingLevelRank(level); rank >= 0 {
+			closest, closestRank, closestDistance := "", -1, 0
+			for _, value := range t.Values {
+				candidate, named := value.(string)
+				if !named {
+					continue
+				}
+				candidateRank := thinkingLevelRank(candidate)
+				if candidateRank < 0 {
+					continue
+				}
+				distance := candidateRank - rank
+				if distance < 0 {
+					distance = -distance
+				}
+				preferCandidate := candidateRank > closestRank || (candidateRank == closestRank && candidate < closest)
+				if closest == "" || distance < closestDistance || (distance == closestDistance && preferCandidate) {
+					closest, closestRank, closestDistance = candidate, candidateRank, distance
+				}
+			}
+			if closest != "" {
+				return &ThinkValue{Value: closest}, nil
 			}
 		}
 	}
 	values, _ := json.Marshal(t.Values)
 	if requested.Value == false {
-		return fmt.Errorf("this model cannot disable thinking; supported values: %s", values)
+		return nil, fmt.Errorf("this model cannot disable thinking; supported values: %s", values)
 	}
-	return fmt.Errorf("unsupported thinking value %v; supported values: %s", requested.Value, values)
+	return nil, fmt.Errorf("unsupported thinking value %v; supported values: %s", requested.Value, values)
+}
+
+// Only established effort names have a cross-model ordering. The legacy maximum
+// aliases share a rank; exact advertised names are preserved before mapping.
+func thinkingLevelRank(level string) int {
+	switch level {
+	case "minimal":
+		return 0
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	case "xhigh", "max", "ultra":
+		return 4
+	default:
+		return -1
+	}
 }
 
 // Clone returns an independent copy.
