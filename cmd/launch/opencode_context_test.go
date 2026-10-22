@@ -1,14 +1,19 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
@@ -54,7 +59,7 @@ func TestOpenCodeRunContentLoadedContext(t *testing.T) {
 				t.Fatal(err)
 			}
 			entry := expected["provider"].(map[string]any)["ollama"].(map[string]any)["models"].(map[string]any)["selected"].(map[string]any)
-			entry["limit"] = map[string]any{"context": float64(8192), "output": float64(2048)}
+			entry["limit"] = map[string]any{"context": float64(8192), "input": float64(8192), "output": float64(2048)}
 			if !reflect.DeepEqual(got, expected) {
 				t.Fatalf("runtime config changed beyond selected limits:\ngot %s", after)
 			}
@@ -92,9 +97,22 @@ func TestOpenCodeRunContentOutputBudget(t *testing.T) {
 	previous := openCodeLoadedContextLength
 	t.Cleanup(func() { openCodeLoadedContextLength = previous })
 	for _, tt := range []struct {
-		context, knownOutput, wantOutput int
-	}{{1024, 0, 256}, {2048, 0, 512}, {16384, 0, 4096}, {65536, 0, 8192}, {16384, 1024, 1024}} {
+		context, knownOutput, savedInput, savedOutput, wantInput, wantOutput int
+	}{
+		{1024, 0, 0, 0, 1024, 256},
+		{2048, 0, 0, 0, 2048, 512},
+		{16384, 0, 0, 0, 16384, 4096},
+		{65536, 0, 0, 0, 65536, 8192},
+		{16384, 1024, 0, 0, 16384, 1024},
+		{8192, 0, 131072, 0, 8192, 2048},
+		{8192, 0, 131072, 1024, 8192, 1024},
+		{8192, 0, 4096, 1024, 4096, 1024},
+		{8192, 0, 131072, 32768, 8192, 2048},
+	} {
 		openCodeLoadedContextLength = func(string) (int, error) { return tt.context, nil }
+		openCodeReadConfig = func() ([]byte, error) {
+			return fmt.Appendf(nil, `{"provider":{"ollama":{"models":{"local":{"limit":{"context":131072,"input":%d,"output":%d}}}}}}`, tt.savedInput, tt.savedOutput), nil
+		}
 		content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local", ContextLength: 131072, MaxOutputTokens: tt.knownOutput}})
 		if err != nil {
 			t.Fatal(err)
@@ -102,7 +120,7 @@ func TestOpenCodeRunContentOutputBudget(t *testing.T) {
 		var cfg struct {
 			Provider map[string]struct {
 				Models map[string]struct {
-					Limit struct{ Context, Output int }
+					Limit struct{ Context, Input, Output int }
 				}
 			}
 		}
@@ -110,9 +128,44 @@ func TestOpenCodeRunContentOutputBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		limit := cfg.Provider["ollama"].Models["local"].Limit
-		if limit.Context != tt.context || limit.Output != tt.wantOutput {
-			t.Fatalf("limit = %+v, want context %d output %d", limit, tt.context, tt.wantOutput)
+		want := struct{ Context, Input, Output int }{tt.context, tt.wantInput, tt.wantOutput}
+		if limit != want {
+			t.Fatalf("limit = %+v, want %+v", limit, want)
 		}
+	}
+}
+
+func TestOpenCodeRunContentConfigFailure(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	previous := openCodeLoadedContextLength
+	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	t.Cleanup(func() { openCodeLoadedContextLength = previous })
+	configErr := errors.New("configuration unavailable")
+	openCodeReadConfig = func() ([]byte, error) { return nil, configErr }
+	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local"}})
+	if content != "" || !errors.Is(err, configErr) {
+		t.Fatalf("configuration failure allowed launch or lost its cause: %q, %v", content, err)
+	}
+}
+
+func TestOpenCodeReadConfigBoundsDescendantWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell wrapper")
+	}
+	dir := t.TempDir()
+	setTestHome(t, dir)
+	// Like the npm launcher, the wrapper starts a child with inherited output.
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte("#!/bin/sh\nsleep 10 &\nwait\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	started := time.Now()
+	_, err := readOpenCodeConfig()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lookup error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > 9*time.Second {
+		t.Fatalf("lookup waited for descendant output after cancellation: %v", elapsed)
 	}
 }
 
@@ -159,8 +212,25 @@ func TestOpenCodeRunContentLatestAlias(t *testing.T) {
 		return 8192, nil
 	}
 	t.Cleanup(func() { openCodeLoadedContextLength = previous })
-	if _, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local:latest"}}); err != nil {
+	openCodeReadConfig = func() ([]byte, error) {
+		return []byte(`{"provider":{"ollama":{"models":{
+			"local":{"limit":{"input":4096,"output":1024}},
+			"local:latest":{"limit":{"input":16384,"output":8192}},
+			"local:7b":{"limit":{"input":128,"output":32}}
+		}}}}`), nil
+	}
+	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local:latest"}})
+	if err != nil {
 		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	limit := cfg["provider"].(map[string]any)["ollama"].(map[string]any)["models"].(map[string]any)["local:latest"].(map[string]any)["limit"]
+	want := map[string]any{"context": float64(8192), "input": float64(4096), "output": float64(1024)}
+	if !reflect.DeepEqual(limit, want) {
+		t.Fatalf("canonical model limits = %v, want %v", limit, want)
 	}
 }
 
@@ -194,6 +264,13 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	bin := t.TempDir()
 	writeFakeBinary(t, bin, "opencode")
+	output := filepath.Join(bin, "env-and-args")
+	t.Setenv("OPENCODE_LAUNCH_TEST_OUTPUT", output)
+	if runtime.GOOS != "windows" {
+		if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte("#!/bin/sh\nprintf '%s\\n' \"$OPENCODE_CONFIG_CONTENT\" \"$@\" > \"$OPENCODE_LAUNCH_TEST_OUTPUT\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Setenv("PATH", bin)
 	previous := openCodeLoadedContextLength
 	openCodeLoadedContextLength = func(model string) (int, error) {
@@ -204,6 +281,20 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 	models := []LaunchModel{{Name: "local"}, {Name: "other"}}
 	o := &OpenCode{}
 	before := o.resolveContent("local", models)
+	checkChild := func(content string, args []string) {
+		t.Helper()
+		if runtime.GOOS == "windows" {
+			return
+		}
+		got, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := strings.Join(append([]string{content}, args...), "\n") + "\n"
+		if string(got) != want {
+			t.Fatalf("child environment and arguments = %q, want %q", got, want)
+		}
+	}
 	for _, args := range [][]string{
 		{"--help"},
 		{"--version"},
@@ -227,11 +318,22 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 			if err := o.Run("local", models, args); err != nil {
 				t.Fatal(err)
 			}
+			checkChild(before, args)
 			if !reflect.DeepEqual(args, original) {
 				t.Fatal("modified caller-owned arguments")
 			}
 		})
 	}
+	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	models[0].Name = "local:latest"
+	content, err := o.runContent("local", models)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := o.Run("local", models, nil); err != nil {
+		t.Fatal(err)
+	}
+	checkChild(content, []string{"--model", "ollama/local:latest"})
 }
 
 type openCodeContentRunner struct {

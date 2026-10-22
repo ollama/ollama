@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -76,6 +78,25 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 }
 
 var openCodeLoadedContextLength = loadedContextLength
+var openCodeReadConfig = readOpenCodeConfig
+
+// Let OpenCode resolve its configuration layers, including JSONC and project settings.
+func readOpenCodeConfig() ([]byte, error) {
+	path, ok := findOpenCode()
+	if !ok {
+		return nil, fmt.Errorf("could not find the OpenCode executable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "debug", "config")
+	// npm's launcher can leave a child holding the output pipes after cancellation.
+	cmd.WaitDelay = time.Second
+	data, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return data, err
+}
 
 // runContent refreshes only the selected local model's limits after loading it.
 // Edit remains metadata-only; other picker entries are not loaded, and their
@@ -116,12 +137,40 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 		fmt.Fprintf(os.Stderr, "Warning: could not read the context size for %s. Continuing with existing settings; long chats may lose earlier messages.\n", model)
 		return content, nil
 	}
+	data, err := openCodeReadConfig()
+	if err != nil {
+		return "", fmt.Errorf("could not read OpenCode configuration: %w", err)
+	}
+	var saved struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Input, Output int }
+			}
+		}
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
+	}
+	// OpenCode prioritizes input over context for compaction. Override stale
+	// input limits too, while keeping a user's smaller limit.
+	input := contextLength
 
 	// Reserve a quarter of the context for output, capped at 8k. Avoid a
 	// minimum output budget that could consume a small allocation entirely.
 	output := min(8192, contextLength/4)
 	if primary.MaxOutputTokens > 0 {
 		output = min(output, primary.MaxOutputTokens)
+	}
+	for name, configured := range saved.Provider["ollama"].Models {
+		if !launchModelMatches(name, model) && !launchModelMatches(model, name) {
+			continue
+		}
+		if configured.Limit.Input > 0 {
+			input = min(input, configured.Limit.Input)
+		}
+		if configured.Limit.Output > 0 {
+			output = min(output, configured.Limit.Output)
+		}
 	}
 	limit, _ := entry["limit"].(map[string]any)
 	if limit == nil {
@@ -131,9 +180,10 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 		output = min(output, int(known))
 	}
 	limit["context"] = contextLength
+	limit["input"] = input
 	limit["output"] = output
 	entry["limit"] = limit
-	data, err := json.Marshal(config)
+	data, err = json.Marshal(config)
 	return string(data), err
 }
 
