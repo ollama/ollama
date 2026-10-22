@@ -49,7 +49,7 @@ func (c *Claude) findPath() (string, error) {
 	return "", fmt.Errorf("claude binary not found")
 }
 
-func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
+func (c *Claude) Run(model string, models []LaunchModel, args []string) error {
 	claudePath, err := ensureClaudeInstalled()
 	if err != nil {
 		return err
@@ -60,11 +60,11 @@ func (c *Claude) Run(model string, _ []LaunchModel, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.Env = append(os.Environ(), c.envVars(model)...)
+	cmd.Env = append(os.Environ(), c.envVars(model, models)...)
 	return cmd.Run()
 }
 
-func (c *Claude) envVars(model string) []string {
+func (c *Claude) envVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_BASE_URL=" + envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
@@ -83,7 +83,7 @@ func (c *Claude) envVars(model string) []string {
 		env = append(env, "CLAUDE_CODE_AUTO_MODE_SERVER=0")
 	}
 
-	env = append(env, c.modelEnvVars(model)...)
+	env = append(env, c.modelEnvVars(model, models)...)
 	return env
 }
 
@@ -177,7 +177,7 @@ const (
 )
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
-func (c *Claude) modelEnvVars(model string) []string {
+func (c *Claude) modelEnvVars(model string, models []LaunchModel) []string {
 	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
@@ -185,12 +185,19 @@ func (c *Claude) modelEnvVars(model string) []string {
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
 	}
 
-	if isCloudModelName(model) {
-		if l, ok := lookupCloudModelLimit(model); ok {
-			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(l.Context))
-			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && l.Context >= claudeMinAutoCompactWindow {
-				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(l.Context, claudeMaxAutoCompactWindow)))
-			}
+	var contextLength int
+	if m, ok := findLaunchModel(models, model); ok && (m.Remote || isCloudModelName(model)) {
+		contextLength = m.ContextLength
+	}
+	if contextLength <= 0 {
+		if limit, ok := lookupCloudModelLimit(model); ok {
+			contextLength = limit.Context
+		}
+	}
+	if contextLength > 0 {
+		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(contextLength))
+		if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && contextLength >= claudeMinAutoCompactWindow {
+			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(contextLength, claudeMaxAutoCompactWindow)))
 		}
 	}
 
