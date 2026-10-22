@@ -665,7 +665,11 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 						return nil, err
 					}
 
-					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+					if strings.EqualFold(msg.Role, "user") && len(messages) > start {
+						messages[len(messages)-1].Images = append(messages[len(messages)-1].Images, img)
+					} else {
+						messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+					}
 				case "input_audio":
 					audioMap, ok := data["input_audio"].(map[string]any)
 					if !ok {
