@@ -185,19 +185,18 @@ func (c *Claude) modelEnvVars(model string, models []LaunchModel) []string {
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
 	}
 
-	var contextLength int
-	if m, ok := findLaunchModel(models, model); ok && (m.Remote || isCloudModelName(model)) {
-		contextLength = m.ContextLength
+	resolved, ok := findLaunchModel(models, model)
+	if ok {
+		resolved = resolved.WithCloudLimits().WithServerMetadata()
+	} else {
+		resolved = fallbackLaunchModel(model)
 	}
-	if contextLength <= 0 {
-		if limit, ok := lookupCloudModelLimit(model); ok {
-			contextLength = limit.Context
-		}
-	}
-	if contextLength > 0 {
-		env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(contextLength))
-		if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && contextLength >= claudeMinAutoCompactWindow {
-			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(contextLength, claudeMaxAutoCompactWindow)))
+	if resolved.Remote || isCloudModelName(model) {
+		if ctxLen := resolved.ContextLength; ctxLen > 0 {
+			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(ctxLen))
+			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && ctxLen >= claudeMinAutoCompactWindow {
+				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(ctxLen, claudeMaxAutoCompactWindow)))
+			}
 		}
 	}
 
