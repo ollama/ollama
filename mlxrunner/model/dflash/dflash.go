@@ -45,6 +45,7 @@ type Config struct {
 	MaskTokenID    int32
 	VocabSize      int32
 	TargetLayerIDs []int
+	HasOwnLMHead   bool
 
 	// RopeInterleaved selects the draft's rotary pairing convention:
 	// true pairs adjacent dims (torch view_as_complex over pairs, the glimmer
@@ -62,8 +63,8 @@ type Config struct {
 type draftTarget interface {
 	model.Model
 
-	// TokenEmbeddings is the raw table lookup; the draft has no table of
-	// its own.
+	// TokenEmbeddings borrows the target table and its input scaling; the
+	// draft has no table of its own.
 	TokenEmbeddings(ids *mlx.Array) *mlx.Array
 
 	// RawLogits is the raw head projection, skipping any output decoration
@@ -80,6 +81,7 @@ type draftTarget interface {
 
 type Model struct {
 	FC         nn.LinearLayer
+	LMHead     nn.LinearLayer
 	HiddenNorm *nn.RMSNorm
 	Norm       *nn.RMSNorm
 	Layers     []*Layer
@@ -155,6 +157,7 @@ func parseConfig(data []byte) (*Config, error) {
 		} `json:"dflash_config"`
 		NumTargetLayers int      `json:"num_target_layers"`
 		VocabSize       int32    `json:"vocab_size"`
+		HasOwnLMHead    bool     `json:"has_own_lm_head"`
 		LayerTypes      []string `json:"layer_types"`
 		SlidingWindow   int32    `json:"sliding_window"`
 		RopeInterleaved *bool    `json:"rope_interleaved"`
@@ -175,6 +178,7 @@ func parseConfig(data []byte) (*Config, error) {
 		LayerTypes:        raw.LayerTypes,
 		BlockSize:         raw.DFlashConfig.BlockSize,
 		VocabSize:         raw.VocabSize,
+		HasOwnLMHead:      raw.HasOwnLMHead,
 		TargetLayerIDs:    raw.DFlashConfig.TargetLayerIDs,
 		Causal:            raw.DFlashConfig.Causal,
 	}
@@ -311,6 +315,12 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 	if m.FC = linears.Make(prefix + "fc"); m.FC == nil {
 		return fmt.Errorf("missing dflash fc weight")
+	}
+	if m.HasOwnLMHead {
+		m.LMHead = linears.Make(prefix + "lm_head")
+		if m.LMHead == nil {
+			return fmt.Errorf("dflash config requires its own lm_head weight")
+		}
 	}
 	for name, dst := range map[string]**nn.RMSNorm{
 		"hidden_norm.weight": &m.HiddenNorm,
@@ -542,6 +552,9 @@ func (m *Model) NewCaches() []cache.Cache {
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
+	if m.LMHead != nil {
+		return m.LMHead.Forward(x)
+	}
 	return m.target.RawLogits(x)
 }
 
