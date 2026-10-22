@@ -87,6 +87,7 @@ type compactionTranscriptItemWire struct {
 type compactionToolGroup struct {
 	CallRef   string
 	ResultRef string
+	Summary   bool
 }
 
 // ResponsesCompactionPlan contains the validated, ordered state required to
@@ -576,7 +577,7 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 	}
 	// Keep an existing conversation item before later instructions so v1
 	// readers can distinguish them from the original leading prefix.
-	for _, ref := range compactionInstructionBoundary(items) {
+	for _, ref := range compactionInstructionBoundary(items, groups) {
 		forced[ref] = struct{}{}
 	}
 	stream := req.Stream != nil && *req.Stream
@@ -585,7 +586,7 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 	}, nil
 }
 
-func compactionInstructionBoundary(items []CompactionTranscriptItem) []string {
+func compactionInstructionBoundary(items []CompactionTranscriptItem, groups []compactionToolGroup) []string {
 	start := 0
 	for start < len(items) && (items[start].Message.Role == "system" || items[start].Message.Role == "developer") {
 		start++
@@ -598,24 +599,22 @@ func compactionInstructionBoundary(items []CompactionTranscriptItem) []string {
 		return nil // No later instruction needs a boundary.
 	}
 	boundary := items[start:end]
-	summaryCalls := make(map[string]string)
-	for _, item := range boundary {
-		if isCompactionSummaryCall(item) {
-			summaryCalls[item.Message.ToolCalls[0].ID] = item.Ref
+	summaryRefs := make(map[string]compactionToolGroup)
+	for _, group := range groups {
+		if group.Summary {
+			summaryRefs[group.CallRef] = group
+			summaryRefs[group.ResultRef] = group
 		}
 	}
 	var priorSummary []string
 	for _, item := range boundary {
-		if isCompactionSummaryCall(item) {
-			continue
+		group, summary := summaryRefs[item.Ref]
+		if !summary {
+			return []string{item.Ref}
 		}
-		if callRef, ok := summaryCalls[item.Message.ToolCallID]; ok && item.Type == "function_call_output" {
-			if priorSummary == nil {
-				priorSummary = []string{callRef, item.Ref}
-			}
-			continue
+		if priorSummary == nil {
+			priorSummary = []string{group.CallRef, group.ResultRef}
 		}
-		return []string{item.Ref}
 	}
 	// Older continuations may contain only a prior summary before a later
 	// instruction. Keep one pair, preferring real history whenever available.
@@ -721,9 +720,16 @@ func validateCompactionContent(contents []ResponsesContent) error {
 }
 
 func isCompactionSummaryCall(item CompactionTranscriptItem) bool {
-	return item.Type == "function_call" && len(item.Message.ToolCalls) == 1 &&
-		item.Message.ToolCalls[0].Function.Name == compactionSummaryToolName &&
-		strings.HasPrefix(item.Message.ToolCalls[0].ID, "call_ollama_compaction_")
+	if item.Type != "function_call" || len(item.Message.ToolCalls) != 1 {
+		return false
+	}
+	call := item.Message.ToolCalls[0]
+	suffix, ok := strings.CutPrefix(call.ID, "call_ollama_compaction_")
+	if !ok || len(suffix) != 12 || call.Function.Name != compactionSummaryToolName {
+		return false
+	}
+	_, err := hex.DecodeString(suffix)
+	return err == nil && call.Function.Arguments.String() == fmt.Sprintf(`{"version":%d}`, OllamaCompactionPayloadVersion)
 }
 
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {
@@ -733,7 +739,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 		group       compactionToolGroup
 	}
 	byCallID := make(map[string]*pendingGroup)
-	ignoredCallIDs := make(map[string]struct{})
 	forced := make(map[string]struct{})
 	var ordered []*pendingGroup
 
@@ -743,10 +748,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			call := item.Message.ToolCalls[0]
 			if call.ID == "" {
 				return nil, nil, fmt.Errorf("%s: function call is missing call_id", item.Ref)
-			}
-			if isCompactionSummaryCall(item) {
-				ignoredCallIDs[call.ID] = struct{}{}
-				continue
 			}
 			if _, exists := byCallID[call.ID]; exists {
 				return nil, nil, fmt.Errorf("%s: duplicate function call_id %q", item.Ref, call.ID)
@@ -760,9 +761,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 				// Standalone outputs can carry the task instructions. Retain them
 				// without inventing a call or relying on the summary to repeat them.
 				forced[item.Ref] = struct{}{}
-				continue
-			}
-			if _, ignored := ignoredCallIDs[callID]; ignored {
 				continue
 			}
 			group := byCallID[callID]
@@ -779,7 +777,11 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 
 	groups := make([]compactionToolGroup, 0, len(ordered))
 	for _, candidate := range ordered {
+		candidate.group.Summary = candidate.resultIndex == candidate.callIndex+1 && isCompactionSummaryCall(items[candidate.callIndex])
 		groups = append(groups, candidate.group)
+		if candidate.group.Summary {
+			continue
+		}
 		active := candidate.resultIndex < 0
 		if !active {
 			active = true
@@ -860,7 +862,7 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 	protected[p.items[len(p.items)-1].Ref] = true
 	peers := make(map[string]string, len(p.groups)*2)
 	for _, group := range p.groups {
-		if group.ResultRef != "" {
+		if !group.Summary && group.ResultRef != "" {
 			peers[group.CallRef] = group.ResultRef
 			peers[group.ResultRef] = group.CallRef
 		}
@@ -877,7 +879,7 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 		}
 		peer := peers[item.Ref]
 		if item.Type == "function_call" || item.Type == "function_call_output" {
-			// Prior summary pairs are intentionally absent from p.groups.
+			// Prior summaries remain available to the summarizer on retries.
 			if peer == "" || protected[peer] {
 				continue
 			}
@@ -1022,6 +1024,14 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 			return ResponsesCompactionResult{}, fmt.Errorf("create_summary selected duplicate item %q", ref)
 		}
 		selected[ref] = struct{}{}
+	}
+	// Generated summaries are replaced, even when the model selects either
+	// member. Only a complete pair forced as an instruction boundary survives.
+	for _, group := range p.groups {
+		if group.Summary {
+			delete(selected, group.CallRef)
+			delete(selected, group.ResultRef)
+		}
 	}
 	for ref := range p.forcedRefs {
 		selected[ref] = struct{}{}

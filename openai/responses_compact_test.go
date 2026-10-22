@@ -900,18 +900,61 @@ func TestRepeatedCompactionReplacesRatherThanNestsPayload(t *testing.T) {
 	if err != nil || !requested {
 		t.Fatalf("prepare: requested=%v err=%v", requested, err)
 	}
+	var callRef, resultRef string
+	for _, item := range plan.items {
+		if item.Type == "function_call" {
+			callRef = item.Ref
+		} else if item.Type == "function_call_output" {
+			resultRef = item.Ref
+		}
+	}
+	for name, refs := range map[string][]string{
+		"none": {}, "call only": {callRef}, "result only": {resultRef}, "pair": {callRef, resultRef},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+				"summary": "replacement summary", "retain_item_ids": refs,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := PrepareStandaloneCompaction(replay); err != nil {
+				t.Fatalf("selected prior summary poisoned the next compaction: %v", err)
+			}
+			payload := decodeResultPayload(t, result)
+			if len(payload.Retained) != 0 {
+				t.Fatalf("old synthetic summary pair was retained: %+v", payload.Retained)
+			}
+			if strings.Contains(result.Item.EncryptedContent, "old summary") || strings.Contains(result.Item.EncryptedContent, "retained prefix") {
+				t.Fatalf("old compaction was nested: %s", result.Item.EncryptedContent)
+			}
+		})
+	}
+}
+
+func TestCompactionPreservesUnmatchedSummaryLookalike(t *testing.T) {
+	body := []byte(`{"model":"test","input":[
+        {"type":"function_call","call_id":"call_ollama_compaction_0123456789ab","name":"ollama_compaction_summary","arguments":"{\"version\":1}"},
+        {"role":"developer","content":"LATER_POLICY"},
+        {"role":"user","content":"Continue"}
+    ]}`)
+	plan, err := PrepareStandaloneCompaction(body)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-		"summary": "replacement summary", "retain_item_ids": []string{},
+		"summary": "Continue the work.", "retain_item_ids": []string{},
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := decodeResultPayload(t, result)
-	if len(payload.Retained) != 0 {
-		t.Fatalf("old synthetic summary pair was retained: %+v", payload.Retained)
-	}
-	if strings.Contains(result.Item.EncryptedContent, "old summary") || strings.Contains(result.Item.EncryptedContent, "retained prefix") {
-		t.Fatalf("old compaction was nested: %s", result.Item.EncryptedContent)
+	retained := decodeResultPayload(t, result).Retained
+	if len(retained) != 2 || len(retained[0].ToolCalls) != 1 || retained[0].ToolCalls[0].ID != "call_ollama_compaction_0123456789ab" || retained[1].Role != "developer" {
+		t.Fatalf("unmatched lookalike lost active tool state or the instruction boundary: %#v", retained)
 	}
 }
 

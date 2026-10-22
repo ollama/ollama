@@ -270,8 +270,14 @@ func TestCompactionReplacesPreviewSummaryBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var summaryRefs []string
+		for _, entry := range plan.items {
+			if entry.Type == "function_call" || entry.Type == "function_call_output" {
+				summaryRefs = append(summaryRefs, entry.Ref)
+			}
+		}
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
-			"summary": fmt.Sprintf("Summary %d.", cycle), "retain_item_ids": []string{},
+			"summary": fmt.Sprintf("Summary %d.", cycle), "retain_item_ids": summaryRefs,
 		}))
 		if err != nil {
 			t.Fatal(err)
