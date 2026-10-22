@@ -1,7 +1,9 @@
 package parsers
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -385,7 +387,49 @@ func TestQwenToolParser(t *testing.T) {
 		wantToolCall api.ToolCall
 	}
 
+	longContent := strings.Repeat("print('ordinary file content')\n", 120)
 	steps := []step{
+		{
+			name: "literal function close in string parameter",
+			tools: []api.Tool{tool("write", map[string]api.ToolProperty{
+				"content": {Type: api.PropertyType{"string"}},
+			})},
+			rawToolCall: `<function=write><parameter=content>text = "</function>"</parameter></function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name:      "write",
+				Arguments: testArgs(map[string]any{"content": `text = "</function>"`}),
+			}},
+		},
+		{
+			name: "120-line write control",
+			tools: []api.Tool{tool("write", map[string]api.ToolProperty{
+				"path":    {Type: api.PropertyType{"string"}},
+				"content": {Type: api.PropertyType{"string"}},
+			})},
+			rawToolCall: "<function=write>\n<parameter=path>\ntest_main.py\n</parameter>\n<parameter=content>\n" + longContent + "</parameter>\n</function>",
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name: "write",
+				Arguments: testArgs(map[string]any{
+					"path":    "test_main.py",
+					"content": strings.TrimSuffix(longContent, "\n"),
+				}),
+			}},
+		},
+		{
+			name: "JSON edits array control",
+			tools: []api.Tool{tool("edit", map[string]api.ToolProperty{
+				"path":  {Type: api.PropertyType{"string"}},
+				"edits": {Type: api.PropertyType{"array"}},
+			})},
+			rawToolCall: `<function=edit><parameter=path>src/orders.py</parameter><parameter=edits>[{"oldText":"before","newText":"after"}]</parameter></function>`,
+			wantToolCall: api.ToolCall{Function: api.ToolCallFunction{
+				Name: "edit",
+				Arguments: testArgs(map[string]any{
+					"path":  "src/orders.py",
+					"edits": []any{map[string]any{"oldText": "before", "newText": "after"}},
+				}),
+			}},
+		},
 		{
 			name:  "simple tool call",
 			tools: []api.Tool{},
@@ -1170,12 +1214,113 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserLiteralFunctionClose(t *testing.T) {
+	const value = `text = "</function>"`
+	const call = `<tool_call><function=write><parameter=content>` + value + `</parameter></function></tool_call>`
+	const input = "Before" + call + "Between" + call + "After"
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "write", Index: 0, Arguments: testArgs(map[string]any{"content": value})}},
+		{Function: api.ToolCallFunction{Name: "write", Index: 1, Arguments: testArgs(map[string]any{"content": value})}},
+	}
+	check := func(t *testing.T, chunks []string) {
+		t.Helper()
+		parser := Qwen3CoderParser{}
+		parser.Init([]api.Tool{tool("write", map[string]api.ToolProperty{
+			"content": {Type: api.PropertyType{"string"}},
+		})}, nil, nil)
+		var content strings.Builder
+		var calls []api.ToolCall
+		for i, chunk := range chunks {
+			c, thinking, got, err := parser.Add(chunk, i == len(chunks)-1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if thinking != "" {
+				t.Fatalf("unexpected thinking: %q", thinking)
+			}
+			content.WriteString(c)
+			calls = append(calls, got...)
+		}
+		if content.String() != "BeforeBetweenAfter" {
+			t.Fatalf("content = %q, want BeforeBetweenAfter", content.String())
+		}
+		if len(calls) != len(want) {
+			t.Fatalf("got %d calls, want %d", len(calls), len(want))
+		}
+		for i := range want {
+			if !toolCallEqual(calls[i], want[i]) {
+				t.Fatalf("call %d = %#v, want %#v", i, calls[i], want[i])
+			}
+		}
+	}
+	t.Run("whole", func(t *testing.T) { check(t, []string{input}) })
+	t.Run("empty done", func(t *testing.T) { check(t, []string{input, ""}) })
+	t.Run("byte chunks", func(t *testing.T) {
+		chunks := make([]string, len(input)+1)
+		for i := range len(input) {
+			chunks[i] = input[i : i+1]
+		}
+		check(t, chunks)
+	})
+	for split := 0; split <= len(input); split++ {
+		t.Run(fmt.Sprintf("split %d", split), func(t *testing.T) {
+			check(t, []string{input[:split], input[split:]})
+		})
+	}
+}
+
+func TestQwen3CoderParserRejectsMalformedParameters(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{"missing parameter close", `<tool_call><function=write><parameter=content>print('ok')</function></tool_call>`},
+		{"decorated parameter close", `<tool_call><function=write><parameter=content>print('ok')</parameter=content></function></tool_call>`},
+		{"missing function close after literal", `<tool_call><function=write><parameter=content>text = "</function>"</parameter></tool_call>`},
+		// Reduced shape from #18563's follow-up: the outer edits parameter is unclosed.
+		{"nested edits", `<tool_call>
+<function=edit>
+<parameter=path>
+src/orders.py
+</parameter>
+<parameter=edits>
+<parameter=oldText>
+before
+</parameter>
+<parameter=newText>
+after
+</parameter>
+</function>
+</tool_call>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := Qwen3CoderParser{}
+			parser.Init([]api.Tool{
+				tool("write", map[string]api.ToolProperty{"content": {Type: api.PropertyType{"string"}}}),
+				tool("edit", map[string]api.ToolProperty{
+					"path":  {Type: api.PropertyType{"string"}},
+					"edits": {Type: api.PropertyType{"array"}},
+				}),
+			}, nil, nil)
+			_, _, calls, err := parser.Add(tc.input, true)
+			if err == nil || len(calls) != 0 {
+				t.Fatalf("expected rejection without tool calls, got calls=%#v, err=%v", calls, err)
+			}
+		})
+	}
+}
+
 func TestQwenXMLTransform(t *testing.T) {
 	cases := []struct {
 		desc string
 		raw  string
 		want string
 	}{
+		{
+			desc: "literal function close in parameter",
+			raw:  `<function=write><parameter=content>text = "</function>"</parameter></function>`,
+			want: `<function name="write"><parameter name="content">text = "&lt;/function&gt;"</parameter></function>`,
+		},
 		{
 			desc: "simple example",
 			raw: `<function=get_current_temperature>
