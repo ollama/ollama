@@ -79,6 +79,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		if decisionVision {
 			capabilities = append(capabilities, "vision")
 		}
+	} else if cfg.Architecture() == "Phonon" {
+		capabilities = []string{"speech"}
 	} else {
 		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
 	}

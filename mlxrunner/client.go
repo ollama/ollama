@@ -604,6 +604,14 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		return nil, api.StatusError{StatusCode: resp.StatusCode, ErrorMessage: strings.TrimSpace(string(body))}
+	}
+
 	var tokens []int
 	if err := json.NewDecoder(resp.Body).Decode(&tokens); err != nil {
 		return nil, err
