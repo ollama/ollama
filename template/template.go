@@ -290,11 +290,15 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		return err
 	}
 	useMessages := !v.forceLegacy && slices.Contains(vars, "messages")
-	if (t.systemRole || !useMessages) && slices.ContainsFunc(v.Messages, func(m api.Message) bool { return m.Role == "developer" }) {
+	if slices.ContainsFunc(v.Messages, func(m api.Message) bool { return m.Role == "developer" }) {
+		// collate merges adjacent turns in place. Custom templates also need a
+		// copy even when their developer roles stay unchanged.
 		v.Messages = slices.Clone(v.Messages)
-		for i := range v.Messages {
-			if v.Messages[i].Role == "developer" {
-				v.Messages[i].Role = "system"
+		if t.systemRole || !useMessages {
+			for i := range v.Messages {
+				if v.Messages[i].Role == "developer" {
+					v.Messages[i].Role = "system"
+				}
 			}
 		}
 	}

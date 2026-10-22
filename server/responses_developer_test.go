@@ -49,8 +49,8 @@ func TestDeveloperInstructionsSurviveTruncation(t *testing.T) {
 			position := 0
 			for _, marker := range []string{"SYSTEM_POLICY", "DEVELOPER_POLICY", "LATER_POLICY", "LATEST_REQUEST"} {
 				index := strings.Index(prompt[position:], marker)
-				if index < 0 {
-					t.Fatalf("prompt lost or reordered %q: %q", marker, prompt)
+				if index < 0 || strings.Count(prompt, marker) != 1 {
+					t.Fatalf("prompt lost, duplicated, or reordered %q: %q", marker, prompt)
 				}
 				position += index + len(marker)
 			}
@@ -65,6 +65,28 @@ func TestDeveloperInstructionsSurviveTruncation(t *testing.T) {
 			}
 		})
 	}
+	t.Run("adjacent developer messages", func(t *testing.T) {
+		messages := []api.Message{
+			{Role: "system", Content: "SYSTEM_POLICY"},
+			{Role: "developer", Content: "DEVELOPER_POLICY"},
+			{Role: "developer", Content: "LATER_POLICY"},
+			{Role: "user", Content: strings.Repeat("OLD_HISTORY ", 200)},
+			{Role: "user", Content: "LATEST_REQUEST"},
+		}
+		prompt, _, err := chatPrompt(t.Context(), &Model{Template: roles}, mockRunner{}.Tokenize,
+			&api.Options{Runner: api.Runner{NumCtx: 4}}, messages, nil, nil, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, marker := range []string{"SYSTEM_POLICY", "DEVELOPER_POLICY", "LATER_POLICY", "LATEST_REQUEST"} {
+			if strings.Count(prompt, marker) != 1 {
+				t.Fatalf("prompt must contain %q once: %q", marker, prompt)
+			}
+		}
+		if strings.Contains(prompt, "OLD_HISTORY") {
+			t.Fatal("test did not exercise history truncation")
+		}
+	})
 }
 
 func TestResponsesDeveloperInstructionsOverrideModelSystem(t *testing.T) {

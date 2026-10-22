@@ -146,6 +146,7 @@ func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 	messages := []api.Message{
 		{Role: "system", Content: "Base policy"},
 		{Role: "developer", Content: "Project policy"},
+		{Role: "developer", Content: "Supplemental policy"},
 		{Role: "user", Content: "First request"},
 		{Role: "assistant", Content: "First answer"},
 		{Role: "developer", Content: "Updated policy"},
@@ -156,7 +157,7 @@ func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 	if err := tmpl.Execute(&out, Values{Messages: messages}); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Base policy|system:Base policy;developer:Project policy;user:First request;assistant:First answer;developer:Updated policy;user:Continue;"; out.String() != want {
+	if want := "Base policy|system:Base policy;developer:Project policy\n\nSupplemental policy;user:First request;assistant:First answer;developer:Updated policy;user:Continue;"; out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
 	}
 	if !reflect.DeepEqual(messages, original) {
