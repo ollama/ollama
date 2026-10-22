@@ -6,6 +6,7 @@ import (
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/sample"
 )
 
 // dflashPendingFlushTokens bounds the held feature rows between flushes.
@@ -142,6 +143,12 @@ func (d *dflashDraftSession) flush() {
 	})
 }
 
+// A correlated draft scores the full trained block before choosing a prefix.
+// It reports its actual proposal probabilities for rejection sampling.
+type blockSelector interface {
+	SelectBlock(hidden, logits, context *mlx.Array) (tokens, ids, probs *mlx.Array)
+}
+
 // propose drafts a block after the not-yet-validated current token, one
 // forward filling every mask position.
 func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCandidates {
@@ -155,12 +162,14 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 	}
 	d.commitBlock()
 
-	// Send only the anchor and the rows being sampled, not the full trained
-	// block. Exact for causal layers, and measured as free for bidirectional
-	// ones.
+	proposalLength := n
+	selector, correlated := spec.draft.(blockSelector)
+	if correlated {
+		proposalLength = blockSize - 1
+	}
 	var candidates *draftCandidates
 	mlx.ScopedArrays(func() []*mlx.Array {
-		masks := make([]int32, n)
+		masks := make([]int32, proposalLength)
 		for i := range masks {
 			masks[i] = d.drafter.maskToken
 		}
@@ -172,13 +181,26 @@ func (d *dflashDraftSession) propose(current *mlx.Array, maxTokens int) *draftCa
 		scheduleSpeculation(spec.draftKV, d.ctxOffset, 1)
 		d.blockOutstanding = true
 
-		hidden, _ := spec.draft.Forward(&batch.Batch{
+		hidden, context := spec.draft.Forward(&batch.Batch{
 			InputIDs:     block,
 			SeqOffsets:   []int32{int32(offset)},
-			SeqQueryLens: []int32{int32(n + 1)},
+			SeqQueryLens: []int32{int32(proposalLength + 1)},
 			Hidden:       features,
 			Layout:       d.layout,
 		}, spec.targets, spec.draftKV)
+
+		if correlated {
+			hidden = hidden.Slice(mlx.Slice(), mlx.Slice(1, proposalLength+1), mlx.Slice())
+			tokens, ids, probs := selector.SelectBlock(hidden, spec.draft.Unembed(hidden), context)
+			candidates = &draftCandidates{
+				tokens: tokens.Slice(mlx.Slice(), mlx.Slice(0, n)),
+				dist: sample.Distribution{
+					IDs:   ids.Squeeze(0).Slice(mlx.Slice(0, n), mlx.Slice()),
+					Probs: probs.Squeeze(0).Slice(mlx.Slice(0, n), mlx.Slice()),
+				},
+			}
+			return candidates.Arrays()
+		}
 
 		// Row i predicts the token at its own position, so the anchor row is
 		// unused. Rows 1..n are sampled from one batched distribution; penalties

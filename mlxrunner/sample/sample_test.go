@@ -202,6 +202,27 @@ func TestDistributionResidualUsesTargetSupport(t *testing.T) {
 	})
 }
 
+func TestDenseResidualAgainstSparseDraft(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		target := Distribution{Probs: mlx.FromValues([]float32{0.7, 0.3, 0, 0.2, 0.3, 0.5}, 2, 3)}
+		draft := Distribution{
+			IDs:   mlx.FromValues([]int32{0, 2, 2, 0}, 2, 2),
+			Probs: mlx.FromValues([]float32{0.2, 0.8, 1, 0}, 2, 2),
+		}
+		residual := target.ResidualAgainst(draft)
+		mlx.Eval(residual.Arrays()...)
+		if residual.IDs != nil {
+			t.Fatal("dense target residual became sparse")
+		}
+		want := []float32{0.625, 0.375, 0, 0.4, 0.6, 0}
+		for i, got := range residual.Probs.Floats() {
+			if math.Abs(float64(got-want[i])) > 1e-6 {
+				t.Fatalf("residual[%d] = %v, want %v", i, got, want[i])
+			}
+		}
+	})
+}
+
 func TestSeededSamplingIsReproducible(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		seededSequence := func(seed int) []int32 {

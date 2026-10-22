@@ -218,6 +218,14 @@ func TestDFlashProposeBounds(t *testing.T) {
 		if got, want := draft.calls[0].block, []int32{1, 6, 6, 6}; !slices.Equal(got, want) {
 			t.Fatalf("block = %v, want %v (anchor plus blockSize-1 masks)", got, want)
 		}
+		cand = session.propose(current, 1)
+		mlx.Eval(cand.tokens)
+		if got := cand.tokens.Ints(); !slices.Equal(got, []int32{2}) {
+			t.Fatalf("limited draft tokens = %v, want [2]", got)
+		}
+		if got := draft.calls[len(draft.calls)-1].block; !slices.Equal(got, []int32{1, 6}) {
+			t.Fatalf("limited block = %v, want [1 6]", got)
+		}
 	})
 }
 

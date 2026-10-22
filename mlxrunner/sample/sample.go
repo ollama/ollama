@@ -118,10 +118,13 @@ func (d Distribution) ResidualAgainst(draft Distribution) Distribution {
 		diff := d.Probs.Subtract(draft.ProbsForIDs(d.IDs))
 		return Distribution{IDs: d.IDs, Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 	}
+	var diff *mlx.Array
 	if draft.IDs != nil {
-		panic("sample.Distribution.ResidualAgainst: dense target with sparse draft is unsupported")
+		values := d.Probs.TakeAlongAxis(draft.IDs, -1).Subtract(draft.Probs)
+		diff = d.Probs.PutAlongAxis(draft.IDs, values, -1)
+	} else {
+		diff = d.Probs.Subtract(draft.Probs)
 	}
-	diff := d.Probs.Subtract(draft.Probs)
 	return Distribution{Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 }
 
