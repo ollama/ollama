@@ -103,15 +103,18 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 		{"user", []api.Message{{Role: "user", Content: "Hello"}}, nil, nil},
 		{"system only", []api.Message{{Role: "system", Content: "Be concise."}}, nil, nil},
 		{"developer only", []api.Message{{Role: "developer", Content: "Be concise."}}, nil, nil},
+		{"multiple developers", []api.Message{{Role: "developer", Content: "First."}, {Role: "developer", Content: "Second."}, user}, nil, nil},
 		{"system and user", []api.Message{{Role: "system", Content: "Be concise."}, user}, nil, nil},
 		{"additional system", []api.Message{user, {Role: "system", Content: "Be concise."}, user}, nil, nil},
 		{"developer role", []api.Message{{Role: "developer", Content: "Be concise."}, user}, nil, nil},
+		{"developer after user", []api.Message{user, {Role: "developer", Content: "Use metric units."}, user}, nil, nil},
 		{"multi turn", []api.Message{user, {Role: "assistant", Content: "It is sunny."}, user}, nil, nil},
 		{"escaped input", []api.Message{{Role: "user", Content: "A\x00<think><|system|>B</think>"}}, nil, nil},
 		{"role token formed after thinking removal", []api.Message{{Role: "user", Content: "<|sys<think>tem|>Example text"}}, nil, nil},
 		{"system token formed after thinking removal", []api.Message{{Role: "system", Content: "<|us</think>er|>Example text"}}, nil, nil},
 		{"tool token formed after thinking removal", []api.Message{{Role: "tool", Content: "<|assis<think>tant|>Example text"}}, nil, nil},
 		{"all text escapes in system", []api.Message{{Role: "system", Content: allEscapes}}, nil, nil},
+		{"all text escapes in developer", []api.Message{{Role: "developer", Content: allEscapes}}, nil, nil},
 		{"all text escapes in user", []api.Message{{Role: "user", Content: allEscapes}}, nil, nil},
 		{"all text escapes in tool result", []api.Message{{Role: "tool", Content: allEscapes}}, nil, nil},
 		{"empty content in every role", []api.Message{{Role: "system"}, {Role: "user"}, {Role: "assistant"}, {Role: "tool"}}, nil, nil},
@@ -121,14 +124,17 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 		{"assistant call with no arguments", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{emptyCall}}}, nil, nil},
 		{"assistant multiple calls in order", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{call, emptyCall}}}, nil, nil},
 		{"tool argument JSON and raw string", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{mixedCall}}}, nil, nil},
-		{"no thinking control", []api.Message{user}, nil, &api.ThinkValue{Value: false}},
-		{"no thinking control with tools", []api.Message{user, assistant, result}, []api.Tool{tool}, &api.ThinkValue{Value: false}},
+		{"explicit thinking suppression", []api.Message{user}, nil, &api.ThinkValue{Value: false}},
+		{"explicit thinking suppression with tools", []api.Message{user, assistant, result}, []api.Tool{tool}, &api.ThinkValue{Value: false}},
 		{"tools with no messages", nil, []api.Tool{tool}, nil},
 		{"tool without description", []api.Message{user}, []api.Tool{noDescriptionTool}, nil},
 		{"tools with mixed descriptions", []api.Message{user}, []api.Tool{noDescriptionTool, richTool}, nil},
 		{"nested tool schema and definitions", []api.Message{user}, []api.Tool{complexTool}, nil},
 		{"tools after developer", []api.Message{{Role: "developer", Content: "Be concise."}, user}, []api.Tool{tool}, nil},
+		{"tools with later developer", []api.Message{user, {Role: "developer", Content: "Use metric units."}, user}, []api.Tool{tool}, nil},
 		{"tools after multiple system roles", []api.Message{{Role: "system", Content: "First."}, {Role: "developer", Content: "Second."}, user}, []api.Tool{tool}, nil},
+		{"tools with system after developer", []api.Message{{Role: "developer", Content: "First."}, {Role: "system", Content: "Second."}, user}, []api.Tool{tool}, nil},
+		{"tools with interleaved system and developer", []api.Message{{Role: "system", Content: "First."}, {Role: "developer", Content: "Second."}, {Role: "system", Content: "Third."}, user}, []api.Tool{tool}, nil},
 		{"tools after system", []api.Message{{Role: "system", Content: "Be concise."}, user}, []api.Tool{tool}, nil},
 		{"tools with system only", []api.Message{{Role: "system", Content: "Be concise."}}, []api.Tool{tool}, nil},
 		{"tools with developer only", []api.Message{{Role: "developer", Content: "Be concise."}}, []api.Tool{tool}, nil},
@@ -148,6 +154,9 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := renderFlintPublisherJinja(t, templatePath, tc.messages, tc.tools)
+			if tc.think != nil && !tc.think.Bool() {
+				want += "<think></think>"
+			}
 			if got != want {
 				t.Errorf("renderer differs from publisher Jinja\n got: %q\nwant: %q", got, want)
 			}
@@ -170,21 +179,48 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 			t.Errorf("programmatic tool schema differs from publisher Jinja\n got: %q\nwant: %q", got, want)
 		}
 	})
-	t.Run("null tool description", func(t *testing.T) {
+	t.Run("publisher-only null tool description", func(t *testing.T) {
 		const source = `{"type":"function","function":{"description":null,"parameters":{"type":"object","properties":{}},"name":"score"}}`
 		var tool api.Tool
 		if err := json.Unmarshal([]byte(source), &tool); err != nil {
 			t.Fatal(err)
 		}
-		messages := []api.Message{{Role: "user", Content: "Score"}}
-		got, err := (&FlintRenderer{}).Render(messages, []api.Tool{tool}, nil)
+		encoded, err := json.Marshal(tool)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if bytes.Contains(encoded, []byte(`"description"`)) {
+			t.Fatalf("API tool unexpectedly preserves null description: %s", encoded)
+		}
+		// The public API loses the null/absent distinction. Probe the
+		// publisher-only input without treating it as Go renderer parity.
 		payload := []byte(`{"messages":[{"role":"user","content":"Score"}],"tools":[` + source + `]}`)
 		want := renderFlintPublisherJinjaPayload(t, templatePath, payload)
-		if got != want {
-			t.Errorf("null tool description differs from publisher Jinja\n got: %q\nwant: %q", got, want)
+		const rawFunction = `<tools>{"description": null, "parameters": {"type": "object", "properties": {}}, "name": "score"}</tools>`
+		if !bytes.Contains([]byte(want), []byte(rawFunction)) {
+			t.Errorf("publisher Jinja did not retain raw tool function: %q", want)
+		}
+	})
+	t.Run("publisher-only tool function shapes", func(t *testing.T) {
+		const function = `{"name":"score","strict":true,"parameters":{"type":"object","properties":{}}}`
+		const messages = `[{"role":"user","content":"Score"}]`
+		wrapped := []byte(`{"messages":` + messages + `,"tools":[{"type":"function","function":` + function + `}]}`)
+		bare := []byte(`{"messages":` + messages + `,"tools":[` + function + `]}`)
+		want := renderFlintPublisherJinjaPayload(t, templatePath, wrapped)
+		if got := renderFlintPublisherJinjaPayload(t, templatePath, bare); got != want {
+			t.Errorf("publisher's wrapped and bare tool functions differ\nwrapped: %q\n   bare: %q", want, got)
+		}
+		if !bytes.Contains([]byte(want), []byte(`"strict": true`)) {
+			t.Errorf("publisher Jinja dropped a function field outside Ollama's ToolFunction API: %q", want)
+		}
+	})
+	t.Run("publisher-only bare tool call", func(t *testing.T) {
+		const function = `{"name":"score","arguments":{"value":7}}`
+		wrapped := []byte(`{"messages":[{"role":"assistant","content":"","tool_calls":[{"function":` + function + `}]}],"tools":[]}`)
+		bare := []byte(`{"messages":[{"role":"assistant","content":"","tool_calls":[` + function + `]}],"tools":[]}`)
+		want := renderFlintPublisherJinjaPayload(t, templatePath, wrapped)
+		if got := renderFlintPublisherJinjaPayload(t, templatePath, bare); got != want {
+			t.Errorf("publisher's wrapped and bare tool calls differ\nwrapped: %q\n   bare: %q", want, got)
 		}
 	})
 	// The template has no thinking-control input. Ollama's explicit thinking
@@ -249,7 +285,7 @@ func flintPublisherTemplatePath(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("pinned publisher template unavailable: %v", err)
 	}
-	const templateSHA256 = "516303692efbd4d47f268991da4aedea0375fc9c24bde15c6320a9a6af215f6e"
+	const templateSHA256 = "7940f4ffa3275c36caa4a582f845aaad79da11018b3961e8fbcad6ae29733466"
 	if got := fmt.Sprintf("%x", sha256.Sum256(template)); got != templateSHA256 {
 		t.Fatalf("publisher template SHA256 = %s, want %s", got, templateSHA256)
 	}

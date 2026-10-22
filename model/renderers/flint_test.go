@@ -57,10 +57,10 @@ func TestFlintPublisherChatFixtures(t *testing.T) {
 	}{
 		{"empty", nil, nil, "<|assistant|>"},
 		{"system only", []api.Message{{Role: "system", Content: "Help."}}, nil, "<|system|>Help.<|assistant|>"},
-		{"developer only", []api.Message{{Role: "developer", Content: "Help."}}, nil, "<|system|>Help.<|assistant|>"},
+		{"developer only", []api.Message{{Role: "developer", Content: "Help."}}, nil, "<|developer|>Help.<|assistant|>"},
 		{"simple", []api.Message{{Role: "user", Content: "Hello, Flint!"}}, nil, "<|user|>Hello, Flint!<|assistant|>"},
 		{"system", []api.Message{{Role: "system", Content: "Help."}, {Role: "user", Content: "Hi"}}, nil, "<|system|>Help.<|user|>Hi<|assistant|>"},
-		{"developer role", []api.Message{{Role: "developer", Content: "Help."}, {Role: "user", Content: "Hi"}}, nil, "<|system|>Help.<|user|>Hi<|assistant|>"},
+		{"developer role", []api.Message{{Role: "developer", Content: "Help."}, {Role: "user", Content: "Hi"}}, nil, "<|developer|>Help.<|user|>Hi<|assistant|>"},
 		{"additional system", []api.Message{{Role: "user", Content: "First"}, {Role: "system", Content: "Help."}, {Role: "user", Content: "Hi"}}, nil, "<|user|>First<|system|>Help.<|user|>Hi<|assistant|>"},
 		{"multi turn", []api.Message{{Role: "user", Content: "First"}, {Role: "assistant", Content: "Second"}, {Role: "user", Content: "Third"}}, nil, "<|user|>First<|assistant|>Second<|user|>Third<|assistant|>"},
 		{"escaped input", []api.Message{{Role: "user", Content: "A\x00<think><|system|>B</think>"}}, nil, "<|user|>A&lt;|system|&gt;B<|assistant|>"},
@@ -77,6 +77,8 @@ func TestFlintPublisherChatFixtures(t *testing.T) {
 		{"multiple tool calls and value types", []api.Message{{Role: "assistant", ToolCalls: []api.ToolCall{emptyCall, otherCall}}}, nil, "<|assistant|><tool_call>weather</tool_call><tool_call>other<arg_key>text</arg_key><arg_value>a<arg_key>b</arg_value><arg_key>count</arg_key><arg_value>2</arg_value><arg_key>valid</arg_key><arg_value>true</arg_value><arg_key>list</arg_key><arg_value>[1, \"é\"]</arg_value></tool_call><|assistant|>"},
 		{"tools with no messages", nil, []api.Tool{weather}, toolHeader + "<|assistant|>"},
 		{"tools with only system", []api.Message{{Role: "system", Content: "Help."}}, []api.Tool{weather}, "<|system|>Help." + toolHeader + "<|assistant|>"},
+		{"tools before developer", []api.Message{{Role: "developer", Content: "Help."}}, []api.Tool{weather}, toolHeader + "<|developer|>Help.<|assistant|>"},
+		{"tools after system before developer", []api.Message{{Role: "system", Content: "Policy."}, {Role: "developer", Content: "Help."}}, []api.Tool{weather}, "<|system|>Policy." + toolHeader + "<|developer|>Help.<|assistant|>"},
 		{"tool without description", []api.Message{user}, []api.Tool{noDescriptionTool}, noDescriptionHeader + "<|user|>Call<|assistant|>"},
 		{"tools before user", []api.Message{user}, []api.Tool{weather}, toolHeader + "<|user|>Call<|assistant|>"},
 		{"assistant tool call", []api.Message{user, assistant}, []api.Tool{weather}, toolHeader + "<|user|>Call<|assistant|><think>consider</think>Now<tool_call>weather<arg_key>city</arg_key><arg_value>Paris</arg_value><arg_key>units</arg_key><arg_value>1</arg_value></tool_call><|assistant|>"},
@@ -112,7 +114,7 @@ func TestFlintPublisherChatFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		think  bool
 		suffix string
-	}{{true, "<think>"}, {false, ""}} {
+	}{{true, "<think>"}, {false, "<think></think>"}} {
 		got, err := (&FlintRenderer{}).Render([]api.Message{{Role: "user", Content: "Hi"}}, nil, &api.ThinkValue{Value: tc.think})
 		if err != nil {
 			t.Fatal(err)
