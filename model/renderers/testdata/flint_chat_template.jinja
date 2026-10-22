@@ -15,12 +15,7 @@ You are provided with function signatures within <tools></tools> XML tags:
 <tools>
 {%- for tool in tools %}
 {%- set fn = tool.function if tool.function is defined else tool %}
-{%- if fn.description is defined and fn.description is not none %}
-{%- set spec = {"name": fn.name, "description": fn.description, "parameters": fn.parameters} %}
-{%- else %}
-{%- set spec = {"name": fn.name, "parameters": fn.parameters} %}
-{%- endif %}
-{{ spec | tojson(ensure_ascii=False) }}
+{{ fn | tojson(ensure_ascii=False) }}
 {%- endfor %}
 </tools>
 
@@ -30,16 +25,17 @@ For each function call, output the function name and arguments within the follow
 {%- endset -%}
 {%- set ns = namespace(tools_pending=true) -%}
 {%- for m in messages -%}
-{%- set role = "system" if m.role == "developer" else m.role -%}
-{%- if ns.tools_pending and role != "system" -%}
+{%- if ns.tools_pending and m.role != 'system' -%}
 {{ tool_preamble }}
 {%- set ns.tools_pending = false -%}
 {%- endif -%}
-{%- if role == "system" -%}
+{%- if m.role == 'system' -%}
 <|system|>{{ flint_text(m.content) }}
-{%- elif role == "user" -%}
+{%- elif m.role == 'developer' -%}
+<|developer|>{{ flint_text(m.content) }}
+{%- elif m.role == 'user' -%}
 <|user|>{{ flint_text(m.content) }}
-{%- elif role == "assistant" -%}
+{%- elif m.role == 'assistant' -%}
 <|assistant|>
 {%- if m.reasoning_content %}<think>{{ m.reasoning_content }}</think>{% endif -%}
 {%- if m.content %}{{ m.content }}{% endif -%}
@@ -53,7 +49,7 @@ For each function call, output the function name and arguments within the follow
 </tool_call>
 {%- endfor -%}
 {%- endif -%}
-{%- elif role == "tool" -%}
+{%- elif m.role == 'tool' -%}
 <|observation|><tool_response>{{ flint_text(m.content) }}</tool_response>
 {%- endif -%}
 {%- endfor -%}

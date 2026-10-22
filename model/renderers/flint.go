@@ -46,19 +46,18 @@ func (*FlintRenderer) Render(messages []api.Message, tools []api.Tool, think *ap
 	var out strings.Builder
 	toolsPending := true
 	for _, message := range messages {
-		role := message.Role
-		if role == "developer" {
-			role = "system"
-		}
-		if role != "system" && toolsPending {
+		if message.Role != "system" && toolsPending {
 			if err := writeFlintTools(&out, tools); err != nil {
 				return "", err
 			}
 			toolsPending = false
 		}
-		switch role {
+		switch message.Role {
 		case "system":
 			out.WriteString("<|system|>")
+			out.WriteString(flintInputText(message.Content))
+		case "developer":
+			out.WriteString("<|developer|>")
 			out.WriteString(flintInputText(message.Content))
 		case "user":
 			out.WriteString("<|user|>")
