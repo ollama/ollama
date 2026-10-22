@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -13,6 +14,72 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/template"
 )
+
+func TestResponsesDeveloperInstructionsPublishedTemplate(t *testing.T) {
+	// Exact llama3.2:latest template layer:
+	// sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396.
+	source, err := os.ReadFile("../template/published/llama3.2.gotmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, custom := range []bool{false, true} {
+		name, saved := "published", string(source)
+		if custom {
+			name = "custom developer support"
+			saved += `{{ range .Messages }}{{ if eq .Role "developer" }}<custom-developer>{{ .Content }}</custom-developer>{{ end }}{{ end }}`
+		}
+		t.Run(name, func(t *testing.T) {
+			tmpl, err := template.Parse(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var systemPrompt string
+			for _, role := range []string{"system", "developer"} {
+				body := `{"model":"llama3.2","instructions":"SYSTEM_POLICY","input":[
+                    {"role":"` + role + `","content":"PROJECT_POLICY"},
+                    {"role":"user","content":"Hello"},
+                    {"role":"assistant","content":"Hello."},
+                    {"role":"` + role + `","content":"LATER_POLICY"},
+                    {"role":"user","content":"Continue"}
+                ]}`
+				var request openai.ResponsesRequest
+				if err := json.Unmarshal([]byte(body), &request); err != nil {
+					t.Fatal(err)
+				}
+				chat, err := openai.FromResponsesRequest(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				original := slices.Clone(chat.Messages)
+				m := &Model{Template: tmpl}
+				prompt, err := renderPrompt(m, chatMessagesForRequest(m, chat.Messages), chat.Tools, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				position := 0
+				for _, policy := range []string{"SYSTEM_POLICY", "PROJECT_POLICY", "LATER_POLICY"} {
+					index := strings.Index(prompt[position:], policy)
+					if index < 0 || strings.Count(prompt, policy) != 1 {
+						t.Fatalf("%s lost, duplicated, or reordered %q: %q", role, policy, prompt)
+					}
+					position += index + len(policy)
+				}
+				if role == "system" {
+					systemPrompt = prompt
+				} else if custom {
+					if !strings.Contains(prompt, "<custom-developer>PROJECT_POLICY</custom-developer>") {
+						t.Fatal("custom template lost its developer role semantics")
+					}
+				} else if prompt != systemPrompt {
+					t.Fatal("published template did not use its system fallback")
+				}
+				if chat.Messages[1].Role != role || !reflect.DeepEqual(chat.Messages, original) {
+					t.Fatal("prompt rendering mutated the Responses source history")
+				}
+			}
+		})
+	}
+}
 
 func TestDeveloperInstructionsSurviveTruncation(t *testing.T) {
 	tmpl, err := template.Parse(`{{ .System }} {{ .Prompt }} {{ .Response }}`)

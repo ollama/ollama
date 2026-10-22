@@ -25,6 +25,7 @@ var indexBytes []byte
 
 //go:embed *.gotmpl
 //go:embed *.json
+//go:embed published/*.gotmpl
 var templatesFS embed.FS
 
 var templatesOnce = sync.OnceValues(func() ([]*named, error) {
@@ -55,8 +56,8 @@ var templatesOnce = sync.OnceValues(func() ([]*named, error) {
 	return templates, nil
 })
 
-// These bundled templates use system instructions. Match their saved source as
-// well, so existing models get the fallback without changing custom templates.
+// Only known system-only sources opt in, including published model templates
+// that differ from the bundled defaults. Custom templates own their role semantics.
 var systemRoleTemplates = sync.OnceValues(func() (map[string]bool, error) {
 	sources := make(map[string]bool)
 	for _, name := range []string{
@@ -65,6 +66,8 @@ var systemRoleTemplates = sync.OnceValues(func() (map[string]bool, error) {
 		"granite-instruct", "llama2-chat", "llama3-instruct", "magicoder",
 		"mistral-instruct", "openchat", "phi-3", "solar-instruct",
 		"starcoder2-instruct", "vicuna", "zephyr",
+		// llama3.2:latest, template layer sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396.
+		"published/llama3.2",
 	} {
 		source, err := templatesFS.ReadFile(name + ".gotmpl")
 		if err != nil {

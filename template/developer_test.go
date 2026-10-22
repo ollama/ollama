@@ -16,6 +16,7 @@ func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	names = append(names, "published/llama3.2.gotmpl")
 	cases := map[string][]api.Message{
 		"leading": {{Role: "developer", Content: "DEVELOPER_POLICY"}, {Role: "user", Content: "Hello"}},
 		"mixed history": {
