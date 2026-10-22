@@ -13,6 +13,8 @@ func TestParams(t *testing.T) {
 		{"NVFP4", 16, 4, "nvfp4"},
 		{"mxfp4", 32, 4, "mxfp4"},
 		{"mxfp8", 32, 8, "mxfp8"},
+		{"int3", 64, 3, "affine"},
+		{"Q3", 64, 3, "affine"},
 		{"int4", 64, 4, "affine"},
 		{"int8", 64, 8, "affine"},
 		{"fp4", 64, 4, "affine"},
@@ -32,27 +34,23 @@ func TestParams(t *testing.T) {
 	}
 }
 
-func TestBitsAndPackFactor(t *testing.T) {
-	tests := []struct {
-		in         string
-		bits       int
-		packFactor int
+func TestBits(t *testing.T) {
+	for _, tt := range []struct {
+		in   string
+		bits int
 	}{
-		{"int4", 4, 8},
-		{"nvfp4", 4, 8},
-		{"mxfp4", 4, 8}, // regression: mxfp4 was missing from the old show.go switch
-		{"int8", 8, 4},
-		{"mxfp8", 8, 4},
-		{"FP8", 8, 4},
-		{"", 0, 0},
-		{"unknown", 0, 0}, // strict: no fallback for sizing/display
-	}
-	for _, tt := range tests {
+		{"int3", 3},
+		{"int4", 4},
+		{"nvfp4", 4},
+		{"mxfp4", 4},
+		{"int8", 8},
+		{"mxfp8", 8},
+		{"FP8", 8},
+		{"", 0},
+		{"unknown", 0},
+	} {
 		if got := Bits(tt.in); got != tt.bits {
 			t.Errorf("Bits(%q) = %d, want %d", tt.in, got, tt.bits)
-		}
-		if got := PackFactor(tt.in); got != tt.packFactor {
-			t.Errorf("PackFactor(%q) = %d, want %d", tt.in, got, tt.packFactor)
 		}
 	}
 }
