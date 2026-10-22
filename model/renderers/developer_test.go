@@ -1,10 +1,11 @@
 package renderers
 
 import (
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
 )
@@ -40,16 +41,10 @@ func TestDeveloperRoleFallbackPreservesInstructions(t *testing.T) {
 				// Exercise each renderer directly: fallback belongs to the model,
 				// rather than being imposed by API conversion or the registry.
 				got, err := rendererForName(name).Render(messages, nil, &api.ThinkValue{Value: false})
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err)
 				want, err := rendererForName(name).Render(system, nil, &api.ThinkValue{Value: false})
-				if err != nil {
-					t.Fatal(err)
-				}
-				if got != want {
-					t.Fatal("developer message did not use the model's system fallback")
-				}
+				require.NoError(t, err)
+				require.Equal(t, want, got, "developer message must use the model's system fallback")
 				// Equality alone can pass when both prompts drop the same policy.
 				position := 0
 				for _, message := range original {
@@ -62,9 +57,7 @@ func TestDeveloperRoleFallbackPreservesInstructions(t *testing.T) {
 					}
 					position += index + len(message.Content)
 				}
-				if !reflect.DeepEqual(messages, original) {
-					t.Fatal("renderer mutated the source history")
-				}
+				require.Equal(t, original, messages, "renderer mutated the source history")
 			})
 		}
 	}
@@ -76,15 +69,9 @@ func TestNativeDeveloperTurnIsPreserved(t *testing.T) {
 			messages := []api.Message{{Role: "user", Content: "Hello"}, {Role: "assistant", Content: "Hello."}, {Role: "developer", Content: "POLICY"}, {Role: "user", Content: "Continue"}}
 			original := slices.Clone(messages)
 			got, err := RenderWithRenderer(name, messages, nil, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.Contains(got, "developer\nPOLICY") {
-				t.Fatal("native developer turn was rewritten")
-			}
-			if !reflect.DeepEqual(messages, original) {
-				t.Fatal("renderer mutated the source history")
-			}
+			require.NoError(t, err)
+			require.Contains(t, got, "developer\nPOLICY", "native developer turn was rewritten")
+			require.Equal(t, original, messages, "renderer mutated the source history")
 		})
 	}
 }
@@ -108,7 +95,6 @@ func TestCustomRendererReceivesOriginalDeveloperRole(t *testing.T) {
 	})
 	Register(name, func() Renderer { return &developerPreservingRenderer{} })
 	got, err := RenderWithRenderer(name, []api.Message{{Role: "developer", Content: "Policy"}}, nil, nil)
-	if err != nil || got != "developer" {
-		t.Fatalf("role = %q, err = %v", got, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "developer", got)
 }

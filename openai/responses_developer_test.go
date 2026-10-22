@@ -3,14 +3,31 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/model/renderers"
 )
+
+func replayCompaction(t *testing.T, item ResponsesCompactionItem) ([]byte, []api.Message) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"model": "test", "input": []any{
+		item, map[string]any{"role": "user", "content": "Continue"},
+	}})
+	require.NoError(t, err)
+	expanded, changed, err := ExpandResponsesCompactionInput(body)
+	require.NoError(t, err)
+	require.True(t, changed, "compaction input must expand")
+	var request ResponsesRequest
+	require.NoError(t, json.Unmarshal(expanded, &request))
+	chat, err := FromResponsesRequest(request)
+	require.NoError(t, err)
+	return body, chat.Messages
+}
 
 func TestResponsesPreserveDeveloperRole(t *testing.T) {
 	body := `{"model":"test-model","instructions":"Base instructions","stream":true,"input":[
@@ -24,27 +41,19 @@ func TestResponsesPreserveDeveloperRole(t *testing.T) {
         {"role":"user","content":"Continue"}
     ]}`
 	var request ResponsesRequest
-	if err := json.Unmarshal([]byte(body), &request); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(body), &request))
 	got, err := FromResponsesRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var roles []string
 	for _, message := range got.Messages {
 		roles = append(roles, message.Role)
 	}
 	want := []string{"system", "system", "developer", "user", "assistant", "tool", "developer", "assistant", "user"}
-	if !slices.Equal(roles, want) {
-		t.Fatalf("roles = %v, want %v", roles, want)
-	}
-	if got.Messages[2].Content != "Use the scratch project." || got.Messages[6].Content != "Keep the file unchanged." {
-		t.Fatal("developer content changed")
-	}
-	if got.Messages[4].ToolCalls[0].ID != "call_1" || got.Messages[5].ToolCallID != "call_1" {
-		t.Fatal("tool history lost its call/result pairing")
-	}
+	require.Equal(t, want, roles)
+	require.Equal(t, "Use the scratch project.", got.Messages[2].Content)
+	require.Equal(t, "Keep the file unchanged.", got.Messages[6].Content)
+	require.Equal(t, "call_1", got.Messages[4].ToolCalls[0].ID)
+	require.Equal(t, "call_1", got.Messages[5].ToolCallID)
 }
 
 func TestCompactionPreservesInstructionRoles(t *testing.T) {
@@ -65,62 +74,30 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 	}
 	for cycle := range 2 {
 		plan, err := PrepareStandaloneCompaction(body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		request, err := plan.SummaryRequest("")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(request), `\"role\":\"developer\"`) {
-			t.Fatal("compaction transcript lost the developer role")
-		}
+		require.NoError(t, err)
+		require.Contains(t, string(request), `\"role\":\"developer\"`)
 		// Retain policies even when the summarizer selects no exact items.
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 			"summary": "Continue the project.", "retain_item_ids": []string{},
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		payload := decodeResultPayload(t, result)
 		wantRetained := []api.Message{want[0], want[1], {Role: "user", Content: "Read the project status"}, want[2]}
-		if !reflect.DeepEqual(payload.Retained, wantRetained) {
-			t.Fatalf("cycle %d: retained %#v, want %#v", cycle, payload.Retained, wantRetained)
-		}
-		if payload.LeadingInstructions != nil {
-			t.Fatal("writer emitted a field unsupported by older v1 readers")
-		}
-		replay, err := json.Marshal(map[string]any{"model": "test-model", "input": []any{
-			result.Item, map[string]any{"role": "user", "content": "Continue"},
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		expanded, changed, err := ExpandResponsesCompactionInput(replay)
-		if err != nil || !changed {
-			t.Fatalf("expand = %v, %v", changed, err)
-		}
-		var decoded ResponsesRequest
-		if err := json.Unmarshal(expanded, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		chat, err := FromResponsesRequest(decoded)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(chat.Messages) != len(wantRetained)+3 || !reflect.DeepEqual(chat.Messages[:2], want[:2]) || !reflect.DeepEqual(chat.Messages[4:6], wantRetained[2:]) {
-			t.Fatalf("cycle %d: replay lost or reordered the instruction prefix: %#v", cycle, chat.Messages)
-		}
-		call, resultMessage := chat.Messages[2], chat.Messages[3]
-		if len(call.ToolCalls) != 1 || call.ToolCalls[0].ID != resultMessage.ToolCallID {
-			t.Fatal("summary call/result pairing changed")
-		}
-		original := slices.Clone(chat.Messages)
+		require.Equal(t, wantRetained, payload.Retained, "cycle %d", cycle)
+		require.Nil(t, payload.LeadingInstructions, "writer must support older v1 readers")
+		replay, messages := replayCompaction(t, result.Item)
+		require.Len(t, messages, len(wantRetained)+3)
+		require.Equal(t, want[:2], messages[:2])
+		require.Equal(t, wantRetained[2:], messages[4:6])
+		call, resultMessage := messages[2], messages[3]
+		require.Len(t, call.ToolCalls, 1)
+		require.Equal(t, call.ToolCalls[0].ID, resultMessage.ToolCallID)
+		original := slices.Clone(messages)
 		for _, renderer := range []string{"qwen3-coder", "cogito", "functiongemma"} {
-			prompt, err := renderers.RenderWithRenderer(renderer, chat.Messages, nil, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			prompt, err := renderers.RenderWithRenderer(renderer, messages, nil, nil)
+			require.NoError(t, err)
 			position := 0
 			for _, instruction := range want {
 				index := strings.Index(prompt[position:], instruction.Content)
@@ -129,9 +106,7 @@ func TestCompactionPreservesInstructionRoles(t *testing.T) {
 				}
 				position += index + len(instruction.Content)
 			}
-			if !reflect.DeepEqual(chat.Messages, original) {
-				t.Fatal("rendering mutated the compacted history")
-			}
+			require.Equal(t, original, messages, "rendering mutated the compacted history")
 		}
 		body = replay
 	}
@@ -145,15 +120,11 @@ func TestCompactionPreservesLegacyPayloadShape(t *testing.T) {
 		`{"type":"function_call","call_id":"check","name":"check","arguments":"{}"},{"type":"function_call_output","call_id":"check","output":"Done"},{"role":"developer","content":"Later policy"},{"role":"assistant","content":"Done."}`,
 	} {
 		plan, err := PrepareStandaloneCompaction([]byte(`{"model":"test","input":[` + input + `]}`))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 			"summary": "Earlier work.", "retain_item_ids": []string{},
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		// Match the existing v1 reader, which rejects unknown JSON fields.
 		var legacy struct {
 			Type            string                         `json:"type"`
@@ -164,9 +135,7 @@ func TestCompactionPreservesLegacyPayloadShape(t *testing.T) {
 		}
 		decoder := json.NewDecoder(strings.NewReader(result.Item.EncryptedContent))
 		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&legacy); err != nil {
-			t.Fatalf("payload is incompatible with the v1 reader: %v", err)
-		}
+		require.NoError(t, decoder.Decode(&legacy), "payload must support the v1 reader")
 	}
 }
 
@@ -179,39 +148,19 @@ func TestCompactionPreservesLaterInstructionPosition(t *testing.T) {
     ]}`)
 	for cycle := range 2 {
 		plan, err := PrepareStandaloneCompaction(body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 			"summary": "Work started.", "retain_item_ids": []string{},
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err = json.Marshal(map[string]any{"model": "test", "input": []any{
-			result.Item, map[string]any{"role": "user", "content": "Continue"},
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		expanded, _, err := ExpandResponsesCompactionInput(body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var request ResponsesRequest
-		if err := json.Unmarshal(expanded, &request); err != nil {
-			t.Fatal(err)
-		}
-		chat, err := FromResponsesRequest(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(chat.Messages) != 5 || len(chat.Messages[0].ToolCalls) != 1 || chat.Messages[1].ToolCallID != chat.Messages[0].ToolCalls[0].ID || chat.Messages[2].Content != "Start" || chat.Messages[3].Role != "developer" || chat.Messages[3].Content != "LATER_POLICY" {
-			t.Fatalf("cycle %d: later instruction moved ahead of summarized history: %#v", cycle, chat.Messages)
-		}
-		if len(decodeResultPayload(t, result).Retained) != 2 {
-			t.Fatal("repeated compaction retained a prior synthetic summary instead of real history")
-		}
+		require.NoError(t, err)
+		replay, messages := replayCompaction(t, result.Item)
+		body = replay
+		require.Len(t, messages, 5, "cycle %d", cycle)
+		require.Len(t, messages[0].ToolCalls, 1)
+		require.Equal(t, messages[0].ToolCalls[0].ID, messages[1].ToolCallID)
+		require.Equal(t, "Start", messages[2].Content)
+		require.Equal(t, api.Message{Role: "developer", Content: "LATER_POLICY"}, messages[3])
+		require.Len(t, decodeResultPayload(t, result).Retained, 2, "must not retain a prior synthetic summary")
 	}
 }
 
@@ -227,16 +176,12 @@ func TestCompactionInstructionBoundarySurvivesTrim(t *testing.T) {
             {"role":"developer","content":"LATER_POLICY"},
             {"role":"user","content":"Continue"}
         ]}`))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		plan.TrimForContextLimit()
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 			"summary": "Continue the work.", "retain_item_ids": []string{},
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		retained := decodeResultPayload(t, result).Retained
 		if len(retained) < 3 || retained[0].Content != "BASE_POLICY" || retained[1].Role != "assistant" || retained[len(retained)-1].Role != "developer" || retained[len(retained)-1].Content != "LATER_POLICY" {
 			t.Fatalf("trimming lost the original instruction boundary: %#v", retained)
@@ -254,22 +199,13 @@ func TestCompactionReplacesPreviewSummaryBoundary(t *testing.T) {
 		Summary: "PREVIEW_SUMMARY", LeadingInstructions: &zero,
 		Retained: []api.Message{{Role: "developer", Content: "LATER_POLICY"}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	item := ResponsesCompactionItem{Type: "compaction", EncryptedContent: string(seed)}
 	priorSummary := "PREVIEW_SUMMARY"
 	for cycle := range 3 {
-		body, err := json.Marshal(map[string]any{"model": "test", "input": []any{
-			item, map[string]any{"role": "user", "content": "Continue"},
-		}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		body, _ := replayCompaction(t, item)
 		plan, err := PrepareStandaloneCompaction(body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		var summaryRefs []string
 		for _, entry := range plan.items {
 			if entry.Type == "function_call" || entry.Type == "function_call_output" {
@@ -279,9 +215,7 @@ func TestCompactionReplacesPreviewSummaryBoundary(t *testing.T) {
 		result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 			"summary": fmt.Sprintf("Summary %d.", cycle), "retain_item_ids": summaryRefs,
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		payload := decodeResultPayload(t, result)
 		retained := payload.Retained
 		if payload.LeadingInstructions != nil || len(retained) != 3 || len(retained[0].ToolCalls) != 1 || retained[0].ToolCalls[0].Function.Name != compactionSummaryToolName || retained[1].ToolCallID != retained[0].ToolCalls[0].ID || retained[1].Content != priorSummary || retained[2].Role != "developer" || retained[2].Content != "LATER_POLICY" {
@@ -303,27 +237,18 @@ func TestCompactionSummaryPreservesRetainedMessageOrder(t *testing.T) {
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion,
 		Summary: "Earlier work is complete.", Retained: retained,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{"model": "test", "input": items})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var request ResponsesRequest
-	if err := json.Unmarshal(body, &request); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, json.Unmarshal(body, &request))
 	chat, err := FromResponsesRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chat.Messages) != 7 || !reflect.DeepEqual(chat.Messages[:2], retained[:2]) || !reflect.DeepEqual(chat.Messages[4:], retained[2:]) {
-		t.Fatalf("summary displaced the leading prefix or reordered later instructions: %#v", chat.Messages)
-	}
-	if len(chat.Messages[2].ToolCalls) != 1 || chat.Messages[2].ToolCalls[0].ID != chat.Messages[3].ToolCallID {
-		t.Fatal("summary call/result pairing changed")
-	}
+	require.NoError(t, err)
+	require.Len(t, chat.Messages, 7)
+	require.Equal(t, retained[:2], chat.Messages[:2])
+	require.Equal(t, retained[2:], chat.Messages[4:])
+	require.Len(t, chat.Messages[2].ToolCalls, 1)
+	require.Equal(t, chat.Messages[2].ToolCalls[0].ID, chat.Messages[3].ToolCallID)
 }
 
 func TestCompactionRejectsInvalidInstructionBoundary(t *testing.T) {
@@ -333,8 +258,6 @@ func TestCompactionRejectsInvalidInstructionBoundary(t *testing.T) {
 			Summary: "Earlier work.", LeadingInstructions: &boundary,
 			Retained: []api.Message{{Role: "developer", Content: "Policy"}, {Role: "user", Content: "Continue"}},
 		})
-		if err == nil {
-			t.Fatalf("accepted invalid instruction boundary %d", boundary)
-		}
+		require.Error(t, err, "invalid instruction boundary %d", boundary)
 	}
 }

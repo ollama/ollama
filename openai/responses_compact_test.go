@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/ollama/ollama/api"
 )
 
@@ -881,9 +883,7 @@ func TestRepeatedCompactionReplacesRatherThanNestsPayload(t *testing.T) {
 	oldPayload, err := json.Marshal(OllamaCompactionPayload{
 		Type: OllamaCompactionPayloadType, Version: OllamaCompactionPayloadVersion, Summary: "old summary",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	body, err := json.Marshal(map[string]any{
 		"model": "test", "stream": true,
 		"input": []any{
@@ -893,9 +893,7 @@ func TestRepeatedCompactionReplacesRatherThanNestsPayload(t *testing.T) {
 			ResponsesCompactionTrigger{Type: "compaction_trigger"},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	plan, requested, err := PrepareTriggeredCompaction(body)
 	if err != nil || !requested {
 		t.Fatalf("prepare: requested=%v err=%v", requested, err)
@@ -915,13 +913,9 @@ func TestRepeatedCompactionReplacesRatherThanNestsPayload(t *testing.T) {
 			result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 				"summary": "replacement summary", "retain_item_ids": refs,
 			}))
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			replay, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			if _, err := PrepareStandaloneCompaction(replay); err != nil {
 				t.Fatalf("selected prior summary poisoned the next compaction: %v", err)
 			}
@@ -943,15 +937,11 @@ func TestCompactionPreservesUnmatchedSummaryLookalike(t *testing.T) {
         {"role":"user","content":"Continue"}
     ]}`)
 	plan, err := PrepareStandaloneCompaction(body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 		"summary": "Continue the work.", "retain_item_ids": []string{},
 	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	retained := decodeResultPayload(t, result).Retained
 	if len(retained) != 2 || len(retained[0].ToolCalls) != 1 || retained[0].ToolCalls[0].ID != "call_ollama_compaction_0123456789ab" || retained[1].Role != "developer" {
 		t.Fatalf("unmatched lookalike lost active tool state or the instruction boundary: %#v", retained)

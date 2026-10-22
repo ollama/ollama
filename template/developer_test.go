@@ -3,19 +3,18 @@ package template
 import (
 	"bytes"
 	"io/fs"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
 )
 
 func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 	names, err := fs.Glob(templatesFS, "*.gotmpl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	names = append(names, "published/llama3.2.gotmpl")
 	cases := map[string][]api.Message{
 		"leading": {{Role: "developer", Content: "DEVELOPER_POLICY"}, {Role: "user", Content: "Hello"}},
@@ -31,17 +30,13 @@ func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 	sources := map[string]string{"legacy": `{{ .System }}|{{ .Prompt }}|{{ .Response }}`}
 	for _, name := range names {
 		source, err := templatesFS.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		sources[name] = string(source)
 	}
 	for name, source := range sources {
 		t.Run(name, func(t *testing.T) {
 			tmpl, err := Parse(source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for label, messages := range cases {
 				t.Run(label, func(t *testing.T) {
 					original := slices.Clone(messages)
@@ -52,15 +47,9 @@ func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 						}
 					}
 					var got, want bytes.Buffer
-					if err := tmpl.Execute(&got, Values{Messages: messages}); err != nil {
-						t.Fatal(err)
-					}
-					if err := tmpl.Execute(&want, Values{Messages: systemMessages}); err != nil {
-						t.Fatal(err)
-					}
-					if got.String() != want.String() {
-						t.Fatalf("developer prompt = %q, system prompt = %q", got.String(), want.String())
-					}
+					require.NoError(t, tmpl.Execute(&got, Values{Messages: messages}))
+					require.NoError(t, tmpl.Execute(&want, Values{Messages: systemMessages}))
+					require.Equal(t, want.String(), got.String(), "developer prompt must match system fallback")
 					position := 0
 					for _, message := range original {
 						if message.Role != "system" && message.Role != "developer" {
@@ -72,9 +61,7 @@ func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 						}
 						position += index + len(message.Content)
 					}
-					if !reflect.DeepEqual(messages, original) {
-						t.Fatal("template fallback mutated the source history")
-					}
+					require.Equal(t, original, messages, "template fallback mutated the source history")
 				})
 			}
 		})
@@ -83,20 +70,12 @@ func TestTemplatesDeveloperRoleFallback(t *testing.T) {
 
 func TestSavedTemplateDeveloperFallbackWithCRLF(t *testing.T) {
 	source, err := templatesFS.ReadFile("chatml.gotmpl")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tmpl, err := Parse(" \r\n" + strings.ReplaceAll(string(source), "\n", "\r\n") + "\r\n ")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, Values{Messages: []api.Message{{Role: "developer", Content: "POLICY"}, {Role: "user", Content: "Hello"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out.String(), "<|im_start|>system\r\nPOLICY<|im_end|>") {
-		t.Fatalf("saved template did not recognize developer fallback: %q", out.String())
-	}
+	require.NoError(t, tmpl.Execute(&out, Values{Messages: []api.Message{{Role: "developer", Content: "POLICY"}, {Role: "user", Content: "Hello"}}}))
+	require.Contains(t, out.String(), "<|im_start|>system\r\nPOLICY<|im_end|>")
 }
 
 func TestLegacyTemplateInstructionCompatibility(t *testing.T) {
@@ -118,19 +97,13 @@ func TestLegacyTemplateInstructionCompatibility(t *testing.T) {
 			messages = append(messages, api.Message{Role: role, Content: "SECOND"}, api.Message{Role: "user", Content: "REQUEST"})
 			t.Run(name, func(t *testing.T) {
 				tmpl, err := Parse(`{{ .System }}|{{ .Prompt }}|{{ .Response }}`)
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err)
 				original := slices.Clone(messages)
 				var out bytes.Buffer
-				if err := tmpl.Execute(&out, Values{Messages: messages}); err != nil {
-					t.Fatal(err)
-				}
-				if out.String() != want {
-					t.Fatalf("got %q, want the existing system behavior %q", out.String(), want)
-				}
-				if role == "developer" && !reflect.DeepEqual(messages, original) {
-					t.Fatal("legacy fallback mutated the source history")
+				require.NoError(t, tmpl.Execute(&out, Values{Messages: messages}))
+				require.Equal(t, want, out.String(), "must preserve the existing system behavior")
+				if role == "developer" {
+					require.Equal(t, original, messages, "legacy fallback mutated the source history")
 				}
 			})
 		}
@@ -141,9 +114,7 @@ func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 	// A custom template owns its role semantics. Developer turns must not also
 	// appear in System when the template renders them from Messages.
 	tmpl, err := Parse(`{{ .System }}|{{ range .Messages }}{{ .Role }}:{{ .Content }};{{ end }}`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	messages := []api.Message{
 		{Role: "system", Content: "Base policy"},
 		{Role: "developer", Content: "Project policy"},
@@ -155,13 +126,8 @@ func TestCustomTemplateKeepsInstructionRolesSeparate(t *testing.T) {
 	}
 	original := slices.Clone(messages)
 	var out bytes.Buffer
-	if err := tmpl.Execute(&out, Values{Messages: messages}); err != nil {
-		t.Fatal(err)
-	}
-	if want := "Base policy|system:Base policy;developer:Project policy\n\nSupplemental policy;user:First request;assistant:First answer;developer:Updated policy;user:Continue;"; out.String() != want {
-		t.Fatalf("got %q, want %q", out.String(), want)
-	}
-	if !reflect.DeepEqual(messages, original) {
-		t.Fatal("template mutated the source history")
-	}
+	require.NoError(t, tmpl.Execute(&out, Values{Messages: messages}))
+	want := "Base policy|system:Base policy;developer:Project policy\n\nSupplemental policy;user:First request;assistant:First answer;developer:Updated policy;user:Continue;"
+	require.Equal(t, want, out.String())
+	require.Equal(t, original, messages, "template mutated the source history")
 }
