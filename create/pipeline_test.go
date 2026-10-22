@@ -77,10 +77,7 @@ func TestCreatePipeline(t *testing.T) {
 
 func TestCreatePipelinePhononRequires(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["Phonon"],"model_type":"phonon"}`)
-	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
-		st.NewTensorDataFromBytes("flow_lm.bos_emb", "F32", []int32{4}, make([]byte, 4*4)),
-	})
+	writeGradiumPhononSource(t, dir, []int32{1, 512, 2})
 	// Remote creates send the generic safetensors minimum; it must not win.
 	for requires, want := range map[string]string{"": phononMinOllamaVersion, "0.19.0": phononMinOllamaVersion, "0.41.0": "0.41.0"} {
 		var got string

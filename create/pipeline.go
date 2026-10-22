@@ -42,6 +42,12 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return fmt.Errorf("read model: %w", err)
 	}
+	if inv.Config.Architecture() == gradiumPhononArchitecture {
+		inv, err = prepareGradiumPhononInventory(inv)
+		if err != nil {
+			return err
+		}
+	}
 	if opts.Renderer == "clef" {
 		inv, err = prepareClefInventory(inv)
 		if err != nil {
@@ -73,7 +79,7 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 		}
 	}
 	// Older releases can't run Phonon, whatever the Modelfile or client says.
-	if inv.Config.Architecture() == "Phonon" && semver.Compare("v"+modelConfig.Requires, "v"+phononMinOllamaVersion) < 0 {
+	if isPhononArchitecture(inv.Config.Architecture()) && semver.Compare("v"+modelConfig.Requires, "v"+phononMinOllamaVersion) < 0 {
 		modelConfig.Requires = phononMinOllamaVersion
 	}
 	if err := validateMLXSource(inv.Config, false, opts.Validation); err != nil {
@@ -85,7 +91,7 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if inv.Config.Architecture() == "LayaForDecision" && opts.Quantize != "" {
 		return fmt.Errorf("Laya currently requires unquantized weights")
 	}
-	if inv.Config.Architecture() == "Phonon" && opts.Quantize != "" {
+	if isPhononArchitecture(inv.Config.Architecture()) && opts.Quantize != "" {
 		return fmt.Errorf("Phonon currently requires unquantized weights")
 	}
 	class, err := Classify(inv, opts.Quantize)

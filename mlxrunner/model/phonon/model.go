@@ -20,15 +20,14 @@ import (
 	"github.com/ollama/ollama/mlxrunner/tokenizer"
 )
 
-func init() { model.Register("Phonon", newModel) }
+func init() {
+	model.Register("GradiumPhononTTSForConditionalGeneration", newModel)
+}
 
 // config follows the upstream Phonon config.json.
 type config struct {
-	ModelID *struct {
-		Sig   string `json:"sig"`
-		Epoch int    `json:"epoch"`
-	} `json:"model_id"`
 	FlowLM struct {
+		DModel      int     `json:"d_model"`
 		NumHeads    int32   `json:"num_heads"`
 		NumLayers   int32   `json:"num_layers"`
 		MaxPeriod   float32 `json:"max_period"`
@@ -49,6 +48,20 @@ type config struct {
 	Temperature  float32 `json:"temp"`
 	DecodeSteps  int     `json:"lsd_decode_steps"`
 	EOSThreshold float32 `json:"eos_threshold"`
+	Conditioners []struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+		LUT  struct {
+			PossibleValues []string `json:"possible_values"`
+		} `json:"lut"`
+		Continuous struct {
+			Dim int `json:"dim"`
+		} `json:"continuous"`
+	} `json:"conditioners"`
+	Fuser struct {
+		Sum     []string `json:"sum"`
+		Prepend []string `json:"prepend"`
+	} `json:"fuser"`
 }
 
 const (
@@ -61,7 +74,7 @@ type Model struct {
 	Embed       *nn.Embedding
 	InputLinear *nn.Linear
 	BOS         *mlx.Array
-	NumSpeakers *mlx.Array
+	Conditions  *mlx.Array
 	Flow        *Transformer
 	OutNorm     *nn.LayerNorm
 	EOS         *nn.Linear
@@ -90,6 +103,15 @@ func newModel(root *model.Root) (model.Model, error) {
 	if err := root.Manifest.ReadConfigJSON("config.json", &cfg); err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	var generation struct {
+		Temperature *float32 `json:"temperature"`
+	}
+	if err := root.Manifest.ReadConfigJSON("generation_config.json", &generation); err != nil {
+		return nil, fmt.Errorf("load generation config: %w", err)
+	}
+	if generation.Temperature != nil {
+		cfg.Temperature = *generation.Temperature
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -104,24 +126,21 @@ func newModel(root *model.Root) (model.Model, error) {
 	return &Model{cfg: &cfg, tok: tok}, nil
 }
 
-// gelu follows upstream's checkpoint defaults; an explicit activation wins.
-func (c *config) gelu(value string) string {
-	if value != "" {
-		return value
-	}
-	if c.ModelID != nil {
-		return "erf"
-	}
-	return "tanh"
-}
-
 func (c *config) validate() error {
+	if c.FlowLM.DModel != 512 || len(c.Conditioners) != 2 ||
+		c.Conditioners[0].Type != "lut" || c.Conditioners[0].Name != "num_speakers" ||
+		!slices.Equal(c.Conditioners[0].LUT.PossibleValues, []string{"0", "1", "2"}) ||
+		c.Conditioners[1].Type != "continuous" || c.Conditioners[1].Name != "duration_delta" || c.Conditioners[1].Continuous.Dim != 128 ||
+		!slices.Equal(c.Fuser.Sum, []string{"num_speakers", "duration_delta"}) ||
+		!slices.Equal(c.Fuser.Prepend, []string{"transcript_in_segment", "speaker_wavs"}) {
+		return fmt.Errorf("unsupported Gradium Phonon conditioning layout")
+	}
 	for _, value := range []string{c.FlowLM.GELU, c.Mimi.GELU} {
-		if value != "" && value != "erf" && value != "tanh" {
+		if value != "erf" {
 			return fmt.Errorf("unsupported phonon GELU %q", value)
 		}
 	}
-	if value := c.FlowLM.TimeRMSNorm; value != "" && value != "rms_var" && value != "rms" {
+	if value := c.FlowLM.TimeRMSNorm; value != "rms" {
 		return fmt.Errorf("unsupported phonon time norm %q", value)
 	}
 	if c.Mimi.SampleRate != sampleRate || c.Mimi.FrameRate != 12.5 {
@@ -149,8 +168,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			return fmt.Errorf("phonon requires unquantized floating-point weights: %s", name)
 		}
 		dtype := mlx.DTypeFloat32
-		if strings.HasPrefix(name, "flow_lm.transformer.") || strings.HasPrefix(name, "voices.") ||
-			name == "flow_lm.num_speakers" || name == "flow_lm.conditioner.embed.weight" || name == "flow_lm.input_linear.weight" {
+		if strings.HasPrefix(name, "flow_lm.transformer.") || name == "flow_lm.input_linear.weight" {
+			dtype = mlx.DTypeBFloat16
+		}
+		if strings.HasPrefix(name, "flow_lm.condition_provider.conditioners.") &&
+			name != "flow_lm.condition_provider.conditioners.speaker_wavs.output_proj.weight" {
 			dtype = mlx.DTypeBFloat16
 		}
 		if t.DType() != dtype {
@@ -159,7 +181,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 	f := m.cfg.FlowLM
 	var err error
-	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.NumLayers, f.NumHeads, f.MaxPeriod, m.cfg.gelu(f.GELU)); err != nil {
+	if m.Flow, err = loadTransformer(tensors, "flow_lm.transformer", f.NumLayers, f.NumHeads, f.MaxPeriod, f.GELU); err != nil {
 		return err
 	}
 	if m.Head, err = loadFlowHead(tensors, "flow_lm.flow_net", f.FlowDepth, f.TimeRMSNorm); err != nil {
@@ -168,7 +190,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if m.Mimi, err = loadMimi(tensors, m.cfg); err != nil {
 		return err
 	}
-	if w := tensors["flow_lm.conditioner.embed.weight"]; w != nil {
+	if w := tensors["flow_lm.condition_provider.conditioners.transcript_in_segment.embed.weight"]; w != nil {
 		m.Embed = nn.NewEmbedding(w)
 	}
 	m.InputLinear = linear(tensors, "flow_lm.input_linear")
@@ -178,9 +200,12 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if m.Embed == nil || m.InputLinear == nil || m.OutNorm == nil || m.EOS == nil || m.BOS == nil || m.EmbMean == nil || m.EmbStd == nil {
 		return fmt.Errorf("missing flow_lm weights")
 	}
-	m.NumSpeakers = tensors["flow_lm.num_speakers"]
-	if m.NumSpeakers == nil || !slices.Equal(m.NumSpeakers.Dims(), []int{1, 1, m.Embed.Weight.Dim(1)}) {
-		return fmt.Errorf("missing or invalid num_speakers conditioning")
+	m.Conditions, err = gradiumConditions(tensors)
+	if err != nil {
+		return err
+	}
+	if m.Conditions == nil || !slices.Equal(m.Conditions.Dims(), []int{1, 1, m.Embed.Weight.Dim(1)}) {
+		return fmt.Errorf("missing or invalid speech conditioning")
 	}
 	m.BOS = mlx.Reshape(m.BOS, 1, 1, -1)
 	m.sample = mlx.Compile("phonon_sample", func(in ...*mlx.Array) []*mlx.Array {
@@ -198,6 +223,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		if !ok {
 			continue
 		}
+		projection := tensors["flow_lm.condition_provider.conditioners.speaker_wavs.output_proj.weight"]
+		if projection == nil || t.NumDims() != 3 || t.Dim(0) != 1 || t.Dim(1) != projection.Dim(1) || t.Dim(2) == 0 {
+			return fmt.Errorf("voice %q has invalid raw speaker latents %v", voice, t.Dims())
+		}
+		t = nn.NewLinear(projection, nil).Forward(mlx.Transpose(t, 0, 2, 1)).AsType(mlx.DTypeBFloat16)
 		if voice == "" || t.NumDims() != 3 || t.Dim(0) != 1 || t.Dim(1) == 0 || t.Dim(2) != m.Embed.Weight.Dim(1) {
 			return fmt.Errorf("voice %q has shape %v", voice, t.Dims())
 		}
@@ -314,7 +344,7 @@ func (m *Model) speak(ctx context.Context, text string, voice *Voice, rng *rand.
 				noise[i] = float32(rng.NormFloat64() * std)
 			}
 			out := mlx.ScopedArrays(func() []*mlx.Array {
-				input := mlx.Add(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), m.NumSpeakers)
+				input := mlx.Add(m.InputLinear.Forward(prev.AsType(mlx.DTypeBFloat16)), m.Conditions)
 				h := m.Flow.forward(input, offset+step, caches)
 				out := m.sample(h, mlx.FromValues(noise, 1, len(noise)))
 				prev.Set(out[0])

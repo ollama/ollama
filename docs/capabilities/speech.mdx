@@ -7,13 +7,13 @@ Speech models read text aloud. Ollama streams the audio as it is generated, so p
 
 ## Setup
 
-Start [Ollama](/quickstart) v0.40.8 or later, then download [Phonon](https://ollama.com/library/phonon):
+Start [Ollama](/quickstart) v0.40.9 or later, then download [Phonon](https://ollama.com/library/phonon):
 
 ```shell setup.sh
 ollama pull phonon
 ```
 
-Phonon speaks English with four voices: `Freya` (the default), `Harper`, `Sterling`, and `Toby`. Voice names are case-sensitive.
+The default Phonon model uses Gradium's 31M English checkpoint and its included voice. The voice name is `default`.
 
 ## Speak from the terminal
 
@@ -22,9 +22,6 @@ Phonon speaks English with four voices: `Freya` (the default), `Harper`, `Sterli
 ```shell examples.sh
 # Speak some text
 ollama run phonon "Hello from Ollama."
-
-# Choose a voice
-ollama run phonon --voice Toby "Hi, this is Toby."
 
 # Speak text from another program
 echo "Text from another program works too." | ollama run phonon
@@ -65,7 +62,7 @@ Use the OpenAI-compatible `/v1/audio/speech` endpoint:
       -d '{
         "model": "phonon",
         "input": "Hello from Ollama.",
-        "voice": "Freya"
+        "voice": "default"
       }' --output speech.wav
     ```
   </Tab>
@@ -77,7 +74,7 @@ Use the OpenAI-compatible `/v1/audio/speech` endpoint:
 
     with client.audio.speech.with_streaming_response.create(
         model="phonon",
-        voice="Freya",
+        voice="default",
         input="Hello from Ollama.",
         response_format="wav",
     ) as response:
@@ -93,7 +90,7 @@ Use the OpenAI-compatible `/v1/audio/speech` endpoint:
 
     const response = await openai.audio.speech.create({
       model: 'phonon',
-      voice: 'Freya',
+      voice: 'default',
       input: 'Hello from Ollama.',
       response_format: 'wav',
     })

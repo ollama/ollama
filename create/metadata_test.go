@@ -239,7 +239,7 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 		},
 		{
 			name:     "phonon",
-			config:   `{"architectures":["Phonon"],"model_type":"phonon"}`,
+			config:   `{"architectures":["GradiumPhononTTSForConditionalGeneration"],"model_type":"gradium_phonon_tts"}`,
 			wantCaps: []string{"speech"},
 		},
 		{
