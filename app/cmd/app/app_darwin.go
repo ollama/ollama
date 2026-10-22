@@ -1454,6 +1454,8 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 			availableModels = selectedModels
 			if len(selectedModels) > 0 {
 				modelSource = "user"
+			} else if showDefaults {
+				availableModels, modelSource = claudeModelsLoader(ctx)
 			}
 		}
 	}

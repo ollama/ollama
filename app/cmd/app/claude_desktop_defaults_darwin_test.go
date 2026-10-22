@@ -82,12 +82,20 @@ func TestDefaultClaudeDesktopSelection(t *testing.T) {
 	}
 }
 
-func TestFreshClaudeConnectionUsesLocalDefault(t *testing.T) {
-	for _, state := range []proxy.ClaudeDesktopAccessState{
-		{Cloud: proxy.ClaudeDesktopCloudOff},
-		{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut},
+func TestFreshClaudeConnectionDefaultsMatchSettings(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		state      proxy.ClaudeDesktopAccessState
+		accessErr  error
+		wantModel  string
+		wantAccess proxy.ClaudeDesktopAvailability
+	}{
+		{name: "cloud off", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOff}, wantModel: "qwen:8b", wantAccess: proxy.ClaudeDesktopAvailabilityAvailable},
+		{name: "signed out", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountSignedOut}, wantModel: "qwen:8b", wantAccess: proxy.ClaudeDesktopAvailabilityAvailable},
+		{name: "cloud status unavailable", accessErr: errors.New("status unavailable"), wantModel: "gemma4:31b-cloud", wantAccess: proxy.ClaudeDesktopAvailabilityUnknown},
+		{name: "account lookup unavailable", state: proxy.ClaudeDesktopAccessState{Cloud: proxy.ClaudeDesktopCloudOn, Account: proxy.ClaudeDesktopAccountUnknown}, accessErr: errors.New("account unavailable"), wantModel: "gemma4:31b-cloud", wantAccess: proxy.ClaudeDesktopAvailabilityUnknown},
 	} {
-		t.Run(string(state.Cloud)+"/"+string(state.Account), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			previousStore, previousDesktop := appStore, claudeDesktop
 			previousInstalled, previousAddr := claudeDesktopInstalled, claudeProxyListenAddr
@@ -96,7 +104,7 @@ func TestFreshClaudeConnectionUsesLocalDefault(t *testing.T) {
 			claudeDesktop = &fakeClaudeDesktopController{configureOnSet: true}
 			claudeDesktopInstalled = func() bool { return true }
 			claudeProxyListenAddr = "127.0.0.1:0"
-			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) { return state, nil }
+			claudeAccessStateResolver = func(context.Context) (proxy.ClaudeDesktopAccessState, error) { return tt.state, tt.accessErr }
 			claudeLocalModelsResolver = func(context.Context) ([]string, error) { return []string{"qwen:8b"}, nil }
 			claudeLocalChatModelsResolver = func(context.Context) ([]string, error) { return []string{"qwen:8b"}, nil }
 			claudeProxyMu.Lock()
@@ -122,17 +130,27 @@ func TestFreshClaudeConnectionUsesLocalDefault(t *testing.T) {
 				status := getClaudeDesktopConnectionStatus()
 				mapped := false
 				for _, mapping := range status.Mappings {
-					mapped = mapped || mapping.RouteID == "claude-sonnet-5" && mapping.Model == "qwen:8b"
+					mapped = mapped || mapping.RouteID == "claude-sonnet-5" && mapping.Model == tt.wantModel
 				}
 				listed := false
 				for _, item := range status.Models {
-					listed = listed || item.Name == "qwen:8b" && item.Availability == proxy.ClaudeDesktopAvailabilityAvailable
+					listed = listed || item.Name == tt.wantModel && item.Availability == tt.wantAccess
 				}
 				if !mapped || !listed {
-					t.Fatalf("Settings must display an available local default: %+v", status)
+					t.Fatalf("Settings must display default %q with access %q: %+v", tt.wantModel, tt.wantAccess, status)
 				}
 			}
 			checkStatus()
+			_, selected, _ := resolveClaudeDesktopStartupCatalog(context.Background())
+			if got, want := proxy.ClaudeDesktopMappings(selected), map[string]string{"claude-sonnet-5": tt.wantModel}; !maps.Equal(got, want) {
+				t.Fatalf("startup mappings = %v, want %v", got, want)
+			}
+			if tt.accessErr != nil {
+				if err := validateClaudeDesktopModels(selected, tt.state, []string{"qwen:8b"}, true); !errors.Is(err, errClaudeDesktopAccessUnavailable) {
+					t.Fatalf("startup validation = %v, want account verification retry", err)
+				}
+				return
+			}
 			if err := setClaudeGatewayInstalled(true, false); err != nil {
 				t.Fatal(err)
 			}
