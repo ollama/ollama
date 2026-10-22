@@ -3534,18 +3534,18 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 
 	lastMsgIdx := len(req.Messages) - 1
 	currMsgIdx := 0
-	var system []api.Message
+	var instructions []api.Message
 
 	for i := 0; i <= lastMsgIdx; i++ {
-		system = system[:0]
+		instructions = instructions[:0]
 		for j := range i {
-			if req.Messages[j].Role == "system" {
-				system = append(system, req.Messages[j])
+			if req.Messages[j].Role == "system" || req.Messages[j].Role == "developer" {
+				instructions = append(instructions, req.Messages[j])
 			}
 		}
 
 		renderReq := req
-		renderReq.Messages = append(slices.Clone(system), req.Messages[i:]...)
+		renderReq.Messages = append(slices.Clone(instructions), req.Messages[i:]...)
 		prompt, err := r.ApplyChatTemplate(ctx, renderReq)
 		if err != nil {
 			return nil, err
@@ -3577,13 +3577,13 @@ func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer
 		slog.Debug("truncating native chat messages which exceed context length", "truncated", currMsgIdx)
 	}
 
-	system = system[:0]
+	instructions = instructions[:0]
 	for j := range currMsgIdx {
-		if req.Messages[j].Role == "system" {
-			system = append(system, req.Messages[j])
+		if req.Messages[j].Role == "system" || req.Messages[j].Role == "developer" {
+			instructions = append(instructions, req.Messages[j])
 		}
 	}
-	return append(slices.Clone(system), req.Messages[currMsgIdx:]...), nil
+	return append(slices.Clone(instructions), req.Messages[currMsgIdx:]...), nil
 }
 
 func countChatImages(msgs []api.Message) int {

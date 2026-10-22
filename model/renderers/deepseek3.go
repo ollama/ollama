@@ -24,6 +24,7 @@ func (r *DeepSeek3Renderer) LeadingBOS() string {
 }
 
 func (r *DeepSeek3Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	// thinking is enabled: model must support it AND user must request it

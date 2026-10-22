@@ -304,13 +304,18 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		}
 
 		switch m.Role {
-		case "system":
+		case "system", "developer":
 			if prompt != "" || response != "" {
 				if err := execute(); err != nil {
 					return err
 				}
 			}
-			system = m.Content
+			// Legacy templates have only a System slot. Preserve the order of
+			// instruction messages without changing roles for Messages templates.
+			if system != "" && m.Content != "" {
+				system += "\n\n"
+			}
+			system += m.Content
 		case "user":
 			if response != "" {
 				if err := execute(); err != nil {
@@ -351,14 +356,15 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 // collate messages based on role. consecutive messages of the same role are merged
 // into a single message (except for tool messages which preserve individual metadata).
-// collate also collects and returns all system messages.
+// collate also collects system and developer instructions for the legacy System
+// slot. Messages templates still receive the original roles.
 // collate mutates message content adding image tags ([img-%d]) as needed
 // todo(parthsareen): revisit for contextual image support
 func collate(msgs []api.Message) (string, []*api.Message) {
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
-		if msgs[i].Role == "system" {
+		if msgs[i].Role == "system" || msgs[i].Role == "developer" {
 			system = append(system, msgs[i].Content)
 		}
 

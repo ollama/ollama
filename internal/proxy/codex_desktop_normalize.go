@@ -384,20 +384,7 @@ func normalizeOllamaInputItem(item json.RawMessage) (json.RawMessage, bool, erro
 	}
 	switch itemType {
 	case "message":
-		if header.Role != "developer" {
-			return item, true, nil
-		}
-		// Map developer instructions to system for models without developer-role support.
-		var message map[string]json.RawMessage
-		if err := json.Unmarshal(item, &message); err != nil {
-			return nil, false, fmt.Errorf("decode developer message: %w", err)
-		}
-		message["role"] = json.RawMessage(`"system"`)
-		converted, err := json.Marshal(message)
-		if err != nil {
-			return nil, false, fmt.Errorf("encode system message: %w", err)
-		}
-		return converted, true, nil
+		return item, true, nil
 	case "agent_message":
 		var message struct {
 			Author    string            `json:"author"`

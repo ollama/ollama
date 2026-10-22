@@ -34,7 +34,7 @@ func TestNormalizeOllamaAgentMessagesPreservesConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantRoles := []string{"system", "user", "assistant", "tool", "user", "user"}
+	wantRoles := []string{"developer", "user", "assistant", "tool", "user", "user"}
 	wantContent := []string{"Environment", "Agent message from \"/root\" to \"/root/child\":\nRead the fixture.\n", "", "fixture contents", "Agent message from \"/root/child\" to \"/root\":\nTask finished.", "Agent message from \"/root\" to \"/root/child\":\nNow return RCA_FOLLOWUP."}
 	if len(chat.Messages) != len(wantRoles) {
 		t.Fatalf("got %d messages: %+v", len(chat.Messages), chat.Messages)

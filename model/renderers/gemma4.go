@@ -26,6 +26,7 @@ func (r *Gemma4Renderer) LeadingBOS() string {
 }
 
 func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 	imageOffset := 0
 

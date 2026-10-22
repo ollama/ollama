@@ -63,6 +63,7 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 type Qwen3CoderRenderer struct{}
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	// filter out system messages and choose the first (if any) to win

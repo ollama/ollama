@@ -26,6 +26,7 @@ func (r *Olmo3Renderer) LeadingBOS() string {
 }
 
 func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	var systemMessage *api.Message

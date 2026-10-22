@@ -26,6 +26,7 @@ func (r *GlmOcrRenderer) renderContent(message api.Message, imageOffset int) (st
 }
 
 func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	sb.WriteString("[gMASK]<sop>")

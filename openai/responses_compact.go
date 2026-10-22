@@ -544,6 +544,13 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	// Instructions must survive independently of the model's summary and
+	// selection of exact items. Retain their original roles and order.
+	for _, item := range items {
+		if item.Message.Role == "system" || item.Message.Role == "developer" {
+			forced[item.Ref] = struct{}{}
+		}
+	}
 	stream := req.Stream != nil && *req.Stream
 	return &ResponsesCompactionPlan{
 		Model: req.Model, Stream: stream, items: items, tools: collectCompactionToolMetadata(req.Tools), groups: groups, forcedRefs: forced,

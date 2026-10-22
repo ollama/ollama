@@ -15,6 +15,7 @@ func (r *GLM46Renderer) LeadingBOS() string {
 }
 
 func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	sb.WriteString("[gMASK]<sop>")

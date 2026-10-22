@@ -61,7 +61,13 @@ func TestCompactionTrimPreservesProtectedState(t *testing.T) {
 	if !strings.Contains(payload.Summary, "2 older transcript items were omitted") {
 		t.Fatal("summary does not disclose omitted history")
 	}
-	if len(payload.Retained) != 3 || payload.Retained[0].ToolCalls[0].ID != "pending" || payload.Retained[1].ToolCalls[0].ID != "latest" || len(payload.Retained[2].Images) != 1 {
+	if len(payload.Retained) != 5 {
+		t.Fatalf("retained %d items, want instructions and active tool state", len(payload.Retained))
+	}
+	if payload.Retained[0].Role != "system" || payload.Retained[0].Content != "system instructions" || payload.Retained[1].Role != "developer" || payload.Retained[1].Content != "developer instructions" {
+		t.Fatalf("instruction state changed: %+v", payload.Retained[:2])
+	}
+	if len(payload.Retained[2].ToolCalls) != 1 || payload.Retained[2].ToolCalls[0].ID != "pending" || len(payload.Retained[3].ToolCalls) != 1 || payload.Retained[3].ToolCalls[0].ID != "latest" || len(payload.Retained[4].Images) != 1 {
 		t.Fatalf("active tool state changed: %+v", payload.Retained)
 	}
 	if _, err := plan.Complete(compactionResponseBody(t, map[string]any{

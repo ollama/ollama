@@ -291,6 +291,7 @@ func (r *GlimmerRenderer) renderContent(message api.Message, imageOffset int) (s
 }
 
 func (r *GlimmerRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 	sb.WriteString(glimmerBOS)
 
