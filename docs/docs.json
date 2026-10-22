@@ -131,6 +131,7 @@
               "/capabilities/decision",
               "/capabilities/vision",
               "/capabilities/embeddings",
+              "/capabilities/speech",
               "/capabilities/tool-calling",
               "/capabilities/web-search"
             ]

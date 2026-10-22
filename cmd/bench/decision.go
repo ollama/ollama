@@ -159,6 +159,15 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 			return fmt.Errorf("%s warmup: %w", name, sample.Err)
 		}
 	}
+	info := ModelInfo{Name: name}
+	measureMemory := opts.decisionURL == nil || *opts.decisionURL == ""
+	measureMemory = measureMemory && *opts.keepAlive <= 0
+	if measureMemory && *opts.warmup > 0 {
+		memCtx, memCancel := context.WithTimeout(ctx, 5*time.Second)
+		info.SizeBytes, info.VRAMBytes = fetchMemoryUsage(memCtx, client, name)
+		info.NumCtx = fetchContextLength(memCtx, client, name)
+		memCancel()
+	}
 	if csvOut == nil {
 		fmt.Fprintf(out, "# API: systemone | Corpus: %s | SHA256: %s | Mode: %s | Concurrency: %d | Cache: unchanged corpus replay\n", *opts.decisionFile, corpus.SHA256, mode, *opts.concurrency)
 	}
@@ -220,7 +229,16 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 			OutputMetrics(out, *opts.format, []Metrics{{Model: name, Step: step + "/metric=http", Count: 1, Duration: s.Duration}}, *opts.verbose)
 		}
 	}
-	writeDecisionSummary(os.Stderr, name, samples, total, elapsed)
+	if measureMemory && *opts.warmup == 0 {
+		memCtx, memCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		info.SizeBytes, info.VRAMBytes = fetchMemoryUsage(memCtx, client, name)
+		info.NumCtx = fetchContextLength(memCtx, client, name)
+		memCancel()
+	}
+	if csvOut == nil {
+		outputModelInfo(out, *opts.format, info)
+	}
+	writeDecisionSummary(os.Stderr, name, samples, total, elapsed, info)
 	if err := context.Cause(ctx); err != nil {
 		return fmt.Errorf("%s: %w", name, err)
 	}
@@ -230,7 +248,7 @@ func benchmarkDecisionModel(opts flagOptions, client *api.Client, name string, c
 	return nil
 }
 
-func writeDecisionSummary(out io.Writer, model string, samples []decisionSample, total int, elapsed time.Duration) {
+func writeDecisionSummary(out io.Writer, model string, samples []decisionSample, total int, elapsed time.Duration, info ModelInfo) {
 	type accuracy struct {
 		decisiontest.Tally
 		CaseAccuracy     float64 `json:"case_accuracy_pct"`
@@ -246,9 +264,12 @@ func writeDecisionSummary(out io.Writer, model string, samples []decisionSample,
 		P50                float64             `json:"p50_ms"`
 		P95                float64             `json:"p95_ms"`
 		P99                float64             `json:"p99_ms"`
+		SizeBytes          int64               `json:"size_bytes,omitempty"`
+		VRAMBytes          int64               `json:"vram_bytes,omitempty"`
+		NumCtx             int64               `json:"num_ctx,omitempty"`
 		Datasets           map[string]accuracy `json:"datasets"`
 	}
-	s := summary{Model: model, Expected: total, Datasets: make(map[string]accuracy)}
+	s := summary{Model: model, Expected: total, SizeBytes: info.SizeBytes, VRAMBytes: info.VRAMBytes, NumCtx: info.NumCtx, Datasets: make(map[string]accuracy)}
 	var durations []time.Duration
 	var questions int
 	for _, sample := range samples {

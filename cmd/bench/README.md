@@ -106,6 +106,12 @@ fail either mode. Stderr summaries report accuracy, latency percentiles and
 requests/questions per second; CSV retains per-request results and input sizes.
 CSV separates label `mismatches` from HTTP/invalid-response `error` values.
 Summary percentiles use HTTP round-trip latency, including server queueing.
+For local warm decision runs, the stderr JSON summary also includes
+`size_bytes`, `vram_bytes`, and `num_ctx` from `/api/ps`. The sample is taken
+after warmup, or after the measured requests when `-warmup 0`. Benchstat output
+also prints the usual model Size/VRAM comment; CSV columns remain per-request.
+External endpoints and cold-load runs omit memory because the local Ollama
+running-model list would not describe those requests.
 Compare identical corpora, model artifacts and settings on the same host. HTTP
 latency includes model lookup and request setup, so warm runs capture routing and
 metadata-cache improvements as well as inference. Use `-k 0 -concurrency 1` and a

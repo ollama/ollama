@@ -585,6 +585,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
 		model.CapabilityDecision:   errors.New("decision"),
+		model.CapabilitySpeech:     errors.New("speech"),
 	}
 
 	for _, cap := range want {

@@ -315,6 +315,31 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [x] `dimensions`
 - [ ] `user`
 
+### `/v1/audio/speech`
+
+> Note: Added in Ollama v0.40.8
+
+Generates audio with [speech models](/capabilities/speech). The response streams while audio is generated.
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `input` (up to 4,096 characters)
+- [x] `voice` (one of the model's voice names, such as `Freya`; omit it for the model's default)
+- [x] `response_format`
+  - [x] `wav` (default)
+  - [x] `pcm`
+  - [ ] `mp3`, `opus`, `aac`, `flac`
+- [x] `speed` (`1` only)
+- [x] `stream_format` (`audio` only)
+- [ ] `instructions`
+
+#### Notes
+
+- Audio is 16-bit, mono, 24 kHz. `pcm` returns raw little-endian samples with no header.
+- The default `response_format` is `wav`, not `mp3`.
+- Unsupported values return a `400` error instead of being ignored.
+
 ### Responses API
 
 `POST /v1/responses`

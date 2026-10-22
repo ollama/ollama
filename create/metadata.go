@@ -22,7 +22,7 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		return model.ConfigV2{}, err
 	}
 
-	var parserName, rendererName string
+	var parserName, rendererName, sourceDecisionRenderer string
 	var decisionModel, decisionVision bool
 	switch cfg.Architecture() {
 	case "Qwen3_5Model":
@@ -31,9 +31,18 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 			return model.ConfigV2{}, err
 		}
 		if !hasSidecar {
-			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires Perplexity decision sidecars")
+			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
 		}
-		rendererName, decisionModel = "pplx", true
+		format, err := qwenDecisionFormat(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName = "pplx"
+		if format == d3FormatID {
+			rendererName = "d3"
+		}
+		sourceDecisionRenderer = rendererName
+		decisionModel = true
 		decisionVision = cfg.VisionConfig != nil
 	case "ClefForDecision":
 		rendererName, decisionModel = "clef", true
@@ -60,8 +69,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 	if rendererOverride != "" {
 		rendererName = rendererOverride
 	}
-	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != "pplx" || parserName != "") {
-		return model.ConfigV2{}, fmt.Errorf("Perplexity decision models require renderer %q and no parser (got renderer %q, parser %q)", "pplx", rendererName, parserName)
+	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != sourceDecisionRenderer || parserName != "") {
+		return model.ConfigV2{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
 	}
 
 	var capabilities []string
@@ -70,6 +79,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		if decisionVision {
 			capabilities = append(capabilities, "vision")
 		}
+	} else if cfg.Architecture() == "Phonon" {
+		capabilities = []string{"speech"}
 	} else {
 		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
 	}
