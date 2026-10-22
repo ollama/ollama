@@ -224,19 +224,66 @@ func talosPrefix() (string, error) {
 }
 
 func talosConfigPath() (string, error) {
+	profile, _, err := talosProfileDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(profile, "talos.env"), nil
+}
+
+func talosProfileDir() (string, bool, error) {
+	prefix, err := talosPrefix()
+	if err != nil {
+		return "", false, err
+	}
 	// A PATH entry can select a different installation than TALOS_PREFIX.
 	// Recognize the official layout through symlinks so CurrentModel and Paths
 	// inspect the same configuration that the selected command will write.
 	if path, err := talosLookPath("talos"); err == nil {
-		if prefix, ok := talosWrapperPrefix(path); ok {
-			return filepath.Join(prefix, "talos.env"), nil
+		if selected, ok := talosWrapperPrefix(path); ok {
+			prefix = selected
 		}
 	}
-	prefix, err := talosPrefix()
-	if err != nil {
-		return "", err
+	manager := strings.TrimSpace(os.Getenv("TALOS_INSTALL_MANAGER"))
+	if marker, err := os.ReadFile(filepath.Join(prefix, ".talos-install-manager")); err == nil && strings.TrimSpace(string(marker)) != "" {
+		manager = strings.TrimSpace(string(marker))
 	}
-	return filepath.Join(prefix, "talos.env"), nil
+	if manager != "" && manager != "homebrew" {
+		return "", false, fmt.Errorf("unknown Talos installation manager %q", manager)
+	}
+	managed := manager == "homebrew"
+	profile := os.Getenv("TALOS_PROFILE_DIR")
+	if profile == "" && !managed {
+		return prefix, false, nil
+	}
+	if profile == "" || profile == "~" || strings.HasPrefix(profile, "~/") {
+		home, err := talosUserHome()
+		if err != nil {
+			return "", managed, err
+		}
+		if profile == "" {
+			profile = filepath.Join(home, ".talos", "homebrew")
+		} else {
+			profile = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(profile, "~"), "/"))
+		}
+	}
+	if !filepath.IsAbs(profile) {
+		return "", managed, fmt.Errorf("TALOS_PROFILE_DIR must be an absolute path")
+	}
+	if managed {
+		resolvedProfile, resolvedPrefix := profile, prefix
+		if resolved, err := filepath.EvalSymlinks(profile); err == nil {
+			resolvedProfile = resolved
+		}
+		if resolved, err := filepath.EvalSymlinks(prefix); err == nil {
+			resolvedPrefix = resolved
+		}
+		relative, err := filepath.Rel(resolvedPrefix, resolvedProfile)
+		if err != nil || relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return "", true, fmt.Errorf("a managed Talos profile must be outside the installed code")
+		}
+	}
+	return filepath.Clean(profile), managed, nil
 }
 
 func talosWrapperPrefix(path string) (string, bool) {
@@ -245,6 +292,14 @@ func talosWrapperPrefix(path string) (string, bool) {
 		return "", false
 	}
 	prefix := filepath.Dir(filepath.Dir(resolved))
+	// Homebrew's outer launcher is not the source wrapper: only its complete,
+	// installer-marked libexec layout selects the durable per-user profile.
+	libexec := filepath.Join(prefix, "libexec")
+	if marker, err := os.ReadFile(filepath.Join(libexec, ".talos-install-manager")); err == nil && strings.TrimSpace(string(marker)) == "homebrew" {
+		if info, err := os.Stat(filepath.Join(libexec, "bin", "talos")); err == nil && info.Mode().IsRegular() {
+			prefix = libexec
+		}
+	}
 	for _, name := range []string{filepath.Join(".venv", "bin", "python"), filepath.Join("talos", "__main__.py")} {
 		if info, err := os.Stat(filepath.Join(prefix, name)); err != nil || !info.Mode().IsRegular() {
 			return "", false
@@ -254,10 +309,15 @@ func talosWrapperPrefix(path string) (string, bool) {
 }
 
 // talosSecretsEnvPath mirrors Talos's SECRETS_ENV: $TALOS_SECRETS_ENV, or the
-// default location next to the other operator secrets.
+// managed profile, or the source install's legacy operator-secrets location.
 func talosSecretsEnvPath() (string, error) {
 	if path := strings.TrimSpace(os.Getenv("TALOS_SECRETS_ENV")); path != "" {
 		return filepath.Clean(path), nil
+	}
+	if profile, managed, err := talosProfileDir(); err != nil {
+		return "", err
+	} else if managed {
+		return filepath.Join(profile, "talos.env"), nil
 	}
 	home, err := talosUserHome()
 	if err != nil {
@@ -270,7 +330,9 @@ func talosSecretsEnvPath() (string, error) {
 // first, the secrets file on top, and the process environment last.
 func talosConfigValues() map[string]string {
 	values := make(map[string]string)
-	if configPath, err := talosConfigPath(); err == nil {
+	if configPath, err := talosConfigPath(); err != nil {
+		return values
+	} else {
 		if data, err := os.ReadFile(configPath); err == nil {
 			for key, value := range talosParseEnvFile(data) {
 				values[key] = value
