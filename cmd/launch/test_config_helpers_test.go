@@ -16,13 +16,17 @@ var (
 func init() {
 	integrations = buildTestIntegrations()
 	integrationAliases = buildTestIntegrationAliases()
-	lookupServerContextLength = func(string) int { return 0 }
+	lookupServerModelMetadata = func(string) (serverModelMetadata, bool) { return serverModelMetadata{}, false }
 }
 
 func useServerContextLookup(t *testing.T) {
-	old := lookupServerContextLength
-	lookupServerContextLength = serverContextLength
-	t.Cleanup(func() { lookupServerContextLength = old })
+	old := lookupServerModelMetadata
+	lookupServerModelMetadata = cachedServerModelMetadata
+	serverModelMetadataUnavailable.Store(false)
+	t.Cleanup(func() {
+		lookupServerModelMetadata = old
+		serverModelMetadataUnavailable.Store(false)
+	})
 }
 
 func buildTestIntegrations() map[string]Runner {

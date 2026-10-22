@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	modelpkg "github.com/ollama/ollama/types/model"
@@ -80,7 +81,7 @@ func TestModelInventoryResolveDoesNotRefreshCloudMiss(t *testing.T) {
 	}
 }
 
-func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
+func TestFallbackLaunchModelUsesServerMetadata(t *testing.T) {
 	useServerContextLookup(t)
 
 	var shown []string
@@ -94,7 +95,7 @@ func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
 			t.Fatalf("decode show request: %v", err)
 		}
 		shown = append(shown, req.Model)
-		fmt.Fprint(w, `{"model_info":{"deepseek4.context_length":1048576}}`)
+		fmt.Fprint(w, `{"capabilities":["vision","thinking","completion","tools"],"thinking":{"values":[false,"low","high"],"default":"high"},"model_info":{"deepseek4.context_length":1048576}}`)
 	}))
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
@@ -104,6 +105,12 @@ func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
 		got := fallbackLaunchModel("deepseek-v4-pro-inventory-test:cloud")
 		if got.ContextLength != 1_048_576 {
 			t.Fatalf("ContextLength = %d, want 1048576", got.ContextLength)
+		}
+		if !got.ToolCapable || !got.HasCapability(modelpkg.CapabilityVision) || !got.HasCapability(modelpkg.CapabilityThinking) {
+			t.Fatalf("capabilities = %v, want vision, thinking and tools", got.Capabilities)
+		}
+		if got.Thinking == nil || got.Thinking.Default != "high" || len(got.Thinking.Values) != 3 {
+			t.Fatalf("Thinking = %#v, want the server's descriptor", got.Thinking)
 		}
 		if len(shown) != 1 || shown[0] != "deepseek-v4-pro-inventory-test:cloud" {
 			t.Fatalf("show calls = %v, want one for the model", shown)
@@ -118,22 +125,22 @@ func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
 		}
 	})
 
-	t.Run("cloud model with known limits", func(t *testing.T) {
+	t.Run("cloud model with known limits keeps the table context", func(t *testing.T) {
 		shown = nil
 		got := fallbackLaunchModel("kimi-k2.5:cloud")
-		if got.ContextLength != 262_144 {
-			t.Fatalf("ContextLength = %d, want 262144", got.ContextLength)
+		if got.ContextLength != 262_144 || got.MaxOutputTokens != 262_144 {
+			t.Fatalf("limits = %d/%d, want the table's 262144/262144", got.ContextLength, got.MaxOutputTokens)
 		}
-		if len(shown) != 0 {
-			t.Fatalf("show calls = %v, want none for a tabled model", shown)
+		if !got.HasCapability(modelpkg.CapabilityVision) {
+			t.Fatalf("capabilities = %v, want the server's capabilities", got.Capabilities)
 		}
 	})
 
 	t.Run("local model", func(t *testing.T) {
 		shown = nil
 		got := fallbackLaunchModel("llama3.2")
-		if got.ContextLength != 0 {
-			t.Fatalf("ContextLength = %d, want 0", got.ContextLength)
+		if got.ContextLength != 0 || len(got.Capabilities) != 0 {
+			t.Fatalf("model = %#v, want no server metadata", got)
 		}
 		if len(shown) != 0 {
 			t.Fatalf("show calls = %v, want none for a local model", shown)
@@ -144,8 +151,42 @@ func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
 		shown = nil
 		models := []LaunchModel{{Name: "glm-5.2-inventory-test:cloud", Remote: true}}
 		resolved, _ := resolveLaunchModels([]string{"glm-5.2-inventory-test:cloud"}, models)
-		if len(resolved) != 1 || resolved[0].ContextLength != 1_048_576 {
-			t.Fatalf("resolved = %#v, want ContextLength 1048576", resolved)
+		if len(resolved) != 1 || resolved[0].ContextLength != 1_048_576 || !resolved[0].ToolCapable {
+			t.Fatalf("resolved = %#v, want ContextLength 1048576 and tool capability", resolved)
 		}
 	})
+}
+
+func TestServerModelMetadataStopsAfterUnreachableServer(t *testing.T) {
+	useServerContextLookup(t)
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		time.Sleep(300 * time.Millisecond)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	oldTimeout := modelShowTimeout
+	modelShowTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { modelShowTimeout = oldTimeout })
+
+	start := time.Now()
+	for _, name := range []string{"unreachable-a:cloud", "unreachable-b:cloud", "unreachable-a:cloud"} {
+		if _, ok := fallbackLaunchModelOK(name); ok {
+			t.Fatalf("lookup for %s succeeded against a hanging server", name)
+		}
+	}
+	if hits != 1 {
+		t.Fatalf("show requests = %d, want 1 before the launcher stops asking", hits)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("lookups took %v, want a single timeout", elapsed)
+	}
+}
+
+func fallbackLaunchModelOK(name string) (LaunchModel, bool) {
+	model := fallbackLaunchModel(name)
+	return model, len(model.Capabilities) > 0 || model.Thinking != nil
 }

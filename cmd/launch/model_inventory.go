@@ -2,9 +2,11 @@ package launch
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -12,10 +14,17 @@ import (
 )
 
 var (
-	modelShowTimeout          = 5 * time.Second
-	lookupServerContextLength = serverContextLength
-	serverContextLengths      sync.Map
+	modelShowTimeout               = 5 * time.Second
+	lookupServerModelMetadata      = cachedServerModelMetadata
+	serverModelMetadataCache       sync.Map
+	serverModelMetadataUnavailable atomic.Bool
 )
+
+type serverModelMetadata struct {
+	ContextLength int
+	Capabilities  []modelpkg.Capability
+	Thinking      *modelpkg.Thinking
+}
 
 // LaunchModel is the model metadata Launch passes to integration config
 // writers after resolving selected model names through the per-run inventory.
@@ -53,42 +62,76 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 	return m
 }
 
-func (m LaunchModel) WithServerLimits() LaunchModel {
-	if m.ContextLength > 0 || !isCloudModelName(m.Name) {
+func (m LaunchModel) WithServerMetadata() LaunchModel {
+	if !isCloudModelName(m.Name) || (m.ContextLength > 0 && len(m.Capabilities) > 0) {
 		return m
 	}
-	if n := lookupServerContextLength(m.Name); n > 0 {
-		m.ContextLength = n
+	meta, ok := lookupServerModelMetadata(m.Name)
+	if !ok {
+		return m
+	}
+	if m.ContextLength <= 0 {
+		m.ContextLength = meta.ContextLength
+	}
+	if len(m.Capabilities) == 0 {
+		m.Capabilities = slices.Clone(meta.Capabilities)
+		m.ToolCapable = slices.Contains(m.Capabilities, modelpkg.CapabilityTools)
+	}
+	if m.Thinking == nil {
+		m.Thinking = meta.Thinking.Clone()
 	}
 	return m
 }
 
-func serverContextLength(model string) int {
-	if n, ok := serverContextLengths.Load(model); ok {
-		return n.(int)
-	}
-	n := showContextLength(model)
-	if n > 0 {
-		serverContextLengths.Store(model, n)
-	}
-	return n
+type serverModelMetadataEntry struct {
+	meta serverModelMetadata
+	ok   bool
 }
 
-func showContextLength(model string) int {
+func cachedServerModelMetadata(model string) (serverModelMetadata, bool) {
+	if v, ok := serverModelMetadataCache.Load(model); ok {
+		entry := v.(serverModelMetadataEntry)
+		return entry.meta, entry.ok
+	}
+	if serverModelMetadataUnavailable.Load() {
+		return serverModelMetadata{}, false
+	}
+	meta, err := showModelMetadata(model)
+	if err != nil {
+		var statusErr api.StatusError
+		if !errors.As(err, &statusErr) {
+			serverModelMetadataUnavailable.Store(true)
+		}
+	}
+	ok := err == nil && (meta.ContextLength > 0 || len(meta.Capabilities) > 0 || meta.Thinking != nil)
+	serverModelMetadataCache.Store(model, serverModelMetadataEntry{meta: meta, ok: ok})
+	return meta, ok
+}
+
+func showModelMetadata(model string) (serverModelMetadata, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return 0
+		return serverModelMetadata{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), modelShowTimeout)
 	defer cancel()
 	resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
 	if err != nil {
-		return 0
+		return serverModelMetadata{}, err
 	}
 
-	n, _ := modelInfoContextLength(resp.ModelInfo)
-	return n
+	meta := serverModelMetadata{
+		Capabilities: append([]modelpkg.Capability(nil), resp.Capabilities...),
+		Thinking:     resp.Thinking.Clone(),
+	}
+	meta.ContextLength, _ = modelInfoContextLength(resp.ModelInfo)
+	return meta, nil
+}
+
+func showContextLength(model string) int {
+	meta, _ := showModelMetadata(model)
+	return meta.ContextLength
 }
 
 func modelInfoContextLength(modelInfo map[string]any) (int, bool) {
@@ -190,7 +233,7 @@ func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, b
 	localMiss := false
 	for _, name := range names {
 		if model, ok := findLaunchModel(models, name); ok {
-			resolved = append(resolved, model.WithCloudLimits().WithServerLimits())
+			resolved = append(resolved, model.WithCloudLimits().WithServerMetadata())
 			continue
 		}
 		if !isCloudModelName(name) {
@@ -215,7 +258,7 @@ func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {
 }
 
 func fallbackLaunchModel(name string) LaunchModel {
-	return LaunchModel{Name: name, Remote: isCloudModelName(name)}.WithCloudLimits().WithServerLimits()
+	return LaunchModel{Name: name, Remote: isCloudModelName(name)}.WithCloudLimits().WithServerMetadata()
 }
 
 func findLaunchModel(models []LaunchModel, name string) (LaunchModel, bool) {
