@@ -22,7 +22,24 @@ const (
 	deepSeekHarnessProvider        = "ollama"
 	deepSeekHarnessAPIKeyEnv       = "OLLAMA_LAUNCH_DSH_API_KEY"
 	deepSeekHarnessWebSettings     = "web-search-deepseek"
+
+	deepSeekHarnessCompactionHeadroom   = 65_536
+	deepSeekHarnessMaxTokensContextFrac = 8
 )
+
+func deepSeekHarnessMaxTokens(contextLength, maxOutputTokens int) int {
+	if maxOutputTokens <= 0 {
+		return 0
+	}
+	if contextLength <= 0 {
+		return maxOutputTokens
+	}
+	maxTokens := min(maxOutputTokens, contextLength/deepSeekHarnessMaxTokensContextFrac)
+	if contextLength-maxTokens < 2*deepSeekHarnessCompactionHeadroom {
+		return 0
+	}
+	return maxTokens
+}
 
 var (
 	deepSeekHarnessLookPath = exec.LookPath
@@ -392,8 +409,8 @@ func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
 		if item.ContextLength > 0 {
 			entry["contextWindow"] = item.ContextLength
 		}
-		if item.MaxOutputTokens > 0 {
-			entry["maxTokens"] = item.MaxOutputTokens
+		if maxTokens := deepSeekHarnessMaxTokens(item.ContextLength, item.MaxOutputTokens); maxTokens > 0 {
+			entry["maxTokens"] = maxTokens
 		}
 		configs = append(configs, entry)
 	}

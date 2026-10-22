@@ -16,6 +16,13 @@ var (
 func init() {
 	integrations = buildTestIntegrations()
 	integrationAliases = buildTestIntegrationAliases()
+	lookupServerContextLength = func(string) int { return 0 }
+}
+
+func useServerContextLookup(t *testing.T) {
+	old := lookupServerContextLength
+	lookupServerContextLength = serverContextLength
+	t.Cleanup(func() { lookupServerContextLength = old })
 }
 
 func buildTestIntegrations() map[string]Runner {

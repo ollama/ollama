@@ -2,6 +2,7 @@ package launch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -77,4 +78,74 @@ func TestModelInventoryResolveDoesNotRefreshCloudMiss(t *testing.T) {
 	if got[0].ContextLength <= 0 || got[0].MaxOutputTokens <= 0 {
 		t.Fatalf("cloud limits not applied: %#v", got[0])
 	}
+}
+
+func TestFallbackLaunchModelUsesServerContextLength(t *testing.T) {
+	useServerContextLookup(t)
+
+	var shown []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/show" {
+			http.NotFound(w, r)
+			return
+		}
+		var req api.ShowRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode show request: %v", err)
+		}
+		shown = append(shown, req.Model)
+		fmt.Fprint(w, `{"model_info":{"deepseek4.context_length":1048576}}`)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	t.Run("cloud model missing from limits", func(t *testing.T) {
+		shown = nil
+		got := fallbackLaunchModel("deepseek-v4-pro-inventory-test:cloud")
+		if got.ContextLength != 1_048_576 {
+			t.Fatalf("ContextLength = %d, want 1048576", got.ContextLength)
+		}
+		if len(shown) != 1 || shown[0] != "deepseek-v4-pro-inventory-test:cloud" {
+			t.Fatalf("show calls = %v, want one for the model", shown)
+		}
+
+		shown = nil
+		if got := fallbackLaunchModel("deepseek-v4-pro-inventory-test:cloud"); got.ContextLength != 1_048_576 {
+			t.Fatalf("cached ContextLength = %d, want 1048576", got.ContextLength)
+		}
+		if len(shown) != 0 {
+			t.Fatalf("show calls = %v, want none when cached", shown)
+		}
+	})
+
+	t.Run("cloud model with known limits", func(t *testing.T) {
+		shown = nil
+		got := fallbackLaunchModel("kimi-k2.5:cloud")
+		if got.ContextLength != 262_144 {
+			t.Fatalf("ContextLength = %d, want 262144", got.ContextLength)
+		}
+		if len(shown) != 0 {
+			t.Fatalf("show calls = %v, want none for a tabled model", shown)
+		}
+	})
+
+	t.Run("local model", func(t *testing.T) {
+		shown = nil
+		got := fallbackLaunchModel("llama3.2")
+		if got.ContextLength != 0 {
+			t.Fatalf("ContextLength = %d, want 0", got.ContextLength)
+		}
+		if len(shown) != 0 {
+			t.Fatalf("show calls = %v, want none for a local model", shown)
+		}
+	})
+
+	t.Run("resolved cloud model without metadata", func(t *testing.T) {
+		shown = nil
+		models := []LaunchModel{{Name: "glm-5.2-inventory-test:cloud", Remote: true}}
+		resolved, _ := resolveLaunchModels([]string{"glm-5.2-inventory-test:cloud"}, models)
+		if len(resolved) != 1 || resolved[0].ContextLength != 1_048_576 {
+			t.Fatalf("resolved = %#v, want ContextLength 1048576", resolved)
+		}
+	})
 }

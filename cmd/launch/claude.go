@@ -186,10 +186,10 @@ func (c *Claude) modelEnvVars(model string) []string {
 	}
 
 	if isCloudModelName(model) {
-		if l, ok := lookupCloudModelLimit(model); ok {
-			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(l.Context))
-			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && l.Context >= claudeMinAutoCompactWindow {
-				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(l.Context, claudeMaxAutoCompactWindow)))
+		if ctxLen := fallbackLaunchModel(model).ContextLength; ctxLen > 0 {
+			env = append(env, "CLAUDE_CODE_MAX_CONTEXT_TOKENS="+strconv.Itoa(ctxLen))
+			if os.Getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW") == "" && ctxLen >= claudeMinAutoCompactWindow {
+				env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(min(ctxLen, claudeMaxAutoCompactWindow)))
 			}
 		}
 	}

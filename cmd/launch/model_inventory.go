@@ -5,9 +5,16 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	modelpkg "github.com/ollama/ollama/types/model"
+)
+
+var (
+	modelShowTimeout          = 5 * time.Second
+	lookupServerContextLength = serverContextLength
+	serverContextLengths      sync.Map
 )
 
 // LaunchModel is the model metadata Launch passes to integration config
@@ -44,6 +51,67 @@ func (m LaunchModel) WithCloudLimits() LaunchModel {
 		}
 	}
 	return m
+}
+
+func (m LaunchModel) WithServerLimits() LaunchModel {
+	if m.ContextLength > 0 || !isCloudModelName(m.Name) {
+		return m
+	}
+	if n := lookupServerContextLength(m.Name); n > 0 {
+		m.ContextLength = n
+	}
+	return m
+}
+
+func serverContextLength(model string) int {
+	if n, ok := serverContextLengths.Load(model); ok {
+		return n.(int)
+	}
+	n := showContextLength(model)
+	if n > 0 {
+		serverContextLengths.Store(model, n)
+	}
+	return n
+}
+
+func showContextLength(model string) int {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), modelShowTimeout)
+	defer cancel()
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
+	if err != nil {
+		return 0
+	}
+
+	n, _ := modelInfoContextLength(resp.ModelInfo)
+	return n
+}
+
+func modelInfoContextLength(modelInfo map[string]any) (int, bool) {
+	for key, val := range modelInfo {
+		if !strings.HasSuffix(key, ".context_length") {
+			continue
+		}
+		switch v := val.(type) {
+		case float64:
+			if v > 0 {
+				return int(v), true
+			}
+		case int:
+			if v > 0 {
+				return v, true
+			}
+		case int64:
+			if v > 0 {
+				return int(v), true
+			}
+		}
+	}
+	return 0, false
 }
 
 type modelInventory struct {
@@ -122,7 +190,7 @@ func resolveLaunchModels(names []string, models []LaunchModel) ([]LaunchModel, b
 	localMiss := false
 	for _, name := range names {
 		if model, ok := findLaunchModel(models, name); ok {
-			resolved = append(resolved, model.WithCloudLimits())
+			resolved = append(resolved, model.WithCloudLimits().WithServerLimits())
 			continue
 		}
 		if !isCloudModelName(name) {
@@ -147,7 +215,7 @@ func launchModelFromListResponse(model api.ListModelResponse) LaunchModel {
 }
 
 func fallbackLaunchModel(name string) LaunchModel {
-	return LaunchModel{Name: name, Remote: isCloudModelName(name)}.WithCloudLimits()
+	return LaunchModel{Name: name, Remote: isCloudModelName(name)}.WithCloudLimits().WithServerLimits()
 }
 
 func findLaunchModel(models []LaunchModel, name string) (LaunchModel, bool) {
