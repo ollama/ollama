@@ -115,6 +115,7 @@ func TestBoundedNumPredict(t *testing.T) {
 		want       int
 	}{
 		{name: "open ended gets finite budget", numPredict: -1, numCtx: 2048, want: 20480},
+		{name: "fill context passed through", numPredict: -2, numCtx: 2048, want: -2},
 		{name: "explicit under limit preserved", numPredict: 100, numCtx: 2048, want: 100},
 		{name: "explicit over limit capped", numPredict: 30000, numCtx: 2048, want: 20480},
 		{name: "unknown context unchanged", numPredict: -1, numCtx: 0, want: -1},
