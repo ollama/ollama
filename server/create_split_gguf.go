@@ -10,10 +10,7 @@ import (
 	"github.com/ollama/ollama/manifest"
 )
 
-const (
-	maxSplitGGUFParts         = maxCreateFiles
-	splitGGUFMinOllamaVersion = "0.35.0"
-)
+const maxSplitGGUFParts = maxCreateFiles
 
 var splitGGUFNameRe = regexp.MustCompile(`^(.*)-(\d{5})-of-(\d{5})\.gguf$`)
 
