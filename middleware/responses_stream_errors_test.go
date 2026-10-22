@@ -28,7 +28,7 @@ func TestResponsesMiddlewareStreamFailure(t *testing.T) {
 		{name: "before content", wantTypes: []string{}},
 		{name: "empty error", empty: true, wantTypes: []string{}},
 		{name: "reasoning", chunks: []api.ChatResponse{{Message: api.Message{Thinking: "partial thought"}}}, wantTypes: []string{"reasoning"}},
-		{name: "text", chunks: []api.ChatResponse{{Message: api.Message{Content: "partial answer"}}}, wantTypes: []string{"message"}},
+		{name: "text", chunks: []api.ChatResponse{{Message: api.Message{Content: "partial "}}, {Message: api.Message{Content: "answer"}}}, wantTypes: []string{"message"}},
 		{name: "reasoning then text", chunks: []api.ChatResponse{{Message: api.Message{Thinking: "partial thought"}}, {Message: api.Message{Content: "partial answer"}}}, wantTypes: []string{"reasoning", "message"}},
 		{name: "text then tool", chunks: []api.ChatResponse{{Message: api.Message{Content: "checking weather"}}, {Message: api.Message{ToolCalls: []api.ToolCall{toolCall}}}}, wantTypes: []string{"message", "function_call"}},
 		{name: "web search enabled", webSearch: true, chunks: []api.ChatResponse{{Message: api.Message{Content: "partial answer"}}}, wantTypes: []string{"message"}},
@@ -85,13 +85,17 @@ func TestResponsesMiddlewareStreamFailure(t *testing.T) {
 					t.Fatalf("reasoning lost: %#v", response.Output)
 				}
 			}
+			wantText := ""
+			for _, chunk := range test.chunks {
+				wantText += chunk.Message.Content
+			}
 			for _, item := range response.Output {
 				if item.Type == "message" {
 					wantStatus := "incomplete"
 					if test.name == "text then tool" {
 						wantStatus = "completed"
 					}
-					if item.Status != wantStatus || item.Content[0].Text == "" {
+					if item.Status != wantStatus || len(item.Content) != 1 || item.Content[0].Text != wantText {
 						t.Fatalf("partial message not preserved: %#v", item)
 					}
 				}
