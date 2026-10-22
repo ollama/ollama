@@ -130,6 +130,11 @@ type WebSearchAnthropicWriter struct {
 	streamNextIndex      int
 }
 
+// SetThinking keeps web-search follow-ups aligned with the resolved chat request.
+func (w *WebSearchAnthropicWriter) SetThinking(think *api.ThinkValue) {
+	w.chatReq.Think = think
+}
+
 type webSearchLoopResult struct {
 	response anthropic.MessagesResponse
 	loopErr  *webSearchLoopError
