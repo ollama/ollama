@@ -121,8 +121,8 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 		{"assistant call with no arguments", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{emptyCall}}}, nil, nil},
 		{"assistant multiple calls in order", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{call, emptyCall}}}, nil, nil},
 		{"tool argument JSON and raw string", []api.Message{user, {Role: "assistant", ToolCalls: []api.ToolCall{mixedCall}}}, nil, nil},
-		{"no thinking control", []api.Message{user}, nil, &api.ThinkValue{Value: false}},
-		{"no thinking control with tools", []api.Message{user, assistant, result}, []api.Tool{tool}, &api.ThinkValue{Value: false}},
+		{"explicit thinking suppression", []api.Message{user}, nil, &api.ThinkValue{Value: false}},
+		{"explicit thinking suppression with tools", []api.Message{user, assistant, result}, []api.Tool{tool}, &api.ThinkValue{Value: false}},
 		{"tools with no messages", nil, []api.Tool{tool}, nil},
 		{"tool without description", []api.Message{user}, []api.Tool{noDescriptionTool}, nil},
 		{"tools with mixed descriptions", []api.Message{user}, []api.Tool{noDescriptionTool, richTool}, nil},
@@ -148,6 +148,9 @@ func TestFlintRendererMatchesPublisherJinja(t *testing.T) {
 				t.Fatal(err)
 			}
 			want := renderFlintPublisherJinja(t, templatePath, tc.messages, tc.tools)
+			if tc.think != nil && !tc.think.Bool() {
+				want += "<think></think>"
+			}
 			if got != want {
 				t.Errorf("renderer differs from publisher Jinja\n got: %q\nwant: %q", got, want)
 			}

@@ -112,7 +112,7 @@ func TestFlintPublisherChatFixtures(t *testing.T) {
 	for _, tc := range []struct {
 		think  bool
 		suffix string
-	}{{true, "<think>"}, {false, ""}} {
+	}{{true, "<think>"}, {false, "<think></think>"}} {
 		got, err := (&FlintRenderer{}).Render([]api.Message{{Role: "user", Content: "Hi"}}, nil, &api.ThinkValue{Value: tc.think})
 		if err != nil {
 			t.Fatal(err)

@@ -13,7 +13,7 @@ type FlintRenderer struct{}
 func (*FlintRenderer) LeadingBOS() string { return "" }
 
 // The publisher's bare assistant prompt lets the model choose whether to
-// reason. Explicit thinking starts a reasoning prefill below.
+// reason. Explicit thinking controls add a prefill below.
 func (*FlintRenderer) Thinking() *model.Thinking { return nil }
 
 var flintRoleEscaper = strings.NewReplacer(
@@ -105,8 +105,14 @@ func (*FlintRenderer) Render(messages []api.Message, tools []api.Tool, think *ap
 		}
 	}
 	out.WriteString("<|assistant|>")
-	if think != nil && think.Bool() {
-		out.WriteString("<think>")
+	if think != nil {
+		if think.Bool() {
+			out.WriteString("<think>")
+		} else {
+			// Close an empty reasoning section so short completions can answer
+			// directly instead of spending their token budget in hidden thought.
+			out.WriteString("<think></think>")
+		}
 	}
 	return out.String(), nil
 }
