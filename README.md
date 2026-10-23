@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Rookie](https://github.com/jordanpainter/rookie) - Chess coach for macOS that checks every claim against the board before showing it
 
 ### Observability & Monitoring
 
