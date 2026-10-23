@@ -13,9 +13,12 @@
 # marks that release latest. Any failure before that mark deletes the tag and
 # the draft and publishes nothing.
 #
+#   bash scripts/release-fork.sh --build-only
 #   bash scripts/release-fork.sh --dry-run patch
 #   bash scripts/release-fork.sh --self-test
 #
+# --build-only compiles and lipos the universal app on the Mac and signs it
+# when a Developer ID is present. It does not notarize, tag, or upload.
 # --dry-run computes the tag and runs the Go gate. It does not tag, build, or
 # upload. --self-test is the Linux-runnable part of the update rehearsal.
 #
@@ -34,7 +37,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 status() { echo "▶ $*"; }
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-1}"
 }
 
@@ -59,6 +62,37 @@ go_gate() {
   go test -count=1 ./app/updatetrust/ ./app/forkversion/ ./app/updater/
   go vet ./app/updatetrust/ ./app/forkversion/ ./app/updater/
   bash scripts/publish_stable_dmg.sh --self-test >/dev/null
+  sh scripts/build_darwin.sh self-test
+}
+
+build_only() {
+  if [ "$(uname -s)" != "Darwin" ]; then
+    die "--build-only runs on macOS so it can compile the universal app. It does not tag or upload."
+  fi
+  status "building universal app (no tag, no notarization, no upload)"
+  SIGN_ID="${OLLAMA_SIGN_ID:-}"
+  if [ -z "$SIGN_ID" ] && command -v security >/dev/null 2>&1; then
+    SIGN_ID="$(security find-identity -v -p codesigning | awk -v team="$TEAM" 'index($0, team) && /Developer ID Application/ { print $2; exit }')"
+  fi
+  if [ -n "$SIGN_ID" ]; then
+    status "signing with $SIGN_ID (notarization skipped)"
+    APPLE_IDENTITY="$SIGN_ID" OLLAMA_SKIP_NOTARIZE=1 ./scripts/build_darwin.sh
+  else
+    echo "WARNING: no Developer ID found. Building an unsigned app." >&2
+    OLLAMA_SKIP_NOTARIZE=1 ./scripts/build_darwin.sh
+  fi
+  [ -d dist/Ollama.app ] || die "build did not produce dist/Ollama.app"
+  APP_ARCHS="$(lipo dist/Ollama.app/Contents/MacOS/Ollama -archs)"
+  case "$APP_ARCHS" in
+    *arm64*x86_64*|*x86_64*arm64*) ;;
+    *) die "build is not universal ($APP_ARCHS)" ;;
+  esac
+  for bin in dist/darwin/ollama dist/darwin/llama-server dist/darwin/llama-quantize; do
+    [ -f "$bin" ] || die "build did not produce $bin"
+    lipo "$bin" -verify_arch x86_64
+    lipo "$bin" -verify_arch arm64
+  done
+  echo "Build ok: dist/Ollama.app ($APP_ARCHS). Nothing was tagged or uploaded."
 }
 
 cli_checks() {
@@ -80,6 +114,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) MODE="dry"; shift ;;
     --self-test) MODE="self"; shift ;;
+    --build-only) MODE="build"; shift ;;
     -h|--help) usage 0 ;;
     --) shift; break ;;
     -*) die "unknown option: $1" ;;
@@ -96,14 +131,31 @@ if [ "$MODE" = "self" ]; then
   status "Go tests, vet, and version CLI"
   go_gate
   cli_checks
+  if [ "$(uname -s)" != "Darwin" ]; then
+    if bash scripts/release-fork.sh --build-only >/tmp/ollama-build-only.out 2>/tmp/ollama-build-only.err; then
+      die "self-test: --build-only ran off macOS"
+    fi
+    if ! grep -q "does not tag or upload" /tmp/ollama-build-only.err; then
+      echo "self-test: --build-only refused without saying it does not tag or upload" >&2
+      cat /tmp/ollama-build-only.err >&2
+      exit 1
+    fi
+    rm -f /tmp/ollama-build-only.out /tmp/ollama-build-only.err
+  fi
   echo "self-test ok"
+  exit 0
+fi
+
+if [ "$MODE" = "build" ]; then
+  [ -z "$SPEC" ] || die "--build-only does not take a version"
+  build_only
   exit 0
 fi
 
 [ -n "$SPEC" ] || usage 1
 
 if [ "$MODE" != "dry" ] && [ "$(uname -s)" != "Darwin" ]; then
-  die "A release runs on macOS so it can sign, notarize, and staple. Use --dry-run or --self-test here."
+  die "A release runs on macOS so it can sign, notarize, and staple. Use --build-only, --dry-run, or --self-test here."
 fi
 
 status "resolving $SPEC"
@@ -213,7 +265,7 @@ APP_VERSION="$(plutil -extract CFBundleShortVersionString raw dist/Ollama.app/Co
 APP_TAG="$(printf '%s' "$APP_VERSION" | sed -E -e 's/^v//' -e 's/-[0-9]+-g[0-9a-f]+(-dirty)?$//' -e 's/-dirty$//')"
 [ "$APP_TAG" = "$VERSION" ] || die "built app is $APP_VERSION (tag $APP_TAG), not $TAG"
 
-APP_ARCHS="$(lipo -archs dist/Ollama.app/Contents/MacOS/Ollama)"
+APP_ARCHS="$(lipo dist/Ollama.app/Contents/MacOS/Ollama -archs)"
 case "$APP_ARCHS" in
   *arm64*x86_64*|*x86_64*arm64*) ARCH="universal" ;;
   *) die "release build is not universal ($APP_ARCHS)" ;;

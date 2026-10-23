@@ -150,7 +150,7 @@ TEAM_ID="$(codesign -dv "$APP" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
 [ "$TEAM_ID" = "$EXPECTED_TEAM_ID" ] ||
     die "$APP is signed by team $TEAM_ID, expected $EXPECTED_TEAM_ID (set EXPECTED_TEAM_ID to override)"
 
-APP_ARCHS="$(lipo -archs "$APP/Contents/MacOS/Ollama")"
+APP_ARCHS="$(lipo "$APP/Contents/MacOS/Ollama" -archs)"
 case "$APP_ARCHS" in
     arm64) ARCH="arm64" ;;
     x86_64) ARCH="amd64" ;;

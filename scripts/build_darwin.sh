@@ -21,14 +21,20 @@ set -e
 
 status() { echo >&2 ">>> $@"; }
 usage() {
-    echo "usage: $(basename $0) [build package app sign]"
+    echo "usage: $(basename "$0") [-a archs] [build package app sign self-test]"
     exit 1
 }
 
 # NOTARY_PROFILE selects a notarytool keychain profile (the release Mac uses
 # AC_PASSWORD). Without it, notarization uses APPLE_ID, APPLE_PASSWORD, and
 # APPLE_TEAM_ID, which is what the GitHub workflow sets.
+# OLLAMA_SKIP_NOTARIZE=1 still signs when APPLE_IDENTITY is set, and skips
+# notarytool and stapler. scripts/release-fork.sh --build-only uses that.
 _notarize() {
+    if [ -n "${OLLAMA_SKIP_NOTARIZE:-}" ]; then
+        status "skipping notarization of $1"
+        return 0
+    fi
     if [ -n "${NOTARY_PROFILE:-}" ]; then
         $(xcrun -f notarytool) submit "$1" --wait --timeout 20m --keychain-profile "$NOTARY_PROFILE"
     else
@@ -98,7 +104,67 @@ _build_darwin() {
 
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" \
             cmake --build "$BUILD_DIR" --target ollama-local --target ollama-mlx-backends --parallel "$BUILD_JOBS" -- -l "$BUILD_LOAD"
+        _assert_no_build_rpath "$INSTALL_PREFIX" "$BUILD_DIR"
     done
+}
+
+# CMake's Apple install invokes install_name_tool without checking its exit
+# status. If a build-tree LC_RPATH survives, the binary only runs on this
+# checkout. Fail the arch build instead of lipo-ing that into the app.
+_assert_no_build_rpath() {
+    root=$1
+    build_dir=$2
+    tool=${OTOOL:-otool}
+    if [ ! -d "$root" ]; then
+        echo "ERROR: $root was not installed" >&2
+        return 1
+    fi
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "ERROR: $tool is required to check installed rpaths under $root" >&2
+        return 1
+    fi
+    list=$(mktemp)
+    rpath_bad=0
+    find "$root" -type f >"$list"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        info=$("$tool" -l "$f" 2>/dev/null) || continue
+        printf '%s\n' "$info" | awk -v path="$f" -v build="$build_dir" '
+            $1 == "cmd" && $2 == "LC_RPATH" { inr = 1; next }
+            inr && $1 == "path" {
+                if (index($2, build) > 0 || index($2, "/build/darwin-") > 0) {
+                    printf "ERROR: %s still has build-tree LC_RPATH %s\n", path, $2 > "/dev/stderr"
+                    printf "Remove %s and rebuild so the binary relinks with @loader_path.\n", build > "/dev/stderr"
+                    bad = 1
+                }
+                inr = 0
+            }
+            END { exit bad ? 1 : 0 }
+        ' || rpath_bad=1
+        [ "$rpath_bad" -eq 0 ] || break
+    done <"$list"
+    rm -f "$list"
+    [ "$rpath_bad" -eq 0 ] || return 1
+}
+
+# Xcode 27 lipo (dyld other-tools) accepts one architecture per -verify_arch.
+# `lipo file -verify_arch x86_64 arm64` treats arm64 as a second input file and
+# exits with "-verify_arch requires exactly one input file". The universal
+# file from -create is fine; the check was the release failure.
+_lipo_universal() {
+    out=$1
+    shift
+    for input in "$@"; do
+        if [ ! -f "$input" ]; then
+            echo "ERROR: universal build is missing $input" >&2
+            return 1
+        fi
+    done
+    mkdir -p "$(dirname "$out")"
+    lipo -create -output "$out" "$@"
+    chmod +x "$out"
+    lipo "$out" -verify_arch x86_64
+    lipo "$out" -verify_arch arm64
 }
 
 _merge_darwin_payload() {
@@ -128,7 +194,7 @@ _merge_darwin_payload() {
 
         for LIB in libmlx.dylib libmlxc.dylib libollama_xgrammar.dylib; do
             if [ -f "$AMD_VARIANT/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
-                lipo -create -output "$DEST/$LIB" "$AMD_VARIANT/$LIB" "$VARIANT$LIB"
+                _lipo_universal "$DEST/$LIB" "$AMD_VARIANT/$LIB" "$VARIANT$LIB"
             elif [ -f "$VARIANT$LIB" ]; then
                 cp "$VARIANT$LIB" "$DEST/"
             elif [ -f "$AMD_VARIANT/$LIB" ]; then
@@ -148,19 +214,14 @@ _merge_darwin_payload() {
 
 _prepare_darwin_runtime() {
     status "Creating universal binary..."
-    mkdir -p dist/darwin
-    lipo -create -output dist/darwin/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
-    chmod +x dist/darwin/ollama
-    lipo dist/darwin/ollama -verify_arch x86_64 arm64
-
-    lipo -create -output dist/darwin/llama-server dist/darwin-amd64/lib/ollama/llama-server dist/darwin-arm64/lib/ollama/llama-server
-    chmod +x dist/darwin/llama-server
-    lipo dist/darwin/llama-server -verify_arch x86_64 arm64
-
-    lipo -create -output dist/darwin/llama-quantize dist/darwin-amd64/lib/ollama/llama-quantize dist/darwin-arm64/lib/ollama/llama-quantize
-    chmod +x dist/darwin/llama-quantize
-    lipo dist/darwin/llama-quantize -verify_arch x86_64 arm64
-
+    _lipo_universal dist/darwin/ollama \
+        dist/darwin-amd64/ollama dist/darwin-arm64/ollama
+    _lipo_universal dist/darwin/llama-server \
+        dist/darwin-amd64/lib/ollama/llama-server \
+        dist/darwin-arm64/lib/ollama/llama-server
+    _lipo_universal dist/darwin/llama-quantize \
+        dist/darwin-amd64/lib/ollama/llama-quantize \
+        dist/darwin-arm64/lib/ollama/llama-quantize
     _merge_darwin_payload
 }
 
@@ -186,11 +247,13 @@ _sign_darwin() {
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
 
-        # create a temporary zip for notarization
-        TEMP=$(mktemp -u).zip
-        ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
-        xcrun notarytool submit "$TEMP" --wait --timeout 20m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
-        rm -f "$TEMP"
+        if [ -z "${OLLAMA_SKIP_NOTARIZE:-}" ]; then
+            # create a temporary zip for notarization
+            TEMP=$(mktemp -u).zip
+            ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
+            xcrun notarytool submit "$TEMP" --wait --timeout 20m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+            rm -f "$TEMP"
+        fi
     fi
 
     _create_darwin_runtime_tarball
@@ -226,7 +289,7 @@ _build_macapp() {
     GOARCH=amd64 CGO_ENABLED=1 GOOS=darwin go build -o dist/darwin-app-amd64 -ldflags="-s -w -X=github.com/ollama/ollama/app/version.Version=${VERSION}" ./app/cmd/app
     GOARCH=arm64 CGO_ENABLED=1 GOOS=darwin go build -o dist/darwin-app-arm64 -ldflags="-s -w -X=github.com/ollama/ollama/app/version.Version=${VERSION}" ./app/cmd/app
     mkdir -p dist/Ollama.app/Contents/MacOS
-    lipo -create -output dist/Ollama.app/Contents/MacOS/Ollama dist/darwin-app-amd64 dist/darwin-app-arm64
+    _lipo_universal dist/Ollama.app/Contents/MacOS/Ollama dist/darwin-app-amd64 dist/darwin-app-arm64
     rm -f dist/darwin-app-amd64 dist/darwin-app-arm64
 
     # Create a mock Squirrel.framework bundle
@@ -269,8 +332,8 @@ _build_macapp() {
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
     (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server llama-quantize *.so *.dylib *.metallib *_LICENSE *_NOTICE mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
-    # Notarize and Staple
-    if [ -n "$APPLE_IDENTITY" ]; then
+    # Notarize and Staple. --build-only signs when it can and skips this.
+    if [ -n "$APPLE_IDENTITY" ] && [ -z "${OLLAMA_SKIP_NOTARIZE:-}" ]; then
         _notarize dist/Ollama-darwin.zip
         rm -f dist/Ollama-darwin.zip
         $(xcrun -f stapler) staple dist/Ollama.app
@@ -297,9 +360,169 @@ _build_macapp() {
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.dmg
         _notarize dist/Ollama.dmg
         $(xcrun -f stapler) staple dist/Ollama.dmg
+    elif [ -n "$APPLE_IDENTITY" ]; then
+        echo "WARNING: Notarization skipped. dist/Ollama.app is signed but not stapled."
     else
         echo "WARNING: Code signing disabled, this bundle will not work for upgrade testing"
     fi
+}
+
+# Linux-runnable stand-in for Xcode 27 lipo and for the rpath check.
+_self_test() {
+    root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
+    if ! grep -q 'CMAKE_BUILD_WITH_INSTALL_RPATH ON' "$root/llama/server/CMakeLists.txt"; then
+        echo "self-test: llama/server is missing CMAKE_BUILD_WITH_INSTALL_RPATH" >&2
+        return 1
+    fi
+
+    tmp=$(mktemp -d)
+    log="$tmp/lipo.log"
+    cat >"$tmp/lipo" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$LIPO_LOG"
+out=
+cmd=
+verify=
+prev=
+inputs=
+for arg in "$@"; do
+    case "$prev" in
+        -output|-o)
+            out=$arg
+            prev=
+            continue
+            ;;
+        -verify_arch)
+            verify=$arg
+            prev=
+            continue
+            ;;
+    esac
+    case "$arg" in
+        -create|-archs|-info)
+            cmd=$arg
+            ;;
+        -output|-o|-verify_arch)
+            prev=$arg
+            ;;
+        -*)
+            echo "lipo: unknown option $arg" >&2
+            exit 1
+            ;;
+        *)
+            inputs="$inputs $arg"
+            ;;
+    esac
+done
+# shellcheck disable=SC2086
+set -- $inputs
+if [ -n "$verify" ]; then
+    if [ "$#" -ne 1 ]; then
+        echo "lipo: -verify_arch requires exactly one input file" >&2
+        echo "usage: lipo <input_file> <command> [<options> ...]" >&2
+        exit 1
+    fi
+    exit 0
+fi
+if [ "$cmd" = "-create" ]; then
+    [ -n "$out" ] || exit 1
+    [ "$#" -ge 1 ] || exit 1
+    for f in "$@"; do
+        [ -f "$f" ] || {
+            echo "lipo: missing $f" >&2
+            exit 1
+        }
+    done
+    : >"$out"
+    exit 0
+fi
+echo "lipo: unhandled" >&2
+exit 1
+EOF
+    chmod +x "$tmp/lipo"
+    cat >"$tmp/otool" <<'EOF'
+#!/bin/sh
+file=
+prev=
+for arg in "$@"; do
+    case "$prev" in
+        -l) file=$arg; prev= ;;
+    esac
+    case "$arg" in
+        -l) prev=-l ;;
+    esac
+done
+case "$file" in
+    *bad-rpath*)
+        printf '%s\n' "cmd LC_RPATH" "path /tmp/build/darwin-amd64/llama-server-local/bin (offset 12)"
+        ;;
+    *)
+        printf '%s\n' "cmd LC_RPATH" "path @loader_path (offset 12)"
+        ;;
+esac
+exit 0
+EOF
+    chmod +x "$tmp/otool"
+
+    old_path=$PATH
+    old_otool=${OTOOL:-}
+    PATH="$tmp:$PATH"
+    LIPO_LOG=$log
+    export LIPO_LOG
+    OTOOL="$tmp/otool"
+    export OTOOL
+
+    work=$tmp/work
+    mkdir -p "$work/in"
+    : >"$work/in/amd64"
+    : >"$work/in/arm64"
+    _lipo_universal "$work/out/ollama" "$work/in/amd64" "$work/in/arm64"
+    if grep -q -- '-verify_arch x86_64 arm64' "$log"; then
+        echo "self-test: verify_arch was passed two architectures in one lipo call" >&2
+        return 1
+    fi
+    verifies=$(grep -c -- '-verify_arch ' "$log" || true)
+    if [ "$verifies" -ne 2 ]; then
+        echo "self-test: expected 2 verify_arch calls, got $verifies" >&2
+        cat "$log" >&2
+        return 1
+    fi
+    miss=$tmp/missing.err
+    if _lipo_universal "$work/out/missing" "$work/in/no-such-arch" "$work/in/arm64" 2>"$miss"; then
+        echo "self-test: missing arch input was accepted" >&2
+        return 1
+    fi
+    if ! grep -q "missing $work/in/no-such-arch" "$miss"; then
+        echo "self-test: missing-input error did not name the file" >&2
+        cat "$miss" >&2
+        return 1
+    fi
+
+    mkdir -p "$work/good/lib"
+    : >"$work/good/lib/libok.dylib"
+    _assert_no_build_rpath "$work/good" "build/darwin-amd64"
+    mkdir -p "$work/bad/lib"
+    : >"$work/bad/lib/bad-rpath.dylib"
+    bad=$tmp/bad-rpath.err
+    if _assert_no_build_rpath "$work/bad" "build/darwin-amd64" 2>"$bad"; then
+        echo "self-test: build-tree LC_RPATH was accepted" >&2
+        return 1
+    fi
+    if ! grep -q "build-tree LC_RPATH" "$bad"; then
+        echo "self-test: rpath error did not name the load command" >&2
+        cat "$bad" >&2
+        return 1
+    fi
+
+    PATH=$old_path
+    if [ -n "$old_otool" ]; then
+        OTOOL=$old_otool
+    else
+        unset OTOOL
+    fi
+    unset LIPO_LOG
+    rm -rf "$tmp"
+    echo "build_darwin self-test ok"
 }
 
 if [ "$#" -eq 0 ]; then
@@ -315,6 +538,7 @@ for CMD in "$@"; do
         package) _package_darwin_runtime ;;
         sign) _sign_darwin ;;
         app) _build_macapp ;;
+        self-test) _self_test ;;
         *) usage ;;
     esac
 done
