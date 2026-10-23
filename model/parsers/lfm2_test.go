@@ -1199,6 +1199,110 @@ func TestLFM2Parser_BareToolCallFallback(t *testing.T) {
 	}
 }
 
+func TestLFM2Parser_StreamingBareToolCall(t *testing.T) {
+	tests := []struct {
+		name             string
+		chunks           []string
+		hasThinking      bool
+		expectedContent  string
+		expectedThinking string
+		expectedCalls    []api.ToolCall
+	}{
+		{
+			name:   "bare_call",
+			chunks: []string{"[", "get", "_weather", "(location", "=\"Paris", "\")", "]"},
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "Paris"}),
+					},
+				},
+			},
+		},
+		{
+			name:             "bare_call_after_thinking",
+			chunks:           []string{"<think>", "Need weather", "</think>", "\n", "[get_weather(", "location=\"Paris\")]"},
+			hasThinking:      true,
+			expectedThinking: "Need weather",
+			expectedCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name:      "get_weather",
+						Arguments: testArgs(map[string]any{"location": "Paris"}),
+					},
+				},
+			},
+		},
+		{
+			name:            "bare_call_followed_by_text",
+			chunks:          []string{"[get_weather(", "location=\"Paris\")]", " is what I would call."},
+			expectedContent: "[get_weather(location=\"Paris\")] is what I would call.",
+		},
+		{
+			name:            "unknown_tool",
+			chunks:          []string{"[unknown_tool(", "location=\"Paris\")]"},
+			expectedContent: "[unknown_tool(location=\"Paris\")]",
+		},
+		{
+			name:            "bracketed_content",
+			chunks:          []string{"[", "1] See ", "the docs."},
+			expectedContent: "[1] See the docs.",
+		},
+	}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "get_weather",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &LFM2Parser{hasThinkingSupport: tt.hasThinking}
+			parser.Init(tools, nil, &api.ThinkValue{Value: tt.hasThinking})
+
+			var allContent, allThinking string
+			var allCalls []api.ToolCall
+			for i, chunk := range tt.chunks {
+				content, thinking, calls, err := parser.Add(chunk, i == len(tt.chunks)-1)
+				if err != nil {
+					t.Fatalf("Add() error = %v", err)
+				}
+				allContent += content
+				allThinking += thinking
+				allCalls = append(allCalls, calls...)
+			}
+
+			if diff := cmp.Diff(tt.expectedContent, allContent); diff != "" {
+				t.Errorf("Content mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.expectedThinking, allThinking); diff != "" {
+				t.Errorf("Thinking mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(tt.expectedCalls, allCalls, argsComparer); diff != "" {
+				t.Errorf("Tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestLFM2Parser_StreamingContentNotHeldWhenNotBareToolCall(t *testing.T) {
+	parser := &LFM2Parser{}
+	parser.Init([]api.Tool{{Type: "function", Function: api.ToolFunction{Name: "get_weather"}}}, nil, &api.ThinkValue{Value: false})
+
+	content, _, _, err := parser.Add("[1] See ", false)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "[1] See " {
+		t.Fatalf("expected content to stream immediately, got %q", content)
+	}
+}
+
 func TestLFM2Parser_BareUnknownToolCallDoesNotParse(t *testing.T) {
 	parser := &LFM2Parser{}
 	tools := []api.Tool{
