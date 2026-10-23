@@ -402,14 +402,8 @@ func TestSystemOneHandler(t *testing.T) {
 				}
 				if runner.native {
 					if strings.HasPrefix(tt.name, "vllm-d3 ") {
-						var original struct {
-							State json.RawMessage `json:"state"`
-						}
-						if err := json.Unmarshal([]byte(tt.body), &original); err != nil {
-							t.Fatal(err)
-						}
-						if !bytes.Equal(runner.state, original.State) {
-							t.Fatalf("state changed before native scoring: got %s, want %s", runner.state, original.State)
+						if !bytes.Equal(runner.state, sent.State) {
+							t.Fatalf("state changed before native scoring: got %s, want %s", runner.state, sent.State)
 						}
 					}
 					if tt.name == "llama.cpp decision model" && (string(runner.state) != `{"total":1250.0}` || !strings.Contains(w.Body.String(), `"model":"laya-native"`)) {
