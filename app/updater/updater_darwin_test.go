@@ -8,9 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/app/updatetrust"
 )
 
+func useTestUpdateKey(t *testing.T) string {
+	t.Helper()
+	pub, priv, err := updatetrust.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := updatePublicKey
+	updatePublicKey = pub
+	t.Cleanup(func() { updatePublicKey = old })
+	return priv
+}
+
+func signStaged(t *testing.T, privatePEM, path string) {
+	t.Helper()
+	if err := updatetrust.WriteSignature(privatePEM, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDoUpgrade(t *testing.T) {
+	priv := useTestUpdateKey(t)
 	tmpDir := t.TempDir()
 	BundlePath = filepath.Join(tmpDir, "Ollama.app")
 	appContents := filepath.Join(BundlePath, "Contents")
@@ -44,6 +66,7 @@ func TestDoUpgrade(t *testing.T) {
 	if err := os.WriteFile(bundle, []byte{0x4b, 0x50, 0x40, 0x03, 0x00, 0x0a, 0x00}, 0o755); err != nil {
 		t.Fatalf("failed to create intentionally corrupt zip file: %s", err)
 	}
+	signStaged(t, priv, bundle)
 	if err := DoUpgrade(false); err == nil {
 		t.Fatal("expected failure with corrupt zip file")
 	} else if !strings.Contains(err.Error(), "unable to open upgrade bundle") {
@@ -68,6 +91,7 @@ func TestDoUpgrade(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	signStaged(t, priv, bundle)
 	// Permission failure on rename
 	if err := os.Chmod(BundlePath, 0o500); err != nil {
 		t.Fatal("failed to remove write permission")
@@ -127,6 +151,7 @@ func TestDoUpgrade(t *testing.T) {
 	if err := os.WriteFile(bundle, corruptZipData, 0o755); err != nil {
 		t.Fatalf("failed to create intentionally corrupt zip file: %s", err)
 	}
+	signStaged(t, priv, bundle)
 	if err := DoUpgrade(false); err == nil {
 		t.Fatal("expected failure with corrupt zip file")
 	} else if !strings.Contains(err.Error(), "failed to open bundle file") {
@@ -148,6 +173,7 @@ func TestDoUpgrade(t *testing.T) {
 }
 
 func TestDoUpgradeRejectsInvalidBundlePath(t *testing.T) {
+	priv := useTestUpdateKey(t)
 	tmpDir := t.TempDir()
 	BundlePath = filepath.Join(tmpDir, "Ollama.app")
 	appBackupDir = filepath.Join(tmpDir, "backup")
@@ -171,6 +197,7 @@ func TestDoUpgradeRejectsInvalidBundlePath(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
+	signStaged(t, priv, bundle)
 
 	if err := DoUpgrade(false); err == nil {
 		t.Fatal("expected failure with invalid bundle path")
@@ -188,6 +215,7 @@ func TestDoUpgradeRejectsInvalidBundlePath(t *testing.T) {
 }
 
 func TestDoUpgradeAtStartup(t *testing.T) {
+	priv := useTestUpdateKey(t)
 	tmpDir := t.TempDir()
 	BundlePath = filepath.Join(tmpDir, "Ollama.app")
 	appBackupDir = filepath.Join(tmpDir, "backup")
@@ -222,6 +250,7 @@ func TestDoUpgradeAtStartup(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	signStaged(t, priv, bundle)
 
 	if err := DoUpgradeAtStartup(); err != nil {
 		t.Fatalf("unexpected error with verification failure: %s", err)
@@ -232,6 +261,7 @@ func TestDoUpgradeAtStartup(t *testing.T) {
 }
 
 func TestVerifyDownloadFailures(t *testing.T) {
+	priv := useTestUpdateKey(t)
 	tmpDir := t.TempDir()
 	BundlePath = filepath.Join(tmpDir, "Ollama.app")
 	UpdateStageDir = filepath.Join(tmpDir, "staging")
@@ -298,6 +328,7 @@ func TestVerifyDownloadFailures(t *testing.T) {
 			if err := zipCreationHelper(bundle, tt.in); err != nil {
 				t.Fatal(err)
 			}
+			signStaged(t, priv, bundle)
 			err := VerifyDownload()
 			if err == nil || !strings.Contains(err.Error(), tt.expected) {
 				t.Fatalf("expected \"%s\" got %s", tt.expected, err)

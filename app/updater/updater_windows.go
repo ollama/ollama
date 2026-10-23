@@ -220,6 +220,9 @@ func verifyDownload() error {
 		return fmt.Errorf("failed to lookup downloads")
 	}
 	slog.Debug("verifying update", "bundle", bundle)
+	if err := verifyStagedArtifact(bundle); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
 
 	if err := verifyWindowsInstallerSignature(bundle); err != nil {
 		return fmt.Errorf("signature verification failed: %w", err)

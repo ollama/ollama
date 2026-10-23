@@ -22,35 +22,49 @@ type githubReleaseResponse struct {
 }
 
 // githubReleaseAsset picks the installable asset from a fork release: a .zip
-// on macOS or an .exe on Windows. An asset naming this OS and arch wins;
-// otherwise the first asset that does not name another arch is used.
+// on macOS or an .exe on Windows, plus the sibling "<name>.ed25519" signature.
+// An asset naming this OS and arch wins; otherwise the first asset that does
+// not name another arch is used. A zip or exe with no signature asset is
+// skipped, so an unsigned arch-specific build falls through to a signed
+// universal zip.
 //
 // Disk images are ignored, including the stable Ollama.dmg asset the README
 // links at /releases/latest/download/Ollama.dmg. The updater stages the
 // versioned zip (or the Windows exe) and cannot install a DMG.
-func githubReleaseAsset(body []byte) (string, githubReleaseResponse, error) {
-	var rel githubReleaseResponse
+func githubReleaseAsset(body []byte) (assetURL, signatureURL string, rel githubReleaseResponse, err error) {
 	if err := json.Unmarshal(body, &rel); err != nil {
-		return "", rel, err
+		return "", "", rel, err
 	}
 	ext := ".zip"
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	var fallback string
+	signatures := map[string]string{}
+	for _, asset := range rel.Assets {
+		name := strings.ToLower(asset.Name)
+		if strings.HasSuffix(name, ".ed25519") && asset.BrowserDownloadURL != "" {
+			signatures[name] = asset.BrowserDownloadURL
+		}
+	}
+	var fallback, fallbackSig string
 	for _, asset := range rel.Assets {
 		name := strings.ToLower(asset.Name)
 		if !strings.HasSuffix(name, ext) || asset.BrowserDownloadURL == "" {
 			continue
 		}
+		sig := signatures[name+".ed25519"]
+		if sig == "" {
+			continue
+		}
 		if strings.Contains(name, runtime.GOOS) && assetNamesArch(name, runtime.GOARCH) {
-			return asset.BrowserDownloadURL, rel, nil
+			return asset.BrowserDownloadURL, sig, rel, nil
 		}
 		if fallback == "" && !assetNamesOtherArch(name, runtime.GOARCH) {
 			fallback = asset.BrowserDownloadURL
+			fallbackSig = sig
 		}
 	}
-	return fallback, rel, nil
+	return fallback, fallbackSig, rel, nil
 }
 
 var archAliases = map[string][]string{

@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Publish a macOS app update for this fork on GitHub releases of
-# maxkongerskov/ollama, in the form the in-app updater installs
-# (app/updater/updater.go, app/updater/updater_darwin.go):
+# Lower-level macOS publish. The one-command release is scripts/release-fork.sh
+# (see RELEASING.md). This script still packages a zip the in-app updater can
+# install, and it now also writes the ed25519 sidecar the updater requires.
 #
 #   - a .zip asset whose name contains "darwin" and the arch (arm64/amd64),
 #     or no arch at all for a universal build,
@@ -208,12 +208,19 @@ codesign --verify --deep --strict "$OUT/verify/Ollama.app" || die "extracted Oll
     die "extracted app version mismatch"
 rm -rf "$OUT/verify"
 
+UPDATE_KEY="${OLLAMA_UPDATE_KEY:-$HOME/.config/ollama-fork/update-private.pem}"
+[ -f "$UPDATE_KEY" ] || die "missing $UPDATE_KEY. The updater rejects a zip with no ed25519 signature. Run: bash scripts/generate-update-key.sh"
+status "signing $ZIP"
+go run ./scripts/updatesign check-embedded "$UPDATE_KEY"
+go run ./scripts/updatesign sign "$UPDATE_KEY" "$ZIP"
+
 if [ "$GO_VERIFY" = 1 ] && command -v go >/dev/null 2>&1; then
     # Run the updater's own download verification on the zip, staged the way
-    # DownloadNewRelease stages it.
+    # DownloadNewRelease stages it. The .ed25519 sidecar has to sit next to it.
     status "verifying with app/updater.VerifyDownload"
     mkdir -p "$OUT/_goverify/stage/etag" "$OUT/_goverify/cmd"
     cp "$ZIP" "$OUT/_goverify/stage/etag/"
+    cp "${ZIP}.ed25519" "$OUT/_goverify/stage/etag/"
     cat >"$OUT/_goverify/cmd/main.go" <<'GO'
 package main
 
@@ -259,8 +266,27 @@ if [ -n "$DMG" ]; then
     [ "$stable_ok" = 1 ] || die "stable Ollama.dmg was not staged"
     [ "$versioned_ok" = 1 ] || die "versioned DMG $BASENAME.dmg was not staged"
 fi
+for asset in "${ASSETS[@]}"; do
+    case "$asset" in
+        *.ed25519) ;;
+        *)
+            if [ ! -f "${asset}.ed25519" ]; then
+                go run ./scripts/updatesign sign "$UPDATE_KEY" "$asset"
+            fi
+            ;;
+    esac
+done
+signed_assets=()
+for asset in "${ASSETS[@]}"; do
+    signed_assets+=("$asset")
+    if [ -f "${asset}.ed25519" ]; then
+        signed_assets+=("${asset}.ed25519")
+    fi
+done
+ASSETS=("${signed_assets[@]}")
 (cd "$OUT" && shasum -a 256 "${ASSETS[@]##*/}" >sha256sum.txt)
-ASSETS+=("$OUT/sha256sum.txt")
+go run ./scripts/updatesign sign "$UPDATE_KEY" "$OUT/sha256sum.txt"
+ASSETS+=("$OUT/sha256sum.txt" "$OUT/sha256sum.txt.ed25519")
 
 status "assets for $REPO $TAG:"
 for f in "${ASSETS[@]}"; do ls -l "$f" >&2; done

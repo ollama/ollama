@@ -18,14 +18,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/app/forkversion"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/updatetrust"
 	"github.com/ollama/ollama/app/version"
 	"github.com/ollama/ollama/auth"
 )
@@ -50,6 +51,7 @@ var (
 // TODO - maybe move up to the API package?
 type UpdateResponse struct {
 	UpdateURL     string `json:"url"`
+	SignatureURL  string `json:"signature_url,omitempty"`
 	UpdateVersion string `json:"version"`
 }
 
@@ -131,21 +133,22 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 		return false, updateResp
 	}
 	if githubRelease {
-		assetURL, rel, err := githubReleaseAsset(body)
+		assetURL, signatureURL, rel, err := githubReleaseAsset(body)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("malformed GitHub release checking for update: %s", err))
 			return false, updateResp
 		}
 		tag := rel.TagName
-		if assetURL == "" {
-			slog.Info("fork release has no zip or exe to install", "tag", tag)
+		if assetURL == "" || signatureURL == "" {
+			slog.Info("fork release has no signed zip or exe to install", "tag", tag)
 			return false, updateResp
 		}
-		if !githubReleaseIsUpdate(tag, currentVersion, rel.PublishedAt, currentBuildTime()) {
+		if !forkversion.IsUpdate(tag, currentVersion, rel.PublishedAt, currentBuildTime()) {
 			slog.Debug("fork release is not newer than this build", "tag", tag, "version", currentVersion, "published", rel.PublishedAt)
 			return false, updateResp
 		}
 		updateResp.UpdateURL = assetURL
+		updateResp.SignatureURL = signatureURL
 		updateResp.UpdateVersion = strings.TrimPrefix(tag, "v")
 		slog.Info("New update available at " + updateResp.UpdateURL)
 		return true, updateResp
@@ -182,88 +185,6 @@ var currentBuildTime = func() time.Time {
 		return time.Time{}
 	}
 	return fi.ModTime()
-}
-
-// gitDescribeSuffix matches what `git describe --long --dirty` appends to the
-// tag: "-<commits>-g<sha>" and an optional "-dirty".
-var gitDescribeSuffix = regexp.MustCompile(`-[0-9]+-g[0-9a-f]+(-dirty)?$`)
-
-// forkBuildTag returns the release tag (without "v") a build was made from,
-// e.g. "0.35.1-b11325-glm5next-unload-9-g6c178a3-dirty" ->
-// "0.35.1-b11325-glm5next-unload".
-func forkBuildTag(version string) string {
-	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
-	if loc := gitDescribeSuffix.FindStringIndex(version); loc != nil && loc[0] > 0 {
-		return version[:loc[0]]
-	}
-	return strings.TrimSuffix(version, "-dirty")
-}
-
-var (
-	forkSemver   = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)`)
-	forkLlamaRev = regexp.MustCompile(`(?:^|-)b([0-9]+)(?:-|$)`)
-)
-
-// compareForkTags orders fork tags like "0.35.1-b11325-glm5next" by their
-// X.Y.Z version, then by the llama.cpp bNNNNN revision when both have one.
-// ok is false when either tag has no X.Y.Z version.
-func compareForkTags(a, b string) (cmp int, ok bool) {
-	am, bm := forkSemver.FindStringSubmatch(a), forkSemver.FindStringSubmatch(b)
-	if am == nil || bm == nil {
-		return 0, false
-	}
-	for i := 1; i <= 3; i++ {
-		if c := compareNumeric(am[i], bm[i]); c != 0 {
-			return c, true
-		}
-	}
-	ar, br := forkLlamaRev.FindStringSubmatch(a), forkLlamaRev.FindStringSubmatch(b)
-	if ar != nil && br != nil {
-		return compareNumeric(ar[1], br[1]), true
-	}
-	return 0, true
-}
-
-func compareNumeric(a, b string) int {
-	x, _ := strconv.ParseUint(a, 10, 64)
-	y, _ := strconv.ParseUint(b, 10, 64)
-	switch {
-	case x < y:
-		return -1
-	case x > y:
-		return 1
-	}
-	return 0
-}
-
-// githubReleaseIsUpdate reports whether the fork release tag should be
-// offered to a build reporting version current (version.Version, which is
-// `git describe` output such as "0.35.1-b11325-glm5next-unload-9-g6c178a3").
-//
-//   - A build made from the release's tag, or from commits after it, never
-//     gets that release offered again.
-//   - A release with a lower X.Y.Z or bNNNNN than the build is never offered.
-//   - A release with a higher X.Y.Z or bNNNNN is offered.
-//   - Otherwise (same numbers, different suffix such as "-glm5next" vs
-//     "-glm5next-unload"), the release is offered only if it was published
-//     after this build was installed, so a freshly built tag that is not
-//     published yet is not "updated" back to the previous release.
-func githubReleaseIsUpdate(tag, current string, publishedAt, installedAt time.Time) bool {
-	tag = strings.TrimPrefix(strings.TrimSpace(tag), "v")
-	if tag == "" {
-		return false
-	}
-	base := forkBuildTag(current)
-	if base == tag {
-		return false
-	}
-	if c, ok := compareForkTags(tag, base); ok && c != 0 {
-		return c > 0
-	}
-	if !publishedAt.IsZero() && !installedAt.IsZero() && !publishedAt.After(installedAt) {
-		return false
-	}
-	return true
 }
 
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
@@ -324,10 +245,20 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		return err
 	}
 
-	// Check to see if we already have it downloaded
+	// Check to see if we already have it downloaded. Re-verify so a swapped
+	// file is not treated as ready to install.
 	_, err = os.Stat(stageFilename)
 	if err == nil {
 		slog.Info("update already downloaded", "bundle", stageFilename)
+		if err := stageUpdateSignature(downloadCtx, updateResp.SignatureURL, stageFilename); err != nil {
+			return err
+		}
+		if err := VerifyDownload(); err != nil {
+			_ = os.Remove(stageFilename)
+			_ = os.Remove(stageFilename + updatetrust.SignatureSuffix)
+			UpdateDownloaded = false
+			return fmt.Errorf("%s - %s", updateResp.UpdateURL, err)
+		}
 		UpdateDownloaded = true
 		return nil
 	}
@@ -373,11 +304,52 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	}
 	slog.Info("new update downloaded " + stageFilename)
 
+	if err := stageUpdateSignature(downloadCtx, updateResp.SignatureURL, stageFilename); err != nil {
+		_ = os.Remove(stageFilename)
+		return err
+	}
 	if err := VerifyDownload(); err != nil {
 		_ = os.Remove(stageFilename)
+		_ = os.Remove(stageFilename + updatetrust.SignatureSuffix)
 		return fmt.Errorf("%s - %s", resp.Request.URL.String(), err)
 	}
 	UpdateDownloaded = true
+	return nil
+}
+
+func stageUpdateSignature(ctx context.Context, signatureURL, stageFilename string) error {
+	if signatureURL == "" {
+		return nil
+	}
+	dest := stageFilename + updatetrust.SignatureSuffix
+	if _, err := os.Stat(dest); err == nil {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, signatureURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download update signature: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update signature status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, updatetrust.MaxSignatureBytes+1))
+	if err != nil {
+		return fmt.Errorf("read update signature: %w", err)
+	}
+	if len(body) == 0 || len(body) > updatetrust.MaxSignatureBytes {
+		return fmt.Errorf("update signature is empty or larger than %d bytes", updatetrust.MaxSignatureBytes)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(dest, body, 0o644); err != nil {
+		return fmt.Errorf("write update signature: %w", err)
+	}
 	return nil
 }
 
