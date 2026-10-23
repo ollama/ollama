@@ -757,11 +757,11 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantErr: "file_id image inputs are not supported",
 		},
 		{
 			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantMessages: []api.Message{{Role: "user", Content: "Read this image"}},
+			wantErr: "file_id image inputs are not supported",
 		},
 		{
 			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,
@@ -833,7 +833,7 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 		},
 		{
 			name: "agent image", item: `{"type":"agent_message","content":[{"type":"input_image","image_url":"data:image/png;base64,Zml4dHVyZQ=="}]}`,
-			wantMessages: []api.Message{{Role: "user"}},
+			wantMessages: []api.Message{{Role: "user", Images: []api.ImageData{[]byte("fixture")}}},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -454,7 +454,8 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
 			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
 				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
-				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."},
+				{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 			]}
 		]
 	}`), &req)
@@ -471,10 +472,14 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 	}
 
 	agentMsg := chat.Messages[3]
-	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
-		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
-		"Analyze the parser module and report issues."
-	if agentMsg.Role != "user" || agentMsg.Content != want {
+	want := api.Message{
+		Role: "user",
+		Content: "Agent message from \"/root\" to \"/root/worker\":\n" +
+			"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+			"Analyze the parser module and report issues.",
+		Images: []api.ImageData{[]byte("fixture")},
+	}
+	if !reflect.DeepEqual(agentMsg, want) {
 		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
