@@ -9,12 +9,11 @@ import (
 )
 
 // The word rules of xn-ptts preprocess::rewrite for English: everything but
-// phone numbers, times and dates, with the readings fixed where upstream gets
-// them wrong.
+// phone numbers, with the readings fixed where upstream gets them wrong.
 
 // rewriteText runs the rules over the words of text. A few readings claim
 // several words; otherwise the first rule that claims a word wins, and the
-// '@' and '+' of a word no rule claims are spelled out.
+// symbols of a word no rule claims are spelled out or dropped.
 func rewriteText(text string) string {
 	words := strings.Split(text, " ")
 	out := make([]string, 0, len(words))
@@ -30,17 +29,22 @@ func rewriteText(text string) string {
 		} else {
 			s = spellSymbols(s)
 		}
-		out = append(out, s)
+		if s != "" {
+			out = append(out, s)
+		}
 		i++
 	}
 	return strings.Join(out, " ")
 }
 
-// rewriteSpan reads the readings that need their neighbours: "$2 million", an
-// abbreviation that ends a sentence, and runs of digit groups ("+44 20 7946
-// 0958"). It returns how many words it used, or 0.
+// rewriteSpan reads the readings that need their neighbours: "$2 million", "1
+// 1/2", an abbreviation that ends a sentence, and runs of digit groups ("+44 20
+// 7946 0958"). It returns how many words it used, or 0.
 func rewriteSpan(words []string) (string, int) {
 	if s, ok := scaledAmount(words); ok {
+		return s, 2
+	}
+	if s, ok := mixedNumber(words); ok {
 		return s, 2
 	}
 	if s, ok := sentenceEnd(words); ok {
@@ -52,7 +56,7 @@ func rewriteSpan(words []string) (string, int) {
 	return "", 0
 }
 
-var rules = []func(string) (string, bool){numbers, currency, ranges, dashedDigits, emails, urls, abbreviations}
+var rules = []func(string) (string, bool){numbers, currency, ranges, times, slashes, dashedDigits, emails, urls, abbreviations, elongations}
 
 func rewriteWord(word string) (string, bool) {
 	for _, rule := range rules {
@@ -111,13 +115,17 @@ func spellShort(word string) string {
 }
 
 // numbers reads large numbers with their scale words: "1,234.56" is "1
-// thousand 234 point 56". Values under a thousand stay digits, as do years
-// written without commas, a leading zero marks a code read digit by digit, and
-// "20-25" is a range.
+// thousand 234 point 56". Values under a thousand stay digits, as do the years
+// 1900 to 2099; other four-digit numbers without commas are read as years are,
+// "1492" as "14 92" and "4090" as "40 90". A leading zero marks a code read
+// digit by digit, and "20-25" is a range.
 func numbers(word string) (string, bool) {
 	body, end := splitSuffix(word)
 	if len(body) >= 2 && body[0] == '0' && allDigits(body) {
 		return spell(body) + end, true
+	}
+	if len(body) == 4 && allDigits(body) && (body < "1900" || body >= "2100") {
+		return yearStyle(body) + end, true
 	}
 	if from, to, ok := strings.Cut(body, "-"); ok && isRange(from, to) {
 		return from + " to " + to + end, true
@@ -140,10 +148,24 @@ func numbers(word string) (string, bool) {
 	return "", false
 }
 
-// isRange reports whether from-to is a range: two- or three-digit numbers going
-// up, or years.
+// yearStyle reads a four-digit number as a year is read: "1492" is "14 92",
+// "1805" "18 oh 5", "1500" "15 hundred" and "3000" "3 thousand".
+func yearStyle(s string) string {
+	switch {
+	case s[1:] == "000":
+		return s[:1] + " thousand"
+	case s[2:] == "00":
+		return s[:2] + " hundred"
+	case s[2] == '0':
+		return s[:2] + " oh " + s[3:]
+	}
+	return s[:2] + " " + s[2:]
+}
+
+// isRange reports whether from-to is a range: numbers of up to three digits
+// going up, or years. Going down, "10-5" is more likely a score.
 func isRange(from, to string) bool {
-	small := func(s string) bool { return len(s) >= 2 && len(s) <= 3 && allDigits(s) && s[0] != '0' }
+	small := func(s string) bool { return len(s) <= 3 && allDigits(s) && (s[0] != '0' || s == "0") }
 	year := func(s string) bool { return len(s) == 4 && allDigits(s) && (s[0] == '1' || strings.HasPrefix(s, "20")) }
 	switch {
 	case small(from) && small(to):
@@ -265,8 +287,8 @@ var currencies = map[rune]money{
 	'¢': {"cent", "cents", "", ""},
 }
 
-// perUnits are the short units of a price that read as words: "$15/hr".
-var perUnits = map[string]string{"h": "hour", "hr": "hour", "mo": "month", "yr": "year", "wk": "week", "min": "minute"}
+// perUnits are the short units after a slash that read as words: "$15/hr".
+var perUnits = map[string]string{"h": "hour", "hr": "hour", "hrs": "hour", "s": "second", "sec": "second", "min": "minute", "wk": "week", "mo": "month", "yr": "year"}
 
 // currency reads an amount with its currency symbol before or after it:
 // "$1,234.56" is "1 thousand 234 dollars and 56 cents", "30¢" is "30 cents",
@@ -377,8 +399,7 @@ func scaledAmount(words []string) (string, bool) {
 }
 
 // ranges reads a range of amounts, or of numbers with thousands commas: "$5-$10",
-// "$5-10" and "5,000-10,000". A plain "3-5" is left to numbers, as it can be a
-// score.
+// "$5-10", "$50-70k" and "5,000-10,000". Plain numbers are left to numbers.
 func ranges(word string) (string, bool) {
 	body, suffix := splitSuffix(word)
 	from, to, ok := strings.Cut(body, "-")
@@ -404,7 +425,20 @@ func ranges(word string) (string, bool) {
 		to = string(fromSymbol) + to
 	case !fromAmount && plain(from):
 		from = string(toSymbol) + from
-	case !fromAmount || !toAmount:
+	case !toAmount:
+		number, scale, ok := splitScale(to)
+		_, amount, _ := splitSymbol(from)
+		if !ok || !plain(number) {
+			return "", false
+		}
+		if plain(amount) {
+			// "$50-70k" is "50 to 70 thousand dollars".
+			a, _, _ := numberWords(amount)
+			b, _, _ := numberWords(number)
+			return a + " to " + b + " " + scale + " " + currencies[fromSymbol].many + suffix, true
+		}
+		to = string(fromSymbol) + to
+	case !fromAmount:
 		return "", false
 	}
 	a, ok := currency(from)
@@ -507,6 +541,87 @@ func dashedDigits(word string) (string, bool) {
 	return strings.Join(words, " ") + suffix, true
 }
 
+// times reads a clock time as upstream's opt-in rule does: "3:45PM" is "3-45
+// PM" and "10:00" "10". A '.' separates the minutes only before AM or PM.
+func times(word string) (string, bool) {
+	body, suffix := splitSuffix(word)
+	hour, rest, ok := runOf(body, isASCIIDigit)
+	if !ok || len(hour) > 2 || len(rest) < 3 || rest[0] != ':' && rest[0] != '.' || !allDigits(rest[1:3]) {
+		return "", false
+	}
+	minutes, meridiem := rest[1:3], rest[3:]
+	if !slices.Contains([]string{"", "AM", "PM", "am", "pm"}, meridiem) || rest[0] == '.' && meridiem == "" {
+		return "", false
+	}
+	if len(hour) == 2 {
+		hour = strings.TrimPrefix(hour, "0")
+	}
+	s := hour
+	if minutes != "00" {
+		s += "-" + minutes
+	}
+	if meridiem != "" {
+		s += " " + strings.ToUpper(meridiem)
+	}
+	return s + suffix, true
+}
+
+var fractionNames = strings.Fields("half third quarter fifth sixth seventh eighth ninth tenth")
+
+// fraction reads a fraction up to tenths in words: "3/4" is "3 quarters".
+func fraction(word string) (string, bool) {
+	body, suffix := splitSuffix(word)
+	a, b, ok := strings.Cut(body, "/")
+	if !ok || !allDigits(a) || !allDigits(b) {
+		return "", false
+	}
+	n, _ := strconv.Atoi(a)
+	d, _ := strconv.Atoi(b)
+	if n < 1 || n >= d || d > 10 {
+		return "", false
+	}
+	name := fractionNames[d-2]
+	switch {
+	case n == 1:
+	case name == "half":
+		name = "halves"
+	default:
+		name += "s"
+	}
+	return a + " " + name + suffix, true
+}
+
+// slashes reads numbers split by slashes: a fraction in words, and anything
+// else, such as a date, as upstream's opt-in rule does: "10/23/2025" is
+// "10-23 2025" and "24/7" "24-7".
+func slashes(word string) (string, bool) {
+	if s, ok := fraction(word); ok {
+		return s, true
+	}
+	body, suffix := splitSuffix(word)
+	parts := strings.Split(body, "/")
+	if len(parts) < 2 || len(parts) > 3 || slices.ContainsFunc(parts, func(p string) bool { return !allDigits(p) }) {
+		return "", false
+	}
+	if len(parts[0]) > 2 || len(parts[1]) > 2 || len(parts) == 3 && len(parts[2]) != 2 && len(parts[2]) != 4 {
+		return "", false
+	}
+	s := parts[0] + "-" + parts[1]
+	if len(parts) == 3 {
+		s += " " + parts[2]
+	}
+	return s + suffix, true
+}
+
+// mixedNumber reads a whole number and a fraction: "1 1/2" is "1 and 1 half".
+func mixedNumber(words []string) (string, bool) {
+	if len(words) < 2 || !allDigits(words[0]) {
+		return "", false
+	}
+	s, ok := fraction(words[1])
+	return words[0] + " and " + s, ok
+}
+
 // dayMonth reports whether x and y are a day and month, in either order.
 func dayMonth(x, y string) bool {
 	if len(x) > 2 || len(y) > 2 {
@@ -604,11 +719,14 @@ func urls(word string) (string, bool) {
 	}
 	isLabel := func(c rune) bool { return isAlphanumeric(c) || c == '-' }
 	domains, rest := labels(rest, isLabel)
-	path, after, hasPath := runOf(rest, func(c rune) bool { return isLabel(c) || c == '/' })
-	if hasPath {
-		rest = after
+	path := ""
+	if strings.HasPrefix(rest, "/") {
+		path, rest, _ = runOf(rest, func(c rune) bool { return isLabel(c) || strings.ContainsRune("/._", c) })
+		// A period that ends the sentence is not part of the path.
+		trimmed := strings.TrimRight(path, ".")
+		path, rest = trimmed, path[len(trimmed):]+rest
 	}
-	if len(domains) < 2 || !isSuffix(rest) || !domainEnd(domains[len(domains)-1]) {
+	if len(domains) < 2 || !isSuffix(rest) || !asciiWord(domains[len(domains)-1]) {
 		return "", false
 	}
 	tld := domains[len(domains)-1]
@@ -621,14 +739,14 @@ func urls(word string) (string, bool) {
 		}
 		words = addressWords(label, words)
 	}
-	if hasPath {
+	if path != "" {
 		words = addressWords(path, words)
 	}
 	return strings.Join(words, " ") + rest, true
 }
 
-// addressWords reads part with its dashes, slashes and digits spoken. Only a
-// part with none of them, such as "fr" or "www", can be spelled out.
+// addressWords reads part with its separators and digits spoken. Only a part
+// with none of them, such as "fr" or "www", can be spelled out.
 func addressWords(part string, words []string) []string {
 	start := 0
 	for i := range len(part) {
@@ -638,6 +756,10 @@ func addressWords(part string, words []string) []string {
 			word = "dash"
 		case c == '/':
 			word = "slash"
+		case c == '.':
+			word = "dot"
+		case c == '_':
+			word = "underscore"
 		case c >= '0' && c <= '9':
 			word = part[i : i+1]
 		default:
@@ -658,9 +780,9 @@ func addressWords(part string, words []string) []string {
 	return words
 }
 
-// domainEnd reports whether label is two or more ASCII letters, as in "fr" and "md".
-func domainEnd(label string) bool {
-	return len(label) >= 2 && strings.Trim(label, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") == ""
+// asciiWord reports whether s is two or more ASCII letters, as in "fr" and "md".
+func asciiWord(s string) bool {
+	return len(s) >= 2 && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") == ""
 }
 
 // abbreviationWords come before a name or a number, so their period never ends
@@ -670,7 +792,7 @@ var abbreviationWords = map[string]string{
 	"Cpl.": "Corporal", "Gen.": "General", "Adm.": "Admiral", "Sen.": "Senator", "Sens.": "Senators", "Rep.": "Representative",
 	"Reps.": "Representatives", "Gov.": "Governor", "Pres.": "President", "Det.": "Detective", "Insp.": "Inspector",
 	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "vol.": "volume", "Vol.": "Volume", "vs.": "versus",
-	"w/": "with", "W/": "With", "w/o": "without", "W/o": "Without",
+	"w/": "with", "W/": "With", "w/o": "without", "W/o": "Without", "c/o": "care of",
 }
 
 // endingWords can also end a sentence. "Jan." and "Sun." are left out: they are
@@ -711,4 +833,30 @@ func sentenceEnd(words []string) (string, bool) {
 		return "", false
 	}
 	return s + ".", true
+}
+
+// elongations shortens a stretched word as upstream does: "sooo" is "so" and
+// "Nooooo," "No,". A run of three or more of a vowel, 'h', 'w' or 'y' becomes
+// one letter; "Zzz", "Brrr" and words in capitals are left alone.
+func elongations(word string) (string, bool) {
+	body, suffix := splitSuffix(word)
+	if !asciiWord(body) || body == strings.ToUpper(body) {
+		return "", false
+	}
+	var b strings.Builder
+	stretched := false
+	for i := 0; i < len(body); {
+		j := i + 1
+		for j < len(body) && body[j] == body[i] {
+			j++
+		}
+		if j-i >= 3 && strings.IndexByte("aeiouyhwAEIOUYHW", body[i]) >= 0 {
+			b.WriteByte(body[i])
+			stretched = true
+		} else {
+			b.WriteString(body[i:j])
+		}
+		i = j
+	}
+	return b.String() + suffix, stretched
 }

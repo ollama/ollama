@@ -48,6 +48,31 @@ func normalizeText(input string) string {
 		}
 		return -1
 	}
+	// after returns the first rune from i on that is not a space.
+	after := func(i int) rune {
+		for unicode.IsSpace(at(i)) {
+			i++
+		}
+		return at(i)
+	}
+	// tag returns where markup such as "<br>" or "</think>" that starts at i
+	// ends, or -1.
+	tag := func(i int) int {
+		j := i + 1
+		if at(j) == '/' {
+			j++
+		}
+		if !isASCIIAlnum(at(j)) || isASCIIDigit(at(j)) {
+			return -1
+		}
+		for isASCIIAlnum(at(j)) || at(j) == '-' {
+			j++
+		}
+		if at(j) != '>' {
+			return -1
+		}
+		return j
+	}
 	prev := rune(-1)
 	for i := 0; i < len(runes); i++ {
 		c := runes[i]
@@ -114,11 +139,34 @@ func normalizeText(input string) string {
 				i++
 				n += string(superscripts[runes[i]])
 			}
-			if isAlphanumeric(prev) || prev == ')' {
+			switch {
+			case res.endsWithFootnote():
+			case isAlphanumeric(prev) || prev == ')':
 				res.pushSpoken(power(n))
-			} else {
+			default:
 				res.pushString(n)
 			}
+		case c == '^' && (isAlphanumeric(prev) || prev == ')') && (isASCIIDigit(at(i+1)) || at(i+1) == '-' && isASCIIDigit(at(i+2))):
+			// "2^10" is "2 to the power of 10".
+			j := i + 2
+			for isASCIIDigit(at(j)) {
+				j++
+			}
+			res.pushSpoken(power(string(runes[i+1 : j])))
+			i = j - 1
+		case c == '<' && tag(i) > 0:
+			i = tag(i)
+			res.pushSpace()
+		case c == '-' && at(i+1) == '>' || c == '=' && at(i+1) == '>' || c == '<' && at(i+1) == '-':
+			// Arrows: "->", "=>" and "<-".
+			i++
+			res.pushSpace()
+		case (c == '<' || c == '>') && at(i+1) == '=':
+			i++
+			res.pushSpoken(symbols[c] + " or equal to")
+		case c == '>' && (prev < 0 || prev == '\n'):
+			// A quoted line in markdown.
+			res.pushSpace()
 		case greek(c) != "":
 			res.pushSpoken(greek(c))
 		case symbols[c] != "":
@@ -126,21 +174,20 @@ func normalizeText(input string) string {
 		case c == '±':
 			res.pushSpoken("plus or minus")
 		case c == '❤' || c == '♥':
-			// "I ❤ NY" reads "love"; a heart that is not between words is decoration.
+			// "I ❤ NY" and "made with ❤." read "love"; a heart that does not
+			// follow a word or does not lead into the sentence is decoration.
 			if at(i+1) == '️' {
 				i++
 			}
-			j := i + 1
-			for unicode.IsSpace(at(j)) {
-				j++
-			}
-			if b := trimSpace(res.buf); len(b) > 0 && isAlphanumeric(b[len(b)-1]) && isAlphanumeric(at(j)) {
+			if next := after(i + 1); isAlphanumeric(res.last()) && (isAlphanumeric(next) || strings.ContainsRune(".!?,;:", next)) {
 				res.pushSpoken("love")
 			} else {
 				res.pushSpace()
 			}
 		case c == '~' && isASCIIDigit(at(i+1)):
 			res.pushSpoken("about")
+		case c == '*' && isASCIIDigit(res.last()) && isASCIIDigit(after(i+1)):
+			res.pushSpoken("times")
 		case c == '*' && (prev < 0 || unicode.IsSpace(prev)) && isASCIIDigit(at(i+1)):
 			res.pushSpoken("star")
 		case c == '#':
@@ -159,7 +206,7 @@ func normalizeText(input string) string {
 		case c == '–' && isASCIIDigit(prev) && (isASCIIDigit(at(i+1)) || currencies[at(i+1)].many != ""):
 			// An en dash between amounts is a range: "2020–2021", "$10–$20".
 			res.pushSpoken("to")
-		case strings.ContainsRune("–*—[]{}•‣◦·→←↑↓➡➜", c):
+		case strings.ContainsRune("–*—[]{}•‣◦·→←↑↓➡➜|\\^~", c):
 			res.pushSpace()
 		case currencies[c].many != "" && res.endsWithSpacedDigit() && !isASCIIDigit(at(i+1)):
 			// "250 €" reads as "250€", unless the symbol leads the next amount.
@@ -235,6 +282,29 @@ func (a *appender) pushSpace() {
 
 func (a *appender) popSpace() { a.buf = trimSpace(a.buf) }
 
+// last returns the last rune before any trailing space, or -1.
+func (a *appender) last() rune {
+	if b := trimSpace(a.buf); len(b) > 0 {
+		return b[len(b)-1]
+	}
+	return -1
+}
+
+// endsWithFootnote reports whether a superscript here marks a footnote: after
+// sentence punctuation, or after a word of three letters or more that is not a
+// unit. "studies¹" is a footnote; "x²", "mc²" and "km²" are powers.
+func (a *appender) endsWithFootnote() bool {
+	n := len(a.buf)
+	if n > 0 && strings.ContainsRune(".,;:!?\"'", a.buf[n-1]) {
+		return true
+	}
+	i := n
+	for i > 0 && isAlphabetic(a.buf[i-1]) {
+		i--
+	}
+	return n-i >= 3 && !slices.Contains(slashUnits, string(a.buf[i:]))
+}
+
 // endsWithOne reports whether the text ends with the number 1, which takes
 // "degree" rather than "degrees".
 func (a *appender) endsWithOne() bool {
@@ -282,14 +352,14 @@ func stripClosingQuote(text string) string {
 	return text
 }
 
-// spellSymbols spells out the '@', '+' and '_' of a word no rule claimed, and
-// gives the pieces they leave their own turn at the rules: "1500+20" reads "1
-// thousand 500 plus 20". A slash between words ("and/or") is read as a pause.
+// spellSymbols spells out the '@', '+' and '_' of a word no rule claimed, drops
+// its ':' and '/', and gives the pieces they leave their own turn at the rules:
+// "1500+20" reads "15 hundred plus 20".
 func spellSymbols(word string) string {
 	if text, ok := splitSlash(word); ok {
 		return rewriteEach(text)
 	}
-	if !strings.ContainsAny(word, "@+_") {
+	if !strings.ContainsAny(word, "@+_:") {
 		return word
 	}
 	var res appender
@@ -301,6 +371,8 @@ func spellSymbols(word string) string {
 			res.pushSpoken("plus")
 		case '_':
 			res.pushSpoken("underscore")
+		case ':':
+			res.pushSpace()
 		default:
 			res.push(c)
 		}
@@ -309,31 +381,37 @@ func spellSymbols(word string) string {
 }
 
 func rewriteEach(text string) string {
-	words := strings.Split(text, " ")
-	for i, word := range words {
+	var out []string
+	for word := range strings.FieldsSeq(text) {
 		if s, ok := rewriteWord(word); ok {
-			words[i] = s
+			word = s
+		} else {
+			word = spellSymbols(word)
+		}
+		if word != "" {
+			out = append(out, word)
 		}
 	}
-	return strings.Join(words, " ")
+	return strings.Join(out, " ")
 }
 
-// Units written with a slash between letters ("mg/kg"), which keep it.
-var slashUnits = strings.Fields("km kg mg ml mL dL mol kJ kW kWh Hz min hr hrs sec ft lb lbs oz mi mph kph yd cm mm yr wk mo kcal rpm")
+// Units that a slash reads "per" before: "km/h" is "km per hour".
+var slashUnits = strings.Fields("km kg mg ml mL dL mol kJ kW kWh Hz min hr hrs sec ft lb lbs oz mi mph kph yd cm mm yr wk mo kcal rpm h s m g L hour minute second day week month year")
 
-// splitSlash replaces the slashes of word with spaces when every part they
-// separate is a word of two letters or more and not a unit, which leaves
-// "c/o", "km/h", "mg/kg", dates and fractions alone.
+// splitSlash reads the slashes of a word: "km/h" is "km per hour" before a
+// unit, and otherwise they part words, "and/or" "and or" and "N/A" "N A".
 func splitSlash(word string) (string, bool) {
 	body := strings.TrimRightFunc(word, func(c rune) bool { return isASCIIPunct(c) && c != '/' })
-	parts := strings.Split(body, "/")
-	if len(parts) < 2 {
+	if !strings.Contains(body, "/") {
 		return "", false
 	}
-	for _, part := range parts {
-		if utf8.RuneCountInString(part) < 2 || strings.IndexFunc(part, func(c rune) bool { return !isAlphabetic(c) }) >= 0 || slices.Contains(slashUnits, part) {
-			return "", false
+	parts := strings.FieldsFunc(body, func(c rune) bool { return c == '/' })
+	if len(parts) == 2 && slices.Contains(slashUnits, parts[1]) {
+		unit := parts[1]
+		if w := perUnits[unit]; w != "" {
+			unit = w
 		}
+		return parts[0] + " per " + unit + word[len(body):], true
 	}
 	return strings.Join(parts, " ") + word[len(body):], true
 }
@@ -349,6 +427,8 @@ func power(n string) string {
 }
 
 var symbols = map[rune]string{
+	'<': "less than",
+	'>': "greater than",
 	'×': "times",
 	'÷': "divided by",
 	'≤': "less than or equal to",

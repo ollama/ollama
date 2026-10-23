@@ -140,21 +140,28 @@ var letterFolds = map[rune]string{
 }
 
 // fold spells the letters that have no piece with ones that do, so that they
-// do not fall back to bytes: "É" becomes "é" when only that has a piece, "ï"
-// "i", and "ß" "ss". Anything else is left to byte fallback.
+// do not fall back to bytes: "École" becomes "école" when only "é" has a piece,
+// "ÉCOLE" "ECOLE", "ï" "i", and "ß" "ss". Anything else is left to byte
+// fallback.
 func (u *unigram) fold(text string) string {
 	missing := func(c rune) bool { return unicode.IsLetter(c) && !u.chars[c] }
 	if !strings.ContainsFunc(text, missing) {
 		return text
 	}
+	runes := []rune(text)
 	var b strings.Builder
-	for _, c := range text {
+	for i, c := range runes {
 		if !missing(c) {
 			b.WriteRune(c)
 			continue
 		}
+		// A capital next to another keeps its case.
+		caps := unicode.IsUpper(c) && (i > 0 && unicode.IsUpper(runes[i-1]) || i+1 < len(runes) && unicode.IsUpper(runes[i+1]))
 		s := letterFolds[c]
-		if lower := unicode.ToLower(c); lower >= utf8.RuneSelf && u.chars[lower] {
+		if caps {
+			s = strings.ToUpper(s)
+		}
+		if lower := unicode.ToLower(c); lower >= utf8.RuneSelf && u.chars[lower] && !caps {
 			s = string(lower)
 		} else if s == "" {
 			s = strings.Map(func(r rune) rune {

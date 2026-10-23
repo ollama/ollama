@@ -75,7 +75,7 @@ func TestUnigramByteFallback(t *testing.T) {
 
 func TestUnigramFold(t *testing.T) {
 	vocab := [][]any{{"<unk>", -10.0}}
-	for _, c := range "abcehilnorstuvSAIøé" {
+	for _, c := range "abcehilnorstuvACEILORSøé" {
 		vocab = append(vocab, []any{string(c), -1.0})
 	}
 	data, _ := json.Marshal(map[string]any{"model": map[string]any{"type": "Unigram", "unk_id": 0, "vocab": vocab}})
@@ -83,14 +83,16 @@ func TestUnigramFold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := u.fold("École naïve Søren Æsir straße İstanbul bǎohù 日本")
-	if want := "école naive Søren Aesir strasse Istanbul baohu 日本"; got != want {
+	got := u.fold("École ÉCOLE naïve Søren Æsir ÆSIR straße İstanbul bǎohù 日本")
+	if want := "école ECOLE naive Søren Aesir AESIR strasse Istanbul baohu 日本"; got != want {
 		t.Errorf("fold = %q; want %q", got, want)
 	}
 }
 
 // Run against a real checkpoint and fixtures generated with Hugging Face
 // tokenizers: PHONON_TOKENIZER=... PHONON_TOKEN_CASES=... go test ...
+// encode folds letters the vocabulary has no piece for, which Hugging Face
+// does not, so leave such letters out of the fixtures.
 func TestCheckpointTokenizer(t *testing.T) {
 	path := os.Getenv("PHONON_TOKENIZER")
 	if path == "" {
