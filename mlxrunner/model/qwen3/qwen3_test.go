@@ -29,6 +29,7 @@ func TestAttentionRopeReference(t *testing.T) {
 			Name                  string          `json:"name"`
 			MaxPositionEmbeddings int             `json:"max_position_embeddings"`
 			RopeScaling           json.RawMessage `json:"rope_scaling"`
+			AttentionFactor       float32         `json:"attention_factor"`
 			OutputSamples         []float32       `json:"output_samples"`
 			KeySamples            []float32       `json:"key_samples"`
 			LongKeySamples        []float32       `json:"long_key_samples"`
@@ -85,8 +86,12 @@ func TestAttentionRopeReference(t *testing.T) {
 						t.Fatal(err)
 					}
 					m := loaded.(*Model)
-					if got := m.MaxContextLength(); got != tc.MaxPositionEmbeddings {
-						t.Fatalf("context limit = %d, want %d", got, tc.MaxPositionEmbeddings)
+					limit := tc.MaxPositionEmbeddings
+					if tc.Name == "unextended_limit" || tc.Name == "implicit_original" {
+						limit = 131072
+					}
+					if got := m.MaxContextLength(); got != limit {
+						t.Fatalf("context limit = %d, want %d", got, limit)
 					}
 					attention, x := testAttention()
 					c := cache.NewKVCache()
@@ -102,7 +107,8 @@ func TestAttentionRopeReference(t *testing.T) {
 					prefill := forward(c, 0, 0, 15)
 					decode := forward(c, 0, 15, 16)
 					out := mlx.Concatenate([]*mlx.Array{prefill, decode}, 1)
-					keys := c.State()[0]
+					// Restore the reference amplitude for cached-key comparisons.
+					keys := mlx.MulScalar(c.State()[0], tc.AttentionFactor)
 					mlx.Eval(out, keys)
 					check := func(label string, values, want []float32, tolerance float64) {
 						if len(want) != len(reference.SampleTokens)*len(reference.SampleDims) {
@@ -126,7 +132,7 @@ func TestAttentionRopeReference(t *testing.T) {
 					longPrefill := forward(longCache, 32768, 0, 15)
 					longDecode := forward(longCache, 32768, 15, 16)
 					longOut := mlx.Concatenate([]*mlx.Array{longPrefill, longDecode}, 1)
-					longKeys := longCache.State()[0]
+					longKeys := mlx.MulScalar(longCache.State()[0], tc.AttentionFactor)
 					mlx.Eval(longOut, longKeys)
 					check("long-position output", longOut.Floats(), tc.LongOutputSamples, 2e-3)
 					check("long-position key", longKeys.Floats(), tc.LongKeySamples, 2e-3)

@@ -316,6 +316,7 @@ func parseConfig(configData []byte) (Config, error) {
 		var scale float32
 		cfg.RopeFreqs, scale = nn.BuildYarnRopeFreqs(int(cfg.RopeDim), cfg.RopeTheta, &params)
 		cfg.RopeScale = &scale
+		cfg.MaxPositionEmbeddings = max(cfg.MaxPositionEmbeddings, int32(float64(params.Factor)*float64(params.OriginalMaxPositionEmbeddings)))
 		if cfg.RopeFreqs != nil {
 			freqs := cfg.RopeFreqs.Floats()
 			cfg.RopeInvFreqs = make([]float32, len(freqs))

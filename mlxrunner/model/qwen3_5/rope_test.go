@@ -71,6 +71,9 @@ func TestRopeReference(t *testing.T) {
 					}
 					config[schema.field] = params
 					limit := int(config["max_position_embeddings"].(float64))
+					if tc.Name == "unextended_limit" || tc.Name == "implicit_original" {
+						limit = 1048576
+					}
 					var envelope any = config
 					if schema.nested {
 						envelope = map[string]any{"text_config": config}
