@@ -440,11 +440,24 @@ func (tp ToolProperty) ToTypeScriptType() string {
 		return strings.Join(types, " | ")
 	}
 
+	if lit, ok := enumToTypeScript(tp.Enum); ok {
+		return lit
+	}
+
 	if len(tp.Type) == 0 {
 		return "any"
 	}
 
 	if len(tp.Type) == 1 {
+		if tp.Type[0] == "array" {
+			if items, ok := tp.Items.(map[string]any); ok {
+				if enum, ok := items["enum"].([]any); ok {
+					if lit, ok := enumToTypeScript(enum); ok {
+						return "(" + lit + ")[]"
+					}
+				}
+			}
+		}
 		return mapToTypeScriptType(tp.Type[0])
 	}
 
@@ -453,6 +466,30 @@ func (tp ToolProperty) ToTypeScriptType() string {
 		types = append(types, mapToTypeScriptType(t))
 	}
 	return strings.Join(types, " | ")
+}
+
+// enumToTypeScript renders JSON Schema enum values as a TypeScript literal
+// union such as `"a" | "b"`. It reports false when the enum is empty or holds a
+// value that has no scalar literal form, so callers fall back to the type.
+func enumToTypeScript(enum []any) (string, bool) {
+	if len(enum) == 0 {
+		return "", false
+	}
+
+	lits := make([]string, 0, len(enum))
+	for _, v := range enum {
+		switch v.(type) {
+		case nil, string, bool, float64, int, int64, json.Number:
+			b, err := json.Marshal(v)
+			if err != nil {
+				return "", false
+			}
+			lits = append(lits, string(b))
+		default:
+			return "", false
+		}
+	}
+	return strings.Join(lits, " | "), true
 }
 
 // mapToTypeScriptType maps JSON Schema types to TypeScript types
