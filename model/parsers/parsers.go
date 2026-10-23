@@ -22,7 +22,8 @@ type Parser interface {
 	// ThinkingClose returns the strings any of which ends the thinking the
 	// response begins with, or none when it starts in content. Answered after
 	// Init, which decides that from the think value, a prefill, and the
-	// parser's default.
+	// parser's default. Parsers that may start in content and enter thinking
+	// later may also implement ThinkingOpen() []string.
 	ThinkingClose() []string
 	HasToolSupport() bool
 	HasThinkingSupport() bool

@@ -58,6 +58,13 @@ func (p *GLM46Parser) ThinkingClose() []string {
 	return nil
 }
 
+func (p *GLM46Parser) ThinkingOpen() []string {
+	if p.thinkingEnabled && p.state == glm46ParserState_LookingForThinkingOpen {
+		return []string{glm46ThinkingOpenTag}
+	}
+	return nil
+}
+
 func (p *GLM46Parser) PreservedTokens() []string {
 	return []string{
 		glm46ThinkingOpenTag,
