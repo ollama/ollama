@@ -3,6 +3,7 @@ package launch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -97,7 +99,59 @@ func readOpenCodeConfig() ([]byte, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if diagnostic := openCodeConfigDiagnostic(exitErr.Stderr); diagnostic != "" {
+			err = fmt.Errorf("%w: %s", err, diagnostic)
+		}
+		return nil, fmt.Errorf("%w\nRun `opencode debug config` for details.", err)
+	}
 	return data, err
+}
+
+// OpenCode's validation messages can echo credentials or the entire JSONC file.
+// Keep only the config location and issue paths, never messages or input values.
+func openCodeConfigDiagnostic(stderr []byte) string {
+	// Cmd.Output truncates large errors mid-message. A partial rejected value
+	// must not be mistaken for a field path; use the recovery command instead.
+	if len(stderr) > 16<<10 {
+		return ""
+	}
+	lines := strings.Split(ansi.Strip(string(stderr)), "\n")
+	for i, line := range lines {
+		line = strings.TrimPrefix(strings.TrimSuffix(line, "\r"), "Error: ")
+		if path, ok := strings.CutPrefix(line, "Config file at "); ok {
+			if path, _, ok := strings.Cut(path, " is not valid JSON(C)"); ok {
+				return fmt.Sprintf("config file at %q is not valid JSON(C)", path)
+			}
+		}
+		rest, ok := strings.CutPrefix(line, "Configuration is invalid")
+		if !ok {
+			continue
+		}
+		diagnostic := "configuration is invalid"
+		if path, ok := strings.CutPrefix(rest, " at "); ok {
+			path, _, _ = strings.Cut(path, ": ")
+			diagnostic += fmt.Sprintf(" at %q", path)
+		}
+		var fields []string
+		for _, issue := range lines[i+1:] {
+			issue = strings.TrimSuffix(issue, "\r")
+			if !strings.HasPrefix(issue, "↳ ") {
+				break
+			}
+			// OpenCode appends a space and the field path, even for root issues
+			// whose path is empty. Preserve that trailing space when parsing.
+			if last := strings.LastIndexByte(issue, ' '); last >= 0 && last < len(issue)-1 {
+				fields = append(fields, fmt.Sprintf("%q", issue[last+1:]))
+			}
+		}
+		if len(fields) > 0 {
+			diagnostic += " (invalid fields: " + strings.Join(fields, ", ") + ")"
+		}
+		return diagnostic
+	}
+	return ""
 }
 
 // runContent refreshes only the selected local model's limits after loading it.

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -145,6 +146,75 @@ func TestOpenCodeRunContentConfigFailure(t *testing.T) {
 	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local"}})
 	if content != "" || !errors.Is(err, configErr) {
 		t.Fatalf("configuration failure allowed launch or lost its cause: %q, %v", content, err)
+	}
+}
+
+func TestOpenCodeRunConfigDiagnostic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell wrapper")
+	}
+	for _, tt := range []struct {
+		name, diagnostic string
+		want             []string
+	}{
+		{
+			name:       "invalid field",
+			diagnostic: "\x1b[91m\x1b[1mError: \x1b[0mConfiguration is invalid at %s: private diagnostic SYNTHETIC_SECRET\n↳ Expected string | undefined, got {\"apiKey\":\"SYNTHETIC_SECRET\"} model\n↳ Expected number, got \"SYNTHETIC_SECRET\" provider.ollama.models.local.limit.input\n",
+			want:       []string{"%s", "model", "provider.ollama.models.local.limit.input"},
+		},
+		{
+			name:       "invalid root",
+			diagnostic: "Error: Configuration is invalid at %s\n↳ Expected Config, got SYNTHETIC_SECRET \n",
+			want:       []string{"%s"},
+		},
+		{
+			name:       "invalid JSONC",
+			diagnostic: "Error: Config file at %s is not valid JSON(C): SYNTHETIC_SECRET\n--- JSONC Input ---\n{\"apiKey\":\"SYNTHETIC_SECRET\", invalid}\n",
+			want:       []string{"%s", "not valid JSON(C)"},
+		},
+		{
+			name:       "unknown diagnostic",
+			diagnostic: "Unexpected error: SYNTHETIC_SECRET\n",
+		},
+		{
+			name:       "oversized diagnostic",
+			diagnostic: "Error: Configuration is invalid at %s\n↳ Expected string, got " + strings.Repeat("SYNTHETIC_SECRET ", 6000) + "model\n",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			setTestHome(t, dir)
+			path := filepath.Join(dir, "my config.jsonc")
+			diagnostic := strings.ReplaceAll(tt.diagnostic, "%s", path)
+			t.Setenv("OPENCODE_TEST_DIAGNOSTIC", diagnostic)
+			script := "#!/bin/sh\n[ \"$1 $2\" = 'debug config' ] || exit 99\nprintf '%s' 'SYNTHETIC_SECRET'\nprintf '%s' \"$OPENCODE_TEST_DIAGNOSTIC\" >&2\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir)
+			previous := openCodeLoadedContextLength
+			openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+			t.Cleanup(func() { openCodeLoadedContextLength = previous })
+			openCodeReadConfig = readOpenCodeConfig
+			var err error
+			stderr := captureStderr(t, func() {
+				err = (&OpenCode{}).Run("local", []LaunchModel{{Name: "local"}}, nil)
+			})
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+				t.Fatalf("config failure allowed launch or lost its cause: %v", err)
+			}
+			want := append([]string{"opencode debug config"}, tt.want...)
+			for _, text := range want {
+				text = strings.ReplaceAll(text, "%s", path)
+				if !strings.Contains(err.Error(), text) {
+					t.Errorf("config error %q does not identify %q", err, text)
+				}
+			}
+			if strings.Contains(err.Error()+stderr, "SYNTHETIC_") {
+				t.Fatal("config diagnostic exposed a rejected value or config contents")
+			}
+		})
 	}
 }
 
