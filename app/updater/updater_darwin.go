@@ -106,6 +106,10 @@ func DoUpgrade(interactive bool) error {
 
 	slog.Info("starting upgrade", "app", BundlePath, "update", bundle, "pid", os.Getpid(), "log", UpgradeLogFile)
 
+	if err := verifyStagedArtifact(bundle); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
+
 	// TODO - in the future, consider shutting down the backend server now to give it
 	// time to drain connections and stop allowing new connections while we perform the
 	// actual upgrade to reduce the overall time to complete
@@ -272,6 +276,9 @@ func verifyDownload() error {
 		return fmt.Errorf("failed to lookup downloads")
 	}
 	slog.Debug("verifying update", "bundle", bundle)
+	if err := verifyStagedArtifact(bundle); err != nil {
+		return fmt.Errorf("signature verification failed: %w", err)
+	}
 
 	// Extract zip file into a temporary location so we can run the cert verification routines
 	dir, err := os.MkdirTemp("", "ollama_update_verify")

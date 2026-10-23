@@ -13,12 +13,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/updatetrust"
 )
 
 func TestUpdateStagePathRejectsUnsafeFilename(t *testing.T) {
@@ -190,6 +192,96 @@ func TestDownloadNewReleaseDoesNotUseRawETagAsPathComponent(t *testing.T) {
 	}
 }
 
+func TestDownloadNewReleaseVerifiesEd25519(t *testing.T) {
+	UpdateStageDir = t.TempDir()
+	oldInstaller := Installer
+	oldVerifyDownload := VerifyDownload
+	oldUpdateDownloaded := UpdateDownloaded
+	oldKey := updatePublicKey
+	defer func() {
+		Installer = oldInstaller
+		VerifyDownload = oldVerifyDownload
+		UpdateDownloaded = oldUpdateDownloaded
+		updatePublicKey = oldKey
+	}()
+	if runtime.GOOS == "windows" {
+		t.Setenv("LOCALAPPDATA", t.TempDir())
+		Installer = "OllamaSetup.exe"
+	} else {
+		Installer = "Ollama-darwin.zip"
+	}
+	UpdateDownloaded = false
+	pub, priv, err := updatetrust.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatePublicKey = pub
+	VerifyDownload = func() error {
+		staged := getStagedUpdate()
+		if staged == "" {
+			return fmt.Errorf("failed to lookup downloads")
+		}
+		return verifyStagedArtifact(staged)
+	}
+
+	payload := []byte("signed-payload")
+	sig, err := updatetrust.SignFile(priv, writeTemp(t, payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"signed"`)
+		switch r.URL.Path {
+		case "/download":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(payload)
+			}
+		case "/download.ed25519":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write([]byte(sig + "\n"))
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	updater := &Updater{}
+	err = updater.DownloadNewRelease(t.Context(), UpdateResponse{
+		UpdateURL:    server.URL + "/download",
+		SignatureURL: server.URL + "/download.ed25519",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(UpdateStageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one staged update dir, got %d", len(entries))
+	}
+	staged := filepath.Join(UpdateStageDir, entries[0].Name(), Installer)
+	flipped := append([]byte{}, payload...)
+	flipped[0] ^= 0xff
+	if err := os.WriteFile(staged, flipped, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyDownload(); err == nil {
+		t.Fatal("tampered download was accepted")
+	}
+}
+
+func writeTemp(t *testing.T, payload []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 // stopChecker cancels the background update checker and waits for its
 // goroutine to return. Tests must join it before returning: the goroutine
 // reads package-level knobs (UpdateCheckURLBase, UpdateCheckInterval, ...)
@@ -337,8 +429,8 @@ func TestBackgroundCheckerSkipsAlreadyStagedETagDownload(t *testing.T) {
 	if getCount.Load() != 1 {
 		t.Fatalf("GET count = %d, want 1", getCount.Load())
 	}
-	if verifyCount.Load() != 1 {
-		t.Fatalf("verification count = %d, want 1", verifyCount.Load())
+	if verifyCount.Load() < 2 {
+		t.Fatalf("verification count = %d, want at least 2 (download and the already-staged re-check)", verifyCount.Load())
 	}
 	if !UpdateDownloaded {
 		t.Fatal("UpdateDownloaded should stay true for already staged update")

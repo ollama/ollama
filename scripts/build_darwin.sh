@@ -25,6 +25,17 @@ usage() {
     exit 1
 }
 
+# NOTARY_PROFILE selects a notarytool keychain profile (the release Mac uses
+# AC_PASSWORD). Without it, notarization uses APPLE_ID, APPLE_PASSWORD, and
+# APPLE_TEAM_ID, which is what the GitHub workflow sets.
+_notarize() {
+    if [ -n "${NOTARY_PROFILE:-}" ]; then
+        $(xcrun -f notarytool) submit "$1" --wait --timeout 20m --keychain-profile "$NOTARY_PROFILE"
+    else
+        $(xcrun -f notarytool) submit "$1" --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+    fi
+}
+
 mkdir -p dist
 
 ARCHS="arm64 amd64"
@@ -260,7 +271,7 @@ _build_macapp() {
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then
-        $(xcrun -f notarytool) submit dist/Ollama-darwin.zip --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+        _notarize dist/Ollama-darwin.zip
         rm -f dist/Ollama-darwin.zip
         $(xcrun -f stapler) staple dist/Ollama.app
         ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
@@ -284,7 +295,7 @@ _build_macapp() {
         rm -f dist/rw*.dmg
 
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.dmg
-        $(xcrun -f notarytool) submit dist/Ollama.dmg --wait --timeout 20m --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID"
+        _notarize dist/Ollama.dmg
         $(xcrun -f stapler) staple dist/Ollama.dmg
     else
         echo "WARNING: Code signing disabled, this bundle will not work for upgrade testing"
