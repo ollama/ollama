@@ -1,0 +1,38 @@
+---
+title: Models
+description: Run Ollama's cloud models from the app, CLI, local API, or official libraries.
+---
+
+Cloud models run in Ollama's cloud while remaining available to local tools and integrations through Ollama.
+
+## Sign in
+
+[Download Ollama](https://ollama.com/download), then open the app or sign in from the CLI:
+
+```shell
+ollama signin
+```
+
+Browse available models in the [cloud model library](https://ollama.com/search?c=cloud).
+
+## Run a cloud model
+
+Cloud models do not need to be downloaded. Run one from the CLI:
+
+```shell
+ollama run gemma4:cloud
+```
+
+You can also open the Ollama app to select a cloud model or connect an integration. See the [quickstart](/quickstart) for setup.
+
+## Model names
+
+For direct requests to `ollama.com`, list models with:
+
+```shell
+curl https://ollama.com/api/tags
+```
+
+Use the name returned by this list, such as `gemma4:31b`. In the Ollama app, CLI, official libraries, or local API, use the `:cloud` name, such as `gemma4:cloud`.
+
+To call a model without installing Ollama, first [create an API key](/cloud/api).
