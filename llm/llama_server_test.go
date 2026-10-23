@@ -2398,6 +2398,55 @@ func TestShouldRetryMMProjCPUOffload(t *testing.T) {
 	}
 }
 
+func TestShouldRetryCUDAEagerModuleLoading(t *testing.T) {
+	t.Setenv(cudaModuleLoadingEnv, "")
+	_ = os.Unsetenv(cudaModuleLoadingEnv)
+
+	// Tail of a llama-server crash during warmup (ollama #17380).
+	status := NewStatusWriter(nil)
+	_, _ = status.Write([]byte("CUDA error: shared object initialization failed\n" +
+		"  current device: 0, in function ggml_cuda_flash_attn_ext_mma_f16_case at fattn-mma-f16.cuh:2099\n" +
+		"  cudaFuncSetAttribute(fattn_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, nbytes_shared_total)\n"))
+	crash := fmt.Errorf("llama-server process has terminated: exit status 0xc0000409: %s", status.LastError())
+
+	cuda := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "CUDA"}}}
+	tests := []struct {
+		name    string
+		gpus    []ml.DeviceInfo
+		envs    map[string]string
+		err     error
+		retried bool
+		want    bool
+	}{
+		{name: "lazy module load failure retries", gpus: cuda, err: crash, want: true},
+		{name: "retries only once", gpus: cuda, err: crash, retried: true},
+		{name: "other errors do not retry", gpus: cuda, err: errors.New("CUDA error: out of memory")},
+		{name: "no error", gpus: cuda},
+		{name: "non-cuda device", gpus: []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Vulkan"}}}, err: crash},
+		{name: "cpu only", err: crash},
+		{name: "launch already sets module loading", gpus: cuda, envs: map[string]string{cudaModuleLoadingEnv: "LAZY"}, err: crash},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &llamaServerRunner{
+				launch:                        llamaServerLaunchConfig{gpus: tt.gpus, extraEnvs: tt.envs},
+				cudaEagerModuleLoadingRetried: tt.retried,
+			}
+			if got := s.shouldRetryCUDAEagerModuleLoading(tt.err); got != tt.want {
+				t.Fatalf("shouldRetryCUDAEagerModuleLoading(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+
+	t.Run("user sets module loading", func(t *testing.T) {
+		t.Setenv(cudaModuleLoadingEnv, "LAZY")
+		s := &llamaServerRunner{launch: llamaServerLaunchConfig{gpus: cuda}}
+		if s.shouldRetryCUDAEagerModuleLoading(crash) {
+			t.Fatal("should not override the user's " + cudaModuleLoadingEnv)
+		}
+	})
+}
+
 func TestMMProjFitTargetExtraEnvs(t *testing.T) {
 	t.Setenv(llamaArgFitTargetEnv, "")
 	_ = os.Unsetenv(llamaArgFitTargetEnv)

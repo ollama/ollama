@@ -182,9 +182,10 @@ type llamaServerRunner struct {
 
 	sem *semaphore.Weighted
 
-	launch                  llamaServerLaunchConfig
-	output                  *memoryParsingWriter
-	mmprojOffloadOOMRetried bool
+	launch                        llamaServerLaunchConfig
+	output                        *memoryParsingWriter
+	mmprojOffloadOOMRetried       bool
+	cudaEagerModuleLoadingRetried bool
 }
 
 type llamaServerLaunchConfig struct {
@@ -1087,16 +1088,17 @@ func qwenVLServerArgs(modelArch string) []string {
 func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
 	slog.Info("loading model via llama-server", "model", s.modelPath)
 
-	if err := s.WaitUntilRunning(ctx); err != nil {
-		retried, retryErr := s.retryWithMMProjCPUOffload(err)
+	err := s.WaitUntilRunning(ctx)
+	for err != nil {
+		retry, retryErr := s.retryStartup(err)
 		if retryErr != nil {
 			return nil, retryErr
 		}
-		if !retried {
+		if retry == "" {
 			return nil, err
 		}
-		if err := s.WaitUntilRunning(ctx); err != nil {
-			return nil, fmt.Errorf("llama-server startup failed after projector CPU offload retry: %w", err)
+		if err = s.WaitUntilRunning(ctx); err != nil {
+			err = fmt.Errorf("llama-server startup failed after %s retry: %w", retry, err)
 		}
 	}
 	if err := s.removeSplitDirs(); err != nil {
@@ -1126,24 +1128,37 @@ func (s *llamaServerRunner) Load(ctx context.Context, systemInfo ml.SystemInfo, 
 	return deviceIDs, nil
 }
 
-func (s *llamaServerRunner) retryWithMMProjCPUOffload(loadErr error) (bool, error) {
-	if !s.shouldRetryMMProjCPUOffload(loadErr) {
-		return false, nil
+// retryStartup restarts llama-server with a workaround for a known startup
+// failure. It returns the name of the retry, or "" if none applies. Each
+// workaround is tried at most once per runner.
+func (s *llamaServerRunner) retryStartup(loadErr error) (string, error) {
+	switch {
+	case s.shouldRetryMMProjCPUOffload(loadErr):
+		slog.Warn("llama-server startup failed with projector GPU offload; retrying with projector CPU offload", "model", s.modelPath, "error", loadErr)
+		s.mmprojOffloadOOMRetried = true
+		s.launch.forceNoMMProjOffload = true
+		return "projector CPU offload", s.restartProcess(loadErr, "projector CPU offload")
+	case s.shouldRetryCUDAEagerModuleLoading(loadErr):
+		slog.Warn("llama-server failed to load a CUDA module; retrying with "+cudaModuleLoadingEnv+"=EAGER", "model", s.modelPath, "error", loadErr)
+		s.cudaEagerModuleLoadingRetried = true
+		s.launch.extraEnvs = cloneStringMap(s.launch.extraEnvs)
+		s.launch.extraEnvs[cudaModuleLoadingEnv] = "EAGER"
+		return "CUDA eager module loading", s.restartProcess(loadErr, "CUDA eager module loading")
+	default:
+		return "", nil
 	}
+}
 
-	slog.Warn("llama-server startup failed with projector GPU offload; retrying with projector CPU offload", "model", s.modelPath, "error", loadErr)
-	s.mmprojOffloadOOMRetried = true
-	s.launch.forceNoMMProjOffload = true
-
+func (s *llamaServerRunner) restartProcess(loadErr error, retry string) error {
 	if err := s.stopProcess(); err != nil {
-		return false, fmt.Errorf("llama-server startup failed before projector CPU offload retry: %w; error stopping failed process: %v", loadErr, err)
+		return fmt.Errorf("llama-server startup failed before %s retry: %w; error stopping failed process: %v", retry, loadErr, err)
 	}
 	s.resetLoadAccounting()
 
 	if err := s.startProcess(); err != nil {
-		return false, fmt.Errorf("llama-server startup failed before projector CPU offload retry: %w; error starting retry: %v", loadErr, err)
+		return fmt.Errorf("llama-server startup failed before %s retry: %w; error starting retry: %v", retry, loadErr, err)
 	}
-	return true, nil
+	return nil
 }
 
 func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
@@ -1158,6 +1173,34 @@ func (s *llamaServerRunner) shouldRetryMMProjCPUOffload(err error) bool {
 	// projector on CPU so the scheduler can keep the text model placement.
 	disabled, _ := s.launch.mmprojOffloadDisabled()
 	return !disabled
+}
+
+const cudaModuleLoadingEnv = "CUDA_MODULE_LOADING"
+
+// shouldRetryCUDAEagerModuleLoading reports whether a startup failure is CUDA
+// failing to load a kernel module on first use. With the default lazy module
+// loading, the first launch or attribute query of a kernel loads its module,
+// and that load can fail with "shared object initialization failed" when host
+// memory or commit is low (seen on Windows during warmup, often together with
+// the pinned host buffer falling back to plain CPU memory). Loading all
+// modules at startup avoids it, at the cost of more VRAM and a slower start,
+// so only fall back to it after this failure.
+func (s *llamaServerRunner) shouldRetryCUDAEagerModuleLoading(err error) bool {
+	if err == nil || s.cudaEagerModuleLoadingRetried {
+		return false
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "shared object initialization failed") {
+		return false
+	}
+	if !slices.ContainsFunc(s.launch.gpus, func(g ml.DeviceInfo) bool { return g.Library == "CUDA" }) {
+		return false
+	}
+	// Respect a module loading mode the user chose.
+	if _, ok := s.launch.extraEnvs[cudaModuleLoadingEnv]; ok {
+		return false
+	}
+	_, ok := os.LookupEnv(cudaModuleLoadingEnv)
+	return !ok
 }
 
 func (s *llamaServerRunner) resetLoadAccounting() {
