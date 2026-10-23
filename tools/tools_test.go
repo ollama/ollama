@@ -950,6 +950,77 @@ func TestContent(t *testing.T) {
 	}
 }
 
+// Content must not repeat output that Add already returned. When the tag is
+// { or [, Add flushes the buffer as content once it decides the output is not
+// a tool call, and the chat route calls Content on the final, empty completion
+// chunk. A buffer left in place after that flush is sent to the client twice.
+func TestContentAfterAddFlushesBuffer(t *testing.T) {
+	object, err := template.New("object").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	list, err := template.New("list").Parse(`{{if .ToolCalls}}[{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}]{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "get_temperature",
+				Parameters: api.ToolFunctionParameters{
+					Type:     "object",
+					Required: []string{"city"},
+					Properties: testPropsMap(map[string]api.ToolProperty{
+						"city": {Type: api.PropertyType{"string"}},
+					}),
+				},
+			},
+		},
+	}
+
+	cases := []struct {
+		name  string
+		tmpl  *template.Template
+		input string
+	}{
+		{
+			name:  "object tag",
+			tmpl:  object,
+			input: `the config is {"level": "debug"}`,
+		},
+		{
+			name:  "list tag",
+			tmpl:  list,
+			input: `the default is [1, 2]`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.tmpl, tools)
+
+			calls, content := parser.Add(tt.input)
+			if len(calls) != 0 {
+				t.Fatalf("Expected 0 tool calls, got %d", len(calls))
+			}
+			if content != tt.input {
+				t.Fatalf("Expected content %q, got %q", tt.input, content)
+			}
+
+			if _, content := parser.Add(""); content != "" {
+				t.Errorf("Expected no further content, got %q", content)
+			}
+
+			if got := parser.Content(); got != "" {
+				t.Errorf("Content() = %q after Add already returned it, want %q", got, "")
+			}
+		})
+	}
+}
+
 func TestFindTag(t *testing.T) {
 	cases := []struct {
 		name   string
