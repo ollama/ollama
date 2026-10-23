@@ -26,7 +26,7 @@ jobs:
       go_mod_changed: ${{ steps.changes.outputs.go_mod_changed }}
       enginehash: ${{ steps.changes.outputs.enginehash }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: changes
@@ -65,7 +65,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify patches apply cleanly
         shell: bash
         run: |
@@ -124,7 +124,7 @@ jobs:
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           [ -n "${{ matrix.container }}" ] || sudo=sudo
           $sudo apt-get update
@@ -158,7 +158,7 @@ jobs:
           $sudo tar xzf "$RUNNER_TEMP/go.tar.gz" -C /usr/local
           rm "$RUNNER_TEMP/go.tar.gz"
           echo "/usr/local/go/bin" >> $GITHUB_PATH
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: /github/home/.cache/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
@@ -338,12 +338,12 @@ jobs:
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: matrix.superbuild_target == 'ollama-local' || matrix.install-go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.enginehash }}
@@ -382,7 +382,7 @@ jobs:
   go_mod_tidy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: check that 'go mod tidy' is clean
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
 
@@ -391,8 +391,8 @@ jobs:
     if: needs.changes.outputs.go_mod_changed == 'True'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Verify Go dependency licenses
@@ -412,8 +412,8 @@ jobs:
     env:
       CGO_ENABLED: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: |
@@ -421,12 +421,12 @@ jobs:
             LLAMA_CPP_VERSION
             MLX_VERSION
             MLX_C_VERSION
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Cache MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/mlx-darwin-release
           # Key on every payload input so a source-built payload survives pushes.
@@ -480,8 +480,8 @@ jobs:
     env:
       CGO_ENABLED: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           cache-dependency-path: |
@@ -491,7 +491,7 @@ jobs:
             MLX_C_VERSION
       - name: Cache MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/mlx-darwin-release
           # Key on every payload input so a source-built payload survives pushes.
@@ -499,9 +499,9 @@ jobs:
       - name: Prepare MLX Darwin release payload
         if: ${{ startsWith(matrix.os, 'macos') }}
         run: .github/scripts/prepare_mlx_darwin.sh
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       # app/ui embeds app/dist, so the UI has to be built before app/... will
       # even compile.
       - name: Build UI

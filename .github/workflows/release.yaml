@@ -18,7 +18,7 @@ jobs:
       VERSION: ${{ steps.goflags.outputs.VERSION }}
       vendorsha: ${{ steps.goflags.outputs.vendorsha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set environment
         id: goflags
         run: |
@@ -44,7 +44,7 @@ jobs:
       CGO_CXXFLAGS: '-mmacosx-version-min=14.0 -O3'
       CGO_LDFLAGS: '-mmacosx-version-min=14.0 -O3'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Select Xcode 26.4.1
         shell: bash
         run: |
@@ -68,7 +68,7 @@ jobs:
           security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
           security set-keychain-settings -lut 3600 build.keychain
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -296,8 +296,8 @@ jobs:
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
-      - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
@@ -350,8 +350,8 @@ jobs:
           if (!(Test-Path "$installPath\bin\aarch64-w64-mingw32-gcc.exe")) {
             throw "llvm-mingw x86_64 package is missing the aarch64 cross compiler"
           }
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -371,9 +371,9 @@ jobs:
           }
           $ErrorActionPreference='Stop'
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "22"
       - run: |
           ./scripts/build_windows ollama ollamaArm64 app appArm64
       - name: Verify Windows build payloads
@@ -404,7 +404,7 @@ jobs:
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: google-github-actions/auth@v2
         with:
           project_id: ollama
@@ -421,7 +421,7 @@ jobs:
           & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
 
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -510,7 +510,7 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -624,7 +624,7 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -774,7 +774,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           pattern: bundles-*
