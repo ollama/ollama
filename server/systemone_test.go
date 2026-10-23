@@ -207,6 +207,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"renamed-clef", "clef", "clef", ""},
 		{"old-clef", "qwen35", "clef", ""},
 		{"laya-native", "modern-bert", "laya", ""},
+		{"renamed-d3", "qwen35", "vllm-d3", ""},
 		{"gguf-tev1", "qwen35", "", "tev1"},
 	} {
 		kv := gguftest.KV{"general.architecture": gguf.architecture}
@@ -268,6 +269,9 @@ func TestSystemOneHandler(t *testing.T) {
 		{"old-format decision GGUF", `{"model":"gguf-tev1","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"old-format Clef GGUF", `{"model":"old-clef","state":"x","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"llama.cpp 65 questions", nativeQuestions(65), nil, 400, 0, false},
+		{"vllm-d3 empty state", `{"model":"renamed-d3","state":"","questions":{"refund":{"type":"choice","instructions":"Which reply is shorter?","criteria":{"Yes.":null,"Yes, I can help with that.":null}}}}`, nil, 200, 1, false},
+		{"vllm-d3 whitespace state", `{"model":"renamed-d3","state":" ","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 200, 1, false},
+		{"safetensors empty state", `{"model":"decision-test","state":"","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"llama.cpp empty state", `{"model":"laya-native","state":" ","questions":{"refund":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"omitted model", `{"state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
 		{"blank model", `{"model":" ","state":"x","questions":{"x":{"type":"noul","instructions":"q"}}}`, nil, 400, 0, false},
@@ -297,7 +301,7 @@ func TestSystemOneHandler(t *testing.T) {
 		{"image does not relax text limit", strings.TrimSuffix(largeText, "}") + `,"images":["aW1hZ2U="]}`, nil, 413, 0, false},
 		{"over transport limit", imagePrefix + strings.Repeat("A", 32<<20) + `"]}`, nil, 413, 0, false},
 	}
-	for _, model := range []string{"decision-test", "laya-native"} {
+	for _, model := range []string{"decision-test", "laya-native", "renamed-d3"} {
 		for _, levels := range []int{1, 2, 10, 11} {
 			status, calls := http.StatusBadRequest, 0
 			if levels >= 2 && levels <= 10 {
@@ -397,6 +401,11 @@ func TestSystemOneHandler(t *testing.T) {
 					t.Fatalf("incorrect scoring response: %s", w.Body)
 				}
 				if runner.native {
+					if strings.HasPrefix(tt.name, "vllm-d3 ") {
+						if !bytes.Equal(runner.state, sent.State) {
+							t.Fatalf("state changed before native scoring: got %s, want %s", runner.state, sent.State)
+						}
+					}
 					if tt.name == "llama.cpp decision model" && (string(runner.state) != `{"total":1250.0}` || !strings.Contains(w.Body.String(), `"model":"laya-native"`)) {
 						t.Fatalf("request did not pass through: state %s, response %s", runner.state, w.Body)
 					}
