@@ -163,75 +163,11 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	return true, updateResp
 }
 
-type githubReleaseResponse struct {
-	TagName     string    `json:"tag_name"`
-	PublishedAt time.Time `json:"published_at"`
-	Assets      []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
-}
-
 // isGitHubReleaseURL reports whether the update check URL is a GitHub
 // "latest release" API endpoint (api.github.com, or a test server serving
 // the same .../releases/latest path).
 func isGitHubReleaseURL(u *url.URL) bool {
 	return u.Host == "api.github.com" || strings.HasSuffix(u.Path, "/releases/latest")
-}
-
-// githubReleaseAsset picks the installable asset from a fork release: a .zip
-// on macOS or an .exe on Windows. An asset naming this OS and arch wins;
-// otherwise the first asset that does not name another arch is used.
-func githubReleaseAsset(body []byte) (string, githubReleaseResponse, error) {
-	var rel githubReleaseResponse
-	if err := json.Unmarshal(body, &rel); err != nil {
-		return "", rel, err
-	}
-	ext := ".zip"
-	if runtime.GOOS == "windows" {
-		ext = ".exe"
-	}
-	var fallback string
-	for _, asset := range rel.Assets {
-		name := strings.ToLower(asset.Name)
-		if !strings.HasSuffix(name, ext) || asset.BrowserDownloadURL == "" {
-			continue
-		}
-		if strings.Contains(name, runtime.GOOS) && assetNamesArch(name, runtime.GOARCH) {
-			return asset.BrowserDownloadURL, rel, nil
-		}
-		if fallback == "" && !assetNamesOtherArch(name, runtime.GOARCH) {
-			fallback = asset.BrowserDownloadURL
-		}
-	}
-	return fallback, rel, nil
-}
-
-var archAliases = map[string][]string{
-	"amd64": {"amd64", "x86_64"},
-	"arm64": {"arm64", "aarch64"},
-}
-
-func assetNamesArch(name, arch string) bool {
-	aliases, ok := archAliases[arch]
-	if !ok {
-		aliases = []string{arch}
-	}
-	for _, a := range aliases {
-		if strings.Contains(name, a) {
-			return true
-		}
-	}
-	return false
-}
-
-func assetNamesOtherArch(name, arch string) bool {
-	for other := range archAliases {
-		if other != arch && assetNamesArch(name, other) {
-			return true
-		}
-	}
-	return false
 }
 
 // currentBuildTime is when the running app binary was built or installed.

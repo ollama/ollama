@@ -2,8 +2,11 @@
 
 ## Download
 
-- [macOS](https://ollama.com/download/Ollama.dmg)
-- [Windows](https://ollama.com/download/OllamaSetup.exe)
+macOS builds of this fork:
+
+- [Ollama.dmg](https://github.com/maxkongerskov/ollama/releases/latest/download/Ollama.dmg) on the latest GitHub release
+
+This fork does not publish a Windows installer. Building from source is described in the repository README. The downloads on ollama.com install upstream Ollama.
 
 ## Development
 
