@@ -241,6 +241,24 @@ func postCompactionRequest(t *testing.T, server *httptest.Server, path, body str
 	return response.StatusCode, response.Header.Clone(), responseBody
 }
 
+func newCompactionTestGateway(t *testing.T, local *httptest.Server) *httptest.Server {
+	t.Helper()
+	catalogPath := filepath.Join(t.TempDir(), proxy.CodexDesktopRoutingCatalogFilename)
+	if err := os.WriteFile(catalogPath, []byte(`{"models":[{"slug":"fixture"},{"slug":"fixture:cloud"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := proxy.NewCodexDesktop(proxy.CodexDesktopConfig{
+		OllamaURL: local.URL, ChatGPTURL: local.URL, OpenAIURL: local.URL,
+		RoutingCatalogPath: catalogPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway := httptest.NewServer(handler)
+	t.Cleanup(gateway.Close)
+	return gateway
+}
+
 func TestResponsesCompactUsesOrdinarySelectedCloudModel(t *testing.T) {
 	local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
 		w.Header().Set("Content-Type", "application/json")
@@ -914,6 +932,9 @@ func TestResponsesCompactionRejectsInvalidStateBeforeInference(t *testing.T) {
 			{"continuation", "/v1/responses", false},
 			{"standalone", "/v1/responses/compact", false},
 			{"triggered", "/v1/responses", true},
+			{"gateway continuation", proxy.CodexDesktopPathPrefix + "/v1/responses", false},
+			{"gateway standalone", proxy.CodexDesktopPathPrefix + "/v1/responses/compact", false},
+			{"gateway triggered", proxy.CodexDesktopPathPrefix + "/v1/responses", true},
 		} {
 			for _, tt := range []struct {
 				name  string
@@ -928,6 +949,9 @@ func TestResponsesCompactionRejectsInvalidStateBeforeInference(t *testing.T) {
 					local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, _ []byte) {
 						w.WriteHeader(http.StatusInternalServerError)
 					})
+					if strings.HasPrefix(mode.path, proxy.CodexDesktopPathPrefix) {
+						local = newCompactionTestGateway(t, local)
+					}
 					input := tt.input
 					if mode.trigger {
 						input += `,{"type":"compaction_trigger"}`
@@ -957,6 +981,10 @@ func TestResponsesForeignCompactionHistory(t *testing.T) {
 		{"streaming continuation", "/v1/responses", true, false},
 		{"standalone compaction", "/v1/responses/compact", false, true},
 		{"triggered compaction", "/v1/responses", true, true},
+		{"gateway json continuation", proxy.CodexDesktopPathPrefix + "/v1/responses", false, false},
+		{"gateway streaming continuation", proxy.CodexDesktopPathPrefix + "/v1/responses", true, false},
+		{"gateway standalone compaction", proxy.CodexDesktopPathPrefix + "/v1/responses/compact", false, true},
+		{"gateway triggered compaction", proxy.CodexDesktopPathPrefix + "/v1/responses", true, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			const response = `{"id":"resp_next","object":"response","status":"completed","model":"fixture","output":[],"usage":null}`
@@ -974,11 +1002,20 @@ func TestResponsesForeignCompactionHistory(t *testing.T) {
 					_, _ = io.WriteString(w, response)
 				}
 			})
+			if strings.HasPrefix(tt.path, proxy.CodexDesktopPathPrefix) {
+				local = newCompactionTestGateway(t, local)
+			}
 			input := []any{
 				map[string]any{"role": "user", "content": "readable prefix"},
 				openai.ResponsesCompactionItem{Type: "compaction", EncryptedContent: "opaque-provider-state"},
+				map[string]any{"type": "reasoning", "id": "rs_123456", "summary": []map[string]string{{"type": "summary_text", "text": "readable reasoning fixture"}}},
 				map[string]any{"type": "custom_tool_call", "call_id": "call_1", "name": "read", "input": "notes.txt"},
 				map[string]any{"type": "custom_tool_call_output", "call_id": "call_1", "output": "kiwi-42"},
+				map[string]any{"type": "function_call", "call_id": "call_2", "name": "inspect", "namespace": "workspace", "arguments": `{}`},
+				map[string]any{"type": "function_call_output", "call_id": "call_2", "output": []map[string]string{
+					{"type": "input_text", "text": "retained image"},
+					{"type": "input_image", "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="},
+				}},
 			}
 			if tt.compact && tt.stream {
 				input = append(input, map[string]any{"type": "compaction_trigger"})
@@ -1007,7 +1044,7 @@ func TestResponsesForeignCompactionHistory(t *testing.T) {
 			if strings.Contains(forwarded, "opaque-provider-state") {
 				t.Fatalf("foreign payload reached inference: %s", forwarded)
 			}
-			for _, text := range []string{"readable prefix", "kiwi-42", "call_1", "notes.txt"} {
+			for _, text := range []string{"readable prefix", "kiwi-42", "call_1", "notes.txt", "readable reasoning fixture", "call_2", "workspace", "retained image", "iVBORw0KGgo"} {
 				if !strings.Contains(forwarded, text) {
 					t.Errorf("history missing %q: %s", text, forwarded)
 				}
