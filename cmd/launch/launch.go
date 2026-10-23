@@ -284,7 +284,7 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 		Short: "Launch the Ollama menu or an integration",
 		Long: `Launch the Ollama interactive menu, or directly launch a specific integration.
 
-Without arguments, this is equivalent to running 'ollama' directly.
+Without arguments, choose a model or app from the interactive menu.
 Flags and extra arguments require an integration name.
 
 Supported integrations:
