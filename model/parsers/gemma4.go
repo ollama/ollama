@@ -3,6 +3,7 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -526,9 +527,10 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 	if err := decoder.Decode(&args); err == nil {
 		suffix := strings.TrimSpace(jsonStr[decoder.InputOffset():])
 		if suffix != "" && !strings.ContainsAny(suffix, `{}[],:"<>|`) {
-			// Another JSON value is additional structured output, not noise.
+			// A complete or incomplete JSON value is structured output, not noise.
 			var extra json.RawMessage
-			hasExtraValue := json.NewDecoder(strings.NewReader(suffix)).Decode(&extra) == nil
+			extraErr := json.NewDecoder(strings.NewReader(suffix)).Decode(&extra)
+			hasExtraValue := extraErr == nil || errors.Is(extraErr, io.ErrUnexpectedEOF)
 			if !hasExtraValue {
 				return args, nil
 			}

@@ -70,7 +70,7 @@ func TestGemma4ParserTrailingNoise(t *testing.T) {
 	}
 }
 
-func TestGemma4ToolCallTrailingNoiseRejectsMalformed(t *testing.T) {
+func TestGemma4ParserTrailingNoiseRejectsMalformed(t *testing.T) {
 	for _, payload := range []string{
 		`call:ask_user{message:<|"|>hi<|"|>,requestedSchema:{properties:{name:{type:<|"|>string<|"|>}}}$$`,
 		`call:ask_user{requestedSchema:{value:???}}$$`,
@@ -80,12 +80,27 @@ func TestGemma4ToolCallTrailingNoiseRejectsMalformed(t *testing.T) {
 		`call:ask_user{message:<|"|>hi<|"|>} []`,
 		`call:ask_user{message:<|"|>hi<|"|>} 42`,
 		`call:ask_user{message:<|"|>hi<|"|>} 1e10000`,
+		`call:ask_user{message:<|"|>hi<|"|>} 1e+`,
+		`call:ask_user{message:<|"|>hi<|"|>} 1.`,
+		`call:ask_user{message:<|"|>hi<|"|>} tru`,
+		`call:ask_user{message:<|"|>hi<|"|>} fals`,
+		`call:ask_user{message:<|"|>hi<|"|>} nul`,
 		`call:ask_user{message:<|"|>hi<|"|>} true`,
 		`call:ask_user{message:<|"|>hi<|"|>},other:1`,
 	} {
 		t.Run(payload, func(t *testing.T) {
-			if call, err := parseGemma4ToolCall(payload, nil); err == nil {
-				t.Fatalf("expected malformed call to be rejected, got %v", call)
+			for _, ending := range []struct{ name, tag string }{
+				{"EOF", ""},
+				{"closing_tag", gemma4ToolCallCloseTag},
+			} {
+				t.Run(ending.name, func(t *testing.T) {
+					parser := ParserForName("gemma4")
+					parser.Init(nil, nil, nil)
+					content, thinking, calls, err := parser.Add(gemma4ToolCallOpenTag+payload+ending.tag, ending.tag == "")
+					if err != nil || content != "" || thinking != "" || len(calls) != 0 {
+						t.Fatalf("got content=%q, thinking=%q, calls=%v, err=%v", content, thinking, calls, err)
+					}
+				})
 			}
 		})
 	}
