@@ -1945,6 +1945,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
 		resp.Thinking = m.Thinking()
 	}
+	if slices.Contains(resp.Capabilities, model.CapabilitySpeech) {
+		resp.Voices = speechVoices(mf)
+	}
 
 	if summaries, err := manifestSummariesForShow(name, mf.SelectedDigest()); err != nil {
 		return nil, err

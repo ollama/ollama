@@ -53,6 +53,16 @@ func TestPrereleaseConfigRejected(t *testing.T) {
 	}
 }
 
+func TestVoiceLookup(t *testing.T) {
+	def, zoey, kaua := &Voice{}, &Voice{}, &Voice{}
+	m := &Model{Voices: map[string]*Voice{"default": def, "Zoey": zoey, "Kauã": kaua}}
+	for name, want := range map[string]*Voice{"": def, "DEFAULT": def, "Zoey": zoey, "zoey": zoey, "kaua": kaua, "KAUÃ": kaua, "alloy": nil} {
+		if got := m.voice(name); got != want {
+			t.Errorf("voice(%q) = %p, want %p", name, got, want)
+		}
+	}
+}
+
 func TestTimeNorm(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		values := []float32{1, 2, 3, 6}

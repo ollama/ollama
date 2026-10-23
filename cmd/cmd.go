@@ -1511,6 +1511,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		})
 	}
 
+	if len(resp.Voices) > 0 {
+		tableRender("Voices", func() (rows [][]string) {
+			for _, voice := range resp.Voices {
+				rows = append(rows, []string{"", voice})
+			}
+			return
+		})
+	}
+
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {
 			arch, _ := resp.ProjectorInfo["general.architecture"].(string)

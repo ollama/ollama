@@ -26,11 +26,17 @@ func writeGradiumPhononSource(t *testing.T, dir string, voiceShape []int32) {
 	})
 }
 
-func TestGradiumPhononImportsPublisherVoice(t *testing.T) {
+func TestGradiumPhononImportsPublisherVoices(t *testing.T) {
 	dir := t.TempDir()
 	writeGradiumPhononSource(t, dir, []int32{1, 512, 2})
+	if err := os.Mkdir(filepath.Join(dir, "voices"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createTestSafetensors(t, filepath.Join(dir, "voices", "Zoey.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("speaker_wavs", "F32", []int32{1, 512, 2}, make([]byte, 4*512*2)),
+	})
 	files, err := SafetensorsWeightFiles(dir)
-	if err != nil || !slices.Contains(files, "default-voice.safetensors") {
+	if err != nil || !slices.Contains(files, "default-voice.safetensors") || !slices.Contains(files, "voices/Zoey.safetensors") {
 		t.Fatalf("weight files = %v, %v", files, err)
 	}
 	store := newCaptureStore()
@@ -45,8 +51,8 @@ func TestGradiumPhononImportsPublisherVoice(t *testing.T) {
 	if !slices.Equal(got.ModelConfig.Capabilities, []string{"speech"}) || got.ModelConfig.Requires != phononMinOllamaVersion {
 		t.Fatalf("model config = %+v", got.ModelConfig)
 	}
-	if store.blobs["voices.default"] == nil {
-		t.Fatalf("missing default voice blob: %v", store.names())
+	if store.blobs["voices.default"] == nil || store.blobs["voices.Zoey"] == nil {
+		t.Fatalf("missing voice blobs: %v", store.names())
 	}
 }
 

@@ -141,6 +141,11 @@ func SafetensorsWeightFiles(dir string) ([]string, error) {
 			if !slices.Contains(files, "default-voice.safetensors") {
 				return nil, fmt.Errorf("Phonon checkpoint requires default-voice.safetensors")
 			}
+			voices, err := phononVoiceFiles(dir)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, voices...)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err

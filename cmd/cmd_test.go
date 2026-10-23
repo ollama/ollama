@@ -2860,6 +2860,35 @@ func TestShowInfoImageCapability(t *testing.T) {
 	}
 }
 
+func TestShowInfoSpeechVoices(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details:      api.ModelDetails{Family: "phonon", ParameterSize: "31M", QuantizationLevel: "F32"},
+		Capabilities: []model.Capability{model.CapabilitySpeech},
+		Voices:       []string{"default", "Fairy Godmother", "Zoey"},
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    phonon    \n" +
+		"    parameters      31M       \n" +
+		"    quantization    F32       \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    speech    \n" +
+		"\n" +
+		"  Voices\n" +
+		"    default            \n" +
+		"    Fairy Godmother    \n" +
+		"    Zoey               \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
 func TestPushProgressMessage(t *testing.T) {
 	tests := []struct {
 		name    string
