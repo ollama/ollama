@@ -161,9 +161,12 @@ func normalizeText(input string) string {
 			// Arrows: "->", "=>" and "<-".
 			i++
 			res.pushSpace()
-		case (c == '<' || c == '>') && at(i+1) == '=':
+		case c == '<' && at(i+1) == '=':
 			i++
-			res.pushSpoken(symbols[c] + " or equal to")
+			res.pushSpoken(symbols['≤'])
+		case c == '>' && at(i+1) == '=':
+			i++
+			res.pushSpoken(symbols['≥'])
 		case c == '>' && (prev < 0 || prev == '\n'):
 			// A quoted line in markdown.
 			res.pushSpace()
@@ -352,14 +355,14 @@ func stripClosingQuote(text string) string {
 	return text
 }
 
-// spellSymbols spells out the '@', '+' and '_' of a word no rule claimed, drops
-// its ':' and '/', and gives the pieces they leave their own turn at the rules:
+// spellSymbols spells out the '@', '+' and '_' of a word no rule claimed, reads
+// its slashes, and gives the pieces they leave their own turn at the rules:
 // "1500+20" reads "15 hundred plus 20".
 func spellSymbols(word string) string {
 	if text, ok := splitSlash(word); ok {
 		return rewriteEach(text)
 	}
-	if !strings.ContainsAny(word, "@+_:") {
+	if !strings.ContainsAny(word, "@+_") {
 		return word
 	}
 	var res appender
@@ -371,8 +374,6 @@ func spellSymbols(word string) string {
 			res.pushSpoken("plus")
 		case '_':
 			res.pushSpoken("underscore")
-		case ':':
-			res.pushSpace()
 		default:
 			res.push(c)
 		}
@@ -400,9 +401,10 @@ var slashUnits = strings.Fields("km kg mg ml mL dL mol kJ kW kWh Hz min hr hrs s
 
 // splitSlash reads the slashes of a word: "km/h" is "km per hour" before a
 // unit, and otherwise they part words, "and/or" "and or" and "N/A" "N A".
+// Slashes between numbers, as in dates and "50/50", the model reads itself.
 func splitSlash(word string) (string, bool) {
 	body := strings.TrimRightFunc(word, func(c rune) bool { return isASCIIPunct(c) && c != '/' })
-	if !strings.Contains(body, "/") {
+	if !strings.Contains(body, "/") || strings.Trim(body, "0123456789/") == "" {
 		return "", false
 	}
 	parts := strings.FieldsFunc(body, func(c rune) bool { return c == '/' })
@@ -427,8 +429,6 @@ func power(n string) string {
 }
 
 var symbols = map[rune]string{
-	'<': "less than",
-	'>': "greater than",
 	'×': "times",
 	'÷': "divided by",
 	'≤': "less than or equal to",

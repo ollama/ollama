@@ -18,9 +18,9 @@ func TestNormalizeText(t *testing.T) {
 		{"She said, “It is time to go.”", "She said, \"It is time to go."},
 		{"Hello\x00 there. How are you?", "Hello there. How are you?"},
 		{"sun ☀️ dev 👩‍💻 done", "sun dev done"},
-		{"time: 10:30", "time, 10-30"},
+		{"time: 10:30", "time, 10:30"},
 		{"foo ; bar  :  baz", "foo, bar, baz"},
-		{"a;b:c", "a, b c"},
+		{"a;b:c", "a, b:c"},
 		{"fish &. 12%. #.", "fish &. 12%."},
 		{"hello... goodbye", "hello. goodbye"},
 		{"'Hello!'", "'Hello!"},
@@ -41,7 +41,7 @@ func TestNormalizeText(t *testing.T) {
 		{"It was −5°C, then −12.", "It was minus 5 degrees Celsius, then minus 12."},
 		{"Thanks for reading! ❤️ Made with ❤️ in Paris ❤❤", "Thanks for reading! Made with love in Paris"},
 		{"Made with ❤️. Thanks! ❤️", "Made with love. Thanks!"},
-		{"x < 5, y >= 2, a -> b, <br>done", "x less than 5, y greater than or equal to 2, a b, done"},
+		{"x < 5, y >= 2, a -> b, <br>done", "x < 5, y greater than or equal to 2, a b, done"},
 		{"> Quoted line\n> more", "Quoted line more"},
 		{"2*3 = 6, 2^10 and x^-1, a|b, ~/git \\o/", "2 times 3 equals 6, 2 to the power of 10 and x to the power of minus 1, a b, git o"},
 		{"Studies show¹ it works.² E = mc², 5 km² and ¹³C.", "Studies show it works. E equals mc squared, 5 km squared and 13C."},
@@ -89,16 +89,17 @@ func TestNormalizeText(t *testing.T) {
 		{"Dial +33 1 23 45 67 89.", "Dial plus three three, one, two three, four five, six seven, eight nine."},
 		{"It fell to -12.", "It fell to minus 12."},
 		{"Your order number is 48213.", "Your order number is 48 thousand 213."},
-		{"In 1492 and 1805, the RTX 4090 had 4096 tokens.", "In 14 92 and 18 oh 5, the RTX 40 90 had 40 96 tokens."},
+		{"In 1492 and 1805, the RTX 4090 had 4096 tokens.", "In 14 92 and 18 oh 5, the RTX 4 thousand 90 had 4 thousand 96 tokens."},
 		{"Wait 5-10 minutes, 0-60 in 3-4 s, a 10-5 win.", "Wait 5 to 10 minutes, 0 to 60 in 3 to 4 s, a 10-5 win."},
 		{"Visit www.kyutai.fr today.", "Visit W-W-W dot kyutai dot F-R today."},
 		{"and/or, to/from, reality/the deity.", "and or, to from, reality the deity."},
-		{"40 km/h, 5 mg/kg, c/o, 3/4, 05/04/2025", "40 km per hour, 5 mg per kg, care of, 3 quarters, 05-04 2025"},
+		{"40 km/h, 5 mg/kg, c/o, 3/4, 05/04/2025", "40 km per hour, 5 mg per kg, care of, 3 quarters, 05/04/2025"},
 		{"Drive 60 km/h at 9.8 m/s², N/A.", "Drive 60 km per hour at 9 point 8 m per second squared, N A."},
-		{"Add 1 1/2 cups, 3/4 tsp and 2/3 cup, 24/7.", "Add 1 and 1 half cups, 3 quarters tsp and 2 thirds cup, 24-7."},
-		// Times and dates are opt-in upstream; these are its readings.
-		{"It's 1:06pm on 20/12/2015.", "It's 1-06 PM on 20-12 2015."},
-		{"Meet at 10:30, 3:45PM or 10:00 am, ratio 16:9.", "Meet at 10-30, 3-45 PM or 10 am, ratio 16 9."},
+		{"Add 1 1/2 cups, 3/4 tsp and 2/3 cup, 24/7.", "Add 1 and 1 half cups, 3 quarters tsp and 2 thirds cup, 24/7."},
+		{"Use Ctrl+C to copy, Cmd+V to paste.", "Use Control plus C to copy, Command plus V to paste."},
+		// The model reads times and dates as written; upstream's opt-in "10-30"
+		// reads as a range.
+		{"It's 1:06pm on 20/12/2015, 16:9.", "It's 1:06pm on 20/12/2015, 16:9."},
 		{"Sooo good, Nooooo!", "So good, No!"},
 	} {
 		if got := normalizeText(tc.input); got != tc.want {
@@ -126,13 +127,9 @@ func TestRewriteWord(t *testing.T) {
 		{"1492", "14 92"},
 		{"1805", "18 oh 5"},
 		{"1500.", "15 hundred."},
-		{"3000", "3 thousand"},
-		{"3:45PM!", "3-45 PM!"},
-		{"03.00pm.", "3 PM."},
-		{"12:30", "12-30"},
+		{"4096", "4 thousand 96"},
 		{"3/4", "3 quarters"},
 		{"1/2,", "1 half,"},
-		{"10/23/2025.", "10-23 2025."},
 		{"sooo", "so"},
 		{"Nooooo,", "No,"},
 		{"Hiii", "Hi"},
@@ -179,7 +176,7 @@ func TestRewriteWord(t *testing.T) {
 		}
 	}
 	for _, word := range []string{
-		"10-5", "3:4", "123:06", "3.5%", "1234567890123", "$5€", "$007", "2024-05-12",
+		"10-5", "12:30", "3:45PM", "10/23/2025", "50/50", "3.5%", "1234567890123", "$5€", "$007", "2024-05-12",
 		"12-05-24", "+1-555-123-4567", "user@host", "fé@bar.com", "it.Now",
 		"e.g.", "v1.2", "Dr.", "dec.", "Zzz", "WWW", "Sun.", "Jan.", "good", "Brrr", "Mmm",
 	} {

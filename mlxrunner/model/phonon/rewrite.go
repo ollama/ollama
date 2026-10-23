@@ -9,7 +9,8 @@ import (
 )
 
 // The word rules of xn-ptts preprocess::rewrite for English: everything but
-// phone numbers, with the readings fixed where upstream gets them wrong.
+// phone numbers, times and dates, with the readings fixed where upstream gets
+// them wrong.
 
 // rewriteText runs the rules over the words of text. A few readings claim
 // several words; otherwise the first rule that claims a word wins, and the
@@ -56,7 +57,7 @@ func rewriteSpan(words []string) (string, int) {
 	return "", 0
 }
 
-var rules = []func(string) (string, bool){numbers, currency, ranges, times, slashes, dashedDigits, emails, urls, abbreviations, elongations}
+var rules = []func(string) (string, bool){numbers, currency, ranges, fraction, dashedDigits, emails, urls, abbreviations, elongations}
 
 func rewriteWord(word string) (string, bool) {
 	for _, rule := range rules {
@@ -116,15 +117,14 @@ func spellShort(word string) string {
 
 // numbers reads large numbers with their scale words: "1,234.56" is "1
 // thousand 234 point 56". Values under a thousand stay digits, as do the years
-// 1900 to 2099; other four-digit numbers without commas are read as years are,
-// "1492" as "14 92" and "4090" as "40 90". A leading zero marks a code read
-// digit by digit, and "20-25" is a range.
+// 1900 to 2099, and earlier years are read as years are: "1492" is "14 92". A
+// leading zero marks a code read digit by digit, and "20-25" is a range.
 func numbers(word string) (string, bool) {
 	body, end := splitSuffix(word)
 	if len(body) >= 2 && body[0] == '0' && allDigits(body) {
 		return spell(body) + end, true
 	}
-	if len(body) == 4 && allDigits(body) && (body < "1900" || body >= "2100") {
+	if len(body) == 4 && allDigits(body) && body < "1900" {
 		return yearStyle(body) + end, true
 	}
 	if from, to, ok := strings.Cut(body, "-"); ok && isRange(from, to) {
@@ -149,7 +149,7 @@ func numbers(word string) (string, bool) {
 }
 
 // yearStyle reads a four-digit number as a year is read: "1492" is "14 92",
-// "1805" "18 oh 5", "1500" "15 hundred" and "3000" "3 thousand".
+// "1805" "18 oh 5", "1500" "15 hundred" and "1000" "1 thousand".
 func yearStyle(s string) string {
 	switch {
 	case s[1:] == "000":
@@ -541,34 +541,11 @@ func dashedDigits(word string) (string, bool) {
 	return strings.Join(words, " ") + suffix, true
 }
 
-// times reads a clock time as upstream's opt-in rule does: "3:45PM" is "3-45
-// PM" and "10:00" "10". A '.' separates the minutes only before AM or PM.
-func times(word string) (string, bool) {
-	body, suffix := splitSuffix(word)
-	hour, rest, ok := runOf(body, isASCIIDigit)
-	if !ok || len(hour) > 2 || len(rest) < 3 || rest[0] != ':' && rest[0] != '.' || !allDigits(rest[1:3]) {
-		return "", false
-	}
-	minutes, meridiem := rest[1:3], rest[3:]
-	if !slices.Contains([]string{"", "AM", "PM", "am", "pm"}, meridiem) || rest[0] == '.' && meridiem == "" {
-		return "", false
-	}
-	if len(hour) == 2 {
-		hour = strings.TrimPrefix(hour, "0")
-	}
-	s := hour
-	if minutes != "00" {
-		s += "-" + minutes
-	}
-	if meridiem != "" {
-		s += " " + strings.ToUpper(meridiem)
-	}
-	return s + suffix, true
-}
-
 var fractionNames = strings.Fields("half third quarter fifth sixth seventh eighth ninth tenth")
 
 // fraction reads a fraction up to tenths in words: "3/4" is "3 quarters".
+// Other numbers split by slashes, as in dates and "50/50", the model reads
+// itself, while "10/23" written as "10-23" would read as a range.
 func fraction(word string) (string, bool) {
 	body, suffix := splitSuffix(word)
 	a, b, ok := strings.Cut(body, "/")
@@ -589,28 +566,6 @@ func fraction(word string) (string, bool) {
 		name += "s"
 	}
 	return a + " " + name + suffix, true
-}
-
-// slashes reads numbers split by slashes: a fraction in words, and anything
-// else, such as a date, as upstream's opt-in rule does: "10/23/2025" is
-// "10-23 2025" and "24/7" "24-7".
-func slashes(word string) (string, bool) {
-	if s, ok := fraction(word); ok {
-		return s, true
-	}
-	body, suffix := splitSuffix(word)
-	parts := strings.Split(body, "/")
-	if len(parts) < 2 || len(parts) > 3 || slices.ContainsFunc(parts, func(p string) bool { return !allDigits(p) }) {
-		return "", false
-	}
-	if len(parts[0]) > 2 || len(parts[1]) > 2 || len(parts) == 3 && len(parts[2]) != 2 && len(parts[2]) != 4 {
-		return "", false
-	}
-	s := parts[0] + "-" + parts[1]
-	if len(parts) == 3 {
-		s += " " + parts[2]
-	}
-	return s + suffix, true
 }
 
 // mixedNumber reads a whole number and a fraction: "1 1/2" is "1 and 1 half".
@@ -792,7 +747,7 @@ var abbreviationWords = map[string]string{
 	"Cpl.": "Corporal", "Gen.": "General", "Adm.": "Admiral", "Sen.": "Senator", "Sens.": "Senators", "Rep.": "Representative",
 	"Reps.": "Representatives", "Gov.": "Governor", "Pres.": "President", "Det.": "Detective", "Insp.": "Inspector",
 	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "vol.": "volume", "Vol.": "Volume", "vs.": "versus",
-	"w/": "with", "W/": "With", "w/o": "without", "W/o": "Without", "c/o": "care of",
+	"w/": "with", "W/": "With", "w/o": "without", "W/o": "Without", "c/o": "care of", "Ctrl": "Control", "Cmd": "Command",
 }
 
 // endingWords can also end a sentence. "Jan." and "Sun." are left out: they are
