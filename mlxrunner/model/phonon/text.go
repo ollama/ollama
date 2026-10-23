@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 const metaspace = "▁"
@@ -214,9 +216,10 @@ func prepareText(text string) (string, int, error) {
 	if len(words) <= 4 {
 		framesAfterEOS = 3
 	}
+	// Rust's full case mapping: "ß" becomes "SS" and "ﬁ" "FI".
 	_, n := utf8.DecodeRuneInString(text)
-	text = strings.ToUpper(text[:n]) + text[n:]
-	if last, _ := utf8.DecodeLastRuneInString(text); unicode.IsLetter(last) || unicode.IsNumber(last) {
+	text = cases.Upper(language.Und).String(text[:n]) + text[n:]
+	if last, _ := utf8.DecodeLastRuneInString(text); isAlphanumeric(last) {
 		text += "."
 	}
 	return text, framesAfterEOS, nil

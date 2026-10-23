@@ -21,6 +21,10 @@ func TestPrepareText(t *testing.T) {
 		{"it’s ready", "It’s ready.", 3},
 		{"hello; world", "Hello; world.", 3},
 		{"one  two\tthree\rfour five", "One two three four five.", 1},
+		// Rust's full case mapping and Alphabetic property.
+		{"ßtart with eszett", "SStart with eszett.", 3},
+		{"ﬁnally, a ligature start", "FInally, a ligature start.", 3},
+		{"rated ⓐ", "Rated ⓐ.", 3},
 	} {
 		got, tail, err := prepareText(tc.input)
 		if err != nil || got != tc.want || tail != tc.tail {
