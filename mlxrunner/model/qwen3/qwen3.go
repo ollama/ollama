@@ -45,7 +45,6 @@ type Config struct {
 	Scale     float32    `json:"-"`
 	QKNormEps float32    `json:"-"`
 	RopeFreqs *mlx.Array `json:"-"`
-	RopeScale float32    `json:"-"`
 }
 
 // Model is the Qwen3 text-only model.
@@ -142,13 +141,15 @@ func newModel(root *model.Root) (model.Model, error) {
 	}
 	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
 	cfg.QKNormEps = 1e-6
-	cfg.RopeScale = 1
 	if rope != nil && rope.TypeName() == "yarn" {
 		params := *rope
 		if params.OriginalMaxPositionEmbeddings <= 0 {
 			params.OriginalMaxPositionEmbeddings = cfg.MaxPositionEmbeddings
 		}
-		cfg.RopeFreqs, cfg.RopeScale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, &params)
+		var scale float32
+		cfg.RopeFreqs, scale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, &params)
+		cfg.Scale *= scale * scale
+		cfg.MaxPositionEmbeddings = max(cfg.MaxPositionEmbeddings, int32(float64(params.Factor)*float64(params.OriginalMaxPositionEmbeddings)))
 	}
 
 	if qt := root.QuantType(); qt != "" {
@@ -332,8 +333,8 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeScale)
-	k = nn.ScaleRotaryPart(mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs), int(cfg.HeadDim), cfg.RopeScale)
+	q = mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+	k = mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a
 	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
