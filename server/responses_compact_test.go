@@ -346,7 +346,7 @@ func TestResponsesCompactionPreservesSelectedImageIntoNextTurn(t *testing.T) {
 	if err := json.Unmarshal(bodies[0], &summaryRequest); err != nil {
 		t.Fatal(err)
 	}
-	if len(summaryRequest.Input) != 2 {
+	if len(summaryRequest.Input) != 3 {
 		t.Fatalf("unexpected summary input: %s", bodies[0])
 	}
 	var blocks []struct {

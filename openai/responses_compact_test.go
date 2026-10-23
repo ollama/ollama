@@ -363,7 +363,7 @@ func TestPrepareTriggeredCompactionBuildsSummaryRequest(t *testing.T) {
 		t.Fatalf("unexpected callable tools: %+v", request.Tools)
 	}
 	transcript := summaryTranscriptText(t, requestBody)
-	if len(request.Input) != 5 || !strings.Contains(transcript, description) || !strings.Contains(transcript, "read_file") {
+	if len(request.Input) != 6 || !strings.Contains(transcript, description) || !strings.Contains(transcript, "read_file") {
 		t.Fatalf("summary transcript is missing tool metadata: %+v", request.Input)
 	}
 	if strings.Contains(transcript, `"instructions"`) {
@@ -447,8 +447,8 @@ func TestCompactionSendsImagesAsMultimodalInput(t *testing.T) {
 	if err := json.Unmarshal(requestBody, &request); err != nil {
 		t.Fatal(err)
 	}
-	if len(request.Input) != 2 {
-		t.Fatalf("input count=%d, want 2", len(request.Input))
+	if len(request.Input) != 3 {
+		t.Fatalf("input count=%d, want 3", len(request.Input))
 	}
 	var blocks []struct {
 		Type     string `json:"type"`
@@ -475,7 +475,7 @@ func TestCompactionSendsImagesAsMultimodalInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chatRequest.Messages) != 2 || len(chatRequest.Messages[1].Images) != 1 || !strings.Contains(chatRequest.Messages[1].Content, "item_000001") {
+	if len(chatRequest.Messages) != 3 || len(chatRequest.Messages[1].Images) != 1 || !strings.Contains(chatRequest.Messages[1].Content, "item_000001") {
 		t.Fatalf("local Responses conversion lost the image-to-item association: %+v", chatRequest.Messages)
 	}
 }
