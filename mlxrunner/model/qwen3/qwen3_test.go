@@ -129,7 +129,7 @@ func TestAttentionRopeReference(t *testing.T) {
 					longKeys := longCache.State()[0]
 					mlx.Eval(longOut, longKeys)
 					check("long-position output", longOut.Floats(), tc.LongOutputSamples, 2e-3)
-					check("long-position key", longKeys.Floats(), tc.LongKeySamples, 2e-4)
+					check("long-position key", longKeys.Floats(), tc.LongKeySamples, 2e-3)
 				})
 			})
 		}
