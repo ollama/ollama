@@ -66,15 +66,22 @@ func TestVerifyFailsClosedWithoutKey(t *testing.T) {
 	if err == nil || !errorsIs(err, ErrNoPublicKey) {
 		t.Fatalf("empty public key err = %v, want ErrNoPublicKey", err)
 	}
-	if strings.TrimSpace(PublicKeyPEM) != "" {
-		t.Fatal("PublicKeyPEM must stay empty until the release Mac generates a key")
-	}
+}
+
+func TestCheckEmbedded(t *testing.T) {
 	_, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckEmbedded(priv); err == nil || !strings.Contains(err.Error(), "no public key is embedded") {
-		t.Fatalf("CheckEmbedded err = %v", err)
+	err = CheckEmbedded(priv)
+	if strings.TrimSpace(PublicKeyPEM) == "" {
+		if err == nil || !strings.Contains(err.Error(), "no public key is embedded") {
+			t.Fatalf("empty embedded key: CheckEmbedded err = %v", err)
+		}
+		return
+	}
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("unrelated private key: CheckEmbedded err = %v", err)
 	}
 }
 
