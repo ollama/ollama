@@ -518,6 +518,20 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 		}
 	}
 
+	// Recover a complete object followed by model noise. The decoder locates
+	// the boundary without mistaking braces inside string arguments for it.
+	jsonStr := gemma4ArgsToJSON(argsStr)
+	decoder := json.NewDecoder(strings.NewReader(jsonStr))
+	var args api.ToolCallFunctionArguments
+	if err := decoder.Decode(&args); err == nil {
+		suffix := strings.TrimSpace(jsonStr[decoder.InputOffset():])
+		// A suffix that can start a JSON value is not noise, even if it
+		// later becomes invalid, such as "1e+$$" or "tru $$".
+		if suffix != "" && !strings.ContainsAny(suffix, `{}[],:"<>|`) && !strings.ContainsAny(suffix[:1], "-0123456789tfn") {
+			return args, nil
+		}
+	}
+
 	return api.ToolCallFunctionArguments{}, errors.New("repair failed to produce valid JSON arguments")
 }
 
