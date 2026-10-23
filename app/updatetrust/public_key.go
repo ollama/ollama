@@ -4,4 +4,7 @@ package updatetrust
 // artifacts. scripts/generate-update-key.sh rewrites this file on the release
 // Mac. The matching private key stays on that Mac and is never committed.
 // An empty value fails closed: the updater will not install an update.
-const PublicKeyPEM = ""
+const PublicKeyPEM = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA5o6r5pHvEin+CApe4sNxNjt6480s0mKUzzbYTFbEW7E=
+-----END PUBLIC KEY-----
+`
