@@ -3204,6 +3204,41 @@ func TestMemoryParsingWriter(t *testing.T) {
 	}
 }
 
+func TestMemoryParsingWriterParsesLinesSplitAcrossWrites(t *testing.T) {
+	log := []byte(
+		"using device CUDA0 (NVIDIA GPU) (0000:01:00.0) - 1000 MiB free\n" +
+			"load_tensors:        CUDA0 model buffer size =   840.00 MiB\n" +
+			"llm_load_tensors: offloaded 4/4 layers to GPU\n",
+	)
+
+	for cut := 1; cut < len(log); cut++ {
+		t.Run(fmt.Sprintf("cut-%d", cut), func(t *testing.T) {
+			runner := &llamaServerRunner{
+				vramByDevice:     make(map[string]uint64),
+				systemFreeAtLoad: make(map[string]uint64),
+			}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+
+			if _, err := w.Write(log[:cut]); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write(log[cut:]); err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := runner.vramByDevice["CUDA0"], uint64(840*1024*1024); got != want {
+				t.Errorf("vramByDevice[CUDA0] = %d, want %d", got, want)
+			}
+			if got, want := runner.systemFreeAtLoad["CUDA0"], uint64(1000*1024*1024); got != want {
+				t.Errorf("systemFreeAtLoad[CUDA0] = %d, want %d", got, want)
+			}
+			if runner.gpuLayers != 4 || runner.totalLayers != 4 {
+				t.Errorf("offloaded layers = %d/%d, want 4/4", runner.gpuLayers, runner.totalLayers)
+			}
+		})
+	}
+}
+
 func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
 	runner := &llamaServerRunner{}
 	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
