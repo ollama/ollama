@@ -2,6 +2,7 @@ package parsers
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -215,6 +216,19 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQwen3VLNonThinkingParserErrorIncludesContext(t *testing.T) {
+	parser := Qwen3VLParser{hasThinkingSupport: false}
+	parser.Init([]api.Tool{}, nil, nil)
+
+	_, _, _, err := parser.Add(`<tool_call>{malformed</tool_call>`, true)
+	if err == nil {
+		t.Fatal("expected error from malformed tool call")
+	}
+	if !strings.Contains(err.Error(), "failed to parse model-generated tool call") {
+		t.Fatalf("expected error to include parsing context, got: %v", err)
 	}
 }
 
