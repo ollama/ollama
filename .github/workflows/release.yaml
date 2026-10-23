@@ -788,6 +788,12 @@ jobs:
               exit 1
             fi
           done
+      # README links releases/latest/download/Ollama.dmg. build_darwin.sh
+      # already writes that name; this also covers a versioned *.dmg.
+      # The in-app updater installs the zip, not the DMG. No DMG (an
+      # unsigned build) is left as a warning inside the script.
+      - name: Ensure stable macOS DMG name
+        run: ./scripts/publish_stable_dmg.sh --ensure-dist dist
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist

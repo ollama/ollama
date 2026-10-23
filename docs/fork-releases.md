@@ -13,7 +13,8 @@ The app polls `https://api.github.com/repos/maxkongerskov/ollama/releases/latest
 - **Asset:** the first `.zip` whose name contains `darwin` and the Mac's arch
   (`arm64`/`aarch64` or `amd64`/`x86_64`). If none matches, any `.zip` that
   does not name another arch (e.g. `-darwin-universal.zip`). A DMG is never
-  installed by the updater; a release with only a DMG is skipped.
+  installed by the updater, including the stable `Ollama.dmg` asset. A release
+  with only a DMG is skipped.
 - **Zip layout:** `Ollama.app/` at the root and nothing else. Make it with
   `ditto -c -k --norsrc --keepParent Ollama.app X.zip`. Do not use
   `--sequesterRsrc`: its `__MACOSX/` entries make the updater reject the zip.
@@ -50,7 +51,10 @@ APPLE_IDENTITY="Developer ID Application: Max Køngerskov (6LZ2DS9JPD)" \
   ./scripts/build_darwin.sh -a arm64          # -> dist/Ollama.app
 #    or let the release script call build_darwin.sh: add --build in step 3
 
-# 3. Check, then publish the zip (+ optional DMG) to the fork's release
+# 3. Check, then publish the zip (+ optional DMG) to the fork's release.
+#    A DMG is uploaded twice: the versioned name, and Ollama.dmg so
+#    https://github.com/maxkongerskov/ollama/releases/latest/download/Ollama.dmg
+#    keeps pointing at the newest build.
 ./scripts/release_fork_darwin.sh --dry-run
 ./scripts/release_fork_darwin.sh [--dmg dist/Ollama.dmg]
 ```
@@ -64,6 +68,9 @@ The release script:
   (`--notary-profile NAME`/`NOTARY_PROFILE`, or
   `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`). Without them it skips this step;
 - writes `dist/fork-release/<tag>/Ollama-<version>-darwin-<arch>.zip`;
+- when a DMG is provided, also writes that zip's sibling
+  `Ollama-<version>-darwin-<arch>.dmg` and a byte-identical `Ollama.dmg`
+  (the name the README downloads; the updater still installs the zip);
 - verifies the zip with `codesign` and the updater's own `VerifyDownload`;
 - creates the release with `--latest`, or uploads to the existing one with
   `--clobber`, and adds `sha256sum.txt`.

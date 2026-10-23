@@ -1,55 +1,109 @@
 <p align="center">
-  <a href="https://ollama.com">
+  <a href="https://github.com/ollama/ollama">
     <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
   </a>
 </p>
 
 # Ollama
 
-Start building with open models. Access the latest releases locally or in the cloud with complete privacy.
+This repository is [Max Køngerskov](https://github.com/maxkongerskov)'s fork of [Ollama](https://github.com/ollama/ollama). It is the same local model runner, CLI, and HTTP API, plus the changes below. It is MIT licensed, with copyright held by Ollama. See [LICENSE](LICENSE). Upstream Ollama lives at [github.com/ollama/ollama](https://github.com/ollama/ollama) and [ollama.com](https://ollama.com).
 
-## Download
+Installers, package-manager formulas, and the Docker Hub image `ollama/ollama` are upstream builds. They do not include the changes in this fork. The download links below are for this fork.
+
+## Why this fork exists
+
+Upstream Ollama installs and updates from ollama.com, and it builds [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp). This fork exists so the macOS app can:
+
+- run current DeepSeek and GLM GGUFs against a pinned llama.cpp that carries the Unsloth DeepSeek-V4.1 import
+- search the web without an ollama.com account or quota
+- update from this GitHub repository
+
+Release tags look like `v0.40.5-b11724-ds41.3`: the Ollama version, the llama.cpp build number, and a fork suffix.
+
+## What this fork adds
+
+### Keyless web search
+
+Web search uses a DuckDuckGo HTML backend. It needs no ollama.com account, sign-in, or quota, and it is on by default. An app launched from Finder does not see a shell environment, so an opt-in environment variable would never apply to the GUI.
+
+Set `OLLAMA_KEYLESS_WEB_SEARCH=0` (or `false`) to use the ollama.com web search backend again. An explicitly configured search endpoint still wins over the built-in backend.
+
+The keyless backend serves:
+
+- the app's own chat tool
+- `POST /api/experimental/web_search`
+- Anthropic `POST /v1/messages`
+- OpenAI Responses
+
+### Claude routes
+
+The desktop app's Claude settings card routes each Claude model option to an Ollama model. That is the Claude Desktop gateway. The routes are the ones Claude reports. When the app has to fall back, they are Fable 5, Opus 5, Sonnet 5, Haiku 4.5, and Sonnet 4.6.
+
+An **All** picker at the top of the card sets every route to the same model in one step. When the routes already differ, the picker shows Mixed. Each route can still be changed on its own afterwards.
+
+### DeepSeek V4.1, GLM, and llama.cpp
+
+`LLAMA_CPP_REPO` points at [maxkongerskov/llama.cpp](https://github.com/maxkongerskov/llama.cpp), and `LLAMA_CPP_VERSION` pins the ref (`b11724-unsloth-ds41` on current main). Upstream Ollama builds ggml-org/llama.cpp instead (its pin is `b11803` as of October 2026).
+
+On top of that pin:
+
+- Message text that contains the DeepSeek image placeholder with fullwidth bars, `<｜deepseek_image｜>`, is rewritten to `<|deepseek_image|>` before it reaches llama-server. Pasted logs and tool results no longer fail the DeepSeek V4.x chat template with "Message content contains image special token". Real images are still sent as image parts.
+- The Go GGUF reader understands `MXFP8`, the gather-only type used for DeepSeek-V4.1 Engram tables, and the IQ1 types at ids 64–66 (`IQ1_XS`, `IQ1_XXS`, `IQ1_XXXS`). Stock llama.cpp rejects files that use those IQ1 types.
+- Runner memory estimates include every split-GGUF shard, DeepSeek Engram host weights, and multimodal projector (`mmproj`) weights.
+- `--context-shift` is passed only when that llama-server can shift the KV cache. `--no-ui` is passed when the binary advertises it; older binaries still get `--no-webui`.
+- The `glm5next` compatibility remap ships in `llama/compat/`. On this pin it is off by default, because the pinned llama.cpp handles those GGUFs itself. `-DOLLAMA_COMPAT_NATIVE_GLM5NEXT=0` turns the remap back on.
+
+### Desktop app
+
+- The macOS and Windows apps check `https://api.github.com/repos/maxkongerskov/ollama/releases/latest`. They install a `.zip` (macOS) or `.exe` (Windows) from that release. They do not install the DMG, and they do not check ollama.com. A release that only has a DMG is skipped. How a release is cut is documented in [docs/fork-releases.md](docs/fork-releases.md).
+- `OLLAMA_KEEP_ALIVE` defaults to 1 hour. Upstream's default is 5 minutes. Settings has a keep-alive slider, including "Never unload".
+- The context-length slider goes up to 1M tokens (512k and 1M stops). Upstream's slider stops at 256k.
+- The chat model picker has an Unload action, the same operation as `ollama stop`.
+
+## Download this fork
 
 ### macOS
 
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
-```
+[Download the latest Ollama.dmg](https://github.com/maxkongerskov/ollama/releases/latest/download/Ollama.dmg)
 
-or [download manually](https://ollama.com/download/Ollama.dmg)
+That URL is the `Ollama.dmg` asset on the [latest release](https://github.com/maxkongerskov/ollama/releases/latest) of this repository. `scripts/release_fork_darwin.sh` also uploads a versioned copy, `Ollama-<version>-darwin-<arch>.dmg`, with the same bytes. The versioned name changes every tag; `Ollama.dmg` does not, so this link keeps tracking the newest build. Checksums and notarization status are in the release notes.
 
-### Windows
+Open the disk image and drag Ollama into Applications. Current macOS releases are universal (Apple Silicon and Intel) and Developer ID signed. If a build was not notarized, macOS shows a Gatekeeper warning the first time you open it: right-click the app and choose Open once. The release notes say whether that build was notarized.
 
-```shell
-irm https://ollama.com/install.ps1 | iex
-```
+The in-app updater installs the `.zip` on the same release, not this DMG.
 
-or [download manually](https://ollama.com/download/OllamaSetup.exe)
+### Linux and Windows
 
-### Linux
+This fork publishes no Linux or Windows installers, and no Docker image. Build from source:
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | sh
+git clone https://github.com/maxkongerskov/ollama.git
+cd ollama
+cmake -B build .
+cmake --build build --parallel 8
+./ollama serve
 ```
 
-[Manual install instructions](https://docs.ollama.com/linux#manual-install)
+GPU backends and other platforms are covered in [docs/development.md](docs/development.md). The macOS app bundle is built with `scripts/build_darwin.sh` on a Mac; publishing it is `scripts/release_fork_darwin.sh` ([docs/fork-releases.md](docs/fork-releases.md)).
 
-### Docker
-
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+The installers and install scripts on ollama.com, Homebrew and distro packages, and the Docker Hub image `ollama/ollama` install upstream Ollama. `scripts/install.sh` and `scripts/install.ps1` in this repository download those upstream builds. Use a build from this repository to get the fork.
 
 ### Libraries
+
+These are upstream client libraries. They speak to the local API and work with this fork.
 
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
 
-### Community
+### Upstream community
 
 - [Discord](https://discord.gg/ollama)
 - [𝕏 (Twitter)](https://x.com/ollama)
 - [Reddit](https://reddit.com/r/ollama)
 
-## Get started
+## Using Ollama
+
+The commands and API below are the same as upstream Ollama. They apply to this fork.
 
 ```
 ollama
@@ -77,7 +131,7 @@ ollama launch openclaw
 
 ### Chat with a model
 
-Run and chat with [Gemma 4](https://ollama.com/library/gemma4):
+Models are pulled from the upstream model registry. Run and chat with [Gemma 4](https://ollama.com/library/gemma4):
 
 ```
 ollama run gemma4
@@ -89,7 +143,7 @@ See the [quickstart guide](https://docs.ollama.com/quickstart) for more details.
 
 ## REST API
 
-Ollama has a REST API for running and managing models.
+Ollama has a REST API for running and managing models. This fork serves it on the same port.
 
 ```
 curl http://localhost:11434/api/chat -d '{
@@ -140,17 +194,30 @@ console.log(response.message.content);
 
 ## Supported backends
 
-- [llama.cpp](https://github.com/ggml-org/llama.cpp) project founded by Georgi Gerganov.
+- [llama.cpp](https://github.com/ggml-org/llama.cpp), founded by Georgi Gerganov. This fork builds the ref in `LLAMA_CPP_VERSION` from [maxkongerskov/llama.cpp](https://github.com/maxkongerskov/llama.cpp).
 
 ## Documentation
+
+Upstream docs for the CLI and API still apply:
 
 - [CLI reference](https://docs.ollama.com/cli)
 - [REST API reference](https://docs.ollama.com/api)
 - [Importing models](https://docs.ollama.com/import)
 - [Modelfile reference](https://docs.ollama.com/modelfile)
-- [Building from source](https://github.com/ollama/ollama/blob/main/docs/development.md)
+- [Quickstart](https://docs.ollama.com/quickstart)
+
+Fork-specific docs in this repository:
+
+- [Building from source](docs/development.md)
+- [Cutting a macOS release](docs/fork-releases.md)
+
+## License
+
+MIT. Copyright (c) Ollama. See [LICENSE](LICENSE). This fork is a modified copy of upstream Ollama.
 
 ## Community Integrations
+
+These projects talk to a local Ollama server, usually at `http://localhost:11434`. They work with this fork. Package-manager packages and the Docker Hub image `ollama/ollama` listed under Infrastructure install upstream Ollama, not a build of this fork.
 
 > Want to add your project? Open a pull request.
 
@@ -347,6 +414,8 @@ console.log(response.message.content);
 - [Harbor](https://github.com/av/harbor) - Containerized LLM toolkit with Ollama as default backend
 
 #### Package Managers
+
+These packages install upstream Ollama. They are not builds of this fork.
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Homebrew](https://formulae.brew.sh/formula/ollama)

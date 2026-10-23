@@ -11,6 +11,10 @@
 #   - built from exactly the release tag, so the updated app reports that
 #     tag as its version and is not offered the same update again.
 #
+# A DMG passed with --dmg is uploaded under its versioned name and again as
+# Ollama.dmg. The README links at releases/latest/download/Ollama.dmg. The
+# updater ignores both DMGs and installs the zip.
+#
 # The release must be a normal (not draft, not prerelease) release, because
 # the app only looks at /repos/maxkongerskov/ollama/releases/latest.
 #
@@ -22,7 +26,8 @@
 #                          (default: dist/Ollama.app)
 #   --build                build first with scripts/build_darwin.sh (HEAD must be the tag)
 #   --archs "arm64"        archs passed to build_darwin.sh -a (default: arm64)
-#   --dmg PATH             also upload this DMG (renamed to match the zip)
+#   --dmg PATH             also upload this DMG as Ollama-<version>-darwin-<arch>.dmg
+#                          and as Ollama.dmg (stable README download name)
 #   --out DIR              output dir (default: dist/fork-release/TAG)
 #   --notarize auto|yes|no notarize + staple the app before zipping (default: auto,
 #                          i.e. when credentials are configured)
@@ -235,8 +240,24 @@ rm -rf "$OUT/stage"
 ASSETS=("$ZIP")
 if [ -n "$DMG" ]; then
     [ -f "$DMG" ] || die "dmg not found: $DMG"
-    cp "$DMG" "$OUT/$BASENAME.dmg"
-    ASSETS+=("$OUT/$BASENAME.dmg")
+    # Versioned name plus Ollama.dmg. The updater installs $BASENAME.zip only;
+    # Ollama.dmg is the stable URL in the README. Fail the release if either
+    # copy is missing, instead of publishing a versioned DMG alone.
+    dmg_list="$("$ROOT/scripts/publish_stable_dmg.sh" "$OUT" "$DMG" "$BASENAME.dmg")" \
+        || die "failed to stage DMG assets"
+    stable_ok=0
+    versioned_ok=0
+    while IFS= read -r asset; do
+        [ -n "$asset" ] || continue
+        [ -f "$asset" ] || die "staged DMG missing: $asset"
+        ASSETS+=("$asset")
+        case "$(basename "$asset")" in
+            Ollama.dmg) stable_ok=1 ;;
+            "$BASENAME.dmg") versioned_ok=1 ;;
+        esac
+    done <<< "$dmg_list"
+    [ "$stable_ok" = 1 ] || die "stable Ollama.dmg was not staged"
+    [ "$versioned_ok" = 1 ] || die "versioned DMG $BASENAME.dmg was not staged"
 fi
 (cd "$OUT" && shasum -a 256 "${ASSETS[@]##*/}" >sha256sum.txt)
 ASSETS+=("$OUT/sha256sum.txt")
@@ -244,7 +265,11 @@ ASSETS+=("$OUT/sha256sum.txt")
 status "assets for $REPO $TAG:"
 for f in "${ASSETS[@]}"; do ls -l "$f" >&2; done
 
-NOTES="${NOTES:-Ollama $VERSION ($REPO). The app updates itself from the $BASENAME.zip asset.}"
+if [ -n "$DMG" ]; then
+    NOTES="${NOTES:-Ollama $VERSION ($REPO). The app updates itself from the $BASENAME.zip asset. Ollama.dmg is the same disk image as $BASENAME.dmg, for a stable download URL.}"
+else
+    NOTES="${NOTES:-Ollama $VERSION ($REPO). The app updates itself from the $BASENAME.zip asset.}"
+fi
 if [ "$DRY_RUN" = 1 ]; then
     status "dry run: not uploading. Would run:"
     if gh_fork release view "$TAG" >/dev/null 2>&1; then
