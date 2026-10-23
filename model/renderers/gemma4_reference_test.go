@@ -1708,6 +1708,14 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 		think    *api.ThinkValue
 	}{
 		{
+			name: "system_then_developer_instruction",
+			messages: []api.Message{
+				{Role: "system", Content: "MODEL_DEFAULT"},
+				{Role: "developer", Content: "CLIENT_POLICY"},
+				{Role: "user", Content: "Continue"},
+			},
+		},
+		{
 			name: "adjacent_assistants_continue_same_model_turn",
 			messages: []api.Message{
 				{Role: "user", Content: "Start"},

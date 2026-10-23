@@ -207,6 +207,8 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		if err != nil {
 			return "", err
 		}
+	} else {
+		messages = developerMessagesAsSystem(messages)
 	}
 	if err := r.validateMessages(messages); err != nil {
 		return "", err

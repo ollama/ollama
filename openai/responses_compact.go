@@ -49,6 +49,9 @@ type OllamaCompactionPayload struct {
 	Version  int           `json:"version"`
 	Summary  string        `json:"summary"`
 	Retained []api.Message `json:"retained"`
+	// LeadingInstructions is accepted for continuations from earlier writers.
+	// New payloads use retained history to preserve the boundary within v1.
+	LeadingInstructions *int `json:"leading_instructions,omitempty"`
 	// StandaloneNames preserves Responses identities by retained-message index.
 	// Qualified native names alone cannot distinguish every namespace/member pair.
 	StandaloneNames map[int]compactionFunctionName `json:"standalone_names,omitempty"`
@@ -84,6 +87,7 @@ type compactionTranscriptItemWire struct {
 type compactionToolGroup struct {
 	CallRef   string
 	ResultRef string
+	Summary   bool
 }
 
 // ResponsesCompactionPlan contains the validated, ordered state required to
@@ -357,6 +361,19 @@ func decodeOllamaCompactionItem(item json.RawMessage) (OllamaCompactionPayload, 
 }
 
 func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage, error) {
+	leadingInstructions := 0
+	for _, message := range payload.Retained {
+		if message.Role != "system" && message.Role != "developer" {
+			break
+		}
+		leadingInstructions++
+	}
+	if payload.LeadingInstructions != nil {
+		if *payload.LeadingInstructions < 0 || *payload.LeadingInstructions > leadingInstructions {
+			return nil, errors.New("invalid leading instruction boundary in compaction payload")
+		}
+		leadingInstructions = *payload.LeadingInstructions
+	}
 	for index, name := range payload.StandaloneNames {
 		if index < 0 || index >= len(payload.Retained) {
 			return nil, fmt.Errorf("standalone name refers to invalid retained-message index %d", index)
@@ -387,13 +404,20 @@ func payloadToResponsesItems(payload OllamaCompactionPayload) ([]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	items = append(items, call, result)
+	// Keep the original instruction prefix ahead of the synthetic summary.
+	// Later instructions remain after it even if intervening items were removed.
 	for i, message := range payload.Retained {
+		if i == leadingInstructions {
+			items = append(items, call, result)
+		}
 		converted, err := messageToResponsesItems(message, payload.StandaloneNames[i])
 		if err != nil {
 			return nil, fmt.Errorf("invalid retained message: %w", err)
 		}
 		items = append(items, converted...)
+	}
+	if leadingInstructions == len(payload.Retained) {
+		items = append(items, call, result)
 	}
 	return items, nil
 }
@@ -544,10 +568,58 @@ func newResponsesCompactionPlan(req rawResponsesRequest, rawItems []json.RawMess
 	if err != nil {
 		return nil, err
 	}
+	// Instructions must survive independently of the model's summary and
+	// selection of exact items. Retain their original roles and order.
+	for _, item := range items {
+		if item.Message.Role == "system" || item.Message.Role == "developer" {
+			forced[item.Ref] = struct{}{}
+		}
+	}
+	// Keep an existing conversation item before later instructions so v1
+	// readers can distinguish them from the original leading prefix.
+	for _, ref := range compactionInstructionBoundary(items, groups) {
+		forced[ref] = struct{}{}
+	}
 	stream := req.Stream != nil && *req.Stream
 	return &ResponsesCompactionPlan{
 		Model: req.Model, Stream: stream, items: items, tools: collectCompactionToolMetadata(req.Tools), groups: groups, forcedRefs: forced,
 	}, nil
+}
+
+func compactionInstructionBoundary(items []CompactionTranscriptItem, groups []compactionToolGroup) []string {
+	start := 0
+	for start < len(items) && (items[start].Message.Role == "system" || items[start].Message.Role == "developer") {
+		start++
+	}
+	end := start
+	for end < len(items) && items[end].Message.Role != "system" && items[end].Message.Role != "developer" {
+		end++
+	}
+	if end == len(items) {
+		return nil // No later instruction needs a boundary.
+	}
+	boundary := items[start:end]
+	summaryRefs := make(map[string]compactionToolGroup)
+	for _, group := range groups {
+		if group.Summary {
+			summaryRefs[group.CallRef] = group
+			summaryRefs[group.ResultRef] = group
+		}
+	}
+	var priorSummary []string
+	for _, item := range boundary {
+		group, summary := summaryRefs[item.Ref]
+		if !summary {
+			return []string{item.Ref}
+		}
+		if priorSummary == nil {
+			priorSummary = []string{group.CallRef, group.ResultRef}
+		}
+	}
+	// Older continuations may contain only a prior summary before a later
+	// instruction. Keep one pair, preferring real history whenever available.
+	// Repeated compaction replaces this pair with the newly expanded summary.
+	return priorSummary
 }
 
 func compactionMessage(item ResponsesInputItem) (api.Message, string, error) {
@@ -647,6 +719,19 @@ func validateCompactionContent(contents []ResponsesContent) error {
 	return nil
 }
 
+func isCompactionSummaryCall(item CompactionTranscriptItem) bool {
+	if item.Type != "function_call" || len(item.Message.ToolCalls) != 1 {
+		return false
+	}
+	call := item.Message.ToolCalls[0]
+	suffix, ok := strings.CutPrefix(call.ID, "call_ollama_compaction_")
+	if !ok || len(suffix) != 12 || call.Function.Name != compactionSummaryToolName {
+		return false
+	}
+	_, err := hex.DecodeString(suffix)
+	return err == nil && call.Function.Arguments.String() == fmt.Sprintf(`{"version":%d}`, OllamaCompactionPayloadVersion)
+}
+
 func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionToolGroup, map[string]struct{}, error) {
 	type pendingGroup struct {
 		callIndex   int
@@ -654,7 +739,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 		group       compactionToolGroup
 	}
 	byCallID := make(map[string]*pendingGroup)
-	ignoredCallIDs := make(map[string]struct{})
 	forced := make(map[string]struct{})
 	var ordered []*pendingGroup
 
@@ -664,10 +748,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 			call := item.Message.ToolCalls[0]
 			if call.ID == "" {
 				return nil, nil, fmt.Errorf("%s: function call is missing call_id", item.Ref)
-			}
-			if call.Function.Name == compactionSummaryToolName && strings.HasPrefix(call.ID, "call_ollama_compaction_") {
-				ignoredCallIDs[call.ID] = struct{}{}
-				continue
 			}
 			if _, exists := byCallID[call.ID]; exists {
 				return nil, nil, fmt.Errorf("%s: duplicate function call_id %q", item.Ref, call.ID)
@@ -681,9 +761,6 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 				// Standalone outputs can carry the task instructions. Retain them
 				// without inventing a call or relying on the summary to repeat them.
 				forced[item.Ref] = struct{}{}
-				continue
-			}
-			if _, ignored := ignoredCallIDs[callID]; ignored {
 				continue
 			}
 			group := byCallID[callID]
@@ -700,7 +777,11 @@ func analyzeCompactionToolState(items []CompactionTranscriptItem) ([]compactionT
 
 	groups := make([]compactionToolGroup, 0, len(ordered))
 	for _, candidate := range ordered {
+		candidate.group.Summary = candidate.resultIndex == candidate.callIndex+1 && isCompactionSummaryCall(items[candidate.callIndex])
 		groups = append(groups, candidate.group)
+		if candidate.group.Summary {
+			continue
+		}
 		active := candidate.resultIndex < 0
 		if !active {
 			active = true
@@ -781,7 +862,7 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 	protected[p.items[len(p.items)-1].Ref] = true
 	peers := make(map[string]string, len(p.groups)*2)
 	for _, group := range p.groups {
-		if group.ResultRef != "" {
+		if !group.Summary && group.ResultRef != "" {
 			peers[group.CallRef] = group.ResultRef
 			peers[group.ResultRef] = group.CallRef
 		}
@@ -798,7 +879,7 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 		}
 		peer := peers[item.Ref]
 		if item.Type == "function_call" || item.Type == "function_call_output" {
-			// Prior summary pairs are intentionally absent from p.groups.
+			// Prior summaries remain available to the summarizer on retries.
 			if peer == "" || protected[peer] {
 				continue
 			}
@@ -943,6 +1024,14 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 			return ResponsesCompactionResult{}, fmt.Errorf("create_summary selected duplicate item %q", ref)
 		}
 		selected[ref] = struct{}{}
+	}
+	// Generated summaries are replaced, even when the model selects either
+	// member. Only a complete pair forced as an instruction boundary survives.
+	for _, group := range p.groups {
+		if group.Summary {
+			delete(selected, group.CallRef)
+			delete(selected, group.ResultRef)
+		}
 	}
 	for ref := range p.forcedRefs {
 		selected[ref] = struct{}{}

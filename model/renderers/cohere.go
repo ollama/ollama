@@ -90,6 +90,7 @@ func writeToolResult(sb *strings.Builder, callID string, content string) error {
 }
 
 func (r *CohereRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	// The template defaults reasoning to true; an explicit think=false

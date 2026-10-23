@@ -38,6 +38,7 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message, imageOffset int) (s
 }
 
 func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	isThinking := r.isThinking

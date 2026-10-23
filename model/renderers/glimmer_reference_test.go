@@ -328,10 +328,11 @@ func TestGlimmerRendererMatchesJinja2ExpandedParity(t *testing.T) {
 	allValues.Set("object", map[string]any{"b": 2, "a": "<value>"})
 
 	tests := []struct {
-		name     string
-		messages []api.Message
-		tools    []api.Tool
-		think    *api.ThinkValue
+		name              string
+		messages          []api.Message
+		referenceMessages []api.Message
+		tools             []api.Tool
+		think             *api.ThinkValue
 	}{
 		{
 			name:     "minimal user",
@@ -365,9 +366,22 @@ func TestGlimmerRendererMatchesJinja2ExpandedParity(t *testing.T) {
 			}},
 		},
 		{
-			name: "unsupported role omitted",
+			name: "developer uses system fallback",
 			messages: []api.Message{
 				{Role: "developer", ToolName: "policy", Content: "Follow policy."},
+				{Role: "user", Content: "Hi"},
+			},
+			// The publisher template has no developer role. Compare this API
+			// compatibility extension with its supported system representation.
+			referenceMessages: []api.Message{
+				{Role: "system", ToolName: "policy", Content: "Follow policy."},
+				{Role: "user", Content: "Hi"},
+			},
+		},
+		{
+			name: "unsupported role omitted",
+			messages: []api.Message{
+				{Role: "unsupported", Content: "Unknown role."},
 				{Role: "user", Content: "Hi"},
 			},
 		},
@@ -450,7 +464,11 @@ func TestGlimmerRendererMatchesJinja2ExpandedParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := renderGlimmerWithJinja2(t, tt.messages, tt.tools, tt.think)
+			referenceMessages := tt.referenceMessages
+			if referenceMessages == nil {
+				referenceMessages = tt.messages
+			}
+			want := renderGlimmerWithJinja2(t, referenceMessages, tt.tools, tt.think)
 			if got != want {
 				t.Fatalf("renderer output doesn't match Jinja2 template:\ngot:  %q\nwant: %q", got, want)
 			}

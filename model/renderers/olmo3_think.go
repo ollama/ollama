@@ -31,15 +31,14 @@ func (r *Olmo3ThinkRenderer) LeadingBOS() string {
 }
 
 func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
-	var systemMessage *api.Message
+	var systemMessages []string
 	filteredMessages := make([]api.Message, 0, len(messages))
-	for i, message := range messages {
+	for _, message := range messages {
 		if message.Role == "system" {
-			if systemMessage == nil {
-				systemMessage = &messages[i]
-			}
+			systemMessages = append(systemMessages, message.Content)
 			continue
 		}
 		// Skip tool messages - Think models don't support tools
@@ -51,8 +50,8 @@ func (r *Olmo3ThinkRenderer) Render(messages []api.Message, _ []api.Tool, _ *api
 
 	sb.WriteString("<|im_start|>system\n")
 
-	if systemMessage != nil {
-		sb.WriteString(systemMessage.Content)
+	if len(systemMessages) > 0 {
+		sb.WriteString(strings.Join(systemMessages, "\n\n"))
 		sb.WriteString(olmo3ThinkFunctionsSuffix)
 	} else {
 		// Default system message varies by variant

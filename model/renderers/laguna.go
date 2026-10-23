@@ -25,6 +25,7 @@ func (r *LagunaRenderer) LeadingBOS() string {
 }
 
 func (r *LagunaRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 	sb.WriteString(lagunaBOS)
 
@@ -174,6 +175,7 @@ func (r *LagunaV8Renderer) LeadingBOS() string {
 }
 
 func (r *LagunaV8Renderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 	sb.WriteString(lagunaBOS)
 

@@ -17,6 +17,7 @@ func (r *CogitoRenderer) LeadingBOS() string {
 }
 
 func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
 	defaultPrompt := "You are Cogito, an AI assistant created by Deep Cogito, which is an AI research lab based in San Francisco."
@@ -24,15 +25,18 @@ func (r *CogitoRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	// thinking is enabled: model must support it AND user must request it (true)
 	enableThinking := r.isThinking && (thinkValue != nil && thinkValue.Bool())
 
-	var systemPrompt string
+	var systemParts []string
 	var conversationMessages []api.Message
 
-	if len(messages) > 0 && messages[0].Role == "system" {
-		systemPrompt = messages[0].Content
-		conversationMessages = messages[1:]
-	} else {
-		conversationMessages = messages
+	// Cogito only has a system prefix, so collect instruction turns there.
+	for _, message := range messages {
+		if message.Role == "system" {
+			systemParts = append(systemParts, message.Content)
+		} else {
+			conversationMessages = append(conversationMessages, message)
+		}
 	}
+	systemPrompt := strings.Join(systemParts, "\n\n")
 
 	var finalSystemPrompt string
 	if enableThinking {

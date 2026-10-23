@@ -26,25 +26,24 @@ func (r *Olmo3Renderer) LeadingBOS() string {
 }
 
 func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
-	var systemMessage *api.Message
+	var systemMessages []string
 	filteredMessages := make([]api.Message, 0, len(messages))
-	for i, message := range messages {
+	for _, message := range messages {
 		if message.Role == "system" {
-			if systemMessage == nil {
-				systemMessage = &messages[i]
-			}
+			systemMessages = append(systemMessages, message.Content)
 			continue
 		}
 		filteredMessages = append(filteredMessages, message)
 	}
 
 	// Render system message
-	if systemMessage != nil {
+	if len(systemMessages) > 0 {
 		// Custom system message - single newline after "system"
 		sb.WriteString("<|im_start|>system\n")
-		sb.WriteString(systemMessage.Content)
+		sb.WriteString(strings.Join(systemMessages, "\n\n"))
 
 		if len(tools) > 0 {
 			functionsJSON, err := marshalWithSpaces(tools)

@@ -63,9 +63,10 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 type Qwen3CoderRenderer struct{}
 
 func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+	messages = developerMessagesAsSystem(messages)
 	var sb strings.Builder
 
-	// filter out system messages and choose the first (if any) to win
+	// This format has one system turn. Keep all instructions in source order.
 	var systemMessage string
 	var filteredMessages []api.Message
 	for _, message := range messages {
@@ -74,8 +75,11 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, _ 
 			continue
 		}
 
-		if systemMessage == "" {
-			systemMessage = message.Content
+		if message.Content != "" {
+			if systemMessage != "" {
+				systemMessage += "\n\n"
+			}
+			systemMessage += message.Content
 		}
 	}
 
