@@ -118,7 +118,7 @@ curl -sN http://localhost:11434/v1/audio/speech \
 ### Limits
 
 - `input` can be up to 4,096 characters per request. `ollama run` splits longer text at paragraph and sentence breaks for you.
-- Prices, large numbers, symbols, email addresses, and URLs are spelled out before speaking, so `$4.59` is read as "4 dollars and 59 cents". Numeric dates and times are not, so write them out (`October 23`, not `10/23`) for predictable results. Emoji, bullet characters, and `*` emphasis markers are skipped.
+- Prices, numbers, times, symbols, email addresses, and URLs are spelled out before speaking, so `$4.59` is read as "4 dollars and 59 cents". Numeric dates are read as numbers, so write them out (`October 23`, not `10/23`) for a natural reading. Emoji, bullet characters, and markdown markers such as `*` and `#` are skipped.
 - Options the model doesn't support, such as other formats, speeds, or `instructions`, return a `400` error instead of being ignored. An unknown voice returns a `400` error that lists the available voices.
 - Speech models only generate speech: chat, completion, and embedding requests to them return a `400` error.
 
