@@ -22,15 +22,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const updateArchiveRoot = "Ollama.app"
-
-type bundleEntryScope int
-
-const (
-	bundleEntryRelative bundleEntryScope = iota
-	bundleEntryWithArchiveRoot
-)
-
 var (
 	appBackupDir   string
 	SystemWidePath = "/Applications/Ollama.app"
@@ -349,18 +340,6 @@ func verifyDownload() error {
 		return fmt.Errorf("signature verification failed: %s", err)
 	}
 	return nil
-}
-
-func bundleEntryPath(root, name string, scope bundleEntryScope) (string, error) {
-	cleanName := filepath.Clean(filepath.FromSlash(name))
-	if !filepath.IsLocal(cleanName) {
-		return "", fmt.Errorf("bundle contains invalid path: %s", name)
-	}
-	if scope == bundleEntryWithArchiveRoot && cleanName != updateArchiveRoot &&
-		!strings.HasPrefix(cleanName, updateArchiveRoot+string(os.PathSeparator)) {
-		return "", fmt.Errorf("bundle contains invalid path: %s", name)
-	}
-	return filepath.Join(root, cleanName), nil
 }
 
 func extractBundleFile(f *zip.File, destName, name string) error {
