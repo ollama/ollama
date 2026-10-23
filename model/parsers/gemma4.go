@@ -3,7 +3,6 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -526,14 +525,10 @@ func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.T
 	var args api.ToolCallFunctionArguments
 	if err := decoder.Decode(&args); err == nil {
 		suffix := strings.TrimSpace(jsonStr[decoder.InputOffset():])
-		if suffix != "" && !strings.ContainsAny(suffix, `{}[],:"<>|`) {
-			// A complete or incomplete JSON value is structured output, not noise.
-			var extra json.RawMessage
-			extraErr := json.NewDecoder(strings.NewReader(suffix)).Decode(&extra)
-			hasExtraValue := extraErr == nil || errors.Is(extraErr, io.ErrUnexpectedEOF)
-			if !hasExtraValue {
-				return args, nil
-			}
+		// A suffix that can start a JSON value is not noise, even if it
+		// later becomes invalid, such as "1e+$$" or "tru $$".
+		if suffix != "" && !strings.ContainsAny(suffix, `{}[],:"<>|`) && !strings.ContainsAny(suffix[:1], "-0123456789tfn") {
+			return args, nil
 		}
 	}
 

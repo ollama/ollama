@@ -85,6 +85,11 @@ func TestGemma4ParserTrailingNoiseRejectsMalformed(t *testing.T) {
 		`call:ask_user{message:<|"|>hi<|"|>} tru`,
 		`call:ask_user{message:<|"|>hi<|"|>} fals`,
 		`call:ask_user{message:<|"|>hi<|"|>} nul`,
+		`call:ask_user{message:<|"|>hi<|"|>} 1e+$$`,
+		`call:ask_user{message:<|"|>hi<|"|>} 1.$$`,
+		`call:ask_user{message:<|"|>hi<|"|>} tru $$`,
+		`call:ask_user{message:<|"|>hi<|"|>} fals $$`,
+		`call:ask_user{message:<|"|>hi<|"|>} nul $$`,
 		`call:ask_user{message:<|"|>hi<|"|>} true`,
 		`call:ask_user{message:<|"|>hi<|"|>},other:1`,
 	} {
@@ -94,11 +99,22 @@ func TestGemma4ParserTrailingNoiseRejectsMalformed(t *testing.T) {
 				{"closing_tag", gemma4ToolCallCloseTag},
 			} {
 				t.Run(ending.name, func(t *testing.T) {
-					parser := ParserForName("gemma4")
-					parser.Init(nil, nil, nil)
-					content, thinking, calls, err := parser.Add(gemma4ToolCallOpenTag+payload+ending.tag, ending.tag == "")
-					if err != nil || content != "" || thinking != "" || len(calls) != 0 {
-						t.Fatalf("got content=%q, thinking=%q, calls=%v, err=%v", content, thinking, calls, err)
+					check := func(chunks []string) {
+						t.Helper()
+						parser := ParserForName("gemma4")
+						parser.Init(nil, nil, nil)
+						for i, chunk := range chunks {
+							content, thinking, calls, err := parser.Add(chunk, ending.tag == "" && i == len(chunks)-1)
+							if err != nil || content != "" || thinking != "" || len(calls) != 0 {
+								t.Fatalf("Add(%q): content=%q, thinking=%q, calls=%v, err=%v", chunk, content, thinking, calls, err)
+							}
+						}
+					}
+
+					input := gemma4ToolCallOpenTag + payload + ending.tag
+					check([]string{input})
+					for split := 0; split <= len(input); split++ {
+						check([]string{input[:split], input[split:]})
 					}
 				})
 			}
