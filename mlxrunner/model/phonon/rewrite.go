@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -35,12 +36,15 @@ func rewriteText(text string) string {
 	return strings.Join(out, " ")
 }
 
-// rewriteSpan reads the readings that need their neighbours: "$2 million" and
-// runs of digit groups ("+44 20 7946 0958"). It returns how many words it
-// used, or 0.
+// rewriteSpan reads the readings that need their neighbours: "$2 million", an
+// abbreviation that ends a sentence, and runs of digit groups ("+44 20 7946
+// 0958"). It returns how many words it used, or 0.
 func rewriteSpan(words []string) (string, int) {
 	if s, ok := scaledAmount(words); ok {
 		return s, 2
+	}
+	if s, ok := sentenceEnd(words); ok {
+		return s, 1
 	}
 	if s, n := digitRun(words); n > 0 {
 		return s, n
@@ -48,7 +52,7 @@ func rewriteSpan(words []string) (string, int) {
 	return "", 0
 }
 
-var rules = []func(string) (string, bool){numbers, currency, dashedDigits, emails, urls, abbreviations}
+var rules = []func(string) (string, bool){numbers, currency, ranges, dashedDigits, emails, urls, abbreviations}
 
 func rewriteWord(word string) (string, bool) {
 	for _, rule := range rules {
@@ -259,11 +263,28 @@ var currencies = map[rune]money{
 	'¢': {"cent", "cents", "", ""},
 }
 
+// perUnits are the short units of a price that read as words: "$15/hr".
+var perUnits = map[string]string{"h": "hour", "hr": "hour", "mo": "month", "yr": "year", "wk": "week", "min": "minute"}
+
 // currency reads an amount with its currency symbol before or after it:
 // "$1,234.56" is "1 thousand 234 dollars and 56 cents", "30¢" is "30 cents",
-// and one unit is singular: "$1" is "1 dollar".
+// one unit is singular: "$1" is "1 dollar", and "$20/month" is "20 dollars per
+// month".
 func currency(word string) (string, bool) {
 	body, suffix := splitSuffix(word)
+	if price, per, ok := strings.Cut(body, "/"); ok {
+		units := strings.Split(per, "/")
+		for i, unit := range units {
+			if unit == "" || strings.IndexFunc(unit, func(c rune) bool { return !isAlphabetic(c) }) >= 0 {
+				return "", false
+			}
+			if w := perUnits[unit]; w != "" {
+				units[i] = w
+			}
+		}
+		s, ok := currency(price)
+		return s + " per " + strings.Join(units, " per ") + suffix, ok
+	}
 	// "-$500" reads as "$-500" does.
 	if rest, ok := strings.CutPrefix(body, "-"); ok {
 		if c, n := utf8.DecodeRuneInString(rest); currencies[c].many != "" {
@@ -344,12 +365,52 @@ func scaledAmount(words []string) (string, bool) {
 		return "", false
 	}
 	scale, suffix := splitSuffix(words[1])
+	scale = strings.ToLower(scale)
 	symbol, amount, ok := splitSymbol(words[0])
 	if !ok || !slices.Contains([]string{"thousand", "million", "billion", "trillion"}, scale) {
 		return "", false
 	}
 	s, ok := withScale(amount, scale, symbol)
 	return s + suffix, ok
+}
+
+// ranges reads a range of amounts, or of numbers with thousands commas: "$5-$10",
+// "$5-10" and "5,000-10,000". A plain "3-5" is left to numbers, as it can be a
+// score.
+func ranges(word string) (string, bool) {
+	body, suffix := splitSuffix(word)
+	from, to, ok := strings.Cut(body, "-")
+	if !ok || from == "" || to == "" {
+		return "", false
+	}
+	plain := func(s string) bool {
+		_, rest, ok := numberWords(s)
+		return ok && rest == ""
+	}
+	fromSymbol, _, fromAmount := splitSymbol(from)
+	toSymbol, _, toAmount := splitSymbol(to)
+	switch {
+	case !fromAmount && !toAmount:
+		if !strings.Contains(body, ",") || !plain(from) || !plain(to) {
+			return "", false
+		}
+		a, _, _ := numberWords(from)
+		b, _, _ := numberWords(to)
+		return a + " to " + b + suffix, true
+	case !toAmount && plain(to):
+		// "$5-10" reads as "$5-$10".
+		to = string(fromSymbol) + to
+	case !fromAmount && plain(from):
+		from = string(toSymbol) + from
+	case !fromAmount || !toAmount:
+		return "", false
+	}
+	a, ok := currency(from)
+	if !ok {
+		return "", false
+	}
+	b, ok := currency(to)
+	return a + " to " + b + suffix, ok
 }
 
 // withCents reads an amount with exactly two decimals as units and cents:
@@ -600,19 +661,28 @@ func domainEnd(label string) bool {
 	return len(label) >= 2 && strings.Trim(label, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") == ""
 }
 
-// "Jan." and "Sun." are left out: they are more often a name or the Sun.
+// abbreviationWords come before a name or a number, so their period never ends
+// a sentence.
 var abbreviationWords = map[string]string{
 	"Lt": "Lieutenant", "Lt.": "Lieutenant", "Col.": "Colonel", "Sgt.": "Sergeant", "Sgt": "Sergeant", "Capt.": "Captain",
 	"Cpl.": "Corporal", "Gen.": "General", "Adm.": "Admiral", "Sen.": "Senator", "Sens.": "Senators", "Rep.": "Representative",
 	"Reps.": "Representatives", "Gov.": "Governor", "Pres.": "President", "Det.": "Detective", "Insp.": "Inspector",
-	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "Feb.": "February", "Mar.": "March",
-	"Apr.": "April", "Jun.": "June", "Jul.": "July", "Aug.": "August", "Sep.": "September", "Sept.": "September",
-	"Oct.": "October", "Nov.": "November", "Dec.": "December", "Mon.": "Monday", "Tue.": "Tuesday", "Tues.": "Tuesday",
-	"Wed.": "Wednesday", "Thu.": "Thursday", "Thur.": "Thursday", "Thurs.": "Thursday", "Fri.": "Friday", "Sat.": "Saturday",
-	"vol.": "volume", "Vol.": "Volume", "ed.": "edition", "approx.": "approximately",
-	"Approx.": "Approximately", "dept.": "department", "Dept.": "Department", "vs.": "versus", "w/": "with",
-	"W/": "With", "w/o": "without", "W/o": "Without",
+	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "vol.": "volume", "Vol.": "Volume", "vs.": "versus",
+	"w/": "with", "W/": "With", "w/o": "without", "W/o": "Without",
 }
+
+// endingWords can also end a sentence. "Jan." and "Sun." are left out: they are
+// more often a name or the Sun.
+var endingWords = map[string]string{
+	"Feb.": "February", "Mar.": "March", "Apr.": "April", "Jun.": "June", "Jul.": "July", "Aug.": "August",
+	"Sep.": "September", "Sept.": "September", "Oct.": "October", "Nov.": "November", "Dec.": "December",
+	"Mon.": "Monday", "Tue.": "Tuesday", "Tues.": "Tuesday", "Wed.": "Wednesday", "Thu.": "Thursday",
+	"Thur.": "Thursday", "Thurs.": "Thursday", "Fri.": "Friday", "Sat.": "Saturday",
+	"ed.": "edition", "approx.": "approximately", "Approx.": "Approximately", "dept.": "department", "Dept.": "Department",
+}
+
+// calendarNames start the names of months and days.
+var calendarNames = strings.Fields("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec Mon Tue Wed Thu Fri Sat Sun")
 
 func abbreviations(word string) (string, bool) {
 	body, suffix := splitSuffix(word)
@@ -621,5 +691,22 @@ func abbreviations(word string) (string, bool) {
 		abbreviation, suffix = word[:len(body)+1], rest
 	}
 	s, ok := abbreviationWords[abbreviation]
+	if !ok {
+		s, ok = endingWords[abbreviation]
+	}
 	return s + suffix, ok
+}
+
+// sentenceEnd keeps the period of an abbreviation that ends a sentence: "in Dec.
+// Then" is "in December. Then", while "Dec. 5" and "Mon. Oct. 5" are dates.
+func sentenceEnd(words []string) (string, bool) {
+	s, ok := endingWords[words[0]]
+	if !ok || len(words) < 2 {
+		return "", false
+	}
+	next := words[1]
+	if c, _ := utf8.DecodeRuneInString(next); !unicode.IsUpper(c) || len(next) >= 3 && slices.Contains(calendarNames, next[:3]) {
+		return "", false
+	}
+	return s + ".", true
 }

@@ -38,6 +38,12 @@ func TestNormalizeText(t *testing.T) {
 		{"★ New ★ Rated ★★★½☆, or ★½.", "New Rated 3 point 5 out of 5 stars, or 1 point 5 stars."},
 		{"From 2020–2021, pages 10–20, $10–$20; a – b.", "From 2020 to 2021, pages 10 to 20, 10 dollars to 20 dollars, a b."},
 		{"It was −5°C, then −12.", "It was minus 5 degrees Celsius, then minus 12."},
+		{"Thanks for reading! ❤️ Made with ❤️ in Paris ❤❤", "Thanks for reading! Made with love in Paris"},
+		{"Pay $20/month or $15/hr, $10/user/month.", "Pay 20 dollars per month or 15 dollars per hour, 10 dollars per user per month."},
+		{"From 5,000-10,000 steps, $50,000-$70,000, $5-10 or 5-10€.", "From 5 thousand to 10 thousand steps, 50 thousand dollars to 70 thousand dollars, 5 dollars to 10 dollars or 5 euros to 10 euros."},
+		{"A $5 Billion deal.", "A 5 billion dollars deal."},
+		{"We met in Dec. Then we left on Mon. Oct. 5, in Dec. 2024.", "We met in December. Then we left on Monday October 5, in December 2024."},
+		{"Mt. Everest, Sen. Smith vs. Jones, vol. II and the dept. They", "Mount Everest, Senator Smith versus Jones, volume II and the department. They"},
 		{"Wait ~10 minutes, ±2.", "Wait about 10 minutes, plus or minus 2."},
 		{"2 + 2 = 4", "2 plus 2 equals 4"},
 		{"x² + y³ = 10⁻⁶", "x squared plus y cubed equals 10 to the power of minus 6"},
@@ -112,6 +118,10 @@ func TestRewriteWord(t *testing.T) {
 		{"1.50¢", "1 point 50 cents"},
 		{"1234$", "1 thousand 234 dollars"},
 		{"-$500.", "minus 500 dollars."},
+		{"$20/month.", "20 dollars per month."},
+		{"$1.50/lb", "1 dollar and 50 cents per lb"},
+		{"5,000-10,000,", "5 thousand to 10 thousand,"},
+		{"$50k-$70k", "50 thousand dollars to 70 thousand dollars"},
 		{"978-3-16-148410-0", "978 3 16 1 4 8 4 1 0 0"},
 		{"555_123_4567", "555 underscore 123 underscore 4 5 6 7"},
 		{"555-123-4567?!", "555 123 4 5 6 7?!"},
@@ -135,7 +145,7 @@ func TestRewriteWord(t *testing.T) {
 	for _, word := range []string{
 		"10-5", "3-5", "12:30", "3.5%", "1234567890123", "$5€", "$007", "2024-05-12",
 		"12-05-24", "+1-555-123-4567", "user@host", "fé@bar.com", "it.Now",
-		"e.g.", "v1.2", "Dr.", "dec.", "Zzz", "WWW", "Sun.", "Jan.",
+		"e.g.", "v1.2", "Dr.", "dec.", "Zzz", "WWW", "Sun.", "Jan.", "$50-70k",
 	} {
 		if got, ok := rewriteWord(word); ok {
 			t.Errorf("rewrite(%q) = %q; want no rule to claim it", word, got)

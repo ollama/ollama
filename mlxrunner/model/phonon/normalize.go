@@ -101,10 +101,19 @@ func normalizeText(input string) string {
 		case c == '±':
 			res.pushSpoken("plus or minus")
 		case c == '❤' || c == '♥':
+			// "I ❤ NY" reads "love"; a heart that is not between words is decoration.
 			if at(i+1) == '️' {
 				i++
 			}
-			res.pushSpoken("love")
+			j := i + 1
+			for unicode.IsSpace(at(j)) {
+				j++
+			}
+			if b := trimSpace(res.buf); len(b) > 0 && isAlphanumeric(b[len(b)-1]) && isAlphanumeric(at(j)) {
+				res.pushSpoken("love")
+			} else {
+				res.pushSpace()
+			}
 		case c == '~' && isASCIIDigit(at(i+1)):
 			res.pushSpoken("about")
 		case c == '*' && (prev < 0 || unicode.IsSpace(prev)) && isASCIIDigit(at(i+1)):
