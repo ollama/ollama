@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/applefm"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
@@ -100,6 +101,12 @@ type Model struct {
 
 func (m *Model) IsMLX() bool {
 	return m.Config.ModelFormat == "safetensors"
+}
+
+// IsAppleFM reports whether the model is Apple's on-device Foundation Model,
+// which is run by the operating system rather than from weights on disk.
+func (m *Model) IsAppleFM() bool {
+	return m.Config.ModelFormat == applefm.ModelFormat
 }
 
 func (m *Model) isGGUF() bool {
