@@ -3,7 +3,6 @@ package renderers
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -175,17 +174,12 @@ func lfm2RenderToolCalls(calls []api.ToolCall) string {
 		sb.WriteString(tc.Function.Name)
 		sb.WriteString("(")
 
-		keys := make([]string, 0, tc.Function.Arguments.Len())
-		for key := range tc.Function.Arguments.All() {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-
-		for j, key := range keys {
-			if j > 0 {
+		first := true
+		for key, value := range sortedToolCallArgumentValues(tc.Function.Arguments) {
+			if !first {
 				sb.WriteString(",")
 			}
-			value, _ := tc.Function.Arguments.Get(key)
+			first = false
 			sb.WriteString(key)
 			sb.WriteString("=")
 			sb.WriteString(lfm2ToolCallArgument(value))
