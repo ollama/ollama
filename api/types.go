@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"iter"
@@ -297,7 +298,69 @@ func (t *ToolCallFunctionArguments) String() string {
 
 func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
 	t.om = orderedmap.New[string, any]()
-	return json.Unmarshal(data, t.om)
+	// Decode numbers with UseNumber so integer arguments keep their integer type.
+	// The default float64 decode renders back out with a trailing ".0", which models
+	// then copy into later tool calls as a string (ollama#19191).
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	token, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if token == nil {
+		return nil
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("tool call arguments must be a JSON object")
+	}
+	for dec.More() {
+		keyToken, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return fmt.Errorf("tool call argument keys must be strings")
+		}
+		var value any
+		if err := dec.Decode(&value); err != nil {
+			return err
+		}
+		t.om.Set(key, normalizeJSONNumbers(value))
+	}
+	_, err = dec.Token()
+	return err
+}
+
+// normalizeJSONNumbers converts json.Number values produced by a UseNumber decoder
+// into int64 for integer literals and float64 otherwise, recursing into maps and
+// slices.
+func normalizeJSONNumbers(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		s := v.String()
+		if !strings.ContainsAny(s, ".eE") {
+			if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+				return i
+			}
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return f
+		}
+		return s
+	case map[string]any:
+		for key, item := range v {
+			v[key] = normalizeJSONNumbers(item)
+		}
+		return v
+	case []any:
+		for i, item := range v {
+			v[i] = normalizeJSONNumbers(item)
+		}
+		return v
+	default:
+		return value
+	}
 }
 
 func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
