@@ -13,7 +13,7 @@ Start [Ollama](/quickstart) v0.40.9 or later, then download [Phonon](https://oll
 ollama pull phonon
 ```
 
-The default Phonon model uses Gradium's 31M English checkpoint and its included voice. The voice name is `default`.
+Phonon uses Gradium's 31M English checkpoint and comes with Gradium's English voices, such as `Zoey`, `Easton`, and `Freya`. Without a voice, it speaks with the checkpoint's own voice, `default`. `ollama show phonon` lists every voice. Voice names work in any case and with or without accents.
 
 ## Speak from the terminal
 
@@ -22,6 +22,9 @@ The default Phonon model uses Gradium's 31M English checkpoint and its included 
 ```shell examples.sh
 # Speak some text
 ollama run phonon "Hello from Ollama."
+
+# Choose a voice
+ollama run phonon --voice Zoey "Hi, this is Zoey."
 
 # Speak text from another program
 echo "Text from another program works too." | ollama run phonon
@@ -122,4 +125,4 @@ curl -sN http://localhost:11434/v1/audio/speech \
 - Options the model doesn't support, such as other formats, speeds, or `instructions`, return a `400` error instead of being ignored. An unknown voice returns a `400` error that lists the available voices.
 - Speech models only generate speech: chat, completion, and embedding requests to them return a `400` error.
 
-`ollama show phonon` and `/api/show` list the model's capabilities as `speech`. See [OpenAI compatibility](/api/openai-compatibility) for every supported field.
+`ollama show phonon` and `/api/show` list the model's capabilities as `speech`, and its voices (`voices` in `/api/show`). See [OpenAI compatibility](/api/openai-compatibility) for every supported field.
