@@ -14,12 +14,13 @@ import {
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
-import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
+import { API_BASE, OLLAMA_DOT_COM, OLLAMA_HOST } from "./lib/config";
 import {
   parseNumCtx,
   parseTrainCtx,
   type ModelContextInfo,
 } from "./lib/settingsSliders";
+import { inspectModelMTP, type ModelMTPInfo } from "./lib/mtp";
 import type {
   ClaudeDesktopStatus,
   CodexDesktopModelsSettingsResult,
@@ -642,6 +643,53 @@ export async function getModelContextInfo(
   };
 }
 
+export type { ModelMTPInfo };
+
+/**
+ * MTP support and the current draft_num_predict parameter for one model,
+ * from POST /api/show. This does not load the model.
+ */
+export async function getModelMTPInfo(model: string): Promise<ModelMTPInfo> {
+  const response = await ollama.show({ model });
+  return inspectModelMTP(
+    response.parameters,
+    response.model_info as unknown as Record<string, unknown> | undefined,
+  );
+}
+
+/**
+ * Sets or removes the model's draft_num_predict parameter.
+ * Zero removes it. Other Modelfile parameters are left in place by the server.
+ */
+export async function setModelDraftNumPredict(
+  model: string,
+  draftNumPredict: number,
+): Promise<void> {
+  const response = await fetch(`${OLLAMA_HOST}/api/model/mtp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, draft_num_predict: draftNumPredict }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await readAPIError(response, "Failed to update multi-token prediction"),
+    );
+  }
+}
+
+async function readAPIError(
+  response: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const data = (await response.json()) as { error?: unknown };
+    if (typeof data.error === "string" && data.error.trim()) return data.error;
+  } catch {
+    // The body was not JSON.
+  }
+  return fallback;
+}
+
 /** Models currently loaded in memory (from GET /api/ps). */
 export async function listRunningModels(): Promise<ModelResponse[]> {
   const response = await ollama.ps();
@@ -657,6 +705,18 @@ export async function unloadModel(model: string): Promise<void> {
     model,
     prompt: "",
     keep_alive: 0,
+    stream: false,
+  });
+}
+
+/**
+ * Load a model without generating (empty prompt). Used to reload after the
+ * MTP parameter changes so llama-server starts with the new draft depth.
+ */
+export async function loadModel(model: string): Promise<void> {
+  await ollama.generate({
+    model,
+    prompt: "",
     stream: false,
   });
 }

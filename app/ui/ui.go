@@ -318,6 +318,9 @@ func (s *Server) Handler() http.Handler {
 	// Used by the chat model picker Unload control (same as `ollama stop`)
 	mux.Handle("POST /api/generate", ollamaProxy)
 	mux.Handle("GET /api/ps", ollamaProxy)
+	// Per-model multi-token prediction toggle. The Ollama server writes the
+	// model's draft_num_predict parameter; this proxy does not touch models.
+	mux.Handle("POST /api/model/mtp", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())

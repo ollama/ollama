@@ -10,6 +10,7 @@ import {
   ClaudeDesktopModelsSettings,
   type ClaudeDesktopModelsSettingsHandle,
 } from "@/components/ClaudeDesktopModelsSettings";
+import { ModelMTPSetting } from "@/components/ModelMTPSetting";
 import {
   CodexDesktopModelsSettings,
   type CodexDesktopModelsSettingsHandle,
@@ -51,8 +52,13 @@ import {
   updateSettings,
   getInferenceCompute,
   getModelContextInfo,
+  getModelMTPInfo,
   listRunningModels,
+  loadModel,
+  setModelDraftNumPredict,
+  unloadModel,
 } from "@/api";
+import { applyModelDraftNumPredict, modelIsLoaded } from "@/lib/mtp";
 
 function AnimatedDots() {
   return (
@@ -246,6 +252,49 @@ export default function Settings() {
       retry: false,
     },
   );
+  const mtpModel = selectedModel || activeModel?.name || "";
+  const { data: mtpInfo } = useQuery({
+    queryKey: ["modelMTP", mtpModel],
+    queryFn: () => getModelMTPInfo(mtpModel),
+    enabled: mtpModel !== "",
+    retry: false,
+  });
+  const [mtpError, setMtpError] = useState<string | null>(null);
+  const mtpMutation = useMutation({
+    mutationFn: (draftNumPredict: number) =>
+      applyModelDraftNumPredict(
+        mtpModel,
+        draftNumPredict,
+        modelIsLoaded(runningModels, mtpModel),
+        {
+          setDraft: setModelDraftNumPredict,
+          unload: unloadModel,
+          load: loadModel,
+        },
+      ),
+    onMutate: () => {
+      setMtpError(null);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["modelMTP", mtpModel] });
+      void queryClient.invalidateQueries({ queryKey: ["runningModels"] });
+      showSavedConfirmation();
+    },
+    onError: (error: unknown) => {
+      setMtpError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update multi-token prediction",
+      );
+      if (error instanceof Error && error.name === "ModelMTPReloadError") {
+        void queryClient.invalidateQueries({
+          queryKey: ["modelMTP", mtpModel],
+        });
+        showSavedConfirmation();
+      }
+    },
+  });
+
   const displayedContextLength = resolveDisplayedContextLength({
     setting: settings?.ContextLength ?? 0,
     runningModels,
@@ -832,6 +881,17 @@ export default function Settings() {
                   </div>
                 </div>
               </Field>
+
+              <ModelMTPSetting
+                modelName={mtpModel}
+                supported={mtpInfo?.supported === true}
+                draftNumPredict={mtpInfo?.draftNumPredict}
+                pending={mtpMutation.isPending}
+                error={mtpError}
+                onChange={(draftNumPredict) => {
+                  mtpMutation.mutate(draftNumPredict);
+                }}
+              />
 
               {/* Keep Alive */}
               <Field>

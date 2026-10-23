@@ -2659,6 +2659,53 @@ func TestExternalDraftType(t *testing.T) {
 	}
 }
 
+func TestHasMTPDraftFromNextNMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		kv   gguftest.KV
+		want bool
+	}{
+		{
+			name: "nextn predict layers enable embedded MTP",
+			kv: gguftest.KV{
+				"general.architecture": "glm4moe",
+				"nextn_predict_layers": uint32(1),
+			},
+			want: true,
+		},
+		{
+			name: "several nextn layers enable embedded MTP",
+			kv: gguftest.KV{
+				"general.architecture":        "qwen35",
+				"qwen35.nextn_predict_layers": uint32(3),
+			},
+			want: true,
+		},
+		{
+			name: "zero nextn layers do not enable MTP",
+			kv: gguftest.KV{
+				"general.architecture": "glm4moe",
+				"nextn_predict_layers": uint32(0),
+			},
+			want: false,
+		},
+		{
+			name: "missing nextn metadata does not enable MTP",
+			kv:   gguftest.KV{"general.architecture": "llama"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := loadTestGGUF(t, tt.kv)
+			if got := hasMTPDraft(model); got != tt.want {
+				t.Fatalf("hasMTPDraft() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasLegacyQwenMTPDraft(t *testing.T) {
 	tests := []struct {
 		name    string
