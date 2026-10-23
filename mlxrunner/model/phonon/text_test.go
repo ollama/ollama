@@ -73,6 +73,22 @@ func TestUnigramByteFallback(t *testing.T) {
 	}
 }
 
+func TestUnigramFold(t *testing.T) {
+	vocab := [][]any{{"<unk>", -10.0}}
+	for _, c := range "abcehilnorstuvSAIøé" {
+		vocab = append(vocab, []any{string(c), -1.0})
+	}
+	data, _ := json.Marshal(map[string]any{"model": map[string]any{"type": "Unigram", "unk_id": 0, "vocab": vocab}})
+	u, err := newUnigram(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := u.fold("École naïve Søren Æsir straße İstanbul bǎohù 日本")
+	if want := "école naive Søren Aesir strasse Istanbul baohu 日本"; got != want {
+		t.Errorf("fold = %q; want %q", got, want)
+	}
+}
+
 // Run against a real checkpoint and fixtures generated with Hugging Face
 // tokenizers: PHONON_TOKENIZER=... PHONON_TOKEN_CASES=... go test ...
 func TestCheckpointTokenizer(t *testing.T) {

@@ -213,9 +213,10 @@ func numberWords(word string) (string, string, bool) {
 	return s, rest, true
 }
 
-// digitRun reads two or more groups of digits, each a word of its own, digit
-// by digit: "+44 20 7946 0958". Two groups need a leading "+" or zero, and
-// three or more must not all be years.
+// digitRun reads groups of digits, each a word of its own, digit by digit, as
+// phone and card numbers are read: "+44 20 7946 0958". A run needs a leading
+// "+" or zero, or three or more groups, not all years, with one of four digits
+// or more, so that "21 17 14" stays a list of numbers.
 func digitRun(words []string) (string, int) {
 	group := func(s string) bool {
 		return len(s) >= 1 && len(s) <= 8 && strings.Trim(s, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "" && strings.ContainsAny(s, "0123456789")
@@ -239,7 +240,8 @@ func digitRun(words []string) (string, int) {
 	}
 	years := !slices.ContainsFunc(bodies, func(b string) bool { return len(b) != 4 || b[:2] != "19" && b[:2] != "20" })
 	zero := slices.ContainsFunc(bodies, func(b string) bool { return b[0] == '0' })
-	if !(len(bodies) >= 3 && !years) && !(len(bodies) == 2 && (plus || zero)) {
+	long := slices.ContainsFunc(bodies, func(b string) bool { return len(b) >= 4 })
+	if !(len(bodies) >= 2 && (plus || zero)) && !(len(bodies) >= 3 && !years && long) {
 		return "", 0
 	}
 	spelled := make([]string, len(bodies))

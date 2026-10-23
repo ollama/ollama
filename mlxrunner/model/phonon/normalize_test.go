@@ -21,7 +21,7 @@ func TestNormalizeText(t *testing.T) {
 		{"time: 10:30", "time, 10:30"},
 		{"foo ; bar  :  baz", "foo, bar, baz"},
 		{"a;b:c", "a, b:c"},
-		{"fish &. 12%. #.", "fish &. 12%. #."},
+		{"fish &. 12%. #.", "fish &. 12%."},
 		{"hello... goodbye", "hello. goodbye"},
 		{"'Hello!'", "'Hello!"},
 		{"a ‐ b ‑ c ‒ d ― e – f — g", "a - b - c - d - e f g"},
@@ -29,7 +29,8 @@ func TestNormalizeText(t *testing.T) {
 		{"He said, \"go home!\"", "He said, \"go home!"},
 		{"It's the boys'", "It's the boys'"},
 		{"café résumé 日本語", "café résumé 日本語"},
-		{"bǎohù zìjǐ in İstanbul, città", "baohù ziji in Istanbul, città"},
+		// Letters are folded by the tokenizer, which knows its pieces.
+		{"bǎohù in İstanbul", "bǎohù in İstanbul"},
 
 		// Symbols that are read aloud.
 		{"I ❤ you", "I love you"},
@@ -57,6 +58,8 @@ func TestNormalizeText(t *testing.T) {
 		{"Turn 90°, then 10n°.", "Turn 90 degrees, then 10n degrees."},
 		{"Call n.° 5 now.", "Call number 5 now."},
 		{"Fish &, chips &.", "Fish &, chips &."},
+		{"Order #12345 in C#, #tag, ## Notes", "Order number 12 thousand 345 in C sharp, tag, Notes"},
+		{"Use snake_case, not _emphasis_ or __init__.", "Use snake underscore case, not emphasis or init."},
 
 		// The word rules.
 		{"user@host @home", "user at host at home"},
@@ -77,6 +80,8 @@ func TestNormalizeText(t *testing.T) {
 		{"Ring +44 20 7946 0958.", "Ring plus four four, two zero, seven nine four six, zero nine five eight."},
 		{"Text 07700 900123 now.", "Text zero seven seven zero zero, nine zero zero one two three now."},
 		{"In 2019 2020 2021", "In 2019 2020 2021"},
+		{"The scores were 21 17 14, call 555 123 4567.", "The scores were 21 17 14, call five five five, one two three, four five six seven."},
+		{"Dial +33 1 23 45 67 89.", "Dial plus three three, one, two three, four five, six seven, eight nine."},
 		{"It fell to -12.", "It fell to minus 12."},
 		{"Your order number is 48213.", "Your order number is 48 thousand 213."},
 		{"Visit www.kyutai.fr today.", "Visit W-W-W dot kyutai dot F-R today."},

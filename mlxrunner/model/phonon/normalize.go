@@ -79,8 +79,6 @@ func normalizeText(input string) string {
 				res.pushString(scale)
 				i++
 			}
-		case folds[c] != 0:
-			res.push(folds[c])
 		case subscripts[c] != 0:
 			res.push(subscripts[c])
 		case superscripts[c] != 0:
@@ -118,6 +116,19 @@ func normalizeText(input string) string {
 			res.pushSpoken("about")
 		case c == '*' && (prev < 0 || unicode.IsSpace(prev)) && isASCIIDigit(at(i+1)):
 			res.pushSpoken("star")
+		case c == '#':
+			// "#1" is "number 1" and "C#" "C sharp"; other hashes are markup.
+			switch {
+			case isASCIIDigit(at(i + 1)):
+				res.pushSpoken("number")
+			case isAlphanumeric(prev) && !isAlphanumeric(at(i+1)):
+				res.pushSpoken("sharp")
+			default:
+				res.pushSpace()
+			}
+		case c == '_' && !(isAlphanumeric(prev) && isAlphanumeric(at(i+1))):
+			// "_word_" is emphasis; the '_' of "snake_case" is read out later.
+			res.pushSpace()
 		case c == '–' && isASCIIDigit(prev) && (isASCIIDigit(at(i+1)) || currencies[at(i+1)].many != ""):
 			// An en dash between amounts is a range: "2020–2021", "$10–$20".
 			res.pushSpoken("to")
@@ -174,12 +185,12 @@ func (a *appender) pushString(s string) {
 
 // keeps reports whether last stays before a '.' or ',': quotes, so that they
 // stay balanced, '@' and '+', which are spelled out after the rules read them,
-// the '$' of an amount ("5$."), and '%', '#' and '&', which are read aloud.
+// the '$' of an amount ("5$."), and '%' and '&', which are read aloud.
 func (a *appender) keeps(last rune) bool {
 	if last == '$' {
 		return len(a.buf) >= 2 && isASCIIDigit(a.buf[len(a.buf)-2])
 	}
-	return strings.ContainsRune("\"'@+%#&", last)
+	return strings.ContainsRune("\"'@+%&", last)
 }
 
 // pushSpoken adds a symbol's spoken form as a word of its own.
@@ -244,14 +255,14 @@ func stripClosingQuote(text string) string {
 	return text
 }
 
-// spellSymbols spells out the '@' and '+' of a word no rule claimed, and gives
-// the pieces they leave their own turn at the rules: "1500+20" reads "1
+// spellSymbols spells out the '@', '+' and '_' of a word no rule claimed, and
+// gives the pieces they leave their own turn at the rules: "1500+20" reads "1
 // thousand 500 plus 20". A slash between words ("and/or") is read as a pause.
 func spellSymbols(word string) string {
 	if text, ok := splitSlash(word); ok {
 		return rewriteEach(text)
 	}
-	if !strings.ContainsAny(word, "@+") {
+	if !strings.ContainsAny(word, "@+_") {
 		return word
 	}
 	var res appender
@@ -261,6 +272,8 @@ func spellSymbols(word string) string {
 			res.pushSpoken("at")
 		case '+':
 			res.pushSpoken("plus")
+		case '_':
+			res.pushSpoken("underscore")
 		default:
 			res.push(c)
 		}
@@ -361,9 +374,6 @@ func pairs(s string) map[rune]rune {
 var (
 	subscripts   = pairs("₀0₁1₂2₃3₄4₅5₆6₇7₈8₉9₊+₋-ₐaₑeₒoₓxₕhₖkₗlₘmₙnₚpₛsₜtᵢiⱼj")
 	superscripts = pairs("⁰0¹1²2³3⁴4⁵5⁶6⁷7⁸8⁹9⁻-⁺+ⁿn")
-	// Letters with a diacritic the tokenizer has no piece for, and the letter
-	// they fold to.
-	folds = pairs("ÌIÒOÝYìiòoýyÿyĀAāaĂAăaĄAąaĆCćcĈCĉcĊCċcČCčcĎDďdĒEēeĔEĕeĖEėeĘEęeĚEěeĜGĝgĞGğgĠGġgĢGģgĤHĥhĨIĩiĪIīiĬIĭiĮIįiİIĴJĵjĶKķkĹLĺlĻLļlĽLľlŃNńnŅNņnŇNňnŌOōoŎOŏoŐOőoŔRŕrŖRŗrŘRřrŚSśsŜSŝsŞSşsŠSšsŢTţtŤTťtŨUũuŪUūuŬUŭuŮUůuŰUűuŲUųuŴWŵwŶYŷyŸYŹZźzŻZżzŽZžzƠOơoƯUưuǍAǎaǏIǐiǑOǒoǓUǔuǕUǖuǗUǘuǙUǚuǛUǜuǞAǟaǠAǡaǦGǧgǨKǩkǪOǫoǬOǭoǰjǴGǵgǸNǹnǺAǻaȀAȁaȂAȃaȄEȅeȆEȇeȈIȉiȊIȋiȌOȍoȎOȏoȐRȑrȒRȓrȔUȕuȖUȗuȘSșsȚTțtȞHȟhȦAȧaȨEȩeȪOȫoȬOȭoȮOȯoȰOȱoȲYȳyḀAḁaḂBḃbḄBḅbḆBḇbḈCḉcḊDḋdḌDḍdḎDḏdḐDḑdḒDḓdḔEḕeḖEḗeḘEḙeḚEḛeḜEḝeḞFḟfḠGḡgḢHḣhḤHḥhḦHḧhḨHḩhḪHḫhḬIḭiḮIḯiḰKḱkḲKḳkḴKḵkḶLḷlḸLḹlḺLḻlḼLḽlḾMḿmṀMṁmṂMṃmṄNṅnṆNṇnṈNṉnṊNṋnṌOṍoṎOṏoṐOṑoṒOṓoṔPṕpṖPṗpṘRṙrṚRṛrṜRṝrṞRṟrṠSṡsṢSṣsṤSṥsṦSṧsṨSṩsṪTṫtṬTṭtṮTṯtṰTṱtṲUṳuṴUṵuṶUṷuṸUṹuṺUṻuṼVṽvṾVṿvẀWẁwẂWẃwẄWẅwẆWẇwẈWẉwẊXẋxẌXẍxẎYẏyẐZẑzẒZẓzẔZẕzẖhẗtẘwẙyẠAạaẢAảaẤAấaẦAầaẨAẩaẪAẫaẬAậaẮAắaẰAằaẲAẳaẴAẵaẶAặaẸEẹeẺEẻeẼEẽeẾEếeỀEềeỂEểeỄEễeỆEệeỈIỉiỊIịiỌOọoỎOỏoỐOốoỒOồoỔOổoỖOỗoỘOộoỚOớoỜOờoỞOởoỠOỡoỢOợoỤUụuỦUủuỨUứuỪUừuỬUửuỮUữuỰUựuỲYỳyỴYỵyỶYỷyỸYỹy")
 )
 
 // Rust's char classes, which unicode.IsLetter and friends only approximate.
