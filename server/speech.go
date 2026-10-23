@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 )
@@ -142,6 +144,18 @@ func streamSpeech(c *gin.Context, speaker llm.Speaker, req llm.SpeechRequest, fo
 
 func speechError(c *gin.Context, status int, message string) {
 	c.AbortWithStatusJSON(status, openai.NewError(status, message))
+}
+
+// speechVoices lists the voices create stored as voices.<name> tensors.
+func speechVoices(mf *manifest.Manifest) []string {
+	var voices []string
+	for _, layer := range mf.Layers {
+		if name, ok := strings.CutPrefix(layer.Name, "voices."); ok && layer.MediaType == manifest.MediaTypeImageTensor {
+			voices = append(voices, name)
+		}
+	}
+	slices.SortFunc(voices, func(a, b string) int { return cmp.Compare(strings.ToLower(a), strings.ToLower(b)) })
+	return voices
 }
 
 // wavHeader describes 16-bit mono PCM of unknown length, as streamed WAV is.
