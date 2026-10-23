@@ -248,10 +248,11 @@ _sign_darwin() {
         done
 
         if [ -z "${OLLAMA_SKIP_NOTARIZE:-}" ]; then
-            # create a temporary zip for notarization
+            # create a temporary zip for notarization; _notarize uses
+            # NOTARY_PROFILE when set, else APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID
             TEMP=$(mktemp -u).zip
             ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
-            xcrun notarytool submit "$TEMP" --wait --timeout 20m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+            _notarize "$TEMP"
             rm -f "$TEMP"
         fi
     fi
