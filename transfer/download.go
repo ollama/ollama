@@ -445,7 +445,7 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 			if err := d.refreshToken(ctx, ch, prev); err != nil {
 				return nil, err
 			}
-		case http.StatusTemporaryRedirect, http.StatusFound, http.StatusMovedPermanently:
+		case http.StatusTemporaryRedirect, http.StatusPermanentRedirect, http.StatusFound, http.StatusMovedPermanently:
 			loc, _ := resp.Location()
 			if err := ValidateRedirectScheme(loc, d.baseURL); err != nil {
 				return nil, err
