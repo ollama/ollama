@@ -10,6 +10,10 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+	"golang.org/x/text/unicode/norm"
 )
 
 const metaspace = "▁"
@@ -23,6 +27,7 @@ type unigram struct {
 	byteIDs    [256]int32 // token ID for each byte, or -1
 	bytes      []int      // byte value of each <0xNN> piece, or -1
 	ids        map[string]int32
+	chars      map[rune]bool // runes with a piece of their own
 	maxLen     int
 	unkID      int32
 	unkScore   float64
@@ -51,7 +56,7 @@ func newUnigram(data []byte) (*unigram, error) {
 	if t.Model.Type != "Unigram" {
 		return nil, fmt.Errorf("unsupported tokenizer model %q", t.Model.Type)
 	}
-	u := &unigram{ids: make(map[string]int32, len(t.Model.Vocab)), unkID: t.Model.UnkID, specialIDs: make([]bool, len(t.Model.Vocab))}
+	u := &unigram{ids: make(map[string]int32, len(t.Model.Vocab)), chars: map[rune]bool{}, unkID: t.Model.UnkID, specialIDs: make([]bool, len(t.Model.Vocab))}
 	for i := range u.byteIDs {
 		u.byteIDs[i] = -1
 	}
@@ -79,6 +84,10 @@ func newUnigram(data []byte) (*unigram, error) {
 		u.scores = append(u.scores, score)
 		u.bytes = append(u.bytes, b)
 		u.ids[piece] = int32(i)
+		if rest := strings.TrimPrefix(piece, metaspace); utf8.RuneCountInString(rest) == 1 {
+			c, _ := utf8.DecodeRuneInString(rest)
+			u.chars[c] = true
+		}
 		u.maxLen = max(u.maxLen, len(piece))
 		minScore = min(minScore, score)
 	}
@@ -118,10 +127,56 @@ func (u *unigram) encode(text string) []int32 {
 
 func (u *unigram) encodeText(text string) []int32 {
 	var ids []int32
-	for word := range strings.SplitSeq(strings.ReplaceAll(text, " ", metaspace), metaspace) {
+	for word := range strings.SplitSeq(strings.ReplaceAll(u.fold(text), " ", metaspace), metaspace) {
 		ids = u.encodeWord(metaspace+word, ids)
 	}
 	return ids
+}
+
+// letterFolds spell the letters that do not decompose into a letter and marks.
+var letterFolds = map[rune]string{
+	'Æ': "Ae", 'æ': "ae", 'Œ': "Oe", 'œ': "oe", 'ß': "ss", 'ẞ': "SS", 'Ø': "O", 'ø': "o",
+	'Ł': "L", 'ł': "l", 'Đ': "D", 'đ': "d", 'Ð': "D", 'ð': "d", 'Þ': "Th", 'þ': "th",
+}
+
+// fold spells the letters that have no piece with ones that do, so that they
+// do not fall back to bytes: "École" becomes "école" when only "é" has a piece,
+// "ÉCOLE" "ECOLE", "ï" "i", and "ß" "ss". Anything else is left to byte
+// fallback.
+func (u *unigram) fold(text string) string {
+	missing := func(c rune) bool { return unicode.IsLetter(c) && !u.chars[c] }
+	if !strings.ContainsFunc(text, missing) {
+		return text
+	}
+	runes := []rune(text)
+	var b strings.Builder
+	for i, c := range runes {
+		if !missing(c) {
+			b.WriteRune(c)
+			continue
+		}
+		// A capital next to another keeps its case.
+		caps := unicode.IsUpper(c) && (i > 0 && unicode.IsUpper(runes[i-1]) || i+1 < len(runes) && unicode.IsUpper(runes[i+1]))
+		s := letterFolds[c]
+		if caps {
+			s = strings.ToUpper(s)
+		}
+		if lower := unicode.ToLower(c); lower >= utf8.RuneSelf && u.chars[lower] && !caps {
+			s = string(lower)
+		} else if s == "" {
+			s = strings.Map(func(r rune) rune {
+				if unicode.Is(unicode.Mn, r) {
+					return -1
+				}
+				return r
+			}, norm.NFKD.String(string(c)))
+		}
+		if s == "" || strings.ContainsFunc(s, func(r rune) bool { return !u.chars[r] }) {
+			s = string(c)
+		}
+		b.WriteString(s)
+	}
+	return b.String()
 }
 
 // encodeWord appends the Viterbi segmentation of s.
@@ -214,9 +269,10 @@ func prepareText(text string) (string, int, error) {
 	if len(words) <= 4 {
 		framesAfterEOS = 3
 	}
+	// Rust's full case mapping: "ß" becomes "SS" and "ﬁ" "FI".
 	_, n := utf8.DecodeRuneInString(text)
-	text = strings.ToUpper(text[:n]) + text[n:]
-	if last, _ := utf8.DecodeLastRuneInString(text); unicode.IsLetter(last) || unicode.IsNumber(last) {
+	text = cases.Upper(language.Und).String(text[:n]) + text[n:]
+	if last, _ := utf8.DecodeLastRuneInString(text); isAlphanumeric(last) {
 		text += "."
 	}
 	return text, framesAfterEOS, nil

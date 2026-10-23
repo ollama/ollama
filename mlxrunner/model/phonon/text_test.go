@@ -21,6 +21,10 @@ func TestPrepareText(t *testing.T) {
 		{"it’s ready", "It’s ready.", 3},
 		{"hello; world", "Hello; world.", 3},
 		{"one  two\tthree\rfour five", "One two three four five.", 1},
+		// Rust's full case mapping and Alphabetic property.
+		{"ßtart with eszett", "SStart with eszett.", 3},
+		{"ﬁnally, a ligature start", "FInally, a ligature start.", 3},
+		{"rated ⓐ", "Rated ⓐ.", 3},
 	} {
 		got, tail, err := prepareText(tc.input)
 		if err != nil || got != tc.want || tail != tc.tail {
@@ -69,8 +73,26 @@ func TestUnigramByteFallback(t *testing.T) {
 	}
 }
 
+func TestUnigramFold(t *testing.T) {
+	vocab := [][]any{{"<unk>", -10.0}}
+	for _, c := range "abcehilnorstuvACEILORSøé" {
+		vocab = append(vocab, []any{string(c), -1.0})
+	}
+	data, _ := json.Marshal(map[string]any{"model": map[string]any{"type": "Unigram", "unk_id": 0, "vocab": vocab}})
+	u, err := newUnigram(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := u.fold("École ÉCOLE naïve Søren Æsir ÆSIR straße İstanbul bǎohù 日本")
+	if want := "école ECOLE naive Søren Aesir AESIR strasse Istanbul baohu 日本"; got != want {
+		t.Errorf("fold = %q; want %q", got, want)
+	}
+}
+
 // Run against a real checkpoint and fixtures generated with Hugging Face
 // tokenizers: PHONON_TOKENIZER=... PHONON_TOKEN_CASES=... go test ...
+// encode folds letters the vocabulary has no piece for, which Hugging Face
+// does not, so leave such letters out of the fixtures.
 func TestCheckpointTokenizer(t *testing.T) {
 	path := os.Getenv("PHONON_TOKENIZER")
 	if path == "" {
@@ -154,5 +176,18 @@ func TestCheckpointChunking(t *testing.T) {
 				t.Errorf("chunk has %d tokens", n)
 			}
 		}
+	}
+}
+
+func TestUnigramDecodeSpecialTokens(t *testing.T) {
+	u, err := newUnigram([]byte(`{
+		"added_tokens":[{"id":1,"content":"\u0000<s>","special":true}],
+		"model":{"type":"Unigram","unk_id":0,"vocab":[["<unk>",-10],["\u0000<s>",0],["▁hello",-1],["▁world",-1]]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.decode([]int32{1, 2, 1, 3, 1}); got != "hello world" {
+		t.Fatalf("decode with skipped special tokens = %q", got)
 	}
 }
