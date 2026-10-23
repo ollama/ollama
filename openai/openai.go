@@ -900,8 +900,6 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
