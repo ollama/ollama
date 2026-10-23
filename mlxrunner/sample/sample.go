@@ -676,9 +676,12 @@ func (s *Sampler) canBatch(slots []*slotState) (Options, bool) {
 	// slots is non-empty (Sample guards) and every slot is registered,
 	// so s.slots[0].opts is the canonical shared value.
 	shared := s.slots[0].opts
-	// TODO(pdevine): Before using multi-slot batching with seeded stochastic sampling,
-	// make sure each row gets its own per-slot random key instead of sharing
-	// slots[0]'s key through one batched categorical op.
+	// A categorical draw with one key does not preserve each slot's random
+	// stream when rows join, leave, or change order. Sample these rows with
+	// their own keys until the uniform path supports a key per row.
+	if len(slots) > 1 && shared.UseSeed && shared.Temperature != 0 {
+		return Options{}, false
+	}
 	if !shared.usesHistory() {
 		return shared, true
 	}
@@ -709,14 +712,6 @@ func (s *Sampler) sampleTokensUniform(slots []*slotState, opts Options, logits *
 
 	ctx := &slotCtx{opts: opts, history: hist}
 	token := slots[0].sample(ctx, logits)
-	if opts.UseSeed && opts.Temperature != 0 {
-		// TODO: This only keeps counters aligned; it does not give each slot
-		// an independent key for the batched draw.
-		for _, slot := range slots[1:] {
-			slot.randomCounter++
-		}
-	}
-
 	if !opts.usesHistory() {
 		return token
 	}

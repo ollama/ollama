@@ -563,7 +563,7 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 // come from the block only. Either input may be absent: with no block the
 // call just extends the context, with no context the block drafts from
 // whatever is already cached.
-func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	kv := draftCaches
 
 	var hctx *mlx.Array
@@ -620,7 +620,7 @@ func (m *Model) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, a
 	return hidden, hidden
 }
 
-func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
 	h := mlx.Add(x, l.Attention.Forward(l.InputNorm.Forward(x, cfg.RMSNormEps), ctxK, ctxV, c, bb, positions, mask, B, L, cfg))
 	return mlx.Add(h, l.MLP.Forward(l.PostAttnNorm.Forward(h, cfg.RMSNormEps)))
 }
@@ -647,7 +647,7 @@ func (a *Attention) splitKV(kv *mlx.Array, B, L int32, cfg *Config) (k, v *mlx.A
 	return k, v
 }
 
-func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Cache, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x, ctxK, ctxV *mlx.Array, c cache.Layer, bb *batch.Batch, positions *mlx.Array, mask nn.AttentionMask, B, L int32, cfg *Config) *mlx.Array {
 	q := mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim)
 	k, v := a.splitKV(a.KVProj.Forward(x), B, L, cfg)
 

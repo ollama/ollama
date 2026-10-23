@@ -9,6 +9,7 @@ var (
 	releaseUnicodeOutputModel   = "gemma2:2b"
 	releaseNumPredictModel      = "llama3.2:1b"
 	releaseParallelHistoryModel = integrationModel{Name: "gpt-oss:20b", MinVRAMGB: 16}
+	releaseParallelMLXModels    = []string{"gemma4:e2b-nvfp4", "qwen3.5:2b-nvfp4"}
 	releaseChatModels           = []integrationModel{
 		{Name: "gemma4", MinVRAMGB: 8},
 		{Name: "gemma4:12b", MinVRAMGB: 16},
@@ -117,7 +118,7 @@ func init() {
 		integrationTestCase("generate-history", smol, runGenerateWithHistory),
 		integrationModelTestCase("parallel-chat-history", defaultTestModel(releaseParallelHistoryModel.Name), runParallelChatWithHistory),
 		integrationTestCase("chat-history", smol, runChatWithHistory),
-		integrationTestCase("concurrent-chat", smol, runConcurrentChat),
+		integrationModelTestCase("concurrent-chat", smol, runConcurrentChat),
 		integrationTestCase("scheduler-multimodel", "", runMultiModelStress),
 		integrationTestCase("scheduler-max-queue", smol, runMaxQueue),
 
@@ -125,6 +126,9 @@ func init() {
 		integrationTestCase("thinking-suppressed", smol, runThinkingSuppressed),
 	)
 	registerStructuredOutputCases()
+	registerModelIntegrationCases("concurrent-chat", testModels(releaseParallelMLXModels), runConcurrentChat)
+	registerModelIntegrationCases("parallel-chat-history", testModels(releaseParallelMLXModels), runParallelChatWithHistory)
+	registerModelIntegrationCases("mlx-batching", testModels(releaseParallelMLXModels), runMLXBatching)
 
 	// Model-parametric cases
 	registerModelMinVRAM([]integrationModel{releaseUnicodeInputModel, releaseParallelHistoryModel})

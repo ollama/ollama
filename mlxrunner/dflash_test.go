@@ -43,7 +43,7 @@ func (d *fakeBlockDraft) NewCaches() []cache.Cache { return d.draftCaches }
 
 func (d *fakeBlockDraft) BlockParams() (int, int32) { return d.blockSize, d.maskToken }
 
-func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (d *fakeBlockDraft) Forward(b *batch.Batch, _, draftCaches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	call := blockCall{offset: b.SeqOffsets[0]}
 
 	if b.Hidden != nil {
@@ -99,7 +99,7 @@ func newBlockTestSession(t *mlxtest.T, predict map[int32]int32, blockSize int) (
 	caches, _ := newMTPTestCaches(2) // caches[0] target, caches[1] draft context
 	draft := &fakeBlockDraft{predict: predict, blockSize: blockSize, maskToken: 6, draftCaches: caches[1:]}
 	r.cache.caches = caches
-	r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+	r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 	return r, draft, r.spec.drafter.open(nil).(*dflashDraftSession), caches
 }
 
@@ -166,7 +166,7 @@ func TestDFlashRestoredPrefixResumes(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft := &fakeBlockDraft{blockSize: 4, maskToken: 6, draftCaches: caches[1:]}
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 
 		// A restored prefix arrives with the draft caches already written.
 		restored := []int32{1, 2, 3, 4, 5}
@@ -281,7 +281,7 @@ func TestDecodeBlockDraft(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft := &fakeBlockDraft{predict: predict, blockSize: 3, maskToken: 6, draftCaches: caches[1:]}
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
 		req := Request{
