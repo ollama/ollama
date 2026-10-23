@@ -71,13 +71,44 @@ func TestRegisterAppleFoundationModel(t *testing.T) {
 
 func TestRegisterAppleFoundationModelUnavailable(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	stubAppleFMAvailable(t, errors.New("Apple Intelligence is not enabled"))
+	name := model.ParseName(appleFMModelName)
 
+	stubAppleFMAvailable(t, nil)
 	if err := registerAppleFoundationModel(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manifest.ParseNamedManifest(model.ParseName(appleFMModelName)); err == nil {
-		t.Fatal("model registered while unavailable")
+
+	// Turning off Apple Intelligence removes the earlier registration.
+	stubAppleFMAvailable(t, errors.New("Apple Intelligence is not enabled"))
+	if err := registerAppleFoundationModel(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manifest.ParseNamedManifest(name); err == nil {
+		t.Fatal("model still registered while unavailable")
+	}
+}
+
+func TestRegisterAppleFoundationModelKeepsOtherModel(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	writeShowManifestVariant(t, appleFMModelName, "", manifest.FormatGGUF, model.ConfigV2{ModelFormat: "gguf"}, nil)
+	name := model.ParseName(appleFMModelName)
+	before, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, available := range []error{nil, errors.New("unavailable")} {
+		stubAppleFMAvailable(t, available)
+		if err := registerAppleFoundationModel(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		after, err := manifest.ParseNamedManifest(name)
+		if err != nil {
+			t.Fatalf("available=%v: %v", available, err)
+		}
+		if after.Config.Digest != before.Config.Digest {
+			t.Fatalf("available=%v: existing model was replaced", available)
+		}
 	}
 }
 

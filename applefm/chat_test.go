@@ -177,6 +177,13 @@ func TestChatErrors(t *testing.T) {
 			message: "ended the response early",
 		},
 		{
+			name: "malformed chunk",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				writeSSE(w, `data: {"choices":[`)
+			},
+			message: "invalid stream chunk",
+		},
+		{
 			name: "json format",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				t.Error("fm should not be called")
