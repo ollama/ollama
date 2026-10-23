@@ -269,6 +269,44 @@ func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_AssistantToolCallsEmptyArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"user","content":"what's the weather?"},
+		{"role":"assistant","content":[],"reasoning":"need weather","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"Paris\"}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"sunny"}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d: %+v", len(result.Messages), result.Messages)
+	}
+
+	user := result.Messages[0]
+	if user.Role != "user" || user.Content != "what's the weather?" || len(user.ToolCalls) != 0 || user.Thinking != "" {
+		t.Errorf("user message modified: %+v", user)
+	}
+
+	assistant := result.Messages[1]
+	if assistant.Role != "assistant" || assistant.Thinking != "need weather" || len(assistant.ToolCalls) != 1 {
+		t.Fatalf("unexpected assistant message: %+v", assistant)
+	}
+	if tc := assistant.ToolCalls[0]; tc.ID != "call_1" || tc.Function.Name != "get_weather" {
+		t.Errorf("unexpected tool call: %+v", tc)
+	}
+
+	tool := result.Messages[2]
+	if tool.Role != "tool" || tool.ToolName != "get_weather" || tool.Content != "sunny" {
+		t.Errorf("unexpected tool message: %+v", tool)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
