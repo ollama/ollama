@@ -3926,8 +3926,8 @@ func fakeRunningCmd() *exec.Cmd {
 // TestLlamaServerCompletionThinkingFormat checks that a format on a thinking
 // response is one request carrying a grammar: a schema is converted by an
 // empty completion once per schema, "json" needs no conversion, the grammar
-// wraps the format rules behind the closing string, and content and metrics
-// pass through unchanged.
+// wraps the format rules behind the closing string, optional tool calls remain
+// available after thinking, and content and metrics pass through unchanged.
 func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object"}`)
 	converted := "root ::= \"{\" space \"}\"\nspace ::= | \" \"\n"
@@ -3989,14 +3989,15 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 	}
 
-	complete := func(format json.RawMessage) string {
+	complete := func(format json.RawMessage, toolCallStarts ...string) string {
 		var responses []CompletionResponse
 		opts := api.DefaultOptions()
 		err := runner.Completion(t.Context(), CompletionRequest{
-			Prompt:        "test prompt",
-			Format:        format,
-			ThinkingClose: []string{"</think>"},
-			Options:       &opts,
+			Prompt:         "test prompt",
+			Format:         format,
+			ThinkingClose:  []string{"</think>"},
+			ToolCallStarts: toolCallStarts,
+			Options:        &opts,
 		}, func(cr CompletionResponse) {
 			responses = append(responses, cr)
 		})
@@ -4033,5 +4034,15 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+
+	grammar = complete(schema, "<tool_call>")
+	if !strings.HasPrefix(grammar, "root ::= ollama-ollama-thinking-0\n") ||
+		!strings.Contains(grammar, `ollama-ollama-format ::= ollama-format | "<tool_call>" ollama-tool`) ||
+		!strings.Contains(grammar, "ollama-format ::= \"{\" space \"}\"\n") {
+		t.Errorf("grammar does not allow a tool call alongside the converted schema:\n%s", grammar)
+	}
+	if got := conversions.Load(); got != 1 {
+		t.Errorf("cached schema converted again, %d conversions", got)
 	}
 }

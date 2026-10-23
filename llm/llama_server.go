@@ -1725,9 +1725,9 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		}
 	}
 
-	// A format on a thinking response applies after the closing string, which
-	// only a grammar of our own can express, so a schema is converted first.
-	if len(req.ThinkingClose) > 0 && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
+	// Thinking and tool-call alternatives require a grammar of our own, so a
+	// schema is converted before those wrappers are applied.
+	if (len(req.ThinkingClose) > 0 || len(req.ToolCallStarts) > 0) && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
 		if lsReq.Grammar == "" {
 			grammar, err := s.schemaGrammar(ctx, lsReq.JsonSchema)
 			if err != nil {
@@ -1735,6 +1735,11 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
 		}
+		lsReq.Grammar = toolGrammar(req.ToolCallStarts, lsReq.Grammar)
+	}
+
+	// A format on a thinking response applies after the closing string.
+	if len(req.ThinkingClose) > 0 && lsReq.Grammar != "" {
 		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
 	}
 
