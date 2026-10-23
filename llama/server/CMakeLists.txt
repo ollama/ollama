@@ -17,12 +17,21 @@ endif()
 
 # Ensure all shared libraries and executables can find their dependencies
 # in the same directory at runtime (via $ORIGIN on Linux, @loader_path on macOS).
+# Link with that install rpath in the build tree as well. The binaries sit next
+# to their libraries in both trees. CMake's macOS install rule otherwise runs
+# install_name_tool -delete_rpath on the build directory and does not check the
+# exit status. Xcode 27's install_name_tool errors when that LC_RPATH was never
+# written, which is what the cross-compiled darwin-amd64 shared llama-quantize
+# build hit (the native arm64 build is static and does not). The installed
+# files were still copied; the rewrite was a no-op that printed an error.
 if(APPLE)
     set(CMAKE_INSTALL_RPATH "@loader_path")
     set(CMAKE_BUILD_RPATH "@loader_path")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 elseif(NOT WIN32)
     set(CMAKE_INSTALL_RPATH "$ORIGIN")
     set(CMAKE_BUILD_RPATH "$ORIGIN")
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 endif()
 
 if(GGML_VULKAN AND DEFINED ENV{VULKAN_SDK})

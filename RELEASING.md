@@ -70,6 +70,18 @@ certificate, the notarytool profile, and the ed25519 private key.
 
 ## Check without publishing
 
+On the Mac, confirm the universal build before a release. This compiles,
+lipos, and signs when a Developer ID is present. It does not notarize, tag,
+or upload:
+
+```sh
+bash scripts/release-fork.sh --build-only
+```
+
+It reuses the existing `build/` directory and relinks targets whose rpath
+flags changed. When it prints `Build ok` and the architectures include
+`arm64` and `x86_64`, publish with `bash scripts/release-fork.sh patch`.
+
 On Linux, or before a real release:
 
 ```sh
@@ -77,9 +89,10 @@ bash scripts/release-fork.sh --self-test
 bash scripts/release-fork.sh --dry-run patch
 ```
 
-`--self-test` runs the Go tests (including a tampered-artifact rejection) and
-the version CLI. `--dry-run` prints the next tag and the Mac plan. Neither
-tags, builds, signs, or uploads.
+`--self-test` runs the Go tests (including a tampered-artifact rejection),
+the version CLI, and the Darwin lipo/rpath checks that do not need a Mac.
+`--dry-run` prints the next tag and the Mac plan. Neither tags, builds,
+signs, or uploads.
 
 The old-to-new install itself only runs on macOS:
 
