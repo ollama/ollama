@@ -349,7 +349,7 @@ func TestClaudeEnvVars(t *testing.T) {
 
 	got := envMap(c.envVars("llama3.2", nil))
 	for key, want := range map[string]string{
-		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
+		"ANTHROPIC_BASE_URL":                  envconfig.ConnectableHost().String(),
 		"ANTHROPIC_API_KEY":                   "",
 		"ANTHROPIC_AUTH_TOKEN":                "ollama",
 		"ENABLE_CLAUDEAI_MCP_SERVERS":         "false",
@@ -373,6 +373,15 @@ func TestClaudeEnvVars(t *testing.T) {
 		if _, ok := got[key]; ok {
 			t.Errorf("%s must not be set by Ollama", key)
 		}
+	}
+}
+
+func TestClaudeEnvVarsUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+
+	got := envSliceToMap((&Claude{}).envVars("llama3.2"))
+	if got["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:11434" {
+		t.Fatalf("ANTHROPIC_BASE_URL = %q, want %q", got["ANTHROPIC_BASE_URL"], "http://127.0.0.1:11434")
 	}
 }
 

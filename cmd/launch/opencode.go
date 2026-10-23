@@ -300,7 +300,7 @@ func buildInlineConfig(primary LaunchModel, models []LaunchModel) (string, error
 				"npm":  "@ai-sdk/openai-compatible",
 				"name": "Ollama",
 				"options": map[string]any{
-					"baseURL": envconfig.Host().String() + "/v1",
+					"baseURL": envconfig.ConnectableHost().String() + "/v1",
 				},
 				"models": buildModelEntries(models),
 			},

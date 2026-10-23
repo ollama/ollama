@@ -1184,3 +1184,22 @@ func TestOpenCodeEdit_BaseURL(t *testing.T) {
 		t.Error("baseURL should be set")
 	}
 }
+
+func TestOpenCodeEdit_BaseURLUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+
+	o.Edit(testLaunchModels("llama3.2"))
+
+	var cfg map[string]any
+	json.Unmarshal([]byte(o.configContent), &cfg)
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	options, _ := ollama["options"].(map[string]any)
+
+	if got, _ := options["baseURL"].(string); got != "http://127.0.0.1:11434/v1" {
+		t.Errorf("baseURL = %q, want %q", got, "http://127.0.0.1:11434/v1")
+	}
+}
