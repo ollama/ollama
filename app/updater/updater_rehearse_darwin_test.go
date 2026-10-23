@@ -53,7 +53,10 @@ func TestMacUpdateRehearsal(t *testing.T) {
 		t.Fatalf("installed version = %s", got)
 	}
 
-	newApp := filepath.Join(root, "New.app")
+	// ditto --keepParent names the zip root after this directory. The updater
+	// installs only a zip whose root is Ollama.app/, the layout
+	// scripts/release-fork.sh and the published ds41 zips use.
+	newApp := filepath.Join(root, "payload", "Ollama.app")
 	buildStubApp(t, newApp, newVer, signID)
 	zipPath := filepath.Join(root, "new.zip")
 	ditto := exec.Command("ditto", "-c", "-k", "--norsrc", "--keepParent", newApp, zipPath)
