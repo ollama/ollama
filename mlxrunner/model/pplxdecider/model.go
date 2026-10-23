@@ -39,9 +39,7 @@ type Model struct {
 	markerID int32
 }
 
-func init() { model.Register("Qwen3_5Model", newModel) }
-
-func newModel(root *model.Root) (model.Model, error) {
+func NewModel(root *model.Root) (model.Model, error) {
 	var cfg config
 	if err := root.Manifest.ReadConfigJSON("decision_config.json", &cfg); err != nil {
 		return nil, fmt.Errorf("read Perplexity decision config: %w", err)

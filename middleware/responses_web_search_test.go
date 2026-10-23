@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1134,3 +1135,60 @@ func completedResponseOutput(t *testing.T, body string) []map[string]any {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestWebSearchResponsesStreamFailure(t *testing.T) {
+	for _, failSearch := range []bool{true, false} {
+		name := "follow-up generation"
+		if failSearch {
+			name = "search execution"
+		}
+		t.Run(name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			stream := true
+			request := openai.ResponsesRequest{Model: "test-model", Stream: &stream, Tools: []openai.ResponsesTool{{Type: "web_search"}}}
+			inner := &ResponsesWriter{BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, converter: openai.NewResponsesStreamConverter("resp_test", "msg_test", request.Model, request), model: request.Model, stream: true, responseID: "resp_test", itemID: "msg_test", request: request}
+			writer := &WebSearchResponsesWriter{
+				BaseWriter: BaseWriter{ResponseWriter: ctx.Writer}, inner: inner, req: request,
+				chat: &api.ChatRequest{Model: request.Model, Tools: api.Tools{openai.WebSearchFunctionTool()}},
+				search: func(context.Context, string) (*api.WebSearchResponse, error) {
+					if failSearch {
+						return nil, errors.New("search failed")
+					}
+					return &api.WebSearchResponse{}, nil
+				},
+				followUpStream: func(_ context.Context, _ []api.Message, _ api.Tools, yield func(api.ChatResponse) error) error {
+					if err := yield(api.ChatResponse{Message: api.Message{Content: "partial answer"}}); err != nil {
+						return err
+					}
+					return errors.New("generation failed")
+				},
+			}
+			data, err := json.Marshal(api.ChatResponse{Done: true, Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_search", Function: api.ToolCallFunction{Name: "web_search", Arguments: testArgs(map[string]any{"query": "weather"})}}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writer.Write(data); err != nil {
+				t.Fatal(err)
+			}
+			message := "generation failed"
+			wantTypes := []string{"web_search_call", "message"}
+			if failSearch {
+				message = "search failed"
+				wantTypes = []string{"web_search_call"}
+			}
+			response := assertFailedResponsesStream(t, recorder.Body.String(), "api_error", message, wantTypes)
+			wantStatus := "completed"
+			if failSearch {
+				wantStatus = "failed"
+			}
+			if response.Output[0].Status != wantStatus {
+				t.Fatalf("search status=%q, want %q", response.Output[0].Status, wantStatus)
+			}
+			if !failSearch && (response.Output[1].Status != "incomplete" || response.Output[1].Content[0].Text != "partial answer") {
+				t.Fatalf("follow-up content lost: %#v", response.Output)
+			}
+		})
+	}
+}

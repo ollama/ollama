@@ -65,7 +65,7 @@ func validateImages(images []api.ImageData) error {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands", "kev", "pplx":
+	case "", "tev1", "clef", "strands", "kev", "pplx", "d3":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -91,6 +91,13 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		c := &Compiled{encoding: encoding}
 		if err := encodePPLX(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if encoding == "d3" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeD3(req, c); err != nil {
 			return nil, err
 		}
 		return c, nil

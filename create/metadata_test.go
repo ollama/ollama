@@ -231,6 +231,18 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config: `{"architectures":["LlamaForCausalLM"]}`,
 		},
 		{
+			name:         "flint",
+			config:       `{"architectures":["FlintForCausalLM"],"model_type":"flint"}`,
+			wantParser:   "flint",
+			wantRenderer: "flint",
+			wantCaps:     []string{"completion", "tools", "thinking"},
+		},
+		{
+			name:     "phonon",
+			config:   `{"architectures":["GradiumPhononTTSForConditionalGeneration"],"model_type":"gradium_phonon_tts"}`,
+			wantCaps: []string{"speech"},
+		},
+		{
 			name:         "nested llm config",
 			config:       `{"model_type":"nemotron_h_omni","llm_config":{"model_type":"nemotron_h"}}`,
 			wantParser:   "nemotron-3-nano",

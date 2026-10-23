@@ -515,6 +515,19 @@ func (w *ResponsesWriter) writeEvent(eventType string, data any) error {
 }
 
 func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
+	if w.stream {
+		if message, ok := streamErrorMessage(data); ok {
+			w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+			for _, event := range w.converter.ResponseFailed(map[string]any{
+				"error": openai.ResponsesError{Code: "server_error", Message: message},
+			}) {
+				if err := w.writeEvent(event.Event, event.Data); err != nil {
+					return 0, err
+				}
+			}
+			return len(data), nil
+		}
+	}
 	var chatResponse api.ChatResponse
 	if err := json.Unmarshal(data, &chatResponse); err != nil {
 		return 0, err
@@ -538,6 +551,18 @@ func (w *ResponsesWriter) writeResponse(data []byte) (int, error) {
 	completedAt := time.Now().Unix()
 	response.CompletedAt = &completedAt
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
+}
+
+// Once HTTP 200 is committed, native generation failures arrive in-band.
+// Presence of the error field matters even when its message is empty.
+func streamErrorMessage(data []byte) (string, bool) {
+	var envelope struct {
+		Error *string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Error == nil {
+		return "", false
+	}
+	return *envelope.Error, true
 }
 
 func (w *ResponsesWriter) Write(data []byte) (int, error) {
@@ -619,6 +644,13 @@ func (w *WebSearchResponsesWriter) Write(data []byte) (int, error) {
 	}
 	if w.Status() != http.StatusOK {
 		return len(data), w.writeWebSearchError(decodeWebSearchResponseError(w.Status(), data), api.Metrics{})
+	}
+	if w.inner.stream {
+		if _, ok := streamErrorMessage(data); ok {
+			w.done = true
+			w.buffered = nil
+			return w.inner.writeResponse(data)
+		}
 	}
 
 	var response api.ChatResponse
@@ -1153,8 +1185,7 @@ func (w *WebSearchResponsesWriter) writeWebSearchError(err error, usage api.Metr
 	}
 	w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 	response := map[string]any{
-		"id": w.inner.responseID, "object": "response", "status": "failed", "model": w.req.Model,
-		"output": []any{}, "error": map[string]any{"code": errorCode, "message": message},
+		"error": map[string]any{"code": errorCode, "message": message},
 		"usage": map[string]any{
 			"input_tokens":         usage.PromptEvalCount,
 			"output_tokens":        usage.EvalCount,
@@ -1165,15 +1196,10 @@ func (w *WebSearchResponsesWriter) writeWebSearchError(err error, usage api.Metr
 	if signinURL != "" {
 		response["signin_url"] = signinURL
 	}
-	initialEvents := w.inner.converter.Process(api.ChatResponse{})
-	for _, event := range initialEvents {
+	for _, event := range w.inner.converter.ResponseFailed(response) {
 		if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
 			return err
 		}
-	}
-	event := w.inner.converter.ResponseFailed(response)
-	if err := w.inner.writeEvent(event.Event, event.Data); err != nil {
-		return err
 	}
 	w.done = true
 	return nil
