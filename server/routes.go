@@ -2386,6 +2386,9 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	// Per-model multi-token prediction. Sets or removes the draft_num_predict
+	// parameter without loading the model.
+	r.POST("/api/model/mtp", s.ModelMTPHandler)
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 	r.GET("/api/experimental/model-recommendations", s.ModelRecommendationsExperimentalHandler)

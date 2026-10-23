@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
   settings: null as SettingsType | null,
   runningModels: [] as { name: string; context_length: number }[],
   modelContextInfo: {} as { numCtx?: number; trainCtx?: number },
+  modelMTP: null as { supported: boolean; draftNumPredict?: number } | null,
+  setModelDraftNumPredict: vi.fn(),
+  unloadModel: vi.fn(),
+  loadModel: vi.fn(),
 }));
 
 vi.mock("@/components/ClaudeDesktopModelsSettings", () => ({
@@ -100,6 +104,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "modelContextInfo") {
       return { data: mocks.modelContextInfo };
     }
+    if (queryKey[0] === "modelMTP") {
+      return { data: mocks.modelMTP, isLoading: false };
+    }
     return { data: { defaultContextLength: 65_536 } };
   },
   useMutation: ({
@@ -140,7 +147,10 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
 
     return {
       mutate: (value: unknown, callbacks?: { onSuccess?: () => void }) => {
-        void run(value, callbacks);
+        // react-query reports failures through onError. mutate itself does
+        // not reject, so a rejected mutation must not escape as an unhandled
+        // rejection.
+        void run(value, callbacks).catch(() => {});
       },
       mutateAsync: (value: unknown) => run(value),
     };
@@ -151,7 +161,11 @@ vi.mock("@/api", () => ({
   getSettings: vi.fn(),
   getInferenceCompute: vi.fn(),
   getModelContextInfo: vi.fn(),
+  getModelMTPInfo: vi.fn(),
   listRunningModels: vi.fn(),
+  loadModel: mocks.loadModel,
+  setModelDraftNumPredict: mocks.setModelDraftNumPredict,
+  unloadModel: mocks.unloadModel,
   updateSettings: mocks.updateSettings,
   updateCloudSetting: mocks.updateCloudSetting,
 }));
@@ -177,6 +191,13 @@ describe("Settings reset interactions", () => {
     mocks.settings = new SettingsType({ ContextLength: 65_536 });
     mocks.runningModels = [];
     mocks.modelContextInfo = {};
+    mocks.modelMTP = { supported: false };
+    mocks.setModelDraftNumPredict.mockReset();
+    mocks.unloadModel.mockReset();
+    mocks.loadModel.mockReset();
+    mocks.setModelDraftNumPredict.mockResolvedValue(undefined);
+    mocks.unloadModel.mockResolvedValue(undefined);
+    mocks.loadModel.mockResolvedValue(undefined);
     mocks.updateSettings.mockResolvedValue({ settings: mocks.settings });
     mocks.updateCloudSetting.mockResolvedValue({
       disabled: false,
@@ -583,6 +604,128 @@ describe("Settings reset interactions", () => {
         expect(mocks.updateSettings.mock.calls[0][0]).toMatchObject({
           ContextLength: 262_144,
         });
+      } finally {
+        await cleanup(renderer);
+      }
+    });
+  });
+
+  describe("multi-token prediction", () => {
+    const glm = "glm5.3-flash:q6-vision";
+
+    async function renderSettings() {
+      let renderer!: ReturnType<typeof create>;
+      await act(async () => {
+        renderer = create(<Settings />);
+        await Promise.resolve();
+      });
+      return renderer;
+    }
+
+    async function cleanup(renderer?: ReturnType<typeof create>) {
+      await act(async () => {
+        renderer?.unmount();
+        await Promise.resolve();
+      });
+      vi.unstubAllGlobals();
+    }
+
+    function toggle(renderer: ReturnType<typeof create>) {
+      return renderer.root.findByProps({ "data-testid": "mtp-toggle" });
+    }
+
+    it("is hidden when the model has no MTP layers", async () => {
+      mocks.settings = new SettingsType({ SelectedModel: glm });
+      mocks.modelMTP = { supported: false };
+      const renderer = await renderSettings();
+      try {
+        expect(
+          renderer.root.findAllByProps({ "data-testid": "mtp-toggle" }),
+        ).toHaveLength(0);
+      } finally {
+        await cleanup(renderer);
+      }
+    });
+
+    it("shows an existing draft_num_predict parameter as on", async () => {
+      mocks.settings = new SettingsType({ SelectedModel: glm });
+      mocks.modelMTP = { supported: true, draftNumPredict: 3 };
+      const renderer = await renderSettings();
+      try {
+        expect(toggle(renderer).props.checked).toBe(true);
+        expect(textContent(renderer.root)).toContain(glm);
+        expect(
+          renderer.root.findByProps({ "data-testid": "mtp-draft-depth" }).props
+            .value,
+        ).toBe(3);
+      } finally {
+        await cleanup(renderer);
+      }
+    });
+
+    it("turning off removes only draft_num_predict and does not reload an unloaded model", async () => {
+      mocks.settings = new SettingsType({ SelectedModel: glm });
+      mocks.modelMTP = { supported: true, draftNumPredict: 3 };
+      const renderer = await renderSettings();
+      try {
+        await act(async () => {
+          toggle(renderer).props.onChange(false);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(mocks.setModelDraftNumPredict).toHaveBeenCalledTimes(1);
+        expect(mocks.setModelDraftNumPredict).toHaveBeenCalledWith(glm, 0);
+        expect(mocks.unloadModel).not.toHaveBeenCalled();
+        expect(mocks.loadModel).not.toHaveBeenCalled();
+      } finally {
+        await cleanup(renderer);
+      }
+    });
+
+    it("turning on sets the default depth and reloads a loaded model", async () => {
+      mocks.settings = new SettingsType({ SelectedModel: glm });
+      mocks.modelMTP = { supported: true };
+      mocks.runningModels = [{ name: glm, context_length: 1_048_576 }];
+      const order: string[] = [];
+      mocks.setModelDraftNumPredict.mockImplementation(async () => {
+        order.push("set");
+      });
+      mocks.unloadModel.mockImplementation(async () => {
+        order.push("unload");
+      });
+      mocks.loadModel.mockImplementation(async () => {
+        order.push("load");
+      });
+      const renderer = await renderSettings();
+      try {
+        await act(async () => {
+          toggle(renderer).props.onChange(true);
+          await Promise.resolve();
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(mocks.setModelDraftNumPredict).toHaveBeenCalledWith(glm, 3);
+        expect(order).toEqual(["set", "unload", "load"]);
+      } finally {
+        await cleanup(renderer);
+      }
+    });
+
+    it("does not unload the model when saving the parameter fails", async () => {
+      mocks.settings = new SettingsType({ SelectedModel: glm });
+      mocks.modelMTP = { supported: true, draftNumPredict: 3 };
+      mocks.runningModels = [{ name: glm, context_length: 1_048_576 }];
+      mocks.setModelDraftNumPredict.mockRejectedValue(new Error("disk full"));
+      const renderer = await renderSettings();
+      try {
+        await act(async () => {
+          toggle(renderer).props.onChange(false);
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(mocks.unloadModel).not.toHaveBeenCalled();
+        expect(mocks.loadModel).not.toHaveBeenCalled();
+        expect(textContent(renderer.root)).toContain("disk full");
       } finally {
         await cleanup(renderer);
       }
