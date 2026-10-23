@@ -2839,24 +2839,78 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 }
 
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
+// Uses model file size as a proxy for weights plus an estimate of the f16 KV
+// cache for the attention layers only.
 func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 	weights := modelFileSize(modelPath, f)
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+	return weights + predictKVCacheSize(f, numCtx)
+}
 
-	return weights + kvCache
+// predictKVCacheSize estimates the attention KV cache for numCtx tokens:
+// (k_head_dim + v_head_dim) * kv_heads * context * 2 bytes (f16) per attention
+// layer. Layers that don't run full attention are skipped — hybrid
+// architectures (qwen35, qwen3next) interleave linear attention layers that
+// keep a small fixed-size state instead of a per-token cache.
+func predictKVCacheSize(f *gguf.Model, numCtx int) uint64 {
+	kv := f.KV()
+
+	// Prefer the explicit key/value lengths. Models that don't record them use
+	// a uniform head size derived from the embedding length.
+	var derivedHeadDim uint64
+	if heads := kv.HeadCountMax(); heads > 0 {
+		derivedHeadDim = kv.EmbeddingLength() / heads
+	}
+	headDimK := kv.Uint("attention.key_length", derivedHeadDim)
+	headDimV := kv.Uint("attention.value_length", derivedHeadDim)
+
+	// Hybrid models record a single (max) head count for every block, so the
+	// full attention layers have to be derived from the interval instead.
+	interval := kv.Uint("full_attention_interval")
+
+	var kvCache uint64
+	for i, kvHeads := range headCountKVPerLayer(kv) {
+		if kvHeads == 0 {
+			continue
+		}
+		if interval > 0 && (uint64(i)+1)%interval != 0 {
+			continue
+		}
+		kvCache += (headDimK + headDimV) * kvHeads * uint64(numCtx) * 2
+	}
+
+	return kvCache
+}
+
+// headCountKVPerLayer returns attention.head_count_kv for every block. A scalar
+// value (or a missing key, which defaults to 1) applies to all blocks; a
+// per-layer array is used as is, padded with its last value if it is short.
+func headCountKVPerLayer(kv *gguf.Metadata) []uint64 {
+	value := kv.KeyValue("attention.head_count_kv")
+	counts := value.Uints()
+	if len(counts) == 0 {
+		for _, n := range value.Ints() {
+			if n < 0 {
+				n = 0
+			}
+			counts = append(counts, uint64(n))
+		}
+	}
+
+	fill := kv.Uint("attention.head_count_kv", 1)
+	if len(counts) > 0 {
+		fill = counts[len(counts)-1]
+	}
+
+	out := make([]uint64, kv.BlockCount())
+	for i := range out {
+		if i < len(counts) {
+			out[i] = counts[i]
+		} else {
+			out[i] = fill
+		}
+	}
+	return out
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output
