@@ -160,3 +160,16 @@ func TestCheckpointChunking(t *testing.T) {
 		}
 	}
 }
+
+func TestUnigramDecodeSpecialTokens(t *testing.T) {
+	u, err := newUnigram([]byte(`{
+		"added_tokens":[{"id":1,"content":"\u0000<s>","special":true}],
+		"model":{"type":"Unigram","unk_id":0,"vocab":[["<unk>",-10],["\u0000<s>",0],["▁hello",-1],["▁world",-1]]}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.decode([]int32{1, 2, 1, 3, 1}); got != "hello world" {
+		t.Fatalf("decode with skipped special tokens = %q", got)
+	}
+}

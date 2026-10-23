@@ -35,6 +35,9 @@ func TestNormalizeText(t *testing.T) {
 		{"I ❤ you", "I love you"},
 		{"I ❤️ NY, dial *67, it's 4.5%.", "I love NY, dial star 67, it's 4.5%."},
 		{"Rated ★★★★☆, or ★★★½.", "Rated 4 out of 5 stars, or 3 point 5 stars."},
+		{"★ New ★ Rated ★★★½☆, or ★½.", "New Rated 3 point 5 out of 5 stars, or 1 point 5 stars."},
+		{"From 2020–2021, pages 10–20, $10–$20; a – b.", "From 2020 to 2021, pages 10 to 20, 10 dollars to 20 dollars, a b."},
+		{"It was −5°C, then −12.", "It was minus 5 degrees Celsius, then minus 12."},
 		{"Wait ~10 minutes, ±2.", "Wait about 10 minutes, plus or minus 2."},
 		{"2 + 2 = 4", "2 plus 2 equals 4"},
 		{"x² + y³ = 10⁻⁶", "x squared plus y cubed equals 10 to the power of minus 6"},
@@ -114,7 +117,8 @@ func TestRewriteWord(t *testing.T) {
 		{"555-123-4567?!", "555 123 4 5 6 7?!"},
 		{"first_last@x.co.uk.", "first underscore last at x dot co dot U-K."},
 		{"a..b@x.io", "a dot dot b at x dot I-O"},
-		{"https://www.example.com/path/to-page/", "H-T-T-P-S colon slash slash W-W-W dot example dot com slash path slash T-O dash page slash"},
+		{"https://www.example.com/path/to-page/", "H-T-T-P-S colon slash slash W-W-W dot example dot com slash path slash to dash page slash"},
+		{"my-site.co.uk/how-to-go", "my dash site dot C-O dot U-K slash how dash to dash go"},
 		{"abc123.io/v2", "abc 1 2 3 dot I-O slash v 2"},
 		{"https://kyutai.Fr", "H-T-T-P-S colon slash slash kyutai dot F-R"},
 		{"EXAMPLE.COM", "EXAMPLE dot COM"},
@@ -131,7 +135,7 @@ func TestRewriteWord(t *testing.T) {
 	for _, word := range []string{
 		"10-5", "3-5", "12:30", "3.5%", "1234567890123", "$5€", "$007", "2024-05-12",
 		"12-05-24", "+1-555-123-4567", "user@host", "fé@bar.com", "it.Now",
-		"e.g.", "v1.2", "Dr.", "dec.", "Zzz", "WWW",
+		"e.g.", "v1.2", "Dr.", "dec.", "Zzz", "WWW", "Sun.", "Jan.",
 	} {
 		if got, ok := rewriteWord(word); ok {
 			t.Errorf("rewrite(%q) = %q; want no rule to claim it", word, got)

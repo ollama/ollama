@@ -94,7 +94,7 @@ func spell(s string) string {
 	return strings.Join(words, " ")
 }
 
-// spellShort spells out a two-letter part of an address as an abbreviation
+// spellShort spells out a two-letter label of an address as an abbreviation
 // reads, "fr" as "F-R", and "www" as "W-W-W". Anything else is read as a word.
 func spellShort(word string) string {
 	switch {
@@ -564,6 +564,8 @@ func urls(word string) (string, bool) {
 	return strings.Join(words, " ") + rest, true
 }
 
+// addressWords reads part with its dashes, slashes and digits spoken. Only a
+// part with none of them, such as "fr" or "www", can be spelled out.
 func addressWords(part string, words []string) []string {
 	start := 0
 	for i := range len(part) {
@@ -579,13 +581,16 @@ func addressWords(part string, words []string) []string {
 			continue
 		}
 		if start < i {
-			words = append(words, spellShort(part[start:i]))
+			words = append(words, part[start:i])
 		}
 		words = append(words, word)
 		start = i + 1
 	}
+	if start == 0 {
+		return append(words, spellShort(part))
+	}
 	if start < len(part) {
-		words = append(words, spellShort(part[start:]))
+		words = append(words, part[start:])
 	}
 	return words
 }
@@ -595,15 +600,16 @@ func domainEnd(label string) bool {
 	return len(label) >= 2 && strings.Trim(label, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") == ""
 }
 
+// "Jan." and "Sun." are left out: they are more often a name or the Sun.
 var abbreviationWords = map[string]string{
 	"Lt": "Lieutenant", "Lt.": "Lieutenant", "Col.": "Colonel", "Sgt.": "Sergeant", "Sgt": "Sergeant", "Capt.": "Captain",
 	"Cpl.": "Corporal", "Gen.": "General", "Adm.": "Admiral", "Sen.": "Senator", "Sens.": "Senators", "Rep.": "Representative",
 	"Reps.": "Representatives", "Gov.": "Governor", "Pres.": "President", "Det.": "Detective", "Insp.": "Inspector",
-	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "Jan.": "January", "Feb.": "February", "Mar.": "March",
+	"Supt.": "Superintendent", "Ft.": "Fort", "Mt.": "Mount", "Feb.": "February", "Mar.": "March",
 	"Apr.": "April", "Jun.": "June", "Jul.": "July", "Aug.": "August", "Sep.": "September", "Sept.": "September",
 	"Oct.": "October", "Nov.": "November", "Dec.": "December", "Mon.": "Monday", "Tue.": "Tuesday", "Tues.": "Tuesday",
 	"Wed.": "Wednesday", "Thu.": "Thursday", "Thur.": "Thursday", "Thurs.": "Thursday", "Fri.": "Friday", "Sat.": "Saturday",
-	"Sun.": "Sunday", "vol.": "volume", "Vol.": "Volume", "ed.": "edition", "approx.": "approximately",
+	"vol.": "volume", "Vol.": "Volume", "ed.": "edition", "approx.": "approximately",
 	"Approx.": "Approximately", "dept.": "department", "Dept.": "Department", "vs.": "versus", "w/": "with",
 	"W/": "With", "w/o": "without", "W/o": "Without",
 }

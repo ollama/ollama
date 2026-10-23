@@ -29,26 +29,32 @@ func normalizeText(input string) string {
 			res.push('"')
 		case strings.ContainsRune("‘’‚‛′‵❛❜❟＇ʼʻʹ´`", c):
 			res.push('\'')
-		case strings.ContainsRune("‐‑‒―", c):
+		case strings.ContainsRune("‐‑‒―−", c):
 			res.push('-')
 		case c == '★' || c == '☆':
-			full, empty := 0, 0
-			for ; at(i) == '★' || at(i) == '☆'; i++ {
-				if at(i) == '★' {
+			// A rating such as "★★★½☆"; a lone star is decoration.
+			full, empty, half := 0, 0, false
+			for ; at(i) == '★' || at(i) == '☆' || at(i) == '½' && !half; i++ {
+				switch at(i) {
+				case '★':
 					full++
-				} else {
+				case '☆':
 					empty++
+				default:
+					half = true
 				}
 			}
+			i--
 			n, of := strconv.Itoa(full), full+empty
-			if at(i) == '½' {
+			if half {
 				n, of = n+".5", of+1
-			} else {
-				i--
 			}
-			if empty > 0 {
+			switch {
+			case of < 2:
+				res.pushSpace()
+			case empty > 0:
 				res.pushSpoken(n + " out of " + strconv.Itoa(of) + " stars")
-			} else {
+			default:
 				res.pushSpoken(n + " stars")
 			}
 		case (c == '°' || c == 'º') && res.endsWithN():
@@ -103,6 +109,9 @@ func normalizeText(input string) string {
 			res.pushSpoken("about")
 		case c == '*' && (prev < 0 || unicode.IsSpace(prev)) && isASCIIDigit(at(i+1)):
 			res.pushSpoken("star")
+		case c == '–' && isASCIIDigit(prev) && (isASCIIDigit(at(i+1)) || currencies[at(i+1)].many != ""):
+			// An en dash between amounts is a range: "2020–2021", "$10–$20".
+			res.pushSpoken("to")
 		case strings.ContainsRune("–*—[]{}•‣◦·→←↑↓➡➜", c):
 			res.pushSpace()
 		case currencies[c].many != "" && res.endsWithSpacedDigit() && !isASCIIDigit(at(i+1)):
