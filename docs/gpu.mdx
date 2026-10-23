@@ -37,6 +37,33 @@ Check your compute compatibility to see if your card is supported:
 
 For building locally to support older GPUs, see [development](./development.md).
 
+### Driver version guidance by compute capability
+
+Ollama requires CUDA driver version 550 or newer. For older GPUs (compute
+capability 5.0 through 6.2) you also need driver version 570 or newer. NVIDIA
+publishes multiple driver branches at any time — pick the one that matches
+your card family:
+
+| Compute capability | Card family                          | Recommended branch        | Example version |
+| ------------------ | ------------------------------------ | ------------------------- | --------------- |
+| 12.x               | Blackwell (RTX 50xx, DGX Spark)      | Production Branch         | 580.x or newer  |
+| 9.x – 11.x         | Hopper / Ada / pre-Blackwell         | Production Branch         | 580.x           |
+| 8.x                | Ampere (RTX 30xx, A100)              | Production Branch         | 580.x           |
+| 7.x                | Turing / Volta (RTX 20xx, V100, T4)  | Long-Lived Branch         | 570.x or 580.x  |
+| 6.x                | Pascal (GTX 10xx, P40, P100)         | Long-Lived Branch         | 575.x or 580.x  |
+| 5.x                | Maxwell (GTX 750/980, M-class)       | Long-Lived Branch         | 570.x (last branch with 5.x support) |
+
+If you're unsure which branch is right for your card, NVIDIA's
+[CUDA Toolkit and Driver Compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/)
+table is the canonical reference. Newer GPUs (Blackwell and Ada) can stay
+on the newest Production Branch release; older GPUs (Turing, Pascal, Maxwell)
+typically want the latest Long-Lived Branch release because Production Branch
+tends to drop legacy card support first.
+
+If a newer driver breaks your older card, fall back to the latest Long-Lived
+Branch release for that compute capability. NVIDIA's 470.x legacy branch is
+*not* sufficient for Ollama — it predates the 550 minimum.
+
 ### GPU Selection
 
 If you have multiple NVIDIA GPUs in your system and want to limit Ollama to use
