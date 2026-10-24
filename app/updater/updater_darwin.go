@@ -8,6 +8,7 @@ import "C"
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -94,6 +95,10 @@ func init() {
 	UpgradeMarkerFile = filepath.Join(appDataDir, "upgraded")
 	appBackupDir = filepath.Join(appDataDir, "backup")
 	UpdateStageDir = filepath.Join(appDataDir, "updates")
+}
+
+func (u *Updater) downloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
+	return u.downloadSingleFileRelease(ctx, updateResp)
 }
 
 func DoUpgrade(interactive bool) error {
