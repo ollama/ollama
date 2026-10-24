@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { isImageFile } from "@/utils/imageUtils";
 
 export interface ImageData {
@@ -14,6 +14,24 @@ interface ImageThumbnailProps {
   onError?: () => void;
 }
 
+const MIME_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+function toBase64(data: Uint8Array | number[] | string): string {
+  if (typeof data === "string") return data;
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
 export function ImageThumbnail({
   image,
   className = "w-16 h-16 object-cover rounded-md select-none",
@@ -22,74 +40,24 @@ export function ImageThumbnail({
 }: ImageThumbnailProps) {
   const [imageLoadError, setImageLoadError] = useState(false);
 
+  // Data URL (not blob URL) — stable across re-renders, no revocation needed
+  const dataLength =
+    typeof image.data === "string" ? image.data.length : image.data?.length;
+
   const imageUrl = useMemo(() => {
-    if (!isImageFile(image.filename)) return "";
+    if (!isImageFile(image.filename) || !image.data || dataLength === 0)
+      return "";
 
     try {
-      // Determine MIME type from file extension
-      const extension = image.filename.toLowerCase().split(".").pop();
-      let mimeType = "application/octet-stream";
-
-      switch (extension) {
-        case "png":
-          mimeType = "image/png";
-          break;
-        case "jpg":
-        case "jpeg":
-          mimeType = "image/jpeg";
-          break;
-        case "gif":
-          mimeType = "image/gif";
-          break;
-        case "webp":
-          mimeType = "image/webp";
-          break;
-      }
-
-      // Convert to Uint8Array if needed
-      let bytes: Uint8Array;
-      if (image.data instanceof Uint8Array) {
-        bytes = image.data;
-      } else if (Array.isArray(image.data)) {
-        bytes = new Uint8Array(image.data);
-      } else if (typeof image.data === "string") {
-        // Convert base64 string to Uint8Array
-        const binaryString = atob(image.data);
-        bytes = new Uint8Array(binaryString.length);
-        for (let i = 0; i < binaryString.length; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-      } else {
-        console.error(
-          "Invalid data format for:",
-          image.filename,
-          typeof image.data,
-        );
-        return "";
-      }
-
-      const blob = new Blob([bytes], { type: mimeType });
-      return URL.createObjectURL(blob);
+      const ext = image.filename.toLowerCase().split(".").pop() || "";
+      const mime = MIME_TYPES[ext] || "application/octet-stream";
+      return `data:${mime};base64,${toBase64(image.data)}`;
     } catch (error) {
-      console.error(
-        "Error converting file data to URL for",
-        image.filename,
-        ":",
-        error,
-      );
+      console.error("Error converting image data for", image.filename, error);
       return "";
     }
-  }, [image]);
-
-  // Cleanup blob URL on unmount and reset error state when image changes
-  useEffect(() => {
-    setImageLoadError(false);
-    return () => {
-      if (imageUrl) {
-        URL.revokeObjectURL(imageUrl);
-      }
-    };
-  }, [imageUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable on filename + data length
+  }, [image.filename, dataLength]);
 
   if (!isImageFile(image.filename) || !imageUrl) {
     return null;
