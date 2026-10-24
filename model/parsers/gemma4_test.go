@@ -1171,6 +1171,113 @@ func TestRepairGemma4RawTerminalStringValue(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4TrailingNoise(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		expected   string
+		expectedOK bool
+	}{
+		{
+			name:       "balanced_object",
+			input:      `{a:{b:1}}$$`,
+			expected:   `{a:{b:1}}`,
+			expectedOK: true,
+		},
+		{
+			name:       "missing_object_close",
+			input:      `{a:{b:1}$$`,
+			expected:   `{a:{b:1}}`,
+			expectedOK: true,
+		},
+		{
+			name:       "gemma_string_braces",
+			input:      `{a:{description:<|"|>Provider {aws|gcp}<|"|>}$$`,
+			expected:   `{a:{description:<|"|>Provider {aws|gcp}<|"|>}}`,
+			expectedOK: true,
+		},
+		{
+			name:       "raw_string_braces_and_escaped_quote",
+			input:      `{a:{description:"Provider {aws|gcp} \"quoted\""}$$`,
+			expected:   `{a:{description:"Provider {aws|gcp} \"quoted\""}}`,
+			expectedOK: true,
+		},
+		{
+			name:       "nested_array_closes_in_reverse_order",
+			input:      `{a:[{b:1}$$`,
+			expected:   `{a:[{b:1}]}`,
+			expectedOK: true,
+		},
+		{name: "no_noise", input: `{a:{b:1}`},
+		{name: "whitespace_only", input: "{a:1} \n"},
+		{name: "structural_noise", input: `{a:1}x,y`},
+		{name: "second_object", input: `{a:1}{b:2}`},
+		{name: "no_close", input: `{a:1$$`},
+		{name: "unmatched_close", input: `{a:1}}$$`},
+		{name: "mismatched_close", input: `{a:[1}$$`},
+		{name: "unclosed_gemma_string", input: `{a:<|"|>value}$$`},
+		{name: "unclosed_raw_string", input: `{a:"value}$$`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := repairGemma4TrailingNoise(tt.input)
+			if !tt.expectedOK {
+				tt.expected = tt.input
+			}
+			if got != tt.expected || ok != tt.expectedOK {
+				t.Fatalf("repairGemma4TrailingNoise(%q) = (%q, %t), want (%q, %t)", tt.input, got, ok, tt.expected, tt.expectedOK)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ToolCall_RepairsTrailingNoise(t *testing.T) {
+	head := `call:ask_user{message:<|"|>Which cloud?<|"|>,requestedSchema:{properties:{cloud_provider:{description:<|"|>Provider {aws|gcp}<|"|>,type:<|"|>string<|"|>`
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "ask_user",
+			Arguments: testArgs(map[string]any{
+				"message": "Which cloud?",
+				"requestedSchema": map[string]any{
+					"properties": map[string]any{
+						"cloud_provider": map[string]any{
+							"description": "Provider {aws|gcp}",
+							"type":        "string",
+						},
+					},
+				},
+			}),
+		},
+	}
+	tests := []struct {
+		name    string
+		suffix  string
+		wantErr bool
+	}{
+		{name: "balanced_with_noise", suffix: "}}}}$$"},
+		{name: "missing_close_with_noise", suffix: "}}}$$"},
+		{name: "missing_close_without_noise", suffix: "}}}", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(head+tt.suffix, nil)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected missing object close without noise to remain unsupported")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+			}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4RepairCandidates(t *testing.T) {
 	tests := []struct {
 		name     string
