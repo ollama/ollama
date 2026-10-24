@@ -957,3 +957,21 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }
+
+func TestDropImagesForBodyLimit(t *testing.T) {
+	plan := &ResponsesCompactionPlan{items: []CompactionTranscriptItem{
+		{Ref: "a", Message: api.Message{Role: "user", Images: []api.ImageData{make([]byte, 100)}}},
+		{Ref: "b", Message: api.Message{Role: "user", Images: []api.ImageData{make([]byte, 100)}}},
+		{Ref: "c", Message: api.Message{Role: "user", Images: []api.ImageData{make([]byte, 100)}}},
+		{Ref: "d", Message: api.Message{Role: "user", Images: []api.ImageData{make([]byte, 100)}}},
+	}}
+	if removed := plan.DropImagesForBodyLimit(); removed != 2 {
+		t.Fatalf("removed %d images, want 2", removed)
+	}
+	if len(plan.items[0].Message.Images) != 0 || len(plan.items[1].Message.Images) != 0 || len(plan.items[3].Message.Images) != 1 {
+		t.Fatalf("wrong images dropped")
+	}
+	if plan.omittedImages != 2 {
+		t.Fatalf("omittedImages=%d", plan.omittedImages)
+	}
+}

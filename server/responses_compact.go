@@ -101,6 +101,7 @@ func resetResponsesRequestBody(r *http.Request, body []byte) {
 func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.ResponsesCompactionPlan, stream bool) {
 	var validationErr error
 	overflowRetried := false
+	bodyRetries := 0
 	for {
 		repair := ""
 		if validationErr != nil {
@@ -114,7 +115,23 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 
 		response := s.runResponsesCompactionInference(c, request)
 		if response.status < http.StatusOK || response.status >= http.StatusMultipleChoices {
-			if !overflowRetried && c.Request.Context().Err() == nil && isCompactionContextLimit(response) {
+			ctxErr := c.Request.Context().Err()
+			if ctxErr == nil && response.status == http.StatusRequestEntityTooLarge && !isCompactionContextLimit(response) && bodyRetries < maxCompactionBodyRetries {
+				// A bare 413 comes from a front proxy limiting request body
+				// size regardless of context window. Shed images first, then
+				// older items, and retry.
+				removedImages := plan.DropImagesForBodyLimit()
+				removedItems := 0
+				if removedImages == 0 {
+					removedItems = plan.TrimForContextLimit()
+				}
+				if removedImages > 0 || removedItems > 0 {
+					bodyRetries++
+					slog.WarnContext(c.Request.Context(), "retrying compaction after request body too large", "model", plan.Model, "omitted_images", removedImages, "omitted_items", removedItems)
+					continue
+				}
+			}
+			if !overflowRetried && ctxErr == nil && isCompactionContextLimit(response) {
 				if removed := plan.TrimForContextLimit(); removed > 0 {
 					overflowRetried = true
 					slog.WarnContext(c.Request.Context(), "retrying compaction after context overflow", "model", plan.Model, "omitted_items", removed)
@@ -145,6 +162,8 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 
 	writeResponsesCompactionError(c, http.StatusInternalServerError, "compaction_failed", "compaction failed; the selected model did not return a valid summary and the original conversation is unchanged")
 }
+
+const maxCompactionBodyRetries = 4
 
 var compactionContextLimitPattern = regexp.MustCompile(`^The prompt is too long: [0-9]+, model maximum context length: [0-9]+(?: \(ref: [^()]+\))?$`)
 
