@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
@@ -21,6 +23,21 @@ import (
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/cmd/launch"
 )
+
+func TestWaitForServerReturnsWhenContextIsCanceled(t *testing.T) {
+	t.Setenv("OLLAMA_HOST", "127.0.0.1:0")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	start := time.Now()
+	err := WaitForServer(ctx, 50*time.Millisecond)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WaitForServer error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed >= 25*time.Millisecond {
+		t.Fatalf("WaitForServer took %s to observe cancellation", elapsed)
+	}
+}
 
 func TestHandlePostApiSettings(t *testing.T) {
 	tests := []struct {
