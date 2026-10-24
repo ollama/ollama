@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/mlx"
@@ -99,7 +100,8 @@ type Model struct {
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
 
-	MTP *MTPHead
+	MTP             *MTPHead
+	auxHiddenLayers []int
 
 	// Vision components; nil for text-only checkpoints.
 	Vision      *VisionConfig
@@ -1336,14 +1338,21 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		mropeCos, mropeSin = mropeCosSin(m.Config, mp, L)
 	}
 
+	var features []*mlx.Array
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
 		h = layer.Forward(h, b, c, positions, B, L, m.Config, mropeCos, mropeSin)
+		if slices.Contains(m.auxHiddenLayers, i) {
+			features = append(features, h)
+		}
 	}
 	out := m.Norm.Forward(h, m.RMSNormEps)
+	if len(features) > 0 {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
 }
 
@@ -1429,3 +1438,14 @@ func (m *Model) NewCaches() []cache.Cache {
 	}
 	return caches
 }
+
+// SetAuxHiddenLayers taps the listed layers' outputs, which Forward then
+// returns concatenated as the draft-conditioning features.
+func (m *Model) SetAuxHiddenLayers(layers []int) { m.auxHiddenLayers = append([]int(nil), layers...) }
+
+// TokenEmbeddings is the raw lookup, for a draft that embeds with the
+// target's table.
+func (m *Model) TokenEmbeddings(ids *mlx.Array) *mlx.Array { return m.EmbedTokens.Forward(ids) }
+
+// RawLogits is the head projection without any output decoration.
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array { return m.LMHead.Forward(hidden) }

@@ -46,8 +46,8 @@ func (r Result) Arrays() []*mlx.Array {
 
 // Distribution is the filtered probability distribution used by the sampler.
 // When IDs is nil, Probs is dense over the vocabulary. When IDs is set, Probs
-// is sparse over the token ids in IDs, preserving GPU residency for the
-// top-k-first path used by normal and speculative sampling.
+// is sparse over the unique token ids in each row of IDs. This preserves GPU
+// residency for the top-k-first path used by normal and speculative sampling.
 type Distribution struct {
 	IDs   *mlx.Array // sparse token ids, shape [B,K]; nil for dense distributions
 	Probs *mlx.Array // probabilities, shape [B,K] or [B,V]
@@ -113,15 +113,19 @@ func (d Distribution) ProbsForIDs(ids *mlx.Array) *mlx.Array {
 // ResidualAgainst returns the Leviathan/Chen rejection distribution
 // proportional to max(target - draft, 0). Sparse target distributions stay
 // sparse over the target support; tokens outside target support have zero mass.
+// A sparse draft has zero mass outside its IDs.
 func (d Distribution) ResidualAgainst(draft Distribution) Distribution {
 	if d.IDs != nil {
 		diff := d.Probs.Subtract(draft.ProbsForIDs(d.IDs))
 		return Distribution{IDs: d.IDs, Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 	}
+	q := draft.Probs
 	if draft.IDs != nil {
-		panic("sample.Distribution.ResidualAgainst: dense target with sparse draft is unsupported")
+		// Sparse IDs are unique within each row. Preserve the target's mass
+		// outside the proposal support when scattering the proposal into it.
+		q = mlx.Zeros(q.DType(), d.Probs.Dims()...).PutAlongAxis(draft.IDs, q, -1)
 	}
-	diff := d.Probs.Subtract(draft.Probs)
+	diff := d.Probs.Subtract(q)
 	return Distribution{Probs: normalizeProbs(mlx.Maximum(diff, mlx.FromValue(float32(0))))}
 }
 
@@ -478,6 +482,25 @@ func (s *Sampler) Distribution(seqID int, logits *mlx.Array, draftTokens *mlx.Ar
 	}
 
 	return slot.distribution(&slotCtx{opts: slot.opts, history: hist}, logits)
+}
+
+// SampleCandidates samples a proposal over model-selected unique IDs and scores
+// with shape [B,K] at the request's temperature. Top-k, top-p, min-p and
+// history penalties belong to the target distribution used by verification.
+// Greedy decoding proposes the argmax as a point mass and still advances the
+// seeded stream.
+func (s *Sampler) SampleCandidates(seqID int, ids, scores *mlx.Array) (*mlx.Array, Distribution) {
+	slot := s.mustSlot("SampleCandidates", seqID)
+	key := slot.nextRandomKey()
+	if slot.opts.Temperature <= 0 {
+		choice := scores.Argmax(-1, true)
+		probs := mlx.Zeros(mlx.DTypeFloat32, scores.Dims()...).PutAlongAxis(choice, mlx.AddScalar(mlx.Zeros(mlx.DTypeFloat32, scores.Dim(0), 1), 1), -1)
+		// The proposal is a point mass. Preserve the seeded stream's counter advance
+		// above, but avoid building a categorical draw to recover the same choice.
+		return ids.TakeAlongAxis(choice, -1).Squeeze(-1).AsType(mlx.DTypeInt32), Distribution{IDs: ids, Probs: probs}
+	}
+	dist := Distribution{IDs: ids, Probs: mlx.SoftmaxAxis(mlx.DivScalar(scores.AsType(mlx.DTypeFloat32), slot.opts.Temperature), -1, true)}
+	return dist.SampleWithKey(key), dist
 }
 
 // SpeculativeScores applies this slot's sampling transforms to logits without

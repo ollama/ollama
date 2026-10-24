@@ -13,3 +13,4 @@ llama/build-info.cpp linguist-generated
 
 * text=auto
 *.go text eol=lf
+*.patch -text

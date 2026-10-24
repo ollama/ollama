@@ -1,0 +1,617 @@
+diff --git a/mlx/backend/metal/kernels/fp_quantized.h b/mlx/backend/metal/kernels/fp_quantized.h
+index 19affeaa3..4e4c28fb9 100644
+--- a/mlx/backend/metal/kernels/fp_quantized.h
++++ b/mlx/backend/metal/kernels/fp_quantized.h
+@@ -1512,6 +1512,201 @@ template <
+       w, scales, x, y, in_vec_size, out_vec_size, M, tid, simd_gid, simd_lid);
+ }
+ 
++template <
++    typename T,
++    const int group_size,
++    const int bits,
++    const int WK = 8,
++    const int BN = 32,
++    const int TM = 1>
++[[kernel]] void fp_qmv_mma(
++    const device uint32_t* w,
++    const device uint8_t* scales,
++    const device T* x,
++    device T* y,
++    const constant int& K,
++    const constant int& N,
++    const constant int& M,
++    uint3 tid [[threadgroup_position_in_grid]],
++    uint simd_gid [[simdgroup_index_in_threadgroup]],
++    uint simd_lid [[thread_index_in_simdgroup]]) {
++  static_assert(BN % 8 == 0, "BN should be divisible by 8");
++  static_assert(TM == 1 || TM == 2, "qmv_mma takes at most 16 rows");
++  static_assert(
++      (group_size == 16 && bits == 4) ||
++          (group_size == 32 && (bits == 4 || bits == 8)),
++      "qmv_mma reads nvfp4, mxfp4 and mxfp8");
++
++  using Frag = mlx::steel::BaseMMAFrag<float, 8, 8>;
++  using frag_t = typename Frag::frag_type;
++  using scale_t = metal::conditional_t<group_size == 16, half2, float>;
++  constexpr int BK = 128;
++  constexpr short TN = BN / 8;
++  constexpr int pack_factor = 8 / bits;
++  constexpr short loads = bits / 4;
++
++  const short2 coord = Frag::get_coord(simd_lid);
++  const short fn = coord.x;
++  const short fm = coord.y;
++  const int row_bytes = K / pack_factor;
++  const int row_scales = K / group_size;
++
++  const int y_col = tid.x * BN;
++  auto wl = (const device uint8_t*)w +
++      (y_col + fm) * static_cast<int64_t>(row_bytes) + 16 * fn / pack_factor;
++  scales +=
++      (y_col + fm) * static_cast<int64_t>(row_scales) + 16 * fn / group_size;
++  x += fn * static_cast<int64_t>(K) + 16 * fm;
++
++  bool x_rows[TM][2];
++  frag_t C[TN][TM];
++  STEEL_PRAGMA_UNROLL
++  for (short mt = 0; mt < TM; mt++) {
++    STEEL_PRAGMA_UNROLL
++    for (short j = 0; j < 2; j++) {
++      x_rows[mt][j] = 8 * mt + fn + j < M;
++    }
++    STEEL_PRAGMA_UNROLL
++    for (short t = 0; t < TN; t++) {
++      C[t][mt] = frag_t(0);
++    }
++  }
++
++  for (int k = simd_gid * BK; k < K; k += WK * BK) {
++    vec<T, 8> xs[TM][2][2];
++    STEEL_PRAGMA_UNROLL
++    for (short mt = 0; mt < TM; mt++) {
++      STEEL_PRAGMA_UNROLL
++      for (short j = 0; j < 2; j++) {
++        const device T* xr = x + (8 * mt + j) * static_cast<int64_t>(K) + k;
++        STEEL_PRAGMA_UNROLL
++        for (short h = 0; h < 2; h++) {
++          xs[mt][j][h] = x_rows[mt][j] ? *(const device vec<T, 8>*)(xr + 8 * h)
++                                       : vec<T, 8>(0);
++        }
++      }
++    }
++    uint4 ws[TN][loads];
++    scale_t sc[TN];
++    STEEL_PRAGMA_UNROLL
++    for (short t = 0; t < TN; t++) {
++      const device uint8_t* wt =
++          wl + 8 * t * static_cast<int64_t>(row_bytes) + k / pack_factor;
++      STEEL_PRAGMA_UNROLL
++      for (short l = 0; l < loads; l++) {
++        ws[t][l] = *(const device uint4*)(wt + 16 * l);
++      }
++      const device uint8_t* st =
++          scales + 8 * t * static_cast<int64_t>(row_scales) + k / group_size;
++      if constexpr (group_size == 16) {
++        const ushort s = *(const device ushort*)st;
++        sc[t] = half2(
++            dequantize_scale<half, group_size>(s & 0xff),
++            dequantize_scale<half, group_size>(s >> 8));
++      } else {
++        sc[t] = dequantize_scale<float, group_size>(*st) *
++            (bits == 4 ? 16384.0f : 256.0f);
++      }
++    }
++
++    STEEL_PRAGMA_UNROLL
++    for (short g = 0; g < 4; g++) {
++      frag_t b[4][TM];
++      STEEL_PRAGMA_UNROLL
++      for (short i = 0; i < 4; i++) {
++        const short f = 4 * g + i;
++        STEEL_PRAGMA_UNROLL
++        for (short mt = 0; mt < TM; mt++) {
++          b[i][mt] = frag_t(
++              float(xs[mt][0][f / 8][f % 8]), float(xs[mt][1][f / 8][f % 8]));
++        }
++      }
++      STEEL_PRAGMA_UNROLL
++      for (short t = 0; t < TN; t++) {
++        uint p[4];
++        if constexpr (bits == 4) {
++          const uint lo = ws[t][0][g / 2];
++          const uint hi = ws[t][0][2 + g / 2];
++          const uint q = (g % 2) == 0 ? (lo & 0xffff) | (hi << 16)
++                                      : (lo >> 16) | (hi & 0xffff0000);
++          p[0] = ((q & 0x00070007) << 9) | ((q & 0x00080008) << 12);
++          p[1] = ((q & 0x00700070) << 5) | ((q & 0x00800080) << 8);
++          p[2] = ((q & 0x07000700) << 1) | ((q & 0x08000800) << 4);
++          p[3] = ((q & 0x70007000) >> 3) | (q & 0x80008000);
++        } else {
++          STEEL_PRAGMA_UNROLL
++          for (short i = 0; i < 4; i++) {
++            const uint q = ((ws[t][0][g] >> (8 * i)) & 0xff) |
++                (((ws[t][1][g] >> (8 * i)) & 0xff) << 16);
++            p[i] = ((q & 0x00800080) << 8) | ((q & 0x007f007f) << 7);
++          }
++        }
++        STEEL_PRAGMA_UNROLL
++        for (short i = 0; i < 4; i++) {
++          frag_t a;
++          if constexpr (group_size == 16) {
++            const half2 v = (as_type<half2>(p[i]) * half2(16384.0h)) * sc[t];
++            a = frag_t(float(v.x), float(v.y));
++          } else {
++            const half2 v = as_type<half2>(p[i]);
++            a = frag_t(float(v.x) * sc[t], float(v.y) * sc[t]);
++          }
++          STEEL_PRAGMA_UNROLL
++          for (short mt = 0; mt < TM; mt++) {
++            Frag::mma(C[t][mt], a, b[i][mt], C[t][mt]);
++          }
++        }
++      }
++    }
++  }
++
++  constexpr int tile_elems = TN * TM * 2;
++  threadgroup float Ps[(WK - 1) * tile_elems * 32];
++  if (simd_gid > 0) {
++    threadgroup float* p = Ps + (simd_gid - 1) * tile_elems * 32 + simd_lid;
++    STEEL_PRAGMA_UNROLL
++    for (short t = 0; t < TN; t++) {
++      STEEL_PRAGMA_UNROLL
++      for (short mt = 0; mt < TM; mt++) {
++        STEEL_PRAGMA_UNROLL
++        for (short j = 0; j < 2; j++) {
++          p[((t * TM + mt) * 2 + j) * 32] = C[t][mt][j];
++        }
++      }
++    }
++  }
++  threadgroup_barrier(mem_flags::mem_threadgroup);
++  if (simd_gid == 0) {
++    for (int s = 0; s < WK - 1; s++) {
++      const threadgroup float* p = Ps + s * tile_elems * 32 + simd_lid;
++      STEEL_PRAGMA_UNROLL
++      for (short t = 0; t < TN; t++) {
++        STEEL_PRAGMA_UNROLL
++        for (short mt = 0; mt < TM; mt++) {
++          STEEL_PRAGMA_UNROLL
++          for (short j = 0; j < 2; j++) {
++            C[t][mt][j] += p[((t * TM + mt) * 2 + j) * 32];
++          }
++        }
++      }
++    }
++    STEEL_PRAGMA_UNROLL
++    for (short mt = 0; mt < TM; mt++) {
++      STEEL_PRAGMA_UNROLL
++      for (short j = 0; j < 2; j++) {
++        if (x_rows[mt][j]) {
++          device T* yr =
++              y + (8 * mt + fn + j) * static_cast<int64_t>(N) + y_col + fm;
++          STEEL_PRAGMA_UNROLL
++          for (short t = 0; t < TN; t++) {
++            yr[8 * t] = static_cast<T>(C[t][mt][j]);
++          }
++        }
++      }
++    }
++  }
++}
++
+ template <
+     typename T,
+     int group_size,
+diff --git a/mlx/backend/metal/kernels/fp_quantized.metal b/mlx/backend/metal/kernels/fp_quantized.metal
+index 5b8c8ba8d..43a10e6ad 100644
+--- a/mlx/backend/metal/kernels/fp_quantized.metal
++++ b/mlx/backend/metal/kernels/fp_quantized.metal
+@@ -273,6 +273,30 @@
+   instantiate_quantized_qmm_t_64(type, mode, group_size, false, 0) \
+   instantiate_quantized_qmm_t_64(type, mode, group_size, false, 1)
+ 
++#define instantiate_qmv_mma(type, mode, group_size, bits, wk, bn, tm) \
++  instantiate_kernel( \
++      #mode "_qmv_mma_" #type "_gs_" #group_size "_b_" #bits "_wk" #wk "_bn" #bn "_tm" #tm, \
++      fp_qmv_mma, \
++      type, \
++      group_size, \
++      bits, \
++      wk, \
++      bn, \
++      tm)
++
++#define instantiate_qmv_mma_rows(type, mode, group_size, bits, wk, bn) \
++  instantiate_qmv_mma(type, mode, group_size, bits, wk, bn, 1) \
++  instantiate_qmv_mma(type, mode, group_size, bits, wk, bn, 2)
++
++#define instantiate_qmv_mma_modes(type, wk, bn) \
++  instantiate_qmv_mma_rows(type, nvfp4, 16, 4, wk, bn) \
++  instantiate_qmv_mma_rows(type, mxfp8, 32, 8, wk, bn) \
++  instantiate_qmv_mma_rows(type, mxfp4, 32, 4, wk, bn)
++
++#define instantiate_qmv_mma_types(type) \
++  instantiate_qmv_mma_modes(type, 8, 16) \
++  instantiate_qmv_mma_modes(type, 4, 16)
++
+ instantiate_quantized_types(float)
+ instantiate_quantized_types(bfloat16_t)
+ instantiate_quantized_types(float16_t)
+@@ -280,4 +304,7 @@ instantiate_quantized_qmm_hgs(bfloat16_t)
+ instantiate_quantized_all_qmm_t_64(bfloat16_t, nvfp4, 16)
+ instantiate_quantized_all_qmm_t_64(float16_t, nvfp4, 16)
+ instantiate_quantized_all_qmm_t_64(float16_t, mxfp4, 32)
++instantiate_qmv_mma_types(float)
++instantiate_qmv_mma_types(bfloat16_t)
++instantiate_qmv_mma_types(float16_t)
+     // clang-format on
+diff --git a/mlx/backend/metal/kernels/fp_quantized_nax.h b/mlx/backend/metal/kernels/fp_quantized_nax.h
+index f843c9996..6e5238576 100644
+--- a/mlx/backend/metal/kernels/fp_quantized_nax.h
++++ b/mlx/backend/metal/kernels/fp_quantized_nax.h
+@@ -337,6 +337,182 @@ METAL_FUNC void fp_qmm_t_impl(
+   });
+ }
+ 
++template <typename Wtype, int group_size, int bits>
++METAL_FUNC vec<Wtype, 4> dequantize_fp_x4(uint q, uint8_t s) {
++  half2 a;
++  half2 b;
++  if constexpr (bits == 4) {
++    const uint lo = (q & 0x000f) | ((q & 0x00f0) << 12);
++    const uint hi = ((q >> 8) & 0x000f) | ((q & 0xf000) << 4);
++    a = as_type<half2>(((lo & 0x00070007) << 9) | ((lo & 0x00080008) << 12));
++    b = as_type<half2>(((hi & 0x00070007) << 9) | ((hi & 0x00080008) << 12));
++  } else {
++    const uint lo = (q & 0x000000ff) | ((q & 0x0000ff00) << 8);
++    const uint hi = ((q >> 16) & 0x000000ff) | ((q >> 8) & 0x00ff0000);
++    a = as_type<half2>(((lo & 0x00800080) << 8) | ((lo & 0x007f007f) << 7));
++    b = as_type<half2>(((hi & 0x00800080) << 8) | ((hi & 0x007f007f) << 7));
++  }
++  if constexpr (group_size == 16) {
++    const half scale = dequantize_scale<half, group_size>(s);
++    a = (a * half2(16384.0h)) * scale;
++    b = (b * half2(16384.0h)) * scale;
++    return vec<Wtype, 4>(Wtype(a.x), Wtype(a.y), Wtype(b.x), Wtype(b.y));
++  } else {
++    const float scale = dequantize_scale<float, group_size>(s) *
++        (bits == 4 ? 16384.0f : 256.0f);
++    return vec<Wtype, 4>(
++        Wtype(float(a.x) * scale),
++        Wtype(float(a.y) * scale),
++        Wtype(float(b.x) * scale),
++        Wtype(float(b.y) * scale));
++  }
++}
++
++template <
++    typename T,
++    const int group_size,
++    const int bits,
++    const int WK = 8,
++    const int BN = 32,
++    typename Wtype = bfloat>
++[[kernel]] void fp_qmv_nax(
++    const device uint32_t* w,
++    const device uint8_t* scales,
++    const device T* x,
++    device T* y,
++    const constant int& K,
++    const constant int& N,
++    const constant int& M,
++    uint3 tid [[threadgroup_position_in_grid]],
++    uint simd_gid [[simdgroup_index_in_threadgroup]]) {
++  static_assert(BN % 32 == 0, "BN should be divisible by 32");
++  static_assert(
++      (group_size == 16 && bits == 4) ||
++          (group_size == 32 && (bits == 4 || bits == 8)),
++      "qmv_nax reads nvfp4, mxfp4 and mxfp8");
++
++  using Frag = BaseNAXFrag;
++  using scale_bits_t = metal::conditional_t<group_size == 16, ushort, uint8_t>;
++  constexpr int BK = 128;
++  constexpr short TK = BK / 16;
++  constexpr short TN = BN / 16;
++  constexpr int pack_factor = 8 / bits;
++  constexpr short loads = bits / 4;
++
++  const short2 coord = Frag::get_coord();
++  const short fm = coord.y;
++  const int k_lane = 8 * coord.x;
++  const int row_bytes = K / pack_factor;
++  const int row_scales = K / group_size;
++
++  const int y_col = tid.x * BN;
++  auto wl = (const device uint8_t*)w +
++      (y_col + fm) * static_cast<int64_t>(row_bytes) + k_lane / pack_factor;
++  scales +=
++      (y_col + fm) * static_cast<int64_t>(row_scales) + k_lane / group_size;
++  x += fm * static_cast<int64_t>(K) + k_lane;
++  y += y_col;
++  const bool x_rows[2] = {fm < M, fm + 8 < M};
++
++  NAXTile<float, 1, TN> Dtile;
++  Dtile.clear();
++
++  for (int k = simd_gid * BK; k < K; k += WK * BK) {
++    vec<T, 8> xs[2][4];
++    STEEL_PRAGMA_UNROLL
++    for (short r = 0; r < 2; r++) {
++      STEEL_PRAGMA_UNROLL
++      for (short i = 0; i < 4; i++) {
++        xs[r][i] = x_rows[r]
++            ? *(const device vec<T, 8>*)(x + r * 8 * static_cast<int64_t>(K) +
++                                         k + 8 * i)
++            : vec<T, 8>(0);
++      }
++    }
++    uint4 ws[TN][2][loads];
++    scale_bits_t ss[TN][2];
++    STEEL_PRAGMA_UNROLL
++    for (short t = 0; t < TN; t++) {
++      STEEL_PRAGMA_UNROLL
++      for (short r = 0; r < 2; r++) {
++        const int row = 16 * t + 8 * r;
++        const device uint8_t* wt =
++            wl + row * static_cast<int64_t>(row_bytes) + k / pack_factor;
++        const device uint8_t* st =
++            scales + row * static_cast<int64_t>(row_scales) + k / group_size;
++        STEEL_PRAGMA_UNROLL
++        for (short l = 0; l < loads; l++) {
++          ws[t][r][l] = *(const device uint4*)(wt + 16 * l);
++        }
++        ss[t][r] = *(const device scale_bits_t*)st;
++      }
++    }
++
++    STEEL_PRAGMA_UNROLL
++    for (short f = 0; f < TK; f++) {
++      typename Frag::template dtype_frag_t<T> a;
++      STEEL_PRAGMA_UNROLL
++      for (short r = 0; r < 2; r++) {
++        STEEL_PRAGMA_UNROLL
++        for (short j = 0; j < 4; j++) {
++          a[4 * r + j] = xs[r][f / 2][4 * (f % 2) + j];
++        }
++      }
++      typename Frag::template dtype_frag_t<Wtype> b[TN];
++      STEEL_PRAGMA_UNROLL
++      for (short t = 0; t < TN; t++) {
++        STEEL_PRAGMA_UNROLL
++        for (short r = 0; r < 2; r++) {
++          uint q;
++          if constexpr (bits == 4) {
++            q = ws[t][r][0][f / 2] >> (16 * (f % 2));
++          } else {
++            q = ws[t][r][f / 4][f % 4];
++          }
++          uint8_t s = ss[t][r];
++          if constexpr (group_size == 16) {
++            s = ss[t][r] >> (8 * (f / 4));
++          }
++          const vec<Wtype, 4> v =
++              dequantize_fp_x4<Wtype, group_size, bits>(q, s);
++          STEEL_PRAGMA_UNROLL
++          for (short j = 0; j < 4; j++) {
++            b[t][4 * r + j] = v[j];
++          }
++        }
++      }
++      STEEL_PRAGMA_UNROLL
++      for (short t = 0; t < TN; t += 2) {
++        Frag::mma(
++            Dtile.frag_at(0, t),
++            Dtile.frag_at(0, t + 1),
++            a,
++            metal::bool_constant<false>{},
++            b[t],
++            b[t + 1],
++            metal::bool_constant<true>{});
++      }
++    }
++  }
++
++  threadgroup float Ps[(WK - 1) * 16 * BN];
++  if (simd_gid > 0) {
++    Dtile.template store<float, BN, 1>(Ps + (simd_gid - 1) * 16 * BN);
++  }
++  threadgroup_barrier(mem_flags::mem_threadgroup);
++  if (simd_gid == 0) {
++    for (int i = 0; i < WK - 1; i++) {
++      NAXTile<float, 1, TN> Ptile;
++      Ptile.template load<float, BN, 1>(Ps + i * 16 * BN);
++      STEEL_PRAGMA_UNROLL
++      for (short j = 0; j < Dtile.kNumFrags; j++) {
++        Dtile.val_frags[j] += Ptile.val_frags[j];
++      }
++    }
++    Dtile.store_rows(y, N, M);
++  }
++}
++
+ template <
+     typename T,
+     const int group_size,
+diff --git a/mlx/backend/metal/kernels/fp_quantized_nax.metal b/mlx/backend/metal/kernels/fp_quantized_nax.metal
+index b6cc78130..5e008eec7 100644
+--- a/mlx/backend/metal/kernels/fp_quantized_nax.metal
++++ b/mlx/backend/metal/kernels/fp_quantized_nax.metal
+@@ -115,8 +115,26 @@
+   instantiate_quantized_modes(type, mxfp8, 32, 8) \
+   instantiate_quantized_modes(type, mxfp4, 32, 4)
+ 
++#define instantiate_qmv_nax(type, mode, group_size, bits, wk, bn) \
++  instantiate_kernel( \
++      #mode "_qmv_nax_" #type "_gs_" #group_size "_b_" #bits "_wk" #wk "_bn" #bn, \
++      fp_qmv_nax, \
++      type, \
++      group_size, \
++      bits, \
++      wk, \
++      bn)
++
++#define instantiate_qmv_nax_modes(type) \
++  instantiate_qmv_nax(type, nvfp4, 16, 4, 8, 32) \
++  instantiate_qmv_nax(type, mxfp8, 32, 8, 8, 32) \
++  instantiate_qmv_nax(type, mxfp4, 32, 4, 8, 32)
++
+ instantiate_quantized_types(float)
+ instantiate_quantized_types(bfloat16_t)
+ instantiate_quantized_types(float16_t)
+ instantiate_quantized_qmm_hgs(bfloat16_t)
++instantiate_qmv_nax_modes(float)
++instantiate_qmv_nax_modes(bfloat16_t)
++instantiate_qmv_nax_modes(float16_t)
+     // clang-format on
+diff --git a/mlx/backend/metal/quantized.cpp b/mlx/backend/metal/quantized.cpp
+index 432666d36..1f261a0cf 100644
+--- a/mlx/backend/metal/quantized.cpp
++++ b/mlx/backend/metal/quantized.cpp
+@@ -632,6 +632,84 @@ void qmv_wide(
+   compute_encoder.dispatch_threadgroups(grid_dims, group_dims);
+ }
+ 
++inline bool
++vector_loads_aligned(const array& x, const array& w, const array& scales) {
++  return x.offset() % (8 * x.itemsize()) == 0 && w.offset() % 16 == 0 &&
++      scales.offset() % 2 == 0;
++}
++
++inline bool
++use_qmv_rows(const array& x, int M, int N, int K, metal::Device& d) {
++  if (M < 6 || M > 16 || K % 128 != 0) {
++    return false;
++  }
++  if (metal::is_nax_available()) {
++    return (env::enable_tf32() || x.dtype() != float32) && N >= 2048 &&
++        K >= 2048 && N % 32 == 0;
++  }
++  if (d.get_architecture().back() == 'd') {
++    return N >= 4096 && K >= 4096 && N % 16 == 0;
++  }
++  return N >= 512 && K >= 512 && int64_t(N) * K >= (int64_t(1) << 22) &&
++      N % 16 == 0;
++}
++
++void qmv_rows(
++    const array& x,
++    const array& w,
++    const array& scales,
++    array& out,
++    int group_size,
++    int bits,
++    int M,
++    int N,
++    int K,
++    metal::Device& d,
++    const Stream& s,
++    const std::string& mode) {
++  bool nax = metal::is_nax_available();
++  int wk = nax || d.get_architecture_gen() >= 15 ? 8 : 4;
++  int bn = nax ? 32 : 16;
++  std::string type_string = get_type_string(x.dtype());
++  std::string kname;
++  kname.reserve(64);
++  concatenate(
++      kname,
++      mode,
++      nax ? "_qmv_nax_" : "_qmv_mma_",
++      type_string,
++      "_gs_",
++      group_size,
++      "_b_",
++      bits,
++      "_wk",
++      wk,
++      "_bn",
++      bn);
++  MTL::ComputePipelineState* kernel;
++  if (nax) {
++    kernel = get_qmm_nax_kernel_wrapped(
++        d, kname, "qmv_nax", mode, type_string, group_size, bits, wk, bn);
++  } else {
++    int tm = M > 8 ? 2 : 1;
++    concatenate(kname, "_tm", tm);
++    kernel = get_quantized_kernel_wrapped(
++        d, kname, "qmv_mma", mode, type_string, group_size, bits, wk, bn, tm);
++  }
++
++  auto& compute_encoder = metal::get_command_encoder(s);
++  compute_encoder.set_compute_pipeline_state(kernel);
++  compute_encoder.set_input_array(w, 0);
++  compute_encoder.set_input_array(scales, 1);
++  compute_encoder.set_input_array(x, 2);
++  compute_encoder.set_output_array(out, 3);
++  compute_encoder.set_bytes(K, 4);
++  compute_encoder.set_bytes(N, 5);
++  compute_encoder.set_bytes(M, 6);
++  compute_encoder.dispatch_threadgroups(
++      MTL::Size(N / bn, 1, 1), MTL::Size(32, wk, 1));
++}
++
+ void qvm_split_k(
+     array x,
+     const array& w,
+@@ -1929,6 +2007,12 @@ void QuantizedMatmul::eval_gpu(const std::vector<array>& inputs, array& out) {
+ 
+   int vector_limit = transpose_ ? get_qmv_batch_limit(K, N, d) : 4;
+   auto mode = quantization_mode_to_string(mode_);
++  if (transpose_ && non_batched && mode_ != QuantizationMode::Affine &&
++      vector_loads_aligned(x, w, scales) && use_qmv_rows(x, M, N, K, d)) {
++    qmv_rows(x, w, scales, out, group_size_, bits_, M, N, K, d, s, mode);
++    return;
++  }
++
+   // It is a matrix matrix product.
+   if (M >= vector_limit) {
+     // Use split-K qmm for small M with transposed weights (non-batched only)
+diff --git a/python/tests/test_quantized.py b/python/tests/test_quantized.py
+index ffb59a559..a9ecab6ac 100644
+--- a/python/tests/test_quantized.py
++++ b/python/tests/test_quantized.py
+@@ -716,6 +716,43 @@ class TestQuantized(mlx_tests.MLXTestCase):
+                 out = mx.quantized_matmul(x, w_q, scales, mode=mode)
+                 self.assertLess(rel_err(out, x @ w_hat.swapaxes(-1, -2)), 3e-2)
+ 
++    def test_qmm_few_rows(self):
++        if mx.default_device() == mx.cpu:
++            self.skipTest("Covers GPU kernels only")
++        mx.random.seed(0)
++        K = 4224
++
++        def rel_err(got, expected):
++            d = mx.abs(got.astype(mx.float32) - expected.astype(mx.float32))
++            return d.max() / mx.abs(expected.astype(mx.float32)).max()
++
++        modes = ["nvfp4", "mxfp4", "mxfp8"]
++        dtypes = [mx.bfloat16, mx.float16, mx.float32]
++        for N, mode, dtype in product([4128, 4112], modes, dtypes):
++            tol = 1e-5 if dtype == mx.float32 else 3e-2
++            w = mx.random.normal((N, K)).astype(dtype)
++            w_q, scales = mx.quantize(w, mode=mode)
++            w_hat = mx.dequantize(w_q, scales, mode=mode, dtype=dtype)
++            for M in [5, 6, 8, 13, 16, 17]:
++                with self.subTest(N=N, mode=mode, dtype=dtype, M=M):
++                    x = (mx.random.normal((M, K)) / K**0.5).astype(dtype)
++                    out = mx.quantized_matmul(x, w_q, scales, mode=mode)
++                    self.assertLess(rel_err(out, x @ w_hat.T), tol)
++
++            # Views at odd offsets must not reach the Metal vector loads
++            if not mx.metal.is_available():
++                continue
++            x = (mx.random.normal((16 * K + 1,)) / K**0.5).astype(dtype)
++            s = mx.concatenate([mx.zeros((1,), mx.uint8), scales.reshape(-1)])
++            views = {
++                "x": (x[1:].reshape(16, K), scales),
++                "scales": (x[:-1].reshape(16, K), s[1:].reshape(scales.shape)),
++            }
++            for name, (xv, sv) in views.items():
++                with self.subTest(N=N, mode=mode, dtype=dtype, offset=name):
++                    out = mx.quantized_matmul(xv, w_q, sv, mode=mode)
++                    self.assertLess(rel_err(out, xv @ w_hat.T), tol)
++
+     def test_qmm_vjp(self):
+         key = mx.random.key(0)
+         k1, k2 = mx.random.split(key)

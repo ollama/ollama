@@ -6,9 +6,10 @@
 #
 # Every *.patch under PATCH_DIR is applied in numeric filename order in the
 # current working directory (which ExternalProject / FetchContent sets to the
-# fetched source's SOURCE_DIR). A patch already applied — detected via
-# `git apply --reverse --check` — is skipped. This makes re-configuring and
-# re-building safe when the source directory outlives its CMake patch stamp.
+# fetched source's SOURCE_DIR). The longest prefix of the series that is
+# already applied — detected via `git apply --reverse --check` on the prefix
+# as a whole — is skipped. This makes re-configuring and re-building safe when
+# the source directory outlives its CMake patch stamp.
 
 if(NOT DEFINED PATCH_DIR)
     message(FATAL_ERROR "apply-git-patches.cmake: PATCH_DIR not set")
@@ -32,18 +33,38 @@ foreach(PATCH_FILE IN LISTS _patches)
 endforeach()
 
 list(SORT _patch_entries)
+set(_patch_files)
 foreach(_patch_entry IN LISTS _patch_entries)
     string(REGEX REPLACE "^[^|]*\\|" "" PATCH_FILE "${_patch_entry}")
-    file(RELATIVE_PATH _patch_rel "${PATCH_DIR}" "${PATCH_FILE}")
+    list(APPEND _patch_files "${PATCH_FILE}")
+endforeach()
 
-    # If the patch can be REVERSED cleanly, it's already applied. Skip.
+# A later patch may edit lines an earlier one added, so a patch alone can stop
+# reversing once its successors are applied; check each prefix as a unit. git
+# chains patches only within a single input, and --reverse undoes them in
+# reverse order, so the prefix is piped in as one stream in forward order.
+set(_applied_count 0)
+set(_prefix)
+foreach(PATCH_FILE IN LISTS _patch_files)
+    list(APPEND _prefix "${PATCH_FILE}")
     execute_process(
+        COMMAND ${CMAKE_COMMAND} -E cat ${_prefix}
         COMMAND ${CMAKE_COMMAND} -E env ${_git_apply_env}
-            ${GIT_EXECUTABLE} apply --reverse --check "${PATCH_FILE}"
+            ${GIT_EXECUTABLE} apply --reverse --check
         RESULT_VARIABLE _reverse_check
         OUTPUT_QUIET ERROR_QUIET
     )
     if(_reverse_check EQUAL 0)
+        list(LENGTH _prefix _applied_count)
+    endif()
+endforeach()
+
+set(_patch_index 0)
+foreach(PATCH_FILE IN LISTS _patch_files)
+    math(EXPR _patch_index "${_patch_index} + 1")
+    file(RELATIVE_PATH _patch_rel "${PATCH_DIR}" "${PATCH_FILE}")
+
+    if(_patch_index LESS_EQUAL _applied_count)
         message(STATUS "${PATCH_LABEL}: ${_patch_rel} already applied, skipping")
         continue()
     endif()
