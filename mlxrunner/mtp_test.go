@@ -369,6 +369,44 @@ func TestAcceptMTPDraftsGreedyEOS(t *testing.T) {
 	})
 }
 
+// With IgnoreEOS an accepted EOS draft does not end the speculative run, and
+// the Stats draft counts come from the speculative decoder.
+func TestRunMTPDecodeIgnoreEOSWithStats(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const eos int32 = 7
+		predict := map[int32]int32{1: 2, 2: 3, 3: eos, eos: 4, 4: 5, 5: 6, 6: 8, 8: 9}
+		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+		draft := &fakeMTPDraft{predict: predict}
+		caches, _ := newMTPTestCaches(1)
+		r.cache.caches = caches
+		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		session, ch := newMTPTestSession(caches)
+
+		req := Request{
+			Responses: ch,
+			Tokens:    []int32{0},
+			CompletionRequest: CompletionRequest{
+				Options:   api.Options{NumPredict: 6},
+				IgnoreEOS: true,
+				Stats:     true,
+			},
+		}
+		d := testDecoder(t, r, req, caches, []int32{1}, 1)
+		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		d.close()
+
+		_, final := collectResponses(ch)
+		if final.DoneReason != 1 || final.EvalCount != 6 {
+			t.Fatalf("final DoneReason = %d, EvalCount = %d, want 1 (length) and 6", final.DoneReason, final.EvalCount)
+		}
+		if final.Stats == nil || final.Stats.DraftTokens == 0 || final.Stats.AcceptedDraft == 0 {
+			t.Fatalf("Stats = %+v, want drafted and accepted tokens", final.Stats)
+		}
+	})
+}
+
 func TestRunMTPDecodeGreedy(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		// The seed token 1 is the last prefill token; its prediction (2) is the
@@ -594,6 +632,44 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 			if acc.seen[i] != 1 || acc.rate[i] != 1 {
 				t.Fatalf("position %d: seen = %d, rate = %v, want 1 and 1", i, acc.seen[i], acc.rate[i])
 			}
+		}
+	})
+}
+
+// With IgnoreEOS the plain decode loop runs past EOS to the full budget, and a
+// Stats request carries its stats on the final response.
+func TestDecodePlainIgnoreEOSWithStats(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		const eos int32 = 7
+		predict := map[int32]int32{1: 2, 2: 3, 3: eos, eos: 4, 4: 5, 5: 6}
+		r := mtpTestRunner(t, predict, []int32{eos}, sampler.Options{})
+
+		caches, _ := newMTPTestCaches(1)
+		session, ch := newMTPTestSession(caches)
+		req := Request{
+			Responses: ch,
+			Tokens:    []int32{0},
+			CompletionRequest: CompletionRequest{
+				Options:   api.Options{NumPredict: 5},
+				IgnoreEOS: true,
+				Stats:     true,
+			},
+		}
+		d := testDecoder(t, r, req, caches, []int32{1}, 1)
+		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		d.close()
+
+		_, final := collectResponses(ch)
+		if final.DoneReason != 1 || final.EvalCount != 5 {
+			t.Fatalf("final DoneReason = %d, EvalCount = %d, want 1 (length) and 5", final.DoneReason, final.EvalCount)
+		}
+		if final.Stats == nil {
+			t.Fatal("Stats requested but missing from the final response")
+		}
+		if final.Stats.DraftTokens != 0 {
+			t.Errorf("plain decode reported %d draft tokens", final.Stats.DraftTokens)
 		}
 	})
 }
