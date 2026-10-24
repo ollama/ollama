@@ -1,11 +1,45 @@
 package progress
 
 import (
+	"bufio"
 	"bytes"
+	"os"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/term"
 )
+
+type testState string
+
+func (s testState) String() string { return string(s) }
+
+func TestStopAndClearOnlyClearsVisibleLines(t *testing.T) {
+	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil {
+		termHeight = defaultTermHeight
+	}
+
+	var buf bytes.Buffer
+	p := &Progress{
+		w:    bufio.NewWriter(&buf),
+		done: make(chan struct{}),
+	}
+	for range termHeight + 1 {
+		p.states = append(p.states, testState("working"))
+	}
+
+	if !p.StopAndClear() {
+		t.Fatal("first stop should report true")
+	}
+
+	const clearLine = "\033[2K\033[1G"
+	if got := strings.Count(buf.String(), clearLine); got != termHeight {
+		t.Fatalf("cleared %d lines, want %d visible lines", got, termHeight)
+	}
+}
 
 // TestStopIsIdempotent pins the contract cmd relies on: a second Stop (e.g. a
 // deferred StopAndClear after an explicit one) reports false so callers don't
