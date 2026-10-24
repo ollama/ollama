@@ -1964,6 +1964,30 @@ func TestLlamaServerBatch(t *testing.T) {
 	}
 }
 
+func TestLlamaServerBatchNoncausalDecision(t *testing.T) {
+	tests := []struct {
+		name      string
+		kv        gguftest.KV
+		wantBatch int
+	}{
+		{"noncausal decision", gguftest.KV{"qwen35.decision.type": "vllm-d3", "qwen35.attention.causal": false}, 8192},
+		{"causal decision", gguftest.KV{"qwen35.decision.type": "vllm-d3", "qwen35.attention.causal": true}, 512},
+		{"decision without causal flag", gguftest.KV{"qwen35.decision.type": "vllm-d3"}, 512},
+		{"noncausal without decision", gguftest.KV{"qwen35.attention.causal": false}, 512},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.kv["general.architecture"] = "qwen35"
+			tt.kv["qwen35.context_length"] = uint64(262144)
+			f := loadTestGGUF(t, tt.kv)
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192, NumBatch: 512}}
+			if batch, _ := LlamaServerBatch(f, opts, false); batch != tt.wantBatch {
+				t.Fatalf("batch=%d, want %d", batch, tt.wantBatch)
+			}
+		})
+	}
+}
+
 func TestAppendBatchArgs(t *testing.T) {
 	tests := []struct {
 		name        string
