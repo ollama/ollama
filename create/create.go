@@ -343,12 +343,20 @@ func readSourceModelConfig(modelDir string) (sourceModelConfig, json.RawMessage,
 	return cfg, data, nil
 }
 
-func (cfg sourceModelConfig) Architecture() string {
+// declaredArchitecture returns the architecture config.json declares: its
+// first architectures entry, or its model_type when it lists none, as
+// MLX-native packs may. The runner resolves a manifest's architecture the
+// same way.
+func (cfg sourceModelConfig) declaredArchitecture() string {
 	if len(cfg.Architectures) > 0 && cfg.Architectures[0] != "" {
 		return cfg.Architectures[0]
 	}
-	if cfg.ModelType != "" {
-		return cfg.ModelType
+	return cfg.ModelType
+}
+
+func (cfg sourceModelConfig) Architecture() string {
+	if arch := cfg.declaredArchitecture(); arch != "" {
+		return arch
 	}
 	return cfg.TextConfig.ModelType
 }
