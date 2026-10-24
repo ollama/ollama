@@ -66,6 +66,7 @@ func (p *CohereParser) PreservedTokens() []string {
 		"<|START_THINKING|>", cohereEndThinking,
 		cohereStartText, cohereEndText,
 		cohereStartAction, cohereEndAction,
+		cohereEndOfTurn,
 		cohereStartResponse, cohereEndResponse,
 	}
 }
