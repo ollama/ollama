@@ -140,19 +140,19 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(result.Messages) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
 	}
 
 	if result.Messages[0].Content != "Hello" {
-		t.Errorf("expected first message content 'Hello', got %q", result.Messages[0].Content)
+		t.Errorf("expected message content 'Hello', got %q", result.Messages[0].Content)
 	}
 
-	if len(result.Messages[1].Images) != 1 {
-		t.Fatalf("expected 1 image, got %d", len(result.Messages[1].Images))
+	if len(result.Messages[0].Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(result.Messages[0].Images))
 	}
 
-	if string(result.Messages[1].Images[0]) != string(imgData) {
+	if string(result.Messages[0].Images[0]) != string(imgData) {
 		t.Error("image data mismatch")
 	}
 }
