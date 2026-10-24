@@ -267,7 +267,8 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe" -MaximumRetryCount 3 -RetryIntervalSec 2
+            curl.exe --fail --location --retry 3 --retry-all-errors --retry-delay 10 --remove-on-error --silent --show-error --output install.exe "${{ matrix.install }}"
+            if ($LASTEXITCODE -ne 0) { throw "CUDA download failed: $LASTEXITCODE" }
             $subpackages = @(${{ join(matrix.cuda-components, ', ') }}) | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
             Remove-Item install.exe

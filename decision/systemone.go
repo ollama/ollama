@@ -31,15 +31,15 @@ type Compiled struct {
 	encoding string
 }
 
-// ValidateLimits checks request limits shared by all decision backends.
-func ValidateLimits(req Request) error {
+// ValidateLimits checks request limits for the selected decision backend.
+func ValidateLimits(req Request, decisionType string) error {
 	if n := req.Questions.Len(); n < 1 || n > 64 {
 		return fmt.Errorf("questions must contain 1–64 fields")
 	}
 	if len(req.Videos) > 0 {
 		return fmt.Errorf("video inputs are not supported")
 	}
-	if state, err := content(req.State); err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
+	if state, err := content(req.State); decisionType != "vllm-d3" && err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
 		return fmt.Errorf("state must not be empty")
 	}
 	for name, q := range req.Questions.All() {
@@ -65,7 +65,7 @@ func validateImages(images []api.ImageData) error {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands", "kev", "pplx":
+	case "", "tev1", "clef", "strands", "kev", "pplx", "d3":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
@@ -83,7 +83,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		return c, nil
 	}
 	if encoding == "pplx" {
-		if err := ValidateLimits(req); err != nil {
+		if err := ValidateLimits(req, encoding); err != nil {
 			return nil, err
 		}
 		if err := validateImages(req.Images); err != nil {
@@ -95,7 +95,14 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		return c, nil
 	}
-	if err := ValidateLimits(req); err != nil {
+	if encoding == "d3" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeD3(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if err := ValidateLimits(req, encoding); err != nil {
 		return nil, err
 	}
 	if len(req.Images) != 0 && encoding != "clef" {

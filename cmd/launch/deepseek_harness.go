@@ -22,7 +22,35 @@ const (
 	deepSeekHarnessProvider        = "ollama"
 	deepSeekHarnessAPIKeyEnv       = "OLLAMA_LAUNCH_DSH_API_KEY"
 	deepSeekHarnessWebSettings     = "web-search-deepseek"
+
+	deepSeekHarnessCompactionHeadroom   = 65_536
+	deepSeekHarnessMaxTokensContextFrac = 8
 )
+
+// deepSeekHarnessMaxTokens bounds the maxTokens dsh is told about so that its
+// automatic context compaction keeps working. dsh (0.2.x) reserves maxTokens
+// plus a 64k headroom out of the context window before it will compact, and
+// disables compaction entirely when that reservation reaches the window. Our
+// cloud limits often report an output limit equal to the full context window,
+// which would leave dsh running without compaction until the context is simply
+// full. The compaction threshold is also the window minus that reservation, so
+// a large maxTokens makes compaction fire early: half of a 262k window as
+// maxTokens would compact at 64k. Capping maxTokens to an eighth of the window
+// keeps compaction at roughly seven eighths, and when even that leaves under
+// two headrooms of room the value is omitted so dsh falls back to its default.
+func deepSeekHarnessMaxTokens(contextLength, maxOutputTokens int) int {
+	if maxOutputTokens <= 0 {
+		return 0
+	}
+	if contextLength <= 0 {
+		return maxOutputTokens
+	}
+	maxTokens := min(maxOutputTokens, contextLength/deepSeekHarnessMaxTokensContextFrac)
+	if contextLength-maxTokens < 2*deepSeekHarnessCompactionHeadroom {
+		return 0
+	}
+	return maxTokens
+}
 
 var (
 	deepSeekHarnessLookPath = exec.LookPath
@@ -392,8 +420,8 @@ func deepSeekHarnessModelConfigs(primary string, models []LaunchModel) []any {
 		if item.ContextLength > 0 {
 			entry["contextWindow"] = item.ContextLength
 		}
-		if item.MaxOutputTokens > 0 {
-			entry["maxTokens"] = item.MaxOutputTokens
+		if maxTokens := deepSeekHarnessMaxTokens(item.ContextLength, item.MaxOutputTokens); maxTokens > 0 {
+			entry["maxTokens"] = maxTokens
 		}
 		configs = append(configs, entry)
 	}

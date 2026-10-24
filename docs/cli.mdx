@@ -96,6 +96,18 @@ ollama run nimble --ask "How urgent is this?" \
 
 The state is piped in or given after the model name, as text or JSON. Each `--ask` question is answered yes or no, unless it's followed by labels to choose from (`--choice`) or levels to score it on (`--level`). See [Decision](/capabilities/decision#ask-from-the-terminal).
 
+### Speak with a speech model
+
+```
+ollama run phonon "Hello from Ollama."
+
+ollama run phonon --voice Zoey "Hi, this is Zoey."
+
+ollama run phonon "Save this to a file." > speech.wav
+```
+
+The audio plays through your speakers, or is written as a WAV file when the output is redirected. Run it without text to speak each line you type. See [Speech](/capabilities/speech#speak-from-the-terminal).
+
 ### Download a model
 
 ```

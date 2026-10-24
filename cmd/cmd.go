@@ -903,23 +903,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	prompts := args[1:]
-	// prepend stdin to the prompt if provided
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		in, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return err
-		}
-
-		// Only prepend stdin content if it's not empty
-		stdinContent := string(in)
-		if len(stdinContent) > 0 {
-			prompts = append([]string{stdinContent}, prompts...)
-		}
+	stdinPiped := !term.IsTerminal(int(os.Stdin.Fd()))
+	if stdinPiped {
 		opts.ShowConnect = false
 		opts.WordWrap = false
 		interactive = false
 	}
-	opts.Prompt = strings.Join(prompts, " ")
 	if len(prompts) > 0 {
 		interactive = false
 	}
@@ -966,11 +955,31 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	applyShowResponseToRunOptions(&opts, info)
 
+	// prepend stdin to the prompt if provided; speech models read it as it
+	// arrives instead
+	speech := slices.Contains(info.Capabilities, model.CapabilitySpeech)
+	if stdinPiped && !speech {
+		in, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		// Only prepend stdin content if it's not empty
+		stdinContent := string(in)
+		if len(stdinContent) > 0 {
+			prompts = append([]string{stdinContent}, prompts...)
+		}
+	}
+	opts.Prompt = strings.Join(prompts, " ")
+
 	if slices.Contains(info.Capabilities, model.CapabilityDecision) {
 		return runDecision(cmd, opts, interactive)
 	}
 	if cmd.Flags().Changed("ask") {
 		return fmt.Errorf("%s is not a decision model, so it can't answer --ask questions", name)
+	}
+	if cmd.Flags().Changed("voice") && !speech {
+		return fmt.Errorf("%s is not a speech model, so it can't use --voice", name)
 	}
 
 	// Check if this is an embedding model
@@ -994,6 +1003,18 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
+	}
+
+	if speech {
+		voice, err := cmd.Flags().GetString("voice")
+		if err != nil {
+			return err
+		}
+		var input io.Reader
+		if stdinPiped {
+			input = os.Stdin
+		}
+		return runSpeech(cmd.Context(), name, voice, opts.Prompt, input, interactive)
 	}
 
 	if slices.Contains(info.Capabilities, model.CapabilityImage) {
@@ -1261,7 +1282,10 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
-			ctxStr := strconv.Itoa(m.ContextLength)
+			ctxStr := "-"
+			if m.ContextLength > 0 {
+				ctxStr = strconv.Itoa(m.ContextLength)
+			}
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, m.Runner, until})
 		}
 	}
@@ -1482,6 +1506,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 						[]string{"", "    default", fmt.Sprint(resp.Thinking.Default)},
 					)
 				}
+			}
+			return
+		})
+	}
+
+	if len(resp.Voices) > 0 {
+		tableRender("Voices", func() (rows [][]string) {
+			for _, voice := range resp.Voices {
+				rows = append(rows, []string{"", voice})
 			}
 			return
 		})
@@ -2597,6 +2630,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
 	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
 	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().String("voice", "", "Voice to speak with (speech models only)")
 	var asked []askedQuestion
 	runCmd.Flags().Var(questionFlag{"ask", &asked}, "ask", "Ask a decision model a question, answered yes or no unless --choice or --level follow")
 	runCmd.Flags().Var(questionFlag{"choice", &asked}, "choice", `Add a label for the preceding --ask to choose from, e.g. billing="Payments and refunds"`)

@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,9 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -23,10 +20,7 @@ const (
 	kimiDefaultMaxContextSize = 32768
 )
 
-var (
-	kimiGOOS             = runtime.GOOS
-	kimiModelShowTimeout = 5 * time.Second
-)
+var kimiGOOS = runtime.GOOS
 
 func (k *Kimi) String() string { return "Kimi Code CLI" }
 
@@ -191,46 +185,11 @@ func resolveKimiMaxContextSize(model string) int {
 		return l.Context
 	}
 
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return kimiDefaultMaxContextSize
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), kimiModelShowTimeout)
-	defer cancel()
-	resp, err := client.Show(ctx, &api.ShowRequest{Model: model})
-	if err != nil {
-		return kimiDefaultMaxContextSize
-	}
-
-	if n, ok := modelInfoContextLength(resp.ModelInfo); ok {
+	if n := showContextLength(model); n > 0 {
 		return n
 	}
 
 	return kimiDefaultMaxContextSize
-}
-
-func modelInfoContextLength(modelInfo map[string]any) (int, bool) {
-	for key, val := range modelInfo {
-		if !strings.HasSuffix(key, ".context_length") {
-			continue
-		}
-		switch v := val.(type) {
-		case float64:
-			if v > 0 {
-				return int(v), true
-			}
-		case int:
-			if v > 0 {
-				return v, true
-			}
-		case int64:
-			if v > 0 {
-				return int(v), true
-			}
-		}
-	}
-	return 0, false
 }
 
 func ensureKimiInstalled() (string, error) {

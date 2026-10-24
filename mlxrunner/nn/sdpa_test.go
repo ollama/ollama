@@ -86,6 +86,34 @@ func TestAttentionMaskAsArrayCausal(t *testing.T) {
 	})
 }
 
+func TestDeviceSlidingMaskMatchesHost(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		for _, tc := range []struct {
+			offsets []int32
+			length  int
+			keys    int
+			window  int
+		}{
+			{[]int32{0}, 6, 6, 4},
+			{[]int32{1024}, 8, 10, 5},
+			{[]int32{0, 1024}, 6, 8, 4},
+		} {
+			b := newBatch(tc.offsets, tc.length, nil)
+			host := CausalMask().IntersectSlidingWindow(b, tc.keys, tc.window, mlx.DTypeBFloat16).AsArray(b, tc.keys, mlx.DTypeBFloat16)
+			device := DeviceCausalMask().IntersectSlidingWindow(b, tc.keys, tc.window, mlx.DTypeBFloat16).AsArray(b, tc.keys, mlx.DTypeBFloat16)
+			host = mlx.Contiguous(host.AsType(mlx.DTypeFloat32), false)
+			device = mlx.Contiguous(device.AsType(mlx.DTypeFloat32), false)
+			mlx.Eval(host, device)
+			want, got := host.Floats(), device.Floats()
+			for i := range want {
+				if !sameF(got[i], want[i]) {
+					t.Fatalf("offsets=%v length=%d keys=%d index=%d: device=%v host=%v", tc.offsets, tc.length, tc.keys, i, got[i], want[i])
+				}
+			}
+		}
+	})
+}
+
 func TestAttentionMaskRelaxLazy(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		// Relax must not materialize a tensor — the perf invariant the
@@ -698,6 +726,39 @@ func TestSDPAMultiSequenceParity(t *testing.T) {
 				if !approxEqual(gotF[gotI], ref1F[refI], 1e-5) {
 					t.Fatalf("row 1 [q=%d,d=%d]: got %v, want %v", q, d, gotF[gotI], ref1F[refI])
 				}
+			}
+		}
+	})
+}
+
+func TestSDPALearnedSinks(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		b := newBatch([]int32{0}, 1, nil)
+		q := mlx.FromValues(make([]float32, 8), 1, 2, 1, 4)
+		k := mlx.FromValues(make([]float32, 8), 1, 1, 2, 4)
+		v := mlx.FromValues([]float32{3, 3, 3, 3, 6, 6, 6, 6}, 1, 1, 2, 4)
+		sinks := mlx.FromValues([]float32{0, float32(math.Ln2)}, 2)
+
+		got := ScaledDotProductAttention(b, q, 1, WithKV(k, v, []int32{2}), WithSinks(sinks))
+		mlx.Eval(got)
+		// The Metal v4 fast attention kernel differs by less than one
+		// thousandth here from the exact softmax calculation.
+		const attentionTolerance = 1e-3
+		for i, value := range got.Floats() {
+			want := float32(3)
+			if i >= 4 {
+				want = 2.25
+			}
+			if !approxEqual(value, want, attentionTolerance) {
+				t.Fatalf("sink output[%d] = %v, want %v", i, value, want)
+			}
+		}
+
+		withoutSinks := ScaledDotProductAttention(b, q, 1, WithKV(k, v, []int32{2}))
+		mlx.Eval(withoutSinks)
+		for i, value := range withoutSinks.Floats() {
+			if !approxEqual(value, 4.5, attentionTolerance) {
+				t.Fatalf("ordinary output[%d] = %v, want 4.5", i, value)
 			}
 		}
 	})

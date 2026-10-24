@@ -3258,6 +3258,40 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 	}
 }
 
+func TestResponsesStreamConverter_TextThenToolCompletion(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "checking weather"}})
+	events = append(events, converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}},
+		Done:    true,
+	})...)
+	done := map[int]any{}
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		if event.Event == "response.output_item.done" {
+			index := data["output_index"].(int)
+			if _, exists := done[index]; exists {
+				t.Fatalf("output index %d closed twice", index)
+			}
+			done[index] = data["item"]
+		}
+	}
+	last := events[len(events)-1]
+	if last.Event != "response.completed" {
+		t.Fatalf("last event=%s", last.Event)
+	}
+	output := last.Data.(map[string]any)["response"].(map[string]any)["output"].([]any)
+	if len(output) != 2 || !reflect.DeepEqual(output[0], done[0]) || !reflect.DeepEqual(output[1], done[1]) {
+		t.Fatalf("terminal output disagrees with streamed items: output=%#v done=%#v", output, done)
+	}
+	if events := converter.ResponseFailed(map[string]any{"error": ResponsesError{Code: "server_error", Message: "late error"}}); len(events) != 0 {
+		t.Fatalf("failure emitted after completion: %#v", events)
+	}
+	if events := converter.Process(api.ChatResponse{Done: true}); len(events) != 0 {
+		t.Fatalf("completion emitted twice: %#v", events)
+	}
+}
+
 func TestFromResponsesRequestAgentMessageWithoutRouting(t *testing.T) {
 	var req ResponsesRequest
 	err := json.Unmarshal([]byte(`{

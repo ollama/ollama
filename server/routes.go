@@ -899,7 +899,7 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q is not a llama.cpp decision model", req.Model)})
 		return
 	}
-	if err := decision.ValidateLimits(req); err != nil {
+	if err := decision.ValidateLimits(req, decisionType); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1021,7 +1021,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	var encoding string
 	switch m.Config.Renderer {
-	case "tev1", "clef", "strands", "kev", "pplx":
+	case "tev1", "clef", "strands", "kev", "pplx", "d3":
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
@@ -1893,8 +1893,8 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Runner:            m.Runner,
 	}
 
-	// For safetensors completion and decision models, populate details from config.json.
-	isSafetensorsLLM := m.IsMLX() && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "decision"))
+	// For safetensors completion, decision and speech models, populate details from config.json.
+	isSafetensorsLLM := m.IsMLX() && (slices.Contains(m.Config.Capabilities, "completion") || slices.Contains(m.Config.Capabilities, "decision") || slices.Contains(m.Config.Capabilities, "speech"))
 	if isSafetensorsLLM {
 		if info, err := getSafetensorsLLMInfoForRunner(name, req.Runner); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
@@ -1944,6 +1944,9 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.TemplateSource = m.templateSource()
 	if !slices.Contains(resp.Capabilities, model.CapabilityDecision) {
 		resp.Thinking = m.Thinking()
+	}
+	if slices.Contains(resp.Capabilities, model.CapabilitySpeech) {
+		resp.Voices = speechVoices(mf)
 	}
 
 	if summaries, err := manifestSummariesForShow(name, mf.SelectedDigest()); err != nil {
@@ -2418,8 +2421,9 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", s.responsesCompactionMiddleware(), cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(lookupThinking), s.ChatHandler)...)
 	r.POST("/v1/responses/compact", s.ResponsesCompactHandler)
-	// OpenAI-compatible audio endpoint
+	// OpenAI-compatible audio endpoints
 	r.POST("/v1/audio/transcriptions", middleware.TranscriptionMiddleware(), s.ChatHandler)
+	r.POST("/v1/audio/speech", s.SpeechHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(lookupThinking), s.ChatHandler)...)
@@ -2816,6 +2820,12 @@ func (s *Server) PsHandler(c *gin.Context) {
 			QuantizationLevel: m.Config.FileType,
 		}
 
+		contextLength := v.contextLength
+		if slices.Contains(m.Config.Capabilities, "speech") {
+			// Speech models have no text context.
+			contextLength = 0
+		}
+
 		mr := api.ProcessModelResponse{
 			Model:         displayName,
 			Name:          displayName,
@@ -2824,7 +2834,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Digest:        digest,
 			Details:       modelDetails,
 			ExpiresAt:     v.expiresAt,
-			ContextLength: v.contextLength,
+			ContextLength: contextLength,
 			Runner:        runner,
 		}
 
@@ -3188,7 +3198,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		if req.Think != nil && req.Think.Bool() {
 			// Clients may retain thinking settings when switching models.
 			if _, ok := c.Get("relax_thinking"); ok {
-				slog.Warn("model does not support thinking, relaxing thinking to nil", "model", req.Model)
+				slog.Debug("model does not support thinking, relaxing thinking to nil", "model", req.Model)
 				req.Think = nil
 			} else {
 				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support thinking", req.Model)})
@@ -3595,19 +3605,24 @@ func countChatImages(msgs []api.Message) int {
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
+	status, message := scheduleError(name, err)
+	c.JSON(status, gin.H{"error": message})
+}
+
+// scheduleError keeps native and OpenAI-compatible endpoints consistent while
+// allowing each to use its own error response format.
+func scheduleError(name string, err error) (int, string) {
 	switch {
-	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-	case errors.Is(err, manifest.ErrNoCompatibleManifest):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired), errors.Is(err, manifest.ErrNoCompatibleManifest):
+		return http.StatusBadRequest, err.Error()
 	case errors.Is(err, context.Canceled):
-		c.JSON(499, gin.H{"error": "request canceled"})
+		return 499, "request canceled"
 	case errors.Is(err, ErrMaxQueue):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return http.StatusServiceUnavailable, err.Error()
 	case errors.Is(err, os.ErrNotExist):
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model %q not found, try pulling it first", name)})
+		return http.StatusNotFound, fmt.Sprintf("model %q not found, try pulling it first", name)
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return http.StatusInternalServerError, err.Error()
 	}
 }
 

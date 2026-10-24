@@ -499,7 +499,7 @@ func (r rotatingApplier) ApplyMask(logical nn.AttentionMask) nn.AttentionMask {
 		return nn.ArrayMask(arr)
 	}
 
-	return logical.Intersect(nn.SlidingWindowMask(r.b, r.K, r.window, r.dtype))
+	return logical.IntersectSlidingWindow(r.b, r.K, r.window, r.dtype)
 }
 
 // gatherRingCols reorders a [B, 1, L, K] mask's K axis from logical order

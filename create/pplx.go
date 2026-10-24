@@ -98,8 +98,8 @@ func newPplxImportTransform(json.RawMessage) (quantizePolicy, error) {
 }
 
 func (pplxImportTransform) quantizationType(name string, shape []int32, requested string) string {
-	// The separate decision readout must remain BF16. Apply the backbone's
-	// existing Qwen3.5 policy to everything else.
+	// Keep the decision readout at its publisher dtype (BF16 for Perplexity,
+	// FP32 for d3). Apply the backbone's Qwen3.5 policy to everything else.
 	if name == "weight" {
 		return ""
 	}

@@ -789,6 +789,9 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		launchModels = c.resolveRunModels(ctx, name, models)
 	}
 
+	if name == "opencode" && len(req.ExtraArgs) == 0 {
+		launchModels = openCodeRuntimeModels(launchModels, c.recommendations(ctx))
+	}
 	return launchAfterConfiguration(name, runner, models[0], launchModels, req)
 }
 

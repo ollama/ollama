@@ -1,7 +1,9 @@
 package launch
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,12 +11,16 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
 const openCodeInstallScript = "curl -fsSL https://opencode.ai/install | bash"
+
+const openCodeDefaultMaxOutputTokens = 32_000
 
 var openCodeGOOS = runtime.GOOS
 
@@ -53,16 +59,210 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	if err != nil {
 		return err
 	}
+	content, err := o.runContent(model, models, args...)
+	if err != nil {
+		return err
+	}
+	if len(args) == 0 && model != "" {
+		if primary, ok := findLaunchModel(models, model); ok {
+			model = primary.Name
+		}
+		args = []string{"--model", "ollama/" + model}
+	}
 
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if content := o.resolveContent(model, models); content != "" {
+	if content != "" {
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
+}
+
+var (
+	openCodeLoadedContextLength = loadedContextLength
+	openCodeReadConfig          = readOpenCodeConfig
+)
+
+// Let OpenCode resolve its configuration layers, including JSONC and project settings.
+func readOpenCodeConfig() ([]byte, error) {
+	path, ok := findOpenCode()
+	if !ok {
+		return nil, fmt.Errorf("could not find the OpenCode executable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "debug", "config")
+	// npm's launcher can leave a child holding the output pipes after cancellation.
+	cmd.WaitDelay = time.Second
+	data, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if diagnostic := openCodeConfigDiagnostic(exitErr.Stderr); diagnostic != "" {
+			err = fmt.Errorf("%w: %s", err, diagnostic)
+		}
+		return nil, fmt.Errorf("%w\nRun `opencode debug config` for details.", err)
+	}
+	return data, err
+}
+
+// OpenCode's validation messages can echo credentials or the entire JSONC file.
+// Keep only the config location and issue paths, never messages or input values.
+func openCodeConfigDiagnostic(stderr []byte) string {
+	// Cmd.Output truncates large errors mid-message. A partial rejected value
+	// must not be mistaken for a field path; use the recovery command instead.
+	if len(stderr) > 16<<10 {
+		return ""
+	}
+	lines := strings.Split(ansi.Strip(string(stderr)), "\n")
+	for i, line := range lines {
+		line = strings.TrimPrefix(strings.TrimSuffix(line, "\r"), "Error: ")
+		if path, ok := strings.CutPrefix(line, "Config file at "); ok {
+			if path, _, ok := strings.Cut(path, " is not valid JSON(C)"); ok {
+				return fmt.Sprintf("config file at %q is not valid JSON(C)", path)
+			}
+		}
+		rest, ok := strings.CutPrefix(line, "Configuration is invalid")
+		if !ok {
+			continue
+		}
+		diagnostic := "configuration is invalid"
+		if path, ok := strings.CutPrefix(rest, " at "); ok {
+			path, _, _ = strings.Cut(path, ": ")
+			diagnostic += fmt.Sprintf(" at %q", path)
+		}
+		var fields []string
+		for _, issue := range lines[i+1:] {
+			issue = strings.TrimSuffix(issue, "\r")
+			if !strings.HasPrefix(issue, "↳ ") {
+				break
+			}
+			// OpenCode appends a space and the field path, even for root issues
+			// whose path is empty. Preserve that trailing space when parsing.
+			if last := strings.LastIndexByte(issue, ' '); last >= 0 && last < len(issue)-1 {
+				fields = append(fields, fmt.Sprintf("%q", issue[last+1:]))
+			}
+		}
+		if len(fields) > 0 {
+			diagnostic += " (invalid fields: " + strings.Join(fields, ", ") + ")"
+		}
+		return diagnostic
+	}
+	return ""
+}
+
+// runContent refreshes only the selected local model's limits after loading it.
+// Edit remains metadata-only; other picker entries are not loaded, and their
+// limits must not inherit the selected model's allocation.
+func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string) (string, error) {
+	content := o.resolveContent(model, models)
+	// Forwarded arguments may select another model, resume a session, or run a
+	// utility. Leave those invocations entirely to OpenCode.
+	if len(args) > 0 {
+		return content, nil
+	}
+	primary, _ := findLaunchModel(models, model)
+	if model == "" || primary.Remote || isCloudModelName(model) {
+		return content, nil
+	}
+	if primary.Name != "" {
+		model = primary.Name
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return "", err
+	}
+	providers, _ := config["provider"].(map[string]any)
+	provider, _ := providers["ollama"].(map[string]any)
+	entries, _ := provider["models"].(map[string]any)
+	entry, _ := entries[model].(map[string]any)
+	if entry == nil {
+		return content, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "Loading %s...\n", model)
+	contextLength, err := openCodeLoadedContextLength(model)
+	if err != nil {
+		return "", fmt.Errorf("could not load %s: %w", model, err)
+	}
+	if contextLength < 4 {
+		fmt.Fprintf(os.Stderr, "Warning: could not read the context size for %s. Continuing with existing settings; long chats may lose earlier messages.\n", model)
+		return content, nil
+	}
+	data, err := openCodeReadConfig()
+	if err != nil {
+		return "", fmt.Errorf("could not read OpenCode configuration: %w", err)
+	}
+	var saved struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Input, Output int }
+			}
+		}
+	}
+	if err := json.Unmarshal(data, &saved); err != nil {
+		return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
+	}
+	// OpenCode prioritizes input over context for compaction. Override stale
+	// input limits too, while keeping a user's smaller limit.
+	input := contextLength
+
+	// Reserve a quarter of the context for output, capped at 8k. Avoid a
+	// minimum output budget that could consume a small allocation entirely.
+	output := min(8192, contextLength/4)
+	if primary.MaxOutputTokens > 0 {
+		output = min(output, primary.MaxOutputTokens)
+	}
+	for name, configured := range saved.Provider["ollama"].Models {
+		if !launchModelMatches(name, model) && !launchModelMatches(model, name) {
+			continue
+		}
+		if configured.Limit.Input > 0 {
+			input = min(input, configured.Limit.Input)
+		}
+		if configured.Limit.Output > 0 {
+			output = min(output, configured.Limit.Output)
+		}
+	}
+	limit, _ := entry["limit"].(map[string]any)
+	if limit == nil {
+		limit = make(map[string]any)
+	}
+	if known, ok := limit["output"].(float64); ok && known > 0 {
+		output = min(output, int(known))
+	}
+	limit["context"] = contextLength
+	limit["input"] = input
+	limit["output"] = output
+	entry["limit"] = limit
+	data, err = json.Marshal(config)
+	return string(data), err
+}
+
+// openCodeRuntimeModels carries recommended output ceilings to Run after Edit
+// has built the fallback configuration. Native context metadata remains intact.
+func openCodeRuntimeModels(models []LaunchModel, recommendations []ModelItem) []LaunchModel {
+	models = cloneLaunchModels(models)
+	for i := range models {
+		if models[i].Remote || isCloudModelName(models[i].Name) {
+			continue
+		}
+		for _, rec := range recommendations {
+			if launchModelRecommendationKey(models[i].Name) != launchModelRecommendationKey(rec.Name) || rec.MaxOutputTokens <= 0 {
+				continue
+			}
+			if models[i].MaxOutputTokens <= 0 || rec.MaxOutputTokens < models[i].MaxOutputTokens {
+				models[i].MaxOutputTokens = rec.MaxOutputTokens
+			}
+		}
+	}
+	return models
 }
 
 func ensureOpenCodeInstalled() (string, error) {
@@ -374,13 +574,12 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				}
 			}
 		}
-		if model.MaxOutputTokens > 0 {
-			limit := make(map[string]any)
-			if model.ContextLength > 0 {
-				limit["context"] = model.ContextLength
+		if model.ContextLength > 0 && (model.MaxOutputTokens > 0 || model.Remote || isCloudModelName(model.Name)) {
+			output := model.MaxOutputTokens
+			if output <= 0 {
+				output = openCodeDefaultMaxOutputTokens
 			}
-			limit["output"] = model.MaxOutputTokens
-			entry["limit"] = limit
+			entry["limit"] = map[string]any{"context": model.ContextLength, "output": output}
 		}
 		models[model.Name] = entry
 	}

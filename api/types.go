@@ -821,6 +821,7 @@ type ShowResponse struct {
 	ProjectorInfo  map[string]any     `json:"projector_info,omitempty"`
 	Tensors        []Tensor           `json:"tensors,omitempty"`
 	Capabilities   []model.Capability `json:"capabilities,omitempty"`
+	Voices         []string           `json:"voices,omitempty"`
 	Manifests      []ManifestSummary  `json:"manifests,omitempty"`
 	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
 	Requires       string             `json:"requires,omitempty"`
