@@ -376,6 +376,18 @@ WEBVIEW_API void webview_set_zoom(webview_t w, double level);
  */
 WEBVIEW_API double webview_get_zoom(webview_t w);
 
+/**
+ * @brief Keeps the window above all other windows when @p on_top is non-zero.
+ *
+ * @param w The webview instance.
+ * @param on_top Non-zero to pin the window on top, zero to release it.
+ *
+ * @remark Win32: sets or clears @c HWND_TOPMOST / @c HWND_NOTOPMOST.
+ * @remark Cocoa: sets or clears @c NSWindowLevelFloating.
+ * @remark Must be called from the UI thread.
+ */
+WEBVIEW_API void webview_set_always_on_top(webview_t w, int on_top);
+
 // TODO (jmorganca): these forward declarations should be
 // in a header file but due to linking issues they live here for now
 typedef struct
@@ -435,7 +447,21 @@ void menu_handle_selection(char *item);
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
+// Without NOMINMAX, <windows.h> defines min/max macros that break the
+// std::min/std::max calls below with "illegal token on right side of '::'".
+// Defining it before <windows.h> is not always enough, because a translation
+// unit may include <windows.h> first and then this header; so also undefine
+// the macros here when they are already defined.
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
+#if defined(min)
+#undef min
+#endif
+#if defined(max)
+#undef max
+#endif
 #else
 #include <dlfcn.h>
 #endif
@@ -1045,6 +1071,7 @@ if (status === 0) {\
   }
   double get_zoom() { return get_zoom_impl(); }
 
+  void set_always_on_top(bool on_top) { set_always_on_top_impl(on_top); }
 protected:
   virtual void navigate_impl(const std::string &url) = 0;
   virtual void *window_impl() = 0;
@@ -1060,6 +1087,7 @@ protected:
   virtual void eval_impl(const std::string &js) = 0;
   virtual void set_zoom_impl(double level) = 0;
   virtual double get_zoom_impl() = 0;
+  virtual void set_always_on_top_impl(bool on_top) = 0;
 
   virtual void on_message(const std::string &msg) {
     auto seq = json_parse(msg, "id", 0);
@@ -1425,6 +1453,10 @@ public:
     }
   }
 
+  void set_always_on_top_impl(bool on_top) override {
+    gtk_window_set_keep_above(GTK_WINDOW(m_window), on_top ? TRUE : FALSE);
+  }
+
   void set_zoom_impl(double level) override {
     webkit_web_view_set_zoom_level(WEBKIT_WEB_VIEW(m_webview), level);
   }
@@ -1761,6 +1793,16 @@ public:
                                             "stringWithUTF8String:"_sel,
                                             js.c_str()),
                          nullptr);
+  }
+
+  void set_always_on_top_impl(bool on_top) override {
+    objc::autoreleasepool arp;
+    if (on_top) {
+      objc::msg_send<void>(m_window, "setLevel:"_sel,
+                           objc::msg_send<double>(m_window, "floatingWindowLevel"_sel));
+    } else {
+      objc::msg_send<void>(m_window, "setLevel:"_sel, 0.0);
+    }
   }
 
   void set_zoom_impl(double level) override {
@@ -3660,6 +3702,11 @@ public:
     }
   }
 
+  void set_always_on_top_impl(bool on_top) override {
+    SetWindowPos(m_window, on_top ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  }
+
   void navigate_impl(const std::string &url) override {
     auto wurl = widen_string(url);
     m_webview->Navigate(wurl.c_str());
@@ -3990,6 +4037,10 @@ WEBVIEW_API void webview_set_zoom(webview_t w, double level) {
 
 WEBVIEW_API double webview_get_zoom(webview_t w) {
   return static_cast<webview::webview *>(w)->get_zoom();
+}
+
+WEBVIEW_API void webview_set_always_on_top(webview_t w, int on_top) {
+  static_cast<webview::webview *>(w)->set_always_on_top(on_top != 0);
 }
 
 #endif /* WEBVIEW_HEADER */
