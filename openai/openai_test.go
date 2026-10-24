@@ -1312,3 +1312,32 @@ func TestNonStreamingResponsesOmitTimings(t *testing.T) {
 		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }
+
+func TestFromChatRequest_ToolNamesUsePrecedingCalls(t *testing.T) {
+	var req ChatCompletionRequest
+	err := json.Unmarshal([]byte(`{
+        "model": "test-model",
+        "messages": [
+            {"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "weather", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+            {"role": "assistant", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "calculate", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "42"}
+        ]
+    }`), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(result.Messages))
+	}
+	if result.Messages[1].ToolName != "weather" {
+		t.Errorf("first tool result name = %q, want weather", result.Messages[1].ToolName)
+	}
+	if result.Messages[3].ToolName != "calculate" {
+		t.Errorf("second tool result name = %q, want calculate", result.Messages[3].ToolName)
+	}
+}
