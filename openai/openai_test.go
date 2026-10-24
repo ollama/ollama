@@ -269,6 +269,93 @@ func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
 	}
 }
 
+func TestFromCompletionToolCall_Arguments(t *testing.T) {
+	cases := []struct {
+		name      string
+		arguments string
+		want      map[string]any
+		wantErr   bool
+	}{
+		{name: "object", arguments: `{"location": "Paris"}`, want: map[string]any{"location": "Paris"}},
+		{name: "empty object", arguments: `{}`, want: map[string]any{}},
+		// clients replaying a call to a parameterless function often send ""
+		// instead of "{}"; OpenAI accepts it, so should we
+		{name: "empty string", arguments: ``, want: map[string]any{}},
+		{name: "whitespace", arguments: " \n\t", want: map[string]any{}},
+		{name: "truncated json", arguments: `{"location": "Pa`, wantErr: true},
+		{name: "not json", arguments: `location=Paris`, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls, err := FromCompletionToolCall([]ToolCall{{
+				ID:   "call_1",
+				Type: "function",
+				Function: struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				}{Name: "get_weather", Arguments: tc.arguments},
+			}})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(calls))
+			}
+			if calls[0].ID != "call_1" || calls[0].Function.Name != "get_weather" {
+				t.Errorf("expected call_1/get_weather, got %q/%q", calls[0].ID, calls[0].Function.Name)
+			}
+			if diff := cmp.Diff(testArgs(tc.want), calls[0].Function.Arguments, argsComparer); diff != "" {
+				t.Errorf("arguments mismatch:\n%s", diff)
+			}
+			// what we echo back for such a call is always an object
+			if got := ToToolCalls(calls)[0].Function.Arguments; got[0] != '{' {
+				t.Errorf("expected arguments to round-trip as a JSON object, got %q", got)
+			}
+		})
+	}
+}
+
+func TestFromChatRequest_ToolCallEmptyArguments(t *testing.T) {
+	// an assistant turn replayed the way several agent frameworks send a call
+	// to a function without parameters: null content and "" for arguments
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"user","content":"List my issues"},
+		{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_my_issues","arguments":""}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"[]"}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+	assistant := result.Messages[1]
+	if len(assistant.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(assistant.ToolCalls))
+	}
+	call := assistant.ToolCalls[0]
+	if call.ID != "call_1" || call.Function.Name != "list_my_issues" || call.Function.Arguments.Len() != 0 {
+		t.Errorf("expected call_1/list_my_issues with no arguments, got id=%q name=%q args=%s", call.ID, call.Function.Name, call.Function.Arguments.String())
+	}
+	tool := result.Messages[2]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "list_my_issues" {
+		t.Errorf("expected tool result for call_1/list_my_issues, got role=%q id=%q name=%q", tool.Role, tool.ToolCallID, tool.ToolName)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{
