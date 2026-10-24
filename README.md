@@ -270,6 +270,8 @@ console.log(response.message.content);
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
 
+- [ALEPH](https://github.com/josuecuguy1307/Aleph) - Source agent workflow with calculator tool execution and saved reports ([Ollama example](https://github.com/josuecuguy1307/Aleph/blob/20a7c95515f29a51374ce1883c26ffce944be2aa/examples/ollama-local/README.md))
+
 ### RAG & Knowledge Bases
 
 - [RAGFlow](https://github.com/infiniflow/ragflow) - RAG engine based on deep document understanding
