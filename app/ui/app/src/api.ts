@@ -288,9 +288,7 @@ export async function getClaudeDesktopAvailableModels(
     const seen = new Set<string>();
     return [...localModels, ...cloudModels]
       .filter((model: ModelResponse) => {
-        const base = model.name
-          .replace(/:latest$/, "")
-          .replace(/:cloud$/, "");
+        const base = model.name.replace(/:latest$/, "").replace(/:cloud$/, "");
         if (!base || seen.has(base)) return false;
 
         const families = model.details?.families;
@@ -391,12 +389,19 @@ export async function* sendMessage(
         break;
       case "error":
         yield new ErrorEvent(event);
-        break;
+        return;
+      case "done":
+        yield new ChatEvent(event);
+        return;
       default:
         yield new ChatEvent(event);
         break;
     }
   }
+
+  throw new Error(
+    "The connection closed before the response was complete. Please try again.",
+  );
 }
 
 export async function getSettings(): Promise<{
