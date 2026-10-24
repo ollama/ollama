@@ -504,14 +504,14 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 	}
 }
 
-func TestWriteBlobsPrequantizedExperts(t *testing.T) {
+func TestWriteBlobsPrequantizedBoltExperts(t *testing.T) {
 	for _, tc := range []struct {
 		name, weight, scale, global, bias, dtype, scaleDtype, quant, config string
 		cols                                                                int32
 	}{
-		{"modelopt", ".weight", ".weight_scale", ".weight_scale_2", "", "U8", "F8_E4M3", "nvfp4", `{}`, 8},
-		{"compressed-tensors", ".weight_packed", ".weight_scale", ".weight_global_scale", "", "U8", "F8_E4M3", "nvfp4", `{}`, 8},
-		{"affine3", ".weight", ".scales", "", ".biases", "U32", "BF16", "int3", `{"quantization":{"mode":"affine","bits":3,"group_size":32}}`, 3},
+		{"modelopt", ".weight", ".weight_scale", ".weight_scale_2", "", "U8", "F8_E4M3", "nvfp4", `{"llm_config":{"model_type":"nemotron_h_puzzle"}}`, 8},
+		{"compressed-tensors", ".weight_packed", ".weight_scale", ".weight_global_scale", "", "U8", "F8_E4M3", "nvfp4", `{"llm_config":{"model_type":"nemotron_h_puzzle"}}`, 8},
+		{"affine3", ".weight", ".scales", "", ".biases", "U32", "BF16", "int3", `{"llm_config":{"model_type":"nemotron_h_puzzle"},"quantization":{"mode":"affine","bits":3,"group_size":32}}`, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
