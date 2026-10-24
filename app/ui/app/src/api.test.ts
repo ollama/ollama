@@ -127,7 +127,7 @@ describe("getClaudeDesktopAvailableModels", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns installed local models while pruning remote entries", async () => {
+  it("returns installed local models while pruning cloud placeholders", async () => {
     listModels.mockResolvedValue({
       models: [
         { name: "llama3.2:latest", digest: "local" },
@@ -145,6 +145,99 @@ describe("getClaudeDesktopAvailableModels", () => {
 
     expect(models.map((model) => model.model)).toEqual(["llama3.2"]);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("includes self-hosted routes alongside local and account cloud models", async () => {
+    listModels.mockResolvedValue({
+      models: [
+        { name: "local-model:latest", digest: "local" },
+        {
+          name: "remote-alias:latest",
+          digest: "remote",
+          remote_host: "http://inference.example:11434",
+          remote_model: "upstream-model:8b",
+        },
+        {
+          name: "hosted-model:cloud",
+          digest: "cloud-placeholder",
+          remote_host: "https://ollama.com",
+          remote_model: "hosted-model",
+        },
+      ],
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ models: [{ name: "hosted-model" }] })),
+        ),
+    );
+
+    const models = await getClaudeDesktopAvailableModels(true);
+
+    expect(models.map((model) => model.model)).toEqual([
+      "local-model",
+      "remote-alias",
+      "hosted-model:cloud",
+    ]);
+  });
+
+  it.each([
+    ["http://inference.example:11434", "model:8b"],
+    ["https://inference.example/ollama", "model:8b"],
+  ])(
+    "includes self-hosted routes at %s without cloud discovery",
+    async (host, upstream) => {
+      listModels.mockResolvedValue({
+        models: [
+          { name: "remote:latest", remote_host: host, remote_model: upstream },
+        ],
+      });
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
+
+      const models = await getClaudeDesktopAvailableModels();
+
+      expect(models.map((model) => model.model)).toEqual(["remote"]);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { remote_model: "model:8b" },
+    { remote_host: "http://inference.example:11434" },
+    { remote_host: "://invalid", remote_model: "model:8b" },
+    { remote_host: "inference.example", remote_model: "model:8b" },
+    { remote_host: "ftp://inference.example", remote_model: "model:8b" },
+    {
+      remote_host: "http://inference.example:11434",
+      remote_model: "model:cloud",
+    },
+    {
+      remote_host: "http://inference.example:11434",
+      remote_model: "model:8b-cloud",
+    },
+    {
+      name: "model:cloud",
+      remote_host: "http://inference.example:11434",
+      remote_model: "model:8b",
+    },
+    {
+      model: "model:8b-cloud",
+      remote_host: "http://inference.example:11434",
+      remote_model: "model:8b",
+    },
+    { remote_host: "https://ollama.com", remote_model: "model:8b" },
+    { remote_host: "https://OLLAMA.COM.:443", remote_model: "model:8b" },
+    { remote_host: "https://api.ollama.com", remote_model: "model:8b" },
+  ])("excludes incomplete or cloud remote entries: %j", async (remote) => {
+    listModels.mockResolvedValue({
+      models: [{ name: "remote:latest", ...remote }],
+    });
+    vi.stubGlobal("fetch", vi.fn());
+
+    expect(await getClaudeDesktopAvailableModels()).toEqual([]);
   });
 
   it("does not request cloud models when they are unavailable to the user", async () => {
