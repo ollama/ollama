@@ -78,6 +78,25 @@ func (w *BaseWriter) writeError(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// writeStreamError forwards an error that the server sent in-band after the
+// stream had started (server.streamResponse writes {"error": "..."} once the
+// status line is out). It reports false when data is not such an error.
+func (w *BaseWriter) writeStreamError(data []byte) (bool, error) {
+	var serr struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &serr); err != nil || serr.Error == "" {
+		return false, nil
+	}
+
+	d, err := json.Marshal(openai.NewError(http.StatusInternalServerError, serr.Error))
+	if err != nil {
+		return true, err
+	}
+	_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+	return true, err
+}
+
 func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
@@ -88,6 +107,13 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	// chat chunk
 	if w.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
+
+		if ok, err := w.writeStreamError(data); ok {
+			if err != nil {
+				return 0, err
+			}
+			return len(data), nil
+		}
 
 		// OpenAI stamps one created value on every chunk in a stream; pin the
 		// timestamp from the first response (the server stamps each response).
@@ -193,6 +219,13 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 
 	// completion chunk
 	if w.stream {
+		if ok, err := w.writeStreamError(data); ok {
+			if err != nil {
+				return 0, err
+			}
+			return len(data), nil
+		}
+
 		c := openai.ToCompleteChunk(w.id, generateResponse)
 		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 			c.Usage = &openai.Usage{}
