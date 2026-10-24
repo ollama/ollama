@@ -107,6 +107,18 @@
     {
       "source": "/integrations/poolside",
       "destination": "/integrations/pool"
+    },
+    {
+      "source": "/sample-projects/research-brief-agent",
+      "destination": "/guide/sample-projects/research_report_agent"
+    },
+    {
+      "source": "/guide/sample-projects/research-brief-agent",
+      "destination": "/guide/sample-projects/research_report_agent"
+    },
+    {
+      "source": "/guide/sample-projects/research-report-agent",
+      "destination": "/guide/sample-projects/research_report_agent"
     }
   ],
   "navigation": {
@@ -134,6 +146,12 @@
               "/capabilities/speech",
               "/capabilities/tool-calling",
               "/capabilities/web-search"
+            ]
+          },
+          {
+            "group": "Sample projects",
+            "pages": [
+              "/guide/sample-projects/research_report_agent"
             ]
           },
           {
