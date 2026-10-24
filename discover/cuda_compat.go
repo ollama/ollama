@@ -42,15 +42,21 @@ func filterOldCUDADriver(_ context.Context, devices []ml.DeviceInfo) []ml.Device
 
 	// Match the driver floor to the CUDA runtime we are about to load, so source
 	// builds with older CUDA runtimes can still run on matching older drivers.
+	// CUDA 12 and later don't carry the minor version in the runtime library
+	// name, so it is often unknown (notably on Windows, where we only ever see
+	// cudart64_12.dll). Assume such a runtime is as new as the one we ship:
+	// guessing low would skip the driver floors below and let llama-server abort
+	// while JITing PTX for a driver that can't consume it.
 	runtimeMajor, runtimeMinor, hasRuntime := cudaRuntimeVersionFromDevices(devices)
-	runtimeMayUseCompressedFatbins := hasRuntime &&
-		runtimeMajor == cudaV12RuntimeMajor &&
-		runtimeMinor >= minFatbinCompressionCUDARuntimeMinor
+	runtimeMinorAtLeast := func(minor int) bool {
+		return hasRuntime &&
+			runtimeMajor == cudaV12RuntimeMajor &&
+			(runtimeMinor == cudaRuntimeMinorUnknown || runtimeMinor >= minor)
+	}
+	runtimeMayUseCompressedFatbins := runtimeMinorAtLeast(minFatbinCompressionCUDARuntimeMinor)
 	// CUDA v12.8+ source builds are expected to either use Ollama's PTX packaging
 	// for older compute targets or be built against a matching local driver/toolkit.
-	runtimeMayJITLegacyCompute := hasRuntime &&
-		runtimeMajor == cudaV12RuntimeMajor &&
-		runtimeMinor >= minLegacyComputeJITCUDARuntimeMinor
+	runtimeMayJITLegacyCompute := runtimeMinorAtLeast(minLegacyComputeJITCUDARuntimeMinor)
 	if driver >= minLegacyComputeJITNVIDIADriverMajor || (!runtimeMayUseCompressedFatbins && !runtimeMayJITLegacyCompute) {
 		return devices
 	}
