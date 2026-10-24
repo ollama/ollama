@@ -2,6 +2,7 @@ package create
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -77,6 +78,46 @@ func TestPlanPrequantizedMLX(t *testing.T) {
 	}
 	if _, ok := specByName(specs, "norm.weight"); !ok {
 		t.Error("norm.weight should pass through as its own blob")
+	}
+}
+
+func TestPlanPrequantizedGemma4Experts(t *testing.T) {
+	for _, prefix := range []string{"model.language_model.layers.0.experts", "model.language_model.layers.0.moe.experts"} {
+		t.Run(prefix, func(t *testing.T) {
+			cfg := sourceModelConfig{
+				Architectures: []string{"Gemma4ForConditionalGeneration"},
+				Quantization:  sourceQuantization{Bits: 4, Mode: "affine", GroupSize: 32},
+			}
+			tensors := make(map[string]string)
+			var weights []string
+			for expert := range 2 {
+				for _, projection := range []string{"gate_proj", "up_proj", "down_proj"} {
+					base := fmt.Sprintf("%s.%d.%s", prefix, expert, projection)
+					tensors[base+".weight"] = "U32"
+					tensors[base+".scales"] = "BF16"
+					tensors[base+".biases"] = "BF16"
+					weights = append(weights, base+".weight")
+				}
+			}
+			specs, err := Plan(newInventory(cfg, tensors), Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			slices.Sort(weights)
+			if got := specNames(specs); !slices.Equal(got, weights) {
+				t.Fatalf("expert blobs = %v, want per-expert weights %v", got, weights)
+			}
+			for _, spec := range specs {
+				if len(spec.Tensors) != 3 || spec.Metadata["quant_type"] != "int4" || spec.Metadata["group_size"] != "32" {
+					t.Fatalf("%s: lost quantization companions or metadata: %+v", spec.Name, spec)
+				}
+				for _, tensor := range spec.Tensors {
+					if tensor.Transform != TransformNone || tensor.Quantize != "" || len(tensor.Sources) != 1 {
+						t.Errorf("%s: per-expert tensor was transformed: %+v", tensor.Name, tensor)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -484,7 +525,7 @@ func TestPlanPrequantizedRejectsInconsistentExperts(t *testing.T) {
 		{"different layout", "", "F16", "mismatched layout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			inv := newInventory(sourceModelConfig{}, map[string]string{
+			inv := newInventory(sourceModelConfig{ModelType: "nemotron_h_puzzle"}, map[string]string{
 				"model.layers.0.mlp.experts.0.up.weight":         "U8",
 				"model.layers.0.mlp.experts.0.up.weight_scale":   "F8_E4M3",
 				"model.layers.0.mlp.experts.0.up.weight_scale_2": "F32",

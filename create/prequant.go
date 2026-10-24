@@ -178,7 +178,10 @@ func planPrequantized(inv Inventory) ([]BlobSpec, error) {
 		t := inv.Tensors[name]
 		specs = append(specs, BlobSpec{Name: name, Tensors: []TensorSpec{{Name: name, Sources: []SourceTensor{t}}}})
 	}
-	return stackPrequantExperts(specs)
+	if inv.Config.ModelType == "nemotron_h_puzzle" || inv.Config.LLMConfig.ModelType == "nemotron_h_puzzle" {
+		return stackPrequantExperts(specs)
+	}
+	return specs, nil
 }
 
 func stackPrequantExperts(specs []BlobSpec) ([]BlobSpec, error) {
