@@ -312,7 +312,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		*api.GenerateRequest
 		Think json.RawMessage `json:"think"`
 	}{GenerateRequest: &req}
-	if err := c.ShouldBindJSON(&body); errors.Is(err, io.EOF) {
+	if err := decodeJSON(c, &body); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -1082,7 +1082,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 func (s *Server) EmbedHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.EmbedRequest
-	err := c.ShouldBindJSON(&req)
+	err := decodeJSON(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -1417,7 +1417,7 @@ func normalize(vec []float32) ([]float32, error) {
 
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	var req api.EmbeddingRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+	if err := decodeJSON(c, &req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -1479,7 +1479,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
-	err := c.ShouldBindJSON(&req)
+	err := decodeJSON(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -1548,7 +1548,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 func (s *Server) PushHandler(c *gin.Context) {
 	var req api.PushRequest
-	err := c.ShouldBindJSON(&req)
+	err := decodeJSON(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -1702,7 +1702,7 @@ func getExistingName(n model.Name) (model.Name, error) {
 
 func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
-	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+	if err := decodeJSON(c, &r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -1744,7 +1744,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 
 func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
-	err := c.ShouldBindJSON(&req)
+	err := decodeJSON(c, &req)
 	switch {
 	case errors.Is(err, io.EOF):
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -2143,7 +2143,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 
 func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
-	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
+	if err := decodeJSON(c, &r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -3004,7 +3004,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		*api.ChatRequest
 		Think json.RawMessage `json:"think"`
 	}{ChatRequest: &req}
-	if err := c.ShouldBindJSON(&body); errors.Is(err, io.EOF) {
+	if err := decodeJSON(c, &body); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	} else if err != nil {
@@ -3665,4 +3665,10 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+func decodeJSON(c *gin.Context, obj any) error {
+	dec := json.NewDecoder(c.Request.Body)
+	dec.UseNumber()
+	return dec.Decode(obj)
 }
