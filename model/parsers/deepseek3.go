@@ -112,7 +112,7 @@ func (deepseekEventToolCall) isDeepSeekEvent()        {}
 
 func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
 	p.buffer.WriteString(s)
-	events := p.parseEvents()
+	events := p.parseEvents(done)
 
 	var toolCalls []api.ToolCall
 	var contentSb strings.Builder
@@ -136,13 +136,13 @@ func (p *DeepSeek3Parser) Add(s string, done bool) (content string, thinking str
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
-func (p *DeepSeek3Parser) parseEvents() []deepseekEvent {
+func (p *DeepSeek3Parser) parseEvents(done bool) []deepseekEvent {
 	var all []deepseekEvent
 
 	keepLooping := true
 	for keepLooping {
 		var events []deepseekEvent
-		events, keepLooping = p.eat()
+		events, keepLooping = p.eat(done)
 		if len(events) > 0 {
 			all = append(all, events...)
 		}
@@ -151,7 +151,7 @@ func (p *DeepSeek3Parser) parseEvents() []deepseekEvent {
 	return all
 }
 
-func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
+func (p *DeepSeek3Parser) eat(done bool) ([]deepseekEvent, bool) {
 	var events []deepseekEvent
 	bufStr := p.buffer.String()
 	if bufStr == "" {
@@ -232,6 +232,25 @@ func (p *DeepSeek3Parser) eat() ([]deepseekEvent, bool) {
 			}
 			return events, true
 		default: // otherwise its content
+			// Withhold trailing bytes that could still grow into an opening tag, so
+			// that a tag split across chunks is not lost as content.
+			if !done {
+				if overlapLen := longestOverlap(bufStr, deepseekToolCallsBeginTag, deepseekToolOutputBeginTag); overlapLen > 0 {
+					beforePartialTag := bufStr[:len(bufStr)-overlapLen]
+					trailingLen := trailingWhitespaceLen(beforePartialTag)
+					ambiguousStart := len(beforePartialTag) - trailingLen
+
+					unambiguous := bufStr[:ambiguousStart]
+					ambiguous := bufStr[ambiguousStart:]
+					p.buffer.Reset()
+					p.buffer.WriteString(ambiguous)
+					if len(unambiguous) > 0 {
+						events = append(events, deepseekEventContent{content: unambiguous})
+					}
+					return events, false
+				}
+			}
+
 			p.buffer.Reset()
 			if len(bufStr) > 0 {
 				events = append(events, deepseekEventContent{content: bufStr})
