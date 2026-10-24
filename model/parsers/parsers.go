@@ -167,6 +167,18 @@ func overlap(s, delim string) int {
 	return 0
 }
 
+// longestOverlap returns the longest overlap between the suffix of s and a
+// prefix of any of the given tags.
+func longestOverlap(s string, tags ...string) int {
+	maxOverlap := 0
+	for _, tag := range tags {
+		if o := overlap(s, tag); o > maxOverlap {
+			maxOverlap = o
+		}
+	}
+	return maxOverlap
+}
+
 // trailingWhitespaceLen returns the length in bytes of trailing whitespace in s
 func trailingWhitespaceLen(s string) int {
 	remaining := s
