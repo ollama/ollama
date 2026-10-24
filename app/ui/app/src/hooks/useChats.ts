@@ -200,6 +200,7 @@ export const useSendMessage = (chatId: string) => {
   const { selectedModel } = useSelectedModel();
   const {
     setStreamingChatIds,
+    setCompletedChatId,
     loadingChats,
     setLoadingChats,
     setAbortControllers,
@@ -252,6 +253,8 @@ export const useSendMessage = (chatId: string) => {
       think?: boolean | string;
       onChatEvent?: (event: ChatEventUnion) => void;
     }) => {
+      setCompletedChatId(null);
+
       // For existing chats, set streaming state and add optimistic user message
       if (chatId !== "new") {
         setStreamingChatIds((prev: Set<string>) => {
@@ -655,6 +658,7 @@ export const useSendMessage = (chatId: string) => {
               newSet.delete(currentChatId);
               return newSet;
             });
+            setCompletedChatId(currentChatId);
             // Clear download progress when streaming is done
             setDownloadProgress((prev) => {
               const newMap = new Map(prev);
@@ -734,6 +738,7 @@ export const useCancelMessage = () => {
   const {
     abortControllers,
     setStreamingChatIds,
+    setCompletedChatId,
     setAbortControllers,
     setDownloadProgress,
   } = useStreamingContext();
@@ -742,6 +747,9 @@ export const useCancelMessage = () => {
     const controller = abortControllers.get(chatId);
     if (controller) {
       controller.abort();
+      setCompletedChatId((completedChatId) =>
+        completedChatId === chatId ? null : completedChatId,
+      );
       setStreamingChatIds(
         (prev) => new Set([...prev].filter((id) => id !== chatId)),
       );
