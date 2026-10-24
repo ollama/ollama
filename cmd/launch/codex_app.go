@@ -768,7 +768,7 @@ func (c *CodexApp) RestoreFromDesktop(restartConfirmed bool) error {
 	if err := stopLegacyCodexAppOllamaProfile(); err != nil {
 		return err
 	}
-	return codexAppApplyProfileFromDesktop(restoreCodexAppProfile, false, restartConfirmed)
+	return codexAppApplyProfileFromDesktop(restoreCodexAppProfileFromDesktop, false, restartConfirmed)
 }
 
 // RestartFromDesktop repairs and restarts the saved profile without requiring live inventory.
