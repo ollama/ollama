@@ -851,7 +851,10 @@ function UserMessage({
               </div>
             )}
 
-          <div className="message-content whitespace-pre-line break-words">
+          <div
+            className="message-content whitespace-pre-line break-words"
+            dir="auto"
+          >
             {message.content}
           </div>
 
