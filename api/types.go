@@ -16,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/orderedmap"
+	"github.com/ollama/ollama/internal/toolargs"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -237,7 +238,12 @@ type ToolCallFunction struct {
 // ToolCallFunctionArguments holds tool call arguments in insertion order.
 type ToolCallFunctionArguments struct {
 	om *orderedmap.Map[string, any]
+	rawState
 }
+
+// Embedding this private alias lets internal renderers recover JSON number
+// spelling without changing Get, All, or the public Go method set.
+type rawState = toolargs.State
 
 // NewToolCallFunctionArguments creates a new empty ToolCallFunctionArguments.
 func NewToolCallFunctionArguments() ToolCallFunctionArguments {
@@ -261,6 +267,7 @@ func (t *ToolCallFunctionArguments) Set(key string, value any) {
 		t.om = orderedmap.New[string, any]()
 	}
 	t.om.Set(key, value)
+	toolargs.Invalidate(&t.rawState, key)
 }
 
 // Len returns the number of arguments.
@@ -297,7 +304,16 @@ func (t *ToolCallFunctionArguments) String() string {
 
 func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
 	t.om = orderedmap.New[string, any]()
-	return json.Unmarshal(data, t.om)
+	t.rawState = toolargs.State{}
+	if err := json.Unmarshal(data, t.om); err != nil {
+		return err
+	}
+	state, err := toolargs.Decode(data)
+	if err != nil {
+		return err
+	}
+	t.rawState = state
+	return nil
 }
 
 func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
