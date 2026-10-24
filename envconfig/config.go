@@ -37,6 +37,14 @@ func Host() *url.URL {
 	}
 
 	hostport, path, _ := strings.Cut(hostport, "/")
+
+	// An authority may carry userinfo, which RFC 3986 places before the last
+	// "@". Leaving it in place makes net.SplitHostPort read the credentials as
+	// the host and port.
+	if i := strings.LastIndex(hostport, "@"); i >= 0 {
+		hostport = hostport[i+1:]
+	}
+
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
 		host, port = "127.0.0.1", defaultPort
