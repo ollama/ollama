@@ -132,6 +132,9 @@ func KeepAlive() (keepAlive time.Duration) {
 		if d, err := time.ParseDuration(s); err == nil {
 			keepAlive = d
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			if n < 0 || n > math.MaxInt64/int64(time.Second) {
+				return time.Duration(math.MaxInt64)
+			}
 			keepAlive = time.Duration(n) * time.Second
 		}
 	}
@@ -152,6 +155,9 @@ func LoadTimeout() (loadTimeout time.Duration) {
 		if d, err := time.ParseDuration(s); err == nil {
 			loadTimeout = d
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			if n < 0 || n > math.MaxInt64/int64(time.Second) {
+				return time.Duration(math.MaxInt64)
+			}
 			loadTimeout = time.Duration(n) * time.Second
 		}
 	}
