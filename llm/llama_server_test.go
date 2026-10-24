@@ -3204,6 +3204,169 @@ func TestMemoryParsingWriter(t *testing.T) {
 	}
 }
 
+// Pipe reads may split or combine lines without changing the accounting.
+func TestMemoryParsingWriterChunkBoundaries(t *testing.T) {
+	output := "using device CUDA0 (GPU) (0000:01:00.0) - 1000 MiB free\n" +
+		"using device CUDA1 (GPU) (0000:02:00.0) - 2000 MiB free\n" +
+		"load_tensors: CPU model buffer size = 83.00 MiB\n" +
+		"load_tensors: CUDA0 model buffer size = 366.00 MiB\n" +
+		"llama_kv_cache: CUDA0 KV buffer size = 448.00 MiB\n" +
+		"sched_reserve: CUDA0 compute buffer size = 26.00 MiB\n" +
+		"load_tensors: CUDA1 model buffer size = 100.00 MiB\n" +
+		"load_tensors: offloaded 29/29 layers to GPU\n" +
+		"common_params_fit_impl: - CUDA0: 29 layers (2 overflowing)\n"
+
+	check := func(t *testing.T, chunks []string) {
+		t.Helper()
+		runner := &llamaServerRunner{systemFreeAtLoad: make(map[string]uint64)}
+		var forwarded bytes.Buffer
+		w := &memoryParsingWriter{inner: &forwarded, runner: runner}
+		for _, chunk := range chunks {
+			n, err := w.Write([]byte(chunk))
+			if err != nil || n != len(chunk) {
+				t.Fatalf("Write = %d, %v, want %d, nil", n, err, len(chunk))
+			}
+		}
+		if forwarded.String() != output {
+			t.Fatal("forwarded output differs from input")
+		}
+		for device, want := range map[string]uint64{"CUDA0": 840 << 20, "CUDA1": 100 << 20} {
+			if got := runner.vramByDevice[device]; got != want {
+				t.Errorf("vramByDevice[%s] = %d, want %d", device, got, want)
+			}
+		}
+		for device, want := range map[string]uint64{"CUDA0": 1000 << 20, "CUDA1": 2000 << 20} {
+			if got := runner.systemFreeAtLoad[device]; got != want {
+				t.Errorf("systemFreeAtLoad[%s] = %d, want %d", device, got, want)
+			}
+		}
+		if runner.memGPU != 940<<20 || runner.memTotal != 1023<<20 {
+			t.Errorf("GPU/total memory = %d/%d, want %d/%d", runner.memGPU, runner.memTotal, 940<<20, 1023<<20)
+		}
+		if runner.gpuLayers != 29 || runner.totalLayers != 29 || runner.gpuLayerOverflow != 2 {
+			t.Errorf("layers = %d/%d, overflow = %d, want 29/29, 2", runner.gpuLayers, runner.totalLayers, runner.gpuLayerOverflow)
+		}
+	}
+
+	for cut := 0; cut <= len(output); cut++ {
+		t.Run(fmt.Sprintf("split-%d", cut), func(t *testing.T) {
+			check(t, []string{output[:cut], "", output[cut:]})
+		})
+	}
+	t.Run("byte-at-a-time", func(t *testing.T) {
+		chunks := make([]string, len(output))
+		for i := range output {
+			chunks[i] = output[i : i+1]
+		}
+		check(t, chunks)
+	})
+}
+
+func TestMemoryParsingWriterWaitsForNewline(t *testing.T) {
+	runner := &llamaServerRunner{}
+	var forwarded bytes.Buffer
+	w := &memoryParsingWriter{inner: &forwarded, runner: runner}
+	line := "load_tensors: CUDA0 model buffer size = 840.00 MiB"
+	if _, err := w.Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if forwarded.String() != line {
+		t.Fatal("unterminated output was not forwarded immediately")
+	}
+	if runner.memGPU != 0 {
+		t.Fatal("accounting changed before the line was complete")
+	}
+	if _, err := w.Write([]byte("\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if runner.memGPU != 840<<20 {
+		t.Fatalf("memGPU = %d, want %d", runner.memGPU, 840<<20)
+	}
+}
+
+func TestMemoryParsingWriterOversizedLine(t *testing.T) {
+	valid := "load_tensors: CUDA0 model buffer size = 840.00 MiB\n"
+	for _, chunks := range [][]string{
+		{strings.Repeat("x", maxMemoryLogLine) + valid},
+		{strings.Repeat("x", maxMemoryLogLine), "x", valid},
+	} {
+		runner := &llamaServerRunner{}
+		var forwarded bytes.Buffer
+		w := &memoryParsingWriter{inner: &forwarded, runner: runner}
+		for _, chunk := range chunks {
+			if _, err := w.Write([]byte(chunk)); err != nil {
+				t.Fatal(err)
+			}
+			if len(w.pending) > maxMemoryLogLine {
+				t.Fatal("retained oversized log line")
+			}
+		}
+		if runner.memGPU != 0 {
+			t.Fatal("parsed the suffix of an oversized line")
+		}
+		if _, err := w.Write([]byte(valid)); err != nil {
+			t.Fatal(err)
+		}
+		if runner.memGPU != 840<<20 {
+			t.Fatalf("did not recover after oversized line: memGPU = %d", runner.memGPU)
+		}
+		if forwarded.String() != strings.Join(chunks, "")+valid {
+			t.Fatal("oversized output was not forwarded unchanged")
+		}
+	}
+}
+
+func TestMemoryParsingWriterLineAtLimit(t *testing.T) {
+	line := "load_tensors: CUDA0 model buffer size = 840.00 MiB\n"
+	line = strings.Repeat(" ", maxMemoryLogLine-len(line)) + line
+	for _, cut := range []int{0, 1, len(line) - 1, len(line)} {
+		t.Run(fmt.Sprintf("split-%d", cut), func(t *testing.T) {
+			runner := &llamaServerRunner{}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			for _, chunk := range []string{line[:cut], line[cut:]} {
+				if _, err := w.Write([]byte(chunk)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if runner.memGPU != 840<<20 {
+				t.Fatalf("memGPU = %d, want %d", runner.memGPU, 840<<20)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterResetForRetry(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		tail string
+	}{
+		{name: "partial line", tail: "unfinished log:"},
+		{name: "oversized line", tail: strings.Repeat("x", maxMemoryLogLine+1)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			runner.output = w
+			if _, err := w.Write([]byte("load_tensors: CUDA0 model buffer size = 840.00 MiB\n" + tt.tail)); err != nil {
+				t.Fatal(err)
+			}
+			runner.resetLoadAccounting()
+			if _, err := w.Write([]byte("load_tensors: CUDA1 model buffer size = 100.00 MiB\n")); err != nil {
+				t.Fatal(err)
+			}
+			if runner.memGPU != 100<<20 || runner.memTotal != 100<<20 {
+				t.Errorf("GPU/total memory = %d/%d, want %d/%d", runner.memGPU, runner.memTotal, 100<<20, 100<<20)
+			}
+			if got := runner.vramByDevice["CUDA0"]; got != 0 {
+				t.Errorf("previous process's VRAM = %d, want 0", got)
+			}
+			if got := runner.vramByDevice["CUDA1"]; got != 100<<20 {
+				t.Errorf("retry process's VRAM = %d, want %d", got, 100<<20)
+			}
+		})
+	}
+}
+
 func TestMemoryParsingWriterRecordsOutputActivityWithoutNewline(t *testing.T) {
 	runner := &llamaServerRunner{}
 	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
