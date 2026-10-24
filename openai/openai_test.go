@@ -544,6 +544,32 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestFromCompleteRequest_WithThink(t *testing.T) {
+	req := CompletionRequest{
+		Model:  "test-model",
+		Prompt: "Why is the sky blue?",
+		Think:  &api.ThinkValue{Value: false},
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil || result.Think.Bool() {
+		t.Fatalf("expected Think to be false, got %v", result.Think)
+	}
+
+	invalidReq := CompletionRequest{
+		Model:  "test-model",
+		Prompt: "Why is the sky blue?",
+		Think:  &api.ThinkValue{Value: "invalid"},
+	}
+	if _, err := FromCompleteRequest(invalidReq); err == nil {
+		t.Fatal("expected error for invalid think value")
+	}
+}
+
 func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	modified := time.Unix(1234567890, 0).UTC()
 
