@@ -806,7 +806,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 		})
 	}
 
-	if r.Message.Thinking != "" && !c.thinkingDone {
+	if r.Message.Thinking != "" {
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",
@@ -817,6 +817,13 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 			c.contentIndex++
 			c.textStarted = false
+		}
+
+		// Thinking that follows text or a tool call starts a new thinking
+		// block; the previous one was already closed and its index consumed.
+		if c.thinkingDone {
+			c.thinkingStarted = false
+			c.thinkingDone = false
 		}
 
 		if !c.thinkingStarted {
