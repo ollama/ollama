@@ -399,6 +399,9 @@ func startLlamaServer(launch llamaServerLaunchConfig, out io.Writer) (cmd *exec.
 	} else {
 		params = append(params, "-np", strconv.Itoa(launch.numParallel))
 	}
+	if launch.modelArch == "gemma4" {	
+		params = append(params, "--ctx-checkpoints", "0")
+	}
 	params = appendLlamaServerLogArgs(params)
 	params = appendJinjaArgs(params, launch.config)
 
