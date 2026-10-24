@@ -3338,3 +3338,71 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }
+
+func TestResponsesStreamConverter_PinsCreatedAt(t *testing.T) {
+	responseCreatedAt := func(t *testing.T, event ResponsesStreamEvent) int64 {
+		t.Helper()
+		data, ok := event.Data.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: data is %T, want map[string]any", event.Event, event.Data)
+		}
+		response, ok := data["response"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: response is %T, want map[string]any", event.Event, data["response"])
+		}
+		createdAt, ok := response["created_at"].(int64)
+		if !ok {
+			t.Fatalf("%s: created_at is %T, want int64", event.Event, response["created_at"])
+		}
+		return createdAt
+	}
+
+	t.Run("uses the first response timestamp on every event", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", ResponsesRequest{})
+
+		first := time.Unix(1700000000, 0).UTC()
+		events := converter.Process(api.ChatResponse{
+			CreatedAt: first,
+			Message:   api.Message{Content: "Hello"},
+		})
+		if len(events) < 2 {
+			t.Fatalf("expected at least 2 events, got %d", len(events))
+		}
+		for _, event := range events[:2] {
+			if got := responseCreatedAt(t, event); got != first.Unix() {
+				t.Errorf("%s created_at = %d, want %d", event.Event, got, first.Unix())
+			}
+		}
+
+		// The final response arrives later; created_at must not move with it.
+		events = converter.Process(api.ChatResponse{
+			CreatedAt: first.Add(5 * time.Second),
+			Done:      true,
+		})
+		completed := events[len(events)-1]
+		if completed.Event != "response.completed" {
+			t.Fatalf("last event = %q, want %q", completed.Event, "response.completed")
+		}
+		if got := responseCreatedAt(t, completed); got != first.Unix() {
+			t.Errorf("response.completed created_at = %d, want %d", got, first.Unix())
+		}
+	})
+
+	t.Run("falls back to the current time when the response carries none", func(t *testing.T) {
+		converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", ResponsesRequest{})
+
+		before := time.Now().Unix()
+		events := converter.Process(api.ChatResponse{Message: api.Message{Content: "Hello"}})
+		after := time.Now().Unix()
+
+		created := responseCreatedAt(t, events[0])
+		if created < before || created > after {
+			t.Errorf("response.created created_at = %d, want between %d and %d", created, before, after)
+		}
+
+		events = converter.Process(api.ChatResponse{Done: true})
+		if got := responseCreatedAt(t, events[len(events)-1]); got != created {
+			t.Errorf("response.completed created_at = %d, want %d", got, created)
+		}
+	})
+}

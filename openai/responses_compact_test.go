@@ -913,8 +913,24 @@ func TestCompactionStreamContainsExactlyOneCompletedItem(t *testing.T) {
 	result := ResponsesCompactionResult{Item: ResponsesCompactionItem{Type: "compaction", EncryptedContent: `{"type":"ollama_compaction","version":1}`}}
 	events := NewResponsesCompactionStreamEvents("resp_1", "test", result)
 	var done, completed int
+	var createdAt int64
 	for _, event := range events {
 		switch event.Event {
+		case "response.created", "response.in_progress", "response.completed":
+			data := event.Data.(map[string]any)
+			response := data["response"].(map[string]any)
+			timestamp := response["created_at"].(int64)
+			if timestamp == 0 {
+				t.Fatalf("%s has zero created_at", event.Event)
+			}
+			if createdAt == 0 {
+				createdAt = timestamp
+			} else if timestamp != createdAt {
+				t.Fatalf("%s created_at = %d, want %d", event.Event, timestamp, createdAt)
+			}
+			if event.Event == "response.completed" {
+				completed++
+			}
 		case "response.output_item.done":
 			done++
 			data := event.Data.(map[string]any)
@@ -922,8 +938,6 @@ func TestCompactionStreamContainsExactlyOneCompletedItem(t *testing.T) {
 			if item.Type != "compaction" {
 				t.Fatalf("unexpected item: %+v", item)
 			}
-		case "response.completed":
-			completed++
 		}
 	}
 	if done != 1 || completed != 1 {

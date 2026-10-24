@@ -1463,6 +1463,7 @@ type ResponsesStreamConverter struct {
 
 	// State tracking (mutated across Process calls)
 	firstWrite      bool
+	createdAt       int64
 	outputIndex     int
 	contentIndex    int
 	contentStarted  bool
@@ -1503,6 +1504,7 @@ func NewResponsesStreamConverter(responseID, itemID, model string, request Respo
 		model:      model,
 		request:    request,
 		firstWrite: true,
+		createdAt:  time.Now().Unix(),
 	}
 }
 
@@ -1521,6 +1523,11 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	// First chunk - emit initial events
 	if c.firstWrite {
 		c.firstWrite = false
+		// Prefer the server timestamp from the first response. The constructor
+		// timestamp also covers callers that build stream events without Process.
+		if !r.CreatedAt.IsZero() {
+			c.createdAt = r.CreatedAt.Unix()
+		}
 		events = append(events, c.createResponseCreatedEvent())
 		events = append(events, c.createResponseInProgressEvent())
 	}
@@ -1612,7 +1619,7 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
-		"created_at":           time.Now().Unix(),
+		"created_at":           c.createdAt,
 		"completed_at":         nil,
 		"status":               status,
 		"incomplete_details":   nil,
