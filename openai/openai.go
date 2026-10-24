@@ -925,9 +925,18 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		topLogprobs = *r.Logprobs
 	}
 
+	// A suffix needs the model's fill-in-the-middle template.
+	raw := r.Suffix == ""
+	var think *api.ThinkValue
+	if raw {
+		// Raw completions must preserve generated thinking tags as text.
+		think = &api.ThinkValue{Value: false}
+	}
 	return api.GenerateRequest{
 		Model:           r.Model,
 		Prompt:          r.Prompt,
+		Raw:             raw,
+		Think:           think,
 		Options:         options,
 		Stream:          &r.Stream,
 		Suffix:          r.Suffix,
