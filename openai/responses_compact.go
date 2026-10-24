@@ -92,11 +92,12 @@ type ResponsesCompactionPlan struct {
 	Model  string
 	Stream bool
 
-	items        []CompactionTranscriptItem
-	tools        []compactionToolMetadata
-	groups       []compactionToolGroup
-	forcedRefs   map[string]struct{}
-	omittedItems int
+	items         []CompactionTranscriptItem
+	tools         []compactionToolMetadata
+	groups        []compactionToolGroup
+	forcedRefs    map[string]struct{}
+	omittedItems  int
+	omittedImages int
 }
 
 // ResponsesCompactionResult is the validated result of a compaction-model call.
@@ -821,6 +822,37 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 	return len(removed)
 }
 
+// DropImagesForBodyLimit removes images from the oldest items until at least
+// half of the image payload bytes are gone, for upstreams that reject large
+// request bodies (HTTP 413) independent of the context window. Images in the
+// latest item are always preserved. It returns the number of images removed,
+// or zero when no progress is possible.
+func (p *ResponsesCompactionPlan) DropImagesForBodyLimit() int {
+	var total int
+	for _, item := range p.items {
+		for _, image := range item.Message.Images {
+			total += len(image)
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+
+	var removedBytes, removedImages int
+	for i := range p.items[:len(p.items)-1] {
+		if removedBytes >= (total+1)/2 {
+			break
+		}
+		for _, image := range p.items[i].Message.Images {
+			removedBytes += len(image)
+			removedImages++
+		}
+		p.items[i].Message.Images = nil
+	}
+	p.omittedImages += removedImages
+	return removedImages
+}
+
 // SummaryRequest returns an ordinary non-streaming Responses request. A repair
 // request includes the validation error from the first model response.
 func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, error) {
@@ -833,6 +865,9 @@ func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, er
 	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. After optional tool metadata, each following user message is one ordered transcript item: its JSON input_text describes the source item, and its input_image blocks belong to that item. Use retain_item_ids for exact source items, including images, that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
 	if p.omittedItems > 0 {
 		prompt += " " + fmt.Sprintf(compactionOmissionNotice, p.omittedItems)
+	}
+	if p.omittedImages > 0 {
+		prompt += fmt.Sprintf(" %d older image(s) were omitted from the transcript because the request was too large.", p.omittedImages)
 	}
 	if repairError != "" {
 		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
