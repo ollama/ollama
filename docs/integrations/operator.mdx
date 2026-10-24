@@ -1,0 +1,194 @@
+---
+title: Operator
+---
+
+[Operator](https://github.com/yrn-dev/Operator) is a terminal AI coding agent that writes code, runs tests, and manages git workflows autonomously.
+
+Operator works with [Alem AI](https://llm.alem.ai) models through its OpenAI-compatible API.
+
+## Get started
+
+Install Operator globally:
+
+```shell
+npm install -g @yernur/operator
+```
+
+Then launch:
+
+```shell
+operator
+```
+
+## Capabilities
+
+<div className="capability-list capability-list-full">
+  <div className="capability-list-grid">
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-pen" /></div>
+      <div>
+        <div className="capability-list-heading">File edits</div>
+        <div className="capability-list-copy">Read, write, and edit files across your project</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="terminal" /></div>
+      <div>
+        <div className="capability-list-heading">Bash</div>
+        <div className="capability-list-copy">Execute terminal commands with full context</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="git-branch" /></div>
+      <div>
+        <div className="capability-list-heading">Git</div>
+        <div className="capability-list-copy">Status, diff, commits, branches — full control</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="square-check" /></div>
+      <div>
+        <div className="capability-list-heading">Tests</div>
+        <div className="capability-list-copy">Auto-run tests and verify changes</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="brain" /></div>
+      <div>
+        <div className="capability-list-heading">Memory</div>
+        <div className="capability-list-copy">Persistent knowledge base with search and tags</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="search" /></div>
+      <div>
+        <div className="capability-list-heading">Search</div>
+        <div className="capability-list-copy">File content, patterns, and deep web research</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="file-search" /></div>
+      <div>
+        <div className="capability-list-heading">Deep research</div>
+        <div className="capability-list-copy">Multi-step web research with cross-verification and detailed reports</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="globe" /></div>
+      <div>
+        <div className="capability-list-heading">Browser</div>
+        <div className="capability-list-copy">Headless browser automation — screenshots, clicks, E2E tests</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="clipboard" /></div>
+      <div>
+        <div className="capability-list-heading">Export</div>
+        <div className="capability-list-copy">Export sessions to JSON with full context</div>
+      </div>
+    </div>
+
+    <div className="capability-list-item">
+      <div className="capability-list-icon"><Icon icon="list-checks" /></div>
+      <div>
+        <div className="capability-list-heading">Tasks</div>
+        <div className="capability-list-copy">Plan and track multi-step workflows</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+## Models
+
+Operator works with [Alem AI](https://llm.alem.ai) models:
+
+| Model | Description |
+|---|---|
+| `qwen3-6` | Qwen 3.6 |
+| `gemma4` | Google Gemma 4 |
+
+Access models at [plus.alem.ai/services](https://plus.alem.ai/services).
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `/model` | Switch model (qwen3-6, gemma4) |
+| `/reasoning` | Adjust thinking depth: off → minimal → low → medium → high → xhigh |
+| `/export` | Export session to JSON |
+| `/import` | Import and resume a session |
+| `/new` | Start a new session |
+| `/resume` | Resume an existing session |
+| `/quit` | Exit |
+
+## CLI usage
+
+```shell
+# Interactive mode
+operator
+
+# One-liner
+operator "find all TODO in the project and fix them"
+
+# With model selection
+operator --model qwen3-6 "write tests for src/auth.ts"
+
+# With API key override
+operator --api-key "sk-xxxxx" "who am i"
+```
+
+## Browser (Puppeteer)
+
+Operator can control a real browser for QA, E2E testing, and UI verification:
+
+| Action | Example |
+|---|---|
+| Open a page | `open https://mysite.test and take a screenshot` |
+| Screenshot | `take a screenshot of the login page` |
+| Click / Form | `login to the site, username admin@test, password 123, click Login` |
+| JS check | `open the page and check console.log shows 0 errors` |
+| E2E test | `go to the registration form, fill fields, submit and verify redirect to /dashboard` |
+| Select element | `select the dropdown and choose "Premium"` |
+
+The browser runs headless — no GUI required, works on VPS.
+
+## Deep research
+
+Operator can perform multi-step web research with cross-verification and confidence scoring:
+
+| Feature | Description |
+|---|---|
+| Multi-source search | Searches DuckDuckGo and Wikipedia in parallel |
+| Cross-verification | Compares claims across multiple sources |
+| Confidence scoring | Rates each claim (confirmed / likely / unclear) |
+| Structured reports | Generates detailed reports with citations |
+| Query planning | Breaks complex topics into focused sub-queries |
+| Claim scoring | Evaluates individual claims against evidence |
+
+Usage example:
+
+```text
+research "compare qwen3 vs gemma4 architecture and performance"
+```
+
+Output includes a structured report with sources, confidence levels, and detailed findings.
+
+## Requirements
+
+- Node.js >= 22.19.0
+- npm
+- Git (for git tools)
+- Internet (for LLM requests)
+
+## License
+
+MIT
