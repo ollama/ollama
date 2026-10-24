@@ -729,6 +729,8 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		}
 	}
 
+	orderToolResults(messages)
+
 	options := make(map[string]any)
 
 	switch stop := r.Stop.(type) {
@@ -811,6 +813,39 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		DebugRenderOnly: r.DebugRenderOnly,
 		KeepAlive:       r.KeepAlive,
 	}, nil
+}
+
+// orderToolResults puts the tool results that follow an assistant message in
+// the order of that message's tool calls. Renderers pair results with calls by
+// position, so results sent in another order would be attributed to the wrong
+// call. A run of results is left alone unless every one carries a tool_call_id
+// that matches one of the calls.
+func orderToolResults(messages []api.Message) {
+	for i := 0; i < len(messages); i++ {
+		calls := messages[i].ToolCalls
+		if messages[i].Role != "assistant" || len(calls) < 2 {
+			continue
+		}
+		end := i + 1
+		for end < len(messages) && messages[end].Role == "tool" {
+			end++
+		}
+		run := messages[i+1 : end]
+		i = end - 1
+		if len(run) < 2 {
+			continue
+		}
+		rank := func(m api.Message) int {
+			if m.ToolCallID == "" {
+				return -1
+			}
+			return slices.IndexFunc(calls, func(tc api.ToolCall) bool { return tc.ID == m.ToolCallID })
+		}
+		if slices.ContainsFunc(run, func(m api.Message) bool { return rank(m) < 0 }) {
+			continue
+		}
+		slices.SortStableFunc(run, func(a, b api.Message) int { return rank(a) - rank(b) })
+	}
 }
 
 func nameFromToolCallID(messages []Message, toolCallID string) string {
