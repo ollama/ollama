@@ -26,6 +26,10 @@ type Error struct {
 	Code    *string `json:"code"`
 }
 
+func (e Error) Error() string {
+	return e.Message
+}
+
 type ErrorResponse struct {
 	Error Error `json:"error"`
 }
@@ -109,24 +113,25 @@ type Reasoning struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	StreamOptions    *StreamOptions  `json:"stream_options"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
-	Stop             any             `json:"stop"`
-	Temperature      *float64        `json:"temperature"`
-	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty"`
-	TopP             *float64        `json:"top_p"`
-	ResponseFormat   *ResponseFormat `json:"response_format"`
-	Tools            []api.Tool      `json:"tools"`
-	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
-	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
-	Logprobs         *bool           `json:"logprobs"`
-	TopLogprobs      int             `json:"top_logprobs"`
-	DebugRenderOnly  bool            `json:"_debug_render_only"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	StreamOptions       *StreamOptions  `json:"stream_options"`
+	MaxTokens           *int            `json:"max_tokens"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens"`
+	Seed                *int            `json:"seed"`
+	Stop                any             `json:"stop"`
+	Temperature         *float64        `json:"temperature"`
+	FrequencyPenalty    *float64        `json:"frequency_penalty"`
+	PresencePenalty     *float64        `json:"presence_penalty"`
+	TopP                *float64        `json:"top_p"`
+	ResponseFormat      *ResponseFormat `json:"response_format"`
+	Tools               []api.Tool      `json:"tools"`
+	Reasoning           *Reasoning      `json:"reasoning,omitempty"`
+	ReasoningEffort     *string         `json:"reasoning_effort,omitempty"`
+	Logprobs            *bool           `json:"logprobs"`
+	TopLogprobs         int             `json:"top_logprobs"`
+	DebugRenderOnly     bool            `json:"_debug_render_only"`
 	// Ollama extension: without it an OpenAI-API client cannot release a model.
 	KeepAlive *api.Duration `json:"keep_alive,omitempty"`
 }
@@ -744,7 +749,18 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		options["stop"] = stops
 	}
 
-	if r.MaxTokens != nil {
+	if r.MaxCompletionTokens != nil && *r.MaxCompletionTokens <= 0 {
+		code := "integer_below_min_value"
+		return nil, Error{
+			Message: fmt.Sprintf("Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got %d instead.", *r.MaxCompletionTokens),
+			Type:    "invalid_request_error",
+			Param:   "max_completion_tokens",
+			Code:    &code,
+		}
+	}
+	if r.MaxCompletionTokens != nil {
+		options["num_predict"] = *r.MaxCompletionTokens
+	} else if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
 	}
 
