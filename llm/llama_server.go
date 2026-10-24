@@ -1725,9 +1725,10 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 		}
 	}
 
-	// A format on a thinking response applies after the closing string, which
-	// only a grammar of our own can express, so a schema is converted first.
-	if len(req.ThinkingClose) > 0 && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
+	// A format constrains assistant text, not thinking or tool calls. Convert
+	// the schema before composing those alternatives with its grammar.
+	hasToolDelimiters := req.ToolCallOpen != "" && req.ToolCallClose != ""
+	if (len(req.ThinkingClose) > 0 || hasToolDelimiters) && (lsReq.Grammar != "" || lsReq.JsonSchema != nil) {
 		if lsReq.Grammar == "" {
 			grammar, err := s.schemaGrammar(ctx, lsReq.JsonSchema)
 			if err != nil {
@@ -1735,7 +1736,12 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 			}
 			lsReq.Grammar, lsReq.JsonSchema = grammar, nil
 		}
-		lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
+		if hasToolDelimiters {
+			lsReq.Grammar = toolCallGrammar(req.ToolCallOpen, req.ToolCallClose, lsReq.Grammar)
+		}
+		if len(req.ThinkingClose) > 0 {
+			lsReq.Grammar = thinkingGrammar(req.ThinkingClose, lsReq.Grammar)
+		}
 	}
 
 	// Convert media: replace Ollama's stable [img-N] markers with the per-process
