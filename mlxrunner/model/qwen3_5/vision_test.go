@@ -22,6 +22,39 @@ func TestVisionAdapterWeightsAreCollectable(t *testing.T) {
 	})
 }
 
+// The patch embedding flattens to the same rows whether the checkpoint stores
+// the Conv3d kernel in reference or MLX channels-last layout.
+func TestPatchEmbedWeightLayouts(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		v := &VisionConfig{HiddenSize: 4, InChannels: 3, TemporalPatchSize: 2, PatchSize: 2}
+		const rowLen = 3 * 2 * 2 * 2
+		values := make([]float32, 4*rowLen)
+		for i := range values {
+			values[i] = float32(i)
+		}
+		reference := mlx.FromValues(values, 4, 3, 2, 2, 2)
+		want := reference.Reshape(4, rowLen)
+
+		// The channels-last weight is contiguous, as a checkpoint loads it, so
+		// the reshape has to copy.
+		for name, w := range map[string]*mlx.Array{
+			"reference":     reference,
+			"channels-last": mlx.Contiguous(reference.Transpose(0, 2, 3, 4, 1), false),
+			"flattened":     want,
+		} {
+			got, err := patchEmbedWeight(w, v)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			assertBitEqual(t, name, got, want)
+		}
+
+		if _, err := patchEmbedWeight(mlx.FromValues(values, 4, 2, 3, 2, 2), v); err == nil {
+			t.Error("unrecognized patch embedding layout accepted")
+		}
+	})
+}
+
 func TestSmartResize(t *testing.T) {
 	// Goldens from the reference smart_resize at the family's processor
 	// bounds (factor 32, pixels in [65536, 16777216]).
@@ -58,7 +91,7 @@ func TestParseMultimodalConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := mm.VisionConfig
-	if v == nil || v.PatchSize != 16 || v.SpatialMergeSize != 2 || v.TemporalPatchSize != 2 || v.NumHeads != 16 {
+	if v == nil || v.InChannels != 3 || v.PatchSize != 16 || v.SpatialMergeSize != 2 || v.TemporalPatchSize != 2 || v.NumHeads != 16 {
 		t.Fatalf("defaults not applied: %+v", v)
 	}
 
