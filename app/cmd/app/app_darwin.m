@@ -1298,8 +1298,8 @@ didCompleteWithError:(NSError *)error {
             ? @"Restart Claude Desktop to use Ollama?"
             : @"Restart Claude Desktop to remove Ollama?"];
         [restartAlert setInformativeText:enabled
-            ? @"Claude Desktop must restart to use Ollama. Any running task will stop."
-            : @"Claude Desktop must restart to remove Ollama. Any running task will stop."];
+            ? @"Claude opens a separate Ollama profile. Disconnect in Ollama to return to your usual Claude account and chats. Any running task will stop."
+            : @"Claude will reopen with your usual Claude account and chats. Any running task will stop."];
         [restartAlert addButtonWithTitle:@"Restart Claude Desktop"];
         [restartAlert addButtonWithTitle:@"Cancel"];
         if ([restartAlert runModal] != NSAlertFirstButtonReturn) {
@@ -1749,12 +1749,12 @@ decidePolicyForNavigationAction:(WKNavigationAction *)action
     if ([message isEqualToString:@"Restart Claude Desktop to use Ollama? Any running task will stop."]) {
         [alert setMessageText:@"Restart Claude Desktop to use Ollama?"];
         [alert setInformativeText:
-            @"Claude Desktop must restart to use Ollama. Any running task will stop."];
+            @"Claude opens a separate Ollama profile. Disconnect in Ollama to return to your usual Claude account and chats. Any running task will stop."];
         [alert addButtonWithTitle:@"Restart Claude Desktop"];
     } else if ([message isEqualToString:@"Restart Claude Desktop to remove Ollama? Any running task will stop."]) {
         [alert setMessageText:@"Restart Claude Desktop to remove Ollama?"];
         [alert setInformativeText:
-            @"Claude Desktop must restart to remove Ollama. Any running task will stop."];
+            @"Claude will reopen with your usual Claude account and chats. Any running task will stop."];
         [alert addButtonWithTitle:@"Restart Claude Desktop"];
     } else if ([message hasPrefix:@"Restart ChatGPT to add Ollama models?"]) {
         configureChatGPTRestartAlert(alert, ChatGPTRestartActionAddModels);

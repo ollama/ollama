@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/internal/proxy"
+	modelpkg "github.com/ollama/ollama/types/model"
 	"golang.org/x/sys/unix"
 )
 
@@ -115,8 +117,9 @@ var (
 	claudeModelSource         string
 	claudeCatalogUpdated      time.Time
 
-	claudeAccessStateResolver = currentClaudeDesktopAccessState
-	claudeLocalModelsResolver = currentClaudeDesktopLocalModels
+	claudeAccessStateResolver     = currentClaudeDesktopAccessState
+	claudeLocalModelsResolver     = currentClaudeDesktopLocalModels
+	claudeLocalChatModelsResolver = currentClaudeDesktopLocalChatModels
 )
 
 var errClaudeDesktopAccessUnavailable = errors.New("Ollama couldn't verify the selected models. Try again")
@@ -608,8 +611,18 @@ func startClaudeAppProxy() error {
 		)
 	}
 	availableModels, activeModels, modelSource := resolveClaudeDesktopStartupCatalog(context.Background())
-	if err := ensureClaudeDesktopModelsAvailable(context.Background(), activeModels); err != nil {
-		return recordClaudeProxyFailure(err, claudeProxyFailureNone)
+	state, accessErr := checkClaudeDesktopModelsAvailable(context.Background(), activeModels)
+	if accessErr != nil && !errors.Is(accessErr, errClaudeDesktopAccessUnavailable) &&
+		hasCloudClaudeDesktopModel(activeModels) && len(launch.ClaudeDesktopModels()) == 0 {
+		selected := defaultClaudeDesktopSelection(context.Background(), availableModels, state)
+		if len(selected) > 0 && !hasCloudClaudeDesktopModel(selected) {
+			activeModels = selected
+			availableModels = includeSelectedClaudeDesktopModels(availableModels, selected)
+			accessErr = ensureClaudeDesktopModelsAvailable(context.Background(), activeModels)
+		}
+	}
+	if accessErr != nil {
+		return recordClaudeProxyFailure(accessErr, claudeProxyFailureNone)
 	}
 	gateway, err := proxy.NewClaudeDesktop(proxy.ClaudeDesktopConfig{
 		ListenAddr:      claudeProxyListenAddr,
@@ -675,10 +688,7 @@ func resolveClaudeDesktopStartupCatalog(ctx context.Context) (available, selecte
 	if len(savedMappings) > 0 {
 		selected = proxy.MapClaudeDesktopModels(selectable, savedMappings)
 	} else if len(selectedNames) == 0 {
-		selected = proxy.MapClaudeDesktopModels(
-			selectable,
-			proxy.DefaultClaudeDesktopMappingsForModels(selectable),
-		)
+		selected = defaultClaudeDesktopSelection(ctx, selectable, state)
 	} else {
 		selected = proxy.SelectClaudeDesktopModels(selectable, selectedNames)
 	}
@@ -1004,21 +1014,13 @@ func claudeLocalModels(
 	ctx context.Context,
 	list func(context.Context) (*api.ListResponse, error),
 ) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
-	response, err := list(ctx)
-	if err != nil || response == nil {
+	models, err := listClaudeLocalModels(ctx, list)
+	if err != nil {
 		return nil, err
 	}
 
-	names := make([]string, 0, len(response.Models)*2)
-	for _, model := range response.Models {
-		// /api/tags can include cloud placeholders. Only models with local
-		// weights qualify as installed local choices for Claude Desktop.
-		if model.RemoteModel != "" || model.RemoteHost != "" ||
-			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
-			continue
-		}
+	names := make([]string, 0, len(models)*2)
+	for _, model := range models {
 		if model.Name != "" {
 			names = append(names, model.Name)
 			if alias := strings.TrimSuffix(model.Name, ":latest"); alias != model.Name {
@@ -1035,12 +1037,85 @@ func claudeLocalModels(
 	return names, nil
 }
 
+func listClaudeLocalModels(ctx context.Context, list func(context.Context) (*api.ListResponse, error)) ([]api.ListModelResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	response, err := list(ctx)
+	if err != nil || response == nil {
+		return nil, err
+	}
+	models := make([]api.ListModelResponse, 0, len(response.Models))
+	for _, model := range response.Models {
+		// Cloud placeholders and self-hosted remotes are not installed weights.
+		if model.RemoteModel != "" || model.RemoteHost != "" ||
+			modelref.HasExplicitCloudSource(model.Name) || modelref.HasExplicitCloudSource(model.Model) {
+			continue
+		}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+func claudeLocalChatModels(ctx context.Context, list func(context.Context) (*api.ListResponse, error)) ([]string, error) {
+	models, err := listClaudeLocalModels(ctx, list)
+	if err != nil {
+		return nil, err
+	}
+	var withTools, completionOnly []string
+	for _, model := range models {
+		if model.Name == "" || !slices.Contains(model.Capabilities, modelpkg.CapabilityCompletion) {
+			continue
+		}
+		if slices.Contains(model.Capabilities, modelpkg.CapabilityTools) {
+			withTools = append(withTools, model.Name)
+		} else {
+			completionOnly = append(completionOnly, model.Name)
+		}
+	}
+	return append(withTools, completionOnly...), nil
+}
+
 func currentClaudeDesktopLocalModels(ctx context.Context) ([]string, error) {
 	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 	return claudeLocalModels(ctx, client.List)
 }
 
+func currentClaudeDesktopLocalChatModels(ctx context.Context) ([]string, error) {
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	return claudeLocalChatModels(ctx, client.List)
+}
+
+// A fresh connection keeps a usable cloud default. When it is unavailable,
+// prefer an installed chat model without replacing an explicit user selection.
+func defaultClaudeDesktopSelection(ctx context.Context, available []proxy.ClaudeDesktopModel, state proxy.ClaudeDesktopAccessState) []proxy.ClaudeDesktopModel {
+	selected := proxy.MapClaudeDesktopModels(available, proxy.DefaultClaudeDesktopMappingsForModels(available))
+	err := validateClaudeDesktopModels(selected, state, nil, false)
+	if err == nil || errors.Is(err, errClaudeDesktopAccessUnavailable) {
+		return selected
+	}
+	localModels, err := claudeLocalChatModelsResolver(ctx)
+	if err != nil {
+		slog.Debug("could not load local chat models for Claude defaults", "error", err)
+		return selected
+	}
+	if len(localModels) == 0 {
+		return selected
+	}
+	defaults := proxy.DefaultClaudeDesktopMappings()
+	for _, route := range proxy.ClaudeDesktopRoutes() {
+		if _, ok := defaults[route.ID]; ok {
+			return proxy.MapClaudeDesktopModels(nil, map[string]string{route.ID: localModels[0]})
+		}
+	}
+	return selected
+}
+
 func ensureClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.ClaudeDesktopModel) error {
+	_, err := checkClaudeDesktopModelsAvailable(ctx, models)
+	return err
+}
+
+func checkClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.ClaudeDesktopModel) (proxy.ClaudeDesktopAccessState, error) {
 	deadline := time.Now().Add(claudeAccessRetryWait)
 	for {
 		state := proxy.ClaudeDesktopAccessState{}
@@ -1057,14 +1132,14 @@ func ensureClaudeDesktopModelsAvailable(ctx context.Context, models []proxy.Clau
 		}
 		err := validateClaudeDesktopModels(models, state, localNames, localErr == nil)
 		if !errors.Is(err, errClaudeDesktopAccessUnavailable) || time.Now().After(deadline) {
-			return err
+			return state, err
 		}
 
 		timer := time.NewTimer(claudeAccessRetryPoll)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return state, ctx.Err()
 		case <-timer.C:
 		}
 	}
@@ -1362,6 +1437,7 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 	used := hasUsedClaudeDesktopIntegration()
 	var availableModels, selectedModels []proxy.ClaudeDesktopModel
 	var modelSource string
+	showDefaults := false
 	accessState := proxy.ClaudeDesktopAccessState{
 		Cloud:   proxy.ClaudeDesktopCloudUnknown,
 		Account: proxy.ClaudeDesktopAccountUnknown,
@@ -1371,6 +1447,7 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 		gateway := claudeAppProxy
 		cachedCatalogHasCloud := hasCloudClaudeDesktopModel(claudeAvailableModels)
 		claudeProxyMu.Unlock()
+		showDefaults = gateway == nil && len(launch.ClaudeDesktopModels()) == 0
 		var accessErr error
 		accessState, accessErr = claudeAccessStateResolver(ctx)
 		if accessErr != nil {
@@ -1387,25 +1464,35 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 		} else {
 			selectedModels = current
 			if len(selectedModels) == 0 {
-				selectedModels = proxy.SelectClaudeDesktopModels(nil, launch.ClaudeDesktopModels())
+				if mappings := launch.ClaudeDesktopModelMappings(); len(mappings) > 0 {
+					selectedModels = proxy.MapClaudeDesktopModels(nil, mappings)
+				} else {
+					selectedModels = proxy.SelectClaudeDesktopModels(nil, launch.ClaudeDesktopModels())
+				}
 			}
 			availableModels = selectedModels
 			if len(selectedModels) > 0 {
 				modelSource = "user"
+			} else if showDefaults {
+				availableModels, modelSource = claudeModelsLoader(ctx)
 			}
 		}
 	}
-	selected := make(map[string]struct{})
-	for _, model := range selectedModels {
-		selected[model.Name] = struct{}{}
-	}
 	var localNames []string
 	var localErr error
-	if len(availableModels) > 0 {
+	if len(availableModels) > 0 || showDefaults {
 		localNames, localErr = claudeLocalModelsResolver(ctx)
 		if localErr != nil {
 			slog.Debug("could not load local models for Claude Settings", "error", localErr)
 		}
+	}
+	if showDefaults {
+		selectedModels = defaultClaudeDesktopSelection(ctx, availableModels, accessState)
+		availableModels = includeSelectedClaudeDesktopModels(availableModels, selectedModels)
+	}
+	selected := make(map[string]struct{}, len(selectedModels))
+	for _, model := range selectedModels {
+		selected[model.Name] = struct{}{}
 	}
 	localModels := make(map[string]struct{}, len(localNames))
 	for _, name := range localNames {
@@ -1433,9 +1520,6 @@ func claudeDesktopConnectionStatus(ctx context.Context) claudeDesktopStatus {
 		})
 	}
 	mappedModels := proxy.ClaudeDesktopMappings(selectedModels)
-	if len(mappedModels) == 0 && len(launch.ClaudeDesktopModels()) == 0 {
-		mappedModels = proxy.DefaultClaudeDesktopMappingsForModels(availableModels)
-	}
 	mappingStatuses := make([]claudeDesktopMappingStatus, 0, proxy.MaxClaudeDesktopModels)
 	for _, route := range proxy.ClaudeDesktopRoutes() {
 		mappingStatuses = append(mappingStatuses, claudeDesktopMappingStatus{
