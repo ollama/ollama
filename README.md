@@ -303,6 +303,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [primerkit](https://github.com/KalskiTheDan/primerkit) - Financial market research on a local model, each answer checked against numbered data lines
 
 ### Productivity & Apps
 
