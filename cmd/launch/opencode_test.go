@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -263,6 +264,57 @@ func TestBuildModelEntries(t *testing.T) {
 			t.Fatalf("limit = %v, want context 1048576 and output %d", limit, openCodeDefaultMaxOutputTokens)
 		}
 	})
+}
+
+func TestOpenCodeEdit_XDGStateHome(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+	stateHome := filepath.Join(t.TempDir(), "custom state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	statePath := filepath.Join(stateHome, "opencode", "model.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initial := map[string]any{
+		"recent":   []any{map[string]any{"providerID": "ollama", "modelID": "existing"}},
+		"favorite": []any{map[string]any{"providerID": "other", "modelID": "favorite"}},
+		"variant":  map[string]any{"ollama/existing": "high"},
+	}
+	data, err := json.Marshal(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	o := &OpenCode{}
+	if err := o.Edit(testLaunchModels("selected")); err != nil {
+		t.Fatal(err)
+	}
+	if got := o.Paths(); !reflect.DeepEqual(got, []string{statePath}) {
+		t.Errorf("Paths() = %v, want %v", got, []string{statePath})
+	}
+	if got := readModelJSONModels(); !reflect.DeepEqual(got, []string{"selected", "existing"}) {
+		t.Errorf("saved models = %v, want selected and existing", got)
+	}
+	stored, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(stored, &state); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"favorite", "variant"} {
+		if !reflect.DeepEqual(state[key], initial[key]) {
+			t.Errorf("%s changed: got %v, want %v", key, state[key], initial[key])
+		}
+	}
+	defaultPath := filepath.Join(home, ".local", "state", "opencode", "model.json")
+	if _, err := os.Stat(defaultPath); !os.IsNotExist(err) {
+		t.Errorf("unexpected default state file: %v", err)
+	}
 }
 
 func TestOpenCodeModels_ReturnsNil(t *testing.T) {
