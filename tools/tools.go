@@ -126,37 +126,46 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	tool, end := findTool(p.tools, p.buffer)
-	if tool == nil {
-		return nil
-	}
+	for {
+		tool, end := findTool(p.tools, p.buffer)
+		if tool == nil {
+			return nil
+		}
 
-	var argsMap map[string]any
-	if found, i := findArguments(tool, p.buffer); found == nil {
-		return nil
-	} else {
-		argsMap = found
-		if i > end {
-			end = i
+		if found, i := findArguments(tool, p.buffer); found == nil {
+			if i == 0 {
+				return nil
+			}
+			// A JSON object was found but it doesn't match the
+			// expected tool (e.g., it has a "name" key without
+			// "arguments" or "parameters"). Skip it and try
+			// again to prevent an infinite parse loop.
+			p.buffer = p.buffer[i:]
+			continue
+		} else {
+			argsMap := found
+			if i > end {
+				end = i
+			}
+
+			args := api.NewToolCallFunctionArguments()
+			for k, v := range argsMap {
+				args.Set(k, v)
+			}
+
+			tc := &api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      tool.Function.Name,
+					Arguments: args,
+					Index:     p.n,
+				},
+			}
+
+			p.n++
+			p.buffer = p.buffer[end:]
+			return tc
 		}
 	}
-
-	args := api.NewToolCallFunctionArguments()
-	for k, v := range argsMap {
-		args.Set(k, v)
-	}
-
-	tc := &api.ToolCall{
-		Function: api.ToolCallFunction{
-			Name:      tool.Function.Name,
-			Arguments: args,
-			Index:     p.n,
-		},
-	}
-
-	p.n++
-	p.buffer = p.buffer[end:]
-	return tc
 }
 
 // findTool finds the first tool name in the list that matches the
