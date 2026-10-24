@@ -176,6 +176,44 @@ func TestOlmo3ThinkParser_StreamingEdgeCases(t *testing.T) {
 			expectedContent:  "Content.",
 			expectedThinking: "Thinking",
 		},
+		{
+			// </think> is a preserved token, so the newlines the model puts
+			// after it arrive in a later chunk than the tag itself.
+			name: "whitespace_after_close_tag_in_later_chunk",
+			chunks: []string{
+				"Yes, that should work.",
+				"\n\n",
+				"</think>",
+				"\n\n",
+				"Hi! I'm all set.",
+			},
+			expectedContent:  "Hi! I'm all set.",
+			expectedThinking: "Yes, that should work.",
+		},
+		{
+			name: "whitespace_only_chunks_after_close_tag",
+			chunks: []string{
+				"Thinking</think>",
+				"\n",
+				" ",
+				"\n",
+				"Answer.",
+			},
+			expectedContent:  "Answer.",
+			expectedThinking: "Thinking",
+		},
+		{
+			name: "whitespace_inside_content_is_kept",
+			chunks: []string{
+				"Thinking</think>",
+				"\n",
+				"First line.",
+				"\n\n",
+				"Second line.",
+			},
+			expectedContent:  "First line.\n\nSecond line.",
+			expectedThinking: "Thinking",
+		},
 	}
 
 	for _, tt := range tests {
