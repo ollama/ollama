@@ -73,7 +73,7 @@ func checkError(resp *http.Response, body []byte) error {
 // used.
 func ClientFromEnvironment() (*Client, error) {
 	return &Client{
-		base: envconfig.Host(),
+		base: envconfig.ConnectableHost(),
 		http: http.DefaultClient,
 	}, nil
 }
