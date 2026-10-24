@@ -10,5 +10,16 @@ func availableSpace(path string) (uint64, error) {
 		return 0, err
 	}
 
-	return st.Bavail * uint64(st.Bsize), nil
+	// Bavail is uint64 on Linux and int64 on FreeBSD and DragonFly.
+	return saturatingCount(st.Bavail) * uint64(st.Bsize), nil
+}
+
+// saturatingCount converts a Statfs block count. A negative count means
+// no space is available to an unprivileged caller.
+func saturatingCount[N ~int64 | ~uint64](n N) uint64 {
+	var zero N
+	if n < zero {
+		return 0
+	}
+	return uint64(n)
 }
