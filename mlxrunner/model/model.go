@@ -124,16 +124,23 @@ func New(root *Root) (Model, error) {
 
 	var archConfig struct {
 		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
 	}
 	if err := json.Unmarshal(configData, &archConfig); err != nil {
 		return nil, fmt.Errorf("failed to parse config.json: %w", err)
 	}
 
-	if len(archConfig.Architectures) == 0 {
+	arch := ""
+	if len(archConfig.Architectures) > 0 {
+		arch = archConfig.Architectures[0]
+	}
+	// Fall back to model_type when architectures is missing, as in NewDraft.
+	if arch == "" {
+		arch = archConfig.ModelType
+	}
+	if arch == "" {
 		return nil, fmt.Errorf("no architectures found in config.json")
 	}
-
-	arch := archConfig.Architectures[0]
 	slog.Info("Model architecture", "arch", arch)
 
 	mu.Lock()
