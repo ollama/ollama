@@ -1207,12 +1207,18 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
+	cloud, _ := cmd.Flags().GetBool("cloud")
+	var models *api.ListResponse
+	var err error
+	if cloud {
+		models, err = listCloudModels(cmd.Context())
+	} else {
+		var client *api.Client
+		client, err = api.ClientFromEnvironment()
+		if err == nil {
+			models, err = client.List(cmd.Context())
+		}
 	}
-
-	models, err := client.List(cmd.Context())
 	if err != nil {
 		return err
 	}
@@ -1228,11 +1234,15 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 				size = format.HumanBytes(m.Size)
 			}
 
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
+			digest := m.Digest[:min(len(m.Digest), 12)]
+			if digest == "" {
+				digest = "-"
+			}
+			data = append(data, []string{m.Name, digest, size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
+	table := tablewriter.NewWriter(cmd.OutOrStdout())
 	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
@@ -2712,9 +2722,15 @@ func NewCLI() *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List models",
-		PreRunE: checkServerHeartbeat,
-		RunE:    ListHandler,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if cloud, _ := cmd.Flags().GetBool("cloud"); cloud {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: ListHandler,
 	}
+	listCmd.Flags().Bool("cloud", false, "List cloud models from ollama.com")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
