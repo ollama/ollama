@@ -2,9 +2,13 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1014,4 +1018,62 @@ func TestResponsesForeignCompactionHistory(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResponsesCompactionBodyTooLargeRecovery(t *testing.T) {
+	const proxy413 = `<html>413 Request Entity Too Large</html>`
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	rng := rand.New(rand.NewSource(1))
+	for i := range img.Pix {
+		img.Pix[i] = byte(rng.Intn(256))
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	imageURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes())
+	input := `[
+		{"type":"message","role":"user","content":[{"type":"input_image","image_url":"` + imageURL + `"}]},
+		{"type":"message","role":"assistant","content":"seen"},
+		{"type":"message","role":"user","content":[{"type":"input_image","image_url":"` + imageURL + `"}]},
+		{"type":"message","role":"assistant","content":"seen again"},
+		{"type":"message","role":"user","content":"latest request"}
+	]`
+	run := func(t *testing.T, statuses []int) (int, [][]byte) {
+		local, capture := newCompactionTestServer(t, func(attempt int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+			if attempt > len(statuses) {
+				t.Errorf("unexpected attempt %d", attempt)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(statuses[attempt-1])
+			if statuses[attempt-1] == http.StatusOK {
+				_, _ = w.Write(summaryResponse(t, "Continue.", nil))
+			} else {
+				_, _ = io.WriteString(w, proxy413)
+			}
+		})
+		status, _, _ := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":`+input+`}`)
+		_, requests := capture.snapshot()
+		return status, requests
+	}
+
+	t.Run("drops images then succeeds", func(t *testing.T) {
+		status, requests := run(t, []int{413, 200})
+		if status != http.StatusOK || len(requests) != 2 {
+			t.Fatalf("status=%d attempts=%d", status, len(requests))
+		}
+		if len(requests[1]) >= len(requests[0]) || !bytes.Contains(requests[1], []byte("older image(s) were omitted")) {
+			t.Fatal("retry did not shed images or add notice")
+		}
+	})
+	t.Run("retry cap relays upstream 413", func(t *testing.T) {
+		status, requests := run(t, []int{413, 413, 413, 413, 413, 413})
+		if status != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status=%d", status)
+		}
+		if len(requests) > maxCompactionBodyRetries+1 {
+			t.Fatalf("made %d attempts", len(requests))
+		}
+	})
 }

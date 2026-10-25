@@ -975,3 +975,45 @@ func TestDropImagesForBodyLimit(t *testing.T) {
 		t.Fatalf("omittedImages=%d", plan.omittedImages)
 	}
 }
+
+func TestDropImagesForBodyLimitBoundaries(t *testing.T) {
+	img := func(n int) []api.ImageData { return []api.ImageData{make([]byte, n)} }
+	t.Run("empty and single", func(t *testing.T) {
+		if got := (&ResponsesCompactionPlan{}).DropImagesForBodyLimit(); got != 0 {
+			t.Fatalf("empty removed %d", got)
+		}
+		plan := &ResponsesCompactionPlan{items: []CompactionTranscriptItem{{Ref: "a", Message: api.Message{Images: img(10)}}}}
+		if got := plan.DropImagesForBodyLimit(); got != 0 {
+			t.Fatalf("single removed %d", got)
+		}
+	})
+	t.Run("images only in latest item", func(t *testing.T) {
+		plan := &ResponsesCompactionPlan{items: []CompactionTranscriptItem{
+			{Ref: "a", Message: api.Message{Role: "user", Content: "old"}},
+			{Ref: "b", Message: api.Message{Role: "user", Images: img(100)}},
+		}}
+		if got := plan.DropImagesForBodyLimit(); got != 0 || len(plan.items[1].Message.Images) != 1 {
+			t.Fatalf("removed %d, latest images=%d", got, len(plan.items[1].Message.Images))
+		}
+	})
+	t.Run("text dominated body", func(t *testing.T) {
+		plan := &ResponsesCompactionPlan{items: []CompactionTranscriptItem{
+			{Ref: "a", Message: api.Message{Role: "user", Images: img(10), Content: strings.Repeat("x", 1000)}},
+			{Ref: "b", Message: api.Message{Role: "user", Content: "latest"}},
+		}}
+		if got := plan.DropImagesForBodyLimit(); got != 0 {
+			t.Fatalf("removed %d images from text-dominated body", got)
+		}
+	})
+}
+
+func TestSummaryRequestImageOmissionNotice(t *testing.T) {
+	plan := &ResponsesCompactionPlan{Model: "m", omittedImages: 3, items: []CompactionTranscriptItem{{Ref: "a", Message: api.Message{Role: "user", Content: "hi"}}}}
+	body, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "3 older image(s) were omitted") {
+		t.Fatalf("missing notice: %s", body)
+	}
+}

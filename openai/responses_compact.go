@@ -22,6 +22,7 @@ const (
 	OllamaCompactionPayloadVersion = 1
 	CreateSummaryToolName          = "create_summary"
 	compactionSummaryToolName      = "ollama_compaction_summary"
+	compactionImageOmissionNotice  = "%d older image(s) were omitted from the transcript because the request was too large."
 	compactionOmissionNotice       = "Compaction warning: %d older transcript items were omitted before summarization because the model's context limit was exceeded."
 )
 
@@ -828,13 +829,19 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 // latest item are always preserved. It returns the number of images removed,
 // or zero when no progress is possible.
 func (p *ResponsesCompactionPlan) DropImagesForBodyLimit() int {
-	var total int
+	if len(p.items) < 2 {
+		return 0
+	}
+	var total, text int
 	for _, item := range p.items {
+		text += len(item.Message.Content) + len(item.Message.Thinking)
 		for _, image := range item.Message.Images {
 			total += len(image)
 		}
 	}
-	if total == 0 {
+	// Only shed images while they make up most of the body; otherwise the
+	// body limit is driven by text and the caller should trim items instead.
+	if total == 0 || total < text {
 		return 0
 	}
 
@@ -867,7 +874,7 @@ func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, er
 		prompt += " " + fmt.Sprintf(compactionOmissionNotice, p.omittedItems)
 	}
 	if p.omittedImages > 0 {
-		prompt += fmt.Sprintf(" %d older image(s) were omitted from the transcript because the request was too large.", p.omittedImages)
+		prompt += " " + fmt.Sprintf(compactionImageOmissionNotice, p.omittedImages)
 	}
 	if repairError != "" {
 		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
