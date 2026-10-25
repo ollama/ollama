@@ -81,6 +81,24 @@ func TestResolveGemma4Renderer(t *testing.T) {
 			want: gemma4RendererLarge,
 		},
 		{
+			name: "legacy e4b model type resolves small",
+			model: &Model{
+				Name:      "my-gemma",
+				ShortName: "my-gemma",
+				Config:    testConfigWithRendererAndType(gemma4RendererLegacy, "8.1B"),
+			},
+			want: gemma4RendererSmall,
+		},
+		{
+			name: "legacy 12b model type without size in name resolves large",
+			model: &Model{
+				Name:      "my-gemma",
+				ShortName: "my-gemma",
+				Config:    testConfigWithRendererAndType(gemma4RendererLegacy, "11.9B"),
+			},
+			want: gemma4RendererLarge,
+		},
+		{
 			name: "legacy unknown defaults small",
 			model: &Model{
 				Config: testConfigWithRenderer(gemma4RendererLegacy),

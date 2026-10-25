@@ -13,9 +13,9 @@ const (
 	gemma4RendererLarge  = "gemma4-large"
 
 	// Gemma 4 small templates cover the e2b/e4b family, while 12b/26b/31b use
-	// the large template. Default to the small prompt unless the model is
-	// clearly in the large range.
-	gemma4LargeMinParameterCount = 12_000_000_000
+	// the large template. e4b reports 8.1B parameters and 12b reports 11.9B,
+	// so the cutoff sits between them.
+	gemma4LargeMinParameterCount = 10_000_000_000
 )
 
 func resolveRendererName(m *Model) string {
