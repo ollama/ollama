@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -116,8 +117,15 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		toolResponsesEmitted := false
 		if len(message.ToolCalls) > 0 {
 			for k := i + 1; k < len(loopMessages) && loopMessages[k].Role == "tool"; k++ {
-				response := r.renderToolResponseContent(loopMessages[k], &imageOffset)
-				sb.WriteString(r.formatToolResponseBlock(r.toolResponseName(loopMessages[k], message.ToolCalls), response))
+				tool := loopMessages[k]
+				response := tool.Content
+				if r.useImgTags && len(tool.Images) > 0 {
+					// The template puts a tool's media after the response
+					// block, but there E2B and E4B answer with fragments or
+					// stray punctuation, so they stay inside the response.
+					response, imageOffset = renderContentWithImageTags(response, len(tool.Images), imageOffset)
+				}
+				sb.WriteString(r.formatToolResponseBlock(r.toolResponseName(tool, message.ToolCalls), response))
 				toolResponsesEmitted = true
 				prevMessageType = "tool_response"
 			}
@@ -194,24 +202,37 @@ func (r *Gemma4Renderer) renderMessageContent(sb *strings.Builder, message api.M
 	return r.messageHasContent(message)
 }
 
-// renderContent writes a message's content, interleaving [img-N] tags for images.
-// When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
-// template's | trim filter applied to non-model content).
+// renderContent writes a message's content and its media placeholders.
+// Images go before the text and audio after it, as Google recommends, unless
+// the text places them with [img] tags. When trim is true, the text is
+// trimmed like the template's | trim filter.
 func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
 	content := msg.Content
 	if trim {
 		content = strings.TrimSpace(content)
 	}
-	if len(msg.Images) > 0 && r.useImgTags {
+	if !r.useImgTags || len(msg.Images) == 0 {
+		sb.WriteString(content)
+		return
+	}
+	if strings.Contains(content, "[img]") || strings.Contains(content, "[img-") {
 		content, *imageOffset = renderContentWithImageTags(content, len(msg.Images), *imageOffset)
+		sb.WriteString(content)
+		return
+	}
+
+	var audio strings.Builder
+	for _, data := range msg.Images {
+		tag := fmt.Sprintf("[img-%d]", *imageOffset)
+		*imageOffset++
+		if llm.DetectMediaKind(data) == llm.MediaKindAudio {
+			audio.WriteString(tag)
+		} else {
+			sb.WriteString(tag)
+		}
 	}
 	sb.WriteString(content)
-}
-
-func (r *Gemma4Renderer) renderToolResponseContent(msg api.Message, imageOffset *int) string {
-	var sb strings.Builder
-	r.renderContent(&sb, msg, imageOffset, false)
-	return sb.String()
+	sb.WriteString(audio.String())
 }
 
 func (r *Gemma4Renderer) nextNonToolRole(messages []api.Message, idx int) string {

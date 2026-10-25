@@ -441,7 +441,7 @@ func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
 		{
 			name:            "gemma4",
 			renderer:        "gemma4",
-			wantUserTag:     "<|turn>user\n[img-0] look at this file<turn|>\n",
+			wantUserTag:     "<|turn>user\n[img-0]look at this file<turn|>\n",
 			wantToolContent: "[img-1] attached image",
 		},
 		{

@@ -23,10 +23,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -1705,6 +1707,58 @@ func TestGemma4LargeRendererClosesEmptyThoughtAfterToolResponse(t *testing.T) {
 	}
 }
 
+var (
+	testGemma4Image = api.ImageData("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+	testGemma4Audio = api.ImageData("RIFF\x00\x00\x00\x00WAVEfmt ")
+)
+
+func TestGemma4RendererPlacesMedia(t *testing.T) {
+	q := `<|"|>`
+	tests := []struct {
+		name     string
+		messages []api.Message
+		want     string
+	}{
+		{
+			name:     "image_before_text",
+			messages: []api.Message{{Role: "user", Content: "Describe this.", Images: []api.ImageData{testGemma4Image}}},
+			want:     "<|turn>user\n[img-0]Describe this.<turn|>",
+		},
+		{
+			name:     "audio_after_text",
+			messages: []api.Message{{Role: "user", Content: "Transcribe this.", Images: []api.ImageData{testGemma4Audio}}},
+			want:     "<|turn>user\nTranscribe this.[img-0]<turn|>",
+		},
+		{
+			name:     "image_and_audio",
+			messages: []api.Message{{Role: "user", Content: "What is shown and said?", Images: []api.ImageData{testGemma4Audio, testGemma4Image}}},
+			want:     "<|turn>user\n[img-1]What is shown and said?[img-0]<turn|>",
+		},
+		{
+			name:     "placeholders_kept",
+			messages: []api.Message{{Role: "user", Content: "Listen to [img] then answer.", Images: []api.ImageData{testGemma4Audio}}},
+			want:     "<|turn>user\nListen to [img-0] then answer.<turn|>",
+		},
+		{
+			name: "tool_response_media_inside_block",
+			messages: []api.Message{
+				{Role: "user", Content: "Take a screenshot"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "shot"})}}}},
+				{Role: "tool", ToolName: "bash", Content: "saved", Images: []api.ImageData{testGemma4Image}},
+			},
+			want: "<|tool_response>response:bash{value:" + q + "[img-0] saved" + q + "}<tool_response|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := (&Gemma4Renderer{useImgTags: true}).Render(tt.messages, nil, nil)
+			assert.NoError(t, err)
+			assert.Contains(t, got, tt.want)
+		})
+	}
+}
+
 func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 	q := `<|"|>`
 	messages := []api.Message{
@@ -1903,6 +1957,26 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 			},
 			tools: schemaKeywordParamsTool(),
 		},
+		{
+			name: "image_before_text",
+			messages: []api.Message{
+				{Role: "user", Content: "Describe this.", Images: []api.ImageData{testGemma4Image}},
+			},
+		},
+		{
+			name: "audio_after_text",
+			messages: []api.Message{
+				{Role: "user", Content: "Transcribe the following speech segment in English into English text.", Images: []api.ImageData{testGemma4Audio}},
+			},
+		},
+		{
+			name: "image_and_audio",
+			messages: []api.Message{
+				{Role: "user", Content: "What is shown and said?", Images: []api.ImageData{testGemma4Audio, testGemma4Image}},
+				{Role: "assistant", Content: "A cat meowing."},
+				{Role: "user", Content: "And now?", Images: []api.ImageData{testGemma4Image}},
+			},
+		},
 	}
 
 	variants := []struct {
@@ -1912,17 +1986,17 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 	}{
 		{
 			name:        "small",
-			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
+			renderer:    &Gemma4Renderer{useImgTags: true},
 			templateRel: gemma4E2BTemplate,
 		},
 		{
 			name:        "large",
-			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
+			renderer:    &Gemma4Renderer{useImgTags: true, emptyBlockOnNothink: true},
 			templateRel: gemma431BTemplate,
 		},
 		{
 			name:        "nemotron",
-			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true},
+			renderer:    &Gemma4Renderer{useImgTags: true, contentBeforeToolCalls: true},
 			templateRel: gemma4NemotronTemplate,
 		},
 	}
@@ -1933,6 +2007,7 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 				t.Run(tt.name, func(t *testing.T) {
 					got, err := variant.renderer.Render(tt.messages, tt.tools, tt.think)
 					assert.NoError(t, err)
+					got = gemma4MediaPlaceholders(got, tt.messages)
 
 					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
 					// The large renderer also closes the empty thought after a
@@ -1992,6 +2067,20 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			wantRenderFrag: `response:bash{value:<|"|>payload<|"|>}`,
 		},
 		{
+			name: "tool_response_media_stay_inside_the_response",
+			messages: []api.Message{
+				{Role: "user", Content: "Take a screenshot"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{
+					ID:       "call_1",
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "screenshot"})},
+				}}},
+				{Role: "tool", ToolCallID: "call_1", Content: "saved", Images: []api.ImageData{testGemma4Image}},
+			},
+			tools:          bashRefTool(),
+			wantJinjaFrag:  `{value:<|"|>saved<|"|>}<tool_response|><|image|>`,
+			wantRenderFrag: `{value:<|"|><|image|> saved<|"|>}<tool_response|>`,
+		},
+		{
 			name: "tool_response_without_name_or_id_uses_unknown",
 			messages: []api.Message{
 				{Role: "user", Content: "List and read"},
@@ -2013,9 +2102,10 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+			renderer := &Gemma4Renderer{useImgTags: true}
 			got, err := renderer.Render(tt.messages, tt.tools, nil)
 			assert.NoError(t, err)
+			got = gemma4MediaPlaceholders(got, tt.messages)
 
 			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, nil)
 			assert.NotEqual(t, jinja2Output, got, "case no longer differs from Jinja2 output")
@@ -2111,7 +2201,7 @@ func renderWithJinja2Template(t *testing.T, templateRelPath string, messages []a
 	}
 	type jinja2Message struct {
 		Role       string           `json:"role"`
-		Content    string           `json:"content"`
+		Content    any              `json:"content"`
 		Reasoning  string           `json:"reasoning,omitempty"`
 		ToolCalls  []jinja2ToolCall `json:"tool_calls,omitempty"`
 		Name       string           `json:"name,omitempty"`
@@ -2126,6 +2216,24 @@ func renderWithJinja2Template(t *testing.T, templateRelPath string, messages []a
 			Reasoning:  m.Thinking,
 			Name:       m.ToolName,
 			ToolCallID: m.ToolCallID,
+		}
+		if len(m.Images) > 0 {
+			// Images before the text and audio after it; a tool's media
+			// follow its text.
+			var images, audio []map[string]string
+			for _, data := range m.Images {
+				if llm.DetectMediaKind(data) == llm.MediaKindAudio {
+					audio = append(audio, map[string]string{"type": "audio"})
+				} else {
+					images = append(images, map[string]string{"type": "image"})
+				}
+			}
+			text := []map[string]string{{"type": "text", "text": m.Content}}
+			if m.Role == "tool" {
+				jm.Content = slices.Concat(text, images, audio)
+			} else {
+				jm.Content = slices.Concat(images, text, audio)
+			}
 		}
 		for _, tc := range m.ToolCalls {
 			jtc := jinja2ToolCall{}
@@ -2179,6 +2287,25 @@ print(tmpl.render(**kwargs), end="")
 		t.Fatalf("uv run failed: %v\nstderr: %s", err, stderr.String())
 	}
 	return stdout.String()
+}
+
+// gemma4MediaPlaceholders replaces the renderer's [img-N] tags with the
+// template's <|image|> and <|audio|> placeholders.
+func gemma4MediaPlaceholders(rendered string, messages []api.Message) string {
+	var kinds []llm.MediaKind
+	for _, m := range messages {
+		for _, data := range m.Images {
+			kinds = append(kinds, llm.DetectMediaKind(data))
+		}
+	}
+	for i, kind := range kinds {
+		placeholder := "<|image|>"
+		if kind == llm.MediaKindAudio {
+			placeholder = "<|audio|>"
+		}
+		rendered = strings.Replace(rendered, fmt.Sprintf("[img-%d]", i), placeholder, 1)
+	}
+	return rendered
 }
 
 func thinkTrue() *api.ThinkValue {
