@@ -1528,7 +1528,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PullModel(ctx, name.DisplayShortest(), runner, regOpts, fn); err != nil {
+		if err := PullModel(ctx, name.DisplayShortest(), runner, regOpts, fn, api.PullLimits{Rate: req.LimitRate, Streams: req.LimitStreams}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 			return
 		}

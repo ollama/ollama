@@ -1164,7 +1164,16 @@ func pushLayersForManifestList(parent manifest.Manifest) ([]manifest.Layer, erro
 	return layers, nil
 }
 
-func PullModel(ctx context.Context, name string, runner string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+// pullLimits unwraps the variadic limits the pull chain carries. The argument
+// is variadic so the many callers that want plain defaults stay unchanged.
+func pullLimits(limits []api.PullLimits) api.PullLimits {
+	if len(limits) > 0 {
+		return limits[0]
+	}
+	return api.PullLimits{}
+}
+
+func PullModel(ctx context.Context, name string, runner string, regOpts *registryOptions, fn func(api.ProgressResponse), limits ...api.PullLimits) error {
 	n := model.ParseName(name)
 
 	// build deleteMap to prune unused layers
@@ -1234,7 +1243,7 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		if err := pullWithTransfer(ctx, n, layers, manifestData, regOpts, fn); err != nil {
+		if err := pullWithTransfer(ctx, n, layers, manifestData, regOpts, fn, pullLimits(limits)); err != nil {
 			return err
 		}
 		writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
@@ -1243,12 +1252,14 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 	}
 
 	skipVerify := make(map[string]bool)
+	lim := pullLimits(limits)
 	for _, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
 			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
 			fn:      fn,
+			limits:  lim,
 		})
 		if err != nil {
 			return err
@@ -1473,7 +1484,9 @@ func remoteBlobLayer(ctx context.Context, n model.Name, digest, mediaType string
 	}, nil
 }
 
-func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+// limits is variadic so the callers that fetch a single config or manifest
+// layer need not care: they pull a few kilobytes and want no limit at all.
+func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, regOpts *registryOptions, fn func(api.ProgressResponse), limits ...api.PullLimits) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -1515,12 +1528,32 @@ func downloadWithTransfer(ctx context.Context, n model.Name, layers []manifest.L
 		}, base.Host)
 	}
 
+	lim := pullLimits(limits)
+
+	// Same precedence as the legacy path: the request wins, then the
+	// environment. MaxTransferStreams stays the fallback here because it is
+	// the existing knob for this path and may already be set.
+	streams := lim.Streams
+	if streams == 0 {
+		streams = int(envconfig.MaxTransferStreams())
+	}
+	rate := lim.Rate
+	if rate == 0 {
+		rate = int64(envconfig.MaxPullRate())
+	}
+	var client *http.Client
+	if rate > 0 {
+		client = throttledClient(nil, newRateLimiter(rate))
+		slog.Debug("pull rate limit active (transfer path)", "bytes_per_sec", rate, "streams", streams)
+	}
+
 	if err := transfer.Download(ctx, transfer.DownloadOptions{
 		Blobs:             blobs,
 		BaseURL:           baseURL,
 		DestDir:           destDir,
 		Repository:        n.DisplayNamespaceModel(),
-		BodyConcurrency:   max(1, int(envconfig.MaxTransferStreams())),
+		BodyConcurrency:   max(1, streams),
+		Client:            client,
 		Progress:          progress,
 		Token:             regOpts.Token,
 		GetToken:          getToken,
@@ -1549,8 +1582,8 @@ func writePullDowngradeAnchor(n model.Name, mf *manifest.Manifest, manifestData 
 }
 
 // pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	if err := downloadWithTransfer(ctx, n, layers, regOpts, fn); err != nil {
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse), limits api.PullLimits) error {
+	if err := downloadWithTransfer(ctx, n, layers, regOpts, fn, limits); err != nil {
 		return err
 	}
 

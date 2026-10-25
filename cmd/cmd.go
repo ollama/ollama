@@ -1747,12 +1747,38 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Looked up rather than read outright: PullHandler is also called with
+	// commands that never declare the flags, and Get* errors out on those.
+	var limits api.PullLimits
+	if flag := cmd.Flags().Lookup("limit-rate"); flag != nil {
+		s, err := cmd.Flags().GetString("limit-rate")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(s) != "" && s != "0" {
+			limits.Rate, err = envconfig.ParseByteSize(s)
+			if err != nil {
+				return fmt.Errorf("invalid --limit-rate value %q: %w", s, err)
+			}
+		}
+	}
+	if flag := cmd.Flags().Lookup("limit-streams"); flag != nil {
+		n, err := cmd.Flags().GetInt("limit-streams")
+		if err != nil {
+			return err
+		}
+		if n < 0 {
+			return fmt.Errorf("invalid --limit-streams value %d: must not be negative", n)
+		}
+		limits.Streams = n
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], runner, insecure, "pull")
+	_, err = pullWithCloudSuggestion(cmd.Context(), client, args[0], runner, insecure, "pull", limits)
 	return err
 }
 
@@ -1760,7 +1786,11 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 // clearNotFound is set and the pull fails because the model doesn't exist,
 // the progress display is erased rather than left behind; callers set it
 // when a ":cloud" suggestion prompt may immediately follow the failure.
-func pullModelWithProgress(ctx context.Context, client *api.Client, name, runner string, insecure, clearNotFound bool) error {
+func pullModelWithProgress(ctx context.Context, client *api.Client, name, runner string, insecure, clearNotFound bool, limits ...api.PullLimits) error {
+	var lim api.PullLimits
+	if len(limits) > 0 {
+		lim = limits[0]
+	}
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -1821,7 +1851,7 @@ func pullModelWithProgress(ctx context.Context, client *api.Client, name, runner
 		return nil
 	}
 
-	request := api.PullRequest{Name: name, Runner: runner, Insecure: insecure}
+	request := api.PullRequest{Name: name, Runner: runner, Insecure: insecure, LimitRate: lim.Rate, LimitStreams: lim.Streams}
 	err := client.Pull(ctx, &request, fn)
 	if clearNotFound && isPullNotFoundErr(err) {
 		// The deferred Stop becomes a no-op after this.
@@ -2661,6 +2691,8 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().String("limit-rate", "", "Limit total pull bandwidth (e.g. 500k, 2m, 1g); 0 = no limit")
+	pullCmd.Flags().Int("limit-streams", 0, "Limit how many blob parts transfer at once; 0 = use OLLAMA_MAX_PULL_STREAMS")
 	pullCmd.Flags().String("runner", "", "Runner to use for manifest list selection (mlx, ggml, llamacpp)")
 	pullCmd.Flags().MarkHidden("runner")
 
@@ -2780,6 +2812,15 @@ func NewCLI() *cobra.Command {
 		switch cmd {
 		case runCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
+		case pullCmd:
+			// The limits belong next to their flags: whoever reads --limit-rate
+			// should see straight away how to set it permanently.
+			appendEnvDocs(cmd, []envconfig.EnvVar{
+				envVars["OLLAMA_HOST"],
+				envVars["OLLAMA_MAX_PULL_RATE"],
+				envVars["OLLAMA_MAX_PULL_STREAMS"],
+				envVars["OLLAMA_MAX_PULL_RETRIES"],
+			})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{
 				envVars["OLLAMA_DEBUG"],
@@ -2788,6 +2829,9 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_KEEP_ALIVE"],
 				envVars["OLLAMA_MAX_LOADED_MODELS"],
 				envVars["OLLAMA_MAX_TRANSFER_STREAMS"],
+				envVars["OLLAMA_MAX_PULL_RATE"],
+				envVars["OLLAMA_MAX_PULL_STREAMS"],
+				envVars["OLLAMA_MAX_PULL_RETRIES"],
 				envVars["OLLAMA_MAX_QUEUE"],
 				envVars["OLLAMA_MODELS"],
 				envVars["OLLAMA_NUM_PARALLEL"],
