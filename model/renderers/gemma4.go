@@ -144,8 +144,15 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		if r.emptyBlockOnNothink && !hasThink {
 			sb.WriteString("<|channel>thought\n<channel|>")
 		}
-	} else if prevMessageType == "tool_response" && hasThink {
-		sb.WriteString("<|channel>thought\n")
+	} else if prevMessageType == "tool_response" {
+		if hasThink {
+			sb.WriteString("<|channel>thought\n")
+		} else if r.emptyBlockOnNothink {
+			// With thinking off these models start every answer with an empty
+			// thought. The template writes it only at the start of a turn, so
+			// after a tool response the model writes it and can close it wrong.
+			sb.WriteString("<|channel>thought\n<channel|>")
+		}
 	}
 
 	return sb.String(), nil

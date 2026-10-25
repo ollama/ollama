@@ -1676,6 +1676,35 @@ func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing
 	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
 }
 
+func TestGemma4LargeRendererClosesEmptyThoughtAfterToolResponse(t *testing.T) {
+	messages := []api.Message{
+		{Role: "user", Content: "Weather in Lyon?"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{{
+			Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Lyon"})},
+		}}},
+		{Role: "tool", ToolName: "get_weather", Content: "Sunny"},
+	}
+
+	tests := []struct {
+		renderer string
+		think    *api.ThinkValue
+		suffix   string
+	}{
+		{renderer: "gemma4-large", think: thinkFalse(), suffix: "<tool_response|><|channel>thought\n<channel|>"},
+		{renderer: "gemma4-large", think: thinkTrue(), suffix: "<tool_response|><|channel>thought\n"},
+		{renderer: "gemma4-small", think: thinkFalse(), suffix: "<tool_response|>"},
+		{renderer: "gemma4-nemotron", think: thinkFalse(), suffix: "<tool_response|>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s/think=%t", tt.renderer, tt.think.Bool()), func(t *testing.T) {
+			got, err := RenderWithRenderer(tt.renderer, messages, weatherTool(), tt.think)
+			assert.NoError(t, err)
+			assert.True(t, strings.HasSuffix(got, tt.suffix), "got %q", got)
+		})
+	}
+}
+
 func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 	q := `<|"|>`
 	messages := []api.Message{
@@ -1906,6 +1935,11 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 					assert.NoError(t, err)
 
 					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
+					// The large renderer also closes the empty thought after a
+					// tool response when thinking is off.
+					if variant.renderer.emptyBlockOnNothink && !tt.think.Bool() && tt.messages[len(tt.messages)-1].Role == "tool" {
+						jinja2Output += "<|channel>thought\n<channel|>"
+					}
 					assert.Equal(t, jinja2Output, got,
 						"renderer output doesn't match Jinja2 template output")
 				})
