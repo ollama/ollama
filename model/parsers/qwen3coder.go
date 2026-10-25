@@ -492,8 +492,10 @@ func repairToolCallXML(xmlString string) (string, bool) {
 			end = opens[i+1][0]
 		}
 		value := body[open[1]:end]
+		terminated := false
 		for _, terminator := range []string{"</parameter>", "</function>"} {
 			if idx := strings.Index(value, terminator); idx >= 0 {
+				terminated = true
 				value = value[:idx]
 				end = open[1] + idx
 				// The model's own `</parameter>` is consumed here and re-emitted
@@ -504,6 +506,15 @@ func repairToolCallXML(xmlString string) (string, bool) {
 				}
 				break
 			}
+		}
+		// A parameter with nothing in it but whitespace before the next one opens
+		// is not one the model forgot to close: it is a parameter holding
+		// parameters, an array of objects in a format with no way to say so
+		// (upstream's #18563 follow-up, an `edits` list of oldText/newText).
+		// Reading it as two siblings sent `edit{edits:"", oldText, newText}`, a
+		// call with the right name and the wrong arguments, so it is not repaired.
+		if !terminated && i+1 < len(opens) && strings.TrimSpace(value) == "" {
+			return "", false
 		}
 		repaired.WriteString(value)
 		repaired.WriteString("</parameter>")
