@@ -98,6 +98,9 @@ func Create(ctx context.Context, modelName, modelDir string, opts PipelineOption
 	if err != nil {
 		return err
 	}
+	if class.Quantize == "" && inv.Config.TorchDtype != "" {
+		modelConfig.FileType = inv.Config.TorchDtype
+	}
 	if inv.Config.Architecture() == "KevForDecision" && class.Kind == SourceFloat && class.Quantize == "" {
 		modelConfig.FileType, err = kevFileType(inv)
 		if err != nil {

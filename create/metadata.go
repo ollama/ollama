@@ -89,8 +89,12 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		return model.ConfigV2{}, err
 	}
 
+	family := deriveModelFamily(cfg)
+
 	config := model.ConfigV2{
 		ModelFormat:        "safetensors",
+		ModelFamily:        family,
+		ModelFamilies:      []string{family},
 		Parser:             parserName,
 		Renderer:           rendererName,
 		Capabilities:       capabilities,
@@ -249,6 +253,23 @@ func nemotronRendererNameFromTemplate(modelDir, chatTemplate string) (string, er
 		return "nemotron-3.5-nano", nil
 	}
 	return "nemotron-3-nano", nil
+}
+
+func deriveModelFamily(cfg sourceModelConfig) string {
+	if len(cfg.Architectures) > 0 && cfg.Architectures[0] != "" {
+		hfArch := cfg.Architectures[0]
+		if decisionArch, ok := strings.CutSuffix(hfArch, "ForDecision"); ok {
+			return strings.ToLower(decisionArch)
+		}
+		arch := strings.ToLower(hfArch)
+		arch = strings.TrimSuffix(arch, "forcausallm")
+		arch = strings.TrimSuffix(arch, "forconditionalgeneration")
+		return arch
+	}
+	if cfg.ModelType != "" {
+		return strings.ToLower(cfg.ModelType)
+	}
+	return ""
 }
 
 func sourceConfigIdentifiers(cfg sourceModelConfig) []string {

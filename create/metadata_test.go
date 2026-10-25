@@ -310,6 +310,66 @@ func TestInferSafetensorsCapabilitiesFromParser(t *testing.T) {
 	}
 }
 
+func TestDeriveModelFamily(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  sourceModelConfig
+		want string
+	}{
+		{
+			name: "causal LM suffix",
+			cfg:  sourceModelConfig{Architectures: []string{"Gemma4ForCausalLM"}},
+			want: "gemma4",
+		},
+		{
+			name: "conditional generation suffix",
+			cfg:  sourceModelConfig{Architectures: []string{"Gemma4ForConditionalGeneration"}},
+			want: "gemma4",
+		},
+		{
+			name: "decision suffix",
+			cfg:  sourceModelConfig{Architectures: []string{"ClefForDecision"}},
+			want: "clef",
+		},
+		{
+			name: "falls back to model_type",
+			cfg:  sourceModelConfig{ModelType: "llama"},
+			want: "llama",
+		},
+		{
+			name: "empty config",
+			cfg:  sourceModelConfig{},
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveModelFamily(tt.cfg); got != tt.want {
+				t.Errorf("deriveModelFamily() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInferSafetensorsConfigSetsModelFamily(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{
+		"architectures": ["Gemma4ForCausalLM"],
+		"model_type": "gemma4",
+		"torch_dtype": "bfloat16"
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	config := inferConfigForTest(t, dir, "", "")
+	if config.ModelFamily != "gemma4" {
+		t.Errorf("ModelFamily = %q, want %q", config.ModelFamily, "gemma4")
+	}
+	if len(config.ModelFamilies) != 1 || config.ModelFamilies[0] != "gemma4" {
+		t.Errorf("ModelFamilies = %v, want [gemma4]", config.ModelFamilies)
+	}
+}
+
 func inferConfigForTest(t *testing.T, modelDir, parser, renderer string) model.ConfigV2 {
 	t.Helper()
 	cfg, _, err := readSourceModelConfig(modelDir)
