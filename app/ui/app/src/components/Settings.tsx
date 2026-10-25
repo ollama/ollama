@@ -675,6 +675,29 @@ export default function Settings() {
                     />
                   </div>
                 </div>
+
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start space-x-3 flex-1">
+                      <ArrowPathIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Automatically restart and apply updates</Label>
+                        <Description>
+                          {settings.AutoRestart
+                            ? "Automatically restart and apply updates after downloading."
+                            : "Updates will be applied on next manual restart."}
+                      </Description>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        checked={settings.AutoRestart}
+                        onChange={(checked) =>
+                          handleChange("AutoRestart", checked)
+                        }
+                      />
+                    </div>
+                  </div>
+                </Field>
               </Field>
 
               {/* Expose Ollama */}
