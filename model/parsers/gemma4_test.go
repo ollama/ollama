@@ -1018,6 +1018,26 @@ func TestGemma4ArgsToJSON_Brackets(t *testing.T) {
 			closeOpen: true,
 			expected:  `{"edits":[{"a":1}]}`,
 		},
+		{
+			name:     "noise_after_arguments_dropped",
+			input:    `{a:{b:<|"|>x}y<|"|>}}$$`,
+			expected: `{"a":{"b":"x}y"}}`,
+		},
+		{
+			name:     "noise_closes_brackets_left_open",
+			input:    `{a:{b:1}$$`,
+			expected: `{"a":{"b":1}}`,
+		},
+		{
+			name:     "second_object_is_not_noise",
+			input:    `{a:1} {b:2}`,
+			expected: `{"a":1} {"b":2}`,
+		},
+		{
+			name:     "arguments_after_close_are_not_noise",
+			input:    `{a:1},b:2`,
+			expected: `{"a":1},b:2`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1081,6 +1101,33 @@ func TestGemma4Parser_ClosesBracketsOfFinishedToolCall(t *testing.T) {
 				t.Fatalf("closed brackets of an unfinished tool call: %v", calls)
 			}
 		})
+	}
+}
+
+func TestGemma4Parser_IgnoresNoiseAfterToolCallArguments(t *testing.T) {
+	const s = `<|"|>`
+	call := `<|tool_call>call:ask_user{message:` + s + `Which cloud?` + s + `,requestedSchema:{properties:{cloud:{type:` + s + `string` + s + `}}}$$`
+	want := []api.ToolCall{{Function: api.ToolCallFunction{
+		Name: "ask_user",
+		Arguments: testArgs(map[string]any{
+			"message":         "Which cloud?",
+			"requestedSchema": map[string]any{"properties": map[string]any{"cloud": map[string]any{"type": "string"}}},
+		}),
+	}}}
+
+	for _, input := range []string{call, call + "<tool_call|>"} {
+		parser := &Gemma4Parser{}
+		parser.Init(nil, nil, nil)
+		content, _, calls, err := parser.Add(input, true)
+		if err != nil {
+			t.Fatalf("Add() error = %v", err)
+		}
+		if content != "" {
+			t.Fatalf("unexpected content %q", content)
+		}
+		if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+			t.Fatalf("tool calls mismatch for %q (-want +got):\n%s", input, diff)
+		}
 	}
 }
 

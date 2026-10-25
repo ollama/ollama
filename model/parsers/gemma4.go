@@ -452,6 +452,10 @@ func gemma4ArgsToJSON(s string, closeOpen bool) string {
 		return end + 1
 	}
 
+	// Past the last structural character, text after a closer is noise, such
+	// as a stray "$$".
+	noise := strings.LastIndexAny(s, `{}[],:"`) + 1
+
 	var open []byte // closers of the open brackets, innermost last
 	for i := 0; i < len(s); {
 		switch {
@@ -491,6 +495,14 @@ func gemma4ArgsToJSON(s string, closeOpen bool) string {
 				open = open[:j]
 			}
 			i++
+			// Noise also shows the model was done writing the arguments, so
+			// whatever it left open is closed.
+			if i >= noise && (len(open) == 0 || strings.TrimSpace(s[i:]) != "") {
+				for k := len(open) - 1; k >= 0; k-- {
+					sb.WriteByte(open[k])
+				}
+				return sb.String()
+			}
 		case s[i] == ',':
 			// A key inside a list means the list was never closed.
 			if len(open) > 0 && open[len(open)-1] == ']' && gemma4BareKeyEnd(s, i+1) != -1 {
