@@ -4,7 +4,9 @@ import "strings"
 
 // stopMatcher applies a request's stop sequences to the streamed output. Text
 // that could be the start of a stop sequence is held back, so a sequence split
-// across tokens is still caught and none of it reaches the client.
+// across tokens is still caught and none of it reaches the client. Responses
+// are held whole and only cut where a stop sequence matches, so a response's
+// text and logprobs go out together.
 type stopMatcher struct {
 	stops   []string
 	pending []CompletionResponse
@@ -42,7 +44,7 @@ func (s *stopMatcher) push(resp CompletionResponse) (ready []CompletionResponse,
 		}
 	}
 	if cut >= 0 {
-		ready = s.take(cut)
+		ready = s.truncate(cut)
 		s.pending = nil
 		return ready, true
 	}
@@ -61,23 +63,32 @@ func (s *stopMatcher) flush() []CompletionResponse {
 	return ready
 }
 
-// take removes the first n bytes of held text from pending and returns them
-// as responses. A response split at n keeps its logprobs with the part sent.
+// take removes the leading responses that lie entirely within the first n
+// bytes of held text and returns them. A response reaching past n stays held
+// whole.
 func (s *stopMatcher) take(n int) []CompletionResponse {
 	var ready []CompletionResponse
-	for n > 0 && len(s.pending) > 0 {
-		p := s.pending[0]
-		if len(p.Content) <= n {
-			ready = append(ready, p)
-			n -= len(p.Content)
-			s.pending = s.pending[1:]
-			continue
+	for len(s.pending) > 0 && len(s.pending[0].Content) <= n {
+		n -= len(s.pending[0].Content)
+		ready = append(ready, s.pending[0])
+		s.pending = s.pending[1:]
+	}
+	return ready
+}
+
+// truncate returns the held responses cut to the first n bytes of held text.
+// A response cut at n keeps its logprobs with the text before the stop.
+func (s *stopMatcher) truncate(n int) []CompletionResponse {
+	var ready []CompletionResponse
+	for _, p := range s.pending {
+		if n == 0 {
+			break
 		}
-		sent := p
-		sent.Content = p.Content[:n]
-		ready = append(ready, sent)
-		s.pending[0] = CompletionResponse{Content: p.Content[n:]}
-		n = 0
+		if len(p.Content) > n {
+			p.Content = p.Content[:n]
+		}
+		ready = append(ready, p)
+		n -= len(p.Content)
 	}
 	return ready
 }

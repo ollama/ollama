@@ -43,7 +43,8 @@ func TestStopMatcher(t *testing.T) {
 		{name: "stop split across pieces", stops: []string{"STOP"}, pieces: []string{"Hel", "lo ST", "OP more"}, sent: []string{"Hel", "lo "}, matched: true},
 		{name: "stop at the very start", stops: []string{"STOP"}, pieces: []string{"ST", "OP"}, matched: true},
 		{name: "false start is released", stops: []string{"STOP"}, pieces: []string{"S", "Sun"}, sent: []string{"S", "Sun"}},
-		{name: "partial match is flushed at the end", stops: []string{"STOP"}, pieces: []string{"abc ST"}, sent: []string{"abc "}, flushed: []string{"ST"}},
+		{name: "false start is released whole", stops: []string{"STOP"}, pieces: []string{"go ST", "ART"}, sent: []string{"go ST", "ART"}},
+		{name: "partial match is flushed whole at the end", stops: []string{"STOP"}, pieces: []string{"abc ST"}, flushed: []string{"abc ST"}},
 		{name: "earliest of several stops wins", stops: []string{"world", "lo"}, pieces: []string{"hello world"}, sent: []string{"hel"}, matched: true},
 		{name: "multibyte stop split across pieces", stops: []string{"【入力確定】"}, pieces: []string{"考え【入", "力確定】続き"}, sent: []string{"考え"}, matched: true},
 		{name: "text after the stop is dropped", stops: []string{"\n\n"}, pieces: []string{"one\n", "\ntwo", "three"}, sent: []string{"one"}, matched: true},
@@ -59,17 +60,26 @@ func TestStopMatcher(t *testing.T) {
 	}
 }
 
-func TestStopMatcherKeepsLogprobsWithSentText(t *testing.T) {
-	s := newStopMatcher([]string{"STOP"})
+func TestStopMatcherKeepsLogprobsWithTheirText(t *testing.T) {
 	logprobs := []llm.Logprob{{TokenLogprob: llm.TokenLogprob{Token: "go ST"}}}
 
-	ready, matched := s.push(CompletionResponse{Content: "go ST", Logprobs: logprobs})
-	if matched || len(ready) != 1 || ready[0].Content != "go " || len(ready[0].Logprobs) != 1 {
-		t.Fatalf("first push = %+v matched=%v, want \"go \" carrying the logprobs", ready, matched)
-	}
+	t.Run("cut at a match", func(t *testing.T) {
+		s := newStopMatcher([]string{"STOP"})
+		if ready, matched := s.push(CompletionResponse{Content: "go ST", Logprobs: logprobs}); matched || len(ready) != 0 {
+			t.Fatalf("first push = %+v matched=%v, want \"go ST\" held", ready, matched)
+		}
+		ready, matched := s.push(CompletionResponse{Content: "OP"})
+		if !matched || len(ready) != 1 || ready[0].Content != "go " || len(ready[0].Logprobs) != 1 {
+			t.Fatalf("second push = %+v matched=%v, want \"go \" carrying the logprobs", ready, matched)
+		}
+	})
 
-	ready, matched = s.push(CompletionResponse{Content: "OP"})
-	if !matched || len(ready) != 0 {
-		t.Fatalf("second push = %+v matched=%v, want a match with nothing sent", ready, matched)
-	}
+	t.Run("flushed without a match", func(t *testing.T) {
+		s := newStopMatcher([]string{"STOP"})
+		s.push(CompletionResponse{Content: "go ST", Logprobs: logprobs})
+		flushed := s.flush()
+		if len(flushed) != 1 || flushed[0].Content != "go ST" || len(flushed[0].Logprobs) != 1 {
+			t.Fatalf("flush = %+v, want \"go ST\" whole with its logprobs", flushed)
+		}
+	})
 }
