@@ -446,7 +446,8 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 //
 // gemma4:e4b leaves a list of objects with long string values unclosed, as in
 // call:edit{edits:[{newText:<|"|>…<|"|>,oldText:<|"|>…<|"|>,path:<|"|>…<|"|>}
-// (ollama/ollama#19273).
+// (ollama/ollama#19273), and once closed an object in a list with a brace too
+// many: set:[…,{path:<|"|>Level<|"|>,value:{…}}}]}.
 func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
 	toolCall, err := parseGemma4ToolCall(content, tools)
 	if err == nil {
@@ -472,7 +473,8 @@ func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, 
 
 // repairGemma4UnclosedBrackets closes the lists and objects left open in Gemma 4
 // arguments. A list still open where `}` closes the object around it, or where
-// `,` is followed by a key, gets its `]` there. Whatever is still open at the
+// `,` is followed by a key, gets its `]` there. A `}` there that the list's own
+// `]` follows closes nothing and is dropped. Whatever is still open at the
 // end is closed, innermost first. Strings are copied as they are.
 func repairGemma4UnclosedBrackets(s string) string {
 	var sb strings.Builder
@@ -512,6 +514,11 @@ func repairGemma4UnclosedBrackets(s string) string {
 			open = append(open, s[i])
 		case '}':
 			if top() == '[' {
+				// With the list's own `]` next, this brace closes nothing: one too many.
+				if next := gemma4SkipSpace(s, i+1); next < len(s) && s[next] == ']' {
+					i++
+					continue
+				}
 				sb.WriteByte(']')
 				open = open[:len(open)-1]
 			}

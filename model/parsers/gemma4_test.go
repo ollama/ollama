@@ -1544,6 +1544,11 @@ func TestRepairGemma4UnclosedBrackets(t *testing.T) {
 			expected: `{text:<|"|>[{,key:<|"|>,raw:"[x:{"}`,
 		},
 		{
+			name:     "drops_a_brace_too_many_before_a_list_close",
+			input:    `{set:[{path:<|"|>a<|"|>,value:{b:1}}}]}`,
+			expected: `{set:[{path:<|"|>a<|"|>,value:{b:1}}]}`,
+		},
+		{
 			name:     "leaves_balanced_input",
 			input:    `{edits:[{a:1}],path:<|"|>x<|"|>}`,
 			expected: `{edits:[{a:1}],path:<|"|>x<|"|>}`,
@@ -1560,7 +1565,8 @@ func TestRepairGemma4UnclosedBrackets(t *testing.T) {
 }
 
 func TestParseGemma4ClosedToolCall_ClosesUnclosedBrackets(t *testing.T) {
-	// The shapes of the 30 edit calls gemma4:e4b left unclosed in ollama/ollama#19273, and #17565's missing brace.
+	// The shapes of the 30 edit calls gemma4:e4b left unclosed in ollama/ollama#19273, its editRecord call with a
+	// brace too many, and #17565's missing brace.
 	tests := []struct {
 		name    string
 		content string
@@ -1594,6 +1600,17 @@ func TestParseGemma4ClosedToolCall_ClosesUnclosedBrackets(t *testing.T) {
 			want: map[string]any{
 				"edits": []any{map[string]any{"newText": "a", "oldText": "b"}, map[string]any{"newText": "c"}},
 				"path":  "x.yaml",
+			},
+		},
+		{
+			name:    "brace_too_many_before_list_close",
+			content: `call:editRecord{record:<|"|>Hilda<|"|>,set:[{path:<|"|>Name<|"|>,value:<|"|>Hilda<|"|>},{path:<|"|>Level<|"|>,value:{LevelMult:1,CalcMinLevel:5}}}]}`,
+			want: map[string]any{
+				"record": "Hilda",
+				"set": []any{
+					map[string]any{"path": "Name", "value": "Hilda"},
+					map[string]any{"path": "Level", "value": map[string]any{"LevelMult": 1.0, "CalcMinLevel": 5.0}},
+				},
 			},
 		},
 		{
