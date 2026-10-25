@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -1309,24 +1310,47 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 }
 
-func TestQwen3CoderParserRejectsMalformedParameters(t *testing.T) {
-	for _, raw := range []string{
-		`<function=write><parameter=content>print('ok')</function>`,
-		`<function=write><parameter=content>print('ok')</parameter=content></function>`,
-		`<function=write><parameter=content>text = "</function>"</parameter>`,
+// Upstream's cases (#19228) for calls it rejects. This branch recovers the two
+// whose only defect is a dropped closing tag, which is what it exists for, and
+// keeps the call out of the other two: a malformed closer comes back as text,
+// as every call it cannot read does, and a parameter holding parameters is not
+// flattened into arguments the model never wrote.
+func TestQwen3CoderParserMalformedParameters(t *testing.T) {
+	for _, tc := range []struct {
+		raw      string
+		wantCall string // "" when no call may come out
+	}{
+		{raw: `<function=write><parameter=content>print('ok')</function>`, wantCall: `write{"content":"print('ok')"}`},
+		{raw: `<function=write><parameter=content>print('ok')</parameter=content></function>`},
+		{raw: `<function=write><parameter=content>text = "</function>"</parameter>`, wantCall: `write{"content":"text = \"\u003c/function\u003e\""}`},
 		// Reduced shape from #18563's follow-up: the outer edits parameter is unclosed.
-		`<function=edit>
+		{raw: `<function=edit>
 <parameter=path>src/orders.py</parameter>
 <parameter=edits>
 <parameter=oldText>before</parameter>
 <parameter=newText>after</parameter>
-</function>`,
+</function>`},
 	} {
 		parser := Qwen3CoderParser{}
 		parser.Init(nil, nil, nil)
-		_, _, calls, err := parser.Add(toolOpenTag+raw+toolCloseTag, true)
-		if err == nil || len(calls) != 0 {
-			t.Errorf("raw=%q: expected rejection without tool calls, got calls=%#v, err=%v", raw, calls, err)
+		content, _, calls, err := parser.Add(toolOpenTag+tc.raw+toolCloseTag, true)
+		if err != nil {
+			t.Errorf("raw=%q: a call it cannot read fails nothing, got err=%v", tc.raw, err)
+			continue
+		}
+		if tc.wantCall == "" {
+			if len(calls) != 0 || content != toolOpenTag+tc.raw+toolCloseTag {
+				t.Errorf("raw=%q: want it back as text and no call, got calls=%#v content=%q", tc.raw, calls, content)
+			}
+			continue
+		}
+		if len(calls) != 1 {
+			t.Errorf("raw=%q: want one recovered call, got %#v", tc.raw, calls)
+			continue
+		}
+		args, _ := json.Marshal(calls[0].Function.Arguments)
+		if got := calls[0].Function.Name + string(args); got != tc.wantCall {
+			t.Errorf("raw=%q: got %s, want %s", tc.raw, got, tc.wantCall)
 		}
 	}
 }
