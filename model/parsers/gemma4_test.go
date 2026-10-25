@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -942,6 +943,21 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			input:    `{meta:{title:<|"|>t "1"<|"|>,note:"n \"2\""},items:[<|"|>x "3"<|"|>,"y \"4\""]}`,
 			expected: `{"meta":{"title":"t \"1\"","note":"n \"2\""},"items":["x \"3\"","y \"4\""]}`,
 		},
+		{
+			name:     "bare_key_with_spaces",
+			input:    `{connections:{Basic LLM Chain:{main:[]}, Ollama Chat Model:{main:[]}}}`,
+			expected: `{"connections":{"Basic LLM Chain":{"main":[]}, "Ollama Chat Model":{"main":[]}}}`,
+		},
+		{
+			name:     "bare_keys_with_punctuation",
+			input:    `{server.port:8080,log-level:<|"|>debug<|"|>,@timestamp:{gte:<|"|>now<|"|>}}`,
+			expected: `{"server.port":8080,"log-level":"debug","@timestamp":{"gte":"now"}}`,
+		},
+		{
+			name:     "bare_key_with_space_before_colon",
+			input:    "{ display name \t :1}",
+			expected: `{ "display name":1}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1479,6 +1495,27 @@ func TestParseGemma4ToolCall_DoesNotRepairNonTerminalUnclosedGemmaString(t *test
 	})
 	if err == nil {
 		t.Fatal("expected non-terminal unclosed Gemma string to remain unsupported")
+	}
+}
+
+func TestParseGemma4ToolCall_ManyStringsBeforeArray(t *testing.T) {
+	var fields []string
+	want := map[string]any{}
+	for i := range 45 {
+		key := fmt.Sprintf("k%02d", i)
+		fields = append(fields, key+`:<|"|>v<|"|>`)
+		want[key] = "v"
+	}
+	fields = append(fields, `members:[<|"|>a<|"|>,<|"|>b<|"|>]`)
+	want["members"] = []any{"a", "b"}
+
+	got, err := parseGemma4ToolCall("call:submit{"+strings.Join(fields, ",")+"}", nil)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	if diff := cmp.Diff(testArgs(want), got.Function.Arguments, argsComparer); diff != "" {
+		t.Fatalf("arguments mismatch (-want +got):\n%s", diff)
 	}
 }
 

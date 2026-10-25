@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -29,8 +28,6 @@ const (
 	gemma4ToolResponseTag  = "<|tool_response>"
 	gemma4StringDelimiter  = `<|"|>`
 )
-
-var gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
 
 type Gemma4Parser struct {
 	state                 Gemma4ParserState
@@ -434,75 +431,68 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 	}, nil
 }
 
-// gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
+// gemma4ArgsToJSON converts Gemma 4's argument syntax to JSON: <|"|> strings
+// become JSON strings and bare keys are quoted.
 func gemma4ArgsToJSON(s string) string {
-	var quotedStrings []string
-	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
-		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
-		quotedStrings = append(quotedStrings, submatches[1])
-		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
-	})
-
-	text = quoteGemma4BareKeys(text)
-
-	for i, value := range quotedStrings {
-		escaped, _ := json.Marshal(value)
-		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
-	}
-
-	return text
-}
-
-func quoteGemma4BareKeys(s string) string {
 	var sb strings.Builder
 	sb.Grow(len(s) + 16)
 
-	for i := 0; i < len(s); {
-		if s[i] == '"' {
-			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
-				sb.WriteString(s[i:end])
-				i = end
-				continue
-			}
+	writeKey := func(i int) int {
+		end := gemma4BareKeyEnd(s, i)
+		if end == -1 {
+			return i
 		}
+		sb.WriteString(s[i:gemma4SkipSpace(s, i)])
+		quoted, _ := json.Marshal(strings.TrimSpace(s[i:end]))
+		sb.Write(quoted)
+		sb.WriteByte(':')
+		return end + 1
+	}
 
-		if s[i] != '{' && s[i] != ',' {
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], gemma4StringDelimiter):
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				return sb.String()
+			}
+			quoted, _ := json.Marshal(s[start : start+end])
+			sb.Write(quoted)
+			i = start + end + len(gemma4StringDelimiter)
+		case s[i] == '"':
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				return sb.String()
+			}
+			sb.WriteString(s[i:end])
+			i = end
+		case s[i] == '{' || s[i] == ',':
+			sb.WriteByte(s[i])
+			i = writeKey(i + 1)
+		default:
 			sb.WriteByte(s[i])
 			i++
-			continue
-		}
-
-		sb.WriteByte(s[i])
-		i++
-
-		spaceStart := i
-		i = gemma4SkipSpace(s, i)
-		sb.WriteString(s[spaceStart:i])
-
-		keyEnd := gemma4BareKeyEnd(s, i)
-		if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
-			sb.WriteByte('"')
-			sb.WriteString(s[i:keyEnd])
-			sb.WriteByte('"')
-			sb.WriteByte(':')
-			i = keyEnd + 1
-			continue
 		}
 	}
 
 	return sb.String()
 }
 
-func gemma4BareKeyEnd(s string, start int) int {
-	i := start
-	for i < len(s) {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
-			break
-		}
-		i += size
+// gemma4BareKeyEnd returns the index of the colon after the bare key at s[i:],
+// or -1 if there is none. A bare key is any text up to the colon, so it may
+// contain spaces, dots or other punctuation.
+func gemma4BareKeyEnd(s string, i int) int {
+	end := i
+	for end < len(s) && !strings.ContainsRune(`:,{}[]"`, rune(s[end])) {
+		end++
 	}
-	return i
+	if end == len(s) || s[end] != ':' || strings.TrimSpace(s[i:end]) == "" {
+		return -1
+	}
+	return end
 }
 
 // repairGemma4ToolCallArgs is a best-effort repair after strict parsing fails.
