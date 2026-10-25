@@ -967,9 +967,118 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := gemma4ArgsToJSON(tt.input)
+			result := gemma4ArgsToJSON(tt.input, false)
 			if result != tt.expected {
 				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestGemma4ArgsToJSON_Brackets(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		closeOpen bool
+		expected  string
+	}{
+		{
+			name:     "closer_closes_list_left_open_inside_it",
+			input:    `{edits:[{a:1}}`,
+			expected: `{"edits":[{"a":1}]}`,
+		},
+		{
+			name:     "wrong_closer_for_list",
+			input:    `{a:[1,2}`,
+			expected: `{"a":[1,2]}`,
+		},
+		{
+			name:     "key_inside_list_closes_it",
+			input:    `{edits:[{a:<|"|>x<|"|>},path:<|"|>p<|"|>}`,
+			expected: `{"edits":[{"a":"x"}],"path":"p"}`,
+		},
+		{
+			name:     "extra_closers_dropped",
+			input:    `{set:[{v:{x:1}}}]}`,
+			expected: `{"set":[{"v":{"x":1}}]}`,
+		},
+		{
+			name:     "brackets_inside_strings_ignored",
+			input:    `{a:<|"|>}]<|"|>,b:"[{"}`,
+			expected: `{"a":"}]","b":"[{"}`,
+		},
+		{
+			name:     "open_brackets_kept_without_close_open",
+			input:    `{edits:[{a:1}`,
+			expected: `{"edits":[{"a":1}`,
+		},
+		{
+			name:      "open_brackets_closed_with_close_open",
+			input:     `{edits:[{a:1}`,
+			closeOpen: true,
+			expected:  `{"edits":[{"a":1}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := gemma4ArgsToJSON(tt.input, tt.closeOpen); got != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_ClosesBracketsOfFinishedToolCall(t *testing.T) {
+	const s = `<|"|>`
+	tests := []struct {
+		name string
+		args string
+		want map[string]any
+		// whether the brackets are only complete once closed at the end
+		leftOpen bool
+	}{
+		{
+			name:     "list_and_object_left_open",
+			leftOpen: true,
+			args:     `{edits:[{newText:` + s + `a: 1` + s + `,oldText:` + s + `a: 0` + s + `,path:` + s + `x.yaml` + s + `}`,
+			want:     map[string]any{"edits": []any{map[string]any{"newText": "a: 1", "oldText": "a: 0", "path": "x.yaml"}}},
+		},
+		{
+			name: "list_left_open_before_key",
+			args: `{edits:[{newText:` + s + `a: 1` + s + `,oldText:` + s + `a: 0` + s + `},path:` + s + `x.yaml` + s + `}`,
+			want: map[string]any{"edits": []any{map[string]any{"newText": "a: 1", "oldText": "a: 0"}}, "path": "x.yaml"},
+		},
+		{
+			name:     "final_brace_missing",
+			leftOpen: true,
+			args:     `{files:[{path:` + s + `c:\a.json` + s + `,start_line:1}]`,
+			want:     map[string]any{"files": []any{map[string]any{"path": `c:\a.json`, "start_line": 1.0}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{}
+			parser.Init(nil, nil, nil)
+			content, _, calls, err := parser.Add("<|tool_call>call:edit"+tt.args+"<tool_call|>", true)
+			if err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+			if content != "" {
+				t.Fatalf("unexpected content %q", content)
+			}
+			want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "edit", Arguments: testArgs(tt.want)}}}
+			if diff := cmp.Diff(want, calls, argsComparer); diff != "" {
+				t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+
+			// Without the closing tag the call may have been cut off, so
+			// brackets left open at the end are not closed for it.
+			parser = &Gemma4Parser{}
+			parser.Init(nil, nil, nil)
+			if _, _, calls, _ := parser.Add("<|tool_call>call:edit"+tt.args, true); tt.leftOpen && len(calls) != 0 {
+				t.Fatalf("closed brackets of an unfinished tool call: %v", calls)
 			}
 		})
 	}
@@ -1286,14 +1395,14 @@ func TestGemma4Parser_HasThinkingSupport(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_InvalidRawQuotedEscape(t *testing.T) {
-	_, err := parseGemma4ToolCall(`call:open_file{path:"C:\users\bob\file.txt"}`, nil)
+	_, err := parseGemma4ToolCall(`call:open_file{path:"C:\users\bob\file.txt"}`, nil, false)
 	if err == nil {
 		t.Fatal("expected parseGemma4ToolCall to reject malformed raw-quoted JSON escapes")
 	}
 }
 
 func TestParseGemma4ToolCall_QuotedScalarsStayStrings(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:foo{n:<|"|>1<|"|>,b:<|"|>true<|"|>,z:<|"|>null<|"|>}`, nil)
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:<|"|>1<|"|>,b:<|"|>true<|"|>,z:<|"|>null<|"|>}`, nil, false)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -1315,7 +1424,7 @@ func TestParseGemma4ToolCall_QuotedScalarsStayStrings(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_UnquotedScalarsKeepStructuredTypes(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:foo{n:1,b:true,z:null}`, nil)
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:1,b:true,z:null}`, nil, false)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -1337,7 +1446,7 @@ func TestParseGemma4ToolCall_UnquotedScalarsKeepStructuredTypes(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_ReferenceImplementationExample(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:get_current_temperature{detail_level:0,location:<|"|>Paris, France<|"|>,unit:<|"|>celsius<|"|>}`, nil)
+	toolCall, err := parseGemma4ToolCall(`call:get_current_temperature{detail_level:0,location:<|"|>Paris, France<|"|>,unit:<|"|>celsius<|"|>}`, nil, false)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -1417,7 +1526,7 @@ func TestParseGemma4ToolCall_RepairsIssue15315Examples(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			got, err := parseGemma4ToolCall(tt.content, tt.tools, false)
 			if err != nil {
 				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 			}
@@ -1483,7 +1592,7 @@ func TestParseGemma4ToolCall_RepairsMultipleProperties(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			got, err := parseGemma4ToolCall(tt.content, tt.tools, false)
 			if err != nil {
 				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 			}
@@ -1502,7 +1611,7 @@ func TestParseGemma4ToolCall_DoesNotRepairNonTerminalUnclosedGemmaString(t *test
 	// this type (the heuristics of where to close are much more complicated)
 	_, err := parseGemma4ToolCall(`call:example{first:<|"|>one,second:<|"|>two<|"|>}`, []api.Tool{
 		gemma4TestStringTool("example", "first", "second"),
-	})
+	}, true)
 	if err == nil {
 		t.Fatal("expected non-terminal unclosed Gemma string to remain unsupported")
 	}
@@ -1519,7 +1628,7 @@ func TestParseGemma4ToolCall_ManyStringsBeforeArray(t *testing.T) {
 	fields = append(fields, `members:[<|"|>a<|"|>,<|"|>b<|"|>]`)
 	want["members"] = []any{"a", "b"}
 
-	got, err := parseGemma4ToolCall("call:submit{"+strings.Join(fields, ",")+"}", nil)
+	got, err := parseGemma4ToolCall("call:submit{"+strings.Join(fields, ",")+"}", nil, false)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -1530,7 +1639,7 @@ func TestParseGemma4ToolCall_ManyStringsBeforeArray(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
-	got, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`, nil)
+	got, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`, nil, false)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}

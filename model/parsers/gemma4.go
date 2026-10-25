@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -320,7 +321,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4IgnoringPostToolCallNoise
 
-			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
+			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools, true); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
@@ -333,7 +334,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 		if done && len(bufStr) > 0 {
 			p.buffer.Reset()
 			p.state = Gemma4CollectingContent
-			if toolCall, err := parseGemma4ToolCall(bufStr, p.tools); err == nil {
+			if toolCall, err := parseGemma4ToolCall(bufStr, p.tools, false); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call flush on done failed", "error", err, "content", bufStr)
@@ -394,8 +395,9 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 }
 
 // parseGemma4ToolCall parses a tool call in Gemma 4 format:
-// call:NAME{key:value,key:value}
-func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
+// call:NAME{key:value,key:value}. closed reports whether the model ended the
+// call with its closing tag, so brackets left open were not cut off.
+func parseGemma4ToolCall(content string, tools []api.Tool, closed bool) (api.ToolCall, error) {
 	// Expected format: call:NAME{args}
 	if !strings.HasPrefix(content, "call:") {
 		return api.ToolCall{}, errors.New("expected 'call:' prefix")
@@ -412,11 +414,11 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 	argsStr := content[braceIdx:]
 
 	// Convert Gemma 4 argument format to JSON
-	jsonStr := gemma4ArgsToJSON(argsStr)
+	jsonStr := gemma4ArgsToJSON(argsStr, closed)
 
 	var args api.ToolCallFunctionArguments
 	if err := json.Unmarshal([]byte(jsonStr), &args); err != nil {
-		repairedArgs, repairErr := repairGemma4ToolCallArgs(argsStr, toolName, tools)
+		repairedArgs, repairErr := repairGemma4ToolCallArgs(argsStr, toolName, tools, closed)
 		if repairErr != nil {
 			return api.ToolCall{}, errors.Join(err, repairErr)
 		}
@@ -432,8 +434,9 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 }
 
 // gemma4ArgsToJSON converts Gemma 4's argument syntax to JSON: <|"|> strings
-// become JSON strings and bare keys are quoted.
-func gemma4ArgsToJSON(s string) string {
+// become JSON strings and bare keys are quoted. Brackets the model closed out
+// of order are fixed, and with closeOpen so are brackets it left open.
+func gemma4ArgsToJSON(s string, closeOpen bool) string {
 	var sb strings.Builder
 	sb.Grow(len(s) + 16)
 
@@ -449,6 +452,7 @@ func gemma4ArgsToJSON(s string) string {
 		return end + 1
 	}
 
+	var open []byte // closers of the open brackets, innermost last
 	for i := 0; i < len(s); {
 		switch {
 		case strings.HasPrefix(s[i:], gemma4StringDelimiter):
@@ -469,12 +473,46 @@ func gemma4ArgsToJSON(s string) string {
 			}
 			sb.WriteString(s[i:end])
 			i = end
-		case s[i] == '{' || s[i] == ',':
-			sb.WriteByte(s[i])
+		case s[i] == '{':
+			open = append(open, '}')
+			sb.WriteByte('{')
 			i = writeKey(i + 1)
+		case s[i] == '[':
+			open = append(open, ']')
+			sb.WriteByte('[')
+			i++
+		case s[i] == '}' || s[i] == ']':
+			// A closer also closes the brackets left open inside it. One with
+			// nothing to close is dropped.
+			if j := bytes.LastIndexByte(open, s[i]); j != -1 {
+				for k := len(open) - 1; k >= j; k-- {
+					sb.WriteByte(open[k])
+				}
+				open = open[:j]
+			}
+			i++
+		case s[i] == ',':
+			// A key inside a list means the list was never closed.
+			if len(open) > 0 && open[len(open)-1] == ']' && gemma4BareKeyEnd(s, i+1) != -1 {
+				for len(open) > 0 && open[len(open)-1] == ']' {
+					sb.WriteByte(']')
+					open = open[:len(open)-1]
+				}
+			}
+			sb.WriteByte(',')
+			i++
+			if len(open) > 0 && open[len(open)-1] == '}' {
+				i = writeKey(i)
+			}
 		default:
 			sb.WriteByte(s[i])
 			i++
+		}
+	}
+
+	if closeOpen {
+		for k := len(open) - 1; k >= 0; k-- {
+			sb.WriteByte(open[k])
 		}
 	}
 
@@ -499,9 +537,9 @@ func gemma4BareKeyEnd(s string, i int) int {
 // repairGemma4ToolCallArgs is a best-effort repair after strict parsing fails.
 // For example, if the model emits an unclosed gemma string as the last value,
 // we can repair it by closing it with the gemma string delimiter.
-func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool) (api.ToolCallFunctionArguments, error) {
+func repairGemma4ToolCallArgs(argsStr, toolName string, tools []api.Tool, closed bool) (api.ToolCallFunctionArguments, error) {
 	for _, candidate := range gemma4RepairCandidates(argsStr, toolName, tools) {
-		jsonStr := gemma4ArgsToJSON(candidate)
+		jsonStr := gemma4ArgsToJSON(candidate, closed)
 
 		var args api.ToolCallFunctionArguments
 		if err := json.Unmarshal([]byte(jsonStr), &args); err == nil {
