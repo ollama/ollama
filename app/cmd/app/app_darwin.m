@@ -1602,38 +1602,42 @@ didCompleteWithError:(NSError *)error {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)registerSelfAsLoginItem:(BOOL)firstTimeRun {
-    appLogInfo(@"using v13+ SMAppService for login registration");
-    // Maps to the file Ollama.app/Contents/Library/LaunchAgents/com.ollama.ollama.plist
-    SMAppService* service = [SMAppService agentServiceWithPlistName:@"com.ollama.ollama.plist"];
-    if (!service) {
-        appLogInfo(@"SMAppService failed to find service for com.ollama.ollama.plist");
-        return;
-    }
-    SMAppServiceStatus status = [service status];
-    switch (status) {
-        case SMAppServiceStatusNotRegistered:
-            appLogInfo(@"service not registered, registering now");
-            break;
-        case SMAppServiceStatusEnabled:
-            appLogInfo(@"service is already enabled, no need to register again");
+    if (@available(macOS 13.0, *)) {
+        appLogInfo(@"using v13+ SMAppService for login registration");
+        // Maps to the file Ollama.app/Contents/Library/LaunchAgents/com.ollama.ollama.plist
+        SMAppService* service = [SMAppService agentServiceWithPlistName:@"com.ollama.ollama.plist"];
+        if (!service) {
+            appLogInfo(@"SMAppService failed to find service for com.ollama.ollama.plist");
             return;
-        case SMAppServiceStatusRequiresApproval: 
-            // User has disabled our login behavior explicitly so leave it as is
-            appLogInfo(@"service is currently disabled and will not start at login");
+        }
+        SMAppServiceStatus status = [service status];
+        switch (status) {
+            case SMAppServiceStatusNotRegistered:
+                appLogInfo(@"service not registered, registering now");
+                break;
+            case SMAppServiceStatusEnabled:
+                appLogInfo(@"service is already enabled, no need to register again");
+                return;
+            case SMAppServiceStatusRequiresApproval:
+                // User has disabled our login behavior explicitly so leave it as is
+                appLogInfo(@"service is currently disabled and will not start at login");
+                return;
+            case SMAppServiceStatusNotFound:
+                appLogInfo(@"service not found, registering now");
+                break;
+            default:
+                appLogInfo([NSString stringWithFormat:@"unexpected status: %ld", (long)status]);
+                break;
+        }
+        NSError *error = nil;
+        if (![service registerAndReturnError:&error]) {
+            appLogInfo([NSString stringWithFormat:@"Failed to register %@ as a login item: %@", NSBundle.mainBundle.bundleURL, error]);
             return;
-        case SMAppServiceStatusNotFound:
-            appLogInfo(@"service not found, registering now");
-            break;
-        default:
-            appLogInfo([NSString stringWithFormat:@"unexpected status: %ld", (long)status]);
-            break;
-    }
-    NSError *error = nil;
-    if (![service registerAndReturnError:&error]) {
-        appLogInfo([NSString stringWithFormat:@"Failed to register %@ as a login item: %@", NSBundle.mainBundle.bundleURL, error]);
+        }
         return;
+    } else {
+        appLogInfo(@"Automatic login registration requires macOS 13; leaving Monterey login items unchanged");
     }
-    return;
 }
 
 /// Remove ollama from the deprecated Login Items list as we now use LaunchAgents

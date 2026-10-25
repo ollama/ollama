@@ -17,6 +17,7 @@
 #
 # Environment overrides:
 #   VERSION    - override the version string (default: git describe)
+#   DMG_SKIP_FINDER - set to 1 to package without Finder AppleScript
 
 set -e
 
@@ -116,7 +117,13 @@ _build_macapp_intel() {
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     rm -f dist/Ollama-intel-macos12-${VERSION}.dmg
-    (cd dist && ../scripts/create-dmg.sh \
+    (
+        cd dist
+        set --
+        if [ "${DMG_SKIP_FINDER:-0}" = 1 ]; then
+            set -- --skip-jenkins
+        fi
+        ../scripts/create-dmg.sh "$@" \
         --volname "${VOL_NAME}" \
         --volicon ../app/darwin/Ollama.app/Contents/Resources/icon.icns \
         --background ../app/assets/background.png \
