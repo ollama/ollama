@@ -326,7 +326,10 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			if toolCall, err := parseGemma4ClosedToolCall(toolCallContent, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
+				// Passed on as content rather than dropped: dropped, the response has neither a tool call
+				// nor content, and the client cannot tell the model its call was lost.
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
+				events = append(events, gemma4EventContent{content: toolCallContent})
 			}
 			return events, true
 		}
@@ -340,6 +343,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call flush on done failed", "error", err, "content", bufStr)
+				events = append(events, gemma4EventContent{content: bufStr})
 			}
 			return events, false
 		}

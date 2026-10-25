@@ -1642,3 +1642,42 @@ func TestGemma4Parser_UnclosedListInFinishedToolCall(t *testing.T) {
 		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
+
+func TestGemma4Parser_UnparsableToolCallIsContent(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedContent string
+	}{
+		{
+			// Finished, and still not valid once its brackets are closed: the client sees it.
+			name:            "finished_call",
+			input:           `<|tool_call>call:edit{edits:[{newText:<|"|>a<|"|>,oldText}<tool_call|>`,
+			expectedContent: `call:edit{edits:[{newText:<|"|>a<|"|>,oldText}`,
+		},
+		{
+			// Flushed on done, with no closing tag, it may have been cut off: not repaired, and passed on.
+			name:            "flushed_on_done",
+			input:           `<|tool_call>call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>}`,
+			expectedContent: `call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			content, _, toolCalls, err := parser.Add(tt.input, true)
+			if err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+			if len(toolCalls) != 0 {
+				t.Fatalf("expected no tool calls, got %v", toolCalls)
+			}
+			if content != tt.expectedContent {
+				t.Fatalf("content = %q, want %q", content, tt.expectedContent)
+			}
+		})
+	}
+}
