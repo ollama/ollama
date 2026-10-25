@@ -481,15 +481,16 @@ func gemma4ArgsToJSON(s string) string {
 	return sb.String()
 }
 
-// gemma4BareKeyEnd returns the index of the colon after the bare key at s[i:],
-// or -1 if there is none. A bare key is any text up to the colon, so it may
-// contain spaces, dots or other punctuation.
+// gemma4BareKeyEnd returns the index of the separator after the bare key at
+// s[i:], or -1 if there is none. A bare key is any text up to the separator,
+// so it may contain spaces, dots or other punctuation. The model sometimes
+// separates keys and values with '=' instead of ':'.
 func gemma4BareKeyEnd(s string, i int) int {
 	end := i
-	for end < len(s) && !strings.ContainsRune(`:,{}[]"`, rune(s[end])) {
+	for end < len(s) && !strings.ContainsRune(`:=,{}[]"`, rune(s[end])) {
 		end++
 	}
-	if end == len(s) || s[end] != ':' || strings.TrimSpace(s[i:end]) == "" {
+	if end == len(s) || (s[end] != ':' && s[end] != '=') || strings.TrimSpace(s[i:end]) == "" {
 		return -1
 	}
 	return end
@@ -615,7 +616,7 @@ func repairGemma4SingleQuotedValues(s string) string {
 			}
 		}
 
-		if s[i] != ':' {
+		if s[i] != ':' && s[i] != '=' {
 			sb.WriteByte(s[i])
 			i++
 			continue

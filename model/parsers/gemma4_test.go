@@ -958,6 +958,11 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			input:    "{ display name \t :1}",
 			expected: `{ "display name":1}`,
 		},
+		{
+			name:     "equals_separator",
+			input:    `{save_as=<|"|>report.docx<|"|>,format:<|"|>docx<|"|>,config={enabled=true}}`,
+			expected: `{"save_as":"report.docx","format":"docx","config":{"enabled":true}}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1066,6 +1071,11 @@ func TestRepairGemma4SingleQuotedValues(t *testing.T) {
 			name:     "converts_middle_single_quoted_value",
 			input:    `{include:<|"|>*.py<|"|>,pattern:'abc',path:<|"|>/tmp<|"|>}`,
 			expected: `{include:<|"|>*.py<|"|>,pattern:<|"|>abc<|"|>,path:<|"|>/tmp<|"|>}`,
+		},
+		{
+			name:     "converts_single_quoted_value_after_equals",
+			input:    `{code:<|"|>x<|"|>,save_as='report.docx'}`,
+			expected: `{code:<|"|>x<|"|>,save_as=<|"|>report.docx<|"|>}`,
 		},
 		{
 			name:     "drops_dangling_gemma_delimiter_after_single_quoted_value",
