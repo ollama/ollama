@@ -453,6 +453,41 @@ func arrayItemsExtraKeysTool() []api.Tool {
 	}}
 }
 
+func schemaKeywordParamsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "create_ticket",
+			Description: "Create a ticket",
+			Parameters: api.ToolFunctionParameters{
+				Type:     "object",
+				Required: []string{"type", "description"},
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"type":        {Type: api.PropertyType{"string"}, Description: "Ticket type", Enum: []any{"bug", "task"}},
+					"description": {Type: api.PropertyType{"string"}, Description: "Ticket body"},
+					"meta": {
+						Type:        api.PropertyType{"object"},
+						Description: "Metadata",
+						Properties: testPropsMap(map[string]api.ToolProperty{
+							"required": {Type: api.PropertyType{"boolean"}, Description: "Blocking"},
+						}),
+					},
+					"links": {
+						Type:        api.PropertyType{"array"},
+						Description: "Links",
+						Items: map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"nullable": map[string]any{"type": "string", "description": "Target"},
+							},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
 func configureTool() []api.Tool {
 	return []api.Tool{{
 		Type: "function",
@@ -1832,6 +1867,13 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 			},
 			tools: unionTopLevelTypeTool(),
 		},
+		{
+			name: "schema_keyword_parameter_names",
+			messages: []api.Message{
+				{Role: "user", Content: "File a bug"},
+			},
+			tools: schemaKeywordParamsTool(),
+		},
 	}
 
 	variants := []struct {
@@ -1946,6 +1988,20 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			assert.Contains(t, jinja2Output, tt.wantJinjaFrag)
 			assert.Contains(t, got, tt.wantRenderFrag)
 		})
+	}
+}
+
+func TestGemma4RendererKeepsSchemaKeywordParameterNames(t *testing.T) {
+	q := `<|"|>`
+	got, err := (&Gemma4Renderer{}).Render([]api.Message{{Role: "user", Content: "File a bug"}}, schemaKeywordParamsTool(), nil)
+	assert.NoError(t, err)
+	for _, want := range []string{
+		"type:{description:" + q + "Ticket type" + q,
+		"description:{description:" + q + "Ticket body" + q,
+		"required:{description:" + q + "Blocking" + q,
+		"nullable:{description:" + q + "Target" + q,
+	} {
+		assert.Contains(t, got, want)
 	}
 }
 
