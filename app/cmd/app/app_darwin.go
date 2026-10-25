@@ -147,8 +147,7 @@ func IsOnboardingActive() C.bool {
 
 func openUI(path string) {
 	if wv.IsRunning() && wv.webview != nil {
-		slog.Debug("ShowUI: webview running, navigating to root")
-		wv.webview.Eval(`history.pushState({}, '', '/');`)
+		slog.Debug("ShowUI: webview running")
 		showWindow(wv.webview.Window())
 		return
 	}

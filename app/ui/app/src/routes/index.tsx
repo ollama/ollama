@@ -40,8 +40,10 @@ function RouteComponent() {
       navigate({ to: "/c/$chatId", params: { chatId }, replace: true });
       return;
     }
-    // Fallback: after 5s, if settings never loaded (e.g. token cookie
-    // not being sent in this build), just go straight to the chat UI.
+  }, [data, isFetching, navigate]);
+
+  useEffect(() => {
+    // Keep the deadline independent of polling and query notifications.
     const t = setTimeout(() => {
       if (!navigatedRef.current) {
         navigatedRef.current = true;
@@ -49,7 +51,7 @@ function RouteComponent() {
       }
     }, 5000);
     return () => clearTimeout(t);
-  }, [data, isFetching, navigate]);
+  }, [navigate]);
 
   // Pre-warm the user query so the chat route can render immediately.
   useEffect(() => {

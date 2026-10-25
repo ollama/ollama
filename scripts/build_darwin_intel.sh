@@ -20,6 +20,8 @@
 
 set -e
 
+export GOCACHE="${GOCACHE:-$(pwd)/build/go-cache}"
+
 VOL_NAME=${VOL_NAME:-"Ollama Intel"}
 export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
 export CGO_CFLAGS="-O3 -mmacosx-version-min=12.0"
@@ -74,7 +76,7 @@ _build_macapp_intel() {
     fi
 
     cd app/ui/app
-    npm install
+    npm ci
     npm run build
     cd ../../..
 
@@ -82,7 +84,6 @@ _build_macapp_intel() {
     cp -a ./app/darwin/Ollama.app dist/Ollama.app
     touch dist/Ollama.app
 
-    go clean -cache
     GOARCH=amd64 CGO_ENABLED=1 GOOS=darwin CGO_CFLAGS="-O3 -mmacosx-version-min=12.0" CGO_LDFLAGS="-mmacosx-version-min=12.0" \
         go build -o dist/darwin-app-amd64 \
         -ldflags="-s -w -X=github.com/ollama/ollama/app/version.Version=${VERSION}" \

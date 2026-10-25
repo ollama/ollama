@@ -48,7 +48,9 @@ export interface IntegrationStatus {
 export type IntegrationStatuses = IntegrationStatus[];
 
 export async function getIntegrationStatuses(): Promise<IntegrationStatuses> {
-  const response = await fetch(`${API_BASE}/api/v1/integrations`);
+  const response = await fetch(`${API_BASE}/api/v1/integrations`, {
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(`Failed to fetch integration statuses: ${response.status}`);
   }
@@ -62,7 +64,7 @@ async function getDesktopModelSettings<T>(
 ): Promise<T> {
   const response = await fetch(
     `${API_BASE}/api/v1/integrations/${integration}/models?catalog=${catalog}`,
-    { signal },
+    { signal, credentials: "include" },
   );
   if (!response.ok) {
     throw new Error(
