@@ -33,7 +33,11 @@ import (
 )
 
 const (
+	// Copied byte-for-byte from google/gemma-4-E2B-it's chat_template.jinja,
+	// which E4B shares. SHA-256: 0a2c8073c878ab1da004bee933a998606537bbb62016310352c7285c3f01c5b5.
 	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
+	// Copied byte-for-byte from google/gemma-4-31B-it's chat_template.jinja,
+	// which 12B and 26B-A4B share. SHA-256: ae53464bf3be25802b3a5b37def7fd89667067d7577049b3b2d74c4d8de4c6d4.
 	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
 	// Copied byte-for-byte from the publisher's chat_template.jinja.
 	// SHA-256: 35b7d0641b6fb4ee41c3bc623e85bdb7d583c40f6ae9f24514ae58a9d57119f3.

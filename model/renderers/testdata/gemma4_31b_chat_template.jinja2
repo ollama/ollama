@@ -228,7 +228,7 @@
     {%- if message['role'] != 'tool' -%}
     {%- set ns.prev_message_type = None -%}
     {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
-    {#- Detect continuation using tracked state - O(1) instead of O(n) backward scan -#}
+    {#- Detect continuation using tracked state — O(1) instead of O(n) backward scan -#}
     {%- set continue_same_model_turn = (role == 'model' and ns.prev_non_tool_role == 'assistant') -%}
     {%- if not continue_same_model_turn -%}
         {{- '<|turn>' + role + '\n' }}
