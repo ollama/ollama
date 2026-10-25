@@ -522,7 +522,7 @@ func TestSDPACausalParity(t *testing.T) {
 			WithKV(k, v, []int32{int32(K)}),
 			WithMask(CausalMask()),
 		)
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "causal", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "causal", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -539,7 +539,7 @@ func TestSDPAZeroMaskParity(t *testing.T) {
 		q, k, v := sdpaInputs(L, K)
 		b := newBatch([]int32{0}, L, nil)
 		got := ScaledDotProductAttention(b, q, 1.0, WithKV(k, v, []int32{int32(K)}))
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -564,7 +564,7 @@ func TestSDPAArrayMaskParity(t *testing.T) {
 			WithKV(k, v, []int32{int32(K)}),
 			WithMask(ArrayMask(mask)),
 		)
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "array", mask)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", mask)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -585,7 +585,7 @@ func TestSDPARelaxMaskMaterializes(t *testing.T) {
 			WithMask(CausalMask().Relax(0, 3, 5, 2, 5)),
 		)
 		ref := CausalMask().Relax(0, 3, 5, 2, 5).AsArray(b, K, k.DType())
-		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, "array", ref)
+		want := mlx.FastScaledDotProductAttention(q, k, v, 1.0, mlx.FastSDPANoWindow, "array", ref)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {
@@ -628,7 +628,7 @@ func TestSDPAMLAHistorySlicesVFromK(t *testing.T) {
 			WithMLAHistory(history, valueDim),
 		)
 		vRef := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
-		want := mlx.FastScaledDotProductAttention(q, k, vRef, 1.0, "", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, vRef, 1.0, mlx.FastSDPANoWindow, "", nil)
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()
 		for i := range ws {

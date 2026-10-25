@@ -104,7 +104,7 @@ func TestRotatingKVCacheDecodeParity(t *testing.T) {
 				nn.WithMask(tc.model))
 
 			want := mlx.FastScaledDotProductAttention(q, kLogical, vLogical, scale,
-				tc.refMode, tc.refMask)
+				mlx.FastSDPANoWindow, tc.refMode, tc.refMask)
 
 			mlx.Eval(got, want)
 			gs, ws := got.Floats(), want.Floats()
@@ -170,7 +170,7 @@ func TestAssistantSharedHistoryL1MasksMatchNoMask(t *testing.T) {
 	for _, tc := range cases {
 		mlxtest.RunSubtest(t, tc.name, func(t *mlxtest.T) {
 			got := nn.ScaledDotProductAttention(b, q, scale, nn.WithKVHistory(tc.h), nn.WithMask(tc.mask))
-			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, "", nil)
+			want := mlx.FastScaledDotProductAttention(q, tc.h.K(), tc.h.V(), scale, mlx.FastSDPANoWindow, "", nil)
 
 			mlx.Eval(got, want)
 			gs, ws := got.Floats(), want.Floats()
@@ -257,7 +257,7 @@ func TestRotatingKVCachePrefillParity(t *testing.T) {
 				}
 			}
 			refMask := mlx.FromValues(refVals, 1, 1, L, L)
-			want := mlx.FastScaledDotProductAttention(q, k, v, scale, "array", refMask)
+			want := mlx.FastScaledDotProductAttention(q, k, v, scale, mlx.FastSDPANoWindow, "array", refMask)
 
 			mlx.Eval(got, want)
 			gs, ws := got.Floats(), want.Floats()
@@ -379,7 +379,7 @@ func TestRotatingKVCacheMLAParity(t *testing.T) {
 			nn.WithMask(nn.CausalMask()))
 
 		vRef := k.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(), mlx.Slice(0, valueDim))
-		want := mlx.FastScaledDotProductAttention(q, k, vRef, scale, "causal", nil)
+		want := mlx.FastScaledDotProductAttention(q, k, vRef, scale, mlx.FastSDPANoWindow, "causal", nil)
 
 		mlx.Eval(got, want)
 		gs, ws := got.Floats(), want.Floats()

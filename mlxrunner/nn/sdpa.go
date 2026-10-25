@@ -94,17 +94,17 @@ func ScaledDotProductAttention(b *batch.Batch, q *mlx.Array, scale float32, opts
 	if cached, ok := b.Memo.Get(inputs); ok {
 		d := cached.(sdpaDispatch)
 		if cfg.sinks == nil {
-			return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
+			return mlx.FastScaledDotProductAttention(q, k, v, scale, mlx.FastSDPANoWindow, d.mode, d.arr)
 		}
-		return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, d.mode, d.arr, cfg.sinks)
+		return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, mlx.FastSDPANoWindow, d.mode, d.arr, cfg.sinks)
 	}
 
 	d := inputs.resolve()
 	b.Memo.Put(inputs, d)
 	if cfg.sinks == nil {
-		return mlx.FastScaledDotProductAttention(q, k, v, scale, d.mode, d.arr)
+		return mlx.FastScaledDotProductAttention(q, k, v, scale, mlx.FastSDPANoWindow, d.mode, d.arr)
 	}
-	return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, d.mode, d.arr, cfg.sinks)
+	return mlx.FastScaledDotProductAttentionWithSinks(q, k, v, scale, mlx.FastSDPANoWindow, d.mode, d.arr, cfg.sinks)
 }
 
 // sdpaDispatch is the resolved kernel call for a given SDPA key —
