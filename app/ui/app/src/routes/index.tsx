@@ -47,7 +47,11 @@ function RouteComponent() {
     const t = setTimeout(() => {
       if (!navigatedRef.current) {
         navigatedRef.current = true;
-        navigate({ to: "/c/$chatId", params: { chatId: "new" }, replace: true });
+        navigate({
+          to: "/c/$chatId",
+          params: { chatId: "new" },
+          replace: true,
+        });
       }
     }, 5000);
     return () => clearTimeout(t);
