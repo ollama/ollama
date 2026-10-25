@@ -323,7 +323,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 			p.buffer.WriteString(remaining)
 			p.state = Gemma4IgnoringPostToolCallNoise
 
-			if toolCall, err := parseGemma4ToolCall(toolCallContent, p.tools); err == nil {
+			if toolCall, err := parseGemma4ClosedToolCall(toolCallContent, p.tools); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
 			} else {
 				slog.Warn("gemma4 tool call parsing failed", "error", err, "content", toolCallContent)
@@ -432,6 +432,129 @@ func parseGemma4ToolCall(content string, tools []api.Tool) (api.ToolCall, error)
 			Arguments: args,
 		},
 	}, nil
+}
+
+// parseGemma4ClosedToolCall parses a tool call the model finished, its closing
+// tag seen. Where that fails, it tries once more with the lists and objects the
+// model left open closed. The model wrote all of the call, so closing them adds
+// no argument it did not write. A call flushed on done, with no closing tag, may
+// have been cut off and is not repaired this way.
+//
+// gemma4:e4b leaves a list of objects with long string values unclosed, as in
+// call:edit{edits:[{newText:<|"|>…<|"|>,oldText:<|"|>…<|"|>,path:<|"|>…<|"|>}
+// (ollama/ollama#19273).
+func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, error) {
+	toolCall, err := parseGemma4ToolCall(content, tools)
+	if err == nil {
+		return toolCall, nil
+	}
+
+	braceIdx := strings.Index(content, "{")
+	if !strings.HasPrefix(content, "call:") || braceIdx == -1 {
+		return toolCall, err
+	}
+
+	closed := content[:braceIdx] + repairGemma4UnclosedBrackets(repairGemma4MissingStringDelimiter(content[braceIdx:]))
+	if closed == content {
+		return toolCall, err
+	}
+
+	if repaired, repairErr := parseGemma4ToolCall(closed, tools); repairErr == nil {
+		return repaired, nil
+	}
+
+	return toolCall, err
+}
+
+// repairGemma4UnclosedBrackets closes the lists and objects left open in Gemma 4
+// arguments. A list still open where `}` closes the object around it, or where
+// `,` is followed by a key, gets its `]` there. Whatever is still open at the
+// end is closed, innermost first. Strings are copied as they are.
+func repairGemma4UnclosedBrackets(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 4)
+	var open []byte
+	top := func() byte {
+		if len(open) == 0 {
+			return 0
+		}
+		return open[len(open)-1]
+	}
+
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				sb.WriteString(s[i:])
+				break
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
+				sb.WriteString(s[i:end])
+				i = end
+				continue
+			}
+		}
+
+		switch s[i] {
+		case '{', '[':
+			open = append(open, s[i])
+		case '}':
+			if top() == '[' {
+				sb.WriteByte(']')
+				open = open[:len(open)-1]
+			}
+			if top() == '{' {
+				open = open[:len(open)-1]
+			}
+		case ']':
+			if top() == '[' {
+				open = open[:len(open)-1]
+			}
+		case ',':
+			if top() == '[' && gemma4KeyFollows(s, i+1) {
+				sb.WriteByte(']')
+				open = open[:len(open)-1]
+			}
+		}
+
+		sb.WriteByte(s[i])
+		i++
+	}
+
+	for j := len(open) - 1; j >= 0; j-- {
+		if open[j] == '{' {
+			sb.WriteByte('}')
+		} else {
+			sb.WriteByte(']')
+		}
+	}
+
+	return sb.String()
+}
+
+// gemma4KeyFollows reports whether an object's key, bare or JSON-quoted, and its
+// colon start at s[i], after any whitespace.
+func gemma4KeyFollows(s string, i int) bool {
+	i = gemma4SkipSpace(s, i)
+	if i < len(s) && s[i] == '"' {
+		end := gemma4JSONQuotedStringEnd(s, i)
+		if end == -1 {
+			return false
+		}
+		end = gemma4SkipSpace(s, end)
+		return end < len(s) && s[end] == ':'
+	}
+
+	keyEnd := gemma4BareKeyEnd(s, i)
+	return keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':'
 }
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
