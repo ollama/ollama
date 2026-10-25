@@ -903,6 +903,58 @@ func TestLlamaServerCompletionWithMediaUsesRunnerMarker(t *testing.T) {
 	}
 }
 
+func TestLlamaServerCompletionSendsMediaInPromptOrder(t *testing.T) {
+	var capturedReq llamaServerCompletionRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			fmt.Fprint(w, `{"status":"ok"}`)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedReq); err != nil {
+			t.Errorf("invalid request body: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"content":"","stop":true,"timings":{"prompt_n":1,"prompt_ms":1,"predicted_n":1,"predicted_ms":1}}`)
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:        portInt,
+		cmd:         fakeRunningCmd(),
+		sem:         semaphore.NewWeighted(1),
+		options:     api.Options{Runner: api.Runner{NumCtx: 2048}},
+		mediaMarker: "<m>",
+	}
+
+	// A renderer may place a later item first, such as an image before the
+	// text and an earlier audio clip after it.
+	opts := api.DefaultOptions()
+	err := runner.Completion(t.Context(), CompletionRequest{
+		Prompt:  "[img-1]transcribe[img-0]",
+		Options: &opts,
+		Media:   []MediaData{NewMediaData(0, []byte("audio")), NewMediaData(1, []byte("image"))},
+	}, func(cr CompletionResponse) {})
+	if err != nil {
+		t.Fatalf("Completion error: %v", err)
+	}
+
+	promptObj := capturedReq.Prompt.(map[string]any)
+	if got, want := promptObj["prompt_string"], "<m>transcribe<m>"; got != want {
+		t.Fatalf("prompt_string = %q, want %q", got, want)
+	}
+	data := promptObj["multimodal_data"].([]any)
+	want := []any{base64.StdEncoding.EncodeToString([]byte("image")), base64.StdEncoding.EncodeToString([]byte("audio"))}
+	if !slices.Equal(data, want) {
+		t.Fatalf("multimodal_data = %v, want %v", data, want)
+	}
+}
+
 func TestLlamaServerCompletionLengthStop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/health" {

@@ -1742,8 +1742,21 @@ func (s *llamaServerRunner) Completion(ctx context.Context, req CompletionReques
 	// llama-server media marker and package the matching payloads as base64.
 	if len(req.Media) > 0 {
 		promptStr := lsReq.Prompt.(string)
+
+		// llama-server pairs payloads with markers by position, so send them
+		// in the order their markers appear in the prompt.
+		order := slices.Clone(req.Media)
+		at := make(map[int]int, len(order))
+		for _, media := range order {
+			at[media.ID] = len(promptStr)
+			if i := strings.Index(promptStr, fmt.Sprintf("[img-%d]", media.ID)); i >= 0 {
+				at[media.ID] = i
+			}
+		}
+		slices.SortStableFunc(order, func(a, b MediaData) int { return at[a.ID] - at[b.ID] })
+
 		var mediaData []string
-		for _, media := range req.Media {
+		for _, media := range order {
 			marker := fmt.Sprintf("[img-%d]", media.ID)
 			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
 			data, err := llamaServerMediaBytes(media.Data)
