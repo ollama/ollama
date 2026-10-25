@@ -407,7 +407,14 @@ func parseGemma4ToolCall(content string, tools []api.Tool, closed bool) (api.Too
 	// Find the opening brace for args
 	braceIdx := strings.Index(content, "{")
 	if braceIdx == -1 {
-		return api.ToolCall{}, errors.New("expected '{' in tool call")
+		// A call without arguments may leave out the braces.
+		name := strings.TrimSpace(content)
+		if name == "" || strings.ContainsFunc(name, func(r rune) bool {
+			return !(r == '_' || r == '.' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r))
+		}) {
+			return api.ToolCall{}, errors.New("expected '{' in tool call")
+		}
+		return api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: api.NewToolCallFunctionArguments()}}, nil
 	}
 
 	toolName := strings.TrimSpace(content[:braceIdx])

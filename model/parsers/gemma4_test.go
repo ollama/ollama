@@ -1664,6 +1664,23 @@ func TestParseGemma4ToolCall_DoesNotRepairNonTerminalUnclosedGemmaString(t *test
 	}
 }
 
+func TestParseGemma4ToolCall_WithoutArguments(t *testing.T) {
+	for _, content := range []string{"call:get_time", "call:get_time{}"} {
+		got, err := parseGemma4ToolCall(content, nil, true)
+		if err != nil {
+			t.Fatalf("parseGemma4ToolCall(%q) returned error: %v", content, err)
+		}
+		want := api.ToolCall{Function: api.ToolCallFunction{Name: "get_time", Arguments: api.NewToolCallFunctionArguments()}}
+		if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+			t.Fatalf("tool call mismatch for %q (-want +got):\n%s", content, diff)
+		}
+	}
+
+	if _, err := parseGemma4ToolCall("call:run_terminal_command:\nBEGIN_ARG:\nls\nEND_ARG\n", nil, true); err == nil {
+		t.Fatal("expected text that is not a tool name to be rejected")
+	}
+}
+
 func TestParseGemma4ToolCall_ManyStringsBeforeArray(t *testing.T) {
 	var fields []string
 	want := map[string]any{}
