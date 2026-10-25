@@ -1131,6 +1131,42 @@ func TestGemma4Parser_IgnoresNoiseAfterToolCallArguments(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_UnparseableToolCallIsContent(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "closing_tag",
+			input: "<|tool_call>call:run_terminal_command:\nBEGIN_ARG:\nls\nEND_ARG\n<tool_call|>",
+			want:  "call:run_terminal_command:\nBEGIN_ARG:\nls\nEND_ARG\n",
+		},
+		{
+			name:  "flushed_on_done",
+			input: `<|tool_call>call:write{content:<|"|>a<|"|><|"|>*,path:<|"|>b.md<|"|>}`,
+			want:  `call:write{content:<|"|>a<|"|><|"|>*,path:<|"|>b.md<|"|>}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{}
+			parser.Init(nil, nil, nil)
+			content, _, calls, err := parser.Add(tt.input, true)
+			if err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("unexpected tool calls %v", calls)
+			}
+			if content != tt.want {
+				t.Fatalf("content = %q, want %q", content, tt.want)
+			}
+		})
+	}
+}
+
 func TestRepairGemma4MissingStringDelimiter(t *testing.T) {
 	tests := []struct {
 		name     string
