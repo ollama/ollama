@@ -149,6 +149,53 @@ func TestOpenCodeRunContentConfigFailure(t *testing.T) {
 	}
 }
 
+func TestOpenCodeRunContentV2ConfigSources(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	previousLoad, previousRead := openCodeLoadedContextLength, openCodeReadConfig
+	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	openCodeReadConfig = func() ([]byte, error) {
+		return []byte(`[{"type":"document","info":{"providers":{"ollama":{"models":{"local":{"limit":{"input":1024,"output":256}}}}}}}]`), nil
+	}
+	t.Cleanup(func() {
+		openCodeLoadedContextLength, openCodeReadConfig = previousLoad, previousRead
+	})
+
+	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Context, Input, Output int }
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	limit := cfg.Provider["ollama"].Models["local"].Limit
+	want := struct{ Context, Input, Output int }{8192, 8192, 2048}
+	if limit != want {
+		t.Fatalf("limit = %+v, want %+v", limit, want)
+	}
+}
+
+func TestOpenCodeRunContentRejectsMalformedConfig(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	previousLoad, previousRead := openCodeLoadedContextLength, openCodeReadConfig
+	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	openCodeReadConfig = func() ([]byte, error) { return []byte(`[{`), nil }
+	t.Cleanup(func() {
+		openCodeLoadedContextLength, openCodeReadConfig = previousLoad, previousRead
+	})
+
+	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local"}})
+	if content != "" || err == nil || !strings.Contains(err.Error(), "could not read OpenCode model limits") {
+		t.Fatalf("malformed configuration allowed launch or lost its cause: %q, %v", content, err)
+	}
+}
+
 func TestOpenCodeRunConfigDiagnostic(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell wrapper")
