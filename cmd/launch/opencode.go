@@ -63,13 +63,6 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	if err != nil {
 		return err
 	}
-	if len(args) == 0 && model != "" {
-		if primary, ok := findLaunchModel(models, model); ok {
-			model = primary.Name
-		}
-		args = []string{"--model", "ollama/" + model}
-	}
-
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
