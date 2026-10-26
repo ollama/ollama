@@ -627,7 +627,11 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
 			}
 		}
-		switch content := msg.Content.(type) {
+		content := msg.Content
+		if parts, ok := content.([]any); ok && len(parts) == 0 && strings.ToLower(msg.Role) != "tool" {
+			content = ""
+		}
+		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
@@ -705,10 +709,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message
-			if len(msg.ToolCalls) > 0 {
-				if len(messages) == start {
-					messages = append(messages, api.Message{Role: msg.Role})
-				}
+			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
 				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 				if err != nil {
 					return nil, err
