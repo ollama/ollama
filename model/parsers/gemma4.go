@@ -459,6 +459,8 @@ func parseGemma4ClosedToolCall(content string, tools []api.Tool) (api.ToolCall, 
 		return toolCall, err
 	}
 
+	// The string delimiter is repaired first. The bracket repair skips strings,
+	// so one left unterminated would hide every bracket after it.
 	closed := content[:braceIdx] + repairGemma4UnclosedBrackets(repairGemma4MissingStringDelimiter(content[braceIdx:]))
 	if closed == content {
 		return toolCall, err

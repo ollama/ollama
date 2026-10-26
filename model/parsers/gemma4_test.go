@@ -1566,7 +1566,8 @@ func TestRepairGemma4UnclosedBrackets(t *testing.T) {
 
 func TestParseGemma4ClosedToolCall_ClosesUnclosedBrackets(t *testing.T) {
 	// The shapes of the 30 edit calls gemma4:e4b left unclosed in ollama/ollama#19273, its editRecord call with a
-	// brace too many, and #17565's missing brace.
+	// brace too many, and #17565's missing brace. The last case also leaves a string unterminated, which has to be
+	// closed before the brackets can be.
 	tests := []struct {
 		name    string
 		content string
@@ -1618,6 +1619,13 @@ func TestParseGemma4ClosedToolCall_ClosesUnclosedBrackets(t *testing.T) {
 			content: `call:read_files{files:[{path:<|"|>assets.json<|"|>,start_line:1}]`,
 			want: map[string]any{"files": []any{
 				map[string]any{"path": "assets.json", "start_line": 1.0},
+			}},
+		},
+		{
+			name:    "string_and_list_unclosed",
+			content: `call:edit{edits:[{newText:<|"|>a: 1<|"|>,oldText:<|"|>a: 0}`,
+			want: map[string]any{"edits": []any{
+				map[string]any{"newText": "a: 1", "oldText": "a: 0"},
 			}},
 		},
 	}
