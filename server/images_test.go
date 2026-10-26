@@ -1348,6 +1348,104 @@ func TestPullModelDuplicateDigestVerifiesBlob(t *testing.T) {
 	}
 }
 
+func TestPullModelPrunesReplacedLayers(t *testing.T) {
+	for _, mediaType := range []string{manifest.MediaTypeImageModel, manifest.MediaTypeImageTensor} {
+		t.Run(mediaType, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+			configData := []byte(`{"architecture":"test"}`)
+			configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(configData))
+			oldLayer := bytes.Repeat([]byte("old layer"), 64)
+			newLayer := bytes.Repeat([]byte("new layer"), 64)
+			oldDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(oldLayer))
+			newDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(newLayer))
+			blobs := map[string][]byte{configDigest: configData, oldDigest: oldLayer, newDigest: newLayer}
+
+			manifestFor := func(digest string, size int) []byte {
+				data, err := json.Marshal(manifest.Manifest{
+					SchemaVersion: 2,
+					MediaType:     manifest.MediaTypeManifest,
+					Runner:        manifest.RunnerLlamaCPP,
+					Config:        manifest.Layer{MediaType: "application/vnd.docker.container.image.v1+json", Digest: configDigest, Size: int64(len(configData))},
+					Layers:        []manifest.Layer{{MediaType: mediaType, Digest: digest, Size: int64(size)}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return data
+			}
+
+			var mu sync.Mutex
+			current := manifestFor(oldDigest, len(oldLayer))
+			var ts *httptest.Server
+			ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case r.URL.Path == "/v2/library/test/manifests/latest":
+					w.Header().Set("Content-Type", manifest.MediaTypeManifest)
+					_, _ = w.Write(current)
+				case strings.HasPrefix(r.URL.Path, "/internal/"):
+					data := blobs[strings.TrimPrefix(r.URL.Path, "/internal/")]
+					http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+				case mediaType == manifest.MediaTypeImageModel && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v2/library/test/blobs/"):
+					// GGUF blobs are fetched through a redirect to the blob store.
+					w.Header().Set("Location", ts.URL+"/internal/"+strings.TrimPrefix(r.URL.Path, "/v2/library/test/blobs/"))
+					w.WriteHeader(http.StatusOK)
+				case strings.HasPrefix(r.URL.Path, "/v2/library/test/blobs/"):
+					data, ok := blobs[strings.TrimPrefix(r.URL.Path, "/v2/library/test/blobs/")]
+					if !ok {
+						http.NotFound(w, r)
+						return
+					}
+					w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+					if r.Method == http.MethodGet {
+						_, _ = w.Write(data)
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer ts.Close()
+
+			name := strings.TrimPrefix(ts.URL, "http://") + "/library/test:latest"
+			pull := func() {
+				t.Helper()
+				if err := PullModel(t.Context(), name, "", &registryOptions{Insecure: true}, func(api.ProgressResponse) {}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			pull()
+			oldPath, err := manifest.BlobsPath(oldDigest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(oldPath); err != nil {
+				t.Fatalf("first pull did not store the layer: %v", err)
+			}
+
+			mu.Lock()
+			current = manifestFor(newDigest, len(newLayer))
+			mu.Unlock()
+			pull()
+
+			if _, err := os.Stat(oldPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("replaced layer %s was not removed: %v", oldDigest, err)
+			}
+			for _, digest := range []string{newDigest, configDigest} {
+				path, err := manifest.BlobsPath(digest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(path); err != nil {
+					t.Fatalf("blob %s still in use was removed: %v", digest, err)
+				}
+			}
+		})
+	}
+}
+
 // TestPullManifestRejectsCrossHostRedirect: a registry can't redirect a
 // pull at an internal address; cross-host redirects to public addresses
 // (hf.co's CDN) are fine. --insecure opts out.

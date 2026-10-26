@@ -1238,6 +1238,7 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 			return err
 		}
 		writePullDowngradeAnchor(n, mf, manifestData, selectedChildDigest)
+		pruneReplacedLayers(deleteMap, layers, fn)
 		fn(api.ProgressResponse{Status: "success"})
 		return nil
 	}
@@ -1286,11 +1287,6 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 		}
 	}
 
-	for _, layer := range layers {
-		delete(deleteMap, layer.Digest)
-	}
-	delete(deleteMap, mf.Config.Digest)
-
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
 	if err := manifest.WriteManifestData(n, manifestData); err != nil {
@@ -1302,16 +1298,26 @@ func PullModel(ctx context.Context, name string, runner string, regOpts *registr
 
 	slog.Debug("manifest written", "name", n.DisplayShortest(), "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 
+	pruneReplacedLayers(deleteMap, layers, fn)
+
+	fn(api.ProgressResponse{Status: "success"})
+
+	return nil
+}
+
+// pruneReplacedLayers removes blobs the previous manifest referenced that are
+// no longer used by the pulled layers or any other model.
+func pruneReplacedLayers(deleteMap map[string]struct{}, layers []manifest.Layer, fn func(api.ProgressResponse)) {
+	for _, layer := range layers {
+		delete(deleteMap, layer.Digest)
+	}
+
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
 		if _, err := manifest.RemoveUnreferencedBlobs(candidateBlobDigests(deleteMap)...); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
-
-	fn(api.ProgressResponse{Status: "success"})
-
-	return nil
 }
 
 // requiresMLX reports whether serving mf needs the MLX runtime. A declared
