@@ -705,7 +705,10 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			// since we might have added multiple messages above, if we have tools
 			// calls we'll add them to the last message
-			if len(messages) > 0 && len(msg.ToolCalls) > 0 {
+			if len(msg.ToolCalls) > 0 {
+				if len(messages) == start {
+					messages = append(messages, api.Message{Role: msg.Role})
+				}
 				toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 				if err != nil {
 					return nil, err
