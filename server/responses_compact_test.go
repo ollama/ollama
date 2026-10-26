@@ -1076,4 +1076,41 @@ func TestResponsesCompactionBodyTooLargeRecovery(t *testing.T) {
 			t.Fatalf("made %d attempts", len(requests))
 		}
 	})
+	t.Run("large arguments are trimmed before images", func(t *testing.T) {
+		var input []any
+		for range 8 {
+			input = append(input, map[string]any{"role": "user", "content": []any{
+				map[string]any{"type": "input_image", "image_url": imageURL},
+			}})
+		}
+		arguments, err := json.Marshal(map[string]string{"script": strings.Repeat("x", 1_000_000)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		input = append(input,
+			map[string]any{"type": "function_call", "call_id": "old", "name": "shell", "arguments": string(arguments)},
+			map[string]any{"type": "function_call_output", "call_id": "old", "output": "ok"},
+			map[string]any{"role": "assistant", "content": "done"},
+		)
+		body, err := json.Marshal(map[string]any{"model": "fixture:cloud", "input": input})
+		if err != nil {
+			t.Fatal(err)
+		}
+		local, capture := newCompactionTestServer(t, func(_ int, w http.ResponseWriter, _ *http.Request, body []byte) {
+			if len(body) > 500_000 {
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = io.WriteString(w, proxy413)
+				return
+			}
+			_, _ = w.Write(summaryResponse(t, "Continue.", nil))
+		})
+		status, _, _ := postCompactionRequest(t, local, "/v1/responses/compact", string(body))
+		_, requests := capture.snapshot()
+		if status != http.StatusOK || len(requests) != 2 {
+			t.Fatalf("status=%d attempts=%d, want 200 after one retry", status, len(requests))
+		}
+		if bytes.Count(requests[1], []byte(imageURL)) != 8 || !bytes.Contains(requests[1], []byte("2 older transcript items were omitted")) {
+			t.Fatal("retry lost images or failed to trim the completed tool pair")
+		}
+	})
 }

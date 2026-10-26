@@ -2,8 +2,11 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	stdimage "image"
+	"image/png"
 	"slices"
 	"strings"
 	"testing"
@@ -578,17 +581,33 @@ func TestCompactionReplaysRetainedToolOutputImagesWithTheirCall(t *testing.T) {
 }
 
 func TestCompactionForcesActiveToolOutputImage(t *testing.T) {
+	img := stdimage.NewNRGBA(stdimage.Rect(0, 0, 32, 32))
+	seed := uint32(19266)
+	for i := range img.Pix {
+		seed = 1664525*seed + 1013904223
+		img.Pix[i] = byte(seed >> 24)
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	imageURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(encoded.Bytes())
 	body := []byte(`{
 		"model":"test","stream":true,
 		"input":[
 			{"type":"function_call","call_id":"call_1","name":"screenshot","arguments":"{}"},
-			{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_image","detail":"auto","image_url":"` + compactionTestPNG + `"}]},
+			{"type":"function_call","call_id":"call_2","name":"screenshot","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_image","detail":"auto","image_url":"` + imageURL + `"}]},
+			{"type":"function_call_output","call_id":"call_2","output":[{"type":"input_image","detail":"auto","image_url":"` + imageURL + `"}]},
 			{"type":"compaction_trigger"}
 		]
 	}`)
 	plan, requested, err := PrepareTriggeredCompaction(body)
 	if err != nil || !requested {
 		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+	if removed := plan.DropImagesForBodyLimit(); removed != 0 {
+		t.Errorf("removed %d protected images", removed)
 	}
 	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
 		"summary": "The screenshot tool just completed.", "retain_item_ids": []string{},
@@ -597,8 +616,27 @@ func TestCompactionForcesActiveToolOutputImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := decodeResultPayload(t, result)
-	if len(payload.Retained) != 2 || len(payload.Retained[1].Images) != 1 {
+	if len(payload.Retained) != 4 {
 		t.Fatalf("active tool state and its image must be forced: %+v", payload.Retained)
+	}
+	for i, callID := range []string{"call_1", "call_2"} {
+		message := payload.Retained[i+2]
+		if message.ToolCallID != callID || len(message.Images) != 1 || !bytes.Equal(message.Images[0], encoded.Bytes()) {
+			t.Errorf("active result %s lost its image", callID)
+		}
+	}
+	continuation, err := json.Marshal(map[string]any{"model": "test", "input": []any{
+		result.Item, map[string]any{"role": "user", "content": "Continue from both screenshots."},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, changed, err := ExpandResponsesCompactionInput(continuation)
+	if err != nil || !changed {
+		t.Fatalf("continuation: changed=%v err=%v", changed, err)
+	}
+	if bytes.Count(expanded, []byte(imageURL)) != 2 || !bytes.Contains(expanded, []byte("Continue from both screenshots.")) {
+		t.Fatal("continuation lost protected screenshots or the next user message")
 	}
 }
 
@@ -1015,5 +1053,22 @@ func TestSummaryRequestImageOmissionNotice(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "3 older image(s) were omitted") {
 		t.Fatalf("missing notice: %s", body)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "Continue.", "retain_item_ids": []string{},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := decodeResultPayload(t, result)
+	if !strings.Contains(payload.Summary, "3 older image(s) were omitted") {
+		t.Fatal("continuation does not disclose omitted images")
+	}
+	items, err := payloadToResponsesItems(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || !bytes.Contains(items[1], []byte("3 older image(s) were omitted")) {
+		t.Fatal("replayed continuation lost the image omission warning")
 	}
 }

@@ -826,15 +826,23 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 // DropImagesForBodyLimit removes images from the oldest items until at least
 // half of the image payload bytes are gone, for upstreams that reject large
 // request bodies (HTTP 413) independent of the context window. Images in the
-// latest item are always preserved. It returns the number of images removed,
-// or zero when no progress is possible.
+// latest item and active tool state are always preserved. It returns the number
+// of images removed, or zero when no progress is possible.
 func (p *ResponsesCompactionPlan) DropImagesForBodyLimit() int {
 	if len(p.items) < 2 {
 		return 0
 	}
 	var total, text int
 	for _, item := range p.items {
-		text += len(item.Message.Content) + len(item.Message.Thinking)
+		message := item.Message
+		message.Images = nil
+		metadata, err := json.Marshal(compactionTranscriptItemWire{
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(item.Message.Images),
+		})
+		if err != nil {
+			return 0
+		}
+		text += len(metadata)
 		for _, image := range item.Message.Images {
 			total += len(image)
 		}
@@ -849,6 +857,9 @@ func (p *ResponsesCompactionPlan) DropImagesForBodyLimit() int {
 	for i := range p.items[:len(p.items)-1] {
 		if removedBytes >= (total+1)/2 {
 			break
+		}
+		if _, protected := p.forcedRefs[p.items[i].Ref]; protected {
+			continue
 		}
 		for _, image := range p.items[i].Message.Images {
 			removedBytes += len(image)
@@ -1019,6 +1030,9 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	}
 	if p.omittedItems > 0 {
 		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
+	}
+	if p.omittedImages > 0 {
+		payload.Summary = fmt.Sprintf(compactionImageOmissionNotice, p.omittedImages) + "\n\n" + payload.Summary
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
