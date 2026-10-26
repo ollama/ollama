@@ -207,7 +207,11 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 		}
 	}
 	if err := json.Unmarshal(data, &saved); err != nil {
-		return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
+		// OpenCode v2 returns its configuration sources as an array.
+		var sources []json.RawMessage
+		if arrayErr := json.Unmarshal(data, &sources); arrayErr != nil {
+			return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
+		}
 	}
 	// OpenCode prioritizes input over context for compaction. Override stale
 	// input limits too, while keeping a user's smaller limit.
