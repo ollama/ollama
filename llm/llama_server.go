@@ -2838,25 +2838,144 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
-// Uses model file size as a proxy for weights plus a rough KV cache estimate.
-// This is intentionally conservative — it overestimates to avoid VRAM contention.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
-	weights := modelFileSize(modelPath, f)
+// llamaServerMaxUbatch is the largest physical batch (-ub) Ollama passes to
+// llama-server. A sliding-window cache holds the window plus one batch, so
+// sizing it with the largest batch keeps the estimate from falling short.
+const llamaServerMaxUbatch = 2048
 
-	// KV cache: 2 (K+V) * layers * kv_heads * head_dim * context * 2 bytes (f16)
-	layers := f.KV().BlockCount()
-	kvHeads := f.KV().HeadCountKVMin()
-	if kvHeads == 0 {
-		kvHeads = 1
-	}
-	headDim := uint64(0)
-	if f.KV().HeadCountMax() > 0 {
-		headDim = f.KV().EmbeddingLength() / f.KV().HeadCountMax()
-	}
-	kvCache := 2 * layers * kvHeads * headDim * uint64(numCtx) * 2
+// PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
+// Weights use the model file size, which also covers a projector stored in the
+// same file. The KV cache follows llama.cpp's per-layer allocation. The compute
+// graph is not counted; the scheduler's headroom absorbs it.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel int) uint64 {
+	weights := modelFileSize(modelPath, f)
+	kvCache := predictKVCache(f.KV(), numCtx, numParallel, envconfig.KvCacheType())
 
 	return weights + kvCache
+}
+
+// predictKVCache mirrors llama.cpp's KV cache allocation. Each layer stores
+// key_length and value_length values per KV head for every cell. Layers with
+// no KV heads (recurrent layers in hybrid models) store nothing, layers marked
+// in sliding_window_pattern store only the window, and non-causal models
+// (embedding encoders) keep no cache at all.
+func predictKVCache(kv *gguf.Metadata, numCtx, numParallel int, cacheType string) uint64 {
+	if !kv.Bool("attention.causal", true) {
+		return 0
+	}
+
+	layers := int(kv.BlockCount())
+	headCount := layerValues(kv, "attention.head_count", layers, nil)
+	if len(headCount) == 0 || headCount[0] == 0 {
+		return 0
+	}
+	headCountKV := layerValues(kv, "attention.head_count_kv", layers, headCount)
+
+	headK := kv.Uint("attention.key_length", kv.EmbeddingLength()/headCount[0])
+	headV := kv.Uint("attention.value_length", kv.EmbeddingLength()/headCount[0])
+	headKSWA := kv.Uint("attention.key_length_swa", headK)
+	headVSWA := kv.Uint("attention.value_length_swa", headV)
+
+	// Only the per-layer array form is read. A scalar pattern's meaning depends
+	// on the architecture, so those models are sized as if every layer were full.
+	swa := kv.KeyValue("attention.sliding_window_pattern").Bools()
+	window := kv.Uint("attention.sliding_window")
+	if len(swa) != layers || window == 0 {
+		swa = nil
+	}
+
+	cells := uint64(max(numCtx, 0))
+	swaCells := min(cells, uint64(max(numParallel, 1))*(window+llamaServerMaxUbatch))
+	swaCells = (swaCells + 255) / 256 * 256
+
+	widthK := make([]uint64, layers)
+	widthV := make([]uint64, layers)
+	var widestV uint64
+	for il := range layers {
+		k, v := headK, headV
+		if swa != nil && swa[il] {
+			k, v = headKSWA, headVSWA
+		}
+		widthK[il] = headCountKV[il] * k
+		widthV[il] = headCountKV[il] * v
+		widestV = max(widestV, widthV[il])
+	}
+
+	// A quantized V cache requires flash attention, which stores V as is.
+	// Without flash attention llama.cpp transposes V and pads every layer to
+	// the widest one, so unquantized caches are sized that way.
+	bytesPer32 := kvCacheBytesPer32(cacheType)
+	quantized := bytesPer32 < kvCacheBytesPer32("f16")
+
+	var values uint64
+	for il := range layers {
+		if widthK[il] == 0 {
+			continue
+		}
+
+		v := widthV[il]
+		if !quantized {
+			v = widestV
+		}
+
+		layerCells := cells
+		if swa != nil && swa[il] {
+			layerCells = swaCells
+		}
+
+		values += (widthK[il] + v) * layerCells
+	}
+
+	return values * bytesPer32 / 32
+}
+
+// layerValues returns one value per layer for key. GGUF stores these either as
+// a single number shared by every layer or as an array with one entry per
+// layer. An array of the wrong length is read as its largest entry everywhere,
+// which can only overestimate.
+func layerValues(kv *gguf.Metadata, key string, layers int, fallback []uint64) []uint64 {
+	value := kv.KeyValue(key)
+	values := value.Uints()
+	if len(values) == 0 {
+		for _, n := range value.Ints() {
+			if n < 0 {
+				return fallback
+			}
+			values = append(values, uint64(n))
+		}
+	}
+
+	if len(values) == layers {
+		return values
+	}
+	if len(values) > 0 {
+		return slices.Repeat([]uint64{slices.Max(values)}, layers)
+	}
+	if n, ok := kv.UintOK(key); ok {
+		return slices.Repeat([]uint64{n}, layers)
+	}
+	return fallback
+}
+
+// kvCacheBytesPer32 returns the bytes llama.cpp uses to store 32 cache values
+// of the given type. Unknown and unset types count as f16, llama.cpp's default.
+func kvCacheBytesPer32(cacheType string) uint64 {
+	switch strings.ToLower(cacheType) {
+	case "f32":
+		return 128
+	case "q8_0":
+		return 34
+	case "q5_1":
+		return 24
+	case "q5_0":
+		return 22
+	case "q4_1":
+		return 20
+	case "q4_0", "iq4_nl":
+		return 18
+	default:
+		return 64
+	}
 }
 
 // memoryParsingWriter wraps an io.Writer and parses llama-server log output

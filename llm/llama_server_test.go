@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -4033,5 +4034,182 @@ func TestLlamaServerCompletionThinkingFormat(t *testing.T) {
 	}
 	if got := conversions.Load(); got != 1 {
 		t.Errorf("json format converted a schema, %d conversions", got)
+	}
+}
+
+func TestPredictKVCache(t *testing.T) {
+	dense := gguftest.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(2),
+		"llama.embedding_length":        uint32(64),
+		"llama.attention.head_count":    uint32(4),
+		"llama.attention.head_count_kv": uint32(2),
+	}
+
+	// Two layers, one sliding (window 256) and one full. Sliding layers
+	// use narrower heads, as gemma4 does.
+	sliding := gguftest.KV{
+		"general.architecture":                    "gemma4",
+		"gemma4.block_count":                      uint32(2),
+		"gemma4.embedding_length":                 uint32(64),
+		"gemma4.attention.head_count":             uint32(4),
+		"gemma4.attention.head_count_kv":          []uint32{4, 2},
+		"gemma4.attention.key_length":             uint32(16),
+		"gemma4.attention.value_length":           uint32(16),
+		"gemma4.attention.key_length_swa":         uint32(8),
+		"gemma4.attention.value_length_swa":       uint32(8),
+		"gemma4.attention.sliding_window":         uint32(256),
+		"gemma4.attention.sliding_window_pattern": []bool{true, false},
+	}
+
+	with := func(base gguftest.KV, changes gguftest.KV) gguftest.KV {
+		kv := maps.Clone(base)
+		for k, v := range changes {
+			if v == nil {
+				delete(kv, k)
+				continue
+			}
+			kv[k] = v
+		}
+		return kv
+	}
+
+	cases := []struct {
+		name        string
+		kv          gguftest.KV
+		numCtx      int
+		numParallel int
+		cacheType   string
+		want        uint64
+	}{
+		{
+			// 2 layers * (2 heads * 16 K + 2 heads * 16 V) * 100 cells * 2 bytes
+			name: "dense f16", kv: dense, numCtx: 100, numParallel: 1,
+			want: 25600,
+		},
+		{
+			name: "dense q8_0", kv: dense, numCtx: 100, numParallel: 1, cacheType: "q8_0",
+			want: 25600 * 34 / 64,
+		},
+		{
+			name:   "head_count_kv defaults to head_count",
+			kv:     with(dense, gguftest.KV{"llama.attention.head_count_kv": nil}),
+			numCtx: 100, numParallel: 1,
+			want: 2 * (4*16 + 4*16) * 100 * 2,
+		},
+		{
+			name: "key and value length override embedding over heads",
+			kv: with(dense, gguftest.KV{
+				"llama.attention.key_length":   uint32(32),
+				"llama.attention.value_length": uint32(8),
+			}),
+			numCtx: 100, numParallel: 1, cacheType: "q8_0",
+			want: 2 * (2*32 + 2*8) * 100 * 34 / 32,
+		},
+		{
+			name:   "layers without kv heads hold nothing",
+			kv:     with(dense, gguftest.KV{"llama.attention.head_count_kv": []uint32{0, 2}}),
+			numCtx: 100, numParallel: 1, cacheType: "q8_0",
+			want: (2*16 + 2*16) * 100 * 34 / 32,
+		},
+		{
+			// f16 may run without flash attention, which pads V to the widest layer.
+			name:   "unquantized v pads to the widest layer",
+			kv:     with(dense, gguftest.KV{"llama.attention.head_count_kv": []uint32{1, 4}}),
+			numCtx: 100, numParallel: 1,
+			want: ((1*16 + 4*16) + (4*16 + 4*16)) * 100 * 2,
+		},
+		{
+			name:   "quantized v keeps each layer's width",
+			kv:     with(dense, gguftest.KV{"llama.attention.head_count_kv": []uint32{1, 4}}),
+			numCtx: 100, numParallel: 1, cacheType: "q8_0",
+			want: ((1*16 + 1*16) + (4*16 + 4*16)) * 100 * 34 / 32,
+		},
+		{
+			// Sliding layer: window 256 + batch 2048 = 2304 cells.
+			name: "sliding layers hold the window", kv: sliding,
+			numCtx: 32768, numParallel: 1, cacheType: "q8_0",
+			want: (4*8+4*8)*2304*34/32 + (2*16+2*16)*32768*34/32,
+		},
+		{
+			name: "parallel sequences widen the window", kv: sliding,
+			numCtx: 32768, numParallel: 2, cacheType: "q8_0",
+			want: (4*8+4*8)*4608*34/32 + (2*16+2*16)*32768*34/32,
+		},
+		{
+			name: "window never exceeds the context", kv: sliding,
+			numCtx: 1024, numParallel: 1, cacheType: "q8_0",
+			want: (4*8+4*8)*1024*34/32 + (2*16+2*16)*1024*34/32,
+		},
+		{
+			name: "scalar pattern sizes every layer as full",
+			kv: with(sliding, gguftest.KV{
+				"gemma4.attention.sliding_window_pattern": uint32(2),
+			}),
+			numCtx: 32768, numParallel: 1, cacheType: "q8_0",
+			want: (4*16+4*16)*32768*34/32 + (2*16+2*16)*32768*34/32,
+		},
+		{
+			name: "non-causal models keep no cache",
+			kv: gguftest.KV{
+				"general.architecture":      "bert",
+				"bert.block_count":          uint32(24),
+				"bert.embedding_length":     uint32(1024),
+				"bert.attention.head_count": uint32(16),
+				"bert.attention.causal":     false,
+			},
+			numCtx: 8192, numParallel: 1,
+			want: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := loadTestGGUF(t, tc.kv).KV()
+			got := predictKVCache(kv, tc.numCtx, tc.numParallel, tc.cacheType)
+			if got != tc.want {
+				t.Errorf("predictKVCache() = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPredictKVCacheGemma4 checks the estimate against what llama-server
+// allocated for gemma4:31b at 262144 context with a q8_0 cache and -ub 2048,
+// the largest batch the estimate assumes: 10880 MiB for the 10 full layers
+// plus 1275 MiB for the 50 sliding layers (3072 cells). The estimate may not
+// fall below that, and should stay close to it.
+func TestPredictKVCacheGemma4(t *testing.T) {
+	headCountKV := make([]uint32, 60)
+	pattern := make([]bool, 60)
+	for il := range 60 {
+		pattern[il] = il%6 != 5
+		headCountKV[il] = 16
+		if !pattern[il] {
+			headCountKV[il] = 4
+		}
+	}
+
+	kv := loadTestGGUF(t, gguftest.KV{
+		"general.architecture":                    "gemma4",
+		"gemma4.block_count":                      uint32(60),
+		"gemma4.embedding_length":                 uint32(5376),
+		"gemma4.attention.head_count":             uint32(32),
+		"gemma4.attention.head_count_kv":          headCountKV,
+		"gemma4.attention.key_length":             uint32(512),
+		"gemma4.attention.value_length":           uint32(512),
+		"gemma4.attention.key_length_swa":         uint32(256),
+		"gemma4.attention.value_length_swa":       uint32(256),
+		"gemma4.attention.sliding_window":         uint32(1024),
+		"gemma4.attention.sliding_window_pattern": pattern,
+	}).KV()
+
+	const measured = (10880 + 1275) << 20
+	got := predictKVCache(kv, 262144, 1, "q8_0")
+	if got < measured {
+		t.Errorf("predicted %d MiB, below the %d MiB llama-server allocated", got>>20, measured>>20)
+	}
+	if got > measured*11/10 {
+		t.Errorf("predicted %d MiB, more than 10%% above the %d MiB llama-server allocated", got>>20, measured>>20)
 	}
 }
