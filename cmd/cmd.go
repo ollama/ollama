@@ -1940,7 +1940,9 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
 				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
+					// the word is too long to move to the next line, and has
+					// already been printed, so only print the new character
+					fmt.Print(string(ch))
 					state.wordBuffer = ""
 					state.lineLength = 0
 					continue

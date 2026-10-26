@@ -3212,3 +3212,21 @@ func TestFormerAgentEntryPointsAreRejected(t *testing.T) {
 		})
 	}
 }
+
+func TestDisplayResponseWordWrapLongWord(t *testing.T) {
+	// stdout is a pipe here, so the terminal width falls back to 80
+	word := "https://example.com/" + strings.Repeat("a", 80)
+	out := captureStdout(t, func() {
+		var state displayResponseState
+		for _, ch := range "see " + word {
+			displayResponse(string(ch), true, &state)
+		}
+	})
+
+	if n := strings.Count(out, "https://example.com/"); n != 1 {
+		t.Fatalf("long word printed %d times: %q", n, out)
+	}
+	if !strings.Contains(out, word) {
+		t.Fatalf("long word not printed intact: %q", out)
+	}
+}
