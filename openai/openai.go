@@ -628,7 +628,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 		}
 		content := msg.Content
-		if parts, ok := content.([]any); ok && len(parts) == 0 && strings.ToLower(msg.Role) != "tool" {
+		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
 			content = ""
 		}
 		switch content := content.(type) {
