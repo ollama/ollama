@@ -63,6 +63,18 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	if err != nil {
 		return err
 	}
+	if len(args) == 0 && model != "" {
+		if openCodeV2(opencodePath) {
+			// The shared v2 service does not inherit this launch's inline config.
+			args = []string{"--standalone"}
+		} else {
+			// V1 needs an explicit selection to override an agent's configured model.
+			if primary, ok := findLaunchModel(models, model); ok {
+				model = primary.Name
+			}
+			args = []string{"--model", "ollama/" + model}
+		}
+	}
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -72,6 +84,20 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
+}
+
+// Use v2's flag only when detected; retain the v1 launch if the probe fails.
+func openCodeV2(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	cmd.WaitDelay = time.Second
+	data, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(data))
+	return len(fields) > 0 && strings.HasPrefix(strings.TrimPrefix(fields[len(fields)-1], "v"), "2.")
 }
 
 var (
@@ -192,14 +218,8 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 	if err != nil {
 		return "", fmt.Errorf("could not read OpenCode configuration: %w", err)
 	}
-	var saved struct {
-		Provider map[string]struct {
-			Models map[string]struct {
-				Limit struct{ Input, Output int }
-			}
-		}
-	}
-	if err := json.Unmarshal(data, &saved); err != nil {
+	saved, err := openCodeConfiguredLimits(data)
+	if err != nil {
 		return "", fmt.Errorf("could not read OpenCode model limits: %w", err)
 	}
 	// OpenCode prioritizes input over context for compaction. Override stale
@@ -212,15 +232,15 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 	if primary.MaxOutputTokens > 0 {
 		output = min(output, primary.MaxOutputTokens)
 	}
-	for name, configured := range saved.Provider["ollama"].Models {
+	for name, configured := range saved {
 		if !launchModelMatches(name, model) && !launchModelMatches(model, name) {
 			continue
 		}
-		if configured.Limit.Input > 0 {
-			input = min(input, configured.Limit.Input)
+		if configured.Input != nil && *configured.Input > 0 {
+			input = min(input, *configured.Input)
 		}
-		if configured.Limit.Output > 0 {
-			output = min(output, configured.Limit.Output)
+		if configured.Output != nil && *configured.Output > 0 {
+			output = min(output, *configured.Output)
 		}
 	}
 	limit, _ := entry["limit"].(map[string]any)
@@ -236,6 +256,51 @@ func (o *OpenCode) runContent(model string, models []LaunchModel, args ...string
 	entry["limit"] = limit
 	data, err = json.Marshal(config)
 	return string(data), err
+}
+
+type openCodeModelLimits struct{ Input, Output *int }
+
+// V1 debug config returns a resolved object; V2 returns normalized source
+// entries from lowest to highest priority. Read only Ollama model limits.
+func openCodeConfiguredLimits(data []byte) (map[string]openCodeModelLimits, error) {
+	type providers map[string]struct {
+		Models map[string]struct{ Limit openCodeModelLimits }
+	}
+	var sources []providers
+	if strings.HasPrefix(strings.TrimSpace(string(data)), "[") {
+		var entries []struct {
+			Type string
+			Info struct{ Providers providers }
+		}
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if entry.Type == "document" {
+				sources = append(sources, entry.Info.Providers)
+			}
+		}
+	} else {
+		var config struct{ Provider providers }
+		if err := json.Unmarshal(data, &config); err != nil {
+			return nil, err
+		}
+		sources = append(sources, config.Provider)
+	}
+	limits := make(map[string]openCodeModelLimits)
+	for _, source := range sources {
+		for name, model := range source["ollama"].Models {
+			limit := limits[name]
+			if model.Limit.Input != nil {
+				limit.Input = model.Limit.Input
+			}
+			if model.Limit.Output != nil {
+				limit.Output = model.Limit.Output
+			}
+			limits[name] = limit
+		}
+	}
+	return limits, nil
 }
 
 // openCodeRuntimeModels carries recommended output ceilings to Run after Edit
