@@ -3338,3 +3338,114 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }
+
+func TestToResponse_KeepsTextWithToolCalls(t *testing.T) {
+	resp := ToResponse("test-model", "resp_test", "msg_test", api.ChatResponse{
+		Message: api.Message{
+			Role:      "assistant",
+			Thinking:  "need the weather",
+			Content:   "Let me check the weather.",
+			ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}},
+		},
+		Done: true,
+	}, ResponsesRequest{})
+
+	var types []string
+	for _, item := range resp.Output {
+		types = append(types, item.Type)
+	}
+	if want := []string{"reasoning", "message", "function_call"}; !reflect.DeepEqual(types, want) {
+		t.Fatalf("output types = %v, want %v", types, want)
+	}
+	if got := resp.Output[1].Content[0].Text; got != "Let me check the weather." {
+		t.Fatalf("message text = %q", got)
+	}
+}
+
+// assertStreamedItems checks that every output item is announced at a unique
+// output_index and that the terminal output matches the streamed items.
+func assertStreamedItems(t *testing.T, events []ResponsesStreamEvent, wantTypes []string) []any {
+	t.Helper()
+	added := map[int]string{}
+	done := map[int]any{}
+	var finalOutput []any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			index := data["output_index"].(int)
+			itemType := data["item"].(map[string]any)["type"].(string)
+			if prev, exists := added[index]; exists {
+				t.Fatalf("output index %d announced twice: %s and %s", index, prev, itemType)
+			}
+			added[index] = itemType
+		case "response.output_item.done":
+			done[data["output_index"].(int)] = data["item"].(map[string]any)["id"]
+		case "response.completed":
+			finalOutput = data["response"].(map[string]any)["output"].([]any)
+		}
+	}
+
+	var types []string
+	for i, raw := range finalOutput {
+		item := raw.(map[string]any)
+		types = append(types, item["type"].(string))
+		if added[i] != item["type"] {
+			t.Fatalf("output[%d] type = %v, announced as %q", i, item["type"], added[i])
+		}
+		if done[i] != item["id"] {
+			t.Fatalf("output[%d] ID = %v, streamed done ID = %v", i, item["id"], done[i])
+		}
+	}
+	if !reflect.DeepEqual(types, wantTypes) {
+		t.Fatalf("output types = %v, want %v", types, wantTypes)
+	}
+	return finalOutput
+}
+
+func messageText(t *testing.T, item any) string {
+	t.Helper()
+	return item.(map[string]any)["content"].([]map[string]any)[0]["text"].(string)
+}
+
+func TestResponsesStreamConverter_TextAndToolCallInSameChunk(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{
+			Content:   "Let me check the weather.",
+			ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}},
+		},
+		Done: true,
+	})
+
+	output := assertStreamedItems(t, events, []string{"message", "function_call"})
+	if got := messageText(t, output[0]); got != "Let me check the weather." {
+		t.Fatalf("message text = %q", got)
+	}
+}
+
+func TestResponsesStreamConverter_TextAfterToolCall(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}},
+	})
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: "Calling the tool now."}, Done: true})...)
+
+	output := assertStreamedItems(t, events, []string{"function_call", "message"})
+	if got := messageText(t, output[1]); got != "Calling the tool now." {
+		t.Fatalf("message text = %q", got)
+	}
+}
+
+func TestResponsesStreamConverter_TextThenReasoning(t *testing.T) {
+	// gpt-oss can emit a commentary preamble, then analysis, then a tool call.
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "I'll check the weather."}})
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Thinking: "need weather for SF"}})...)
+	events = append(events, converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}},
+		Done:    true,
+	})...)
+
+	assertStreamedItems(t, events, []string{"message", "reasoning", "function_call"})
+}
