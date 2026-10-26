@@ -21,12 +21,12 @@ jobs:
     env:
       FETCH_TOKENIZERS: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Cache tokenizer data
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .cache/tokenizers
           key: tokenizers-${{ hashFiles('mlxrunner/tokenizer/tokenizer_reference_test.go') }}
