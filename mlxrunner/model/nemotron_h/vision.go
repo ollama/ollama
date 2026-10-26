@@ -567,7 +567,7 @@ func radioAttentionForward(layer *RadioVisionLayer, x *mlx.Array, B, S int32, cf
 	k = mlx.Transpose(mlx.Reshape(k, B, S, cfg.NumAttentionHeads, cfg.HeadDim), 0, 2, 1, 3)
 	v = mlx.Transpose(mlx.Reshape(v, B, S, cfg.NumAttentionHeads, cfg.HeadDim), 0, 2, 1, 3)
 
-	out := mlx.FastScaledDotProductAttention(q, k, v, float32(1/math.Sqrt(float64(cfg.HeadDim))), "", nil)
+	out := mlx.FastScaledDotProductAttention(q, k, v, float32(1/math.Sqrt(float64(cfg.HeadDim))), mlx.FastSDPANoWindow, "", nil)
 	out = mlx.Transpose(out, 0, 2, 1, 3)
 	out = mlx.Reshape(out, B, S, cfg.HiddenSize)
 	return layer.Proj.Forward(out)
