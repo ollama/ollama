@@ -146,6 +146,115 @@ func TestResponsesCompactionOverflowWithoutRemovableHistory(t *testing.T) {
 	}
 }
 
+func TestResponsesCompactionBodyRecovery(t *testing.T) {
+	const imageURL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	const tooLarge = "Request Entity Too Large"
+	image := `{"type":"input_image","image_url":"` + imageURL + `"}`
+	active := `{"type":"function_call","call_id":"a","name":"screenshot","arguments":"{}"},
+		{"type":"function_call","call_id":"b","name":"screenshot","arguments":"{}"},
+		{"type":"function_call_output","call_id":"a","output":[` + image + `]},
+		{"type":"function_call_output","call_id":"b","output":[` + image + `]}`
+	for _, test := range []struct {
+		name          string
+		arguments     int
+		protectedOnly bool
+		reject        bool
+		wantStatus    int
+		wantAttempts  int
+		wantImages    int
+	}{
+		{name: "images", wantStatus: 200, wantAttempts: 2, wantImages: 2},
+		{name: "arguments", arguments: 10_000, wantStatus: 200, wantAttempts: 2, wantImages: 34},
+		{name: "protected state", protectedOnly: true, wantStatus: 413, wantAttempts: 1, wantImages: 2},
+		{name: "retry exhausted", reject: true, wantStatus: 413, wantAttempts: 2, wantImages: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := active
+			if !test.protectedOnly {
+				arguments, err := json.Marshal(map[string]string{"script": strings.Repeat("x", test.arguments)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				quoted, _ := json.Marshal(string(arguments))
+				input = `{"role":"user","content":[` + strings.TrimSuffix(strings.Repeat(image+",", 32), ",") + `]},
+					{"type":"function_call","call_id":"old","name":"shell","arguments":` + string(quoted) + `},
+					{"type":"function_call_output","call_id":"old","output":"completed"},
+					{"role":"assistant","content":"finished"},` + input
+			}
+			local, capture := newCompactionTestServer(t, func(attempt int, w http.ResponseWriter, _ *http.Request, _ []byte) {
+				if attempt == 1 || test.reject {
+					w.WriteHeader(http.StatusRequestEntityTooLarge)
+					_, _ = io.WriteString(w, tooLarge)
+				} else if attempt == 2 {
+					retained := []string{"item_000001"}
+					if test.arguments == 0 {
+						retained = append(retained, "item_000003")
+					}
+					_, _ = w.Write(summaryResponse(t, "Continue.", retained))
+				} else {
+					_, _ = io.WriteString(w, `{"id":"next","object":"response","status":"completed","output":[]}`)
+				}
+			})
+			status, _, body := postCompactionRequest(t, local, "/v1/responses/compact", `{"model":"fixture:cloud","input":[`+input+`]}`)
+			_, requests := capture.snapshot()
+			if status != test.wantStatus || len(requests) != test.wantAttempts {
+				t.Fatalf("status=%d attempts=%d, want %d/%d", status, len(requests), test.wantStatus, test.wantAttempts)
+			}
+			last := requests[len(requests)-1]
+			if got := bytes.Count(last, []byte(imageURL)); got != test.wantImages {
+				t.Fatalf("summary images=%d, want %d", got, test.wantImages)
+			}
+			if status == http.StatusRequestEntityTooLarge {
+				if string(body) != tooLarge {
+					t.Fatalf("upstream error changed: %s", body)
+				}
+				return
+			}
+			if len(last) >= len(requests[0]) {
+				t.Fatal("retry did not reduce the serialized request")
+			}
+			var compacted openai.ResponsesCompactedResponse
+			if err := json.Unmarshal(body, &compacted); err != nil {
+				t.Fatal(err)
+			}
+			var payload openai.OllamaCompactionPayload
+			if err := json.Unmarshal([]byte(compacted.Output[0].EncryptedContent), &payload); err != nil {
+				t.Fatal(err)
+			}
+			wantRetained, activeOffset := 5, 3
+			warning := "2 older transcript items"
+			if test.arguments == 0 {
+				wantRetained, activeOffset = 7, 5
+				warning = "summary input"
+			}
+			if len(payload.Retained) != wantRetained || len(payload.Retained[0].Images) != 32 {
+				t.Fatal("selected original images or active tool state were lost")
+			}
+			for i, id := range []string{"a", "b"} {
+				message := payload.Retained[i+activeOffset]
+				if message.ToolCallID != id || len(message.Images) != 1 {
+					t.Fatalf("active tool result %s changed", id)
+				}
+			}
+			if !strings.Contains(payload.Summary, warning) {
+				t.Fatal("continuation does not disclose excluded context")
+			}
+			next, err := json.Marshal(map[string]any{"model": "fixture:cloud", "input": []any{
+				compacted.Output[0], map[string]any{"role": "user", "content": "Resume marker."},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status, _, _ = postCompactionRequest(t, local, "/v1/responses", string(next))
+			_, requests = capture.snapshot()
+			continued := requests[len(requests)-1]
+			if status != http.StatusOK || bytes.Count(continued, []byte(imageURL)) != 34 || !bytes.Contains(continued, []byte("Resume marker.")) || !bytes.Contains(continued, []byte(warning)) {
+				t.Fatal("next turn did not replay the original images and new user message")
+			}
+		})
+	}
+}
+
 func summaryResponse(t *testing.T, summary string, retained []string) []byte {
 	t.Helper()
 	arguments, err := json.Marshal(map[string]any{"summary": summary, "retain_item_ids": retained})

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ const (
 	OllamaCompactionPayloadVersion = 1
 	CreateSummaryToolName          = "create_summary"
 	compactionSummaryToolName      = "ollama_compaction_summary"
-	compactionOmissionNotice       = "Compaction warning: %d older transcript items were omitted before summarization because the model's context limit was exceeded."
+	compactionOmissionNotice       = "Compaction warning: %d older transcript items were omitted before summarization because request limits were exceeded."
 )
 
 // ResponsesCompactionTrigger is the terminal input item sent by current Codex
@@ -79,6 +80,7 @@ type compactionTranscriptItemWire struct {
 	Message        api.Message             `json:"message"`
 	StandaloneName *compactionFunctionName `json:"standalone_name,omitempty"`
 	ImageCount     int                     `json:"image_count,omitempty"`
+	ImagesOmitted  bool                    `json:"images_omitted,omitempty"`
 }
 
 type compactionToolGroup struct {
@@ -92,11 +94,12 @@ type ResponsesCompactionPlan struct {
 	Model  string
 	Stream bool
 
-	items        []CompactionTranscriptItem
-	tools        []compactionToolMetadata
-	groups       []compactionToolGroup
-	forcedRefs   map[string]struct{}
-	omittedItems int
+	items                []CompactionTranscriptItem
+	tools                []compactionToolMetadata
+	groups               []compactionToolGroup
+	forcedRefs           map[string]struct{}
+	omittedItems         int
+	omittedSummaryImages map[string]int
 }
 
 // ResponsesCompactionResult is the validated result of a compaction-model call.
@@ -821,6 +824,59 @@ func (p *ResponsesCompactionPlan) TrimForContextLimit() int {
 	return len(removed)
 }
 
+// ReduceSummaryBody chooses the smaller of an item-trimmed transcript and one
+// without older, unprotected image inputs. Original images remain available for
+// retained items. It applies a reduction only when the encoded request shrinks.
+func (p *ResponsesCompactionPlan) ReduceSummaryBody() bool {
+	if len(p.items) < 2 {
+		return false
+	}
+	original, err := p.SummaryRequest("")
+	if err != nil {
+		return false
+	}
+	best, size := *p, len(original)
+	consider := func(candidate ResponsesCompactionPlan) {
+		body, err := candidate.SummaryRequest("")
+		if err == nil && len(body) < size {
+			best, size = candidate, len(body)
+		}
+	}
+	trimmed := *p
+	trimmed.items = slices.Clone(p.items)
+	trimmed.groups = slices.Clone(p.groups)
+	if trimmed.TrimForContextLimit() > 0 {
+		consider(trimmed)
+	}
+	images := *p
+	images.omittedSummaryImages = maps.Clone(p.omittedSummaryImages)
+	if images.omittedSummaryImages == nil {
+		images.omittedSummaryImages = make(map[string]int)
+	}
+	for _, item := range p.items[:len(p.items)-1] {
+		if _, protected := p.forcedRefs[item.Ref]; !protected && len(item.Message.Images) > 0 {
+			images.omittedSummaryImages[item.Ref] = len(item.Message.Images)
+		}
+	}
+	consider(images)
+	if size == len(original) {
+		return false
+	}
+	*p = best
+	return true
+}
+
+func (p *ResponsesCompactionPlan) imageOmissionNotice() string {
+	var count int
+	for _, images := range p.omittedSummaryImages {
+		count += images
+	}
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Compaction warning: %d older images were excluded from the summary input because the request was too large.", count)
+}
+
 // SummaryRequest returns an ordinary non-streaming Responses request. A repair
 // request includes the validation error from the first model response.
 func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, error) {
@@ -833,6 +889,9 @@ func (p *ResponsesCompactionPlan) SummaryRequest(repairError string) ([]byte, er
 	prompt := `Summarize the conversation for another coding agent. Preserve the goal, decisions, constraints, repository state, changed files, test results, failures, active work, and next actions. After optional tool metadata, each following user message is one ordered transcript item: its JSON input_text describes the source item, and its input_image blocks belong to that item. Use retain_item_ids for exact source items, including images, that cannot safely be paraphrased. Tool calls and results are execution state; do not invent or edit them. Call create_summary exactly once.`
 	if p.omittedItems > 0 {
 		prompt += " " + fmt.Sprintf(compactionOmissionNotice, p.omittedItems)
+	}
+	if notice := p.imageOmissionNotice(); notice != "" {
+		prompt += " " + notice
 	}
 	if repairError != "" {
 		prompt += " Your previous create_summary call was invalid: " + repairError + ". Return one corrected create_summary call."
@@ -880,9 +939,14 @@ func (p *ResponsesCompactionPlan) summaryTranscriptMessages() ([]any, error) {
 	for _, item := range p.items {
 		message := item.Message
 		images := message.Images
+		imagesOmitted := p.omittedSummaryImages[item.Ref] > 0
+		if imagesOmitted {
+			images = nil
+		}
 		message.Images = nil
 		metadata, err := json.Marshal(compactionTranscriptItemWire{
-			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName, ImageCount: len(images),
+			Ref: item.Ref, Type: item.Type, Message: message, StandaloneName: item.StandaloneName,
+			ImageCount: len(item.Message.Images), ImagesOmitted: imagesOmitted,
 		})
 		if err != nil {
 			return nil, err
@@ -977,6 +1041,9 @@ func (p *ResponsesCompactionPlan) Complete(body []byte) (ResponsesCompactionResu
 	}
 	if p.omittedItems > 0 {
 		payload.Summary = fmt.Sprintf(compactionOmissionNotice, p.omittedItems) + "\n\n" + payload.Summary
+	}
+	if notice := p.imageOmissionNotice(); notice != "" {
+		payload.Summary = notice + "\n\n" + payload.Summary
 	}
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {

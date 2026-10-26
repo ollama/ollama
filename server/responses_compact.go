@@ -100,7 +100,7 @@ func resetResponsesRequestBody(r *http.Request, body []byte) {
 
 func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.ResponsesCompactionPlan, stream bool) {
 	var validationErr error
-	overflowRetried := false
+	sizeRetried := false
 	for {
 		repair := ""
 		if validationErr != nil {
@@ -114,10 +114,16 @@ func (s *Server) handleResponsesCompaction(c *gin.Context, plan *openai.Response
 
 		response := s.runResponsesCompactionInference(c, request)
 		if response.status < http.StatusOK || response.status >= http.StatusMultipleChoices {
-			if !overflowRetried && c.Request.Context().Err() == nil && isCompactionContextLimit(response) {
-				if removed := plan.TrimForContextLimit(); removed > 0 {
-					overflowRetried = true
-					slog.WarnContext(c.Request.Context(), "retrying compaction after context overflow", "model", plan.Model, "omitted_items", removed)
+			if !sizeRetried && c.Request.Context().Err() == nil {
+				retry := false
+				if isCompactionContextLimit(response) {
+					retry = plan.TrimForContextLimit() > 0
+				} else if response.status == http.StatusRequestEntityTooLarge {
+					retry = plan.ReduceSummaryBody()
+				}
+				if retry {
+					sizeRetried = true
+					slog.WarnContext(c.Request.Context(), "retrying compaction after request limit", "model", plan.Model, "status", response.status)
 					continue
 				}
 			}
