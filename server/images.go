@@ -908,7 +908,22 @@ func CopyModel(src, dst model.Name) (string, error) {
 		return "", err
 	}
 
-	return warning, manifest.WriteManifestData(dst, data)
+	oldDigests, _ := manifest.ReferencedBlobDigestsForName(dst)
+
+	if err := manifest.WriteManifestData(dst, data); err != nil {
+		return "", err
+	}
+
+	// Remove blobs only the overwritten destination model referenced.
+	if !envconfig.NoPrune() && len(oldDigests) > 0 {
+		removed, err := manifest.RemoveUnreferencedBlobs(oldDigests...)
+		removeGGUFMetadata(removed...)
+		if err != nil {
+			slog.Warn("couldn't remove unused layers", "model", dst.DisplayShortest(), "error", err)
+		}
+	}
+
+	return warning, nil
 }
 
 // narrowManifestListToLocal drops manifest list children whose manifests are
