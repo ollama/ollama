@@ -93,6 +93,72 @@ func TestOpenCodeRunContentSkipsCloud(t *testing.T) {
 	}
 }
 
+func TestOpenCodeRunContentV2Config(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	previous := openCodeLoadedContextLength
+	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	t.Cleanup(func() { openCodeLoadedContextLength = previous })
+	openCodeReadConfig = func() ([]byte, error) {
+		// V2 debug config returns normalized sources in increasing priority order.
+		return []byte(`[
+			{"type":"document","info":{"providers":{"ollama":{"models":{"local:latest":{"limit":{"input":1024,"output":512}}}}}}},
+			{"type":"directory","path":"/scratch/.opencode"},
+			{"type":"document","info":{"providers":{"ollama":{"models":{"local:latest":{"limit":{"input":4096}}}}}}},
+			{"type":"document","info":{"providers":{"other":{"models":{"local:latest":{"limit":{"output":1}}}}}}}
+		]`), nil
+	}
+	content, err := (&OpenCode{}).runContent("local", []LaunchModel{{Name: "local:latest", ContextLength: 131072}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Model    string
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Context, Input, Output int }
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "ollama/local:latest" {
+		t.Fatalf("selected model = %q", cfg.Model)
+	}
+	limit := cfg.Provider["ollama"].Models["local:latest"].Limit
+	if want := (struct{ Context, Input, Output int }{8192, 4096, 512}); limit != want {
+		t.Fatalf("limit = %+v, want %+v", limit, want)
+	}
+}
+
+func TestOpenCodeConfiguredLimitsV2Reset(t *testing.T) {
+	data := []byte(`[
+		{"type":"document","info":{"providers":{"ollama":{"models":{"local":{"limit":{"input":1024,"output":512}}}}}}},
+		{"type":"document","info":{"providers":{"ollama":{"models":{"local":{"limit":{"input":0,"output":0}}}}}}}
+	]`)
+	limits, err := openCodeConfiguredLimits(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limit := limits["local"]
+	if limit.Input == nil || *limit.Input != 0 || limit.Output == nil || *limit.Output != 0 {
+		t.Fatalf("higher-priority zero limits did not clear lower-priority caps: %+v", limit)
+	}
+}
+
+func TestOpenCodeConfiguredLimitsInvalid(t *testing.T) {
+	for _, data := range []string{
+		`{`,
+		`[`,
+		`{"provider":{"ollama":{"models":{"local":{"limit":{"input":"invalid"}}}}}}`,
+		`[{"type":"document","info":{"providers":{"ollama":{"models":{"local":{"limit":{"output":"invalid"}}}}}}}]`,
+	} {
+		if _, err := openCodeConfiguredLimits([]byte(data)); err == nil {
+			t.Errorf("accepted invalid model limits: %s", data)
+		}
+	}
+}
+
 func TestOpenCodeRunContentOutputBudget(t *testing.T) {
 	setTestHome(t, t.TempDir())
 	previous := openCodeLoadedContextLength
@@ -347,7 +413,11 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 		t.Errorf("unexpected load of %q", model)
 		return 0, errors.New("model does not fit in memory")
 	}
-	t.Cleanup(func() { openCodeLoadedContextLength = previous })
+	previousReadConfig := openCodeReadConfig
+	t.Cleanup(func() {
+		openCodeLoadedContextLength = previous
+		openCodeReadConfig = previousReadConfig
+	})
 	models := []LaunchModel{{Name: "local"}, {Name: "other"}}
 	o := &OpenCode{}
 	before := o.resolveContent("local", models)
@@ -395,15 +465,83 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 		})
 	}
 	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	openCodeReadConfig = func() ([]byte, error) { return []byte(`{}`), nil }
 	models[0].Name = "local:latest"
 	content, err := o.runContent("local", models)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(content, `"model":"ollama/local:latest"`) {
+		t.Fatalf("selected model missing from inline config: %s", content)
+	}
 	if err := o.Run("local", models, nil); err != nil {
 		t.Fatal(err)
 	}
-	checkChild(content, []string{"--model", "ollama/local:latest"})
+	checkChild(content, nil)
+}
+
+func TestOpenCodeRunArgsByVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake executable")
+	}
+	setTestHome(t, t.TempDir())
+	bin := t.TempDir()
+	output := filepath.Join(bin, "env-and-args")
+	t.Setenv("OPENCODE_LAUNCH_TEST_OUTPUT", output)
+	t.Setenv("PATH", bin)
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  if [ "$OPENCODE_LAUNCH_TEST_VERSION_EXIT" = "timeout" ]; then
+    exec /bin/sleep 10
+  fi
+  if [ -n "$OPENCODE_LAUNCH_TEST_VERSION_DELAY" ]; then
+    /bin/sleep "$OPENCODE_LAUNCH_TEST_VERSION_DELAY"
+  fi
+  printf '%s\n' "$OPENCODE_LAUNCH_TEST_VERSION"
+  exit "$OPENCODE_LAUNCH_TEST_VERSION_EXIT"
+fi
+printf '%s\n' "$OPENCODE_CONFIG_CONTENT" "$@" > "$OPENCODE_LAUNCH_TEST_OUTPUT"
+`
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	models := []LaunchModel{{Name: "selected:latest", Remote: true}}
+	o := &OpenCode{}
+	content := o.resolveContent("selected", models)
+	for _, tt := range []struct {
+		name, version, versionExit, versionDelay string
+		args                                     []string
+	}{
+		{"v1", "1.18.35", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v1 branded", "opencode v1.19.4", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v2", "2.1.4", "0", "", []string{"--standalone"}},
+		{"v2 branded", "opencode v2.1.4", "0", "", []string{"--standalone"}},
+		{"v2 prerelease", "opencode v2.1.4-beta.1\n", "0", "", []string{"--standalone"}},
+		{"slow v2 probe", "2.1.4", "0", "2", []string{"--standalone"}},
+		{"empty version", "", "0", "", nil},
+		{"unknown version", "unknown", "0", "", nil},
+		{"future version", "3.0.0", "0", "", nil},
+		{"failed v1 probe", "opencode v1.19.4", "1", "", nil},
+		{"failed v2 probe", "opencode v2.1.4", "1", "", nil},
+		{"probe timeout", "", "timeout", "", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION", tt.version)
+			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION_EXIT", tt.versionExit)
+			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION_DELAY", tt.versionDelay)
+			if err := o.Run("selected", models, nil); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Join(append([]string{content}, tt.args...), "\n") + "\n"
+			if string(got) != want {
+				t.Fatalf("child environment and arguments = %q, want %q", got, want)
+			}
+		})
+	}
 }
 
 type openCodeContentRunner struct {
