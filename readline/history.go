@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
@@ -74,7 +75,7 @@ func (h *History) Init() error {
 			continue
 		}
 
-		h.Add(line)
+		h.Add(decodeHistoryLine(line))
 	}
 
 	return nil
@@ -138,7 +139,7 @@ func (h *History) Save() error {
 	buf := bufio.NewWriter(f)
 	for cnt := range h.Size() {
 		line, _ := h.Buf.Get(cnt)
-		fmt.Fprintln(buf, line)
+		fmt.Fprintln(buf, encodeHistoryLine(line))
 	}
 	buf.Flush()
 	f.Close()
@@ -148,4 +149,23 @@ func (h *History) Save() error {
 	}
 
 	return nil
+}
+
+// encodeHistoryLine quotes entries that span multiple lines, such as pasted
+// text, so that each entry is stored on a single line of the history file.
+// Entries starting with a quote are quoted too so they read back unchanged.
+func encodeHistoryLine(s string) string {
+	if strings.Contains(s, "\n") || strings.HasPrefix(s, `"`) {
+		return strconv.Quote(s)
+	}
+	return s
+}
+
+func decodeHistoryLine(line string) string {
+	if strings.HasPrefix(line, `"`) {
+		if s, err := strconv.Unquote(line); err == nil {
+			return s
+		}
+	}
+	return line
 }
