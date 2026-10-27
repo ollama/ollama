@@ -2234,7 +2234,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	if layer.Digest != c.Param("digest") {
+	if !manifest.SameDigest(c.Param("digest"), layer.Digest) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", c.Param("digest"), layer.Digest)})
 		return
 	}

@@ -2346,6 +2346,30 @@ func TestHeadBlobHandlerReturnsStatErrors(t *testing.T) {
 	}
 }
 
+func TestCreateBlobDigestSpellings(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	data := []byte("blob data")
+	hex := fmt.Sprintf("%x", sha256.Sum256(data))
+	for _, digest := range []string{"sha256:" + hex, "sha256-" + hex} {
+		t.Run(digest[:7], func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var s Server
+			router := gin.New()
+			router.POST("/api/blobs/:digest", s.CreateBlobHandler)
+
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/blobs/"+digest, bytes.NewReader(data)))
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+			}
+			if w := headBlobRequest(t, &s, digest); w.Code != http.StatusOK {
+				t.Fatalf("HEAD status = %d, want %d", w.Code, http.StatusOK)
+			}
+		})
+	}
+}
+
 func headBlobRequest(t *testing.T, s *Server, digest string) *httptest.ResponseRecorder {
 	t.Helper()
 	router := gin.New()
