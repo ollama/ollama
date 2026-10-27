@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -27,6 +28,10 @@ type fakeCodexDesktopController struct {
 	installed            bool
 	running              bool
 	configured           bool
+	restorePending       bool
+	restores             int
+	restoreErrs          []error
+	restoreBeforeError   bool
 	launched             string
 	models               []string
 	stopped              bool
@@ -43,7 +48,8 @@ func (f *fakeCodexDesktopController) Installed() bool { return f.installed }
 func (f *fakeCodexDesktopController) OllamaConfigured() bool {
 	return f.configured
 }
-func (f *fakeCodexDesktopController) Running() bool { return f.running }
+func (f *fakeCodexDesktopController) RestorePending() bool { return f.restorePending }
+func (f *fakeCodexDesktopController) Running() bool        { return f.running }
 func (f *fakeCodexDesktopController) OllamaRequestCount() uint64 {
 	return f.requests
 }
@@ -133,9 +139,22 @@ func (f *fakeCodexDesktopController) RestoreFromDesktop(restartConfirmed bool) e
 	if f.running && !restartConfirmed {
 		return errCodexDesktopRestartConfirmationRequired
 	}
+	f.restores++
+	if len(f.restoreErrs) > 0 {
+		err := f.restoreErrs[0]
+		f.restoreErrs = f.restoreErrs[1:]
+		if err != nil {
+			if f.restoreBeforeError {
+				f.configured = false
+				f.restorePending = true
+			}
+			return err
+		}
+	}
 	f.stopped = true
 	f.running = false
 	f.configured = false
+	f.restorePending = false
 	return nil
 }
 
@@ -261,6 +280,93 @@ func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *te
 	}
 	if got := config.IntegrationModels(codexDesktopIntegrationName); len(got) != 1 || got[0] != "old-model" {
 		t.Fatalf("saved models = %v, want previous selection", got)
+	}
+}
+
+func TestSetCodexDesktopConnectionRetriesPendingDisconnect(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{installed: true, restorePending: true}
+	codexDesktop = fake
+	if err := setCodexDesktopConnection(false, false); err != nil {
+		t.Fatal(err)
+	}
+	if fake.restores != 1 || fake.restorePending {
+		t.Fatalf("pending cleanup was skipped: restores=%d, pending=%v", fake.restores, fake.restorePending)
+	}
+}
+
+func TestChangeCodexDesktopConnectionReportsPartialCleanupAndRetry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{
+		installed: true, configured: true, restoreBeforeError: true,
+		restoreErrs: []error{errors.Join(launch.ErrCodexAppCleanupFailed, errors.New("fixture cleanup obstruction"))},
+	}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if result.Error == "" || result.Status.Connected || !result.Status.DisconnectPending {
+		t.Fatalf("partial disconnect reported as complete: %+v", result)
+	}
+	if !strings.Contains(result.Error, "cleanup") || strings.Contains(result.Error, "fixture cleanup obstruction") {
+		t.Fatalf("unexpected recovery message: %q", result.Error)
+	}
+	result = changeCodexDesktopConnection(false, false)
+	if result.Error != "" || result.Status.Connected || result.Status.DisconnectPending || fake.restores != 2 {
+		t.Fatalf("cleanup retry did not finish: result=%+v, restores=%d", result, fake.restores)
+	}
+}
+
+func TestChangeCodexDesktopConnectionPendingCleanupRequiresRestartConsent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	originalController := codexDesktop
+	t.Cleanup(func() { codexDesktop = originalController })
+	fake := &fakeCodexDesktopController{installed: true, running: true, restorePending: true}
+	codexDesktop = fake
+	result := changeCodexDesktopConnection(false, false)
+	if !result.RestartConfirmationRequired || !result.Status.DisconnectPending || fake.restores != 0 {
+		t.Fatalf("pending cleanup bypassed restart consent: %+v", result)
+	}
+	result = changeCodexDesktopConnection(false, true)
+	if result.Error != "" || result.Status.DisconnectPending || fake.restores != 1 {
+		t.Fatalf("confirmed cleanup did not finish: %+v", result)
+	}
+}
+
+func TestCodexDesktopConnectionErrorIsSafeAndActionable(t *testing.T) {
+	privateDetail := errors.New("/private/DO_NOT_DISPLAY token=DO_NOT_DISPLAY prompt=DO_NOT_DISPLAY")
+	for _, tc := range []struct {
+		name    string
+		err     error
+		enabled bool
+		want    []string
+	}{
+		{"restart consent", errCodexDesktopRestartConfirmationRequired, false, []string{"confirm the restart"}},
+		{"close", launch.ErrCodexAppCloseFailed, false, []string{"could not close", "Close ChatGPT, then try again"}},
+		{"restore access", errors.Join(launch.ErrCodexAppRestoreFailed, os.ErrPermission), false, []string{"restore", "file access was denied", "Check file permissions"}},
+		{"cleanup", launch.ErrCodexAppCleanupFailed, false, []string{"Disconnect is incomplete", "Retry disconnecting"}},
+		{"cleanup access", errors.Join(launch.ErrCodexAppCleanupFailed, os.ErrPermission), false, []string{"cleanup", "file access was denied", "Check file permissions"}},
+		{"open", launch.ErrCodexAppOpenFailed, false, []string{"could not open", "Open ChatGPT manually"}},
+		{"cleanup and reopen", errors.Join(launch.ErrCodexAppCleanupFailed, launch.ErrCodexAppOpenFailed), false, []string{"Retry disconnecting", "also could not reopen"}},
+		{"unknown disconnect", errors.New("unknown fixture failure"), false, []string{"could not finish disconnecting", "Try again"}},
+		{"unverified version hint", errors.New("old version; update Ollama"), false, []string{"could not finish disconnecting"}},
+		{"unknown connect", errors.New("unknown fixture failure"), true, []string{"could not add its models", "Try again"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message := codexDesktopConnectionError(errors.Join(tc.err, privateDetail), tc.enabled)
+			for _, want := range tc.want {
+				if !strings.Contains(message, want) {
+					t.Fatalf("message %q missing %q", message, want)
+				}
+			}
+			for _, unwanted := range []string{"DO_NOT_DISPLAY", "/private/", "update Ollama", "unchanged", "unknown fixture failure"} {
+				if strings.Contains(message, unwanted) {
+					t.Fatalf("unsafe or unsupported guidance %q in %q", unwanted, message)
+				}
+			}
+		})
 	}
 }
 

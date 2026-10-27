@@ -72,6 +72,77 @@ function connectionButton(renderer: ReactTestRenderer) {
 }
 
 describe("CodexDesktopRow", () => {
+  it("shows pending disconnect cleanup after reopening the Apps page", () => {
+    const html = renderToStaticMarkup(
+      <CodexDesktopRow
+        integration={integration}
+        initialStatus={status({ disconnectPending: true })}
+      />,
+    );
+    expect(html).toContain("Disconnect is incomplete");
+    expect(html).toContain("Retry disconnect");
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).not.toContain("Connected to Ollama");
+  });
+
+  it.each([
+    undefined,
+    "Disconnect is incomplete because Ollama cleanup failed.",
+  ])(
+    "retries cleanup instead of reconnecting after a partial disconnect: %s",
+    async (error) => {
+      const disconnect = vi
+        .fn()
+        .mockResolvedValueOnce({
+          status: status({ disconnectPending: true }),
+          error,
+        })
+        .mockResolvedValueOnce({ status: status() });
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      vi.stubGlobal("window", {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        setCodexDesktopConnected: disconnect,
+      });
+      let renderer;
+      try {
+        await act(async () => {
+          renderer = create(
+            <CodexDesktopRow
+              integration={integration}
+              initialStatus={status({ connected: true })}
+            />,
+          );
+        });
+        await act(async () => connectionButton(renderer!).props.onClick());
+        const retry = renderer!.root.findByProps({
+          "aria-label": "Retry disconnecting ChatGPT",
+        });
+        expect(retry.props["aria-pressed"]).toBe(false);
+        expect(retry.props.disabled).toBe(false);
+        expect(renderer!.root.findByProps({ role: "alert" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ role: "status" })).toHaveLength(
+          0,
+        );
+        await act(async () => retry.props.onClick());
+        expect(disconnect).toHaveBeenNthCalledWith(1, false, false);
+        expect(disconnect).toHaveBeenNthCalledWith(2, false, false);
+        expect(connectionButton(renderer!).props["aria-pressed"]).toBe(false);
+        expect(connectionButton(renderer!).props["aria-label"]).toBe(
+          "Add Ollama models to ChatGPT",
+        );
+        expect(renderer!.root.findAllByProps({ role: "alert" })).toHaveLength(
+          0,
+        );
+        expect(
+          renderer!.root.findByProps({ role: "status" }).children,
+        ).toContain("Ollama models removed · Codex models remain available");
+      } finally {
+        await act(async () => renderer?.unmount());
+      }
+    },
+  );
+
   it("matches Claude's connected copy before the first request", () => {
     const html = renderToStaticMarkup(
       <CodexDesktopRow
@@ -615,7 +686,7 @@ describe("CodexDesktopRow", () => {
       })
       .mockResolvedValueOnce({
         status: status({ running: true }),
-        error: "quit ChatGPT: timed out waiting for ChatGPT to exit",
+        error: "ChatGPT could not close. Close ChatGPT, then try again.",
       });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("window", {
@@ -645,7 +716,7 @@ describe("CodexDesktopRow", () => {
 
       expect(getStatus).not.toHaveBeenCalled();
       expect(renderer!.root.findByProps({ role: "alert" }).children).toContain(
-        "quit ChatGPT: timed out waiting for ChatGPT to exit",
+        "ChatGPT could not close. Close ChatGPT, then try again.",
       );
       expect(toggle.props["aria-pressed"]).toBe(false);
     } finally {

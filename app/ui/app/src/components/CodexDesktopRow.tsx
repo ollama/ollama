@@ -79,6 +79,8 @@ function codexDesktopDescription(
   status: CodexDesktopStatus | null,
   defaultDescription: string,
 ): string {
+  if (status?.disconnectPending)
+    return "Disconnect is incomplete. Retry to finish removing Ollama’s setup.";
   if (!status?.connected) return defaultDescription;
   const requestCount = status.requests ?? 0;
   return `Connected to Ollama · ${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;
@@ -306,6 +308,7 @@ export function CodexDesktopRow({
   }, [phase, beginOperation, finishOperation]);
 
   const connected = status?.connected ?? false;
+  const disconnectPending = status?.disconnectPending ?? false;
   const installed = status?.installed ?? integration.installed ?? false;
   const pending = phase !== "idle" || savingAcknowledgment;
   const displayedConnected =
@@ -362,7 +365,7 @@ export function CodexDesktopRow({
   };
 
   const toggleConnection = async (fromIntro = false) => {
-    const enabled = fromIntro || !connected;
+    const enabled = fromIntro || (!connected && !disconnectPending);
     const nextPhase = enabled
       ? installed
         ? "connecting"
@@ -443,7 +446,10 @@ export function CodexDesktopRow({
         setError(result.error);
         return;
       }
-      if (result.status.connected !== enabled) {
+      if (
+        result.status.connected !== enabled ||
+        (!enabled && result.status.disconnectPending)
+      ) {
         setError(
           enabled
             ? "Ollama could not add its models to ChatGPT."
@@ -508,21 +514,26 @@ export function CodexDesktopRow({
           connected={displayedConnected}
           busy={pending}
           progress={statusLabel}
+          idleLabel={disconnectPending ? "Retry disconnect" : undefined}
           label={
-            showIntro
-              ? "Finish connecting ChatGPT"
-              : connected
-                ? "Remove Ollama models from ChatGPT"
-                : pending
-                  ? "Connecting ChatGPT"
-                  : "Add Ollama models to ChatGPT"
+            disconnectPending
+              ? "Retry disconnecting ChatGPT"
+              : showIntro
+                ? "Finish connecting ChatGPT"
+                : connected
+                  ? "Remove Ollama models from ChatGPT"
+                  : pending
+                    ? "Connecting ChatGPT"
+                    : "Add Ollama models to ChatGPT"
           }
           title={
-            connected
-              ? "Remove Ollama models"
-              : installed
-                ? "Add Ollama models"
-                : "Install ChatGPT and add Ollama models"
+            disconnectPending
+              ? "Finish disconnecting ChatGPT"
+              : connected
+                ? "Remove Ollama models"
+                : installed
+                  ? "Add Ollama models"
+                  : "Install ChatGPT and add Ollama models"
           }
           disabled={pending || showIntro}
           onClick={() => void toggleConnection()}

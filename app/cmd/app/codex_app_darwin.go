@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -35,6 +36,7 @@ var errCodexDesktopRestartConfirmationRequired = launch.ErrCodexAppRestartConfir
 type codexDesktopController interface {
 	Installed() bool
 	OllamaConfigured() bool
+	RestorePending() bool
 	Running() bool
 	OllamaRequestCount() uint64
 	UseOllamaFromDesktop(string, []launch.LaunchModel, bool) error
@@ -62,15 +64,16 @@ var (
 )
 
 type codexDesktopStatus struct {
-	Used      bool     `json:"used"`
-	Supported bool     `json:"supported"`
-	Installed bool     `json:"installed"`
-	Connected bool     `json:"connected"`
-	Running   bool     `json:"running"`
-	Model     string   `json:"model,omitempty"`
-	Models    []string `json:"models,omitempty"`
-	MaxModels int      `json:"maxModels"`
-	Requests  uint64   `json:"requests"`
+	Used              bool     `json:"used"`
+	Supported         bool     `json:"supported"`
+	Installed         bool     `json:"installed"`
+	Connected         bool     `json:"connected"`
+	DisconnectPending bool     `json:"disconnectPending,omitempty"`
+	Running           bool     `json:"running"`
+	Model             string   `json:"model,omitempty"`
+	Models            []string `json:"models,omitempty"`
+	MaxModels         int      `json:"maxModels"`
+	Requests          uint64   `json:"requests"`
 }
 
 type codexDesktopActionResult struct {
@@ -150,15 +153,16 @@ func getCodexDesktopStatus() codexDesktopStatus {
 		model = models[0]
 	}
 	return codexDesktopStatus{
-		Used:      hasUsedCodexDesktopIntegration(),
-		Supported: true,
-		Installed: codexDesktop.Installed(),
-		Connected: connected,
-		Running:   codexDesktop.Running(),
-		Model:     model,
-		Models:    models,
-		MaxModels: codexDesktopMaxModels,
-		Requests:  requests,
+		Used:              hasUsedCodexDesktopIntegration(),
+		Supported:         true,
+		Installed:         codexDesktop.Installed(),
+		Connected:         connected,
+		DisconnectPending: !connected && codexDesktop.RestorePending(),
+		Running:           codexDesktop.Running(),
+		Model:             model,
+		Models:            models,
+		MaxModels:         codexDesktopMaxModels,
+		Requests:          requests,
 	}
 }
 
@@ -166,7 +170,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	codexDesktopMu.Lock()
 	defer codexDesktopMu.Unlock()
 
-	if enabled == codexDesktop.OllamaConfigured() {
+	if enabled == codexDesktop.OllamaConfigured() && (enabled || !codexDesktop.RestorePending()) {
 		return nil
 	}
 	if !enabled {
@@ -211,6 +215,51 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 		return err
 	}
 	return nil
+}
+
+// Both native and webview controls use the same status and safe recovery message.
+func changeCodexDesktopConnection(enabled, restartConfirmed bool) codexDesktopActionResult {
+	err := setCodexDesktopConnection(enabled, restartConfirmed)
+	result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
+	if err == nil {
+		return result
+	}
+	result.RestartConfirmationRequired = errors.Is(err, errCodexDesktopRestartConfirmationRequired)
+	result.Error = codexDesktopConnectionError(err, enabled)
+	if !result.RestartConfirmationRequired {
+		slog.Warn("failed to change ChatGPT integration", "connected", enabled, "error", err)
+	}
+	return result
+}
+
+func codexDesktopConnectionError(err error, enabled bool) string {
+	var message string
+	switch {
+	case errors.Is(err, errCodexDesktopRestartConfirmationRequired):
+		return "ChatGPT needs to restart before its connection can change. Try again and confirm the restart."
+	case errors.Is(err, launch.ErrCodexAppCloseFailed):
+		message = "ChatGPT could not close. Close ChatGPT, then try again."
+	case errors.Is(err, launch.ErrCodexAppCleanupFailed):
+		message = "Disconnect is incomplete because Ollama cleanup failed. Retry disconnecting to finish."
+		if errors.Is(err, os.ErrPermission) {
+			message = "Disconnect is incomplete because file access was denied during cleanup. Check file permissions, then retry disconnecting."
+		}
+	case errors.Is(err, launch.ErrCodexAppRestoreFailed):
+		message = "Ollama could not restore ChatGPT’s settings. Retry disconnecting. If it fails again, share a redacted error entry from the Ollama log."
+		if errors.Is(err, os.ErrPermission) {
+			message = "Ollama could not restore ChatGPT’s settings because file access was denied. Check file permissions, then retry disconnecting."
+		}
+	case errors.Is(err, launch.ErrCodexAppOpenFailed):
+		return "ChatGPT could not open. Open ChatGPT manually."
+	case enabled:
+		message = "Ollama could not add its models to ChatGPT. Try again. If it fails again, share a redacted error entry from the Ollama log."
+	default:
+		message = "Ollama could not finish disconnecting ChatGPT. Try again. If it fails again, share a redacted error entry from the Ollama log."
+	}
+	if errors.Is(err, launch.ErrCodexAppOpenFailed) {
+		message += " ChatGPT also could not reopen. Open it manually after retrying."
+	}
+	return message
 }
 
 func getCodexDesktopModelsSettings() (codexDesktopModelsSettings, error) {

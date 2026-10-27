@@ -80,7 +80,13 @@ type CodexApp struct{}
 
 // ErrCodexAppRestartConfirmationRequired reports that changing the regular
 // ChatGPT profile would interrupt a running task.
-var ErrCodexAppRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
+var (
+	ErrCodexAppRestartConfirmationRequired = errors.New("ChatGPT restart confirmation is required before changing its profile")
+	ErrCodexAppCloseFailed                 = errors.New("close ChatGPT")
+	ErrCodexAppRestoreFailed               = errors.New("restore ChatGPT config")
+	ErrCodexAppCleanupFailed               = errors.New("ChatGPT cleanup did not complete")
+	ErrCodexAppOpenFailed                  = errors.New("open ChatGPT")
+)
 
 func (c *CodexApp) String() string { return "ChatGPT" }
 
@@ -680,6 +686,30 @@ func (c *CodexApp) OllamaConfigured() bool {
 	return c.CurrentModel() != ""
 }
 
+// RestorePending recognizes saved restore state and abandoned Ollama catalogs,
+// including legacy connections that do not have a restore record.
+func (c *CodexApp) RestorePending() bool {
+	if _, err := os.Lstat(codexAppRestoreStatePath()); !os.IsNotExist(err) {
+		return true
+	}
+	configPath, err := codexConfigPath()
+	if err != nil {
+		return false
+	}
+	if data, err := os.ReadFile(configPath); err == nil && codexAppRootReferencesCatalog(string(data)) {
+		return false
+	}
+	for _, path := range []string{
+		codexAppModelCatalogPathForConfig(configPath),
+		codexAppRoutingCatalogPathForConfig(configPath),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
+}
+
 // Running reports whether the user's regular ChatGPT app is open.
 func (c *CodexApp) Running() bool {
 	return codexAppIsRunning()
@@ -794,7 +824,7 @@ func stopLegacyCodexAppOllamaProfile() error {
 		return nil
 	}
 	if err := codexAppStopProfile(); err != nil {
-		return fmt.Errorf("close the previous ChatGPT · Ollama profile: %w", err)
+		return fmt.Errorf("%w: close the previous ChatGPT · Ollama profile: %w", ErrCodexAppCloseFailed, err)
 	}
 	return nil
 }
@@ -819,16 +849,16 @@ func restoreCodexAppProfile() error {
 	if err != nil {
 		if os.IsNotExist(err) {
 			if err := removeCodexAppManagedAuth(configPath); err != nil {
-				return codexAppRestoreFailure(configPath, err)
-			}
-			if err := removeCodexAppRestoreState(); err != nil {
-				return codexAppRestoreFailure(configPath, err)
+				return codexAppCleanupFailure(configPath, err)
 			}
 			if err := removeCodexAppProfileConfig(); err != nil {
-				return codexAppRestoreFailure(configPath, err)
+				return codexAppCleanupFailure(configPath, err)
 			}
 			if err := codexAppRemoveOwnedCatalog(); err != nil {
-				return codexAppRestoreFailure(configPath, err)
+				return codexAppCleanupFailure(configPath, err)
+			}
+			if err := removeCodexAppRestoreState(); err != nil {
+				return codexAppCleanupFailure(configPath, err)
 			}
 			return nil
 		}
@@ -858,28 +888,35 @@ func restoreCodexAppProfile() error {
 		return codexAppRestoreFailure(configPath, err)
 	}
 	if err := removeCodexAppProfileConfig(); err != nil {
-		return codexAppRestoreFailure(configPath, err)
-	}
-	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
-		return codexAppRestoreFailure(configPath, err)
+		return codexAppCleanupFailure(configPath, err)
 	}
 	if err := removeCodexAppManagedAuth(configPath); err != nil {
-		return codexAppRestoreFailure(configPath, err)
+		return codexAppCleanupFailure(configPath, err)
+	}
+	// Retain the catalogs until other cleanup succeeds so legacy disconnects
+	// without a restore record also remain retryable after a failure.
+	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
+		return codexAppCleanupFailure(configPath, err)
 	}
 	if err := removeCodexAppRestoreState(); err != nil {
-		return codexAppRestoreFailure(configPath, err)
+		return codexAppCleanupFailure(configPath, err)
 	}
 	return nil
 }
 
 func codexAppRestoreFailure(configPath string, err error) error {
-	return fmt.Errorf("restore ChatGPT config: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
+	return fmt.Errorf("%w: %w\n\nRestore did not complete. Check these files before retrying:\n  Codex config: %s\n  Restore state: %s\n  Model catalog: %s\n  Backups: %s",
+		ErrCodexAppRestoreFailed,
 		err,
 		configPath,
 		codexAppRestoreStatePath(),
 		codexAppModelCatalogPathForConfig(configPath),
 		filepath.Join(fileutil.BackupDir(), codexAppIntegrationName),
 	)
+}
+
+func codexAppCleanupFailure(configPath string, err error) error {
+	return codexAppRestoreFailure(configPath, fmt.Errorf("%w: %w", ErrCodexAppCleanupFailed, err))
 }
 
 func codexAppSupported() error {
@@ -1800,7 +1837,9 @@ func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, resta
 			return err
 		}
 		if openWhenStopped {
-			return codexAppOpenApp(nil)
+			if err := codexAppOpenApp(nil); err != nil {
+				return fmt.Errorf("%w: %w", ErrCodexAppOpenFailed, err)
+			}
 		}
 		return nil
 	}
@@ -1810,16 +1849,19 @@ func codexAppApplyProfileFromDesktop(change func() error, openWhenStopped, resta
 
 	restartAppID, restartAppPath := codexAppRestartTarget()
 	if err := codexAppStopForRestart(nil); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrCodexAppCloseFailed, err)
 	}
 	if err := change(); err != nil {
 		changeErr := fmt.Errorf("change ChatGPT profile: %w", err)
 		if openErr := codexAppOpenAfterRestart(restartAppID, restartAppPath, nil); openErr != nil {
-			return errors.Join(changeErr, fmt.Errorf("reopen ChatGPT after profile failure: %w", openErr))
+			return errors.Join(changeErr, fmt.Errorf("%w: reopen ChatGPT after profile failure: %w", ErrCodexAppOpenFailed, openErr))
 		}
 		return changeErr
 	}
-	return codexAppOpenAfterRestart(restartAppID, restartAppPath, nil)
+	if err := codexAppOpenAfterRestart(restartAppID, restartAppPath, nil); err != nil {
+		return fmt.Errorf("%w: %w", ErrCodexAppOpenFailed, err)
+	}
+	return nil
 }
 
 func codexAppRestartTarget() (appID, appPath string) {
