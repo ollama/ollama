@@ -309,6 +309,36 @@ func TestProjectorAudioFromMetadata(t *testing.T) {
 	}
 }
 
+// Projector vision detection: the explicit flag decides, then vision keys,
+// and a projector declaring no encoder at all predates the flags.
+func TestProjectorVisionFromMetadata(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	for _, tt := range []struct {
+		name   string
+		kv     gguftest.KV
+		vision bool
+	}{
+		{"flag true", gguftest.KV{"general.architecture": "clip", "clip.has_vision_encoder": true}, true},
+		{"flag false with audio", gguftest.KV{"general.architecture": "clip", "clip.has_vision_encoder": false, "clip.has_audio_encoder": true}, false},
+		{"flag false wins over vision keys", gguftest.KV{"general.architecture": "clip", "clip.has_vision_encoder": false, "clip.vision.block_count": uint32(1)}, false},
+		{"vision keys without flag", gguftest.KV{"general.architecture": "clip", "clip.has_audio_encoder": true, "clip.vision.block_count": uint32(1)}, true},
+		{"audio only, no vision keys", gguftest.KV{"general.architecture": "clip", "clip.has_audio_encoder": true, "clip.projector_type": "voxtral", "clip.audio.block_count": uint32(1)}, false},
+		{"no encoder flags", gguftest.KV{"general.architecture": "clip", "clip.projector_type": "mlp"}, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path, _ := createBinFile(t, tt.kv, nil)
+			md, err := extractGGUFMetadata(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := projectorHasVision(md); got != tt.vision {
+				t.Errorf("projectorHasVision = %v, want %v", got, tt.vision)
+			}
+		})
+	}
+}
+
 func TestGGUFMetadataPathRejectsBadDigest(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 	hex := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

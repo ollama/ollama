@@ -836,6 +836,15 @@ func TestModelCapabilities(t *testing.T) {
 		"clip.vision.block_count": uint32(1),
 	}, []*gguftest.Tensor{})
 
+	// Keys from ggml-org/Voxtral-Mini-3B-2507-GGUF's mmproj: an audio
+	// encoder and no vision keys.
+	audioOnlyProjectorPath, _ := createBinFile(t, gguftest.KV{
+		"general.architecture":   "clip",
+		"clip.has_audio_encoder": true,
+		"clip.projector_type":    "voxtral",
+		"clip.audio.block_count": uint32(1),
+	}, []*gguftest.Tensor{})
+
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
 	if err != nil {
 		t.Fatalf("Failed to parse template: %v", err)
@@ -975,6 +984,15 @@ func TestModelCapabilities(t *testing.T) {
 				Template:       chatTemplate,
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityAudio},
+		},
+		{
+			name: "model with audio-only projector does not claim vision",
+			model: Model{
+				ModelPath:      completionModelPath,
+				ProjectorPaths: []string{audioOnlyProjectorPath},
+				Template:       chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio},
 		},
 		{
 			name: "model with parser and projector capabilities without template",

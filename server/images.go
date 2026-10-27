@@ -442,8 +442,16 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 		return capabilities
 	}
 
-	capabilities = appendCapability(capabilities, model.CapabilityVision)
+	// Without projector metadata there is nothing to check; projectors have
+	// historically been vision encoders.
+	if len(m.projectorMetadata) == 0 {
+		return appendCapability(capabilities, model.CapabilityVision)
+	}
+
 	for _, md := range m.projectorMetadata {
+		if projectorHasVision(md) {
+			capabilities = appendCapability(capabilities, model.CapabilityVision)
+		}
 		if projectorHasAudio(md) && !projectorSuppressesAudioCapability(md) {
 			capabilities = appendCapability(capabilities, model.CapabilityAudio)
 		}
@@ -544,6 +552,28 @@ func isNemotronSafetensorsConfig(cfg model.ConfigV2) bool {
 			cfg.Renderer == "nemotron-3.5-nano" ||
 			cfg.ModelFamily == "nemotron_h_omni" ||
 			slices.Contains(cfg.ModelFamilies, "nemotron_h_omni"))
+}
+
+// projectorHasVision reports whether a projector carries a vision encoder. An
+// explicit has_vision_encoder flag decides. Without one, any vision key means
+// vision. A projector that declares neither encoder predates the flags and is
+// a vision projector; one that declares only an audio encoder, such as
+// Voxtral's, has no vision.
+func projectorHasVision(md ggufMetadata) bool {
+	keys := md.Keys()
+	for _, key := range keys {
+		if key == "has_vision_encoder" || strings.HasSuffix(key, ".has_vision_encoder") {
+			b, ok := md.KV[key].(bool)
+			return ok && b
+		}
+	}
+	for _, key := range keys {
+		if strings.HasPrefix(key, "vision.") || strings.Contains(key, ".vision.") {
+			return true
+		}
+	}
+
+	return !projectorHasAudio(md)
 }
 
 func projectorHasAudio(md ggufMetadata) bool {
