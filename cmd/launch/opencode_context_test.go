@@ -347,7 +347,11 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 		t.Errorf("unexpected load of %q", model)
 		return 0, errors.New("model does not fit in memory")
 	}
-	t.Cleanup(func() { openCodeLoadedContextLength = previous })
+	previousReadConfig := openCodeReadConfig
+	t.Cleanup(func() {
+		openCodeLoadedContextLength = previous
+		openCodeReadConfig = previousReadConfig
+	})
 	models := []LaunchModel{{Name: "local"}, {Name: "other"}}
 	o := &OpenCode{}
 	before := o.resolveContent("local", models)
@@ -395,15 +399,19 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 		})
 	}
 	openCodeLoadedContextLength = func(string) (int, error) { return 8192, nil }
+	openCodeReadConfig = func() ([]byte, error) { return []byte(`{}`), nil }
 	models[0].Name = "local:latest"
 	content, err := o.runContent("local", models)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(content, `"model":"ollama/local:latest"`) {
+		t.Fatalf("selected model missing from inline config: %s", content)
+	}
 	if err := o.Run("local", models, nil); err != nil {
 		t.Fatal(err)
 	}
-	checkChild(content, []string{"--model", "ollama/local:latest"})
+	checkChild(content, nil)
 }
 
 type openCodeContentRunner struct {
