@@ -125,6 +125,6 @@ func strandsContent(raw json.RawMessage) (string, error) {
 	if raw = bytes.TrimSpace(raw); len(raw) > 0 && (raw[0] == '{' || raw[0] == '[') {
 		return renderers.PythonJSON(raw, 2)
 	}
-	text, err := content(raw)
+	text, err := Content(raw)
 	return strings.TrimSpace(text), err
 }

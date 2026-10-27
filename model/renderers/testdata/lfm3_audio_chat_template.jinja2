@@ -1,0 +1,218 @@
+{{- bos_token -}}
+{%- set preserve_thinking = preserve_thinking | default(false) -%}
+
+{%- macro render_value(v) -%}
+    {%- if v is string -%}
+        {{- v -}}
+    {%- elif v is boolean -%}
+        {{- "true" if v else "false" -}}
+    {%- elif v is none -%}
+        {{- "null" -}}
+    {%- elif v is mapping or (v is sequence and v is not string) -%}
+        {{- v | tojson -}}
+    {%- else -%}
+        {{- v -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro parse_content(content) -%}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- elif content is mapping -%}
+        {{- content | tojson -}}
+    {%- elif content is iterable -%}
+        {%- set _ns = namespace(result="") -%}
+        {%- for item in content -%}
+            {%- if item is string -%}
+                {%- set _ns.result = _ns.result + item -%}
+            {%- elif item is mapping and item.get("type")
+                in ["audio", "audio_url", "input_audio"] -%}
+                {%- set _ns.result = _ns.result + "<|audio|>" -%}
+            {%- elif item is mapping and item.get("type") == "audio_out" -%}
+                {%- set _ns.result = _ns.result + "<|audio_out|>" -%}
+            {%- elif item is mapping and item.get("type") == "image" -%}
+                {%- set _ns.result = _ns.result + "<|vision_start|><|image|><|vision_end|>" -%}
+            {%- elif item is mapping and item.get("type") == "video" -%}
+                {%- set _ns.result = _ns.result + "<|vision_start|><|video|><|vision_end|>" -%}
+            {%- elif item is mapping and item.get("type") == "text" -%}
+                {%- set _ns.result = _ns.result + ((item.get("text") or "") | string) -%}
+            {%- else -%}
+                {%- set _ns.result = _ns.result + (item | tojson) -%}
+            {%- endif -%}
+        {%- endfor -%}
+        {{- _ns.result -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro render_tool_calls(tool_calls) -%}
+    {%- for tool_call in tool_calls -%}
+        {%- if not loop.first -%}{{- "\n\n" -}}{%- endif -%}
+        {%- set func = tool_call["function"] if "function" in tool_call else tool_call -%}
+        {%- set func_args = func.get("arguments") -%}
+        {%- if func_args is string and (func_args | trim) not in ["", "{}", "null"] -%}
+            {{- raise_exception("Tool call arguments must be a mapping, got a JSON-encoded string: parse arguments with json.loads() before applying the chat template") -}}
+        {%- endif -%}
+        {{- "<tool_call>\n<function=" + func["name"] + ">\n" -}}
+        {%- if func_args is mapping -%}
+            {%- for arg_name, arg_value in func_args.items() -%}
+                {{- "<parameter=" + arg_name + ">\n" + render_value(arg_value) + "\n</parameter>\n" -}}
+            {%- endfor -%}
+        {%- endif -%}
+        {{- "</function>\n</tool_call>" -}}
+    {%- endfor -%}
+{%- endmacro -%}
+
+{%- macro tool_to_json(tool) -%}
+    {%- set fn = tool.function if tool.function is defined else tool -%}
+    {%- set ns_t = namespace(first=true) -%}
+    {{- "{" -}}
+    {%- for k, v in fn.items() -%}
+        {%- if k != "defer_loading" -%}
+            {%- if not ns_t.first -%}{{- ", " -}}{%- endif -%}
+            {%- set ns_t.first = false -%}
+            {{- k | tojson -}}{{- ": " -}}{{- v | tojson -}}
+        {%- endif -%}
+    {%- endfor -%}
+    {{- "}" -}}
+{%- endmacro -%}
+
+{%- macro render_tool_response(content) -%}
+    {#- content that already carries the tag (pre-formatted by the caller) is
+        passed through as-is instead of being wrapped a second time -#}
+    {%- if content is string and "<tool_response>" in content -%}
+        {{- content -}}
+    {%- else -%}
+    {{- "<tool_response>\n" -}}
+    {%- if content is string -%}
+        {{- content -}}
+    {%- else -%}
+        {%- for item in content -%}
+            {%- if not loop.first -%}{{- "\n" -}}{%- endif -%}
+            {%- if item is mapping and item.result is defined and item.result is mapping and item.result.tools is defined -%}
+                {{- "<additional_tools>\n" -}}
+                {%- set _tl = item.result.tools -%}
+                {%- if _tl is string -%}
+                    {{- _tl -}}
+                {%- elif _tl is mapping -%}
+                    {{- tool_to_json(_tl) -}}
+                {%- else -%}
+                    {%- for t in _tl -%}
+                        {%- if not loop.first -%}{{- "\n" -}}{%- endif -%}
+                        {{- tool_to_json(t) -}}
+                    {%- endfor -%}
+                {%- endif -%}
+                {{- "\n</additional_tools>" -}}
+            {%- else -%}
+                {{- item | tojson -}}
+            {%- endif -%}
+        {%- endfor -%}
+    {%- endif -%}
+    {{- "\n</tool_response>" -}}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- set ns = namespace(system_prompt="", last_user_index=-1) -%}
+{%- if messages and messages[0]["role"] == "system" -%}
+    {%- if messages[0].get("content") -%}
+        {%- set ns.system_prompt = parse_content(messages[0]["content"]) -%}
+    {%- endif -%}
+    {%- set messages = messages[1:] -%}
+{%- endif -%}
+{%- if tools -%}
+    {%- set tools_ns = namespace(lines=[]) -%}
+    {%- for tool in tools -%}
+        {%- set fn = tool.function if tool.function is defined else tool -%}
+        {%- set _dyn = (fn.defer_loading is defined and fn.defer_loading) or (tool.defer_loading is defined and tool.defer_loading) -%}
+        {%- if not _dyn -%}
+            {%- set tools_ns.lines = tools_ns.lines + [tool_to_json(fn)] -%}
+        {%- endif -%}
+    {%- endfor -%}
+    {%- if tools_ns.lines -%}
+        {%- set ns.system_prompt = ns.system_prompt + ("\n\n" if ns.system_prompt else "") + "<tools>\n" + (tools_ns.lines | join("\n")) + "\n</tools>" -%}
+    {%- endif -%}
+{%- endif -%}
+{%- if ns.system_prompt -%}
+    {{- "<|im_start|>system\n" + ns.system_prompt + "<|im_end|>\n" -}}
+{%- endif -%}
+{%- for message in messages -%}
+    {%- if message["role"] == "user" -%}
+        {%- set ns.last_user_index = loop.index0 -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- for message in messages -%}
+    {{- "<|im_start|>" + message.role + "\n" -}}
+    {%- if message.role == "assistant" -%}
+        {%- generation -%}
+        {%- set keep_thinking = preserve_thinking or loop.index0 > ns.last_user_index -%}
+        {%- if message.thinking is defined and keep_thinking -%}
+            {{- "<think>" + (message.thinking or "") + "</think>" -}}
+        {%- endif -%}
+        {%- set _cfm_tag = "CONTINUE_FINAL_MESSAGE_TAG " -%}
+        {%- set _has_cfm = false -%}
+        {%- set content = "" -%}
+        {%- if message.get("content") -%}
+            {%- set content = parse_content(message.content) -%}
+        {%- endif -%}
+        {%- if not keep_thinking -%}
+            {%- if "</think>" in content -%}
+                {%- set content = content.split("</think>")[-1] | trim -%}
+            {%- endif -%}
+        {%- endif -%}
+        {%- if content.endswith(_cfm_tag) -%}
+            {%- set _has_cfm = true -%}
+            {%- set _trunc_len = (content | length) - (_cfm_tag | length) -%}
+            {%- set content = content[:_trunc_len] -%}
+        {%- endif -%}
+        {{- content -}}
+        {%- if message.tool_calls -%}
+            {{- render_tool_calls(message.tool_calls) -}}
+        {%- endif -%}
+        {%- if _has_cfm -%}
+            {{- _cfm_tag -}}
+        {%- endif -%}
+        {{- "<|im_end|>\n" -}}
+        {%- endgeneration -%}
+    {%- elif message.role == "tool" -%}
+        {%- if message.get("additional_tools") -%}
+            {%- set _at = message["additional_tools"] -%}
+            {#- definitions may live in additional_tools itself, or in content
+                with additional_tools used as a plain truthy flag -#}
+            {%- if _at is mapping or (_at is sequence and _at is not string) -%}
+                {%- set _src = _at -%}
+            {%- else -%}
+                {%- set _src = message.get("content") -%}
+            {%- endif -%}
+            {#- nothing to reveal: skip the wrapper entirely rather than
+                emitting an empty <additional_tools> block -#}
+            {%- if _src is string and "<tool_response>" in _src -%}
+                {{- _src -}}
+            {%- elif _src is string and "<additional_tools>" in _src -%}
+                {{- "<tool_response>\n" + _src + "\n</tool_response>" -}}
+            {%- elif _src -%}
+                {{- "<tool_response>\n<additional_tools>\n" -}}
+                {%- if _src is string -%}
+                    {{- _src -}}
+                {%- elif _src is mapping -%}
+                    {{- tool_to_json(_src) -}}
+                {%- else -%}
+                    {%- for t in _src -%}
+                        {%- if not loop.first -%}{{- "\n" -}}{%- endif -%}
+                        {{- tool_to_json(t) -}}
+                    {%- endfor -%}
+                {%- endif -%}
+                {{- "\n</additional_tools>\n</tool_response>" -}}
+            {%- endif -%}
+        {%- elif message.get("content") -%}
+            {{- render_tool_response(message["content"]) -}}
+        {%- endif -%}
+        {{- "<|im_end|>\n" -}}
+    {%- else %}
+        {%- if message.get("content") -%}
+            {{- parse_content(message["content"]) -}}
+        {%- endif -%}
+        {{- "<|im_end|>\n" -}}
+    {%- endif %}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {{- "<|im_start|>assistant\n" -}}
+{%- endif -%}

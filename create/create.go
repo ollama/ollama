@@ -457,6 +457,10 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"NemotronH_Omni_Reasoning_V3":           newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
 	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
+	"Lfm3VlForConditionalGeneration":        newLFM3ImportTransform,
+	"Lfm3OmniForConditionalGeneration":      newLFM3OmniImportTransform,
+	"Lfm3AudioForConditionalGeneration":     newLFM3AudioImportTransform,
+	"D1Model":                               newLFM3ImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {
