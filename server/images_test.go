@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -100,6 +101,50 @@ func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
 	}
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("old orphan still exists: %v", err)
+	}
+}
+
+func TestPruneLayersKeepsPartsOfActiveDownload(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	blobs, err := manifest.BlobsPath("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldTime := time.Now().Add(-layerPruneGracePeriod - time.Hour)
+	write := func(name string, old bool) string {
+		p := filepath.Join(blobs, name)
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if old {
+			if err := os.Chtimes(p, oldTime, oldTime); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return p
+	}
+
+	// active: the data file is still being written, but part 0 finished long ago
+	activeData := write("sha256-0000000000000000000000000000000000000000000000000000000000000001-partial", false)
+	activePart := write("sha256-0000000000000000000000000000000000000000000000000000000000000001-partial-0", true)
+	// abandoned: everything is old
+	staleData := write("sha256-0000000000000000000000000000000000000000000000000000000000000002-partial", true)
+	stalePart := write("sha256-0000000000000000000000000000000000000000000000000000000000000002-partial-0", true)
+
+	if err := PruneLayers(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range []string{activeData, activePart} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s was pruned: %v", filepath.Base(p), err)
+		}
+	}
+	for _, p := range []string{staleData, stalePart} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("%s still exists: %v", filepath.Base(p), err)
+		}
 	}
 }
 

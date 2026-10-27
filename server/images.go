@@ -989,6 +989,16 @@ func PruneLayers() error {
 			continue
 		}
 
+		// A part file is only rewritten when a chunk attempt ends, so it can
+		// age past the grace period while its download is still in progress.
+		// Keep it as long as the download's data file is recent; otherwise a
+		// resumed download sees only some of its parts.
+		if stem, _, ok := strings.Cut(blob.Name(), "-partial-"); ok {
+			if fi, err := os.Stat(filepath.Join(p, stem+"-partial")); err == nil && time.Since(fi.ModTime()) < layerPruneGracePeriod {
+				continue
+			}
+		}
+
 		name := blob.Name()
 		name = strings.ReplaceAll(name, "-", ":")
 
