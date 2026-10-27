@@ -2871,10 +2871,18 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	CUDA_Host compute buffer size =   268.05 MiB
 //	MTL0_Mapped model buffer size =  1918.35 MiB
 //	ROCm0 model buffer size =  1918.35 MiB
+//
+// llama.cpp prints one line per buffer, so one key can repeat within a load:
+// large mmapped weights arrive as many consecutive model lines, and an iSWA
+// model reports its full and sliding-window caches as two KV lines.
+// Consecutive lines with the same key add up. A key that returns after other
+// buffer lines starts over, so a fit probe's buffers are replaced by the
+// final load's.
 type memoryParsingWriter struct {
 	inner   io.Writer
 	runner  *llamaServerRunner
 	buffers map[memoryBufferKey]memoryBuffer
+	lastKey *memoryBufferKey
 }
 
 type memoryBufferKey struct {
@@ -2965,11 +2973,17 @@ func (w *memoryParsingWriter) Write(b []byte) (int, error) {
 					if w.buffers == nil {
 						w.buffers = make(map[memoryBufferKey]memoryBuffer)
 					}
-					w.buffers[memoryBufferKey{
+					key := memoryBufferKey{
 						component: string(match[1]),
 						backend:   backendName,
 						kind:      string(match[3]),
-					}] = memoryBuffer{bytes: uint64(mib * 1024 * 1024)}
+					}
+					bytes := uint64(mib * 1024 * 1024)
+					if w.lastKey != nil && *w.lastKey == key {
+						bytes += w.buffers[key].bytes
+					}
+					w.buffers[key] = memoryBuffer{bytes: bytes}
+					w.lastKey = &key
 					w.updateRunnerMemoryLocked()
 				}
 			}

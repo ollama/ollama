@@ -3133,6 +3133,40 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 1100 + 2200 + 330 + 440 + 10 + 20,
 		},
 		{
+			// Order taken from a gemma4:31b load on Metal: mmapped weights in
+			// chunks, then an iSWA model's full and sliding-window caches.
+			name: "chunked weights and iswa caches add up",
+			lines: []string{
+				"load_tensors:   CPU_Mapped model buffer size =  1102.50 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   290.80 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   290.84 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =  1102.52 MiB\n",
+				"llama_context:        CPU  output buffer size =     1.00 MiB\n",
+				"llama_kv_cache_iswa: creating non-SWA KV cache, size = 262144 cells\n",
+				"llama_kv_cache:       MTL0 KV buffer size = 10880.00 MiB\n",
+				"llama_kv_cache_iswa: creating     SWA KV cache, size = 3072 cells\n",
+				"llama_kv_cache:       MTL0 KV buffer size =  1275.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =  3575.00 MiB\n",
+			},
+			wantGPU:   290.80 + 290.84 + 1102.52 + 10880 + 1275 + 3575,
+			wantTotal: 1102.50 + 290.80 + 290.84 + 1102.52 + 1 + 10880 + 1275 + 3575,
+		},
+		{
+			name: "chunked fit probe is replaced by chunked final load",
+			lines: []string{
+				"load_tensors:  MTL0_Mapped model buffer size =   100.00 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   100.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   500.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    50.00 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   200.00 MiB\n",
+				"load_tensors:  MTL0_Mapped model buffer size =   200.00 MiB\n",
+				"llama_kv_cache:       MTL0 KV buffer size =   600.00 MiB\n",
+				"sched_reserve:       MTL0 compute buffer size =    60.00 MiB\n",
+			},
+			wantGPU:   200 + 200 + 600 + 60,
+			wantTotal: 200 + 200 + 600 + 60,
+		},
+		{
 			name: "rc21 fit probe accounting",
 			lines: []string{
 				"load_tensors:          CPU model buffer size =     0.00 MiB\n",
