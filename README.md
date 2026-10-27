@@ -303,6 +303,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [AITerm](https://ai-term.com/?ref=ollama) - Native macOS terminal with approve-before-run AI commands using local Ollama models
 
 ### Productivity & Apps
 
