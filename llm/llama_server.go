@@ -2490,13 +2490,28 @@ func (s *llamaServerRunner) Embedding(ctx context.Context, input string, media [
 		if len(s.launch.projectors) == 0 {
 			return nil, 0, api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "model does not support media embeddings"}
 		}
-		multimodal := llamaServerMultimodalPrompt{PromptString: input + strings.Repeat(s.llamaServerMediaMarker(), len(media))}
-		for _, m := range media {
+
+		// Build media data with proper placeholder replacement, matching the Completion path
+		promptStr := input
+		var mediaData []string
+		for i, m := range media {
+			marker := fmt.Sprintf("[img-%d]", i)
+			promptStr = strings.Replace(promptStr, marker, s.llamaServerMediaMarker(), 1)
 			data, err := llamaServerMediaBytes(m)
 			if err != nil {
 				return nil, 0, api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 			}
-			multimodal.MultimodalData = append(multimodal.MultimodalData, base64.StdEncoding.EncodeToString(data))
+			mediaData = append(mediaData, base64.StdEncoding.EncodeToString(data))
+		}
+
+		// If no placeholders were found, prepend media markers (for backward compatibility)
+		if !strings.Contains(input, "[img-") && len(mediaData) > 0 {
+			promptStr = strings.Repeat(s.llamaServerMediaMarker(), len(mediaData)) + promptStr
+		}
+
+		multimodal := llamaServerMultimodalPrompt{
+			PromptString:   promptStr,
+			MultimodalData: mediaData,
 		}
 		prompt = multimodal
 	}
