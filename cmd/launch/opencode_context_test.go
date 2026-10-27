@@ -477,7 +477,7 @@ func TestOpenCodeRunForwardsArgsWithoutPreload(t *testing.T) {
 	if err := o.Run("local", models, nil); err != nil {
 		t.Fatal(err)
 	}
-	checkChild(content, []string{"--model", "ollama/local:latest"})
+	checkChild(content, nil)
 }
 
 func TestOpenCodeRunArgsByVersion(t *testing.T) {
@@ -494,6 +494,9 @@ if [ "$1" = "--version" ]; then
   if [ "$OPENCODE_LAUNCH_TEST_VERSION_EXIT" = "timeout" ]; then
     exec /bin/sleep 10
   fi
+  if [ -n "$OPENCODE_LAUNCH_TEST_VERSION_DELAY" ]; then
+    /bin/sleep "$OPENCODE_LAUNCH_TEST_VERSION_DELAY"
+  fi
   printf '%s\n' "$OPENCODE_LAUNCH_TEST_VERSION"
   exit "$OPENCODE_LAUNCH_TEST_VERSION_EXIT"
 fi
@@ -506,22 +509,26 @@ printf '%s\n' "$OPENCODE_CONFIG_CONTENT" "$@" > "$OPENCODE_LAUNCH_TEST_OUTPUT"
 	o := &OpenCode{}
 	content := o.resolveContent("selected", models)
 	for _, tt := range []struct {
-		name, version, versionExit string
-		args                       []string
+		name, version, versionExit, versionDelay string
+		args                                     []string
 	}{
-		{"v1", "1.18.35", "0", []string{"--model", "ollama/selected:latest"}},
-		{"v1 branded", "opencode v1.19.4", "0", []string{"--model", "ollama/selected:latest"}},
-		{"v2", "2.1.4", "0", []string{"--standalone"}},
-		{"v2 branded", "opencode v2.1.4", "0", []string{"--standalone"}},
-		{"v2 prerelease", "opencode v2.1.4-beta.1\n", "0", []string{"--standalone"}},
-		{"empty version", "", "0", []string{"--model", "ollama/selected:latest"}},
-		{"unknown version", "unknown", "0", []string{"--model", "ollama/selected:latest"}},
-		{"failed probe", "opencode v2.1.4", "1", []string{"--model", "ollama/selected:latest"}},
-		{"probe timeout", "", "timeout", []string{"--model", "ollama/selected:latest"}},
+		{"v1", "1.18.35", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v1 branded", "opencode v1.19.4", "0", "", []string{"--model", "ollama/selected:latest"}},
+		{"v2", "2.1.4", "0", "", []string{"--standalone"}},
+		{"v2 branded", "opencode v2.1.4", "0", "", []string{"--standalone"}},
+		{"v2 prerelease", "opencode v2.1.4-beta.1\n", "0", "", []string{"--standalone"}},
+		{"slow v2 probe", "2.1.4", "0", "2", []string{"--standalone"}},
+		{"empty version", "", "0", "", nil},
+		{"unknown version", "unknown", "0", "", nil},
+		{"future version", "3.0.0", "0", "", nil},
+		{"failed v1 probe", "opencode v1.19.4", "1", "", nil},
+		{"failed v2 probe", "opencode v2.1.4", "1", "", nil},
+		{"probe timeout", "", "timeout", "", nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION", tt.version)
 			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION_EXIT", tt.versionExit)
+			t.Setenv("OPENCODE_LAUNCH_TEST_VERSION_DELAY", tt.versionDelay)
 			if err := o.Run("selected", models, nil); err != nil {
 				t.Fatal(err)
 			}

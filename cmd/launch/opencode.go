@@ -64,10 +64,11 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 		return err
 	}
 	if len(args) == 0 && model != "" {
-		if openCodeV2(opencodePath) {
+		switch openCodeMajorVersion(opencodePath) {
+		case 2:
 			// The shared v2 service does not inherit this launch's inline config.
 			args = []string{"--standalone"}
-		} else {
+		case 1:
 			// V1 needs an explicit selection to override an agent's configured model.
 			if primary, ok := findLaunchModel(models, model); ok {
 				model = primary.Name
@@ -86,18 +87,28 @@ func (o *OpenCode) Run(model string, models []LaunchModel, args []string) error 
 	return cmd.Run()
 }
 
-// Use v2's flag only when detected; retain the v1 launch if the probe fails.
-func openCodeV2(path string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+// Return zero for an unknown version so neither version-specific flag is added.
+func openCodeMajorVersion(path string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, "--version")
 	cmd.WaitDelay = time.Second
 	data, err := cmd.Output()
 	if err != nil {
-		return false
+		return 0
 	}
 	fields := strings.Fields(string(data))
-	return len(fields) > 0 && strings.HasPrefix(strings.TrimPrefix(fields[len(fields)-1], "v"), "2.")
+	if len(fields) == 0 {
+		return 0
+	}
+	version := strings.TrimPrefix(fields[len(fields)-1], "v")
+	if strings.HasPrefix(version, "1.") {
+		return 1
+	}
+	if strings.HasPrefix(version, "2.") {
+		return 2
+	}
+	return 0
 }
 
 var (
