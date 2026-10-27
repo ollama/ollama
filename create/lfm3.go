@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ollama/ollama/mlxrunner/model/lfm3/lfm3speech"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -57,7 +57,7 @@ func (t lfm3ImportTransform) augmentConfig(cfg *model.ConfigV2) error {
 		cfg.EmbedLen = t.embedLen
 	}
 	if t.speech {
-		cfg.Voices = lfm3speech.VoiceNames()
+		cfg.Voices = renderers.LFM3SpeechVoices()
 	}
 	return nil
 }
