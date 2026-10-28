@@ -255,7 +255,10 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 	if err != nil {
 		req.responses = append(req.responses, CompletionResponse{Error: completionStatusError(err)})
 	} else {
-		req.responses = append(req.responses, req.output.finish())
+		final := req.output.finish()
+		// A failed request reports its error alone, like a decoder fault.
+		req.spec.reportCounts(&final)
+		req.responses = append(req.responses, final)
 	}
 	slog.Debug("MLX batch request finished", "slot", slot.id, "memory", mlx.Memory{})
 }
