@@ -790,6 +790,21 @@ function vulkan {
     }
 }
 
+function mlxCpu {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    Write-Output "Building MLX CPU backend libraries"
+    $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
+    $configureArgs = @("-S", ".", "-B", "build\mlx", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cpu", "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "--install-prefix", "$script:DIST_DIR")
+    & cmake @configureArgs
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    $buildArgs = @("--build", "build\mlx", "--target", "ollama-mlx-cpu", "--config", "Release", "--parallel", "$script:JOBS")
+    if ($env:CMAKE_GENERATOR -notlike "Ninja*") {
+        $buildArgs += @("--", "/nodeReuse:false")
+    }
+    & cmake @buildArgs
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+}
+
 function mlxCuda13 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     $cudaMajorVer="13"
@@ -1308,6 +1323,7 @@ try {
         }
         rocm7
         vulkan
+        mlxCpu
         mlxCuda13
         ollama
         ollamaArm64
