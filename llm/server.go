@@ -245,6 +245,10 @@ type ChatResponse struct {
 	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
 	EvalCount             int           `json:"eval_count"`
 	EvalDuration          time.Duration `json:"eval_duration"`
+	DraftCount            *int          `json:"draft_count,omitempty"`
+	DraftAcceptedCount    *int          `json:"draft_accepted_count,omitempty"`
+	DraftStepCount        *int          `json:"draft_step_count,omitempty"`
+	StepCount             *int          `json:"step_count,omitempty"`
 	Logprobs              []Logprob     `json:"logprobs,omitempty"`
 }
 
@@ -289,6 +293,10 @@ type CompletionResponse struct {
 	PromptEvalDuration    time.Duration `json:"prompt_eval_duration"`
 	EvalCount             int           `json:"eval_count"`
 	EvalDuration          time.Duration `json:"eval_duration"`
+	DraftCount            *int          `json:"draft_count,omitempty"`
+	DraftAcceptedCount    *int          `json:"draft_accepted_count,omitempty"`
+	DraftStepCount        *int          `json:"draft_step_count,omitempty"`
+	StepCount             *int          `json:"step_count,omitempty"`
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
