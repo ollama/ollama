@@ -3,9 +3,11 @@ package lfm3
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/videoclip"
 )
 
 type visionConfig struct {
@@ -25,7 +27,7 @@ type visionConfig struct {
 	} `json:"rope_parameters"`
 }
 
-// VLModel adds still-image preparation to the shared language decoder.
+// VLModel adds image and video preparation to the shared language decoder.
 type VLModel struct{ *Model }
 
 func newVLModel(root *model.Root) (model.Model, error) {
@@ -46,13 +48,15 @@ func newVLModel(root *model.Root) (model.Model, error) {
 	return &VLModel{Model: m}, nil
 }
 
-// parseVisionModel reads the vision tower, projector, and image processor
-// settings shared by LFM3 VL and Omni, returning the nested text config.
+// parseVisionModel reads the vision tower, projector, and image and video
+// processor settings shared by LFM3 VL and Omni, returning the nested text
+// config.
 func parseVisionModel(root *model.Root, data []byte) (json.RawMessage, *VisionModel, error) {
 	var cfg struct {
 		TextConfig            json.RawMessage `json:"text_config"`
 		VisionConfig          visionConfig    `json:"vision_config"`
 		ImageTokenID          int32           `json:"image_token_id"`
+		VideoTokenID          int32           `json:"video_token_id"`
 		DownsampleFactor      int32           `json:"downsample_factor"`
 		ProjectorHiddenSize   int32           `json:"projector_hidden_size"`
 		ProjectorLayerNormEps float32         `json:"projector_layer_norm_eps"`
@@ -81,6 +85,22 @@ func parseVisionModel(root *model.Root, data []byte) (json.RawMessage, *VisionMo
 				Max int32 `json:"longest_edge"`
 			} `json:"size"`
 		} `json:"image_processor"`
+		Video *struct {
+			FPS               float64   `json:"fps"`
+			MinFrames         int       `json:"min_frames"`
+			MaxFrames         int       `json:"max_frames"`
+			PatchSize         int32     `json:"patch_size"`
+			MergeSize         int32     `json:"merge_size"`
+			TemporalPatchSize int32     `json:"temporal_patch_size"`
+			Resample          int       `json:"resample"`
+			CapPixelsPerFrame bool      `json:"cap_pixels_per_frame"`
+			Mean              []float32 `json:"image_mean"`
+			Std               []float32 `json:"image_std"`
+			Size              struct {
+				Min int64 `json:"shortest_edge"`
+				Max int64 `json:"longest_edge"`
+			} `json:"size"`
+		} `json:"video_processor"`
 	}
 	if err := json.Unmarshal(processorData, &processor); err != nil {
 		return nil, nil, fmt.Errorf("parse VL image processor: %w", err)
@@ -97,6 +117,15 @@ func parseVisionModel(root *model.Root, data []byte) (json.RawMessage, *VisionMo
 			return nil, nil, fmt.Errorf("unsupported VL image normalization")
 		}
 	}
+	// Video is served only under the processor settings it was verified
+	// against; other checkpoints keep images and audio.
+	var videoCfg *videoclip.Config
+	if v := processor.Video; v != nil && cfg.VideoTokenID > 0 && v.PatchSize == imageCfg.PatchSize &&
+		v.MergeSize == imageCfg.MergeSize && v.TemporalPatchSize == 2 && v.Resample == 3 && !v.CapPixelsPerFrame &&
+		v.FPS > 0 && v.MinFrames >= 2 && v.MaxFrames >= v.MinFrames && v.Size.Min > 0 && v.Size.Max >= v.Size.Min &&
+		slices.Equal(v.Mean, imageCfg.Mean) && slices.Equal(v.Std, imageCfg.Std) {
+		videoCfg = &videoclip.Config{FPS: v.FPS, MinFrames: v.MinFrames, MaxFrames: v.MaxFrames, MinPixels: v.Size.Min, MaxPixels: v.Size.Max}
+	}
 	for name := range root.AllTensorQuant() {
 		if strings.HasPrefix(name, "model.vision_tower.") || strings.HasPrefix(name, "model.multi_modal_projector.") {
 			return nil, nil, fmt.Errorf("quantized LFM3 VL vision weight %q is not supported", name)
@@ -111,5 +140,7 @@ func parseVisionModel(root *model.Root, data []byte) (json.RawMessage, *VisionMo
 		ProjectorAct:        cfg.ProjectorHiddenAct,
 		MinPixels:           imageCfg.Size.Min,
 		MaxPixels:           imageCfg.Size.Max,
+		VideoTokenID:        cfg.VideoTokenID,
+		Video:               videoCfg,
 	}, nil
 }

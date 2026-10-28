@@ -250,6 +250,7 @@ func (s *batchScheduler) finish(slot *batchSlot, err error) {
 		slot.cache.dumpTree()
 	}
 	req.media.close()
+	req.request.releaseMedia()
 	req.request.Grammar.close()
 	req.finished = true
 	if err != nil {

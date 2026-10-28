@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/videoclip"
 )
 
 const (
@@ -41,6 +42,8 @@ func mediaSpan(opaque any) (lead, tokens int) {
 		return 1, int(item.Tokens)
 	case preparedAudio:
 		return int(item.Lead), int(item.Tokens)
+	case preparedSoundtrack:
+		return 0, int(item.Tokens)
 	}
 	return 0, 0
 }
@@ -69,82 +72,6 @@ func resizeImageGrid(height, width, factor, minPixels, maxPixels int32) (int32, 
 	return int32(h), int32(w), nil
 }
 
-type resampleTap struct {
-	index  int
-	weight float64
-}
-
-func cubicWeight(x float64) float64 {
-	x = math.Abs(x)
-	switch {
-	case x < 1:
-		return (1.5*x-2.5)*x*x + 1
-	case x < 2:
-		return ((-0.5*x+2.5)*x-4)*x + 2
-	default:
-		return 0
-	}
-}
-
-func bicubicPlan(source, target int) [][]resampleTap {
-	plan := make([][]resampleTap, target)
-	scale := float64(source) / float64(target)
-	filterScale := math.Max(scale, 1)
-	for output := range target {
-		center := (float64(output) + 0.5) * scale
-		first := max(0, int(math.Floor(center-2*filterScale-0.5)))
-		last := min(source, int(math.Ceil(center+2*filterScale-0.5))+1)
-		var total float64
-		for input := first; input < last; input++ {
-			weight := cubicWeight((float64(input) + 0.5 - center) / filterScale)
-			if weight == 0 {
-				continue
-			}
-			plan[output] = append(plan[output], resampleTap{index: input, weight: weight})
-			total += weight
-		}
-		for i := range plan[output] {
-			plan[output][i].weight /= total
-		}
-	}
-	return plan
-}
-
-func roundedByte(v float64) uint8 {
-	return uint8(max(0, min(255, int(math.Floor(v+0.5)))))
-}
-
-func resizeBicubic(source *image.NRGBA, width, height int) *image.NRGBA {
-	sourceW, sourceH := source.Bounds().Dx(), source.Bounds().Dy()
-	horizontal := image.NewNRGBA(image.Rect(0, 0, width, sourceH))
-	for x, taps := range bicubicPlan(sourceW, width) {
-		for y := range sourceH {
-			for channel := range 3 {
-				var value float64
-				for _, tap := range taps {
-					value += float64(source.Pix[source.PixOffset(tap.index, y)+channel]) * tap.weight
-				}
-				horizontal.Pix[horizontal.PixOffset(x, y)+channel] = roundedByte(value)
-			}
-			horizontal.Pix[horizontal.PixOffset(x, y)+3] = 255
-		}
-	}
-	output := image.NewNRGBA(image.Rect(0, 0, width, height))
-	for y, taps := range bicubicPlan(sourceH, height) {
-		for x := range width {
-			for channel := range 3 {
-				var value float64
-				for _, tap := range taps {
-					value += float64(horizontal.Pix[horizontal.PixOffset(x, tap.index)+channel]) * tap.weight
-				}
-				output.Pix[output.PixOffset(x, y)+channel] = roundedByte(value)
-			}
-			output.Pix[output.PixOffset(x, y)+3] = 255
-		}
-	}
-	return output
-}
-
 func (v *VisionModel) preprocessImage(data []byte) ([]float32, preparedImage, error) {
 	source, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -164,40 +91,35 @@ func (v *VisionModel) preprocessImage(data []byte) ([]float32, preparedImage, er
 	for i := 3; i < len(rgb.Pix); i += 4 {
 		rgb.Pix[i] = 0xff
 	}
-	resized := resizeBicubic(rgb, int(width), int(height))
-	gridH, gridW := height/patch, width/patch
-	channels := int32(3) * temporal * patch * patch
-	pixels := make([]float32, gridH*gridW*channels)
-	row := int32(0)
-	for blockH := int32(0); blockH < gridH; blockH += merge {
-		for blockW := int32(0); blockW < gridW; blockW += merge {
-			for innerH := range merge {
-				for innerW := range merge {
-					patchH, patchW := blockH+innerH, blockW+innerW
-					for channel := range int32(3) {
-						for time := range temporal {
-							for y := range patch {
-								for x := range patch {
-									pixel := resized.PixOffset(int(patchW*patch+x), int(patchH*patch+y))
-									index := row*channels + (((channel*temporal+time)*patch+y)*patch + x)
-									pixels[index] = float32(resized.Pix[pixel+int(channel)])/127.5 - 1
-								}
-							}
-						}
-					}
-					row++
-				}
-			}
-		}
+	resized := videoclip.ResizeBicubic(rgb, int(width), int(height))
+	frames := make([]*image.NRGBA, temporal)
+	for i := range frames {
+		frames[i] = resized // a still image fills every temporal slot
 	}
-	return pixels, preparedImage{Height: gridH, Width: gridW, Tokens: gridH * gridW / (merge * merge)}, nil
+	gridH, gridW := height/patch, width/patch
+	return videoclip.PackPatches(frames, patch, merge), preparedImage{Height: gridH, Width: gridW, Tokens: gridH * gridW / (merge * merge)}, nil
 }
 
-func (m *VLModel) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+func (m *VLModel) PrepareMedia(segments []model.Segment) (_ *model.PreparedRequest, err error) {
 	request := &model.PreparedRequest{}
+	defer func() {
+		if err != nil && request.Release != nil {
+			request.Release()
+		}
+	}()
 	for source, segment := range segments {
 		if segment.Data == nil && segment.Kind == "" {
 			request.Tokens = append(request.Tokens, segment.Tokens...)
+			continue
+		}
+		if segment.Kind == "video" {
+			tokens, items, release, err := m.prepareVideo(segment, source, request.Tokens)
+			if err != nil {
+				return nil, err
+			}
+			request.Tokens = tokens
+			request.Items = append(request.Items, items...)
+			request.AddRelease(release)
 			continue
 		}
 		if segment.Kind == "audio" && m.Audio != nil {
@@ -237,8 +159,11 @@ func (m *VLModel) PrepareMedia(segments []model.Segment) (*model.PreparedRequest
 }
 
 func (m *VLModel) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
-	if _, ok := item.Opaque.(preparedAudio); ok {
+	switch opaque := item.Opaque.(type) {
+	case preparedAudio:
 		return m.Audio.Enc.Forward(data)
+	case preparedSoundtrack:
+		return opaque.clip.soundtrack(m.Audio.Enc, opaque.Start, int(opaque.Tokens))
 	}
 	geometry := item.Opaque.(preparedImage)
 	return m.Vision.Forward(data, geometry.Height, geometry.Width)

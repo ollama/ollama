@@ -129,7 +129,10 @@ func (p *evaluationState) step(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if p.session == nil {
-		b := p.inputBatch(0, len(p.input.Tokens))
+		b, err := p.inputBatch(ctx, 0, len(p.input.Tokens))
+		if err != nil {
+			return false, err
+		}
 		out := mlx.ScopedArrays(func() []*mlx.Array {
 			h, _ := p.r.Model.Forward(b, nil)
 			return []*mlx.Array{h}
@@ -138,10 +141,18 @@ func (p *evaluationState) step(ctx context.Context) (bool, error) {
 	}
 	if p.position < len(p.input.Tokens) {
 		n := p.media.extendChunk(p.position, min(prefillChunkSize(), len(p.input.Tokens)-p.position), len(p.input.Tokens))
+		var err error
 		mlx.Scoped(func() {
-			h, _ := p.r.Model.Forward(p.inputBatch(p.position, n), cache.Layers(p.session.caches[:len(p.session.caches)-1]))
+			var b *batch.Batch
+			if b, err = p.inputBatch(ctx, p.position, n); err != nil {
+				return
+			}
+			h, _ := p.r.Model.Forward(b, cache.Layers(p.session.caches[:len(p.session.caches)-1]))
 			p.hidden.Append(h)
 		})
+		if err != nil {
+			return false, err
+		}
 		var state []*mlx.Array
 		for _, c := range p.session.caches {
 			if c != nil {
@@ -161,12 +172,16 @@ func (p *evaluationState) step(ctx context.Context) (bool, error) {
 	return true, p.consume(p.hidden.State()[0])
 }
 
-func (p *evaluationState) inputBatch(offset, n int) *batch.Batch {
+func (p *evaluationState) inputBatch(ctx context.Context, offset, n int) (*batch.Batch, error) {
+	media, err := p.media.batchMedia(ctx, offset, n)
+	if err != nil {
+		return nil, err
+	}
 	return &batch.Batch{
 		InputIDs:   mlx.FromValues(p.input.Tokens[offset:offset+n], 1, n),
 		SeqOffsets: []int32{int32(offset)}, SeqQueryLens: []int32{int32(n)},
-		Media: p.media.batchMedia(offset, n), Layout: p.media.rowLayout(),
-	}
+		Media: media, Layout: p.media.rowLayout(),
+	}, nil
 }
 
 func (p *evaluationState) close() {
@@ -185,7 +200,13 @@ func (s *batchScheduler) wholeForward(slots []*batchSlot) {
 		length = max(length, len(p.input.Tokens))
 	}
 	logutil.Trace("mlx whole forward batch", "rows", len(slots), "tokens", length)
-	b := forwardBatch(slots, length)
+	b, err := forwardBatch(slots, length)
+	if err != nil {
+		for _, slot := range slots {
+			s.finishEvaluation(slot, err)
+		}
+		return
+	}
 	hidden := mlx.ScopedArrays(func() []*mlx.Array {
 		h, _ := s.r.Model.Forward(b, nil)
 		return []*mlx.Array{h}
@@ -228,7 +249,7 @@ func (s *batchScheduler) wholeForwardSlots(first *batchSlot) []*batchSlot {
 
 // forwardBatch preserves each request's absolute positions and media identity.
 // Cacheless forwards may pad; cached forwards pass a shared unpadded length.
-func forwardBatch(slots []*batchSlot, length int) *batch.Batch {
+func forwardBatch(slots []*batchSlot, length int) (*batch.Batch, error) {
 	tokens := make([]int32, len(slots)*length)
 	b := &batch.Batch{SeqOffsets: make([]int32, len(slots)), SeqQueryLens: make([]int32, len(slots)), Layout: make([]any, len(slots))}
 	for i, slot := range slots {
@@ -237,13 +258,17 @@ func forwardBatch(slots []*batchSlot, length int) *batch.Batch {
 		copy(tokens[i*length:], p.input.Tokens[p.position:p.position+n])
 		b.SeqOffsets[i], b.SeqQueryLens[i] = int32(p.position), int32(n)
 		b.Layout[i] = p.input.Layout
-		for _, item := range p.media.batchMedia(p.position, n) {
+		media, err := p.media.batchMedia(slot.evaluation.request.ctx, p.position, n)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range media {
 			item.Seq = i
 			b.Media = append(b.Media, item)
 		}
 	}
 	b.InputIDs = mlx.FromValues(tokens, len(slots), length)
-	return b
+	return b, nil
 }
 
 func (s *batchScheduler) cachedForwardSlots(first *batchSlot) ([]*batchSlot, int) {
@@ -301,7 +326,13 @@ func (s *batchScheduler) cachedForward(slots []*batchSlot, n int) {
 		}
 		return
 	}
-	b := forwardBatch(slots, n)
+	b, err := forwardBatch(slots, n)
+	if err != nil {
+		for _, slot := range slots {
+			s.finishEvaluation(slot, err)
+		}
+		return
+	}
 	hidden := mlx.ScopedArrays(func() []*mlx.Array {
 		h, _ := s.r.Model.Forward(b, layers)
 		return []*mlx.Array{h}

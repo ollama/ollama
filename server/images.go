@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/create"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/mlx"
@@ -195,6 +196,7 @@ func (m *Model) capabilitiesForTemplate(source templateCapabilitySource) []model
 	capabilities = m.templateCapabilities(capabilities, source)
 	capabilities = m.parserCapabilities(capabilities)
 	capabilities = m.modelFamilyCapabilities(capabilities)
+	capabilities = m.videoCapabilities(capabilities)
 	capabilities = m.filterUnsupportedCapabilities(capabilities, modelArch)
 
 	return capabilities
@@ -508,6 +510,21 @@ func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model
 	return capabilities
 }
 
+// videoCapabilities infers video for MLX models created before it was
+// recorded in the config. Only the MLX runner decodes video, so other
+// formats never report it, whatever their config declares.
+func (m *Model) videoCapabilities(capabilities []model.Capability) []model.Capability {
+	switch {
+	case m.Config.ModelFormat != "safetensors":
+		return slices.DeleteFunc(capabilities, func(c model.Capability) bool { return c == model.CapabilityVideo })
+	case slices.Contains(capabilities, model.CapabilityDecision):
+		return capabilities
+	case create.VideoCapable(m.Config.Renderer, capabilityNames(capabilities)):
+		return appendCapability(capabilities, model.CapabilityVideo)
+	}
+	return capabilities
+}
+
 func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability, modelArch string) []model.Capability {
 	if m.metadata.String("decision.type") != "" {
 		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
@@ -612,6 +629,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityImage:      errCapabilityImage,
 		model.CapabilityDecision:   errors.New("decision"),
 		model.CapabilitySpeech:     errors.New("speech"),
+		model.CapabilityVideo:      errors.New("video"),
 	}
 
 	for _, cap := range want {
