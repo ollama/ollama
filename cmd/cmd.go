@@ -2554,19 +2554,12 @@ func NewCLI() *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{
 			DisableDefaultCmd: true,
 		},
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if version, _ := cmd.Flags().GetBool("version"); version {
 				versionHandler(cmd, args)
-				return
+				return nil
 			}
-
-			if err := runWelcome(); err != nil {
-				if !errors.Is(err, launch.ErrCancelled) {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				}
-				return
-			}
-			runInteractiveTUI(cmd)
+			return cmd.Help()
 		},
 	}
 
