@@ -155,6 +155,7 @@ func runPlatformNativeProbe(ctx context.Context, libDirs []string) ([]nativeProb
 
 	devices := mergeNativeProbeDevices(mergeNativeProbeDevices(ggmlDevices, cudaDevices), rocmDevices)
 	if len(devices) > 0 {
+		addIntelVulkanDeviceInfo(devices, libDirs)
 		return devices, nil
 	}
 

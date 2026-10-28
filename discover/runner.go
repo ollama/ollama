@@ -385,6 +385,13 @@ func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
 	}
 
 	allow, explicit := integratedGPUAdmission()
+	hasDiscrete := false
+	for _, device := range devices {
+		if !device.Integrated {
+			hasDiscrete = true
+			break
+		}
+	}
 	filtered := devices[:0]
 	for _, device := range devices {
 		if !device.Integrated {
@@ -397,7 +404,7 @@ func filterIntegratedGPUs(devices []ml.DeviceInfo) []ml.DeviceInfo {
 				filtered = append(filtered, device)
 				continue
 			}
-		} else if integratedGPUAllowedByDefault(device) {
+		} else if integratedGPUAllowedByDefault(device, hasDiscrete) {
 			filtered = append(filtered, device)
 			continue
 		}
@@ -423,13 +430,15 @@ func integratedGPUAdmission() (allow, explicit bool) {
 	return false, false
 }
 
-func integratedGPUAllowedByDefault(device ml.DeviceInfo) bool {
+func integratedGPUAllowedByDefault(device ml.DeviceInfo, hasDiscrete bool) bool {
 	switch device.Library {
 	case "CUDA":
 		return true
 	case "ROCm":
 		_, ok := defaultIntegratedROCmGFXTargets[device.GFXTarget]
 		return ok
+	case "Vulkan":
+		return intelIGPUAllowedByDefault(device, hasDiscrete)
 	default:
 		return false
 	}
