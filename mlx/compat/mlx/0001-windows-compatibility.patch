@@ -1,0 +1,133 @@
+diff --git a/mlx/backend/cpu/CMakeLists.txt b/mlx/backend/cpu/CMakeLists.txt
+index f2c96949f..81ba7c5db 100644
+--- a/mlx/backend/cpu/CMakeLists.txt
++++ b/mlx/backend/cpu/CMakeLists.txt
+@@ -17,7 +17,7 @@ set(COMPILE_DEPS
+     unary_ops.h
+     binary_ops.h)
+ 
+-if(MSVC)
++if(WIN32)
+   set(SHELL_EXT ps1)
+   set(SHELL_CMD powershell -ExecutionPolicy Bypass -File)
+ else()
+diff --git a/mlx/backend/cpu/compiled_preamble.h b/mlx/backend/cpu/compiled_preamble.h
+index 31ca1b468..582d6c475 100644
+--- a/mlx/backend/cpu/compiled_preamble.h
++++ b/mlx/backend/cpu/compiled_preamble.h
+@@ -1,6 +1,7 @@
+ // Copyright © 2023-24 Apple Inc.
+ 
+ #pragma once
++#define _USE_MATH_DEFINES
+ 
+ // clang-format off
+ #include "mlx/types/half_types.h"
+diff --git a/mlx/backend/cpu/jit_compiler.cpp b/mlx/backend/cpu/jit_compiler.cpp
+index 267e8fd86..0bd8ec5ab 100644
+--- a/mlx/backend/cpu/jit_compiler.cpp
++++ b/mlx/backend/cpu/jit_compiler.cpp
+@@ -109,7 +109,7 @@ std::string JitCompiler::build_command(
+       libpaths);
+ #else
+   return fmt::format(
+-      "g++ -std=c++17 -O3 -Wall -fPIC -shared \"{0}\" -o \"{1}\" 2>&1",
++      "c++ -std=c++20 -O3 -D_USE_MATH_DEFINES -w -shared \"{0}\" -o \"{1}\" 2>&1",
+       (dir / source_file_name).string(),
+       (dir / shared_lib_name).string());
+ #endif
+diff --git a/mlx/backend/cpu/make_compiled_preamble.ps1 b/mlx/backend/cpu/make_compiled_preamble.ps1
+index 0cd2d1f17..1349e4722 100644
+--- a/mlx/backend/cpu/make_compiled_preamble.ps1
++++ b/mlx/backend/cpu/make_compiled_preamble.ps1
+@@ -8,7 +8,11 @@ $CL = $args[1]
+ $SRCDIR = $args[2]
+ 
+ # Get command result as array.
+-$CONTENT = & $CL /std:c++17 /EP "/I$SRCDIR" /Tp "$SRCDIR/mlx/backend/cpu/compiled_preamble.h"
++if ($CL -match 'cl(\.exe)?$' -or $CL -match 'clang-cl(\.exe)?$') {
++    $CONTENT = & $CL /std:c++17 /EP "/I$SRCDIR" /Tp "$SRCDIR/mlx/backend/cpu/compiled_preamble.h"
++} else {
++    $CONTENT = & $CL -std=c++20 -D_USE_MATH_DEFINES -E -P "-I$SRCDIR" -x c++ "$SRCDIR/mlx/backend/cpu/compiled_preamble.h" 2>$null
++}
+ # Remove empty lines.
+ # Otherwise there will be too much empty lines making the result unreadable.
+ $CONTENT = $CONTENT | Where-Object { $_.Trim() -ne '' }
+diff --git a/mlx/backend/no_gpu/allocator.cpp b/mlx/backend/no_gpu/allocator.cpp
+index abb83e50e..479fa37c1 100644
+--- a/mlx/backend/no_gpu/allocator.cpp
++++ b/mlx/backend/no_gpu/allocator.cpp
+@@ -10,6 +10,16 @@
+ #include "mlx/backend/no_gpu/apple_memory.h"
+ #elif defined(__linux__)
+ #include "mlx/backend/no_gpu/linux_memory.h"
++#elif defined(_WIN32)
++#include <windows.h>
++size_t get_memory_size() {
++  MEMORYSTATUSEX status;
++  status.dwLength = sizeof(status);
++  if (GlobalMemoryStatusEx(&status)) {
++    return (size_t)status.ullTotalPhys;
++  }
++  return 0;
++}
+ #else
+ size_t get_memory_size() {
+   return 0;
+@@ -53,7 +63,7 @@ class CommonAllocator : public Allocator {
+   std::mutex mutex_;
+   CommonAllocator() : memory_limit_(0.8 * get_memory_size()) {
+     if (memory_limit_ == 0) {
+-      memory_limit_ = 1UL << 33;
++      memory_limit_ = 1ULL << 33;
+     }
+   };
+ 
+diff --git a/mlx/dtype.cpp b/mlx/dtype.cpp
+index 380a9362a..eba8dd192 100644
+--- a/mlx/dtype.cpp
++++ b/mlx/dtype.cpp
+@@ -92,20 +92,6 @@ Dtype::Kind kindof(const Dtype& t) {
+   return type_kinds[static_cast<int>(t.val())];
+ }
+ 
+-template class MLX_API TypeToDtype<bool>;
+-template class MLX_API TypeToDtype<uint8_t>;
+-template class MLX_API TypeToDtype<uint16_t>;
+-template class MLX_API TypeToDtype<uint32_t>;
+-template class MLX_API TypeToDtype<uint64_t>;
+-template class MLX_API TypeToDtype<int8_t>;
+-template class MLX_API TypeToDtype<int16_t>;
+-template class MLX_API TypeToDtype<int32_t>;
+-template class MLX_API TypeToDtype<int64_t>;
+-template class MLX_API TypeToDtype<float16_t>;
+-template class MLX_API TypeToDtype<float>;
+-template class MLX_API TypeToDtype<double>;
+-template class MLX_API TypeToDtype<bfloat16_t>;
+-template class MLX_API TypeToDtype<complex64_t>;
+ 
+ template <>
+ TypeToDtype<bool>::operator Dtype() {
+@@ -177,6 +163,22 @@ TypeToDtype<complex64_t>::operator Dtype() {
+   return complex64;
+ }
+ 
++
++template class MLX_API TypeToDtype<bool>;
++template class MLX_API TypeToDtype<uint8_t>;
++template class MLX_API TypeToDtype<uint16_t>;
++template class MLX_API TypeToDtype<uint32_t>;
++template class MLX_API TypeToDtype<uint64_t>;
++template class MLX_API TypeToDtype<int8_t>;
++template class MLX_API TypeToDtype<int16_t>;
++template class MLX_API TypeToDtype<int32_t>;
++template class MLX_API TypeToDtype<int64_t>;
++template class MLX_API TypeToDtype<float16_t>;
++template class MLX_API TypeToDtype<float>;
++template class MLX_API TypeToDtype<double>;
++template class MLX_API TypeToDtype<bfloat16_t>;
++template class MLX_API TypeToDtype<complex64_t>;
++
+ bool issubdtype(const Dtype& a, const Dtype& b) {
+   return a == b;
+ }
