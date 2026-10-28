@@ -757,11 +757,15 @@ func TestResponsesForeignCompactionLocalInputs(t *testing.T) {
 	}{
 		{
 			name: "image file ID", item: `{"role":"user","content":[{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantErr: "file_id image inputs are not supported",
+			wantMessages: []api.Message{{Role: "user", Content: "\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file ID beside text", item: `{"role":"user","content":[{"type":"input_text","text":"Read this image"},{"type":"input_image","file_id":"file-fixture"}]}`,
-			wantErr: "file_id image inputs are not supported",
+			wantMessages: []api.Message{{Role: "user", Content: "Read this image\n\n[This image is unavailable. Attach the image again, or continue without the image.]\n\n"}},
+			wantPrompt:   []string{"Read this image", "[This image is unavailable. Attach the image again, or continue without the image.]"},
+			wantOmitted:  []string{"file-fixture"},
 		},
 		{
 			name: "file reference", item: `{"role":"user","content":[{"type":"input_file","file_id":"file-fixture"}]}`,

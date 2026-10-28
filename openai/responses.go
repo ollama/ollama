@@ -12,6 +12,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+const responsesUnavailableImageNotice = "[This image is unavailable. Attach the image again, or continue without the image.]"
+
 // ResponsesContent is a discriminated union for input content types.
 // Concrete types: ResponsesTextContent, ResponsesImageContent,
 // ResponsesOutputTextContent, ResponsesRefusalContent, ResponsesFileContent,
@@ -1189,8 +1191,9 @@ func convertResponsesContent(contents []ResponsesContent) (string, []api.ImageDa
 			content += v.EncryptedContent
 		case ResponsesImageContent:
 			if v.ImageURL == "" {
-				if v.FileID != "" {
-					return "", nil, fmt.Errorf("content[%d]: file_id image inputs are not supported; send image_url as a base64 data URL", i)
+				if strings.TrimSpace(v.FileID) != "" {
+					content += "\n\n" + responsesUnavailableImageNotice + "\n\n"
+					continue
 				}
 				return "", nil, fmt.Errorf("content[%d]: image input requires image_url as a base64 data URL", i)
 			}
