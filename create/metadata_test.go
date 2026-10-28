@@ -120,14 +120,14 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config:       `{"architectures":["Lfm3VlForConditionalGeneration"],"model_type":"lfm3_vl","vision_config":{}}`,
 			wantParser:   "lfm3",
 			wantRenderer: "lfm3",
-			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+			wantCaps:     []string{"completion", "vision", "tools", "thinking", "video"},
 		},
 		{
 			name:         "lfm3 omni architecture",
 			config:       `{"architectures":["Lfm3OmniForConditionalGeneration"],"model_type":"lfm3_omni","vision_config":{}}`,
 			wantParser:   "lfm3-omni",
 			wantRenderer: "lfm3-omni",
-			wantCaps:     []string{"completion", "vision", "tools", "audio", "speech"},
+			wantCaps:     []string{"completion", "vision", "tools", "audio", "speech", "video"},
 		},
 		{
 			name:         "lfm3 audio architecture",
@@ -155,7 +155,7 @@ func TestInferSafetensorsConfigFamilies(t *testing.T) {
 			config:       `{"architectures":["Qwen3_5ForConditionalGeneration"],"vision_config":{}}`,
 			wantParser:   "qwen3.5",
 			wantRenderer: "qwen3.5",
-			wantCaps:     []string{"completion", "vision", "tools", "thinking"},
+			wantCaps:     []string{"completion", "vision", "tools", "thinking", "video"},
 		},
 		{
 			name:            "pplx decision text",

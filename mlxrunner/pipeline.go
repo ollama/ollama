@@ -58,12 +58,18 @@ func (r *Runner) Prepare(request *Request) (err error) {
 			}
 			return fmt.Errorf("this model does not support %s input", kind)
 		}
-		prepared, bound, err := r.expandMedia(mm, request.Prompt, request.Media)
-		if err != nil {
-			return err
+		prepared, bound, expandErr := r.expandMedia(mm, request.Prompt, request.Media)
+		if expandErr != nil {
+			return expandErr
 		}
 		tokens, items = prepared.Tokens, bound
 		request.Layout = prepared.Layout
+		request.Release = prepared.Release
+		defer func() {
+			if err != nil {
+				request.releaseMedia()
+			}
+		}()
 	}
 
 	if len(tokens) == 0 {
@@ -118,6 +124,7 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 	defer skipCleanupOnPanic(session.close)
 	caches := session.caches
 
+	defer skipCleanupOnPanic(request.releaseMedia)
 	media := r.openMedia(request)
 	defer skipCleanupOnPanic(media.close)
 
@@ -202,9 +209,13 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 		n := min(prefillChunk, total-processed-1)
 		n = media.extendChunk(position, n)
 
+		var mediaErr error
 		mlx.Scoped(func() {
 			chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
-			chunkMedia := media.batchMedia(position, n)
+			var chunkMedia []batch.MediaItem
+			if chunkMedia, mediaErr = media.batchMedia(ctx, position, n); mediaErr != nil {
+				return
+			}
 			auxHidden := mlx.ScopedArrays(func() []*mlx.Array {
 				_, auxHidden := r.Model.Forward(&batch.Batch{
 					InputIDs:     chunkIDs,
@@ -223,6 +234,11 @@ func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *specu
 			// deferred flush still embeds.
 			media.free(position + n)
 		})
+		if mediaErr != nil {
+			// Nothing of this chunk ran: settle as a cancellation does.
+			spec.settle(mlx.FromValues(tokens[processed:processed+1], 1))
+			return nil, 0, 0, mediaErr
+		}
 		processed += n
 		position += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
