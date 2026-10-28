@@ -91,6 +91,8 @@ PARAMETER stop "<|eot_id|>"
 PARAMETER stop "<|reserved_special_token"
 ```
 
+A Modelfile has no way to escape quotes, so an instruction whose value has a line that ends in `"""` cannot be written to one. `ollama show --modelfile` leaves a comment such as `# SYSTEM omitted: ...` in its place, and a model created from that output does not have the value. Use `ollama show --system`, `--template` or `--license` to read it.
+
 ## Instructions
 
 ### FROM (Required)

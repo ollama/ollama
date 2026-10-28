@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -1348,4 +1349,147 @@ func TestFilesForModel(t *testing.T) {
 			}
 		})
 	}
+}
+
+// exportAndParse writes the command between FROM and a PARAMETER the way the
+// show handler does and parses the result.
+func exportAndParse(cmd Command) (*Modelfile, error) {
+	export := Modelfile{Commands: []Command{
+		{Name: "model", Args: "foo"},
+		cmd,
+		{Name: "temperature", Args: "1"},
+	}}
+
+	return ParseFile(strings.NewReader(export.String()))
+}
+
+func commandNames(modelfile *Modelfile) []string {
+	var names []string
+	for _, c := range modelfile.Commands {
+		names = append(names, c.Name)
+	}
+
+	return names
+}
+
+func TestModelfileStringRoundTripTripleQuote(t *testing.T) {
+	values := []string{
+		"say \"\"\"hi\"\"\" please",
+		"say \"\"\"hi\"\"\"",
+		"Text: \"\"\"{input}\"\"\" and then\nRespond in one sentence.",
+		"a \"\"\" b\nc",
+		"line one\n\"\"\"x\nline three",
+		"ends with a delimiter\n\"\"\"",
+		"quote \"\"\"\"\" run",
+	}
+
+	for _, v := range values {
+		for _, cmd := range []Command{
+			{Name: "system", Args: v},
+			{Name: "template", Args: v},
+			{Name: "license", Args: v},
+			{Name: "message", Args: "user: " + v},
+		} {
+			t.Run(fmt.Sprintf("%s/%q", cmd.Name, v), func(t *testing.T) {
+				modelfile, err := exportAndParse(cmd)
+				require.NoError(t, err)
+				require.Equal(t, []string{"model", cmd.Name, "temperature"}, commandNames(modelfile))
+				assert.Equal(t, cmd.Args, modelfile.Commands[1].Args)
+			})
+		}
+	}
+}
+
+// A line that ends in a triple quote closes the value early and the Modelfile
+// has no escape, so these values cannot be written. The command is replaced by
+// a comment instead of a file that fails to parse.
+func TestModelfileStringUnrepresentable(t *testing.T) {
+	values := []string{
+		"say \"\"\"hi\"\"\"\nplease",
+		"Summarize the text between the triple quotes:\n\"\"\"\n{text}\n\"\"\"\nRespond in one sentence.",
+		"\"\"\"\nfoo",
+		"a \"\"\"  \nb",
+		"a \"\"\"\t\nb",
+		"a \"\"\"\r\nb",
+		"a\n\"\"\"\rb",
+		"a\n\"\"\"\"\nb",
+		// ParseFile drops runes that are not printable and trims the rest
+		"a \"\"\"\v\nb",
+		"a \"\"\"\u00a0\nb",
+		"a \"\"\"\u200b\nb",
+		"a \"\"\"\x00\nb",
+	}
+
+	cmds := []struct {
+		cmd     Command
+		keyword string
+	}{
+		{Command{Name: "system"}, "SYSTEM"},
+		{Command{Name: "template"}, "TEMPLATE"},
+		{Command{Name: "license"}, "LICENSE"},
+		{Command{Name: "stop"}, "PARAMETER stop"},
+		{Command{Name: "message"}, "MESSAGE user"},
+	}
+
+	for _, v := range values {
+		for _, c := range cmds {
+			cmd := c.cmd
+			cmd.Args = v
+			if cmd.Name == "message" {
+				cmd.Args = "user: " + v
+			}
+
+			t.Run(fmt.Sprintf("%s/%q", cmd.Name, v), func(t *testing.T) {
+				export := Modelfile{Commands: []Command{{Name: "model", Args: "foo"}, cmd}}.String()
+				assert.Contains(t, export, "\n# "+c.keyword+" omitted: ")
+
+				modelfile, err := exportAndParse(cmd)
+				require.NoError(t, err)
+				assert.Equal(t, []string{"model", "temperature"}, commandNames(modelfile))
+			})
+		}
+	}
+}
+
+// For every short value over the characters that matter, the value is omitted
+// exactly when the old output does not parse back to one command, and a value
+// that is kept parses back unchanged. Values that begin or end with a quote
+// fail for another reason (quote does not wrap them) and are not covered here.
+func TestModelfileStringOmitsExactlyWhatFails(t *testing.T) {
+	const zwsp = "\u200b"
+	alphabet := []string{"a", "\"", " ", "\t", "\n", zwsp}
+
+	var walk func(prefix string, depth int)
+	walk = func(prefix string, depth int) {
+		// what ParseFile sees of the value
+		seen := strings.ReplaceAll(prefix, zwsp, "")
+		if seen != "" && strings.TrimSpace(seen) == seen &&
+			!strings.HasPrefix(seen, `"`) && !strings.HasSuffix(seen, `"`) {
+			cmd := Command{Name: "system", Args: prefix}
+
+			// what String wrote before values were omitted
+			old := "FROM foo\n" + cmd.String() + "\nPARAMETER temperature 1\n"
+			modelfile, err := ParseFile(strings.NewReader(old))
+			fails := err != nil || !slices.Equal(commandNames(modelfile), []string{"model", "system", "temperature"})
+
+			if omitted := endsLineWithTripleQuote(prefix); omitted != fails {
+				t.Fatalf("%q: omitted = %v but the old output failing = %v", prefix, omitted, fails)
+			}
+
+			// a zero width space is not printable, ParseFile drops it
+			if !fails && !strings.Contains(prefix, zwsp) && modelfile.Commands[1].Args != prefix {
+				t.Fatalf("%q came back as %q", prefix, modelfile.Commands[1].Args)
+			}
+		}
+
+		if depth == 0 {
+			return
+		}
+
+		for _, a := range alphabet {
+			walk(prefix+a, depth-1)
+		}
+	}
+
+	walk("", 7)
 }
