@@ -2351,20 +2351,35 @@ func TestCreateBlobDigestSpellings(t *testing.T) {
 
 	data := []byte("blob data")
 	hex := fmt.Sprintf("%x", sha256.Sum256(data))
-	for _, digest := range []string{"sha256:" + hex, "sha256-" + hex} {
-		t.Run(digest[:7], func(t *testing.T) {
+	canonical := "sha256:" + hex
+	for _, digest := range []string{
+		canonical,
+		"sha256-" + hex,
+		"sha256:" + strings.ToUpper(hex),
+		"sha256-" + strings.ToUpper(hex),
+	} {
+		t.Run(digest, func(t *testing.T) {
 			t.Setenv("OLLAMA_MODELS", t.TempDir())
 			var s Server
 			router := gin.New()
 			router.POST("/api/blobs/:digest", s.CreateBlobHandler)
-
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/blobs/"+digest, bytes.NewReader(data)))
-			if w.Code != http.StatusCreated {
-				t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusCreated, w.Body.String())
+			post := func() int {
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/blobs/"+digest, bytes.NewReader(data)))
+				return w.Code
 			}
-			if w := headBlobRequest(t, &s, digest); w.Code != http.StatusOK {
-				t.Fatalf("HEAD status = %d, want %d", w.Code, http.StatusOK)
+
+			if code := post(); code != http.StatusCreated {
+				t.Fatalf("status = %d, want %d", code, http.StatusCreated)
+			}
+			// A second upload finds the blob already stored.
+			if code := post(); code != http.StatusOK {
+				t.Fatalf("second upload status = %d, want %d", code, http.StatusOK)
+			}
+			for _, d := range []string{digest, canonical} {
+				if w := headBlobRequest(t, &s, d); w.Code != http.StatusOK {
+					t.Fatalf("HEAD %s status = %d, want %d", d, w.Code, http.StatusOK)
+				}
 			}
 		})
 	}
