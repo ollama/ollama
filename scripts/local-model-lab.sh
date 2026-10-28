@@ -24,6 +24,8 @@ commands:
                     model derived from the model's own config
   bench MODEL...    prompt-size sweep: prefill tok/s, TTFT, decode tok/s,
                     peak memory, failures
+  cache             prefix-cache reuse per request from the server log, to
+                    see how much of each agent turn was computed again
 
 inspect flags:
   --budget-gib N    GPU memory budget in GiB (default: "available" from the
@@ -38,6 +40,10 @@ bench flags:
   --no-isolate      keep the model loaded between requests so prefix-cache
                     snapshots pile up the way they do in an agent session
   --out FILE        CSV output (default ./bench-<timestamp>.csv)
+
+cache flags:
+  --last N          only the last N requests
+  --prefill-tok-s N prefill rate from bench, to estimate time spent prefilling
 
 environment:
   OLLAMA_HOST        server address (default 127.0.0.1:11434)
@@ -620,6 +626,58 @@ cmd_bench() {
 	summarize "$out"
 }
 
+# cmd_cache reads the MLX runner's per-request "cache hit"/"cache miss" lines
+# (x/mlxrunner/cache.go begin): total prompt tokens, tokens matched in the
+# prefix trie, tokens restored from it, and tokens left to prefill. Matched
+# but unrestored tokens had no snapshot at the branch point.
+cmd_cache() {
+	local rate=0 last=0 lines ooms
+	while [ $# -gt 0 ]; do
+		case "$1" in
+		--last | --prefill-tok-s)
+			[ $# -ge 2 ] || die "$1 needs a value"
+			if [ "$1" = --last ]; then last="$2"; else rate="$2"; fi
+			shift 2
+			;;
+		*) die "unknown flag $1" ;;
+		esac
+	done
+	[ -r "$LOG" ] || die "cannot read $LOG (set OLLAMA_SERVER_LOG)"
+	lines="$(grep -E 'msg="cache (hit|miss)"' "$LOG" || true)"
+	if [ -z "$lines" ]; then
+		echo "no prefix-cache lines in $LOG: no MLX-runner requests since the server started"
+		return 0
+	fi
+	if [ "$last" -gt 0 ]; then lines="$(printf '%s\n' "$lines" | tail -n "$last")"; fi
+	printf '%s\n' "$lines" | awk -v rate="$rate" '
+	function attr(k,   s) {
+		if (!match($0, "(^| )" k "=[^ ]+")) return ""
+		s = substr($0, RSTART, RLENGTH)
+		sub(/^ /, "", s)
+		s = substr(s, length(k) + 2)
+		gsub(/"/, "", s)
+		return s
+	}
+	BEGIN { printf "%-8s %8s %8s %8s %8s %7s\n", "TIME", "PROMPT", "MATCHED", "REUSED", "PREFILL", "REUSE" }
+	{
+		t = attr("time"); sub(/^[^T]*T/, "", t); t = substr(t, 1, 8)
+		total = attr("total") + 0; matched = attr("matched") + 0; cached = attr("cached") + 0; left = attr("left") + 0
+		n++; st += total; sc += cached; sl += left
+		if (cached == 0) miss++
+		if (matched > cached) lost += matched - cached
+		if (left > maxleft) maxleft = left
+		printf "%-8s %8d %8d %8d %8d %6.1f%%\n", t, total, matched, cached, left, (total > 0 ? 100 * cached / total : 0)
+	}
+	END {
+		printf "\nrequests %d, full misses %d\n", n, miss
+		printf "prompt tokens %d, reused %d (%.1f%%), prefilled %d, largest single prefill %d\n", st, sc, (st > 0 ? 100 * sc / st : 0), sl, maxleft
+		printf "matched but not restorable: %d tokens, prefilled again for lack of a snapshot at the branch point\n", lost
+		if (rate > 0) printf "time spent prefilling at %s tok/s: ~%.0f s\n", rate, sl / rate
+	}'
+	ooms="$(grep -c 'runtime OOM detected' "$LOG" || true)"
+	echo "runtime OOMs in this log: ${ooms:-0}"
+}
+
 main() {
 	need curl
 	need jq
@@ -634,6 +692,7 @@ main() {
 	env) cmd_env ;;
 	inspect) cmd_inspect "$@" ;;
 	bench) cmd_bench "$@" ;;
+	cache) cmd_cache "$@" ;;
 	-h | --help | help) usage ;;
 	*)
 		usage
