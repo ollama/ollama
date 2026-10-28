@@ -1,0 +1,3 @@
+# Session records stay local; they can hold paths, logs and code.
+sessions/
+__pycache__/
