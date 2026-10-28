@@ -303,6 +303,142 @@ func TestLlamaServerCompletionPromptEvalCountIncludesCache(t *testing.T) {
 	}
 }
 
+func TestLlamaServerDraftCountsPassThrough(t *testing.T) {
+	draft, accepted := 9, 4
+	tests := []struct {
+		name         string
+		timings      string
+		wantDraft    *int
+		wantAccepted *int
+	}{
+		{
+			name:         "draft counts present",
+			timings:      `"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20,"draft_n":9,"draft_n_accepted":4`,
+			wantDraft:    &draft,
+			wantAccepted: &accepted,
+		},
+		{
+			// Omitted when speculative decoding did not run; the response
+			// must stay nil rather than reporting zeros.
+			name:    "draft counts absent when not drafted",
+			timings: `"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/health":
+					fmt.Fprint(w, `{"status":"ok"}`)
+				case "/completion":
+					w.Header().Set("Content-Type", "text/event-stream")
+					fmt.Fprintf(w, "data: {\"content\":\"\",\"stop\":true,\"stop_type\":\"eos\",\"timings\":{%s}}\n", tt.timings)
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+
+			parts := strings.Split(srv.URL, ":")
+			var portInt int
+			fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+			runner := &llamaServerRunner{
+				port:    portInt,
+				cmd:     fakeRunningCmd(),
+				sem:     semaphore.NewWeighted(1),
+				options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+			}
+
+			var responses []CompletionResponse
+			opts := api.DefaultOptions()
+			err := runner.Completion(t.Context(), CompletionRequest{
+				Prompt:  "test prompt",
+				Options: &opts,
+			}, func(cr CompletionResponse) {
+				responses = append(responses, cr)
+			})
+			if err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+			if len(responses) != 1 {
+				t.Fatalf("got %d responses, want 1", len(responses))
+			}
+			if tt.wantDraft == nil {
+				if responses[0].DraftCount != nil || responses[0].DraftAcceptedCount != nil {
+					t.Errorf("draft counts = %v/%v, want nil", responses[0].DraftCount, responses[0].DraftAcceptedCount)
+				}
+			} else {
+				if got := responses[0].DraftCount; got == nil || *got != *tt.wantDraft {
+					t.Errorf("DraftCount = %v, want %d", got, *tt.wantDraft)
+				}
+				if got := responses[0].DraftAcceptedCount; got == nil || *got != *tt.wantAccepted {
+					t.Errorf("DraftAcceptedCount = %v, want %d", got, *tt.wantAccepted)
+				}
+			}
+			// No forward-pass count is reported; steps stay unset and must
+			// not be derived from the draft counts.
+			if responses[0].DraftStepCount != nil || responses[0].StepCount != nil {
+				t.Errorf("step counts = %v/%v, want nil", responses[0].DraftStepCount, responses[0].StepCount)
+			}
+		})
+	}
+}
+
+func TestLlamaServerChatDraftCountsPassThrough(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			fmt.Fprint(w, `{"status":"ok"}`)
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{"content":"Hello"}}]}`)
+			fmt.Fprintln(w, `:`)
+			fmt.Fprintln(w, `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"timings":{"prompt_n":5,"prompt_ms":10,"predicted_n":2,"predicted_ms":20,"draft_n":9,"draft_n_accepted":4}}`)
+			fmt.Fprintln(w, `data: [DONE]`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parts := strings.Split(srv.URL, ":")
+	var portInt int
+	fmt.Sscanf(parts[len(parts)-1], "%d", &portInt)
+
+	runner := &llamaServerRunner{
+		port:    portInt,
+		cmd:     fakeRunningCmd(),
+		sem:     semaphore.NewWeighted(1),
+		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
+	}
+
+	var responses []ChatResponse
+	opts := api.DefaultOptions()
+	err := runner.Chat(t.Context(), ChatRequest{
+		Messages: []api.Message{{Role: "user", Content: "test prompt"}},
+		Options:  &opts,
+	}, func(cr ChatResponse) {
+		responses = append(responses, cr)
+	})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if len(responses) != 2 {
+		t.Fatalf("got %d responses, want 2", len(responses))
+	}
+	if got := responses[1].DraftCount; got == nil || *got != 9 {
+		t.Errorf("DraftCount = %v, want 9", got)
+	}
+	if got := responses[1].DraftAcceptedCount; got == nil || *got != 4 {
+		t.Errorf("DraftAcceptedCount = %v, want 4", got)
+	}
+	if responses[1].DraftStepCount != nil || responses[1].StepCount != nil {
+		t.Errorf("step counts = %v/%v, want nil", responses[1].DraftStepCount, responses[1].StepCount)
+	}
+}
+
 func TestLlamaServerChatPromptEvalCountIncludesCache(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

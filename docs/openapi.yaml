@@ -155,6 +155,18 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        draft_count:
+          type: integer
+          description: Draft tokens proposed by speculative decoding; absent when the runner did not report it
+        draft_accepted_count:
+          type: integer
+          description: Draft tokens the model accepted; absent when the runner did not report it
+        draft_step_count:
+          type: integer
+          description: Target forward passes that drafted at least one token; absent when the runner did not report it
+        step_count:
+          type: integer
+          description: Target forward passes over the decode window; absent when the runner did not report it
         logprobs:
           type: array
           items:
@@ -202,6 +214,18 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        draft_count:
+          type: integer
+          description: Draft tokens proposed by speculative decoding; absent when the runner did not report it
+        draft_accepted_count:
+          type: integer
+          description: Draft tokens the model accepted; absent when the runner did not report it
+        draft_step_count:
+          type: integer
+          description: Target forward passes that drafted at least one token; absent when the runner did not report it
+        step_count:
+          type: integer
+          description: Target forward passes over the decode window; absent when the runner did not report it
     ChatMessage:
       type: object
       required: [role, content]
@@ -362,6 +386,18 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        draft_count:
+          type: integer
+          description: Draft tokens proposed by speculative decoding; absent when the runner did not report it
+        draft_accepted_count:
+          type: integer
+          description: Draft tokens the model accepted; absent when the runner did not report it
+        draft_step_count:
+          type: integer
+          description: Target forward passes that drafted at least one token; absent when the runner did not report it
+        step_count:
+          type: integer
+          description: Target forward passes over the decode window; absent when the runner did not report it
         logprobs:
           type: array
           items:
