@@ -42,10 +42,14 @@ func EncodeWAV(samples []float32, rate int) []byte {
 	out := append(make([]byte, 0, wavHeaderSize+2*len(samples)), WAVHeader(rate, uint32(2*len(samples)))...)
 	out = out[:cap(out)]
 	for i, s := range samples {
-		v := int16(math.Round(float64(max(-1, min(1, s))) * math.MaxInt16))
-		binary.LittleEndian.PutUint16(out[wavHeaderSize+2*i:], uint16(v))
+		binary.LittleEndian.PutUint16(out[wavHeaderSize+2*i:], uint16(PCM16(s)))
 	}
 	return out
+}
+
+// PCM16 converts a sample to 16-bit PCM, clipping to [-1, 1].
+func PCM16(s float32) int16 {
+	return int16(math.Round(float64(max(-1, min(1, s))) * math.MaxInt16))
 }
 
 const wavHeaderSize = 44

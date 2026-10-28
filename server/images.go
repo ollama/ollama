@@ -445,7 +445,14 @@ func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.C
 		return capabilities
 	}
 
-	capabilities = appendCapability(capabilities, model.CapabilityVision)
+	// Audio-only projectors (LFM3-Audio) don't make a model see; one that
+	// couldn't be read keeps vision.
+	audioOnly := len(m.projectorMetadata) == len(m.ProjectorPaths) && !slices.ContainsFunc(m.projectorMetadata, func(md ggufMetadata) bool {
+		return !projectorHasAudio(md) || projectorHasVision(md)
+	})
+	if !audioOnly {
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
+	}
 	for _, md := range m.projectorMetadata {
 		if projectorHasAudio(md) && !projectorSuppressesAudioCapability(md) {
 			capabilities = appendCapability(capabilities, model.CapabilityAudio)
@@ -556,6 +563,22 @@ func projectorHasAudio(md ggufMetadata) bool {
 			if b, ok := md.KV[key].(bool); ok && b {
 				return true
 			}
+		}
+	}
+
+	return false
+}
+
+// projectorHasVision reports a vision encoder, flagged or implied by vision keys.
+func projectorHasVision(md ggufMetadata) bool {
+	for _, key := range md.Keys() {
+		if key == "has_vision_encoder" || strings.HasSuffix(key, ".has_vision_encoder") {
+			if b, ok := md.KV[key].(bool); ok && b {
+				return true
+			}
+		}
+		if strings.HasPrefix(key, "vision.") || strings.Contains(key, ".vision.") {
+			return true
 		}
 	}
 

@@ -21,6 +21,7 @@ type LFM3Renderer struct {
 	useImgTags bool
 	noThinking bool
 	audio      bool
+	speech     bool // Omni and Audio read text aloud
 }
 
 func (*LFM3Renderer) LeadingBOS() string { return lfm3BOS }

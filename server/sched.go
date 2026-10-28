@@ -214,7 +214,7 @@ func (s *Scheduler) getRunner(c context.Context, m *Model, opts api.Options, ses
 		opts.NumCtx = 4
 	}
 
-	if m.CheckCapabilities(model.CapabilityVision) == nil {
+	if m.CheckCapabilities(model.CapabilityVision) == nil || len(m.ProjectorPaths) > 0 {
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}

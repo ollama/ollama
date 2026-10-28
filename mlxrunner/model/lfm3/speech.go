@@ -7,11 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"os"
-	"regexp"
 	"slices"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
@@ -20,21 +16,12 @@ import (
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/model"
 	"github.com/ollama/ollama/mlxrunner/model/lfm3/lfm3speech"
+	"github.com/ollama/ollama/model/renderers"
 )
 
 // speechCodecPrefix names the codec tensors create imports from the
 // checkpoint's codec subfolder.
 const speechCodecPrefix = "codec."
-
-const (
-	// maxSpeechChunkTokens bounds one generation; longer input is read in
-	// sentence groups of about 20 seconds each.
-	maxSpeechChunkTokens = 80
-	// A chunk may speak for 0.8 s per text token plus 2 s before the frame
-	// budget cuts it off; speech runs at about 0.3 s per token.
-	speechFramesPerToken = 10
-	speechLeadFrames     = 25
-)
 
 var (
 	_ model.SpeechModel = (*SpeechModel)(nil)
@@ -131,12 +118,12 @@ func (m *SpeechModel) Speak(ctx context.Context, req llm.SpeechRequest, emit fun
 	if m.Speech == nil {
 		return api.StatusError{StatusCode: http.StatusNotImplemented, ErrorMessage: "this model was created without its speech codec; recreate it to use speech"}
 	}
-	voice, err := parseSpeechVoice(req.Voice)
+	voice, err := renderers.ParseLFM3Voice(req.Voice)
 	if err != nil {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: err.Error()}
 	}
 	count := func(s string) int { return len(m.tok.Encode(s, false)) }
-	chunks := speechChunks(req.Input, maxSpeechChunkTokens, count)
+	chunks := renderers.LFM3SpeechChunks(req.Input, renderers.LFM3SpeechChunkTokens, count)
 	if len(chunks) == 0 {
 		return api.StatusError{StatusCode: http.StatusBadRequest, ErrorMessage: "input has no text to speak"}
 	}
@@ -153,13 +140,13 @@ func (m *SpeechModel) Speak(ctx context.Context, req llm.SpeechRequest, emit fun
 }
 
 // speakChunk generates one utterance with fresh backbone state.
-func (m *SpeechModel) speakChunk(ctx context.Context, voice speechVoice, text string, textTokens int, rng *rand.Rand, stream *lfm3speech.Stream, emit func([]float32) error) error {
+func (m *SpeechModel) speakChunk(ctx context.Context, voice renderers.LFM3Voice, text string, textTokens int, rng *rand.Rand, stream *lfm3speech.Stream, emit func([]float32) error) error {
 	sampler, err := lfm3speech.NewFrameSampler(m.setup.cfg, lfm3speech.DefaultSampleOptions(m.setup.omni), rng)
 	if err != nil {
 		return err
 	}
 	prompt := m.tok.Encode(speechPrompt(m.setup.omni, voice, text), false)
-	budget := speechLeadFrames + speechFramesPerToken*textTokens
+	budget := renderers.LFM3SpeechFrameBudget(textTokens)
 
 	caches := m.NewCaches()
 	defer func() {
@@ -256,144 +243,12 @@ func (m *SpeechModel) forwardSpeech(caches []cache.Cache, pos int, input func() 
 // README: a TTS system prompt and an assistant turn prefilled with
 // <|audio_start|>. Omni's README system prompt with the default generation
 // prompt and the marker its audio generation mode appends.
-func speechPrompt(omni bool, v speechVoice, text string) string {
-	system := fmt.Sprintf("Perform TTS in %s using a %s voice.", v.language, v.gender)
+func speechPrompt(omni bool, v renderers.LFM3Voice, text string) string {
+	system := fmt.Sprintf("Perform TTS in %s using a %s voice.", v.Language, v.Gender)
 	assistant := "<|audio_start|>"
 	if omni {
-		system = fmt.Sprintf("Read this with a %s voice in %s.", v.gender, v.language)
+		system = fmt.Sprintf("Read this with a %s voice in %s.", v.Gender, v.Language)
 		assistant = "<think></think><|audio_start|>"
 	}
-	return "<|startoftext|><|im_start|>system\n" + system + "<|im_end|>\n<|im_start|>user\n" + escapeSpeechText(text) + "<|im_end|>\n<|im_start|>assistant\n" + assistant
+	return "<|startoftext|><|im_start|>system\n" + system + "<|im_end|>\n<|im_start|>user\n" + renderers.LFM3EscapeSpeechText(text) + "<|im_end|>\n<|im_start|>assistant\n" + assistant
 }
-
-var controlTokenPattern = regexp.MustCompile(`<\|[^<>]+\|>`)
-
-// escapeSpeechText swaps the brackets of control-token spellings for full-width
-// ones, so text to read aloud cannot end its turn or switch modes.
-func escapeSpeechText(text string) string {
-	return controlTokenPattern.ReplaceAllStringFunc(text, func(token string) string {
-		return "＜" + token[1:len(token)-1] + "＞"
-	})
-}
-
-type speechVoice struct{ gender, language string }
-
-// parseSpeechVoice reads "female" or "male", optionally followed by a
-// language ("male-french", "female-en-gb"), or a language alone. The default,
-// also named "default" as with other speech models, is a female American
-// English voice.
-func parseSpeechVoice(name string) (speechVoice, error) {
-	v := speechVoice{gender: "female", language: "American English"}
-	key := strings.ToLower(strings.Join(strings.FieldsFunc(name, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '_' || r == '-'
-	}), "-"))
-	if key == "" || key == "default" {
-		return v, nil
-	}
-	gender, rest, _ := strings.Cut(key, "-")
-	switch gender {
-	case "female", "male":
-		v.gender = gender
-	default:
-		rest = key
-	}
-	if rest != "" {
-		language, ok := lfm3speech.Languages[rest]
-		if !ok {
-			return v, fmt.Errorf("voice %q is not supported; use female or male, optionally followed by a language such as female-british-english or male-french (languages: %s)", name, strings.Join(speechLanguageNames(), ", "))
-		}
-		v.language = language
-	}
-	return v, nil
-}
-
-func speechLanguageNames() []string {
-	var names []string
-	for key := range lfm3speech.Languages {
-		if len(key) > 2 && !strings.HasPrefix(key, "en-") {
-			names = append(names, key)
-		}
-	}
-	slices.Sort(names)
-	return names
-}
-
-// speechChunks splits text into groups of whole sentences of at most limit
-// tokens; sentences over the limit split between words, and words between
-// characters.
-func speechChunks(text string, limit int, count func(string) int) []string {
-	var units []string
-	for _, sentence := range speechSentences(text) {
-		if count(sentence) <= limit {
-			units = append(units, sentence)
-			continue
-		}
-		var words []string
-		for _, word := range strings.Fields(sentence) {
-			if count(word) <= limit {
-				words = append(words, word)
-				continue
-			}
-			var chars []string
-			for _, r := range word {
-				chars = append(chars, string(r))
-			}
-			words = append(words, packSpeech(chars, limit, count, "")...)
-		}
-		units = append(units, packSpeech(words, limit, count, " ")...)
-	}
-	return packSpeech(units, limit, count, " ")
-}
-
-// packSpeech joins consecutive units while the result fits the limit.
-func packSpeech(units []string, limit int, count func(string) int, sep string) []string {
-	var out []string
-	var cur string
-	for _, u := range units {
-		next := u
-		if cur != "" {
-			join := sep
-			if last, _ := utf8.DecodeLastRuneInString(cur); isFullWidthStop(last) {
-				join = ""
-			}
-			next = cur + join + u
-			if count(next) > limit {
-				out = append(out, cur)
-				next = u
-			}
-		}
-		cur = next
-	}
-	if cur != "" {
-		out = append(out, cur)
-	}
-	return out
-}
-
-// speechSentences splits text at line breaks and after sentence-ending
-// punctuation, collapsing other whitespace.
-func speechSentences(text string) []string {
-	var out []string
-	var cur []rune
-	flush := func() {
-		if s := strings.Join(strings.Fields(string(cur)), " "); s != "" {
-			out = append(out, s)
-		}
-		cur = cur[:0]
-	}
-	runes := []rune(text)
-	for i, r := range runes {
-		if r == '\n' || r == '\r' {
-			flush()
-			continue
-		}
-		cur = append(cur, r)
-		if isFullWidthStop(r) || (strings.ContainsRune(".!?…", r) && (i+1 == len(runes) || unicode.IsSpace(runes[i+1]))) {
-			flush()
-		}
-	}
-	flush()
-	return out
-}
-
-func isFullWidthStop(r rune) bool { return strings.ContainsRune("。！？", r) }

@@ -122,9 +122,9 @@ func rendererForName(name string) Renderer {
 	case "lfm3":
 		return &LFM3Renderer{useImgTags: RenderImgTags}
 	case "lfm3-omni":
-		return &LFM3Renderer{useImgTags: RenderImgTags, noThinking: true}
+		return &LFM3Renderer{useImgTags: RenderImgTags, noThinking: true, speech: true}
 	case "lfm3-audio":
-		return &LFM3Renderer{useImgTags: RenderImgTags, audio: true}
+		return &LFM3Renderer{useImgTags: RenderImgTags, audio: true, speech: true}
 	case "laguna":
 		return &LagunaRenderer{}
 	case "poolside-v1":
