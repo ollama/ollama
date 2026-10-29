@@ -58,6 +58,8 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		menuItemId := int32(wParam)
 		// https://docs.microsoft.com/en-us/windows/win32/menurc/wm-command#menus
 		switch menuItemId {
+		case settingsMenuID:
+			t.app.ShowSettings()
 		case quitMenuID:
 			t.app.Quit()
 		case updateMenuID:

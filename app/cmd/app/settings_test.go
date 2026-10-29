@@ -26,9 +26,19 @@ type testSettings struct {
 	updater       *recordingUpdater
 }
 
+// setTestHome points the home folder at a temporary directory. Windows
+// reads it from USERPROFILE.
+func setTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
+}
+
 func newTestSettings(t *testing.T) *testSettings {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t)
 	t.Setenv("OLLAMA_MODELS", "")
 	t.Setenv("OLLAMA_NO_CLOUD", "")
 	st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
@@ -140,28 +150,34 @@ func TestSettingsModelsPath(t *testing.T) {
 }
 
 func TestIsDefaultModelsPath(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := setTestHome(t)
 	t.Setenv("OLLAMA_MODELS", "")
 	defaultPath := filepath.Join(home, ".ollama", "models")
 	if err := os.MkdirAll(defaultPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	link := filepath.Join(t.TempDir(), "models")
-	if err := os.Symlink(defaultPath, link); err != nil {
-		t.Fatal(err)
-	}
 
-	for _, tt := range []struct {
+	tests := []struct {
 		path string
 		want bool
 	}{
 		{"", true},
 		{defaultPath, true},
-		{defaultPath + "/", true},
-		{link, true},
+		{defaultPath + string(filepath.Separator), true},
 		{t.TempDir(), false},
-	} {
+	}
+	// Creating symbolic links on Windows needs a privilege people may not have.
+	link := filepath.Join(t.TempDir(), "models")
+	if err := os.Symlink(defaultPath, link); err == nil {
+		tests = append(tests, struct {
+			path string
+			want bool
+		}{link, true})
+	} else {
+		t.Logf("not checking a link to the default folder: %v", err)
+	}
+
+	for _, tt := range tests {
 		if got := isDefaultModelsPath(tt.path); got != tt.want {
 			t.Errorf("isDefaultModelsPath(%q) = %v, want %v", tt.path, got, tt.want)
 		}

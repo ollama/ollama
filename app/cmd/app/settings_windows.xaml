@@ -1,0 +1,244 @@
+<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid.RowDefinitions>
+    <RowDefinition Height="Auto" />
+    <RowDefinition Height="Auto" />
+    <RowDefinition Height="*" />
+  </Grid.RowDefinitions>
+
+  <TitleBar x:Name="TitleBar" Title="Ollama">
+    {{- if .Icon}}
+    <TitleBar.IconSource>
+      <ImageIconSource ImageSource="{{.Icon}}" />
+    </TitleBar.IconSource>
+    {{- end}}
+  </TitleBar>
+
+  <TextBlock Grid.Row="1" Margin="36,24,36,0" Text="Settings"
+      Style="{StaticResource TitleTextBlockStyle}" AutomationProperties.HeadingLevel="Level1" />
+
+  <ScrollViewer Grid.Row="2" Padding="36,0,36,0">
+    <StackPanel MaxWidth="1064" Spacing="4">
+      <InfoBar x:Name="ErrorBar" Margin="0,16,0,0" />
+
+      <TextBlock Text="Account" Style="{StaticResource SettingsSectionHeader}" />
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <PersonPicture x:Name="AccountPicture" Width="40" Height="40" Margin="0,0,16,0" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock x:Name="AccountName" TextTrimming="CharacterEllipsis" />
+          <TextBlock x:Name="AccountDetail" Style="{StaticResource SettingsCardDescription}" />
+        </StackPanel>
+        <StackPanel Grid.Column="2" Style="{StaticResource SettingsCardActions}">
+          <ProgressRing x:Name="AccountProgress" Width="20" Height="20" IsActive="False" />
+          <Button x:Name="SignInButton" Content="Sign in" Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed" />
+          <Button x:Name="SignOutButton" Content="Sign out" Visibility="Collapsed">
+            <Button.Flyout>
+              <Flyout x:Name="SignOutFlyout">
+                <StackPanel MaxWidth="300" Spacing="12">
+                  <TextBlock Style="{StaticResource BodyStrongTextBlockStyle}" Text="Sign out of ollama.com?" />
+                  <TextBlock TextWrapping="Wrap"
+                      Text="This PC won’t be able to use cloud models or web search until you sign in again." />
+                  <Button x:Name="SignOutConfirmButton" Content="Sign out" Style="{StaticResource AccentButtonStyle}" />
+                </StackPanel>
+              </Flyout>
+            </Button.Flyout>
+          </Button>
+        </StackPanel>
+      </Grid>
+      <Button x:Name="ManageCard" Style="{StaticResource SettingsClickableCard}" Visibility="Collapsed"
+          AutomationProperties.Name="Manage your account">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <FontIcon Glyph="&#xE779;" Style="{StaticResource SettingsCardIcon}" />
+          <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+            <TextBlock Text="Manage your account" />
+            <TextBlock Style="{StaticResource SettingsCardDescription}" Text="Change your profile, plan, and devices on ollama.com." />
+          </StackPanel>
+          <FontIcon Grid.Column="2" Glyph="&#xE8A7;" Style="{StaticResource SettingsCardActionIcon}" />
+        </Grid>
+      </Button>
+      <Button x:Name="UpgradeCard" Style="{StaticResource SettingsClickableCard}" Visibility="Collapsed"
+          AutomationProperties.Name="Upgrade your plan">
+        <Grid>
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <FontIcon Glyph="&#xE734;" Style="{StaticResource SettingsCardIcon}" />
+          <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+            <TextBlock Text="Upgrade your plan" />
+            <TextBlock Style="{StaticResource SettingsCardDescription}" Text="See plans with more cloud usage on ollama.com." />
+          </StackPanel>
+          <FontIcon Grid.Column="2" Glyph="&#xE8A7;" Style="{StaticResource SettingsCardActionIcon}" />
+        </Grid>
+      </Button>
+
+      <TextBlock Text="General" Style="{StaticResource SettingsSectionHeader}" />
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE7E8;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Start Ollama when you sign in" />
+          <TextBlock x:Name="StartupDescription" Style="{StaticResource SettingsCardDescription}" />
+        </StackPanel>
+        <StackPanel Grid.Column="2" Style="{StaticResource SettingsCardActions}">
+          <HyperlinkButton x:Name="StartupAppsButton" Content="Startup apps" Visibility="Collapsed" />
+          <ToggleSwitch x:Name="StartupToggle" IsEnabled="False" AutomationProperties.Name="Start Ollama when you sign in" />
+        </StackPanel>
+      </Grid>
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE895;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Download updates automatically" />
+          <TextBlock x:Name="UpdateDescription" Style="{StaticResource SettingsCardDescription}" />
+        </StackPanel>
+        <StackPanel Grid.Column="2" Style="{StaticResource SettingsCardActions}">
+          <Button x:Name="RestartToUpdateButton" Content="Restart to update" Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed" />
+          <ToggleSwitch x:Name="AutoUpdateToggle" IsEnabled="False" AutomationProperties.Name="Download updates automatically" />
+        </StackPanel>
+      </Grid>
+
+      <TextBlock Text="Models" Style="{StaticResource SettingsSectionHeader}" />
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE8B7;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Model location" />
+          <HyperlinkButton x:Name="ModelsPathButton" Padding="0" FontSize="12" AutomationProperties.Name="Open the model location">
+            <TextBlock x:Name="ModelsPathText" TextTrimming="CharacterEllipsis" />
+          </HyperlinkButton>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Style="{StaticResource SettingsCardActions}">
+          <Button x:Name="ChangeModelsButton" Content="Change…" IsEnabled="False" />
+          <Button x:Name="ResetModelsButton" Content="Reset" IsEnabled="False" />
+        </StackPanel>
+      </Grid>
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE8BD;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Context length" />
+          <TextBlock Style="{StaticResource SettingsCardDescription}"
+              Text="How much of a conversation local models can use at once. Longer context uses more memory." />
+        </StackPanel>
+        <ComboBox x:Name="ContextLengthBox" Grid.Column="2" MinWidth="160" VerticalAlignment="Center"
+            IsEnabled="False" AutomationProperties.Name="Context length">
+          {{- range .ContextLengths}}
+          <ComboBoxItem{{if .Automatic}} x:Name="ContextLengthAutomatic"{{end}} Content="{{.Title}}" />
+          {{- end}}
+        </ComboBox>
+      </Grid>
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE753;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Include cloud models in my model list" />
+          <TextBlock x:Name="CloudDescription" Style="{StaticResource SettingsCardDescription}" />
+        </StackPanel>
+        <ToggleSwitch x:Name="CloudToggle" Grid.Column="2" IsEnabled="False"
+            AutomationProperties.Name="Include cloud models in my model list" />
+      </Grid>
+
+      <TextBlock Text="Network" Style="{StaticResource SettingsSectionHeader}" />
+      <Grid Style="{StaticResource SettingsCard}">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <FontIcon Glyph="&#xE968;" Style="{StaticResource SettingsCardIcon}" />
+        <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+          <TextBlock Text="Allow connections from other devices" />
+          <TextBlock Style="{StaticResource SettingsCardDescription}"
+              Text="Other devices on your network can connect to Ollama on this PC." />
+        </StackPanel>
+        <ToggleSwitch x:Name="ExposeToggle" Grid.Column="2" IsEnabled="False"
+            AutomationProperties.Name="Allow connections from other devices" />
+      </Grid>
+
+      <StackPanel x:Name="ChatsSection" Spacing="4" Visibility="Collapsed">
+        <TextBlock Text="Chats" Style="{StaticResource SettingsSectionHeader}" />
+        <Grid Style="{StaticResource SettingsCard}">
+          <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+          </Grid.ColumnDefinitions>
+          <FontIcon Glyph="&#xEDE1;" Style="{StaticResource SettingsCardIcon}" />
+          <StackPanel Grid.Column="1" Style="{StaticResource SettingsCardText}">
+            <TextBlock Text="Export chats" />
+            <TextBlock x:Name="ExportDescription" Style="{StaticResource SettingsCardDescription}" />
+          </StackPanel>
+          <StackPanel Grid.Column="2" Style="{StaticResource SettingsCardActions}">
+            <ProgressRing x:Name="ExportProgress" Width="20" Height="20" IsActive="False" />
+            <Button x:Name="ExportButton" Content="Export…" />
+          </StackPanel>
+        </Grid>
+      </StackPanel>
+
+      <TextBlock Text="About" Style="{StaticResource SettingsSectionHeader}" />
+      <Expander x:Name="AboutExpander" Margin="0,0,0,36" Padding="0"
+          HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+        <Expander.Header>
+          <Grid Padding="0,14,0,14">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            {{- if .Icon}}
+            <Image Source="{{.Icon}}" Width="20" Height="20" Margin="2,0,20,0" VerticalAlignment="Center" />
+            {{- else}}
+            <FontIcon Glyph="&#xE946;" Style="{StaticResource SettingsCardIcon}" />
+            {{- end}}
+            <TextBlock Grid.Column="1" Text="Ollama" VerticalAlignment="Center" />
+            <TextBlock x:Name="VersionText" Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}" IsTextSelectionEnabled="True" />
+          </Grid>
+        </Expander.Header>
+        <StackPanel>
+          <Grid Padding="58,8,44,8" MinHeight="52">
+            <TextBlock Text="Documentation" VerticalAlignment="Center" />
+            <HyperlinkButton HorizontalAlignment="Right" Content="docs.ollama.com" NavigateUri="https://docs.ollama.com" />
+          </Grid>
+          <Grid Padding="58,8,44,8" MinHeight="52" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+            <TextBlock Text="Report a problem or request a feature" VerticalAlignment="Center" />
+            <HyperlinkButton HorizontalAlignment="Right" Content="GitHub" NavigateUri="https://github.com/ollama/ollama/issues" />
+          </Grid>
+        </StackPanel>
+      </Expander>
+    </StackPanel>
+  </ScrollViewer>
+</Grid>

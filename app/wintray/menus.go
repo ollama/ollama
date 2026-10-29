@@ -14,18 +14,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// Menu items appear in the order of their IDs.
 const (
 	_ = iota
-	updateSeparatorMenuID
-	updateAvailableMenuID
-	updateMenuID
-	separatorMenuID
+	settingsMenuID
 	diagLogsMenuID
 	diagSeparatorMenuID
+	updateAvailableMenuID
+	updateMenuID
+	updateSeparatorMenuID
 	quitMenuID
 )
 
 func (t *winTray) initMenus() error {
+	if err := t.addOrUpdateMenuItem(settingsMenuID, 0, settingsMenuTitle, false); err != nil {
+		return fmt.Errorf("unable to create menu entries %w", err)
+	}
 	if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w\n", err)
 	}
@@ -42,16 +46,13 @@ func (t *winTray) initMenus() error {
 func (t *winTray) UpdateAvailable(ver string) error {
 	if !t.updateNotified {
 		slog.Debug("updating menu and sending notification for new update")
-		if err := t.addSeparatorMenuItem(updateSeparatorMenuID, 0); err != nil {
-			return fmt.Errorf("unable to create menu entries %w", err)
-		}
 		if err := t.addOrUpdateMenuItem(updateAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
 		if err := t.addOrUpdateMenuItem(updateMenuID, 0, updateMenuTitle, false); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
-		if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {
+		if err := t.addSeparatorMenuItem(updateSeparatorMenuID, 0); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
 		iconFilePath, err := iconBytesToFilePath(wt.updateIcon)
