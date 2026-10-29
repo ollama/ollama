@@ -2540,6 +2540,39 @@ func TestMMProjMemoryRequirement(t *testing.T) {
 	}
 }
 
+func TestPredictServerVRAMSkipsCPUInputTensors(t *testing.T) {
+	const perLayer, embd = 64 * 4, 16 * 4
+	tests := []struct {
+		name    string
+		tensors []*gguftest.Tensor
+		cpu     uint64
+	}{
+		{"plain", []*gguftest.Tensor{
+			testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{8}),
+		}, 0},
+		{"tied output", []*gguftest.Tensor{
+			testGGUFTensor("token_embd.weight", gguf.TensorTypeF32, []uint64{16}),
+			testGGUFTensor("per_layer_token_embd.weight", gguf.TensorTypeF32, []uint64{64}),
+			testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{8}),
+		}, perLayer},
+		{"separate output", []*gguftest.Tensor{
+			testGGUFTensor("token_embd.weight", gguf.TensorTypeF32, []uint64{16}),
+			testGGUFTensor("per_layer_token_embd.weight", gguf.TensorTypeF32, []uint64{64}),
+			testGGUFTensor("blk.0.attn_q.weight", gguf.TensorTypeF32, []uint64{8}),
+			testGGUFTensor("output.weight", gguf.TensorTypeF32, []uint64{16}),
+		}, perLayer + embd},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, model := writeTestGGUF(t, gguftest.KV{"general.architecture": "gemma4"}, tt.tensors)
+			want := model.FileSize() - tt.cpu
+			if got := PredictServerVRAM(path, model, 0); got != want {
+				t.Fatalf("PredictServerVRAM = %d, want %d (file %d)", got, want, model.FileSize())
+			}
+		})
+	}
+}
+
 func TestAppendJinjaArgs(t *testing.T) {
 	tests := []struct {
 		name   string
