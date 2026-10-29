@@ -8,6 +8,7 @@ const (
 	updateTitle      = "Update available"
 	updateMessage    = "Ollama version %s is ready to install"
 
+	settingsMenuTitle        = "Settings"
 	quitMenuTitle            = "Quit Ollama"
 	updateAvailableMenuTitle = "An update is available"
 	updateMenuTitle          = "Restart to update"

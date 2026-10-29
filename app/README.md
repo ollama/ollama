@@ -7,9 +7,18 @@
 
 ## Development
 
-The app is a menu bar app with a native settings window: AppKit on macOS
-(`cmd/app/*_darwin.m`) and a tray icon on Windows. Settings logic lives in Go
+The app runs in the menu bar or notification area and has a native settings
+window: AppKit on macOS (`cmd/app/*_darwin.m`) and WinUI 3 on Windows
+(`cmd/app/settings_windows.*`). Settings logic lives in Go
 (`cmd/app/settings.go`) so both platforms share it.
+
+The Windows window is XAML markup that `app/winui` loads at run time, calling
+WinUI from Go without cgo or a XAML compiler. It needs the
+[Windows App Runtime](https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads)
+1.8, and on Windows 10 the runtime's bootstrapper DLL next to the app, which
+the installer includes. Building the app on Windows still needs a C compiler,
+such as [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), for the SQLite
+database.
 
 Run it from the repository root, which is where it finds its icons during
 development:

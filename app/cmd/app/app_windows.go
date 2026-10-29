@@ -79,15 +79,10 @@ type appCallbacks struct {
 
 var app = &appCallbacks{}
 
-// ShowSettings is called when people open Ollama while it is running.
+// ShowSettings is called when people open Ollama while it is running, or
+// choose Settings from the notification area.
 func (*appCallbacks) ShowSettings() {
 	showSettings(settingsPaneDefault)
-}
-
-// showSettings opens the settings window at pane.
-func showSettings(pane settingsPane) {
-	// TODO: add the native Windows settings window.
-	slog.Info("settings window is not available on Windows yet", "pane", pane)
 }
 
 func (app *appCallbacks) Quit() {
@@ -122,6 +117,7 @@ func handleURLSchemeRequest(urlScheme string) {
 }
 
 func UpdateAvailable(ver string) error {
+	settingsDidChange()
 	if app.t == nil {
 		slog.Debug("tray not yet initialized, skipping update notification")
 		return nil
@@ -184,12 +180,17 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool, urlSchemeReq
 	}
 
 	app.t.TrayRun() // This will block the main thread
+	closeSettings()
+}
+
+// installedShortcut is the shortcut the installer lays down for starting
+// Ollama, so the app can copy it without calling COM APIs.
+func installedShortcut() string {
+	return filepath.Join(appPath, "lib", "Ollama.lnk")
 }
 
 func createLoginShortcut() error {
-	// The installer lays down a shortcut for us so we can copy it without
-	// having to resort to calling COM APIs to establish the shortcut
-	shortcutOrigin := filepath.Join(appPath, "lib", "Ollama.lnk")
+	shortcutOrigin := installedShortcut()
 
 	_, err := os.Stat(startupShortcut)
 	if err != nil {
