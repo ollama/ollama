@@ -794,7 +794,7 @@ function mlxCpu {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     Write-Output "Building MLX CPU backend libraries"
     $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
-    $configureArgs = @("-S", ".", "-B", "build\mlx", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cpu", "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "--install-prefix", "$script:DIST_DIR")
+    $configureArgs = @("-S", ".", "-B", "build\mlx", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cpu", "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "-DOLLAMA_BUILD_PARALLEL=$script:JOBS", "--install-prefix", "$script:DIST_DIR")
     & cmake @configureArgs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     $buildArgs = @("--build", "build\mlx", "--target", "ollama-mlx-cpu", "--config", "Release", "--parallel", "$script:JOBS")
@@ -856,7 +856,7 @@ function mlxCuda13 {
                 }
                 $cudaToolsetArgs = cudaCMakeArgs $cuda
                 $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
-                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "--install-prefix", "$script:DIST_DIR")
+                $configureArgs = @("-S", ".", "-B", "build\mlx_cuda_v$cudaMajorVer", "-DCMAKE_BUILD_TYPE=Release", "-DOLLAMA_MLX_BACKENDS=cuda_v$cudaMajorVer") + $cudaToolsetArgs + $cudaFlags + @("-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$script:DIST_DIR", "-DOLLAMA_MLX_PAYLOAD_INSTALL_PREFIX=$mlxDistDir", "-DOLLAMA_BUILD_PARALLEL=$script:JOBS", "--install-prefix", "$script:DIST_DIR")
                 & cmake @configureArgs
                 if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
                 $buildArgs = @("--build", "build\mlx_cuda_v$cudaMajorVer", "--target", "ollama-mlx-cuda_v$cudaMajorVer", "--config", "Release", "--parallel", "$script:JOBS")
