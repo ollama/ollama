@@ -91,6 +91,7 @@ DialogFontSize=12
 [Files]
 #if FileExists("..\dist\windows-ollama-app-amd64.exe")
 Source: "..\dist\windows-ollama-app-amd64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
+Source: "..\dist\winappsdk\amd64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit; BeforeInstall: TaskKill('ollama.exe')
 Source: "..\dist\windows-amd64\lib\ollama\*"; Excludes: "\mlx_*\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
@@ -98,8 +99,10 @@ Source: "..\dist\windows-amd64\lib\ollama\*"; Excludes: "\mlx_*\*"; DestDir: "{a
 ; For local development, rely on binary compatibility at runtime since we can't cross compile
 #if FileExists("..\dist\windows-ollama-app-arm64.exe")
 Source: "..\dist\windows-ollama-app-arm64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
+Source: "..\dist\winappsdk\arm64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
 #else 
 Source: "..\dist\windows-ollama-app-amd64.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit; BeforeInstall: TaskKill('{#MyAppExeName}')
+Source: "..\dist\winappsdk\amd64\Microsoft.WindowsAppRuntime.Bootstrap.dll"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
 #endif
 
 #if FileExists("..\dist\windows-arm64\ollama.exe")

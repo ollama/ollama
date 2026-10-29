@@ -935,6 +935,38 @@ function buildApp {
     )
 	& go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${arch}.exe ./app/cmd/app/
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    appBootstrap $arch
+}
+
+# appBootstrap copies the Windows App SDK's bootstrapper, which lets the
+# settings window load WinUI on Windows 10, out of its NuGet package. It stays
+# outside dist\windows-* so signing keeps Microsoft's signature.
+function appBootstrap {
+    param (
+        [string]$arch
+    )
+    $version = "1.8.260803002"
+    $sha256 = "b9232041afd605b606c6f78f442d92ead0076453f1f2a3260d2b7f8089bcab0e"
+    $nupkg = "${script:SRC_DIR}\dist\microsoft.windowsappsdk.foundation.${version}.nupkg"
+    if (-not (Test-Path $nupkg)) {
+        Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.windowsappsdk.foundation/${version}/microsoft.windowsappsdk.foundation.${version}.nupkg" -OutFile $nupkg
+    }
+    if ((Get-FileHash $nupkg -Algorithm SHA256).Hash -ne $sha256) {
+        Remove-Item -ea 0 $nupkg
+        Write-Error "unexpected checksum for $nupkg"
+        exit(1)
+    }
+    $runtime = @{ "amd64" = "win-x64"; "arm64" = "win-arm64" }[$arch]
+    $dest = "${script:SRC_DIR}\dist\winappsdk\${arch}"
+    New-Item -ItemType Directory -Force $dest | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($nupkg)
+    try {
+        $entry = $zip.GetEntry("runtimes/${runtime}/native/Microsoft.WindowsAppRuntime.Bootstrap.dll")
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "${dest}\Microsoft.WindowsAppRuntime.Bootstrap.dll", $true)
+    } finally {
+        $zip.Dispose()
+    }
 }
 
 function app {
