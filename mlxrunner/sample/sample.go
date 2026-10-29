@@ -447,11 +447,8 @@ func (s *Sampler) Sample(seqIDs []int, logits *mlx.Array) Result {
 				if vocab := lp.Dim(lp.NumDims() - 1); k > vocab {
 					k = vocab
 				}
-				// Argpartition on the negated values places the K largest
-				// (unsorted) in positions [0:K].
-				idx := lp.Negative().ArgpartitionAxis(k-1, -1).Slice(mlx.Slice(), mlx.Slice(0, k))
-				res.TopTokens = idx.AsType(mlx.DTypeInt32)
-				res.TopLogprobs = lp.TakeAlongAxis(idx, -1)
+				res.TopTokens = mlx.TopKIndices(lp, k)
+				res.TopLogprobs = lp.TakeAlongAxis(res.TopTokens, -1)
 			}
 		}
 		return res.Arrays()
@@ -871,7 +868,7 @@ func (slot *slotState) distribution(ctx *slotCtx, logits *mlx.Array) Distributio
 }
 
 func sparseDistribution(opts Options, scores *mlx.Array) Distribution {
-	ids := scores.Negative().ArgpartitionAxis(opts.TopK-1, -1).Slice(mlx.Slice(), mlx.Slice(0, opts.TopK)).AsType(mlx.DTypeInt32)
+	ids := mlx.TopKIndices(scores, opts.TopK)
 	topScores := scores.TakeAlongAxis(ids, -1).AsType(mlx.DTypeFloat32)
 	probs := mlx.SoftmaxAxis(mlx.DivScalar(topScores, opts.Temperature), -1, true)
 	probs = applyTopPProbs(probs, opts.TopP)

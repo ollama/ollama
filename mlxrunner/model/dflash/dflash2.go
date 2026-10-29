@@ -181,7 +181,7 @@ func (m *model2) Select(hidden, logits, anchor *mlx.Array, choose func(ids, scor
 	s := m.Selector
 	b, length := logits.Dim(0), logits.Dim(1)
 	k := s.TopK
-	ids = logits.Negative().ArgpartitionAxis(k-1, -1).Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, k)).AsType(mlx.DTypeInt32)
+	ids = mlx.TopKIndices(logits, k)
 	unary := logits.TakeAlongAxis(ids, -1)
 	gates := s.Projection.Forward(hidden)
 
