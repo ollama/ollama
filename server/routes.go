@@ -3251,6 +3251,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	msgs := chatMessagesForRequest(m, req.Messages)
 
+	if err := checkMessageMedia(m, msgs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	parserName := parserNameForModel(m)
 	if shouldUseHarmony(m) {
 		// harmony's Reasoning field only understands low/medium/high; map "max" to "high"
@@ -3657,6 +3662,30 @@ func chatMessagesForRequest(m *Model, requestMessages []api.Message) []api.Messa
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 	return filterThinkTags(msgs, m)
+}
+
+// checkMessageMedia rejects clips the model can't take, such as audio sent
+// to a text-only model. Everything a message carries in Images is handed to
+// the projector, so a clip the model has no encoder for is only ever garbage
+// to it: without this the request is answered from the text alone and the
+// clip is silently ignored.
+//
+// A single base64 blob can hold either kind, so each one is looked at
+// separately instead of sending the model's vision capability for all of them
+// (which is how audio ended up going through Images in the first place).
+func checkMessageMedia(m *Model, msgs []api.Message) error {
+	for _, msg := range msgs {
+		for _, data := range msg.Images {
+			capability := model.CapabilityVision
+			if llm.DetectMediaKind(data) == llm.MediaKindAudio {
+				capability = model.CapabilityAudio
+			}
+			if err := m.CheckCapabilities(capability); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
