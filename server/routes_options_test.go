@@ -273,6 +273,17 @@ func TestModelOptionsDraftNumPredictDefault(t *testing.T) {
 			requestOpts: map[string]any{"draft_num_predict": float64(0)},
 			want:        0,
 		},
+		{
+			name:  "MLX model drafts by default",
+			model: &Model{Config: model.ConfigV2{ModelFormat: "safetensors"}},
+			want:  4,
+		},
+		{
+			name:        "request can disable MLX drafting",
+			model:       &Model{Config: model.ConfigV2{ModelFormat: "safetensors"}},
+			requestOpts: map[string]any{"draft_num_predict": float64(0)},
+			want:        0,
+		},
 	}
 
 	for _, tt := range tests {
