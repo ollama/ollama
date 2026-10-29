@@ -11,16 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"time"
 )
 
 // The settings window calls these exports from background dispatch queues,
 // never the main thread, because they can wait on the network, the disk, or a
 // server restart. Each returns a JSON object allocated with malloc that the
 // caller releases with free.
-
-// settingsTimeout bounds calls that contact ollama.com or the local server.
-const settingsTimeout = 15 * time.Second
 
 type settingsResult struct {
 	Settings settingsState `json:"settings"`
@@ -127,8 +123,8 @@ func settingsStateResult(err error) *C.char {
 func accountStateResult(account accountState, err error) *C.char {
 	result := accountResult{
 		Account:    account,
-		ManageURL:  ollamaDotCom + "/settings",
-		UpgradeURL: ollamaDotCom + "/upgrade",
+		ManageURL:  accountSettingsURL(),
+		UpgradeURL: accountUpgradeURL(),
 	}
 	if err != nil {
 		result.Error = err.Error()

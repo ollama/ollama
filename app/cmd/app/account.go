@@ -37,6 +37,16 @@ var (
 	errSignedOut    = errors.New("not signed in to ollama.com")
 )
 
+// accountSettingsURL is where people manage their ollama.com account.
+func accountSettingsURL() string {
+	return ollamaDotCom + "/settings"
+}
+
+// accountUpgradeURL lists ollama.com plans.
+func accountUpgradeURL() string {
+	return ollamaDotCom + "/upgrade"
+}
+
 // accountState is the ollama.com account shown in Settings.
 type accountState struct {
 	SignedIn  bool   `json:"signedIn"`
