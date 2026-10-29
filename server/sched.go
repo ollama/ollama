@@ -558,6 +558,15 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 	}
 
 	s.loadedMu.Lock()
+	// On discrete GPUs, evicting runners that hold no VRAM cannot free GPU
+	// memory, so when every loaded runner is CPU-only (e.g. an embedding model
+	// with num_gpu 0) load with partial offload instead of evicting them.
+	// Integrated/unified-memory GPUs share system RAM, so eviction still helps
+	// there. See https://github.com/ollama/ollama/issues/19279
+	if requireFull && len(s.loaded) > 0 && allDiscreteGPUs(gpus) && !s.anyLoadedRunnerUsingVRAM() {
+		slog.Debug("no loaded runner uses VRAM on discrete GPUs; loading without requiring a full GPU fit")
+		requireFull = false
+	}
 	llama := s.activeLoading
 	var f *gguf.Model
 	loadGpus := gpus
@@ -1740,6 +1749,20 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 	// None appear idle, just wait for the one with the shortest duration
 	slog.Debug("no idle runners, picking the shortest duration", "runner_count", len(runnerList), "runner", runnerList[0])
 	return runnerList[0]
+}
+
+// anyLoadedRunnerUsingVRAM reports whether any currently loaded runner holds
+// GPU memory. The caller must hold s.loadedMu. A runner's vramSize is set once
+// when it is created and never mutated afterwards, so reading it under
+// loadedMu is safe; refMu must not be taken here because the expiration path
+// locks the two mutexes in the opposite order.
+func (s *Scheduler) anyLoadedRunnerUsingVRAM() bool {
+	for _, runner := range s.loaded {
+		if runner.vramSize > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scheduler) unloadAllRunners() {

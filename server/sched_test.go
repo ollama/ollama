@@ -916,6 +916,25 @@ func TestSchedFindRunnerToUnload(t *testing.T) {
 	require.Equal(t, r1, resp)
 }
 
+// TestSchedAnyLoadedRunnerUsingVRAM covers the pre-flight gate for
+// https://github.com/ollama/ollama/issues/19279: a CPU-only model (vramSize 0)
+// must not count as a reason to evict, because evicting it frees no GPU
+// memory.
+func TestSchedAnyLoadedRunnerUsingVRAM(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.loadedMu.Lock()
+	require.False(t, s.anyLoadedRunnerUsingVRAM())
+	s.loaded["cpu"] = &runnerRef{vramSize: 0, numParallel: 1}
+	require.False(t, s.anyLoadedRunnerUsingVRAM())
+	s.loaded["gpu"] = &runnerRef{vramSize: 1 << 30, numParallel: 1}
+	require.True(t, s.anyLoadedRunnerUsingVRAM())
+	delete(s.loaded, "gpu")
+	require.False(t, s.anyLoadedRunnerUsingVRAM())
+	s.loadedMu.Unlock()
+}
+
 func TestSchedNeedsReload(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
@@ -1305,6 +1324,7 @@ func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
 	s.loaded["existing-model"] = &runnerRef{
 		llama:    &mockLlm{modelPath: "existing"},
 		modelKey: "existing-model",
+		vramSize: 1 * format.GigaByte,
 	}
 	s.loadedMu.Unlock()
 
@@ -1320,6 +1340,86 @@ func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
 
 	needEvict := s.load(scenario.req, systemInfo, gpus, true)
 	require.True(t, needEvict, "expected eviction when predicted VRAM exceeds free memory")
+}
+
+// TestSchedLlamaServerDoesNotEvictCPUOnlyRunner is a scheduler-level
+// regression test for https://github.com/ollama/ollama/issues/19279: when the
+// only loaded runner is CPU-only (vramSize 0), a GPU-fit prediction miss must
+// not request an eviction, because evicting it frees no GPU memory.
+func TestSchedLlamaServerDoesNotEvictCPUOnlyRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "CUDA"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 0
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["cpu-embedding"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "cpu-embedding"},
+		modelKey: "cpu-embedding",
+		vramSize: 0,
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		return scenario.srv, nil
+	}
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "a CPU-only runner must not be evicted to satisfy a GPU memory prediction")
+	s.loadedMu.Lock()
+	_, stillLoaded := s.loaded["cpu-embedding"]
+	s.loadedMu.Unlock()
+	require.True(t, stillLoaded, "CPU-only runner must remain loaded")
+}
+
+// TestSchedLlamaServerEvictsCPUOnlyRunnerOnIntegratedGPU is the negative
+// control for TestSchedLlamaServerDoesNotEvictCPUOnlyRunner: on an integrated
+// GPU that shares system memory, evicting a CPU-only runner does free memory
+// for the new model, so the scheduler must still request an eviction.
+func TestSchedLlamaServerEvictsCPUOnlyRunnerOnIntegratedGPU(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 24 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	s.loadedMu.Lock()
+	s.loaded["cpu-embedding"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "cpu-embedding"},
+		modelKey: "cpu-embedding",
+		vramSize: 0,
+	}
+	s.loadedMu.Unlock()
+
+	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, _ llm.LlamaServerConfig) (llm.LlamaServer, error) {
+		return scenario.srv, nil
+	}
+
+	// System memory is nearly exhausted, so the shared-memory GPU is limited by it.
+	systemInfo := getSystemInfoFn()
+	systemInfo.FreeMemory = 1
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "on a shared-memory GPU a CPU-only runner must still be evictable")
 }
 
 func TestSchedLlamaServerExplicitPartialNumGPUSkipsFullFitEviction(t *testing.T) {
@@ -1417,6 +1517,7 @@ func TestSchedLlamaServerPredictionUsesTotalParallelContext(t *testing.T) {
 	s.loaded["existing-model"] = &runnerRef{
 		llama:    &mockLlm{modelPath: "existing"},
 		modelKey: "existing-model",
+		vramSize: 1 * format.GigaByte,
 	}
 	s.loadedMu.Unlock()
 
