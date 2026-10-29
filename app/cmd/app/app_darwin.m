@@ -724,7 +724,7 @@ static NSImage *ollamaApplicationIcon(void) {
         ? activeStatus
         : nil];
     [self.codexAppRow setInactiveStatusText:disconnectPending
-        ? @"Disconnect incomplete · toggle to retry"
+        ? @"Try disconnecting again"
         : (installed ? @"Use Ollama models in ChatGPT" : @"Not installed")];
     [self.codexAppRow.integrationSwitch setAccessibilityLabel:disconnectPending
         ? @"Retry disconnecting ChatGPT"
@@ -1398,13 +1398,8 @@ didCompleteWithError:(NSError *)error {
 
     [sender setEnabled:NO];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        char *rawActionError = SetCodexDesktopConnected(enabled, restartChatGPT);
+        BOOL succeeded = SetCodexDesktopConnected(enabled, restartChatGPT);
         dispatch_async(dispatch_get_main_queue(), ^{
-            BOOL succeeded = rawActionError != NULL && rawActionError[0] == '\0';
-            NSString *actionError = rawActionError != NULL
-                ? [NSString stringWithUTF8String:rawActionError]
-                : nil;
-            free(rawActionError);
             [sender setEnabled:YES];
             [self refreshCodexAppState];
             if (!succeeded) {
@@ -1412,11 +1407,9 @@ didCompleteWithError:(NSError *)error {
                 [alert setAlertStyle:NSAlertStyleWarning];
                 [alert setIcon:ollamaApplicationIcon()];
                 [alert setMessageText:enabled
-                    ? @"Unable to add Ollama models to ChatGPT"
-                    : @"Couldn’t finish disconnecting ChatGPT"];
-                [alert setInformativeText:actionError.length > 0
-                    ? actionError
-                    : @"Ollama could not read the result. Try again."];
+                    ? @"Couldn’t connect ChatGPT"
+                    : @"Couldn’t disconnect ChatGPT"];
+                [alert setInformativeText:@"Please try again."];
                 if (!enabled && (IsCodexDesktopConnected() || IsCodexDesktopDisconnectPending())) {
                     [alert addButtonWithTitle:@"Retry"];
                     [alert addButtonWithTitle:@"Not Now"];

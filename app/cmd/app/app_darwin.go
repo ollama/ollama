@@ -1269,11 +1269,11 @@ func CodexDesktopRequestCount() C.ulonglong {
 }
 
 //export SetCodexDesktopConnected
-func SetCodexDesktopConnected(connected, restartConfirmed C.bool) *C.char {
+func SetCodexDesktopConnected(connected, restartConfirmed C.bool) C.bool {
 	shouldConnect := connected != C._Bool(false)
 	confirmed := restartConfirmed != C._Bool(false)
 	result := changeCodexDesktopConnection(shouldConnect, confirmed)
-	return C.CString(result.Error)
+	return C._Bool(result.Error == "")
 }
 
 //export IsClaudeGatewayConfigured

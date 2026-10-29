@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -283,34 +282,20 @@ func TestSetCodexDesktopConnectionRestoresProfileAfterPartialSwitchFailure(t *te
 	}
 }
 
-func TestSetCodexDesktopConnectionRetriesPendingDisconnect(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	originalController := codexDesktop
-	t.Cleanup(func() { codexDesktop = originalController })
-	fake := &fakeCodexDesktopController{installed: true, restorePending: true}
-	codexDesktop = fake
-	if err := setCodexDesktopConnection(false, false); err != nil {
-		t.Fatal(err)
-	}
-	if fake.restores != 1 || fake.restorePending {
-		t.Fatalf("pending cleanup was skipped: restores=%d, pending=%v", fake.restores, fake.restorePending)
-	}
-}
-
 func TestChangeCodexDesktopConnectionReportsPartialCleanupAndRetry(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	originalController := codexDesktop
 	t.Cleanup(func() { codexDesktop = originalController })
 	fake := &fakeCodexDesktopController{
 		installed: true, configured: true, restoreBeforeError: true,
-		restoreErrs: []error{errors.Join(launch.ErrCodexAppCleanupFailed, errors.New("fixture cleanup obstruction"))},
+		restoreErrs: []error{errors.New("/private/fixture cleanup obstruction")},
 	}
 	codexDesktop = fake
 	result := changeCodexDesktopConnection(false, false)
 	if result.Error == "" || result.Status.Connected || !result.Status.DisconnectPending {
 		t.Fatalf("partial disconnect reported as complete: %+v", result)
 	}
-	if !strings.Contains(result.Error, "cleanup") || strings.Contains(result.Error, "fixture cleanup obstruction") {
+	if result.Error != "Couldn’t disconnect ChatGPT. Try again." {
 		t.Fatalf("unexpected recovery message: %q", result.Error)
 	}
 	result = changeCodexDesktopConnection(false, false)
@@ -335,38 +320,15 @@ func TestChangeCodexDesktopConnectionPendingCleanupRequiresRestartConsent(t *tes
 	}
 }
 
-func TestCodexDesktopConnectionErrorIsSafeAndActionable(t *testing.T) {
-	privateDetail := errors.New("/private/DO_NOT_DISPLAY token=DO_NOT_DISPLAY prompt=DO_NOT_DISPLAY")
-	for _, tc := range []struct {
-		name    string
-		err     error
-		enabled bool
-		want    []string
-	}{
-		{"restart consent", errCodexDesktopRestartConfirmationRequired, false, []string{"confirm the restart"}},
-		{"close", launch.ErrCodexAppCloseFailed, false, []string{"could not close", "Close ChatGPT, then try again"}},
-		{"restore access", errors.Join(launch.ErrCodexAppRestoreFailed, os.ErrPermission), false, []string{"restore", "file access was denied", "Check file permissions"}},
-		{"cleanup", launch.ErrCodexAppCleanupFailed, false, []string{"Disconnect is incomplete", "Retry disconnecting"}},
-		{"cleanup access", errors.Join(launch.ErrCodexAppCleanupFailed, os.ErrPermission), false, []string{"cleanup", "file access was denied", "Check file permissions"}},
-		{"open", launch.ErrCodexAppOpenFailed, false, []string{"could not open", "Open ChatGPT manually"}},
-		{"cleanup and reopen", errors.Join(launch.ErrCodexAppCleanupFailed, launch.ErrCodexAppOpenFailed), false, []string{"Retry disconnecting", "also could not reopen"}},
-		{"unknown disconnect", errors.New("unknown fixture failure"), false, []string{"could not finish disconnecting", "Try again"}},
-		{"unverified version hint", errors.New("old version; update Ollama"), false, []string{"could not finish disconnecting"}},
-		{"unknown connect", errors.New("unknown fixture failure"), true, []string{"could not add its models", "Try again"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			message := codexDesktopConnectionError(errors.Join(tc.err, privateDetail), tc.enabled)
-			for _, want := range tc.want {
-				if !strings.Contains(message, want) {
-					t.Fatalf("message %q missing %q", message, want)
-				}
-			}
-			for _, unwanted := range []string{"DO_NOT_DISPLAY", "/private/", "update Ollama", "unchanged", "unknown fixture failure"} {
-				if strings.Contains(message, unwanted) {
-					t.Fatalf("unsafe or unsupported guidance %q in %q", unwanted, message)
-				}
-			}
-		})
+func TestChangeCodexDesktopConnectionHidesErrorDetails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	original := codexDesktop
+	t.Cleanup(func() { codexDesktop = original })
+	stubCodexDesktopModelLoader(t)
+	codexDesktop = &fakeCodexDesktopController{installed: true, launchErrs: []error{errors.New("/private/fixture token=secret")}}
+	result := changeCodexDesktopConnection(true, false)
+	if result.Error != "Couldn’t connect ChatGPT. Try again." {
+		t.Fatalf("unexpected connection message: %q", result.Error)
 	}
 }
 

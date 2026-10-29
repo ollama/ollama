@@ -80,7 +80,7 @@ function codexDesktopDescription(
   defaultDescription: string,
 ): string {
   if (status?.disconnectPending)
-    return "Disconnect is incomplete. Retry to finish removing Ollama’s setup.";
+    return "Couldn’t disconnect ChatGPT. Try again.";
   if (!status?.connected) return defaultDescription;
   const requestCount = status.requests ?? 0;
   return `Connected to Ollama · ${requestCount} ${requestCount === 1 ? "request" : "requests"} this session`;

@@ -60,7 +60,7 @@ bool IsCodexDesktopConnected(void);
 bool IsCodexDesktopDisconnectPending(void);
 bool IsCodexDesktopRunning(void);
 unsigned long long CodexDesktopRequestCount(void);
-char *SetCodexDesktopConnected(bool connected, bool restartConfirmed);
+bool SetCodexDesktopConnected(bool connected, bool restartConfirmed);
 bool ClaudeGatewayStartFailed(void);
 bool ClaudeGatewayPortConflict(void);
 char *ClaudeGatewayErrorMessage(void);
