@@ -10,6 +10,8 @@ import (
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/model/renderers"
+	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/pelletier/go-toml/v2"
 	"golang.org/x/mod/semver"
@@ -18,7 +20,7 @@ import (
 // Codex implements Runner for Codex integration
 type Codex struct{}
 
-func (c *Codex) String() string { return "Codex" }
+func (c *Codex) String() string { return "Codex CLI" }
 
 const (
 	codexProfileName           = "ollama-launch"
@@ -30,6 +32,7 @@ const (
 	codexRootModelKey            = "model"
 	codexRootModelProviderKey    = "model_provider"
 	codexRootModelCatalogJSONKey = "model_catalog_json"
+	codexRootOpenAIBaseURLKey    = "openai_base_url"
 )
 
 func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, error) {
@@ -41,6 +44,7 @@ func (c *Codex) args(model, modelCatalogPath string, extra []string) ([]string, 
 	for _, override := range codexManagedConfigOverrides(modelCatalogPath) {
 		args = append(args, "-c", override)
 	}
+	args = append(args, "-c", `service_tier="default"`)
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -220,7 +224,7 @@ func ensureCodexConfig(modelName string, models []LaunchModel) error {
 	}
 
 	catalogPath := codexModelCatalogPathForConfig(configPath)
-	if err := writeCodexModelCatalog(catalogPath, codexCatalogModel(modelName, models)); err != nil {
+	if err := writeCodexModelCatalog(catalogPath, codexCatalogModels(modelName, models)); err != nil {
 		return err
 	}
 
@@ -387,24 +391,6 @@ func codexValidateProfileConfigText(config codexParsedConfig, profileName, model
 		}
 	}
 	return nil
-}
-
-func codexUpsertSection(text, header string, lines []string) string {
-	block := strings.Join(append([]string{header}, lines...), "\n") + "\n"
-
-	if targetPath, ok := codexTableHeaderPath(header); ok {
-		if start, end, found := codexSectionRange(text, targetPath); found {
-			return text[:start] + block + text[end:]
-		}
-	}
-
-	if text != "" && !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if text != "" {
-		text += "\n"
-	}
-	return text + block
 }
 
 func codexRemoveSection(text, header string) string {
@@ -687,11 +673,29 @@ func codexCatalogModel(modelName string, models []LaunchModel) LaunchModel {
 	return fallbackLaunchModel(modelName)
 }
 
-func writeCodexModelCatalog(catalogPath string, model LaunchModel) error {
-	entry := buildCodexModelEntry(model)
+func codexCatalogModels(modelName string, models []LaunchModel) []LaunchModel {
+	selected := codexCatalogModel(modelName, models)
+	catalogModels := []LaunchModel{selected}
+	seen := map[string]bool{launchModelRecommendationKey(selected.Name): true}
+	for _, model := range models {
+		key := launchModelRecommendationKey(model.Name)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		catalogModels = append(catalogModels, model.WithCloudLimits())
+	}
+	return catalogModels
+}
+
+func writeCodexModelCatalog(catalogPath string, models []LaunchModel) error {
+	entries := make([]any, 0, len(models))
+	for _, model := range models {
+		entries = append(entries, buildCodexModelEntry(model))
+	}
 
 	catalog := map[string]any{
-		"models": []any{entry},
+		"models": entries,
 	}
 
 	data, err := json.MarshalIndent(catalog, "", "  ")
@@ -732,6 +736,29 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		truncationMode = "tokens"
 	}
 
+	supportedReasoningLevels := make([]any, 0)
+	var defaultReasoningLevel any
+	if contract, ok := codexAppThinkingContractFromRecommendation(launchModel.Thinking); ok {
+		for _, level := range contract.levels {
+			value := contract.values[level]
+			converted, err := openai.ThinkingFromReasoningEffort(level, launchModel.Thinking)
+			if err != nil || converted == nil {
+				continue
+			}
+			resolved := renderers.ResolveThinking(converted, launchModel.Thinking)
+			if resolved == nil || resolved.Value != value {
+				continue
+			}
+			supportedReasoningLevels = append(supportedReasoningLevels, map[string]any{
+				"effort":      level,
+				"description": codexAppThinkingLevelDescription(level),
+			})
+		}
+		if contract.defaultLevel != "" {
+			defaultReasoningLevel = contract.defaultLevel
+		}
+	}
+
 	return map[string]any{
 		"slug":                         modelName,
 		"display_name":                 modelName,
@@ -747,7 +774,8 @@ func buildCodexModelEntry(launchModel LaunchModel) map[string]any {
 		"default_verbosity":            "low",
 		"supports_parallel_tool_calls": false,
 		"supports_reasoning_summaries": false,
-		"supported_reasoning_levels":   []any{},
+		"supported_reasoning_levels":   supportedReasoningLevels,
+		"default_reasoning_level":      defaultReasoningLevel,
 		"experimental_supported_tools": []any{},
 	}
 }

@@ -1,0 +1,61 @@
+{%- macro flint_text(t) -%}
+{%- if t is string -%}
+{{- t | replace("\x00", "") | replace("<think>", "") | replace("</think>", "") | replace("<|begin_of_text|>", "&lt;|begin_of_text|&gt;") | replace("<|end_of_text|>", "&lt;|end_of_text|&gt;") | replace("<|system|>", "&lt;|system|&gt;") | replace("<|developer|>", "&lt;|developer|&gt;") | replace("<|user|>", "&lt;|user|&gt;") | replace("<|assistant|>", "&lt;|assistant|&gt;") | replace("<|observation|>", "&lt;|observation|&gt;") -}}
+{%- else -%}
+{{- t -}}
+{%- endif -%}
+{%- endmacro -%}
+{%- set tool_preamble -%}
+{%- if tools %}<|system|>
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{%- for tool in tools %}
+{%- set fn = tool.function if tool.function is defined else tool %}
+{{ fn | tojson(ensure_ascii=False) }}
+{%- endfor %}
+</tools>
+
+For each function call, output the function name and arguments within the following XML format:
+<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value>...</tool_call>
+{% endif -%}
+{%- endset -%}
+{%- set ns = namespace(tools_pending=true) -%}
+{%- for m in messages -%}
+{%- if ns.tools_pending and m.role != 'system' -%}
+{{ tool_preamble }}
+{%- set ns.tools_pending = false -%}
+{%- endif -%}
+{%- if m.role == 'system' -%}
+<|system|>{{ flint_text(m.content) }}
+{%- elif m.role == 'developer' -%}
+<|developer|>{{ flint_text(m.content) }}
+{%- elif m.role == 'user' -%}
+<|user|>{{ flint_text(m.content) }}
+{%- elif m.role == 'assistant' -%}
+<|assistant|>
+{%- if m.reasoning_content %}<think>{{ m.reasoning_content }}</think>{% endif -%}
+{%- if m.content %}{{ m.content }}{% endif -%}
+{%- if m.tool_calls -%}
+{%- for tc in m.tool_calls -%}
+{%- set fn = tc.function if tc.function is defined else tc -%}
+<tool_call>{{ fn.name }}
+{%- for k, v in fn.arguments.items() -%}
+<arg_key>{{ k }}</arg_key><arg_value>{{ v | tojson(ensure_ascii=False) if v is not string else v }}</arg_value>
+{%- endfor -%}
+</tool_call>
+{%- endfor -%}
+{%- endif -%}
+{%- elif m.role == 'tool' -%}
+<|observation|><tool_response>{{ flint_text(m.content) }}</tool_response>
+{%- endif -%}
+{%- endfor -%}
+{%- if ns.tools_pending -%}
+{{ tool_preamble }}
+{%- endif -%}
+{%- if add_generation_prompt -%}
+<|assistant|>
+{%- endif -%}

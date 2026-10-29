@@ -136,6 +136,13 @@ func TestNemotron35RendererMatchesReference(t *testing.T) {
 					t.Fatalf("3.5 template mismatch (-want +got):\n%s", diff)
 				}
 			}
+			gotSuper, err := RenderWithRenderer("nemotron-3.5-super", tc.messages, tc.tools, tc.think)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, gotSuper); diff != "" {
+				t.Fatalf("super renderer mismatch (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 const (
@@ -75,6 +76,21 @@ func glimmerReasoningStrength(think *api.ThinkValue) string {
 	return "high"
 }
 
+var glimmerSystemReasoningReplacer = strings.NewReplacer(
+	"Reasoning effort", "Reasoning strength",
+	"Reasoning Effort", "Reasoning Strength",
+	"reasoning effort", "reasoning strength",
+	"REASONING EFFORT", "REASONING STRENGTH",
+)
+
+func glimmerNormalizeSystemReasoning(content string) string {
+	return glimmerSystemReasoningReplacer.Replace(content)
+}
+
+func glimmerHasSystemReasoning(content string) bool {
+	return strings.Contains(strings.ToLower(content), "reasoning strength")
+}
+
 func glimmerNamespace(name string) string {
 	if namespace, _, ok := strings.Cut(name, "."); ok {
 		return namespace
@@ -103,7 +119,7 @@ func glimmerJSON(v any) (string, error) {
 	if err := encoder.Encode(v); err != nil {
 		return "", err
 	}
-	return string(addJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
+	return string(AddJSONSpaces(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))), nil
 }
 
 func writeGlimmerToolDefinitions(sb *strings.Builder, tools []api.Tool) error {
@@ -161,6 +177,10 @@ func writeGlimmerSystemMeta(sb *strings.Builder, tools []api.Tool) {
 }
 
 func writeGlimmerSystem(sb *strings.Builder, content string, tools []api.Tool, strength, currentDate string, defaultSystem bool) error {
+	if !defaultSystem {
+		content = glimmerNormalizeSystemReasoning(content)
+	}
+
 	writeGlimmerMessageStart(sb, "system")
 	sb.WriteString(content)
 	if defaultSystem {
@@ -171,9 +191,11 @@ func writeGlimmerSystem(sb *strings.Builder, content string, tools []api.Tool, s
 		sb.WriteString(currentDate)
 		sb.WriteByte('.')
 	}
-	sb.WriteString("\n\nReasoning strength: ")
-	sb.WriteString(strength)
-	sb.WriteByte('.')
+	if defaultSystem || !glimmerHasSystemReasoning(content) {
+		sb.WriteString("\n\nReasoning strength: ")
+		sb.WriteString(strength)
+		sb.WriteByte('.')
+	}
 	if len(tools) > 0 {
 		sb.WriteString("\n\n")
 		if err := writeGlimmerToolDefinitions(sb, tools); err != nil {
@@ -344,4 +366,8 @@ func (r *GlimmerRenderer) Render(messages []api.Message, tools []api.Tool, think
 	sb.WriteString(glimmerStart)
 	sb.WriteString("assistant")
 	return sb.String(), nil
+}
+
+func (r *GlimmerRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false, "low", "medium", "high", "max"}, Default: "high"}
 }

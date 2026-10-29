@@ -14,8 +14,8 @@ import (
 )
 
 // glimmerChatTemplate is copied byte-for-byte from hf/chat_template.jinja at
-// publisher revision 7f1ae4102757b5303d0896ec86f6a8b77b217822.
-// SHA-256: 114f55ebdc1804c1af371197b9fdf2d6bb925966c9dfe46b73782a71bc07965e.
+// publisher revision a4e59da52a7bc87ae7251dd5545c0dd437c44b68.
+// SHA-256: cfc67e5f349f37690dfd31ed1f18bc4442a9dd32fe39a648f993cb4eb3cae678.
 const glimmerChatTemplate = "testdata/glimmer_chat_template.jinja"
 
 const (
@@ -152,6 +152,35 @@ Reasoning strength: high.
 				glimmerRefMsg("user", "<|patch|>Read this.", glimmerRefEOT),
 				glimmerRefMsg("assistant to=self", "I should inspect it.", glimmerRefEOM),
 				glimmerRefMsg("assistant to=user", "It says hello.", glimmerRefEOT),
+			),
+		},
+		{
+			name: "explicit system reasoning effort is normalized and not duplicated",
+			messages: []api.Message{
+				{Role: "system", Content: "You are direct.\nReasoning effort: medium."},
+				{Role: "user", Content: "Hello"},
+			},
+			expected: glimmerRefPrompt(
+				glimmerRefMsg("system", `You are direct.
+Reasoning strength: medium.
+
+# Valid recipients: "self", "user".`, glimmerRefEOT),
+				glimmerRefMsg("user", "Hello", glimmerRefEOT),
+			),
+		},
+		{
+			name: "explicit system reasoning strength is not duplicated",
+			messages: []api.Message{
+				{Role: "system", Content: "You are direct.\nReasoning strength: low."},
+				{Role: "user", Content: "Hello"},
+			},
+			think: &api.ThinkValue{Value: "high"},
+			expected: glimmerRefPrompt(
+				glimmerRefMsg("system", `You are direct.
+Reasoning strength: low.
+
+# Valid recipients: "self", "user".`, glimmerRefEOT),
+				glimmerRefMsg("user", "Hello", glimmerRefEOT),
 			),
 		},
 		{
