@@ -31,6 +31,9 @@ const (
 	settingsPaneApps    settingsPane = "apps"
 )
 
+// settingsTimeout bounds calls that contact ollama.com or the local server.
+const settingsTimeout = 15 * time.Second
+
 // contextLengths are the context lengths offered in Settings. Zero lets the
 // server choose a context length from available memory.
 var contextLengths = []int{0, 4096, 8192, 16384, 32768, 65536, 131072, 262144}
