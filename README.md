@@ -203,7 +203,6 @@ console.log(response.message.content);
 - [Perfect Memory AI](https://www.perfectmemory.ai/) - Productivity AI personalized by screen and meeting history
 - [Clairvoyance](https://www.clairvoyanceai.com/) - Free desktop app where AI staff work in your files and projects
 
-
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
