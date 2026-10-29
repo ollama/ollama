@@ -190,22 +190,32 @@ func (grammarTestDraftSession) close()            {}
 
 func TestSpeculationGating(t *testing.T) {
 	s := &speculation{drafter: grammarTestDrafter{}, depth: newDepthController()}
-	constrained := s.open(request{Grammar: resolvedGrammarCompilation(&xgrammar.Matcher{})}, nil)
+	// drafting mirrors the server's default for a drafting-capable model.
+	drafting := CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}}}
+
+	constrained := s.open(request{CompletionRequest: drafting, Grammar: resolvedGrammarCompilation(&xgrammar.Matcher{})}, nil)
 	defer constrained.close()
 	if !constrained.enabled {
 		t.Fatal("structured output request disabled speculative decoding")
 	}
 
-	logprobs := s.open(request{SamplerOpts: sampler.Options{Logprobs: true}}, nil)
+	logprobs := s.open(request{CompletionRequest: drafting, SamplerOpts: sampler.Options{Logprobs: true}}, nil)
 	defer logprobs.close()
 	if logprobs.enabled {
 		t.Fatal("logprobs request enabled speculative decoding")
 	}
 
-	unconstrained := s.open(request{}, nil)
+	unconstrained := s.open(request{CompletionRequest: drafting}, nil)
 	defer unconstrained.close()
 	if !unconstrained.enabled {
 		t.Fatal("ordinary request unexpectedly disabled speculative decoding")
+	}
+
+	// draft_num_predict=0 arrives as the option's zero value.
+	disabled := s.open(request{}, nil)
+	defer disabled.close()
+	if disabled.enabled {
+		t.Fatal("draft_num_predict=0 request enabled speculative decoding")
 	}
 }
 
@@ -260,7 +270,7 @@ func TestDecodeGrammarTransitions(t *testing.T) {
 		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := request{
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -321,7 +331,7 @@ func TestRunMTPDecodeGrammar(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{0},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
@@ -360,7 +370,7 @@ func TestRunMTPDecodeGrammarRejectsInvalidDraft(t *testing.T) {
 		req := request{
 			Responses:         ch,
 			Tokens:            []int32{1},
-			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
+			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20, Runner: api.Runner{DraftNumPredict: 4}}},
 			SamplerOpts:       sampler.Options{},
 		}
 		spec := r.spec.open(req, nil)
