@@ -7,12 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/compatmigrate"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
@@ -25,7 +27,10 @@ func TestMain(m *testing.M) {
 	os.Setenv("OLLAMA_DEBUG", "1")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
-	os.Exit(m.Run())
+	restoreMigrators := compatmigrate.SetMigratorsForTesting(nil)
+	code := m.Run()
+	restoreMigrators()
+	os.Exit(code)
 }
 
 func TestSchedInit(t *testing.T) {
@@ -277,6 +282,11 @@ func newScenarioRequestWithContext(t *testing.T, ctx context.Context, modelName 
 	return b
 }
 
+func withModel(r *runnerRef, m *Model) *runnerRef {
+	r.model.Store(m)
+	return r
+}
+
 func getGpuFn(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 	slog.Info("test getGpuFn called", "runners", runners)
 	g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
@@ -423,7 +433,7 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	b.req.sessionDuration = &api.Duration{Duration: 5 * time.Millisecond}
 	c := newScenarioRequest(t, ctx, "model-c-10g-cpu", 10*format.GigaByte, nil, nil /* No GPU load */)
 	c.req.opts.NumGPU = 0                                                                                                                         // CPU load, will be allowed
-	b.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
+	c.req.sessionDuration = &api.Duration{Duration: 10 * time.Millisecond}                                                                        // longer than b to cause the scheduler to favor unloading b over c
 	d := newScenarioRequest(t, ctx, "model-d-10g-gpu", 13*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 13 * format.GigaByte}) // Needs prior unloaded
 
 	s.newServerFn = a.newServer
@@ -488,25 +498,25 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 3)
 	s.loadedMu.Unlock()
 	a.ctxDone() // Won't help since this one isn't big enough to make room
-	time.Sleep(2 * time.Millisecond)
 	s.pendingReqCh <- d.req
-	// finish prior request, so new model can load
-	time.Sleep(6 * time.Millisecond)
-	s.loadedMu.Lock()
-	require.Len(t, s.loaded, 2)
-	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 2
+	}, 500*time.Millisecond, 10*time.Millisecond)
+
+	// Report recovered VRAM usage before releasing b so the next fit check sees it.
 	gMu.Lock()
 	g.FreeMemory = 24 * format.GigaByte
 	gMu.Unlock()
+	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)
 		require.Empty(t, s.pendingReqCh)
 		require.Empty(t, d.req.errCh)
+	case err := <-d.req.errCh:
+		t.Fatal(err.Error())
 	case <-ctx.Done():
 		t.Fatal("timeout")
 	}
@@ -517,7 +527,7 @@ closeWait:
 		case <-ctx.Done():
 			t.Fatal("timeout")
 		default:
-			if b.srv.closeCalled {
+			if b.srv.closeCalled.Load() {
 				break closeWait
 			}
 			time.Sleep(1 * time.Millisecond)
@@ -592,12 +602,12 @@ func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
 
 	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
 	loadedRunner := &runnerRef{
-		model:       loadedModel,
 		modelKey:    schedulerModelKey(loadedModel),
 		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
 		Options:     &opts,
 		numParallel: 1,
 	}
+	loadedRunner.model.Store(loadedModel)
 
 	s.loadedMu.Lock()
 	s.loaded[loadedRunner.modelKey] = loadedRunner
@@ -619,6 +629,35 @@ func TestSchedulerModelKeyIncludesGGUFShards(t *testing.T) {
 	}
 }
 
+func TestSchedGetRunnerUsesManifestDigestKeyWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "list", Digest: "parent", ManifestDigest: "child-a"}
+	loadedRunner := &runnerRef{
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+	loadedRunner.model.Store(loadedModel)
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqModel := &Model{Name: "list", Digest: "parent", ManifestDigest: "child-b"}
+	successCh, errCh := s.getRunner(ctx, reqModel, opts, nil, false, false, nil)
+
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
 func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
@@ -629,12 +668,12 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 
 	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
 	loadedRunner := &runnerRef{
-		model:       loadedModel,
 		modelKey:    schedulerModelKey(loadedModel),
 		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
 		Options:     &opts,
 		numParallel: 1,
 	}
+	loadedRunner.model.Store(loadedModel)
 
 	s.loadedMu.Lock()
 	s.loaded[loadedRunner.modelKey] = loadedRunner
@@ -770,14 +809,15 @@ func TestSchedPrematureExpired(t *testing.T) {
 		t.Fatal("timeout")
 	}
 	time.Sleep(scenario1a.req.sessionDuration.Duration)
-	scenario1a.ctxDone()
-	time.Sleep(20 * time.Millisecond)
-	require.LessOrEqual(t, len(s.finishedReqCh), 1)
-	time.Sleep(10 * time.Millisecond)
-	require.Empty(t, s.finishedReqCh)
 	s.loadedMu.Lock()
-	require.Empty(t, s.loaded)
+	require.Len(t, s.loaded, 1)
 	s.loadedMu.Unlock()
+	scenario1a.ctxDone()
+	require.Eventually(t, func() bool {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+		return len(s.loaded) == 0
+	}, 500*time.Millisecond, 10*time.Millisecond)
 
 	// also shouldn't happen in real life
 	s.finishedReqCh <- scenario1a.req
@@ -883,14 +923,14 @@ func TestSchedNeedsReload(t *testing.T) {
 	llm := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	do := api.DefaultOptions()
 	runner := &runnerRef{
-		model: &Model{
-			AdapterPaths:   []string{"adapter1"},
-			ProjectorPaths: []string{"projector1"},
-		},
 		Options:     &do,
 		llama:       llm,
 		numParallel: 1,
 	}
+	runner.model.Store(&Model{
+		AdapterPaths:   []string{"adapter1"},
+		ProjectorPaths: []string{"projector1"},
+	})
 	req := &LlmRequest{
 		model: &Model{
 			AdapterPaths:   []string{"adapter2"},
@@ -900,10 +940,10 @@ func TestSchedNeedsReload(t *testing.T) {
 	}
 	resp := runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.AdapterPaths = runner.model.AdapterPaths
+	req.model.AdapterPaths = runner.model.Load().AdapterPaths
 	resp = runner.needsReload(ctx, req)
 	require.True(t, resp)
-	req.model.ProjectorPaths = runner.model.ProjectorPaths
+	req.model.ProjectorPaths = runner.model.Load().ProjectorPaths
 	runner.loading = true
 	req.opts.NumBatch = 1234
 	resp = runner.needsReload(ctx, req)
@@ -961,12 +1001,12 @@ func TestSchedNeedsReloadIgnoresAutomaticNumCtxClamp(t *testing.T) {
 	opts.NumCtx = 131072
 	model := &Model{}
 	runner := &runnerRef{
-		model:       model,
 		Options:     &opts,
 		llama:       llm,
 		numParallel: 1,
 		numCtxAuto:  true,
 	}
+	runner.model.Store(model)
 	req := &LlmRequest{
 		model:      model,
 		opts:       api.DefaultOptions(),
@@ -989,13 +1029,13 @@ func TestSchedNeedsReloadUsesEffectiveAutomaticContextShift(t *testing.T) {
 	opts.NumCtx = 128
 	model := &Model{ModelPath: "model.gguf"}
 	runner := &runnerRef{
-		model:        model,
 		Options:      &opts,
 		llama:        llm,
 		numParallel:  1,
 		numCtxAuto:   true,
 		contextShift: true,
 	}
+	runner.model.Store(model)
 	req := &LlmRequest{
 		model:      model,
 		opts:       api.DefaultOptions(),
@@ -1018,13 +1058,13 @@ func TestSchedNeedsReloadUsesEffectiveExplicitContext(t *testing.T) {
 	opts.NumCtx = 2048
 	model := &Model{ModelPath: "model.gguf"}
 	runner := &runnerRef{
-		model:        model,
 		Options:      &opts,
 		llama:        llm,
 		numParallel:  1,
 		contextShift: true,
 		trainContext: 2048,
 	}
+	runner.model.Store(model)
 	req := &LlmRequest{
 		model: model,
 		opts:  api.DefaultOptions(),
@@ -1046,12 +1086,12 @@ func TestSchedNeedsReloadIgnoresAutomaticNumBatchDerivation(t *testing.T) {
 	opts.NumBatch = 1024
 	model := &Model{}
 	runner := &runnerRef{
-		model:        model,
 		Options:      &opts,
 		llama:        llm,
 		numParallel:  1,
 		numBatchAuto: true,
 	}
+	runner.model.Store(model)
 	req := &LlmRequest{
 		model:        model,
 		opts:         api.DefaultOptions(),
@@ -1075,12 +1115,12 @@ func TestSchedNeedsReloadIgnoresAutomaticUseMMapDefault(t *testing.T) {
 	opts.UseMMap = &useMmap
 	model := &Model{}
 	runner := &runnerRef{
-		model:       model,
 		Options:     &opts,
 		llama:       llm,
 		numParallel: 1,
 		useMMapAuto: true,
 	}
+	runner.model.Store(model)
 	req := &LlmRequest{
 		model: model,
 		opts:  api.DefaultOptions(),
@@ -1200,18 +1240,18 @@ func TestSchedUnloadAllRunners(t *testing.T) {
 	s.loadedMu.Unlock()
 	s.unloadAllRunners()
 
-	require.True(t, llm1.closeCalled)
-	require.True(t, llm2.closeCalled)
+	require.True(t, llm1.closeCalled.Load())
+	require.True(t, llm2.closeCalled.Load())
 }
 
 func TestSchedUnload(t *testing.T) {
 	llm1 := &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}}
 	r1 := &runnerRef{llama: llm1, numParallel: 1}
-	r2 := &runnerRef{model: &Model{AdapterPaths: []string{"A"}}, numParallel: 1}
+	r2 := withModel(&runnerRef{numParallel: 1}, &Model{AdapterPaths: []string{"A"}})
 	r1.unload()
-	require.True(t, llm1.closeCalled)
+	require.True(t, llm1.closeCalled.Load())
 	r2.unload()
-	require.Nil(t, r2.model)
+	require.Nil(t, r2.model.Load())
 }
 
 func TestSchedAlreadyCanceled(t *testing.T) {
@@ -2047,18 +2087,18 @@ func TestSchedRuntimeOOMExpiresLoadedRunners(t *testing.T) {
 
 	currentModel := &Model{ModelPath: "/tmp/current.gguf"}
 	current := &runnerRef{
-		model:           currentModel,
 		modelKey:        schedulerModelKey(currentModel),
 		sessionDuration: time.Hour,
 		llama:           &mockLlm{modelPath: "/tmp/current.gguf"},
 	}
+	current.model.Store(currentModel)
 	otherModel := &Model{ModelPath: "/tmp/other.gguf"}
 	other := &runnerRef{
-		model:           otherModel,
 		modelKey:        schedulerModelKey(otherModel),
 		sessionDuration: time.Hour,
 		llama:           &mockLlm{modelPath: "/tmp/other.gguf"},
 	}
+	other.model.Store(otherModel)
 
 	s.loadedMu.Lock()
 	s.loaded[current.modelKey] = current
@@ -2106,7 +2146,7 @@ type mockLlm struct {
 	detokenizeResp    string
 	detonekizeRespErr error
 	closeResp         error
-	closeCalled       bool
+	closeCalled       atomic.Bool
 	vramSize          uint64
 	totalSize         uint64
 	contextLength     int
@@ -2158,7 +2198,7 @@ func (s *mockLlm) ApplyChatTemplate(ctx context.Context, req llm.ChatRequest) (s
 	return "", errors.New("not implemented")
 }
 
-func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+func (s *mockLlm) Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error) {
 	return s.embeddingResp, 0, s.embeddingRespErr
 }
 
@@ -2171,7 +2211,7 @@ func (s *mockLlm) Detokenize(ctx context.Context, tokens []int) (string, error) 
 }
 
 func (s *mockLlm) Close() error {
-	s.closeCalled = true
+	s.closeCalled.Store(true)
 	return s.closeResp
 }
 
@@ -2193,12 +2233,12 @@ func TestRunnerCanBeEvicted(t *testing.T) {
 	s.getSystemInfoFn = getSystemInfoFn
 
 	loadedRunner := &runnerRef{
-		model:           &Model{Name: "test", ModelPath: "/fake/model"},
 		modelPath:       "/fake/model",
 		llama:           &mockLlm{vramSize: 21 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{}},
 		sessionDuration: 5 * time.Millisecond,
 		refCount:        0, // idle
 	}
+	loadedRunner.model.Store(&Model{Name: "test", ModelPath: "/fake/model"})
 
 	s.loadedMu.Lock()
 	s.loaded["/fake/model"] = loadedRunner
@@ -2222,22 +2262,22 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 	s.getSystemInfoFn = getSystemInfoFn
 
 	firstRunner := &runnerRef{
-		model:           &Model{Name: "first", ModelPath: "/fake/first/model"},
 		modelPath:       "/fake/first/model",
 		llama:           &mockLlm{vramSize: 8 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 8 * format.GigaByte}},
 		sessionDuration: 10 * time.Millisecond,
 		numParallel:     1,
 		refCount:        0,
 	}
+	firstRunner.model.Store(&Model{Name: "first", ModelPath: "/fake/first/model"})
 
 	secondRunner := &runnerRef{
-		model:           &Model{Name: "second", ModelPath: "/fake/second/model"},
 		modelPath:       "/fake/second/model",
 		llama:           &mockLlm{vramSize: 4 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 4 * format.GigaByte}},
 		sessionDuration: 10 * time.Millisecond,
 		numParallel:     1,
 		refCount:        0,
 	}
+	secondRunner.model.Store(&Model{Name: "second", ModelPath: "/fake/second/model"})
 
 	s.loadedMu.Lock()
 	s.loaded["/fake/first/model"] = firstRunner

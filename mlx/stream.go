@@ -60,6 +60,11 @@ type Stream struct {
 	ctx C.mlx_stream
 }
 
+// Synchronize waits for submitted work and its completion handlers on the stream.
+func (s Stream) Synchronize() {
+	mlxCheck(C.mlx_synchronize(s.ctx))
+}
+
 func (s Stream) LogValue() slog.Value {
 	str := mlxCheck(C.mlx_string_new())
 	mlxCheck(C.mlx_stream_tostring(&str, s.ctx))

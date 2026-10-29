@@ -38,8 +38,16 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		errData.Error = string(data)
 	}
 
+	response := anthropic.NewError(w.Status(), errData.Error)
+	if w.stream && w.Written() {
+		if err := w.writeEvent("error", anthropic.StreamErrorEvent{Type: response.Type, Error: response.Error}); err != nil {
+			return 0, err
+		}
+		return len(data), nil
+	}
+
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(response); err != nil {
 		return 0, err
 	}
 
@@ -51,11 +59,17 @@ func (w *AnthropicWriter) writeEvent(eventType string, data any) error {
 }
 
 func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
-	var chatResponse api.ChatResponse
-	err := json.Unmarshal(data, &chatResponse)
-	if err != nil {
+	var chunk struct {
+		api.ChatResponse
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
 		return 0, err
 	}
+	if w.stream && chunk.Error != "" {
+		return w.writeError(data)
+	}
+	chatResponse := chunk.ChatResponse
 
 	if w.stream {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
@@ -116,6 +130,11 @@ type WebSearchAnthropicWriter struct {
 	streamNextIndex      int
 }
 
+// SetThinking keeps web-search follow-ups aligned with the resolved chat request.
+func (w *WebSearchAnthropicWriter) SetThinking(think *api.ThinkValue) {
+	w.chatReq.Think = think
+}
+
 type webSearchLoopResult struct {
 	response anthropic.MessagesResponse
 	loopErr  *webSearchLoopError
@@ -145,10 +164,18 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		return w.inner.writeError(data)
 	}
 
-	var chatResponse api.ChatResponse
-	if err := json.Unmarshal(data, &chatResponse); err != nil {
+	var chunk struct {
+		api.ChatResponse
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &chunk); err != nil {
 		return 0, err
 	}
+	if w.stream && chunk.Error != "" {
+		w.terminalSent = true
+		return w.inner.writeError(data)
+	}
+	chatResponse := chunk.ChatResponse
 	w.recordObservedUsage(chatResponse.Metrics)
 
 	if w.stream && w.loopInFlight {
@@ -219,7 +246,15 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 }
 
 func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initialResponse api.ChatResponse, initialToolCall api.ToolCall, initialUsage anthropic.Usage) (anthropic.MessagesResponse, *webSearchLoopError) {
-	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
+	// Omitted or non-positive max_uses retains the server default.
+	maxLoops := maxWebSearchLoops
+	for _, tool := range w.req.Tools {
+		if strings.HasPrefix(tool.Type, "web_search") && tool.MaxUses > 0 {
+			maxLoops = min(maxLoops, tool.MaxUses)
+		}
+	}
+
+	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxLoops*2)
 	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
 
 	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
@@ -229,7 +264,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		"tool_call", anthropic.TraceToolCall(initialToolCall),
 		"messages", len(followUpMessages),
 		"tools", len(followUpTools),
-		"max_loops", maxWebSearchLoops,
+		"max_loops", maxLoops,
 	)
 
 	currentResponse := initialResponse
@@ -237,7 +272,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	var serverContent []anthropic.ContentBlock
 
-	for loop := 1; loop <= maxWebSearchLoops; loop++ {
+	for loop := 1; loop <= maxLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",
 			"loop", loop,
@@ -340,7 +375,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	}
 
 	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
-	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
+	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxLoops+1)
 	serverContent = append(serverContent,
 		anthropic.ContentBlock{
 			Type:  "server_tool_use",
@@ -520,6 +555,7 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 }
 
 func (w *WebSearchAnthropicWriter) writePassthroughStreamChunk(chatResponse api.ChatResponse) error {
+	w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 	events := w.inner.converter.Process(chatResponse)
 	for _, event := range events {
 		switch e := event.Data.(type) {

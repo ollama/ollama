@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
@@ -198,6 +199,35 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 			wantArch:      "custom",
 		},
 		{
+			name:          "Strands decision architecture over backbone",
+			architectures: []string{"StrandsDeciderForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Clef decision architecture over backbone",
+			architectures: []string{"ClefForDecision"},
+			modelType:     "qwen3_5",
+			wantArch:      "clef",
+		},
+		{
+			name:          "Laya decision architecture",
+			architectures: []string{"LayaForDecision"},
+			modelType:     "laya",
+			wantArch:      "laya",
+		},
+		{
+			name:          "decision architecture without model_type",
+			architectures: []string{"StrandsDeciderForDecision"},
+			wantArch:      "strandsdecider",
+		},
+		{
+			name:          "Qwen fine-tune retains backbone architecture",
+			architectures: []string{"Qwen3_5ForConditionalGeneration"},
+			modelType:     "qwen3_5",
+			wantArch:      "qwen3_5",
+		},
+		{
 			name:          "empty architectures with model_type",
 			architectures: nil,
 			modelType:     "mymodel",
@@ -208,13 +238,21 @@ func TestBuildModelInfo_ArchitectureConversion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := modelConfig{
-				Architectures: tt.architectures,
-				ModelType:     tt.modelType,
+				Architectures:         tt.architectures,
+				ModelType:             tt.modelType,
+				MaxPositionEmbeddings: 4096,
+				HiddenSize:            2048,
+				NumHiddenLayers:       24,
 			}
 			info := buildModelInfo(config, 0, 0)
 
 			if arch, ok := info["general.architecture"].(string); !ok || arch != tt.wantArch {
 				t.Errorf("architecture = %v, want %v", info["general.architecture"], tt.wantArch)
+			}
+			for key, want := range map[string]int{"context_length": 4096, "embedding_length": 2048, "block_count": 24} {
+				if got := info[tt.wantArch+"."+key]; got != want {
+					t.Errorf("%s.%s = %v, want %d", tt.wantArch, key, got, want)
+				}
 			}
 		})
 	}
@@ -551,6 +589,99 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 	// Shape should be unpacked: 320 * 8 = 2560
 	if len(tensor.Shape) != 2 || tensor.Shape[0] != 2560 || tensor.Shape[1] != 2560 {
 		t.Errorf("Shape = %v, want [2560, 2560]", tensor.Shape)
+	}
+}
+
+func createSafetensorsManifestForRunner(t *testing.T, name, runner, tensorName string) manifest.Manifest {
+	t.Helper()
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader([]byte("{}")), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	header := map[string]any{
+		tensorName: map[string]any{
+			"dtype":        "F32",
+			"shape":        []int64{2, 3},
+			"data_offsets": []int64{0, 24},
+		},
+	}
+	headerData, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerData))); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(headerData)
+
+	tensorLayer, err := manifest.NewLayer(bytes.NewReader(buf.Bytes()), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tensorLayer.Name = tensorName
+
+	if err := manifest.WriteManifestWithMetadata(model.ParseName(name), configLayer, []manifest.Layer{tensorLayer}, runner, manifest.FormatSafetensors); err != nil {
+		t.Fatal(err)
+	}
+
+	mf, err := manifest.ParseNamedManifestForRunner(model.ParseName(name), runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return *mf
+}
+
+func TestGetSafetensorsTensorInfoForRunnerSelectsChildManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	mlxManifest := createSafetensorsManifestForRunner(t, "runner-mlx", manifest.RunnerMLX, "mlx.weight")
+	ggmlManifest := createSafetensorsManifestForRunner(t, "runner-ggml", manifest.RunnerGGML, "ggml.weight")
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{ggmlRef, mlxRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("runner-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		runner string
+		want   string
+	}{
+		{runner: manifest.RunnerMLX, want: "mlx.weight"},
+		{runner: manifest.RunnerGGML, want: "ggml.weight"},
+	} {
+		t.Run(tt.runner, func(t *testing.T) {
+			tensors, err := getSafetensorsTensorInfoForRunner(model.ParseName("runner-list"), tt.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(tensors) != 1 {
+				t.Fatalf("tensor count = %d, want 1", len(tensors))
+			}
+			if tensors[0].Name != tt.want {
+				t.Fatalf("tensor name = %q, want %q", tensors[0].Name, tt.want)
+			}
+		})
 	}
 }
 
@@ -1160,11 +1291,43 @@ func TestGetSafetensorsDtypeChoosesLowestPrecisionQuantizedBlob(t *testing.T) {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
-	got, err := getSafetensorsDtype(name)
+	got, err := getSafetensorsDtypeForRunner(name, "")
 	if err != nil {
-		t.Fatalf("getSafetensorsDtype() error = %v", err)
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
 	}
 	if got != "nvfp4" {
-		t.Fatalf("getSafetensorsDtype() = %q, want nvfp4", got)
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want nvfp4", got)
+	}
+
+	draft := lowerPrecision
+	draft.Name = "draft.model.layers.0.mlp.up_proj.weight"
+
+	name = model.ParseName("mixed-target-and-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, quantized, draft}); err != nil {
+		t.Fatalf("failed to write target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "mxfp8" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target mxfp8", got)
+	}
+
+	configJSON, err := manifest.NewLayer(strings.NewReader(`{"dtype":"bfloat16"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatalf("failed to create model config layer: %v", err)
+	}
+	configJSON.Name = "config.json"
+	name = model.ParseName("bf16-target-and-nvfp4-draft-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, []manifest.Layer{unquantized, draft, configJSON}); err != nil {
+		t.Fatalf("failed to write BF16 target/draft manifest: %v", err)
+	}
+	got, err = getSafetensorsDtypeForRunner(name, "")
+	if err != nil {
+		t.Fatalf("getSafetensorsDtypeForRunner() error = %v", err)
+	}
+	if got != "bfloat16" {
+		t.Fatalf("getSafetensorsDtypeForRunner() = %q, want target bfloat16", got)
 	}
 }

@@ -1,7 +1,6 @@
 import MessageList from "./MessageList";
 import ChatForm from "./ChatForm";
 import { FileUpload } from "./FileUpload";
-import { DisplayUpgrade } from "./DisplayUpgrade";
 import { DisplayStale } from "./DisplayStale";
 import { DisplayLogin } from "./DisplayLogin";
 import {
@@ -26,7 +25,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
-import { useUser } from "@/hooks/useUser";
 import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
 import { Message } from "@/gotypes";
 
@@ -36,7 +34,6 @@ export default function Chat({ chatId }: { chatId: string }) {
   const chatQuery = useChat(chatId === "new" ? "" : chatId);
   const chatErrorQuery = useChatError(chatId === "new" ? "" : chatId);
   const { selectedModel } = useSelectedModel(chatId);
-  const { user } = useUser();
   const hasVisionCapability = useHasVisionCapability(selectedModel?.model);
   const shouldShowStaleDisplay = useShouldShowStaleDisplay(selectedModel);
   const dismissStaleModel = useDismissStaleModel();
@@ -256,19 +253,6 @@ export default function Chat({ chatId }: { chatId: string }) {
                       });
                     }
                   }}
-                />
-              </div>
-            )}
-            {chatError && chatError.code === "usage_limit_upgrade" && (
-              <div className="pb-2">
-                <DisplayUpgrade
-                  error={chatError}
-                  onDismiss={clearChatError}
-                  href={
-                    user?.plan === "pro"
-                      ? "https://ollama.com/settings/billing"
-                      : "https://ollama.com/upgrade"
-                  }
                 />
               </div>
             )}

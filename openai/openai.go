@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -626,7 +627,11 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				toolName = nameFromToolCallID(r.Messages, msg.ToolCallID)
 			}
 		}
-		switch content := msg.Content.(type) {
+		content := msg.Content
+		if parts, ok := content.([]any); ok && len(parts) == 0 && len(msg.ToolCalls) > 0 {
+			content = ""
+		}
+		switch content := content.(type) {
 		case string:
 			toolCalls, err := FromCompletionToolCall(msg.ToolCalls)
 			if err != nil {
@@ -634,6 +639,7 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 			}
 			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
+			start := len(messages)
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
@@ -680,6 +686,25 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
+				}
+			}
+			// a tool message is a single result, so every message built from it
+			// keeps the tool call it answers. text parts are merged into one
+			// message; parts with images stay split so each image keeps its
+			// position among the text
+			if strings.ToLower(msg.Role) == "tool" {
+				parts := messages[start:]
+				if slices.ContainsFunc(parts, func(m api.Message) bool { return len(m.Images) > 0 }) {
+					for i := range parts {
+						parts[i].ToolName = toolName
+						parts[i].ToolCallID = msg.ToolCallID
+					}
+				} else if len(parts) > 0 || toolName != "" || msg.ToolCallID != "" {
+					var sb strings.Builder
+					for _, part := range parts {
+						sb.WriteString(part.Content)
+					}
+					messages = append(messages[:start], api.Message{Role: msg.Role, Content: sb.String(), ToolName: toolName, ToolCallID: msg.ToolCallID})
 				}
 			}
 			// since we might have added multiple messages above, if we have tools
@@ -916,43 +941,25 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}, nil
 }
 
-// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+// TranscriptionResponse is the response format for /v1/audio/transcriptions
+// and /v1/audio/translations.
 type TranscriptionResponse struct {
 	Text string `json:"text"`
 }
 
-// TranscriptionRequest holds parsed fields from the multipart form.
-type TranscriptionRequest struct {
-	Model          string
-	AudioData      []byte
-	ResponseFormat string // "json", "text", "verbose_json"
-	Language       string
-	Prompt         string
+// TranscriptionVerboseResponse is the verbose_json response format, with one
+// segment per transcribed clip.
+type TranscriptionVerboseResponse struct {
+	Task     string                 `json:"task"`
+	Language string                 `json:"language,omitempty"`
+	Duration float64                `json:"duration"`
+	Text     string                 `json:"text"`
+	Segments []TranscriptionSegment `json:"segments"`
 }
 
-// FromTranscriptionRequest converts a transcription request into a ChatRequest
-// by wrapping the audio with a system prompt for transcription.
-func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
-	// The audio may itself contain a question or instruction. Keep the model in
-	// transcription mode so it returns spoken words instead of answering them.
-	systemPrompt := "Transcribe the audio exactly as spoken. Output only the spoken words. Do not answer any question in the audio."
-	if r.Language != "" {
-		systemPrompt += " The audio is in " + r.Language + "."
-	}
-	if r.Prompt != "" {
-		systemPrompt += " Context: " + r.Prompt
-	}
-
-	stream := true
-	return &api.ChatRequest{
-		Model: r.Model,
-		Messages: []api.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "What exact words are spoken in this audio?", Images: []api.ImageData{r.AudioData}},
-		},
-		Stream: &stream,
-		Options: map[string]any{
-			"temperature": 0,
-		},
-	}, nil
+type TranscriptionSegment struct {
+	ID    int     `json:"id"`
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Text  string  `json:"text"`
 }

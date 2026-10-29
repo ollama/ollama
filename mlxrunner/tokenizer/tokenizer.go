@@ -7,8 +7,6 @@
 
 package tokenizer
 
-import "regexp"
-
 // TokenizerType identifies the tokenization algorithm
 type TokenizerType int
 
@@ -35,12 +33,22 @@ type Vocabulary struct {
 
 // Tokenizer handles BPE and SentencePiece tokenization
 type Tokenizer struct {
-	vocab                              *Vocabulary
-	pretokenizer                       *regexp.Regexp
-	pretokenizerSpaceBeforePunctuation bool
-	specialTokens                      map[string]int32 // Special tokens for direct lookup
-	sortedSpecialTokens                []string         // Special tokens sorted by length, longest first
-	typ                                TokenizerType    // Algorithm type
+	vocab                  *Vocabulary
+	pretokenizer           []pretokenizer
+	specialTokens          map[string]int32 // Special tokens for direct lookup
+	specialTokenMatcher    addedTokenMatcher
+	normalizedTokenMatcher addedTokenMatcher
+	typ                    TokenizerType // Algorithm type
+	normalizeNFC           bool
+	normalizeSpaces        bool
+	ignoreMerges           bool
+	metaspace              *metaspace
+}
+
+type metaspace struct {
+	Replacement   string `json:"replacement"`
+	PrependScheme string `json:"prepend_scheme"`
+	Split         bool   `json:"split"`
 }
 
 // Precomputed GPT-2 byte-level encoding table

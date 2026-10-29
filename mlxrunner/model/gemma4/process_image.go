@@ -61,9 +61,14 @@ func visionTargetSize(height, width int, patchSize, poolingKernel, budget int32)
 
 // dynamicVisionTargetSize chooses the smallest publisher-supported mode that
 // preserves both source dimensions, or the largest mode when none fits.
-func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32, error) {
+func dynamicVisionTargetSize(height, width int, cfg *VisionConfig) (int32, int32, error) {
+	patch, pool := cfg.PatchSize, cfg.PoolingKernelSize
+	// The compact tower used by E2B, E4B, and Bolt needs the smallest mode's
+	// rounded-up grid for small-image detail. Larger and unified towers keep
+	// the reference processor's floor-rounded grid.
+	compactTower := cfg.ModelType == "gemma4_vision" && cfg.HiddenSize == 768 && cfg.NumHiddenLayers == 16
 	var targetH, targetW int32
-	for _, budget := range [...]int32{70, 140, 280, 560, 1120} {
+	for _, budget := range visionSoftTokenBudgets {
 		var err error
 		targetH, targetW, err = visionTargetSize(height, width, patch, pool, budget)
 		if err != nil {
@@ -72,6 +77,21 @@ func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32
 		// Compare the rounded grid: choosing the nearest area can discard
 		// detail even when a larger supported mode preserves it.
 		if int(targetH) >= height && int(targetW) >= width {
+			if compactTower && budget == visionSoftTokenBudgets[0] && height >= int(2*patch*pool) && width >= int(2*patch*pool) {
+				// The reference floors both grid dimensions, so its smallest
+				// mode can use fewer than 70 image tokens even for a small input.
+				// Round this mode up only after it already covers the source;
+				// source axes shorter than two pooled cells, larger modes, and
+				// explicit budgets retain reference sizing.
+				side := float64(patch) * float64(pool)
+				scale := math.Sqrt(float64(budget) * side * side / (float64(height) * float64(width)))
+				h := math.Ceil(scale * float64(height) / side)
+				w := math.Ceil(scale * float64(width) / side)
+				// Keep the rounded grid within the next supported mode.
+				if h >= 1 && w >= 1 && h <= float64(budget) && w <= float64(budget) && h*w <= float64(visionSoftTokenBudgets[1]) {
+					return int32(h) * patch * pool, int32(w) * patch * pool, nil
+				}
+			}
 			return targetH, targetW, nil
 		}
 	}
@@ -81,32 +101,50 @@ func dynamicVisionTargetSize(height, width int, patch, pool int32) (int32, int32
 // preprocessImage decodes and prepares one image: aspect-preserving
 // resize, rescale to [0,1], and patchify. The [-1,1] normalization stays
 // in the patch embedder, so pixels here match the reference
-// pixel_values.
+// pixel_values. Budget 0 selects the dynamic per-image resolution the
+// generative path uses (#18603).
 func (m *Model) preprocessImage(data []byte) (pixels []float32, positions []int32, geom ImageGeometry, err error) {
+	return ProcessImage(data, m.Vision, 0)
+}
+
+// ProcessImage decodes and prepares one image: aspect-preserving
+// resize, rescale to [0,1], and patchify under the given per-image
+// soft-token budget. The [-1,1] normalization stays in the patch
+// embedder, so pixels here match the reference pixel_values.
+func ProcessImage(data []byte, cfg *VisionConfig, softTokenBudget int32) (pixels []float32, positions []int32, geom ImageGeometry, err error) {
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, nil, ImageGeometry{}, fmt.Errorf("decode image: %w", err)
 	}
 
-	patch, pool := m.Vision.PatchSize, m.Vision.PoolingKernelSize
+	patch, pool := cfg.PatchSize, cfg.PoolingKernelSize
 	bounds := img.Bounds()
-	targetH, targetW, err := dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool)
+	// A declared budget fixes the resize grid (the embedding models'
+	// reference processor resizes to the budget's grid, not the closest
+	// fit); budget 0 keeps the dynamic per-image selection the generative
+	// path uses (#18603).
+	var targetH, targetW int32
+	if softTokenBudget > 0 {
+		targetH, targetW, err = visionTargetSize(bounds.Dy(), bounds.Dx(), patch, pool, softTokenBudget)
+	} else {
+		targetH, targetW, err = dynamicVisionTargetSize(bounds.Dy(), bounds.Dx(), cfg)
+	}
 	if err != nil {
 		return nil, nil, ImageGeometry{}, err
 	}
 	positionPatch := patch
-	if m.Vision.unified() {
+	if cfg.unified() {
 		positionPatch *= pool
 	}
-	if int(max(targetH, targetW)/positionPatch) > m.Vision.positionEmbeddingSize {
-		return nil, nil, ImageGeometry{}, fmt.Errorf("image patch grid exceeds vision position embedding size %d", m.Vision.positionEmbeddingSize)
+	if int(max(targetH, targetW)/positionPatch) > cfg.positionEmbeddingSize {
+		return nil, nil, ImageGeometry{}, fmt.Errorf("image patch grid exceeds vision position embedding size %d", cfg.positionEmbeddingSize)
 	}
 
 	img = dropAlpha(img, bounds)
 	resized := image.NewRGBA(image.Rect(0, 0, int(targetW), int(targetH)))
 	draw.CatmullRom.Scale(resized, resized.Bounds(), img, bounds, draw.Src, nil)
 
-	if m.Vision.unified() {
+	if cfg.unified() {
 		// One raster patch of pool*patchSize pixels per soft token: the
 		// reference merge rearranges its intermediate 16px patches back
 		// into this layout, with positions on the merged grid.

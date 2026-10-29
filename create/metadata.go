@@ -15,42 +15,96 @@ import (
 
 // inferSafetensorsConfig derives the manifest config shared by local and
 // server-side safetensors imports. Explicit parser and renderer values take
-// precedence over the inferred values.
+// precedence when compatible with the source model's scoring format.
 func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverride, rendererOverride string) (model.ConfigV2, error) {
 	chatTemplate, err := readChatTemplateStrict(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
 	}
 
-	parserName, err := parserNameForConfig(modelDir, cfg, chatTemplate)
-	if err != nil {
-		return model.ConfigV2{}, err
+	var parserName, rendererName, sourceDecisionRenderer string
+	var decisionModel, decisionVision bool
+	switch cfg.Architecture() {
+	case "Qwen3_5Model":
+		hasSidecar, err := hasPplxSidecar(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		if !hasSidecar {
+			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
+		}
+		format, err := qwenDecisionFormat(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName = "pplx"
+		if format == d3FormatID {
+			rendererName = "d3"
+		}
+		sourceDecisionRenderer = rendererName
+		decisionModel = true
+		decisionVision = cfg.VisionConfig != nil
+	case "ClefForDecision":
+		rendererName, decisionModel = "clef", true
+		decisionVision = cfg.VisionConfig != nil
+	case "StrandsDeciderForDecision":
+		rendererName, decisionModel = "strands", true
+	case "KevForDecision":
+		rendererName, decisionModel = "kev", true
+	case "LayaForDecision":
+		decisionModel = true
+	case "D1Model":
+		rendererName, decisionModel, decisionVision = "d1", true, true
+	default:
+		parserName, err = parserNameForConfig(modelDir, cfg, chatTemplate)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName, err = rendererNameForConfig(modelDir, cfg, chatTemplate)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
 	}
 	if parserOverride != "" {
 		parserName = parserOverride
 	}
-
-	rendererName, err := rendererNameForConfig(modelDir, cfg, chatTemplate)
-	if err != nil {
-		return model.ConfigV2{}, err
-	}
 	if rendererOverride != "" {
 		rendererName = rendererOverride
 	}
+	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != sourceDecisionRenderer || parserName != "") {
+		return model.ConfigV2{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
+	}
 
-	capabilities := inferSafetensorsCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	var capabilities []string
+	if decisionModel {
+		capabilities = []string{"decision"}
+		if decisionVision {
+			capabilities = append(capabilities, "vision")
+		}
+		if cfg.Architecture() == "D1Model" && cfg.ModelType == "lfm3_omni" {
+			capabilities = append(capabilities, "audio")
+		}
+	} else if isPhononArchitecture(cfg.Architecture()) {
+		capabilities = []string{"speech"}
+	} else {
+		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	}
+	if rendererName == "lfm3-omni" || rendererName == "lfm3-audio" {
+		capabilities = lfm3AudioCapabilities(capabilities)
+	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
 	}
 
-	return model.ConfigV2{
+	config := model.ConfigV2{
 		ModelFormat:        "safetensors",
 		Parser:             parserName,
 		Renderer:           rendererName,
 		Capabilities:       capabilities,
 		GenerationDefaults: generationDefaults,
-	}, nil
+	}
+	return config, nil
 }
 
 func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {
@@ -96,7 +150,7 @@ func readChatTemplateStrict(modelDir string) (string, error) {
 	return "", fmt.Errorf("read %s: %w", chatTemplatePath, err)
 }
 
-func inferSafetensorsCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
+func inferCompletionCapabilitiesFromConfig(cfg sourceModelConfig, chatTemplate, parserName string) []string {
 	capabilities := []string{"completion"}
 
 	caps := detectCapabilitiesFromConfig(cfg, chatTemplate)
@@ -184,7 +238,11 @@ func lagunaRendererParserNameFromTemplate(modelDir, chatTemplate string) (string
 	return "laguna", nil
 }
 
-func nemotronRendererParserNameFromTemplate(modelDir, chatTemplate string) (string, error) {
+// Nemotron 3.5 replaces inline /think toggles with request-controlled thinking
+// and adds a reasoning-effort marker. The architecture names do not distinguish
+// these prompt formats, but both use the same thinking/tool-call output syntax
+// and therefore the nemotron-3-nano parser.
+func nemotronRendererNameFromTemplate(modelDir, chatTemplate string) (string, error) {
 	const v35Marker = "{reasoning effort: efficient}"
 
 	chatTemplatePath := filepath.Join(modelDir, "chat_template.jinja")
@@ -219,6 +277,10 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -236,7 +298,7 @@ func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	case strings.Contains(s, "qwen3"):
 		return "qwen3", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+		return "nemotron-3-nano", nil
 	default:
 		return "", nil
 	}
@@ -255,6 +317,10 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -273,9 +339,36 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 		return qwen35RendererNameFromTemplate(chatTemplate), nil
 	case strings.Contains(s, "qwen3"):
 		return "qwen3-coder", nil
+	case s == "nemotronh_omni_reasoning_v3":
+		return "nemotron-3.5-super", nil
 	case strings.Contains(s, "nemotronh") || strings.Contains(s, "nemotron_h"):
-		return nemotronRendererParserNameFromTemplate(modelDir, chatTemplate)
+		return nemotronRendererNameFromTemplate(modelDir, chatTemplate)
 	default:
 		return "", nil
 	}
+}
+
+// lfm3RendererParserName maps an LFM3 identifier to its template branch.
+func lfm3RendererParserName(s string) string {
+	switch {
+	case strings.Contains(s, "omni"):
+		return "lfm3-omni"
+	case strings.Contains(s, "audio"):
+		return "lfm3-audio"
+	default:
+		return "lfm3"
+	}
+}
+
+// lfm3AudioCapabilities marks LFM3 Audio and Omni as audio-input models served
+// without thinking (their templates mention <think>) that also speak through
+// /v1/audio/speech.
+func lfm3AudioCapabilities(caps []string) []string {
+	out := []string{}
+	for _, c := range caps {
+		if c != "audio" && c != "thinking" {
+			out = append(out, c)
+		}
+	}
+	return append(out, "audio", "speech")
 }

@@ -14,6 +14,10 @@ type Thread struct {
 	id     uint64
 }
 
+// Worker returns the worker for handlers that dispatch their own MLX jobs.
+// Call those handlers from the test goroutine, not from Run's callback.
+func (t *Thread) Worker() *mlxthread.Thread { return t.worker }
+
 // Start creates a pinned test worker.
 func Start(name string, init func() error) (*Thread, error) {
 	t := &Thread{}

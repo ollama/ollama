@@ -23,8 +23,11 @@ import (
 // safetensors-backed models.
 const SafetensorsMinOllamaVersion = "0.19.0"
 
-// IsSafetensorsLLMModel checks if a model is a safetensors LLM model
-// (has completion capability, not image generation).
+// phononMinOllamaVersion is the first Ollama release that runs Phonon speech
+// models.
+const phononMinOllamaVersion = "0.40.9"
+
+// IsSafetensorsLLMModel checks for a safetensors completion or decision model.
 func IsSafetensorsLLMModel(modelName string) bool {
 	name := model.ParseName(modelName)
 	if !name.IsValid() {
@@ -44,15 +47,18 @@ func IsSafetensorsLLMModel(modelName string) bool {
 	if err := json.NewDecoder(f).Decode(&config); err != nil {
 		return false
 	}
-	return config.ModelFormat == "safetensors" && slices.Contains(config.Capabilities, "completion")
+	return config.ModelFormat == "safetensors" && (slices.Contains(config.Capabilities, "completion") || slices.Contains(config.Capabilities, "decision"))
 }
 
-// IsSafetensorsModelDir checks if the directory contains a standard safetensors model
-// by looking for config.json and at least one .safetensors file.
+// IsSafetensorsModelDir checks for a supported model config and safetensors weights.
 func IsSafetensorsModelDir(dir string) bool {
-	// Must have config.json
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
-		return false
+		if !os.IsNotExist(err) {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, "rl_agent_config.json")); err != nil {
+			return false
+		}
 	}
 
 	// Must have at least one .safetensors file
@@ -322,6 +328,9 @@ type sourceModelConfig struct {
 func readSourceModelConfig(modelDir string) (sourceModelConfig, json.RawMessage, error) {
 	configPath := filepath.Join(modelDir, "config.json")
 	data, err := os.ReadFile(configPath)
+	if os.IsNotExist(err) {
+		return readLayaConfig(modelDir)
+	}
 	if err != nil {
 		return sourceModelConfig{}, nil, fmt.Errorf("read %s: %w", configPath, err)
 	}
@@ -418,6 +427,10 @@ func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) 
 type tensorImportTransformFactory func(rawConfig json.RawMessage) (quantizePolicy, error)
 
 var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
+	"Qwen3_5Model":                          newPplxImportTransform,
+	"KevForDecision":                        newQwen35DecisionImportTransform,
+	"StrandsDeciderForDecision":             newQwen35DecisionImportTransform,
+	"ClefForDecision":                       newQwen35DecisionImportTransform,
 	"Qwen3_5ForCausalLM":                    newQwen35ImportTransform,
 	"Qwen3_5ForConditionalGeneration":       newQwen35ImportTransform,
 	"Qwen3NextForCausalLM":                  newQwen35ImportTransform,
@@ -441,7 +454,13 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"gemma4_unified_assistant":              newGemma4ImportTransform,
 	"NemotronH_Nano_VL_V2":                  newNemotronHImportTransform,
 	"NemotronH_Nano_Omni_Reasoning_V3":      newNemotronHImportTransform,
+	"NemotronH_Omni_Reasoning_V3":           newNemotronHImportTransform,
 	"NemotronHForCausalLM":                  newNemotronHImportTransform,
+	"EmbeddingGemma2Model":                  newGemma4EmbeddingImportTransform,
+	"Lfm3VlForConditionalGeneration":        newLFM3ImportTransform,
+	"Lfm3OmniForConditionalGeneration":      newLFM3OmniImportTransform,
+	"Lfm3AudioForConditionalGeneration":     newLFM3AudioImportTransform,
+	"D1Model":                               newLFM3ImportTransform,
 }
 
 func newTensorImportTransform(inv Inventory) (quantizePolicy, error) {
@@ -460,6 +479,24 @@ func buildSourceFP8Reader(weightTD, scaleTD *safetensors.TensorData) io.Reader {
 }
 
 func validateScalarFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
+	validated, err := validateFloat32TensorData(td, name)
+	if err != nil || validated == nil {
+		if err != nil && td != nil && strings.EqualFold(td.Dtype, "F32") {
+			return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+		}
+		return validated, err
+	}
+	n := int64(1)
+	for _, dim := range validated.Shape {
+		n *= int64(dim)
+	}
+	if n != 1 {
+		return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", validated.Shape)
+	}
+	return validated, nil
+}
+
+func validateFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
 	if td == nil {
 		return nil, nil
 	}
@@ -469,35 +506,36 @@ func validateScalarFloat32TensorData(td *safetensors.TensorData, name string) (*
 	n := int64(1)
 	for _, dim := range td.Shape {
 		if dim <= 0 || n > math.MaxInt64/int64(dim) {
-			return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+			return nil, fmt.Errorf("expected non-empty F32 tensor, got shape %v", td.Shape)
 		}
 		n *= int64(dim)
 	}
-	if n != 1 || td.Size != 4 {
-		return nil, fmt.Errorf("expected scalar F32 tensor, got shape %v", td.Shape)
+	if n > math.MaxInt64/4 || td.Size != n*4 {
+		return nil, fmt.Errorf("expected non-empty F32 tensor, got shape %v", td.Shape)
 	}
 	return td.WithName(name), nil
 }
 
-func invertScalarFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
-	td, err := validateScalarFloat32TensorData(td, name)
-	if err != nil {
-		return nil, err
+func invertFloat32TensorData(td *safetensors.TensorData, name string) (*safetensors.TensorData, error) {
+	td, err := validateFloat32TensorData(td, name)
+	if err != nil || td == nil {
+		return td, err
 	}
 	raw, err := io.ReadAll(td.Reader())
 	if err != nil {
 		return nil, err
 	}
-	if len(raw)%4 != 0 {
-		return nil, fmt.Errorf("invalid F32 tensor byte length %d", len(raw))
+	if int64(len(raw)) != td.Size {
+		return nil, fmt.Errorf("invalid F32 tensor byte length %d, expected %d", len(raw), td.Size)
 	}
 	out := make([]byte, len(raw))
 	for i := 0; i < len(raw); i += 4 {
 		v := math.Float32frombits(binary.LittleEndian.Uint32(raw[i : i+4]))
-		if v == 0 {
-			return nil, fmt.Errorf("cannot invert zero F32 scale")
+		inverse := 1 / v
+		if !(v > 0) || math.IsInf(float64(v), 0) || math.IsInf(float64(inverse), 0) {
+			return nil, fmt.Errorf("cannot invert F32 scale %v: expected a finite positive scale with a finite reciprocal", v)
 		}
-		binary.LittleEndian.PutUint32(out[i:i+4], math.Float32bits(1/v))
+		binary.LittleEndian.PutUint32(out[i:i+4], math.Float32bits(inverse))
 	}
 	return safetensors.NewTensorDataFromBytes(name, td.Dtype, td.Shape, out), nil
 }

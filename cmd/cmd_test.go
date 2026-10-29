@@ -75,6 +75,44 @@ func TestRunThinkingNamesReachServer(t *testing.T) {
 	}
 }
 
+// captureOutput redirects *target (os.Stdout or os.Stderr) to a pipe while fn
+// runs and returns everything written to it. The original file is restored
+// before captureOutput returns.
+func captureOutput(t *testing.T, target **os.File, fn func()) string {
+	t.Helper()
+
+	old := *target
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	*target = w
+	defer func() {
+		*target = old
+	}()
+
+	done := make(chan string)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+	w.Close()
+	return <-done
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureOutput(t, &os.Stdout, fn)
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	return captureOutput(t, &os.Stderr, fn)
+}
+
 func TestShowInfo(t *testing.T) {
 	t.Run("bare details", func(t *testing.T) {
 		var b bytes.Buffer
@@ -97,6 +135,48 @@ func TestShowInfo(t *testing.T) {
 
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("renderer and template source", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Renderer:       "gemma4-large",
+			Parser:         "gemma4",
+			TemplateSource: "renderer_parser",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, want := range []string{"renderer", "gemma4-large", "template source", "renderer_parser"} {
+			if !strings.Contains(b.String(), want) {
+				t.Errorf("expected output to contain %q:\n%s", want, b.String())
+			}
+		}
+	})
+
+	t.Run("renderer fields omitted when empty", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			TemplateSource: "none",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, unwanted := range []string{"renderer", "template source"} {
+			if strings.Contains(b.String(), unwanted) {
+				t.Errorf("expected output to omit %q:\n%s", unwanted, b.String())
+			}
 		}
 	})
 
@@ -380,6 +460,63 @@ Weigh anchor!
 	})
 }
 
+func TestShowInfoRendersRunnerAlternates(t *testing.T) {
+	var b bytes.Buffer
+	if err := showInfo(&api.ShowResponse{
+		ModelInfo: map[string]any{
+			"general.architecture": "gemma3",
+		},
+		Details: api.ModelDetails{
+			ParameterSize:     "4.3B",
+			QuantizationLevel: "nvfp4",
+		},
+		Manifests: []api.ManifestSummary{
+			{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+			{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+		},
+	}, false, &b); err != nil {
+		t.Fatal(err)
+	}
+
+	expect := `  Model
+    architecture         gemma3
+    parameters           4.3B
+    quantization         nvfp4
+    runner               mlx
+    available runners    mlx:sha256:aaaaaaaaaaaa,
+                           llamacpp:sha256:111111111111
+
+`
+	trimLinePadding := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			lines[i] = strings.TrimRight(line, " \t\r")
+		}
+		return strings.Join(lines, "\n")
+	}
+	if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestShowRunnerSummaries(t *testing.T) {
+	selected, ok := showSelectedRunner([]api.ManifestSummary{
+		{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+		{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+	})
+	if !ok || selected != "mlx" {
+		t.Fatalf("selected = %q, %t", selected, ok)
+	}
+
+	available := showAvailableRunners([]api.ManifestSummary{
+		{Digest: "sha256:aaaaaaaaaaaabbbbbbbbbbbbccccccccccccddddddddddddeeeeeeeeeeeeffffffff", Runner: "mlx", Format: "safetensors", Selected: true},
+		{Digest: "sha256:1111111111112222222222223333333333334444444444445555555555556666", Runner: "llamacpp", Format: "gguf"},
+	})
+	if available != "mlx:sha256:aaaaaaaaaaaa, llamacpp:sha256:111111111111" {
+		t.Fatalf("available = %q", available)
+	}
+}
+
 func TestDeleteHandler(t *testing.T) {
 	stopped := false
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -442,6 +579,125 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+// Output written to a pipe or file is plain text: word wrapping's cursor
+// escapes would reach whatever reads it, such as a speech model.
+func TestRunPipedOutputIsPlain(t *testing.T) {
+	text := "The sky is blue because of a phenomenon called Rayleigh scattering. When sunlight enters the atmosphere it travels through countless tiny gas molecules."
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			json.NewEncoder(w).Encode(api.ShowResponse{Capabilities: []model.Capability{model.CapabilityCompletion}})
+		case "/api/generate":
+			for _, word := range strings.SplitAfter(text, " ") {
+				json.NewEncoder(w).Encode(api.GenerateResponse{Response: word})
+			}
+			json.NewEncoder(w).Encode(api.GenerateResponse{Done: true})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	for _, f := range []string{"keepalive", "format", "think", "voice"} {
+		cmd.Flags().String(f, "", "")
+	}
+	for _, f := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
+		cmd.Flags().Bool(f, false, "")
+	}
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"chat-model", "Why is the sky blue?"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "\x1b") || strings.TrimSpace(out) != text {
+		t.Fatalf("piped output %q, want the plain response", out)
+	}
+}
+
+// A model that both chats and speaks chats in ollama run, and speaks the text
+// when --voice is given.
+func TestRunChatSpeechModelVoice(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		voice  string
+		speaks bool
+	}{
+		{name: "chat by default"},
+		{name: "speak with voice", voice: "default", speaks: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var speech []map[string]string
+			chats := 0
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				defer mu.Unlock()
+				switch r.URL.Path {
+				case "/api/show":
+					json.NewEncoder(w).Encode(api.ShowResponse{
+						Capabilities: []model.Capability{model.CapabilityCompletion, model.CapabilityAudio, model.CapabilitySpeech},
+					})
+				case "/v1/audio/speech":
+					var req map[string]string
+					json.NewDecoder(r.Body).Decode(&req)
+					speech = append(speech, req)
+					w.Write(append([]byte("RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x00\x00\x00\x00"), make([]byte, 64)...))
+				case "/api/generate", "/api/chat":
+					chats++
+					json.NewEncoder(w).Encode(api.GenerateResponse{Response: "hi", Done: true})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+			t.Cleanup(mockServer.Close)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+			for _, f := range []string{"keepalive", "format", "think", "voice"} {
+				cmd.Flags().String(f, "", "")
+			}
+			for _, f := range []string{"verbose", "insecure", "nowordwrap", "hidethinking"} {
+				cmd.Flags().Bool(f, false, "")
+			}
+			if tt.voice != "" {
+				if err := cmd.Flags().Set("voice", tt.voice); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var err error
+			out := captureStdout(t, func() {
+				err = RunHandler(cmd, []string{"chat-speech-model", "Hello from Ollama."})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if !tt.speaks {
+				if len(speech) != 0 || chats != 1 {
+					t.Fatalf("%d speech and %d chat requests, want a chat", len(speech), chats)
+				}
+				return
+			}
+			if chats != 0 || len(speech) != 1 {
+				t.Fatalf("%d speech and %d chat requests, want speech", len(speech), chats)
+			}
+			if got := speech[0]; got["voice"] != tt.voice || !strings.Contains(got["input"], "Hello from Ollama.") {
+				t.Fatalf("speech request %v", got)
+			}
+			if !strings.HasPrefix(out, "RIFF") {
+				t.Fatalf("output %q, want a WAV", out[:min(len(out), 16)])
+			}
+		})
+	}
+}
+
 func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -488,25 +744,14 @@ func TestRunEmbeddingModel(t *testing.T) {
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
 
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- RunHandler(cmd, []string{"test-embedding-model", "hello", "world"})
-	}()
-
-	err := <-errCh
-	w.Close()
-	os.Stdout = oldStdout
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"test-embedding-model", "hello", "world"})
+	})
 
 	if err != nil {
 		t.Fatalf("RunHandler returned error: %v", err)
 	}
-
-	var out bytes.Buffer
-	io.Copy(&out, r)
 
 	select {
 	case req := <-reqCh:
@@ -528,8 +773,133 @@ func TestRunEmbeddingModel(t *testing.T) {
 	}
 
 	expectOutput := "[0.1,0.2,0.3]\n"
-	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+	if diff := cmp.Diff(expectOutput, out); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestListRunningHandlerShowsRunner(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" || r.Method != http.MethodGet {
+			http.NotFound(w, r)
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProcessResponse{
+			Models: []api.ProcessModelResponse{
+				{
+					Name:          "test-model:latest",
+					Model:         "test-model:latest",
+					Digest:        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+					Size:          1024,
+					SizeVRAM:      1024,
+					ContextLength: 4096,
+					Runner:        "mlx",
+					ExpiresAt:     time.Now().Add(time.Hour),
+				},
+			},
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	var err error
+	got := captureStdout(t, func() {
+		err = ListRunningHandler(cmd, nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"CONTEXT", "RUNNER", "abcdef123456", "mlx"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRunHandlerRunnerFlag(t *testing.T) {
+	showReqCh := make(chan api.ShowRequest, 1)
+	generateReqCh := make(chan api.GenerateRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			showReqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				ModelInfo:    map[string]any{},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			var req api.GenerateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			generateReqCh <- req
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+				Model: "test-model",
+				Done:  true,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("runner", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+	if err := cmd.Flags().Set("runner", "llamacpp"); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"test-model", "hello"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case req := <-showReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("show runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive show request")
+	}
+	select {
+	case req := <-generateReqCh:
+		if req.Runner != "llamacpp" {
+			t.Fatalf("generate runner = %q, want %q", req.Runner, "llamacpp")
+		}
+	default:
+		t.Fatal("server did not receive generate request")
 	}
 }
 
@@ -590,25 +960,14 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 		t.Fatalf("failed to set keepalive flag: %v", err)
 	}
 
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- RunHandler(cmd, []string{"test-embedding-model", "test", "input"})
-	}()
-
-	err := <-errCh
-	w.Close()
-	os.Stdout = oldStdout
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"test-embedding-model", "test", "input"})
+	})
 
 	if err != nil {
 		t.Fatalf("RunHandler returned error: %v", err)
 	}
-
-	var out bytes.Buffer
-	io.Copy(&out, r)
 
 	select {
 	case req := <-reqCh:
@@ -630,7 +989,7 @@ func TestRunEmbeddingModelWithFlags(t *testing.T) {
 	}
 
 	expectOutput := "[0.4,0.5]\n"
-	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+	if diff := cmp.Diff(expectOutput, out); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
 }
@@ -688,27 +1047,15 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	stdinW.Write([]byte("piped text"))
 	stdinW.Close()
 
-	// Capture stdout
-	oldStdout := os.Stdout
-	stdoutR, stdoutW, _ := os.Pipe()
-	os.Stdout = stdoutW
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- RunHandler(cmd, []string{"test-embedding-model", "additional", "args"})
-	}()
-
-	err := <-errCh
-	stdoutW.Close()
-	os.Stdout = oldStdout
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"test-embedding-model", "additional", "args"})
+	})
 	os.Stdin = oldStdin
 
 	if err != nil {
 		t.Fatalf("RunHandler returned error: %v", err)
 	}
-
-	var out bytes.Buffer
-	io.Copy(&out, stdoutR)
 
 	select {
 	case req := <-reqCh:
@@ -722,7 +1069,7 @@ func TestRunEmbeddingModelPipedInput(t *testing.T) {
 	}
 
 	expectOutput := "[0.6,0.7]\n"
-	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+	if diff := cmp.Diff(expectOutput, out); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)
 	}
 }
@@ -807,16 +1154,10 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
 
-	oldStdout := os.Stdout
-	readOut, writeOut, _ := os.Pipe()
-	os.Stdout = writeOut
-	t.Cleanup(func() { os.Stdout = oldStdout })
-
-	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
-
-	_ = writeOut.Close()
-	var out bytes.Buffer
-	_, _ = io.Copy(&out, readOut)
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	})
 
 	if err != nil {
 		t.Fatalf("RunHandler returned error: %v", err)
@@ -826,12 +1167,12 @@ func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
 		t.Fatal("expected run to stop before /api/generate after unauthorized /api/show")
 	}
 
-	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
-		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	if !strings.Contains(out, "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out)
 	}
 
-	if !strings.Contains(out.String(), "https://ollama.com/signin") {
-		t.Fatalf("expected signin_url in output, got %q", out.String())
+	if !strings.Contains(out, "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out)
 	}
 }
 
@@ -875,27 +1216,21 @@ func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
 	cmd.Flags().String("think", "", "")
 	cmd.Flags().Bool("hidethinking", false, "")
 
-	oldStdout := os.Stdout
-	readOut, writeOut, _ := os.Pipe()
-	os.Stdout = writeOut
-	t.Cleanup(func() { os.Stdout = oldStdout })
-
-	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
-
-	_ = writeOut.Close()
-	var out bytes.Buffer
-	_, _ = io.Copy(&out, readOut)
+	var err error
+	out := captureStdout(t, func() {
+		err = RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	})
 
 	if err != nil {
 		t.Fatalf("RunHandler returned error: %v", err)
 	}
 
-	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
-		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	if !strings.Contains(out, "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out)
 	}
 
-	if !strings.Contains(out.String(), "https://ollama.com/signin") {
-		t.Fatalf("expected signin_url in output, got %q", out.String())
+	if !strings.Contains(out, "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out)
 	}
 }
 
@@ -1318,38 +1653,23 @@ func TestPushHandler(t *testing.T) {
 			cmd.Flags().Bool("insecure", false, "")
 			cmd.SetContext(t.Context())
 
-			// Redirect stderr to capture progress output
-			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-
-			// Capture stdout for the "Model pushed" message
-			oldStdout := os.Stdout
-			outR, outW, _ := os.Pipe()
-			os.Stdout = outW
-
-			err := PushHandler(cmd, []string{tt.modelName})
-
-			// Restore stderr
-			w.Close()
-			os.Stderr = oldStderr
-			// drain the pipe
-			if _, err := io.ReadAll(r); err != nil {
-				t.Fatal(err)
-			}
-
-			// Restore stdout and get output
-			outW.Close()
-			os.Stdout = oldStdout
-			stdout, _ := io.ReadAll(outR)
+			var err error
+			var stdout string
+			// Capture stderr for progress output and stdout for the "Model
+			// pushed" message.
+			captureStderr(t, func() {
+				stdout = captureStdout(t, func() {
+					err = PushHandler(cmd, []string{tt.modelName})
+				})
+			})
 
 			if tt.expectedError == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %v", err)
 				}
 				if tt.expectedOutput != "" {
-					if got := string(stdout); !strings.Contains(got, tt.expectedOutput) {
-						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
+					if !strings.Contains(stdout, tt.expectedOutput) {
+						t.Errorf("expected output %q, got %q", tt.expectedOutput, stdout)
 					}
 				}
 			} else {
@@ -1373,22 +1693,22 @@ func TestListHandler(t *testing.T) {
 			name: "list all models",
 			args: []string{},
 			serverResponse: []api.ListModelResponse{
-				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
-				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+				{Name: "model1", Digest: "abc123abc123abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "def456def456def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
 			},
 			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
-				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
-				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+				"model1    abc123abc123    1.0 KB    24 hours ago    \n" +
+				"model2    def456def456    2.0 KB    2 days ago      \n",
 		},
 		{
 			name: "filter models by prefix",
 			args: []string{"model1"},
 			serverResponse: []api.ListModelResponse{
-				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
-				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model1", Digest: "abc123abc123abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "def456def456def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
 			},
 			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
-				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
+				"model1    abc123abc123    1.0 KB    24 hours ago    \n",
 		},
 		{
 			name:          "server error",
@@ -1423,24 +1743,17 @@ func TestListHandler(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(t.Context())
 
-			// Capture stdout
-			oldStdout := os.Stdout
-			r, w, _ := os.Pipe()
-			os.Stdout = w
-
-			err := ListHandler(cmd, tt.args)
-
-			// Restore stdout and get output
-			w.Close()
-			os.Stdout = oldStdout
-			output, _ := io.ReadAll(r)
+			var err error
+			output := captureStdout(t, func() {
+				err = ListHandler(cmd, tt.args)
+			})
 
 			if tt.expectedError == "" {
 				if err != nil {
 					t.Errorf("expected no error, got %v", err)
 				}
-				if got := string(output); got != tt.expectedOutput {
-					t.Errorf("expected output:\n%s\ngot:\n%s", tt.expectedOutput, got)
+				if output != tt.expectedOutput {
+					t.Errorf("expected output:\n%s\ngot:\n%s", tt.expectedOutput, output)
 				}
 			} else {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
@@ -1541,30 +1854,14 @@ func TestCreateHandler(t *testing.T) {
 			cmd.Flags().Bool("insecure", false, "")
 			cmd.SetContext(t.Context())
 
-			// Redirect stderr to capture progress output
-			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-
-			// Capture stdout for the "Model pushed" message
-			oldStdout := os.Stdout
-			outR, outW, _ := os.Pipe()
-			os.Stdout = outW
-
-			err = CreateHandler(cmd, []string{tt.modelName})
-
-			// Restore stderr
-			w.Close()
-			os.Stderr = oldStderr
-			// drain the pipe
-			if _, err := io.ReadAll(r); err != nil {
-				t.Fatal(err)
-			}
-
-			// Restore stdout and get output
-			outW.Close()
-			os.Stdout = oldStdout
-			stdout, _ := io.ReadAll(outR)
+			var stdout string
+			// Capture stderr for progress output and stdout for the final
+			// status message.
+			captureStderr(t, func() {
+				stdout = captureStdout(t, func() {
+					err = CreateHandler(cmd, []string{tt.modelName})
+				})
+			})
 
 			if tt.expectedError == "" {
 				if err != nil {
@@ -1572,8 +1869,8 @@ func TestCreateHandler(t *testing.T) {
 				}
 
 				if tt.expectedOutput != "" {
-					if got := string(stdout); got != tt.expectedOutput {
-						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
+					if stdout != tt.expectedOutput {
+						t.Errorf("expected output %q, got %q", tt.expectedOutput, stdout)
 					}
 				}
 			}
@@ -1988,6 +2285,61 @@ func TestResolveCreateDraftDir(t *testing.T) {
 	}
 }
 
+func TestCreateHandlerManifestList(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/create" {
+			t.Errorf("unexpected request to %s", r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST request, got %s", r.Method)
+		}
+
+		var req api.CreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Model != "parent" {
+			t.Errorf("model = %q, want %q", req.Model, "parent")
+		}
+		if !cmp.Equal(req.List, []string{"gguf", "safetensors"}) {
+			t.Errorf("list = %#v, want %#v", req.List, []string{"gguf", "safetensors"})
+		}
+		if req.From != "" || len(req.Files) > 0 {
+			t.Errorf("manifest list create sent normal create fields: from=%q files=%v", req.From, req.Files)
+		}
+
+		if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.(http.Flusher).Flush()
+	}))
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("quantize", "", "")
+	cmd.Flags().Bool("experimental", false, "")
+	cmd.Flags().StringSlice("combine", nil, "")
+	cmd.SetContext(t.Context())
+	if err := cmd.Flags().Set("combine", "gguf,safetensors"); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	captureStderr(t, func() {
+		err = CreateHandler(cmd, []string{"parent"})
+	})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSafetensorsCreateOptionsDetectsLocalDir(t *testing.T) {
 	dir := t.TempDir()
 	modelDir := filepath.Join(dir, "model")
@@ -2306,6 +2658,44 @@ func TestApplyShowResponseToRunOptions(t *testing.T) {
 	}
 }
 
+func TestApplyShowResponseRefreshesMultimodal(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		info api.ShowResponse
+	}{
+		{
+			name: "decision vision",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityDecision, model.CapabilityVision}},
+		},
+		{
+			name: "audio",
+			info: api.ShowResponse{Capabilities: []model.Capability{model.CapabilityAudio}},
+		},
+		{
+			name: "legacy projector",
+			info: api.ShowResponse{ProjectorInfo: map[string]any{"general.architecture": "clip"}},
+		},
+		{
+			name: "legacy vision",
+			info: api.ShowResponse{ModelInfo: map[string]any{"mllama.vision.block_count": 32}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := runOptions{}
+			applyShowResponseToRunOptions(&opts, &tt.info)
+			if !opts.MultiModal {
+				t.Fatal("loading a multimodal model did not enable media input")
+			}
+			applyShowResponseToRunOptions(&opts, &api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityDecision},
+			})
+			if opts.MultiModal {
+				t.Fatal("loading a text-only model did not disable media input")
+			}
+		})
+	}
+}
+
 func TestRunOptions_Copy(t *testing.T) {
 	// Setup test data
 	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}
@@ -2583,6 +2973,35 @@ func TestShowInfoImageCapability(t *testing.T) {
 		"\n" +
 		"  Capabilities\n" +
 		"    image    \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestShowInfoSpeechVoices(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details:      api.ModelDetails{Family: "phonon", ParameterSize: "31M", QuantizationLevel: "F32"},
+		Capabilities: []model.Capability{model.CapabilitySpeech},
+		Voices:       []string{"default", "Fairy Godmother", "Zoey"},
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    phonon    \n" +
+		"    parameters      31M       \n" +
+		"    quantization    F32       \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    speech    \n" +
+		"\n" +
+		"  Voices\n" +
+		"    default            \n" +
+		"    Fairy Godmother    \n" +
+		"    Zoey               \n" +
 		"\n"
 	if diff := cmp.Diff(expect, b.String()); diff != "" {
 		t.Errorf("unexpected output (-want +got):\n%s", diff)

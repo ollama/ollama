@@ -488,6 +488,7 @@ type Model struct {
 
 	SuppressLogitBias *mlx.Array
 	weightPrefix      string
+	auxHiddenLayers   []int
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -546,6 +547,14 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 	cfg.SlidingRopeBase = 10000
 	cfg.FullRopeDims = int(cfg.HeadDim) // default: full rotation
 	cfg.FullRopeBase = 1000000
+
+	for lt, rp := range cfg.RopeParameters {
+		switch rp.RopeType {
+		case "", "default", "proportional":
+		default:
+			return TextConfig{}, fmt.Errorf("unsupported rope_type %q for %s", rp.RopeType, lt)
+		}
+	}
 
 	if rp := cfg.RopeParameters; rp != nil {
 		if sp := rp["sliding_attention"]; sp != nil && sp.RopeTheta > 0 {
@@ -1154,6 +1163,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		sharedKV = make(map[int32]sharedHistory)
 	}
 
+	var features []*mlx.Array
+	nextFeature := 0
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
@@ -1181,6 +1192,10 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 
 		var donorKV *sharedHistory
 		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor, mask)
+		if nextFeature < len(m.auxHiddenLayers) && i == m.auxHiddenLayers[nextFeature] {
+			features = append(features, h)
+			nextFeature++
+		}
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1189,7 +1204,22 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	}
 
 	out := mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	if len(features) > 0 {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
+}
+
+// SetAuxHiddenLayers selects decoder outputs to condition a DFlash draft.
+func (m *Model) SetAuxHiddenLayers(layers []int) {
+	m.auxHiddenLayers = append(m.auxHiddenLayers[:0], layers...)
+}
+
+func (m *Model) NumLayers() int { return len(m.Layers) }
+
+// RawLogits projects through the target head without its output decoration.
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array {
+	return m.LMHead.Forward(hidden)
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1244,7 +1274,7 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
 }
 
-// TokenEmbeddings returns the target model's scaled token embeddings for MTP.
+// TokenEmbeddings returns the target's scaled token embeddings for drafts.
 func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
 	return mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
 }
@@ -1430,51 +1460,15 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	}
 
 	var out *mlx.Array
-	if headDim > 128 && L > 1 && !mlx.MetalIsAvailable() {
-		// Manual attention for CUDA prefill with head_dim > 128.
-		// cuDNN SDPA requires head_dim <= 128, and the MLX CUDA SDPA vector
-		// kernel only handles L < 4 (generation). For prefill, we fall back
-		// to explicit matmul+softmax+matmul on CUDA.
-		var k, v *mlx.Array
-		mask := baseMask.Intersect(nn.QPaddingMask(b, q.DType()))
-		if kv.history != nil {
-			k, v = kv.history.K(), kv.history.V()
-			mask = kv.history.Mask(mask)
-		} else {
-			k, v = kv.k, kv.v
-			mask = mask.Intersect(nn.KPaddingMask(b, k.Dim(2), b.SeqQueryLens, q.DType()))
-			mask = mask.Intersect(kv.mask)
-		}
-		kvHeads := int32(k.Dim(1))
-		nRepeats := cfg.NumAttentionHeads / kvHeads
-		kLen := int32(k.Dim(2))
-		// AsArray returns [B, 1, L, K]; reshape to rank 5 so that
-		// right-to-left broadcast against scores [B, kvHeads,
-		// nRepeats, L, K] aligns the batch dim correctly.
-		maskArr := mlx.Reshape(mask.AsArray(b, int(kLen), q.DType()), B, 1, 1, L, kLen)
-
-		q = mlx.MulScalar(q, scale)
-		q = mlx.Reshape(q, B, kvHeads, nRepeats, L, headDim)
-		k = mlx.Reshape(k, B, kvHeads, 1, kLen, headDim)
-		v = mlx.Reshape(v, B, kvHeads, 1, kLen, headDim)
-
-		kT := mlx.Transpose(k, 0, 1, 2, 4, 3)
-		scores := mlx.Matmul(q, kT)
-		scores = mlx.Add(scores, maskArr)
-		scores = mlx.SoftmaxAxis(scores, -1, true)
-		out = mlx.Matmul(scores, v)
-		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
+	var opt nn.SDPAOption
+	mask := baseMask
+	if kv.history != nil {
+		opt = nn.WithKVHistory(kv.history)
 	} else {
-		var opt nn.SDPAOption
-		mask := baseMask
-		if kv.history != nil {
-			opt = nn.WithKVHistory(kv.history)
-		} else {
-			opt = nn.WithKV(kv.k, kv.v, b.SeqQueryLens)
-			mask = mask.Intersect(kv.mask)
-		}
-		out = nn.ScaledDotProductAttention(b, q, scale, opt, nn.WithMask(mask))
+		opt = nn.WithKV(kv.k, kv.v, b.SeqQueryLens)
+		mask = mask.Intersect(kv.mask)
 	}
+	out = nn.ScaledDotProductAttention(b, q, scale, opt, nn.WithMask(mask))
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*headDim)
 	if !mlx.MetalIsAvailable() {
 		// Force contiguous layout before OProj on CUDA where matmul handles

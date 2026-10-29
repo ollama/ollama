@@ -63,7 +63,7 @@ type LlamaServer interface {
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Chat(ctx context.Context, req ChatRequest, fn func(ChatResponse)) error
 	ApplyChatTemplate(ctx context.Context, req ChatRequest) (string, error)
-	Embedding(ctx context.Context, input string) ([]float32, int, error)
+	Embedding(ctx context.Context, input string, media [][]byte) ([]float32, int, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -83,6 +83,13 @@ type LlamaServerConfig struct {
 	ManifestDigest       string
 	DraftModelPath       string
 	DraftModelShardPaths []string
+}
+
+// IsLlamaCPP reports whether the server is backed by the llama.cpp
+// llama-server runner implementation.
+func IsLlamaCPP(s LlamaServer) bool {
+	_, ok := s.(*llamaServerRunner)
+	return ok
 }
 
 // LoadModel loads GGUF model metadata from disk.

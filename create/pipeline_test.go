@@ -22,7 +22,7 @@ func (f blobStoreFunc) WriteBlob(r io.Reader, mediaType, name string) (LayerInfo
 
 func TestCreatePipeline(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
 		st.NewTensorDataFromBytes("model.embed_tokens.weight", "BF16", []int32{8, 8}, make([]byte, 8*8*2)),
 		st.NewTensorDataFromBytes("model.norm.weight", "BF16", []int32{8}, make([]byte, 8*2)),
@@ -59,6 +59,9 @@ func TestCreatePipeline(t *testing.T) {
 	if gotModelConfig.Requires != "0.20.0" {
 		t.Errorf("requires = %q, want 0.20.0", gotModelConfig.Requires)
 	}
+	if gotModelConfig.FileType != "BF16" {
+		t.Errorf("file type = %q, want BF16 from the stored weights", gotModelConfig.FileType)
+	}
 	if gotClass.Kind != SourceFloat || gotClass.Quantize != "" {
 		t.Errorf("classification = {%s %q}, want {float %q}", gotClass.Kind, gotClass.Quantize, "")
 	}
@@ -68,6 +71,24 @@ func TestCreatePipeline(t *testing.T) {
 	for _, n := range []string{"model.embed_tokens.weight", "model.norm.weight", "config.json"} {
 		if _, ok := store.blobs[n]; !ok {
 			t.Errorf("missing written blob %q (have %v)", n, store.names())
+		}
+	}
+}
+
+func TestCreatePipelinePhononRequires(t *testing.T) {
+	dir := t.TempDir()
+	writeGradiumPhononSource(t, dir, []int32{1, 512, 2})
+	// Remote creates send the generic safetensors minimum; it must not win.
+	for requires, want := range map[string]string{"": phononMinOllamaVersion, "0.19.0": phononMinOllamaVersion, "0.41.0": "0.41.0"} {
+		var got string
+		opts := testPipelineOptions()
+		opts.Requires = requires
+		err := Create(context.Background(), "phonon", dir, opts, newCaptureStore(), func(_ context.Context, _ string, info ManifestInfo) error {
+			got = info.ModelConfig.Requires
+			return nil
+		}, func(string) {})
+		if err != nil || got != want {
+			t.Errorf("requires %q: got %q, %v; want %q", requires, got, err, want)
 		}
 	}
 }
@@ -150,7 +171,7 @@ func TestCreatePipelineIncludesDraftLayers(t *testing.T) {
 
 func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 	dir := t.TempDir()
-	writeConfigJSON(t, dir, `{"architectures":["TestModel"]}`)
+	writeConfigJSON(t, dir, `{"architectures":["TestModel"],"dtype":"bfloat16"}`)
 	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
 		st.NewTensorDataFromBytes("linear.weight", "U8", []int32{16, 8}, make([]byte, 16*8)),
 		st.NewTensorDataFromBytes("linear.weight_scale", "F8_E4M3", []int32{16, 1}, make([]byte, 16)),
@@ -159,8 +180,10 @@ func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 
 	store := newCaptureStore()
 	var got Classification
+	var gotModelConfig model.ConfigV2
 	writeManifest := func(_ context.Context, _ string, info ManifestInfo) error {
 		got = info.Class
+		gotModelConfig = info.ModelConfig
 		return nil
 	}
 	if err := Create(context.Background(), "mymodel", dir, testPipelineOptions(), store, writeManifest, func(string) {}); err != nil {
@@ -168,6 +191,9 @@ func TestCreatePipelineReportsPrequantizedFileType(t *testing.T) {
 	}
 	if got.Kind != SourcePrequantized || got.Quantize != "nvfp4" {
 		t.Errorf("classification = {%s %q}, want {prequantized nvfp4}", got.Kind, got.Quantize)
+	}
+	if gotModelConfig.FileType != "" {
+		t.Errorf("file type = %q, want empty before manifest writer selects NVFP4", gotModelConfig.FileType)
 	}
 }
 

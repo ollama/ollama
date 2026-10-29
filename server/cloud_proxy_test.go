@@ -233,6 +233,56 @@ func TestCloudPassthroughMiddleware_ZstdBodyTooLarge(t *testing.T) {
 	}
 }
 
+func TestCloudProxyPreservesHTMLCharacters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	var forwarded []byte
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	router, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	content := `<b>Tom & Jerry</b> if (a < b && c > d)`
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{"v1 passthrough", "/v1/chat/completions", `{"model":"test-model:cloud","messages":[{"role":"user","content":"` + content + `"}]}`},
+		{"api re-encode", "/api/generate", `{"model":"test-model:cloud","prompt":"` + content + `","stream":false}`},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			forwarded = nil
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tt.path, bytes.NewBufferString(tt.body)))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			if model, _ := extractModelField(forwarded); model != "test-model" {
+				t.Fatalf("expected normalized model %q, got %q", "test-model", model)
+			}
+			if !bytes.Contains(forwarded, []byte(content)) {
+				t.Fatalf("expected content to be forwarded unescaped, got %s", forwarded)
+			}
+		})
+	}
+}
+
 func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://ollama.com/v1/messages?beta=true&ts=999", nil)
 	if err != nil {
@@ -246,6 +296,30 @@ func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	}
 	if req.URL.RawQuery != "beta=true&ts=123" {
 		t.Fatalf("unexpected signed query: %q", req.URL.RawQuery)
+	}
+}
+
+func TestBuildCloudSignatureChallengePreservesMalformedQuery(t *testing.T) {
+	for _, rawQuery := range []string{
+		"range=24h;",
+		"range=24h&scope=%zz",
+		"ts=999&range=24h;",
+		"ts=%zz&range=24h",
+	} {
+		t.Run(rawQuery, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/usage?"+rawQuery, nil)
+			challenge := buildCloudSignatureChallenge(req, "123")
+			wantQuery := "ts=123&" + rawQuery
+			if got := req.URL.RawQuery; got != wantQuery {
+				t.Errorf("signed query = %q, want %q", got, wantQuery)
+			}
+			if want := "GET,/api/usage?" + wantQuery; challenge != want {
+				t.Errorf("challenge = %q, want %q", challenge, want)
+			}
+			if got := req.URL.Query().Get("ts"); got != "123" {
+				t.Errorf("verifier timestamp = %q, want 123", got)
+			}
+		})
 	}
 }
 

@@ -12,6 +12,20 @@ set(_ollama_mlx_backends_doc "Semicolon-separated MLX backends to build: cuda_v1
 set(OLLAMA_VERSION "0.0.0" CACHE STRING "Ollama version embedded in the local Go binary")
 set(OLLAMA_PAYLOAD_INSTALL_PREFIX "${CMAKE_BINARY_DIR}" CACHE PATH
     "Build-time staging prefix for nested Ollama native payloads")
+set(OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX "" CACHE PATH
+    "Optional separate staging prefix for the MLX overlay payload")
+
+get_filename_component(_ollama_mlx_base_install_prefix
+    "${OLLAMA_PAYLOAD_INSTALL_PREFIX}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+set(_ollama_mlx_payload_install_prefix "${_ollama_mlx_base_install_prefix}")
+set(_ollama_mlx_overlay_package OFF)
+if(OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX)
+    get_filename_component(_ollama_mlx_payload_install_prefix
+        "${OLLAMA_MLX_PAYLOAD_INSTALL_PREFIX}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+    if(NOT "${_ollama_mlx_payload_install_prefix}" STREQUAL "${_ollama_mlx_base_install_prefix}")
+        set(_ollama_mlx_overlay_package ON)
+    endif()
+endif()
 
 string(REGEX REPLACE "^v" "" OLLAMA_VERSION "${OLLAMA_VERSION}")
 
@@ -102,6 +116,12 @@ else()
     set(OLLAMA_MLX_BACKENDS "${OLLAMA_MLX_BACKENDS}" CACHE STRING "${_ollama_mlx_backends_doc}")
 endif()
 
+if(OLLAMA_MLX_BACKENDS AND _ollama_mlx_overlay_package)
+    add_custom_target(ollama-mlx-overlay-clean
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "${_ollama_mlx_payload_install_prefix}"
+        COMMENT "Cleaning MLX overlay staging directory")
+endif()
+
 if(NOT OLLAMA_HAVE_LLAMA_SERVER)
     if(OLLAMA_LLAMA_BACKENDS)
         message(FATAL_ERROR "llama/server is required when OLLAMA_LLAMA_BACKENDS is set")
@@ -146,14 +166,26 @@ if(OLLAMA_MLX_BACKENDS)
     file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" OLLAMA_MLX_C_GIT_TAG)
     string(STRIP "${OLLAMA_MLX_C_GIT_TAG}" OLLAMA_MLX_C_GIT_TAG)
 
+    # Apply carried MLX and MLX-C patches to fetched sources and local overrides.
+    find_package(Git REQUIRED)
+    set(OLLAMA_MLX_COMPAT_PATCH_COMMAND
+        ${CMAKE_COMMAND}
+            -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx
+            -DPATCH_LABEL=mlx/compat/mlx
+            -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
+        CACHE INTERNAL "MLX carry patches")
+
+    set(_mlx_source_override FALSE)
     if(DEFINED FETCHCONTENT_SOURCE_DIR_MLX AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX}" STREQUAL "")
         get_filename_component(OLLAMA_MLX_SOURCE_DIR
             "${FETCHCONTENT_SOURCE_DIR_MLX}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using MLX source override: ${OLLAMA_MLX_SOURCE_DIR}")
+        set(_mlx_source_override TRUE)
     elseif(DEFINED ENV{OLLAMA_MLX_SOURCE})
         get_filename_component(OLLAMA_MLX_SOURCE_DIR
             "$ENV{OLLAMA_MLX_SOURCE}" ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}")
         message(STATUS "Using local MLX source: ${OLLAMA_MLX_SOURCE_DIR}")
+        set(_mlx_source_override TRUE)
     else()
         set(OLLAMA_MLX_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/mlx-src")
         ExternalProject_Add(ollama-mlx-source
@@ -165,20 +197,27 @@ if(OLLAMA_MLX_BACKENDS)
             CONFIGURE_COMMAND ""
             BUILD_COMMAND ""
             INSTALL_COMMAND ""
-            USES_TERMINAL_DOWNLOAD TRUE)
+            PATCH_COMMAND ${OLLAMA_MLX_COMPAT_PATCH_COMMAND}
+            USES_TERMINAL_DOWNLOAD TRUE
+            USES_TERMINAL_PATCH TRUE)
         list(APPEND _mlx_source_targets ollama-mlx-source)
     endif()
 
-    # Temporary MLX-C carry patch for gather_qmm global-scale support, carried
-    # until it merges upstream into ml-explore/mlx-c. Then bump MLX_C_VERSION
-    # and delete mlx/compat/.
-    find_package(Git REQUIRED)
+    if(_mlx_source_override)
+        add_custom_target(ollama-mlx-override-patch
+            COMMAND ${OLLAMA_MLX_COMPAT_PATCH_COMMAND}
+            WORKING_DIRECTORY ${OLLAMA_MLX_SOURCE_DIR}
+            COMMENT "Applying carried MLX patches to ${OLLAMA_MLX_SOURCE_DIR}"
+            VERBATIM)
+        list(APPEND _mlx_source_targets ollama-mlx-override-patch)
+    endif()
+
     set(OLLAMA_MLX_C_COMPAT_PATCH_COMMAND
         ${CMAKE_COMMAND}
             -DPATCH_DIR=${CMAKE_SOURCE_DIR}/mlx/compat/mlx-c
             -DPATCH_LABEL=mlx/compat/mlx-c
             -P ${CMAKE_SOURCE_DIR}/cmake/apply-git-patches.cmake
-        CACHE INTERNAL "MLX-C carry patch")
+        CACHE INTERNAL "MLX-C carry patches")
 
     set(_mlx_c_source_override FALSE)
     if(DEFINED "FETCHCONTENT_SOURCE_DIR_MLX-C" AND NOT "${FETCHCONTENT_SOURCE_DIR_MLX-C}" STREQUAL "")
@@ -208,13 +247,13 @@ if(OLLAMA_MLX_BACKENDS)
         list(APPEND _mlx_source_targets ollama-mlx-c-source)
     endif()
     if(_mlx_c_source_override)
-        # Source overrides bypass the ExternalProject patch step, so the carry
-        # patch has to be applied to the override checkout as well. The
+        # Source overrides bypass the ExternalProject patch step, so patches
+        # have to be applied to the override checkout as well. The
         # applier is idempotent, which keeps repeated builds safe.
         add_custom_target(ollama-mlx-c-override-patch
             COMMAND ${OLLAMA_MLX_C_COMPAT_PATCH_COMMAND}
             WORKING_DIRECTORY ${OLLAMA_MLX_C_SOURCE_DIR}
-            COMMENT "Applying MLX-C compat patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
+            COMMENT "Applying carried MLX-C patches to ${OLLAMA_MLX_C_SOURCE_DIR}"
             VERBATIM)
         list(APPEND _mlx_source_targets ollama-mlx-c-override-patch)
     endif()
@@ -509,13 +548,14 @@ function(ollama_add_mlx_build name)
     ollama_collect_cache_args_with_prefix("MLX_" _mlx_cache_args)
     set(_cmake_args
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${OLLAMA_PAYLOAD_INSTALL_PREFIX}
+        -DCMAKE_INSTALL_PREFIX=${_ollama_mlx_base_install_prefix}
         -DOLLAMA_LIB_DIR:STRING=${OLLAMA_LIB_DIR}
         -DOLLAMA_RUNNER_DIR=${ARG_RUNNER_DIR}
         -DOLLAMA_SOURCE_DIR=${CMAKE_SOURCE_DIR}
         -DFETCHCONTENT_SOURCE_DIR_MLX=${OLLAMA_MLX_SOURCE_DIR}
         -DFETCHCONTENT_SOURCE_DIR_MLX-C=${OLLAMA_MLX_C_SOURCE_DIR}
         -DOLLAMA_MLX_GENERATE_WRAPPERS=OFF
+        -DOLLAMA_MLX_OVERLAY_PACKAGE=${_ollama_mlx_overlay_package}
         ${ARG_CMAKE_ARGS}
         ${_mlx_cache_args}
     )
@@ -556,6 +596,26 @@ function(ollama_add_mlx_build name)
             ${_cmake_args})
     endif()
 
+    set(_install_command)
+    list(APPEND _install_command
+        ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_payload_install_prefix}"
+            --component MLX
+        COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_payload_install_prefix}"
+            --component MLX_VENDOR
+        COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
+            ${OLLAMA_NATIVE_CONFIG_ARG}
+            --prefix "${_ollama_mlx_base_install_prefix}"
+            --component MLX_SHARED)
+
+    set(_mlx_dependencies ollama-mlx-sources)
+    if(_ollama_mlx_overlay_package)
+        list(APPEND _mlx_dependencies ollama-mlx-overlay-clean)
+    endif()
+
     ExternalProject_Add(ollama-mlx-${name}
         SOURCE_DIR ${CMAKE_SOURCE_DIR}/cmake/mlx
         BINARY_DIR ${_build_dir}
@@ -565,13 +625,8 @@ function(ollama_add_mlx_build name)
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlx
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} mlxc
             ${OLLAMA_NATIVE_BUILD_TARGET_ARG} ollama_xgrammar
-        INSTALL_COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            --component MLX
-            COMMAND ${CMAKE_COMMAND} --install <BINARY_DIR>
-            ${OLLAMA_NATIVE_CONFIG_ARG}
-            --component MLX_VENDOR
-        DEPENDS ollama-mlx-sources
+        INSTALL_COMMAND ${_install_command}
+        DEPENDS ${_mlx_dependencies}
         LIST_SEPARATOR |
         BUILD_ALWAYS TRUE
         ${OLLAMA_NATIVE_EXTERNAL_OPTIONS}

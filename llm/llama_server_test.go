@@ -469,7 +469,9 @@ func writeLargeLlamaServerEvent(t *testing.T, w io.Writer, chat bool, payload st
 	}
 }
 
-func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
+// repeat_last_n reaches llama-server unchanged, except Ollama's -1 (the whole
+// context), which llama-server rejects and so becomes the context size.
+func TestLlamaServerForwardsRepeatLastN(t *testing.T) {
 	var completionBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -505,21 +507,27 @@ func TestLlamaServerCompletionForwardsRepeatLastNZero(t *testing.T) {
 		options: api.Options{Runner: api.Runner{NumCtx: 2048}},
 	}
 
-	opts := api.DefaultOptions()
-	opts.RepeatLastN = 0
-	if err := runner.Completion(t.Context(), CompletionRequest{
-		Prompt:  "test prompt",
-		Options: &opts,
-	}, func(CompletionResponse) {}); err != nil {
-		t.Fatalf("Completion error: %v", err)
-	}
+	for _, tt := range []struct{ repeatLastN, want int }{{0, 0}, {64, 64}, {-1, 2048}} {
+		t.Run(fmt.Sprint(tt.repeatLastN), func(t *testing.T) {
+			opts := api.DefaultOptions()
+			opts.RepeatLastN = tt.repeatLastN
 
-	value, ok := completionBody["repeat_last_n"]
-	if !ok {
-		t.Fatal("repeat_last_n missing from llama-server completion request")
-	}
-	if value != float64(0) {
-		t.Fatalf("repeat_last_n = %v, want 0", value)
+			completionBody = nil
+			if err := runner.Completion(t.Context(), CompletionRequest{Prompt: "test prompt", Options: &opts}, func(CompletionResponse) {}); err != nil {
+				t.Fatalf("Completion error: %v", err)
+			}
+			if value, ok := completionBody["repeat_last_n"]; !ok || value != float64(tt.want) {
+				t.Errorf("completion repeat_last_n = %v (present %v), want %d", value, ok, tt.want)
+			}
+
+			chat, err := runner.llamaServerChatRequest(ChatRequest{Options: &opts}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if chat["repeat_last_n"] != tt.want {
+				t.Errorf("chat repeat_last_n = %v, want %d", chat["repeat_last_n"], tt.want)
+			}
+		})
 	}
 }
 
@@ -951,8 +959,8 @@ func TestLlamaServerStatusErrorMessageIncludesOOMStatus(t *testing.T) {
 	}
 
 	got := runner.statusErrorMessage([]byte(`{"error":{"message":"Compute error."}}`))
-	if !strings.Contains(got, "Compute error") {
-		t.Fatalf("expected original response body, got %q", got)
+	if !strings.HasPrefix(got, "Compute error.\n") {
+		t.Fatalf("expected llama-server's error message, got %q", got)
 	}
 	if !IsOutOfMemoryMessage(got) {
 		t.Fatalf("expected OOM status detail to be detectable, got %q", got)
@@ -1477,13 +1485,28 @@ func TestLlamaServerCompletionBOSOwnership(t *testing.T) {
 			wantPrompt: "<|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
 		{
-			name:       "lfm2 strips renderer bos",
+			// llama.cpp honors an explicit add_bos_token=false for lfm2, so the
+			// renderer's BOS is the only one.
+			name:       "lfm2 explicit add_bos false keeps renderer bos",
 			leadingBOS: "<|startoftext|>",
 			ggufKV: gguftest.KV{
 				"general.architecture":         "lfm2",
 				"tokenizer.ggml.model":         "gpt2",
 				"tokenizer.ggml.pre":           "lfm2",
 				"tokenizer.ggml.add_bos_token": false,
+				"tokenizer.ggml.bos_token_id":  uint32(0),
+			},
+			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+			wantPrompt: "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:       "lfm2 explicit add_bos true strips renderer bos",
+			leadingBOS: "<|startoftext|>",
+			ggufKV: gguftest.KV{
+				"general.architecture":         "lfm2",
+				"tokenizer.ggml.model":         "gpt2",
+				"tokenizer.ggml.pre":           "lfm2",
+				"tokenizer.ggml.add_bos_token": true,
 				"tokenizer.ggml.bos_token_id":  uint32(0),
 			},
 			prompt:     "<|startoftext|><|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n",
@@ -1713,7 +1736,7 @@ func TestLlamaServerEmbedding(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, count, err := runner.Embedding(t.Context(), "hello")
+	embedding, count, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1722,6 +1745,21 @@ func TestLlamaServerEmbedding(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("prompt_eval_count = %d, want 2", count)
+	}
+}
+
+func TestLlamaServerSystemOnePromptOverContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":{"code":500,"message":"input (9000 tokens) is too large to process. increase the physical batch size (current batch size: 8192)","type":"server_error"}}`)
+	}))
+	defer srv.Close()
+	runner := &llamaServerRunner{port: srv.Listener.Addr().(*net.TCPAddr).Port, client: srv.Client(), cmd: fakeRunningCmd(), sem: semaphore.NewWeighted(1)}
+
+	_, _, err := runner.SystemOne(t.Context(), json.RawMessage(`"x"`), json.RawMessage(`{"q":{"type":"noul","instructions":"q"}}`), nil)
+	var serr api.StatusError
+	if !errors.As(err, &serr) || serr.StatusCode != http.StatusBadRequest || serr.ErrorMessage != promptTooLongMessage {
+		t.Fatalf("err = %v, want 400 %q", err, promptTooLongMessage)
 	}
 }
 
@@ -1787,7 +1825,7 @@ func TestLlamaServerEmbeddingFallbackFormat(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1820,7 +1858,7 @@ func TestLlamaServerEmbeddingFlatArrayFallback(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	embedding, _, err := runner.Embedding(t.Context(), "hello")
+	embedding, _, err := runner.Embedding(t.Context(), "hello", nil)
 	if err != nil {
 		t.Fatalf("Embedding error: %v", err)
 	}
@@ -1851,17 +1889,17 @@ func TestLlamaServerEmbeddingTooLargeError(t *testing.T) {
 		sem:  semaphore.NewWeighted(1),
 	}
 
-	_, _, err := runner.Embedding(t.Context(), "very long input")
+	_, _, err := runner.Embedding(t.Context(), "very long input", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// Should be normalized to 400 for the embed handler's truncation retry
+	// Should be normalized to 413 for the embed handler's truncation retry
 	var statusErr api.StatusError
 	if !errors.As(err, &statusErr) {
 		t.Fatalf("expected api.StatusError, got %T: %v", err, err)
 	}
-	if statusErr.StatusCode != 400 {
-		t.Errorf("status code = %d, want 400", statusErr.StatusCode)
+	if statusErr.StatusCode != 413 {
+		t.Errorf("status code = %d, want 413", statusErr.StatusCode)
 	}
 }
 
@@ -1910,6 +1948,40 @@ func TestEmbeddingBatchSize(t *testing.T) {
 			opts.NumBatch = tt.numBatch
 			if got := embeddingBatchSize(opts, tt.numParallel); got != tt.want {
 				t.Fatalf("embeddingBatchSize = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLlamaServerBatch(t *testing.T) {
+	tests := []struct {
+		name                 string
+		headBlocks, trainCtx uint64
+		numCtx, numBatch     int
+		completion           bool
+		wantBatch            int
+		wantMemory           uint64
+	}{
+		{"default generation", 0, 8192, 8192, 512, true, 512, 0},
+		{"medium generation", 0, 8192, 8192, 1024, true, 1024, 768 << 20},
+		{"large generation", 0, 8192, 8192, 2048, true, 2048, 2 << 30},
+		{"other non-completion models", 0, 8192, 8192, 2048, false, 2048, 0},
+		{"decision uses requested context", 4, 32768, 8192, 512, false, 8192, 2 << 30},
+		{"decision caps at trained context", 4, 1024, 8192, 512, false, 1024, 768 << 20},
+		{"decision without trained context", 4, 0, 8192, 512, false, 8192, 2 << 30},
+		{"decision with an already matching batch", 4, 8192, 8192, 8192, false, 8192, 2 << 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := loadTestGGUF(t, gguftest.KV{
+				"general.architecture":      "clef",
+				"clef.context_length":       tt.trainCtx,
+				"clef.decision.block_count": tt.headBlocks,
+			})
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.numCtx, NumBatch: tt.numBatch}}
+			batch, memory := LlamaServerBatch(f, opts, tt.completion)
+			if batch != tt.wantBatch || memory != tt.wantMemory {
+				t.Fatalf("batch=%d memory=%d, want batch=%d memory=%d", batch, memory, tt.wantBatch, tt.wantMemory)
 			}
 		})
 	}
@@ -2561,15 +2633,20 @@ func TestAppendDraftArgs(t *testing.T) {
 			want:      []string{"base", "--spec-type", "draft-mtp", "--spec-draft-n-max", "8", "--spec-draft-backend-sampling", "--spec-draft-model", "draft.gguf"},
 		},
 		{
-			name:      "DFlash draft omits MTP backend sampling",
-			draftType: draftTypeDFlash,
+			name:      "Eagle3 draft passes its type without MTP backend sampling",
+			draftType: draftTypeEagle3,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
-			want:      []string{"base", "--spec-type", "draft-dflash", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+			want:      []string{"base", "--spec-type", "draft-eagle3", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
+		},
+		{
+			name:      "untyped draft leaves the type to llama-server",
+			draftPath: "draft.gguf",
+			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 4}},
+			want:      []string{"base", "--spec-draft-n-max", "4", "--spec-draft-model", "draft.gguf"},
 		},
 		{
 			name:      "zero draft depth disables speculative decoding",
-			draftType: draftTypeDFlash,
 			draftPath: "draft.gguf",
 			opts:      api.Options{Runner: api.Runner{DraftNumPredict: 0}},
 			want:      []string{"base"},
@@ -2588,17 +2665,46 @@ func TestAppendDraftArgs(t *testing.T) {
 
 func TestExternalDraftType(t *testing.T) {
 	tests := []struct {
-		architecture string
-		want         string
+		name    string
+		kv      gguftest.KV
+		tensors []*gguftest.Tensor
+		want    string
 	}{
-		{architecture: "dflash", want: draftTypeDFlash},
-		{architecture: "qwen35", want: draftTypeMTP},
-		{architecture: "unknown", want: draftTypeMTP},
+		{
+			name: "dflash family is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "dflash"},
+		},
+		{
+			name: "eagle3",
+			kv:   gguftest.KV{"general.architecture": "eagle3"},
+			want: draftTypeEagle3,
+		},
+		{
+			name: "MTP sidecar by nextn key",
+			kv:   gguftest.KV{"general.architecture": "gemma4-assistant", "gemma4-assistant.nextn_predict_layers": uint32(4)},
+			want: draftTypeMTP,
+		},
+		{
+			name: "legacy qwen35 MTP sidecar",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+			tensors: []*gguftest.Tensor{
+				testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+			},
+			want: draftTypeMTP,
+		},
+		{
+			name: "qwen35 without MTP markers is inferred by llama-server",
+			kv:   gguftest.KV{"general.architecture": "qwen35"},
+		},
+		{
+			name: "unknown",
+			kv:   gguftest.KV{"general.architecture": "unknown"},
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.architecture, func(t *testing.T) {
-			path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": tt.architecture}, nil)
+		t.Run(tt.name, func(t *testing.T) {
+			path, _ := writeTestGGUF(t, tt.kv, tt.tensors)
 			got, err := externalDraftType(path)
 			if err != nil {
 				t.Fatal(err)
@@ -2608,6 +2714,20 @@ func TestExternalDraftType(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("MTP marker in a later shard", func(t *testing.T) {
+		path, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "qwen35"}, nil)
+		shard, _ := writeTestGGUF(t, gguftest.KV{"general.architecture": "unknown"}, []*gguftest.Tensor{
+			testGGUFTensor("mtp.fc.weight", gguf.TensorTypeF32, []uint64{1}),
+		})
+		got, err := externalDraftType(path, shard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != draftTypeMTP {
+			t.Fatalf("externalDraftType = %q, want %q", got, draftTypeMTP)
+		}
+	})
 }
 
 func TestHasLegacyQwenMTPDraft(t *testing.T) {
@@ -2703,21 +2823,21 @@ func TestNormalizeEmbeddingError(t *testing.T) {
 			name:       "physical batch size",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":{"code":500,"message":"input (103 tokens) is too large to process. increase the physical batch size (current batch size: 30)"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "context length string error",
 			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"input length exceeds the context length"}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{
 			name:       "available context",
 			statusCode: http.StatusBadRequest,
 			body:       `{"error":{"message":"request (302 tokens) exceeds the available context size (256 tokens), try increasing it"}}`,
-			wantStatus: http.StatusBadRequest,
+			wantStatus: http.StatusRequestEntityTooLarge,
 			wantMsg:    "the input length exceeds the context length",
 		},
 		{

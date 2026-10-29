@@ -1,6 +1,7 @@
 package sample
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -531,4 +532,121 @@ func TestRemoveDoesNotLeakHistory(t *testing.T) {
 			t.Errorf("slot 3 = %d, want 1 (token 0 penalized, no slot-1 carryover)", tokens[1])
 		}
 	})
+}
+
+func TestDenseSparseResidualRestoresTarget(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		// Two different proposal rows can represent different accepted prefixes.
+		// Verify each conditional separately, including target-only support.
+		p := []float32{.05, .15, .8, .6, .1, .3, .25, .75, 0}
+		q := []float32{.6, .4, .8, .2, .25, .75}
+		ids := []int32{0, 1, 1, 2, 0, 1}
+		r := (Distribution{Probs: mlx.FromValues(p, 3, 3)}).ResidualAgainst(Distribution{IDs: mlx.FromValues(ids, 3, 2), Probs: mlx.FromValues(q, 3, 2)}).Probs
+		mlx.Eval(r)
+		got := r.Floats()
+		for row := range 3 {
+			accepted := make([]float32, 3)
+			rejection := float32(1)
+			for i := range 2 {
+				token := ids[row*2+i]
+				accepted[token] = min(p[row*3+int(token)], q[row*2+i])
+				rejection -= accepted[token]
+			}
+			for token := range 3 {
+				prob := accepted[token] + rejection*got[row*3+token]
+				if math.IsNaN(float64(prob)) || math.Abs(float64(prob-p[row*3+token])) > 1e-6 {
+					t.Fatalf("row %d token %d recovered %g want %g", row, token, prob, p[row*3+token])
+				}
+			}
+		}
+	})
+}
+
+func TestSampleCandidatesIgnoresHistory(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(8)
+		defer s.Free()
+		s.Add(0, Options{Temperature: 2, RepeatLastN: 8, RepeatPenalty: 10, PresencePenalty: 100}, []int32{5})
+		_, d := s.SampleCandidates(0, mlx.FromValues([]int32{5, 9}, 1, 2), mlx.FromValues([]float32{0, 2}, 1, 2))
+		mlx.Eval(d.Probs)
+		want := float32(1 / (1 + math.E))
+		if got := d.Probs.Floats(); math.Abs(float64(got[0]-want)) > 1e-6 || math.Abs(float64(got[1]-(1-want))) > 1e-6 {
+			t.Fatalf("proposal probabilities %v; want [%g,%g]", got, want, 1-want)
+		}
+	})
+}
+
+// The proposal applies only the temperature; the target's filters stay on the
+// verify side.
+func TestSampleCandidatesTemperatureOnly(t *testing.T) {
+	logs := []float32{float32(math.Log(.5)), float32(math.Log(.3)), float32(math.Log(.15)), float32(math.Log(.05))}
+	cases := []struct {
+		name string
+		opts Options
+		want []float64
+	}{
+		{"temperature", Options{Temperature: 1}, []float64{.5, .3, .15, .05}},
+		{"filters ignored", Options{Temperature: 1, TopK: 2, TopP: .6, MinP: .7}, []float64{.5, .3, .15, .05}},
+		{"half temperature", Options{Temperature: .5, TopK: 1}, []float64{.25 / .365, .09 / .365, .0225 / .365, .0025 / .365}},
+	}
+	for _, c := range cases {
+		mlxtest.RunSubtest(t, c.name, func(t *mlxtest.T) {
+			s := New(8)
+			defer s.Free()
+			s.Add(0, c.opts, nil)
+			_, d := s.SampleCandidates(0, mlx.FromValues([]int32{11, 12, 13, 14}, 1, 4), mlx.FromValues(logs, 1, 4))
+			mlx.Eval(d.Probs)
+			for i, got := range d.Probs.Floats() {
+				if math.Abs(float64(got)-c.want[i]) > 1e-5 {
+					t.Fatalf("%+v: probs %v, want %v", c.opts, d.Probs.Floats(), c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSampleCandidatesRequiresRegisteredSlot(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		s := New(8)
+		defer s.Free()
+		defer func() {
+			if recover() == nil {
+				t.Fatal("unregistered candidate distribution did not panic")
+			}
+		}()
+		s.SampleCandidates(1, nil, nil)
+	})
+}
+
+func TestSampleCandidatesPreservesSeededStream(t *testing.T) {
+	for _, temperature := range []float32{0, 0.7, 1.5} {
+		mlxtest.RunSubtest(t, fmt.Sprintf("temperature %g", temperature), func(t *mlxtest.T) {
+			baseline, optimized := New(16), New(16)
+			defer baseline.Free()
+			defer optimized.Free()
+			opts := Options{Temperature: temperature, UseSeed: true, Seed: 42}
+			baseline.Add(0, opts, nil)
+			optimized.Add(0, opts, nil)
+			ids := mlx.FromValues([]int32{3, 8, 1, 17, 6, 19}, 2, 3)
+			scores := mlx.FromValues([]float32{1, 1, -2, -2, 3, 1}, 2, 3).AsType(mlx.DTypeBFloat16)
+			// Greedy ties select the first candidate in each row. Sampled proposals
+			// must keep the tempered probabilities and the seeded draw sequence.
+			probs := mlx.FromValues([]float32{1, 0, 0, 0, 1, 0}, 2, 3)
+			if temperature > 0 {
+				probs = mlx.SoftmaxAxis(mlx.DivScalar(scores.AsType(mlx.DTypeFloat32), temperature), -1, true)
+			}
+			reference := Distribution{IDs: ids, Probs: probs}
+			for range 12 {
+				want := baseline.SampleDistribution(0, reference)
+				got, distribution := optimized.SampleCandidates(0, ids, scores)
+				mlx.Eval(want, got, probs, distribution.Probs)
+				if !slices.Equal(want.Ints(), got.Ints()) || !slices.Equal(probs.Floats(), distribution.Probs.Floats()) {
+					t.Fatalf("temperature %g: candidate tokens or probabilities changed", temperature)
+				}
+				if baseline.byID[0].randomCounter != optimized.byID[0].randomCounter {
+					t.Fatal("seeded stream counter changed")
+				}
+			}
+		})
+	}
 }

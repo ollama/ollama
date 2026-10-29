@@ -20,6 +20,7 @@ A Modelfile is the blueprint to create and share customized models using Ollama.
   - [SYSTEM](#system)
   - [LICENSE](#license)
   - [MESSAGE](#message)
+  - [CAPABILITY](#capability)
 - [Notes](#notes)
 
 ## Format
@@ -40,6 +41,7 @@ INSTRUCTION arguments
 | [`LICENSE`](#license)               | Specifies the legal license.                                   |
 | [`MESSAGE`](#message)               | Specify message history.                                       |
 | [`REQUIRES`](#requires)             | Specify the minimum version of Ollama required by the model.   |
+| [`CAPABILITY`](#capability)         | Declare an additional model capability.                       |
 
 ## Examples
 
@@ -219,6 +221,14 @@ MESSAGE user Is Sacramento in Canada?
 MESSAGE assistant no
 MESSAGE user Is Ontario in Canada?
 MESSAGE assistant yes
+```
+
+### CAPABILITY
+
+Adds a capability to a GGUF or MLX model without removing inherited or inferred capabilities. Repeat the instruction to add more than one. Declare `decision` only for weights trained for System One's decision prompts:
+
+```
+CAPABILITY decision
 ```
 
 ### REQUIRES

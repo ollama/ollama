@@ -2,9 +2,11 @@ package create
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/safetensors"
@@ -112,12 +114,166 @@ func ReadInventory(dir string) (Inventory, error) {
 	return Inventory{Dir: dir, Config: cfg, RawConfig: rawConfig, Tensors: tensors}, nil
 }
 
-// SafetensorsWeightFiles returns the weight shards selected by the same index
-// rules used by ReadInventory. Callers that transfer a source model should use
-// this list rather than guessing shard names.
+// SafetensorsWeightFiles returns the source shards and supported sidecars for
+// transfer. Importing a sidecar still requires its model-specific importer.
 func SafetensorsWeightFiles(dir string) ([]string, error) {
 	_, files, err := safetensorsWeightFiles(dir)
-	return files, err
+	if err != nil {
+		return nil, err
+	}
+	// Clef selects its separate head through RENDERER, so its sidecar is
+	// included whenever present. The Perplexity readout belongs only to its
+	// Qwen3_5Model checkpoint.
+	files, err = appendWeightSidecar(dir, files, "joint_head.safetensors", "Clef")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err == nil {
+		cfg, _, err := readSourceModelConfig(dir)
+		if err != nil {
+			return nil, err
+		}
+		if cfg.Architecture() == gradiumPhononArchitecture {
+			files, err = appendWeightSidecar(dir, files, "default-voice.safetensors", "Phonon")
+			if err != nil {
+				return nil, err
+			}
+			if !slices.Contains(files, "default-voice.safetensors") {
+				return nil, fmt.Errorf("Phonon checkpoint requires default-voice.safetensors")
+			}
+			voices, err := phononVoiceFiles(dir)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, voices...)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		file, err := lfm3CodecFile(dir, codecDir, "model.safetensors")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, file)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "readout.safetensors")); errors.Is(err, os.ErrNotExist) {
+		return files, nil
+	} else if err != nil {
+		return nil, err
+	}
+	cfg, _, err := readSourceModelConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Architecture() != "Qwen3_5Model" {
+		return files, nil
+	}
+	return appendWeightSidecar(dir, files, "readout.safetensors", "Qwen decision")
+}
+
+func appendWeightSidecar(dir string, files []string, name, modelName string) ([]string, error) {
+	info, err := os.Stat(filepath.Join(dir, name))
+	if errors.Is(err, os.ErrNotExist) {
+		return files, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s %s must be a regular file", modelName, name)
+	}
+	if !slices.Contains(files, name) {
+		files = append(files, name)
+		slices.Sort(files)
+	}
+	return files, nil
+}
+
+// SafetensorsConfigFiles lists source metadata for remote transfer and local
+// JSON import. Auxiliary checkpoint subfolders are excluded.
+func SafetensorsConfigFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	var hasLaya bool
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		hasLaya = hasLaya || name == "rl_agent_config.json"
+		if filepath.Ext(name) == ".json" || name == "chat_template.jinja" {
+			names = append(names, name)
+		}
+	}
+	if hasLaya {
+		for _, name := range []string{"encoder/config.json", "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json"} {
+			info, err := os.Stat(filepath.Join(dir, filepath.FromSlash(name)))
+			if err != nil {
+				return nil, err
+			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("Laya metadata %s is not a regular file", name)
+			}
+			names = append(names, name)
+		}
+	}
+	if codecDir, err := lfm3CodecDir(dir); err != nil {
+		return nil, err
+	} else if codecDir != "" {
+		name, err := lfm3CodecFile(dir, codecDir, "config.json")
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	hasSidecar, err := hasPplxSidecar(dir)
+	if err != nil {
+		return nil, err
+	}
+	if !hasSidecar {
+		return names, nil
+	}
+	cfg, _, err := readSourceModelConfig(dir)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Architecture() != "Qwen3_5Model" {
+		return names, nil
+	}
+	format, err := qwenDecisionFormat(dir)
+	if err != nil {
+		return nil, err
+	}
+	// This checkpoint has extra JSON that does not configure inference. Keep
+	// only the files the importer or runner consumes.
+	modelMetadata := map[string]bool{
+		"config.json":                  true,
+		"decision_config.json":         true,
+		"joint_config.json":            true,
+		"generation_config.json":       true,
+		"model.safetensors.index.json": true,
+		"processor_config.json":        true,
+		"tokenizer.json":               true,
+		"tokenizer_config.json":        true,
+		"special_tokens_map.json":      true,
+		"added_tokens.json":            true,
+		"hf_quant_config.json":         true,
+		"quantization_config.json":     true,
+	}
+	if format == d3FormatID {
+		modelMetadata["preprocessor_config.json"] = true
+		modelMetadata["video_preprocessor_config.json"] = true
+		modelMetadata["vocab.json"] = true
+	}
+	return slices.DeleteFunc(names, func(name string) bool {
+		return filepath.Ext(name) == ".json" && !modelMetadata[name]
+	}), nil
 }
 
 func safetensorsWeightFiles(dir string) (map[string]string, []string, error) {

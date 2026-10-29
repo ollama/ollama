@@ -39,6 +39,7 @@ func TestCodexArgs(t *testing.T) {
 		"-c", fmt.Sprintf("model_providers.%s.base_url=%q", codexProfileName, codexBaseURL()),
 		"-c", fmt.Sprintf("model_providers.%s.wire_api=%q", codexProfileName, "responses"),
 		"-c", fmt.Sprintf("%s=%q", codexRootModelCatalogJSONKey, catalogPath),
+		"-c", `service_tier="default"`,
 	}
 
 	tests := []struct {
@@ -50,6 +51,7 @@ func TestCodexArgs(t *testing.T) {
 		{"with model", "llama3.2", nil, append(slices.Clone(managedArgs), "-m", "llama3.2")},
 		{"empty model", "", nil, managedArgs},
 		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "--sandbox", "workspace-write")},
+		{"explicit tier", "llama3.2", []string{"-c", `service_tier="priority"`}, append(append(slices.Clone(managedArgs), "-m", "llama3.2"), "-c", `service_tier="priority"`)},
 	}
 
 	for _, tt := range tests {
@@ -62,6 +64,59 @@ func TestCodexArgs(t *testing.T) {
 				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCodexCatalogContainsSwitchableModels(t *testing.T) {
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "65536")
+	models := []LaunchModel{
+		{Name: "qwen3:latest", ContextLength: 65536},
+		{Name: "qwen3:latest"},
+		{Name: "qwen3:4b", Capabilities: []modelpkg.Capability{modelpkg.CapabilityVision}},
+		{Name: "gpt-oss:20b-cloud", ContextLength: 131072},
+		{Name: ""},
+	}
+	if err := ensureCodexConfig("qwen3", models); err != nil {
+		t.Fatal(err)
+	}
+	path, err := codexModelCatalogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range catalog.Models {
+		names = append(names, entry["slug"].(string))
+	}
+	if want := []string{"qwen3", "qwen3:4b", "gpt-oss:20b-cloud"}; !slices.Equal(names, want) {
+		t.Fatalf("catalog names = %v, want %v", names, want)
+	}
+	if got := catalog.Models[1]["input_modalities"]; !slices.Equal(got.([]any), []any{"text", "image"}) {
+		t.Fatalf("switched model lost vision metadata: %v", got)
+	}
+	if got := catalog.Models[2]["context_window"]; got != float64(131072) {
+		t.Fatalf("cloud model lost context window: %v", got)
+	}
+	// Refreshing after a model is removed must remove it from /model too.
+	if err := ensureCodexConfig("qwen3", models[:1]); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &catalog); err != nil || len(catalog.Models) != 1 {
+		t.Fatalf("refreshed catalog = %s, err = %v", data, err)
 	}
 }
 
@@ -382,6 +437,8 @@ func TestCodexRestoreRemovesCLIProfileAndCatalogWithoutChangingUserRootConfig(t 
 	}
 	userConfig := "" +
 		`model = "gpt-5.5"` + "\n" +
+		`model_reasoning_effort = "max"` + "\n" +
+		`service_tier = "priority"` + "\n" +
 		`model_provider = "openai"` + "\n\n" +
 		"[model_providers.openai]\n" +
 		`name = "OpenAI"` + "\n"

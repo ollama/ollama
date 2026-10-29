@@ -170,7 +170,8 @@ func TestGatherQMMGlobalScaleMatchesDequantized(t *testing.T) {
 
 // One key policy for every model. The canonical name import writes wins;
 // ModelOpt's own name is the fallback for un-imported checkpoints; and an
-// activation scale is consumed but never mistaken for a weight scale.
+// activation scale is reported as a companion but never mistaken for a weight
+// scale.
 func TestReadGlobalScale(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		scale := func(v float32) *mlx.Array { return mlx.FromValues([]float32{v}, 1) }
@@ -210,6 +211,12 @@ func TestReadGlobalScale(t *testing.T) {
 				tensors:  map[string]*mlx.Array{"w.weight.input_global_scale": scale(8)},
 				want:     0,
 				consumed: []string{"w.weight.input_global_scale"},
+			},
+			{
+				name:     "modelopt activation scale is never the weight scale",
+				tensors:  map[string]*mlx.Array{"w.weight.input_scale": scale(8)},
+				want:     0,
+				consumed: []string{"w.weight.input_scale"},
 			},
 			{
 				name: "activation scale alongside a weight scale",

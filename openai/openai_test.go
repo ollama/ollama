@@ -157,6 +157,145 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"sunny [img]"},{"type":"text","text":", 72F [img-99]"}]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// text parts are merged into one result; tool text is kept as sent
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "get_weather" || tool.Content != "sunny [img], 72F [img-99]" {
+		t.Errorf("expected tool message for call_1/get_weather, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
+func TestFromChatRequest_ToolMessageArrayContentWithImages(t *testing.T) {
+	const image2 = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`
+	imgData, _ := base64.StdEncoding.DecodeString(image)
+	img2Data, _ := base64.StdEncoding.DecodeString(image2)
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "What's in the screenshot?"},
+			{
+				Role: "assistant",
+				ToolCalls: []ToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "screenshot", Arguments: "{}"},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content: []any{
+					map[string]any{"type": "text", "text": "Before: "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
+					},
+					map[string]any{"type": "text", "text": " After: "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image2},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// parts with images stay split in order, each answering the same call
+	if len(result.Messages) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result.Messages))
+	}
+	wantContent := []string{"Before: ", "", " After: ", ""}
+	wantImages := [][]byte{nil, imgData, nil, img2Data}
+	for i, msg := range result.Messages[2:] {
+		if msg.Role != "tool" || msg.ToolCallID != "call_1" || msg.ToolName != "screenshot" {
+			t.Errorf("part %d: expected tool message for call_1/screenshot, got role=%q id=%q name=%q", i, msg.Role, msg.ToolCallID, msg.ToolName)
+		}
+		if msg.Content != wantContent[i] {
+			t.Errorf("part %d: expected content %q, got %q", i, wantContent[i], msg.Content)
+		}
+		if wantImages[i] == nil && len(msg.Images) != 0 || wantImages[i] != nil && (len(msg.Images) != 1 || string(msg.Images[0]) != string(wantImages[i])) {
+			t.Errorf("part %d: unexpected images, got %d", i, len(msg.Images))
+		}
+	}
+}
+
+func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"screenshot","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":[]},
+		{"role":"tool","content":[]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// the empty result without a call id or name is skipped
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "screenshot" || tool.Content != "" {
+		t.Errorf("expected empty tool message for call_1/screenshot, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
+func TestFromChatRequest_AssistantEmptyArrayContentWithToolCalls(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"user","content":"what is the weather?"},
+		{"role":"assistant","content":[],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"sunny"}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+	if user := result.Messages[0]; user.Role != "user" || len(user.ToolCalls) != 0 {
+		t.Errorf("expected user message without tool calls, got role=%q tool_calls=%d", user.Role, len(user.ToolCalls))
+	}
+	assistant := result.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("expected assistant message with get_weather tool call, got role=%q tool_calls=%+v", assistant.Role, assistant.ToolCalls)
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{

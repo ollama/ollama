@@ -604,8 +604,8 @@ func TestCompactionForcesActiveToolOutputImage(t *testing.T) {
 
 func TestCompactionRejectsUnsupportedImageSources(t *testing.T) {
 	for name, image := range map[string]string{
-		"file id":    `{"type":"input_image","detail":"auto","file_id":"file_123"}`,
-		"remote URL": `{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}`,
+		"missing source": `{"type":"input_image","detail":"auto"}`,
+		"remote URL":     `{"type":"input_image","detail":"auto","image_url":"https://example.com/image.png"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			body := []byte(`{"model":"test","stream":true,"input":[{"type":"message","role":"user","content":[` + image + `]},{"type":"compaction_trigger"}]}`)
@@ -614,6 +614,54 @@ func TestCompactionRejectsUnsupportedImageSources(t *testing.T) {
 				t.Fatalf("requested=%v err=%v", requested, err)
 			}
 		})
+	}
+}
+
+func TestCompactionReplaysUnavailableImageNotice(t *testing.T) {
+	body := []byte(`{"model":"test","stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"Keep this."},{"type":"input_image","file_id":"file_private"}]},{"role":"assistant","content":"Continue."},{"type":"compaction_trigger"}]}`)
+	original := bytes.Clone(body)
+	plan, requested, err := PrepareTriggeredCompaction(body)
+	if err != nil || !requested {
+		t.Fatalf("prepare: requested=%v err=%v", requested, err)
+	}
+	summaryRequest, err := plan.SummaryRequest("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const notice = "[This image is unavailable. Attach the image again, or continue without the image.]"
+	if !bytes.Contains(summaryRequest, []byte(notice)) || bytes.Contains(summaryRequest, []byte("file_private")) {
+		t.Fatalf("summary request does not identify the unavailable image safely: %s", summaryRequest)
+	}
+	result, err := plan.Complete(compactionResponseBody(t, map[string]any{
+		"summary": "The user supplied an unavailable image reference.", "retain_item_ids": []string{"item_000001"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := json.Marshal(map[string]any{"model": "test", "input": []any{result.Item, map[string]any{"role": "user", "content": "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expanded, changed, err := ExpandResponsesCompactionInput(request)
+	if err != nil || !changed {
+		t.Fatalf("expand: changed=%v err=%v", changed, err)
+	}
+	var replay ResponsesRequest
+	if err := json.Unmarshal(expanded, &replay); err != nil {
+		t.Fatal(err)
+	}
+	chat, err := FromResponsesRequest(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained bool
+	for _, msg := range chat.Messages {
+		if msg.Content == "Keep this.\n\n"+notice+"\n\n" && len(msg.Images) == 0 {
+			retained = true
+		}
+	}
+	if !retained || chat.Messages[len(chat.Messages)-1].Content != "hi" || !bytes.Equal(body, original) {
+		t.Fatalf("notice, follow-up or original history changed: %+v", chat.Messages)
 	}
 }
 
@@ -839,11 +887,35 @@ func TestExpandResponsesCompactionInputPreservesCodexRetainedPrefix(t *testing.T
 	}
 }
 
-func TestExpandResponsesCompactionInputRejectsForeignPayload(t *testing.T) {
-	body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}]}`)
-	_, changed, err := ExpandResponsesCompactionInput(body)
-	if changed || err == nil || !strings.Contains(err.Error(), "not an Ollama payload") {
-		t.Fatalf("changed=%v err=%v", changed, err)
+// Accepting retained items does not mean a foreign checkpoint was recovered.
+// Each destination is responsible for validating the retained item schemas.
+func TestExpandResponsesCompactionInputRequiresRemainingItems(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		remaining string
+		wantErr   bool
+	}{
+		{"no remaining items", "", true},
+		{"only foreign checkpoints", `,{"type":"compaction","encrypted_content":"other-provider"}`, true},
+		{"Codex retained user", `,{"role":"user","content":"continue"}`, false},
+		{"search metadata only", `,{"type":"web_search_call","id":"ws_1","status":"completed"}`, false},
+		{"encrypted reasoning only", `,{"type":"reasoning","summary":[],"encrypted_content":"opaque"}`, false},
+		{"empty message", `,{"role":"user","content":" "}`, false},
+		{"empty routed agent message", `,{"type":"agent_message","author":"worker","recipient":"root","content":[]}`, false},
+		{"orphan empty tool result", `,{"type":"function_call_output","call_id":"missing-call","output":""}`, false},
+		{"incomplete tool definition", `,{"type":"tool_search_output","tools":[{}]}`, false},
+		{"provider call", `,{"type":"shell_call","call_id":"call_1","action":{"commands":["true"]}}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"test","input":[{"type":"compaction","encrypted_content":"opaque-provider-state"}` + tt.remaining + `]}`)
+			_, changed, err := ExpandResponsesCompactionInput(body)
+			if (err != nil) != tt.wantErr || changed == tt.wantErr {
+				t.Errorf("expand: changed=%v err=%v, wantErr=%v", changed, err, tt.wantErr)
+			}
+			if tt.wantErr && (err == nil || !strings.Contains(err.Error(), "resend conversation history")) {
+				t.Errorf("expected empty-history recovery error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -915,7 +987,8 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 		"recipient": "/root/worker",
 		"content": [
 			{"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
-			{"type": "encrypted_content", "encrypted_content": "analyze the parser"}
+			{"type": "encrypted_content", "encrypted_content": "analyze the parser"},
+			{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 		]
 	}`), &item)
 	if err != nil {
@@ -928,7 +1001,7 @@ func TestCompactionMessageAgentMessage(t *testing.T) {
 	}
 	want := AgentMessageEnvelopeFormat + "Message Type: NEW_TASK\nPayload:\nanalyze the parser"
 	want = fmt.Sprintf(want, "/root", "/root/worker")
-	if kind != "message" || msg.Role != "user" || msg.Content != want {
+	if kind != "message" || msg.Role != "user" || msg.Content != want || len(msg.Images) != 1 || string(msg.Images[0]) != "fixture" {
 		t.Fatalf("kind=%q msg=%#v", kind, msg)
 	}
 }

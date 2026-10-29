@@ -599,10 +599,8 @@ func (p *Pi) Edit(models []LaunchModel) error {
 				} else if selectedSet[id] {
 					// Rebuild stale managed cloud entries so createConfig refreshes
 					// the whole entry instead of patching it in place.
-					if !hasContextWindow(modelObj) {
-						if _, ok := lookupCloudModelLimit(id); ok {
-							continue
-						}
+					if !hasContextWindow(modelObj) && isCloudModelName(id) {
+						continue
 					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false

@@ -533,6 +533,7 @@ int (*mlx_fast_scaled_dot_product_attention_)(
     const mlx_array keys,
     const mlx_array values,
     float scale,
+    int window_size,
     const char* mask_mode,
     const mlx_array mask_arr /* may be null */,
     const mlx_array sinks /* may be null */,
@@ -882,6 +883,7 @@ int (*mlx_map_string_to_string_iterator_next_)(
     mlx_map_string_to_string_iterator it) = NULL;
 int (*mlx_clear_cache_)(void) = NULL;
 int (*mlx_get_active_memory_)(size_t* res) = NULL;
+int (*mlx_get_array_buffer_size_)(size_t* res, const mlx_vector_array arrays) = NULL;
 int (*mlx_get_cache_memory_)(size_t* res) = NULL;
 int (*mlx_get_memory_limit_)(size_t* res) = NULL;
 int (*mlx_get_peak_memory_)(size_t* res) = NULL;
@@ -1570,6 +1572,7 @@ int (*mlx_matmul_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s) = NULL;
+int (*mlx_matrix_transpose_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_max_axes_)(
     mlx_array* res,
     const mlx_array a,
@@ -2227,6 +2230,15 @@ int (*mlx_unflatten_)(
     const int* shape,
     size_t shape_num,
     const mlx_stream s) = NULL;
+int (*mlx_unique_)(
+    mlx_vector_array* res,
+    const mlx_array a,
+    int size,
+    bool return_index,
+    bool return_inverse,
+    bool return_counts,
+    const mlx_array fill_value /* may be null */,
+    const mlx_stream s) = NULL;
 int (*mlx_unstack_axis_)(
     mlx_vector_array* res,
     const mlx_array a,
@@ -2876,6 +2888,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_map_string_to_string_iterator_next);
     CHECK_LOAD(handle, mlx_clear_cache);
     CHECK_LOAD(handle, mlx_get_active_memory);
+    CHECK_LOAD(handle, mlx_get_array_buffer_size);
     CHECK_LOAD(handle, mlx_get_cache_memory);
     CHECK_LOAD(handle, mlx_get_memory_limit);
     CHECK_LOAD(handle, mlx_get_peak_memory);
@@ -3023,6 +3036,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_logsumexp);
     CHECK_LOAD(handle, mlx_masked_scatter);
     CHECK_LOAD(handle, mlx_matmul);
+    CHECK_LOAD(handle, mlx_matrix_transpose);
     CHECK_LOAD(handle, mlx_max_axes);
     CHECK_LOAD(handle, mlx_max_axis);
     CHECK_LOAD(handle, mlx_max);
@@ -3142,6 +3156,7 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_triu);
     CHECK_LOAD(handle, mlx_trunc);
     CHECK_LOAD(handle, mlx_unflatten);
+    CHECK_LOAD(handle, mlx_unique);
     CHECK_LOAD(handle, mlx_unstack_axis);
     CHECK_LOAD(handle, mlx_unstack);
     CHECK_LOAD(handle, mlx_var_axes);
