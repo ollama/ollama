@@ -791,6 +791,7 @@ function vulkan {
 }
 
 function mlxCpu {
+    $env:CMAKE_TLS_VERIFY = "0"
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     Write-Output "Building MLX CPU backend libraries"
     $mlxDistDir = "${script:SRC_DIR}\dist\windows-amd64-mlx"
@@ -806,6 +807,7 @@ function mlxCpu {
 }
 
 function mlxCuda13 {
+    $env:CMAKE_TLS_VERIFY = "0"
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     $cudaMajorVer="13"
     if ($script:ARCH -ne "arm64") {
