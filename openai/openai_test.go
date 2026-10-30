@@ -1226,6 +1226,22 @@ func TestFinishChunk_UsesResponseCreatedAt(t *testing.T) {
 	}
 }
 
+func TestToCompleteChunk_UsesResponseCreatedAt(t *testing.T) {
+	resp := api.GenerateResponse{
+		Model:     "test-model",
+		CreatedAt: time.Unix(1700000000, 0),
+	}
+	if got := ToCompleteChunk("test-id", resp).Created; got != 1700000000 {
+		t.Fatalf("expected created %d, got %d", 1700000000, got)
+	}
+
+	// A zero CreatedAt falls back to the current time.
+	zero := api.GenerateResponse{Model: "test-model"}
+	if got := ToCompleteChunk("test-id", zero).Created; got <= 1700000000 {
+		t.Fatalf("expected fallback created to be the current time, got %d", got)
+	}
+}
+
 func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 	tests := []struct {
 		name        string
