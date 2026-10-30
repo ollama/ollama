@@ -1,10 +1,10 @@
 package openai
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -1725,7 +1725,7 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 	// Start reasoning item if not started
 	if !c.reasoningStarted {
 		c.reasoningStarted = true
-		c.reasoningItemID = fmt.Sprintf("rs_%d", rand.Intn(999999))
+		c.reasoningItemID = "rs_" + rand.Text()
 
 		events = append(events, c.newEvent("response.output_item.added", map[string]any{
 			"output_index": c.outputIndex,
@@ -1808,7 +1808,7 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 	for i, tc := range converted {
 		outputIndex := c.outputIndex + i
 		if HasToolSearchTool(c.request.Tools) && tc.Function.Name == "tool_search" {
-			itemID := fmt.Sprintf("tsc_%d_%d", rand.Intn(999999), i)
+			itemID := fmt.Sprintf("tsc_%s_%d", rand.Text(), i)
 			arguments := toolSearchArguments(tc.Function.Arguments)
 			item := map[string]any{
 				"id":        itemID,
@@ -1838,7 +1838,7 @@ func (c *ResponsesStreamConverter) emitFunctionCallEvents(toolCalls []api.ToolCa
 			)
 			continue
 		}
-		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		fcItemID := fmt.Sprintf("fc_%s_%d", rand.Text(), i)
 		namespace, name := responsesToolCallName(availableTools, tc.Function.Name)
 
 		toolCallItem := map[string]any{
