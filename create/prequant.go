@@ -1,6 +1,7 @@
 package create
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -92,6 +93,9 @@ var prequantPatterns = []prequantPattern{
 // and any remaining tensors (norms, embeddings) pass through at source
 // precision.
 func planPrequantized(inv Inventory) ([]BlobSpec, error) {
+	if err := checkModuleQuantization(inv); err != nil {
+		return nil, err
+	}
 	fused := make(map[string]BlobSpec)
 	consumed := make(map[string]bool)
 	for _, name := range sortedTensorNames(inv) {
@@ -322,6 +326,77 @@ func matchPrequant(name string, inv Inventory) (BlobSpec, []string, bool) {
 		return BlobSpec{Name: outWeight, Tensors: tensors, Metadata: prequantMetadata(inv, p)}, consumed, true
 	}
 	return BlobSpec{}, nil, false
+}
+
+// checkModuleQuantization rejects an int4 or int8 config without a mode whose
+// per-module entries quantize some modules differently from the default,
+// unless the loader reads every weight correctly from its tensor shapes. Such
+// a config records no type (see QuantMetadata), and shapes identify only some
+// layouts; the loader would fail to load the others or load them at the wrong
+// width.
+func checkModuleQuantization(inv Inventory) error {
+	q := inv.Config.declaredQuantization()
+	if q.Mode != "" || q.quantType() == "" || !q.mixedPrecision() {
+		return nil
+	}
+	wantType, wantGroupSize := q.defaults().settings()
+	for _, name := range sortedTensorNames(inv) {
+		spec, _, ok := matchPrequant(name, inv)
+		if !ok {
+			continue
+		}
+		path := strings.TrimSuffix(spec.Name, ".weight")
+		quantType, groupSize := wantType, wantGroupSize
+		if m, ok := q.Modules[path]; ok {
+			if err := checkModuleEntry(path, m); err != nil {
+				return err
+			}
+			quantType, groupSize = m.settings()
+		}
+		if inferableFromShapes(quantType, groupSize) {
+			continue
+		}
+		if quantType == wantType && groupSize == wantGroupSize {
+			return fmt.Errorf("%s: config.json quantizes this module as %s with group size %d and %s differently; mixed-precision checkpoints are not supported yet",
+				path, quantType, groupSize, q.firstMixedModule())
+		}
+		return fmt.Errorf("%s: config.json quantizes this module as %s with group size %d, unlike the model's %s with group size %d; mixed-precision checkpoints are not supported yet",
+			path, quantType, groupSize, wantType, wantGroupSize)
+	}
+	return nil
+}
+
+// checkModuleEntry rejects a per-module entry whose settings can't be read or
+// name a type the engine lacks.
+func checkModuleEntry(path string, m moduleQuantization) error {
+	if m.Unreadable {
+		return fmt.Errorf("%s: config.json's quantization entry for this module has unreadable bits, group_size or mode", path)
+	}
+	if quantType, _ := m.settings(); quantType == "" {
+		// Only an unknown mode, or an affine width the engine lacks, resolves
+		// to no type.
+		setting := fmt.Sprintf("mode %q", m.Mode)
+		if strings.EqualFold(cmp.Or(m.Mode, "affine"), "affine") {
+			setting = fmt.Sprintf("%d bits", m.Bits)
+		}
+		return fmt.Errorf("%s: config.json quantizes this module with %s, which is not supported", path, setting)
+	}
+	return nil
+}
+
+// inferableFromShapes reports whether the loader, given no metadata, reads a
+// weight quantized as quantType with groupSize correctly from its tensor
+// shapes. Packing fixes only bits × group size, which the loader resolves to
+// int4 at group size 16 or 32 and int8 at 64 or 128. It can't place int4/64
+// or int8/32, and it misreads int4/128 and int8/16.
+func inferableFromShapes(quantType string, groupSize int) bool {
+	switch quantType {
+	case "int4":
+		return groupSize == 16 || groupSize == 32
+	case "int8":
+		return groupSize == 64 || groupSize == 128
+	}
+	return false
 }
 
 func f32ScaleTransform(t SourceTensor) Transform {
