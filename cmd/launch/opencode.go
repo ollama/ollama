@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -512,6 +513,15 @@ func (o *OpenCode) Edit(models []LaunchModel) error {
 		_ = json.Unmarshal(data, &state) // Ignore parse errors; use defaults
 	}
 
+	if defaultVariant := openCodeDefaultVariant(models[0]); defaultVariant != "" {
+		if variantState, ok := state["variant"].(map[string]any); ok {
+			key := "ollama/" + models[0].Name
+			if _, exists := variantState[key]; !exists {
+				variantState[key] = defaultVariant
+			}
+		}
+	}
+
 	recent, _ := state["recent"].([]any)
 
 	modelSet := make(map[string]bool)
@@ -624,16 +634,13 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 				"output": []string{"text"},
 			}
 		}
-		if model.HasCapability("thinking") {
+		if model.HasCapability("thinking") || model.Thinking.Valid() {
 			entry["reasoning"] = true
-			if openCodeModelSupportsThinkingLevels(model) {
-				entry["options"] = map[string]any{"reasoningEffort": "medium"}
-				entry["variants"] = map[string]any{
-					"low":    map[string]any{"reasoningEffort": "low"},
-					"medium": map[string]any{"reasoningEffort": "medium"},
-					"high":   map[string]any{"reasoningEffort": "high"},
-					"max":    map[string]any{"reasoningEffort": "max"},
+			if variants, defaults, _ := openCodeThinkingVariants(model); variants != nil {
+				if len(defaults) > 0 {
+					entry["options"] = defaults
 				}
+				entry["variants"] = variants
 			} else {
 				entry["variants"] = map[string]any{
 					"none":   map[string]any{"reasoningEffort": "none"},
@@ -653,6 +660,108 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 		models[model.Name] = entry
 	}
 	return models
+}
+
+// openCodeThinkingVariants maps Ollama's shared thinking metadata to the OpenAI-compatible
+// controls OpenCode can advertise. An omitted reasoning effort lets the backend use its
+// boolean-on default.
+func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any, string) {
+	if thinking := model.Thinking; thinking.Valid() {
+		variants := make(map[string]any)
+		for _, value := range thinking.Values {
+			label, ok := value.(string)
+			if !ok {
+				continue
+			}
+			variants[label] = map[string]any{"reasoningEffort": label}
+		}
+
+		booleanLabels := make(map[bool]string)
+		for _, value := range thinking.Values {
+			boolean, ok := value.(bool)
+			if !ok {
+				continue
+			}
+			base := "thinking"
+			variant := map[string]any{}
+			if !boolean {
+				base = "none"
+				variant["reasoningEffort"] = "none"
+			}
+			label := openCodeVariantLabel(base, variants)
+			booleanLabels[boolean] = label
+			if boolean {
+				variant["reasoningEffort"] = openCodeBooleanOnEffort(thinking)
+			}
+			variants[label] = variant
+		}
+
+		// OpenCode 1.18 still computes generic low/medium/high/max fallbacks and merges
+		// configured variants. Explicitly disable the fallbacks that Ollama metadata does
+		// not support so the provider's variant merge cannot repopulate them.
+		for _, level := range []string{"none", "thinking", "low", "medium", "high", "max"} {
+			if _, ok := variants[level]; !ok {
+				variants[level] = map[string]any{"disabled": true}
+			}
+		}
+
+		defaults := map[string]any{}
+		defaultVariant := ""
+		switch defaultLevel := thinking.Default.(type) {
+		case string:
+			defaults["reasoningEffort"] = defaultLevel
+		case bool:
+			// Boolean defaults launch with a variant instead of a model option, which
+			// lets on and off choices reset the inherited reasoning effort.
+			defaultVariant = booleanLabels[defaultLevel]
+		}
+		return variants, defaults, defaultVariant
+	}
+
+	if openCodeModelSupportsThinkingLevels(model) {
+		return map[string]any{
+			"low":    map[string]any{"reasoningEffort": "low"},
+			"medium": map[string]any{"reasoningEffort": "medium"},
+			"high":   map[string]any{"reasoningEffort": "high"},
+			"max":    map[string]any{"reasoningEffort": "max"},
+		}, map[string]any{"reasoningEffort": "medium"}, "medium"
+	}
+
+	return nil, nil, ""
+}
+
+func openCodeBooleanOnEffort(thinking *api.ModelRecommendationThinking) string {
+	if thinking == nil {
+		return ""
+	}
+	if thinking.Supports("high") {
+		return "high"
+	}
+	for _, value := range thinking.Values {
+		if name, ok := value.(string); ok && name != "" {
+			return name
+		}
+	}
+	return "high"
+}
+
+func openCodeVariantLabel(base string, variants map[string]any) string {
+	label := base
+	for suffix := 2; ; suffix++ {
+		if _, exists := variants[label]; !exists {
+			return label
+		}
+		label = fmt.Sprintf("%s-%d", base, suffix)
+	}
+}
+
+func openCodeDefaultVariant(model LaunchModel) string {
+	if !model.Thinking.Valid() {
+		return ""
+	}
+
+	_, _, defaultVariant := openCodeThinkingVariants(model)
+	return defaultVariant
 }
 
 func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {
