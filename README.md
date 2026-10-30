@@ -303,6 +303,7 @@ console.log(response.message.content);
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
 - [VT](https://github.com/vinhnx/vt.ai) - Minimal multimodal AI chat app
+- [NeuronDump](https://github.com/aymen94/NeuronDump) - Inspect, trace, edit and slim Ollama models (GGUF) from a CLI or local web UI
 
 ### Productivity & Apps
 
