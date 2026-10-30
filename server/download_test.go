@@ -21,7 +21,8 @@ import (
 )
 
 func TestBlobDownloadRetriesStalledDirectURLRequest(t *testing.T) {
-	directURL, err := url.Parse("https://cdn.example.com/blob")
+	// Use the same public fixture range as the redirect tests, without DNS.
+	directURL, err := url.Parse("https://203.0.113.2/blob")
 	if err != nil {
 		t.Fatal(err)
 	}
