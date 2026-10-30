@@ -294,6 +294,7 @@ console.log(response.message.content);
 
 - [aichat](https://github.com/sigoden/aichat) - All-in-one LLM CLI with Shell Assistant, RAG, and AI tools
 - [oterm](https://github.com/ggozad/oterm) - Terminal client for Ollama
+- [BashBrunch](https://bashbrunch.attaditya.space) - A minimal yet powerful terminal harness fully running on Bash!
 - [gollama](https://github.com/sammcj/gollama) - Go-based model manager for Ollama
 - [tlm](https://github.com/yusufcanb/tlm) - Local shell copilot
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
