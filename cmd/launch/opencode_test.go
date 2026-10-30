@@ -224,6 +224,84 @@ func TestOpenCodeEdit(t *testing.T) {
 			t.Fatalf("variants.max.reasoningEffort = %v, want max", max["reasoningEffort"])
 		}
 	})
+
+	t.Run("metadata advertises supported reasoning levels", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "deepseek-v4-pro:0813-cloud",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, "low", "high", "max"}, Default: "low"},
+		}})
+		entry, _ := models["deepseek-v4-pro:0813-cloud"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if options["reasoningEffort"] != "low" {
+			t.Fatalf("options.reasoningEffort = %v, want low", options["reasoningEffort"])
+		}
+		for level, want := range map[string]string{"none": "none", "low": "low", "high": "high", "max": "max"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["reasoningEffort"] != want {
+				t.Fatalf("variants.%s.reasoningEffort = %v, want %s", level, variant["reasoningEffort"], want)
+			}
+			if variant["disabled"] != nil {
+				t.Fatalf("variants.%s.disabled = %v, want omitted", level, variant["disabled"])
+			}
+		}
+		medium, _ := variants["medium"].(map[string]any)
+		if medium["disabled"] != true {
+			t.Fatalf("variants.medium.disabled = %v, want true so OpenCode fallback is absent", medium["disabled"])
+		}
+	})
+
+	t.Run("metadata omits unsupported controls", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "glm-5.3:cloud",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{"low", "high", "max"}, Default: "max"},
+		}})
+		entry, _ := models["glm-5.3:cloud"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if options["reasoningEffort"] != "max" {
+			t.Fatalf("options.reasoningEffort = %v, want max", options["reasoningEffort"])
+		}
+		for _, level := range []string{"none", "medium"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["disabled"] != true {
+				t.Fatalf("variants.%s.disabled = %v, want true so OpenCode fallback is absent", level, variant["disabled"])
+			}
+		}
+		for _, level := range []string{"low", "high", "max"} {
+			variant, _ := variants[level].(map[string]any)
+			if variant["reasoningEffort"] != level || variant["disabled"] != nil {
+				t.Fatalf("variants.%s = %v, want supported %s", level, variant, level)
+			}
+		}
+	})
+
+	t.Run("binary metadata gets an omitted on control", func(t *testing.T) {
+		models := buildModelEntries([]LaunchModel{{
+			Name:         "binary-thinker:local",
+			Capabilities: []model.Capability{model.CapabilityThinking},
+			Thinking:     &api.ModelRecommendationThinking{Values: []any{false, true}, Default: true},
+		}})
+		entry, _ := models["binary-thinker:local"].(map[string]any)
+		options, _ := entry["options"].(map[string]any)
+		variants, _ := entry["variants"].(map[string]any)
+
+		if _, ok := options["reasoningEffort"]; ok {
+			t.Fatalf("options.reasoningEffort = %v, want omitted for backend default on", options["reasoningEffort"])
+		}
+		none, _ := variants["none"].(map[string]any)
+		if none["reasoningEffort"] != "none" {
+			t.Fatalf("variants.none = %v, want reasoningEffort none", none)
+		}
+		on := variants["thinking"]
+		if on == nil || on.(map[string]any)["reasoningEffort"] != nil {
+			t.Fatalf("variants.thinking = %v, want omitted reasoningEffort", on)
+		}
+	})
 }
 
 func TestBuildModelEntries(t *testing.T) {

@@ -626,14 +626,11 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 		}
 		if model.HasCapability("thinking") {
 			entry["reasoning"] = true
-			if openCodeModelSupportsThinkingLevels(model) {
-				entry["options"] = map[string]any{"reasoningEffort": "medium"}
-				entry["variants"] = map[string]any{
-					"low":    map[string]any{"reasoningEffort": "low"},
-					"medium": map[string]any{"reasoningEffort": "medium"},
-					"high":   map[string]any{"reasoningEffort": "high"},
-					"max":    map[string]any{"reasoningEffort": "max"},
+			if variants, defaults := openCodeThinkingVariants(model); variants != nil {
+				if defaults != nil {
+					entry["options"] = defaults
 				}
+				entry["variants"] = variants
 			} else {
 				entry["variants"] = map[string]any{
 					"none":   map[string]any{"reasoningEffort": "none"},
@@ -653,6 +650,72 @@ func buildModelEntries(modelList []LaunchModel) map[string]any {
 		models[model.Name] = entry
 	}
 	return models
+}
+
+// openCodeThinkingVariants maps Ollama's shared thinking metadata to the OpenAI-compatible
+// controls OpenCode can advertise. Omitted false turns thinking off; omitted true lets the
+// backend apply its default on state.
+func openCodeThinkingVariants(model LaunchModel) (map[string]any, map[string]any) {
+	if thinking := model.Thinking; thinking.Valid() {
+		variants := make(map[string]any)
+		for _, value := range thinking.Values {
+			var variant map[string]any
+			label := ""
+			switch value := value.(type) {
+			case string:
+				label = value
+				variant = map[string]any{"reasoningEffort": value}
+			case bool:
+				if !value {
+					label = "none"
+					variant = map[string]any{"reasoningEffort": "none"}
+				} else if thinking.Supports("high") {
+					label = "high"
+					variant = map[string]any{"reasoningEffort": "high"}
+				} else {
+					label = "thinking"
+				}
+			}
+			if len(variant) > 0 {
+				variants[label] = variant
+			} else {
+				variants[label] = map[string]any{}
+			}
+		}
+
+		// OpenCode 1.18 still computes generic low/medium/high/max fallbacks and merges
+		// configured variants. Explicitly disable the fallbacks that Ollama metadata does
+		// not support so the provider's variant merge cannot repopulate them.
+		for _, level := range []string{"none", "low", "medium", "high", "max"} {
+			if _, ok := variants[level]; !ok {
+				variants[level] = map[string]any{"disabled": true}
+			}
+		}
+
+		defaults := map[string]any{}
+		switch defaultLevel := thinking.Default.(type) {
+		case string:
+			defaults["reasoningEffort"] = defaultLevel
+		case bool:
+			if !defaultLevel {
+				defaults["reasoningEffort"] = "none"
+			} else if thinking.Supports("high") {
+				defaults["reasoningEffort"] = "high"
+			}
+		}
+		return variants, defaults
+	}
+
+	if openCodeModelSupportsThinkingLevels(model) {
+		return map[string]any{
+			"low":    map[string]any{"reasoningEffort": "low"},
+			"medium": map[string]any{"reasoningEffort": "medium"},
+			"high":   map[string]any{"reasoningEffort": "high"},
+			"max":    map[string]any{"reasoningEffort": "max"},
+		}, map[string]any{"reasoningEffort": "medium"}
+	}
+
+	return nil, nil
 }
 
 func openCodeModelSupportsThinkingLevels(model LaunchModel) bool {
