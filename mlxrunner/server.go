@@ -168,8 +168,10 @@ func Execute(args []string) error {
 
 		select {
 		case <-r.Context().Done():
-			// Never queued, so the runner will not close the grammar.
+			// Never queued, so the runner will not close the grammar or
+			// release the media.
 			request.Grammar.close()
+			request.releaseMedia()
 			return
 		case runner.Requests <- request:
 		}

@@ -33,6 +33,7 @@ type VisionConfig struct {
 type multimodalConfig struct {
 	VisionConfig       *VisionConfig `json:"vision_config"`
 	ImageTokenID       int32         `json:"image_token_id"`
+	VideoTokenID       int32         `json:"video_token_id"`
 	VisionStartTokenID int32         `json:"vision_start_token_id"`
 	VisionEndTokenID   int32         `json:"vision_end_token_id"`
 }
@@ -264,11 +265,16 @@ func (m *Model) loadVisionWeights(tensors map[string]*mlx.Array, linears model.L
 
 func (m *Model) visionLoaded() bool { return m.VisionTower != nil }
 
-// PrepareMedia implements model.MediaModel: preprocess each image segment,
-// splice its vision_start + pads + vision_end expansion, and precompute the
-// request's 3-channel rope positions.
-func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, error) {
+// PrepareMedia implements model.MediaModel: preprocess each image segment
+// and plan each video, splice their vision_start + pads + vision_end
+// expansions, and precompute the request's 3-channel rope positions.
+func (m *Model) PrepareMedia(segments []model.Segment) (_ *model.PreparedRequest, err error) {
 	prepared := &model.PreparedRequest{}
+	defer func() {
+		if err != nil && prepared.Release != nil {
+			prepared.Release()
+		}
+	}()
 
 	// pos walks the reference's multimodal position rule: text advances one
 	// per token on all channels; an image spans a merged grid anchored at
@@ -276,22 +282,60 @@ func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, 
 	var positions []int32
 	cur := int32(0)
 	maxPos := int32(-1)
-	text := func(n int) {
-		for range n {
+	text := func(tokens ...int32) {
+		prepared.Tokens = append(prepared.Tokens, tokens...)
+		for range tokens {
 			positions = append(positions, cur, cur, cur)
 			maxPos = max(maxPos, cur)
 			cur++
 		}
 	}
+	// vision appends one image's (or one video frame pair's) expansion and
+	// returns its token range.
+	vision := func(prep preparedImage, pad int32) [2]int {
+		start := len(prepared.Tokens)
+		text(m.MM.VisionStartTokenID)
+		merge := m.Vision.SpatialMergeSize
+		mh, mw := prep.gridH/merge, prep.gridW/merge
+		for bh := range mh {
+			for bw := range mw {
+				prepared.Tokens = append(prepared.Tokens, pad)
+				positions = append(positions, cur, cur+bh, cur+bw)
+				maxPos = max(maxPos, max(cur+bh, cur+bw))
+			}
+		}
+		cur += max(mh, mw)
+		text(m.MM.VisionEndTokenID)
+		return [2]int{start, len(prepared.Tokens)}
+	}
 
 	for s, seg := range segments {
 		if seg.Data == nil {
-			prepared.Tokens = append(prepared.Tokens, seg.Tokens...)
-			text(len(seg.Tokens))
+			text(seg.Tokens...)
 			continue
 		}
 		if !m.visionLoaded() {
 			return nil, fmt.Errorf("this model does not support %s input", seg.Kind)
+		}
+		if seg.Kind == "video" {
+			clip, err := m.openVideo(seg.Data)
+			if err != nil {
+				return nil, err
+			}
+			prepared.AddRelease(clip.Close)
+			// Each frame pair is placed like an image, led by its timestamp,
+			// and the clip is wrapped in one more vision_start/vision_end.
+			prep := preparedImage{}
+			prep.gridH, prep.gridW = clip.Grid()
+			prep.ropePos, prep.posIdx, prep.posWt = visionPatchLookups(prep.gridH, prep.gridW, m.Vision.SpatialMergeSize, m.Vision.NumPositionEmbeddings)
+			text(m.MM.VisionStartTokenID)
+			for g, group := range clip.Plan.Groups {
+				text(m.tok.Encode(group.Label(), false)...)
+				r := vision(prep, m.MM.VideoTokenID)
+				prepared.Items = append(prepared.Items, clip.Item(g, s, r[0], r[1], prep))
+			}
+			text(m.MM.VisionEndTokenID)
+			continue
 		}
 		if seg.Kind != "image" {
 			return nil, fmt.Errorf("qwen3.5 does not support %s input", seg.Kind)
@@ -302,21 +346,8 @@ func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, 
 			return nil, err
 		}
 
-		start := len(prepared.Tokens)
-		prepared.Tokens = append(prepared.Tokens, m.MM.VisionStartTokenID)
-		text(1)
-		merge := m.Vision.SpatialMergeSize
-		mh, mw := prep.gridH/merge, prep.gridW/merge
-		for bh := range mh {
-			for bw := range mw {
-				prepared.Tokens = append(prepared.Tokens, m.MM.ImageTokenID)
-				positions = append(positions, cur, cur+bh, cur+bw)
-				maxPos = max(maxPos, max(cur+bh, cur+bw))
-			}
-		}
-		cur += max(mh, mw)
-		prepared.Tokens = append(prepared.Tokens, m.MM.VisionEndTokenID)
-		text(1)
+		r := vision(prep, m.MM.ImageTokenID)
+		start := r[0]
 
 		n := int(prep.numPatches())
 		prepared.Items = append(prepared.Items, model.PreparedItem{
@@ -345,7 +376,7 @@ func (m *Model) PrepareMedia(segments []model.Segment) (*model.PreparedRequest, 
 }
 
 // EncodeMedia implements model.MediaModel: run the tower over one whole
-// image, returning the lazy [numTokens, hidden] features.
+// image or video frame pair, returning the lazy [numTokens, hidden] features.
 func (m *Model) EncodeMedia(item *model.PreparedItem, data *mlx.Array) *mlx.Array {
 	prep := item.Opaque.(preparedImage)
 	v := m.Vision

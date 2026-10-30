@@ -10,6 +10,7 @@ import (
 	"math"
 
 	"github.com/ollama/ollama/mlxrunner/model"
+	"github.com/ollama/ollama/mlxrunner/model/videoclip"
 )
 
 // NewDecisionBackbone loads the LFM3-VL or LFM3-Omni backbone of a decision
@@ -77,7 +78,7 @@ func CapImagePixels(data []byte, maxPixels int) ([]byte, error) {
 	for i := 3; i < len(rgb.Pix); i += 4 {
 		rgb.Pix[i] = 0xff
 	}
-	resized := resizeBicubic(rgb, max(1, int(float64(w)*s)), max(1, int(float64(h)*s)))
+	resized := videoclip.ResizeBicubic(rgb, max(1, int(float64(w)*s)), max(1, int(float64(h)*s)))
 	var out bytes.Buffer
 	if err := png.Encode(&out, resized); err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	modelparsers "github.com/ollama/ollama/model/parsers"
@@ -92,6 +93,9 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 	if rendererName == "lfm3-omni" || rendererName == "lfm3-audio" {
 		capabilities = lfm3AudioCapabilities(capabilities)
 	}
+	if !decisionModel && VideoCapable(rendererName, capabilities) {
+		capabilities = append(capabilities, string(model.CapabilityVideo))
+	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
 		return model.ConfigV2{}, err
@@ -105,6 +109,20 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		GenerationDefaults: generationDefaults,
 	}
 	return config, nil
+}
+
+// VideoCapable reports whether the MLX runner takes video for a model with
+// this renderer and capabilities: it implements these families' video
+// processors. The server applies it to models created before video was
+// recorded.
+func VideoCapable(renderer string, capabilities []string) bool {
+	switch renderer {
+	case "lfm3-omni":
+		return true
+	case "lfm3", "qwen3.5", "qwen3.8":
+		return slices.Contains(capabilities, string(model.CapabilityVision))
+	}
+	return false
 }
 
 func readHFGenerationDefaults(modelDir string) (model.GenerationDefaults, error) {

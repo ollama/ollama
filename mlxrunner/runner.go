@@ -36,9 +36,18 @@ type Request struct {
 	Ctx         context.Context //nolint:containedctx // Queued requests carry caller cancellation to the runner.
 	Tokens      []int32
 	MediaItems  []mediaItem
-	Layout      any // opaque PrepareMedia layout state, stamped on every batch
+	Layout      any    // opaque PrepareMedia layout state, stamped on every batch
+	Release     func() // PrepareMedia's request-scoped cleanup; see model.PreparedRequest
 	SamplerOpts sample.Options
 	Grammar     *grammarCompilation
+}
+
+// releaseMedia runs the request's media cleanup once.
+func (r *Request) releaseMedia() {
+	if r.Release != nil {
+		r.Release()
+		r.Release = nil
+	}
 }
 
 type Runner struct {
@@ -346,7 +355,14 @@ func (r *Runner) runRequest(request Request) error {
 		return request.Pipeline(request.Ctx, request)
 	}
 
-	return r.mlxThread.Do(request.Ctx, func() error {
+	ran := false
+	err := r.mlxThread.Do(request.Ctx, func() error {
+		ran = true
 		return request.Pipeline(request.Ctx, request)
 	})
+	if !ran {
+		// The pipeline releases media; a request cancelled while queued never reached it.
+		request.releaseMedia()
+	}
+	return err
 }
