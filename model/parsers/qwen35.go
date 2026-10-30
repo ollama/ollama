@@ -52,6 +52,12 @@ func (p *Qwen35Parser) ThinkingClose() []string {
 	return nil
 }
 
+// ThinkingTags reports the delimiters of this parser's thinking block so a
+// thinking-token budget can force the block closed.
+func (p *Qwen35Parser) ThinkingTags() (string, string) {
+	return qwen35ThinkingOpenTag, qwen35ThinkingCloseTag
+}
+
 func (p *Qwen35Parser) PreservedTokens() []string {
 	return []string{
 		qwen35ThinkingOpenTag,
