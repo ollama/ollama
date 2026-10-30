@@ -4,10 +4,13 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 type Renderer interface {
+	Thinking() *model.Thinking
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
+	LeadingBOS() string
 }
 
 type (
@@ -42,6 +45,15 @@ func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think
 	return renderer.Render(msgs, tools, think)
 }
 
+func LeadingBOSForRenderer(name string) string {
+	renderer := rendererForName(name)
+	if renderer == nil {
+		return ""
+	}
+
+	return renderer.LeadingBOS()
+}
+
 func rendererForName(name string) Renderer {
 	if constructor, ok := registry.renderers[name]; ok {
 		return constructor()
@@ -56,9 +68,13 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
-	case "qwen3.5":
+	case "qwen3.5", "tev1":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.8", "d3":
+		return newQwen38Renderer()
+	case "ornith":
+		return newOrnithRenderer()
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
@@ -81,16 +97,42 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "nemotron-3.5-nano":
+		return &Nemotron3NanoRenderer{v35: true}
+	case "nemotron-3.5-super":
+		return &Nemotron3NanoRenderer{v35: true, imageLabels: true}
+	case "gemma4", "gemma4-small":
+		return &Gemma4Renderer{useImgTags: RenderImgTags}
+	case "gemma4-large":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true, transcribeThenTranslate: true}
+	case "gemma4-nemotron":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
 		return &GLM47Renderer{}
+	case "flint":
+		return &FlintRenderer{}
 	case "glm-ocr":
 		return &GlmOcrRenderer{useImgTags: RenderImgTags}
 	case "lfm2":
 		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
+	case "lfm3":
+		return &LFM3Renderer{useImgTags: RenderImgTags}
+	case "lfm3-omni":
+		return &LFM3Renderer{useImgTags: RenderImgTags, noThinking: true, speech: true}
+	case "lfm3-audio":
+		return &LFM3Renderer{useImgTags: RenderImgTags, audio: true, speech: true}
+	case "laguna":
+		return &LagunaRenderer{}
+	case "poolside-v1":
+		return &LagunaV8Renderer{}
+	case "cohere":
+		return &CohereRenderer{}
+	case "glimmer":
+		return &GlimmerRenderer{useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

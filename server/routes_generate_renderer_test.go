@@ -12,7 +12,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
@@ -45,7 +45,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -58,7 +58,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a model with a built-in renderer (qwen3-coder)
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "qwen3",
 		"qwen3.block_count":             uint32(1),
 		"qwen3.context_length":          uint32(8192),
@@ -68,7 +68,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -143,7 +143,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	})
 
 	t.Run("custom template bypasses renderer", func(t *testing.T) {
-		// Test that providing a custom template uses the legacy flow
+		// Test that providing a custom template uses direct template execution.
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:    "test-renderer",
 			Prompt:   "Write a hello world function",
@@ -180,7 +180,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 	}
 
 	t.Run("suffix bypasses renderer", func(t *testing.T) {
-		// Test that providing a suffix uses the legacy flow
+		// Test that providing a suffix uses direct template execution.
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model:  "test-suffix-renderer",
 			Prompt: "def add(",
@@ -230,7 +230,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -243,7 +243,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 	go s.sched.Run(t.Context())
 
 	// Create a model with a built-in renderer
-	_, digest := createBinFile(t, ggml.KV{
+	_, digest := createBinFile(t, gguftest.KV{
 		"general.architecture":          "qwen3",
 		"qwen3.block_count":             uint32(1),
 		"qwen3.context_length":          uint32(8192),
@@ -253,7 +253,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []*ggml.Tensor{
+	}, []*gguftest.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},

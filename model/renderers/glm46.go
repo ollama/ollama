@@ -10,6 +10,10 @@ import (
 
 type GLM46Renderer struct{}
 
+func (r *GLM46Renderer) LeadingBOS() string {
+	return ""
+}
+
 func (r *GLM46Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 

@@ -480,13 +480,15 @@ function ChatForm({
       return;
     }
 
-    // Prepare attachments for submission
-    const attachmentsToSend: FileAttachment[] = message.attachments.map(
-      (att) => ({
+    // Prepare attachments for submission, excluding unsupported images
+    const attachmentsToSend: FileAttachment[] = message.attachments
+      .filter(
+        (att) => hasVisionCapability || !isImageFile(att.filename),
+      )
+      .map((att) => ({
         filename: att.filename,
         data: att.data || new Uint8Array(0), // Empty data for existing files
-      }),
-    );
+      }));
 
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
@@ -736,10 +738,17 @@ function ChatForm({
         )}
         {(message.attachments.length > 0 || message.fileErrors.length > 0) && (
           <div className="flex gap-2 overflow-x-auto px-3 pt pb-3 w-full scrollbar-hide">
-            {message.attachments.map((attachment, index) => (
+            {message.attachments.map((attachment, index) => {
+              const isUnsupportedImage =
+                !hasVisionCapability && isImageFile(attachment.filename);
+              return (
               <div
                 key={attachment.id}
-                className="group flex items-center gap-2 py-2 px-3 rounded-lg bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors flex-shrink-0"
+                className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
+                  isUnsupportedImage
+                    ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                    : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                }`}
               >
                 {isImageFile(attachment.filename) ? (
                   <ImageThumbnail
@@ -764,9 +773,16 @@ function ChatForm({
                     />
                   </svg>
                 )}
-                <span className="text-sm text-neutral-700 dark:text-neutral-300 max-w-[150px] truncate">
-                  {attachment.filename}
-                </span>
+                <div className="flex flex-col min-w-0">
+                  <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
+                    {attachment.filename}
+                  </span>
+                  {isUnsupportedImage && (
+                    <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
+                      This model does not support images
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => removeFile(index)}
@@ -788,7 +804,8 @@ function ChatForm({
                   </svg>
                 </button>
               </div>
-            ))}
+              );
+            })}
             {message.fileErrors.map((fileError, index) => (
               <div
                 key={`error-${index}`}

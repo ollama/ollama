@@ -30,6 +30,12 @@ func (p *Parser) GetBuffer() []byte {
 	return p.buffer
 }
 
+// Tag returns the tool-call tag string the parser looks for in the output
+// stream.
+func (p *Parser) Tag() string {
+	return p.tag
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -54,6 +60,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 
 	if p.state == toolsState_LookingForTag {
 		i, found := p.findTag()
+
 		if i == -1 {
 			content = string(p.buffer)
 			p.buffer = []byte{}
@@ -351,7 +358,23 @@ func (p *Parser) done() bool {
 	}
 
 	var count int
+	var inString, escaped bool
 	for _, c := range p.buffer {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {

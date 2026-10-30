@@ -5,6 +5,8 @@ package updater
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,10 +153,12 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		return err
 	}
 
-	// In case of slow downloads, continue the update check in the background
+	// In case of slow downloads, continue the update check in the background.
+	// Drain the goroutine before returning: it reads package-level knobs
+	// (e.g. UpdateCheckInterval), which callers may mutate once we return.
 	bgctx, bgcancel := context.WithCancel(downloadCtx)
-	defer bgcancel()
-	go func() {
+	var bgwg sync.WaitGroup
+	bgwg.Go(func() {
 		for {
 			select {
 			case <-bgctx.Done():
@@ -163,28 +167,30 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 				u.checkForUpdate(bgctx)
 			}
 		}
+	})
+	defer func() {
+		bgcancel()
+		bgwg.Wait()
 	}()
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("error checking update: %w", err)
 	}
+	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
-	resp.Body.Close()
-	etag := strings.Trim(resp.Header.Get("etag"), "\"")
-	if etag == "" {
-		slog.Debug("no etag detected, falling back to filename based dedup")
-		etag = "_"
-	}
 	filename := Installer
 	_, params, err := mime.ParseMediaType(resp.Header.Get("content-disposition"))
-	if err == nil {
+	if err == nil && params["filename"] != "" {
 		filename = params["filename"]
 	}
 
-	stageFilename := filepath.Join(UpdateStageDir, etag, filename)
+	stageFilename, err := updateStagePath(UpdateStageDir, resp.Header.Get("etag"), filename)
+	if err != nil {
+		return err
+	}
 
 	// Check to see if we already have it downloaded
 	_, err = os.Stat(stageFilename)
@@ -202,13 +208,14 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		return fmt.Errorf("error checking update: %w", err)
 	}
 	defer resp.Body.Close()
-	etag = strings.Trim(resp.Header.Get("etag"), "\"")
-	if etag == "" {
-		slog.Debug("no etag detected, falling back to filename based dedup") // TODO probably can get rid of this redundant log
-		etag = "_"
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
 
-	stageFilename = filepath.Join(UpdateStageDir, etag, filename)
+	stageFilename, err = updateStagePath(UpdateStageDir, resp.Header.Get("etag"), filename)
+	if err != nil {
+		return err
+	}
 
 	_, err = os.Stat(filepath.Dir(stageFilename))
 	if errors.Is(err, os.ErrNotExist) {
@@ -225,9 +232,12 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	if err != nil {
 		return fmt.Errorf("write payload %s: %w", stageFilename, err)
 	}
-	defer fp.Close()
 	if n, err := fp.Write(payload); err != nil || n != len(payload) {
+		_ = fp.Close()
 		return fmt.Errorf("write payload %s: %d vs %d -- %w", stageFilename, n, len(payload), err)
+	}
+	if err := fp.Close(); err != nil {
+		return fmt.Errorf("close payload %s: %w", stageFilename, err)
 	}
 	slog.Info("new update downloaded " + stageFilename)
 
@@ -236,6 +246,61 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 		return fmt.Errorf("%s - %s", resp.Request.URL.String(), err)
 	}
 	UpdateDownloaded = true
+	return nil
+}
+
+func updateStagePath(stageDir, etag, filename string) (string, error) {
+	filename, err := safeUpdateFilename(filename)
+	if err != nil {
+		return "", err
+	}
+
+	stageDir, err = filepath.Abs(stageDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve update stage dir: %w", err)
+	}
+
+	stageFilename := filepath.Join(stageDir, updateStageETagDir(etag), filename)
+	if err := ensurePathInDir(stageDir, stageFilename); err != nil {
+		return "", err
+	}
+
+	return stageFilename, nil
+}
+
+func safeUpdateFilename(filename string) (string, error) {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return "", errors.New("missing update filename")
+	}
+	if filename == "." || filename == ".." ||
+		filepath.IsAbs(filename) || path.IsAbs(filename) ||
+		strings.ContainsAny(filename, `/\:`) ||
+		filepath.Base(filename) != filename || path.Base(filename) != filename {
+		return "", fmt.Errorf("unsafe update filename %q", filename)
+	}
+	return filename, nil
+}
+
+func updateStageETagDir(etag string) string {
+	etag = strings.Trim(strings.TrimSpace(etag), "\"")
+	if etag == "" {
+		slog.Debug("no etag detected, falling back to filename based dedup")
+		return "_"
+	}
+
+	sum := sha256.Sum256([]byte(etag))
+	return hex.EncodeToString(sum[:])
+}
+
+func ensurePathInDir(dir, name string) error {
+	rel, err := filepath.Rel(dir, name)
+	if err != nil {
+		return fmt.Errorf("resolve update staging path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("update staging path escapes stage dir: %s", name)
+	}
 	return nil
 }
 
@@ -288,11 +353,23 @@ func (u *Updater) TriggerImmediateCheck() {
 }
 
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
+	u.startBackgroundUpdaterChecker(ctx, cb)
+}
+
+func (u *Updater) startBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) <-chan struct{} {
 	u.checkNow = make(chan struct{}, 1)
 	u.checkNow <- struct{}{} // Trigger first check after initial delay
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// Don't blast an update message immediately after startup
-		time.Sleep(UpdateCheckInitialDelay)
+		initialDelay := time.NewTimer(UpdateCheckInitialDelay)
+		defer initialDelay.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-initialDelay.C:
+		}
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
 		ticker := time.NewTicker(UpdateCheckInterval)
 		defer ticker.Stop()
@@ -341,4 +418,5 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 			}
 		}
 	}()
+	return done
 }

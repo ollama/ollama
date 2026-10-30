@@ -2,45 +2,55 @@
 title: Introduction
 ---
 
-Ollama's API allows you to run and interact with models programatically.
+Use Ollama's API to build applications with cloud or local models.
 
 ## Get started
 
-If you're just getting started, follow the [quickstart](/quickstart) documentation to get up and running with Ollama's API.
+Call cloud models with an [API key](https://ollama.com/settings/keys). No Ollama installation required. Start with the [API quickstart](/quickstart#build-an-application).
 
-## Base URL
+To run models on your computer, [install Ollama and run a local model](/quickstart#run-a-model-locally).
 
-After installation, Ollama's API is served by default at:
+## Base URLs
 
-```
-http://localhost:11434/api
-```
+| API | Direct cloud access | Local Ollama server |
+| --- | --- | --- |
+| Ollama | `https://ollama.com/api` | `http://localhost:11434/api` |
+| OpenAI compatibility | `https://ollama.com/v1` | `http://localhost:11434/v1` |
+| Anthropic client base URL | `https://ollama.com` | `http://localhost:11434` |
 
-For running cloud models on **ollama.com**, the same API is available with the following base URL:
+The Anthropic client appends `/v1/messages` to its base URL.
 
-```
-https://ollama.com/api
-```
+Cloud requests need an API key. Local requests do not. To use cloud models through your local server, [sign in to Ollama](/api/authentication#signing-in).
 
-## Example request
+Creating or deleting models requires a local Ollama server. For supported API features, see [OpenAI compatibility](/api/openai-compatibility) and [Anthropic compatibility](/api/anthropic-compatibility).
 
-Once Ollama is running, its API is automatically available and can be accessed via `curl`:
+## Ollama API example
+
+Set `OLLAMA_API_KEY` to your [API key](https://ollama.com/settings/keys), then call a cloud model:
 
 ```shell
-curl http://localhost:11434/api/generate -d '{
-  "model": "gemma3",
-  "prompt": "Why is the sky blue?"
-}'
+curl https://ollama.com/api/chat \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma4:31b",
+    "messages": [{"role": "user", "content": "Why is the sky blue?"}],
+    "stream": false
+  }'
 ```
+
+Read the answer from `message.content`. For local inference, use `http://localhost:11434/api/chat` with a downloaded model and omit the authorization header.
 
 ## Libraries
 
-Ollama has official libraries for Python and JavaScript:
+Use Ollama's official libraries with either a local server or the hosted API:
 
 - [Python](https://github.com/ollama/ollama-python)
 - [JavaScript](https://github.com/ollama/ollama-js)
 
-Several community-maintained libraries are available for Ollama. For a full list, see the [Ollama GitHub repository](https://github.com/ollama/ollama?tab=readme-ov-file#libraries-1).
+For direct cloud access, set the host to `https://ollama.com` and supply your API key in the `Authorization: Bearer` header.
+
+Browse [community libraries](https://github.com/ollama/ollama?tab=readme-ov-file#libraries--sdks).
 
 ## Versioning
 

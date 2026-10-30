@@ -124,12 +124,14 @@ func TestFunctionGemmaParser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
+						Index:     0,
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
+						Index:     1,
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"city": "London"}),
 					},
@@ -345,12 +347,14 @@ func TestFunctionGemmaParser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
+						Index:     0,
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
+						Index:     1,
 						Name:      "get_time",
 						Arguments: testArgs(map[string]any{"timezone": "UTC"}),
 					},
@@ -372,12 +376,14 @@ func TestFunctionGemmaParser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
+						Index:     0,
 						Name:      "first",
 						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
+						Index:     1,
 						Name:      "second",
 						Arguments: api.NewToolCallFunctionArguments(),
 					},

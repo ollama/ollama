@@ -7,12 +7,17 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 var (
 	imStartTag = "<|im_start|>"
 	imEndTag   = "<|im_end|>"
 )
+
+func (r *Qwen3CoderRenderer) LeadingBOS() string {
+	return ""
+}
 
 // renderAdditionalKeys renders all JSON fields except the ones in handledKeys
 // This follows the same approach from the reference implementation, which gives
@@ -235,4 +240,8 @@ func formatToolDefinitionType(tp api.PropertyType) string {
 	}
 
 	return string(jsonBytes)
+}
+
+func (r *Qwen3CoderRenderer) Thinking() *model.Thinking {
+	return &model.Thinking{Values: []any{false}, Default: false}
 }

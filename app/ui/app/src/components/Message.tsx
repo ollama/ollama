@@ -273,7 +273,7 @@ function ToolRoleContent({
     );
   }
   return (
-    // collapsable tool result with raw json
+    // collapsible tool result with raw json
     <div className="space-y-2">
       {content && !rawToolResult && (
         <pre className="text-xs whitespace-pre-wrap overflow-x-auto bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 p-2 rounded-md max-h-40">
@@ -536,7 +536,7 @@ function ToolCallDisplay({
     let args: Record<string, unknown> | null = null;
     try {
       args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-    } catch (e) {
+    } catch {
       args = null;
     }
     const query = args && typeof args.query === "string" ? args.query : "";
@@ -562,7 +562,7 @@ function ToolCallDisplay({
     let args: Record<string, unknown> | null = null;
     try {
       args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-    } catch (e) {
+    } catch {
       args = null;
     }
     const url = args && typeof args.url === "string" ? args.url : "";

@@ -414,7 +414,10 @@ export class Settings {
     ThinkLevel: string;
     SelectedModel: string;
     SidebarOpen: boolean;
+    LastHomeView: string;
+    OnboardingVersion: number;
     AutoUpdateEnabled: boolean;
+    ClaudeDesktopUsed: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -432,7 +435,10 @@ export class Settings {
         this.ThinkLevel = source["ThinkLevel"];
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
+        this.LastHomeView = source["LastHomeView"];
+        this.OnboardingVersion = source["OnboardingVersion"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
+        this.ClaudeDesktopUsed = source["ClaudeDesktopUsed"];
     }
 }
 export class SettingsResponse {
@@ -550,14 +556,12 @@ export class Error {
     }
 }
 export class ModelUpstreamResponse {
-    digest?: string;
-    pushTime: number;
+    stale: boolean;
     error?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
-        this.digest = source["digest"];
-        this.pushTime = source["pushTime"];
+        this.stale = source["stale"];
         this.error = source["error"];
     }
 }

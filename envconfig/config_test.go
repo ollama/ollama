@@ -52,6 +52,37 @@ func TestHost(t *testing.T) {
 	}
 }
 
+func TestConnectableHost(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect string
+	}{
+		"empty":                    {"", "http://127.0.0.1:11434"},
+		"localhost":                {"127.0.0.1", "http://127.0.0.1:11434"},
+		"localhost and port":       {"127.0.0.1:1234", "http://127.0.0.1:1234"},
+		"ipv4 unspecified":         {"0.0.0.0", "http://127.0.0.1:11434"},
+		"ipv4 unspecified + port":  {"0.0.0.0:1234", "http://127.0.0.1:1234"},
+		"ipv6 unspecified":         {"[::]", "http://[::1]:11434"},
+		"ipv6 unspecified + port":  {"[::]:1234", "http://[::1]:1234"},
+		"ipv6 localhost":           {"[::1]", "http://[::1]:11434"},
+		"ipv6 localhost + port":    {"[::1]:1234", "http://[::1]:1234"},
+		"specific address":         {"192.168.1.5", "http://192.168.1.5:11434"},
+		"specific address + port":  {"192.168.1.5:8080", "http://192.168.1.5:8080"},
+		"hostname":                 {"example.com", "http://example.com:11434"},
+		"hostname and port":        {"example.com:1234", "http://example.com:1234"},
+		"https unspecified + port": {"https://0.0.0.0:4321", "https://127.0.0.1:4321"},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_HOST", tt.value)
+			if host := ConnectableHost(); host.String() != tt.expect {
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
+			}
+		})
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string

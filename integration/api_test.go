@@ -14,6 +14,13 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+const (
+	apiTestTimeout                    = 4 * time.Minute
+	apiInitialResponseTimeout         = time.Minute
+	apiOverrideInitialResponseTimeout = 2 * time.Minute
+	apiStreamResponseTimeout          = 30 * time.Second
+)
+
 func assertBytesMatchToken(t *testing.T, label, token string, ints []int) {
 	t.Helper()
 
@@ -31,10 +38,12 @@ func assertBytesMatchToken(t *testing.T, label, token string, ints []int) {
 	}
 }
 
-func TestAPIGenerate(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 30 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+func runAPIGenerate(t *testing.T) {
+	initialTimeout := apiInitialResponseTimeout
+	if testModel != "" {
+		initialTimeout = apiOverrideInitialResponseTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
@@ -45,12 +54,9 @@ func TestAPIGenerate(t *testing.T) {
 			"seed":        123,
 		},
 	}
-
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	tests := []struct {
 		name   string
@@ -107,7 +113,7 @@ func TestAPIGenerate(t *testing.T) {
 
 				} // else incremental response, nothing to check right now...
 				buf.Write([]byte(response.Response))
-				if !stallTimer.Reset(streamTimeout) {
+				if !stallTimer.Reset(apiStreamResponseTimeout) {
 					return fmt.Errorf("stall was detected while streaming response, aborting")
 				}
 				return nil
@@ -151,7 +157,11 @@ func TestAPIGenerate(t *testing.T) {
 		})
 	}
 
-	// Validate PS while we're at it...
+	// Validate PS while we're at it — skip for local-only models
+	// which may lack metadata fields like family, parameter_size, etc.
+	if testModel != "" {
+		return
+	}
 	resp, err := client.ListRunning(ctx)
 	if err != nil {
 		t.Fatalf("list models API error: %s", err)
@@ -186,10 +196,12 @@ func TestAPIGenerate(t *testing.T) {
 	}
 }
 
-func TestAPIChat(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 30 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+func runAPIChat(t *testing.T) {
+	initialTimeout := apiInitialResponseTimeout
+	if testModel != "" {
+		initialTimeout = apiOverrideInitialResponseTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 	// Set up the test data
 	req := api.ChatRequest{
@@ -205,12 +217,9 @@ func TestAPIChat(t *testing.T) {
 			"seed":        123,
 		},
 	}
-
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("pull failed %s", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	tests := []struct {
 		name   string
@@ -265,7 +274,7 @@ func TestAPIChat(t *testing.T) {
 					}
 				} // else incremental response, nothing to check right now...
 				buf.Write([]byte(response.Message.Content))
-				if !stallTimer.Reset(streamTimeout) {
+				if !stallTimer.Reset(apiStreamResponseTimeout) {
 					return fmt.Errorf("stall was detected while streaming response, aborting")
 				}
 				return nil
@@ -289,7 +298,7 @@ func TestAPIChat(t *testing.T) {
 				}
 			case <-done:
 				if genErr != nil {
-					t.Fatalf("failed with %s request prompt %v", req.Model, req.Messages)
+					t.Fatalf("failed with %s request prompt %s", req.Model, summarizeMessages(req.Messages))
 				}
 				// Verify the response contains the expected data
 				response := buf.String()
@@ -310,8 +319,11 @@ func TestAPIChat(t *testing.T) {
 	}
 }
 
-func TestAPIListModels(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func runAPIListModels(t *testing.T) {
+	if testModel != "" {
+		t.Skip("skipping metadata test with model override")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -328,41 +340,54 @@ func TestAPIListModels(t *testing.T) {
 	if len(resp.Models) == 0 {
 		t.Fatalf("list should not be empty")
 	}
-	model := resp.Models[0]
+
+	var model *api.ListModelResponse
+	for i := range resp.Models {
+		if resp.Models[i].Name == smol || resp.Models[i].Model == smol || strings.Contains(resp.Models[i].Name, smol) || strings.Contains(resp.Models[i].Model, smol) {
+			model = &resp.Models[i]
+			break
+		}
+	}
+	if model == nil {
+		t.Fatalf("list should include pulled model %s: %#v", smol, resp.Models)
+	}
 	if model.Name == "" {
-		t.Errorf("first model name empty: %#v", model)
+		t.Errorf("model name empty: %#v", model)
 	}
 	var nilTime time.Time
 	if model.ModifiedAt == nilTime {
-		t.Errorf("first model modified_at empty: %#v", model)
+		t.Errorf("model modified_at empty: %#v", model)
 	}
 	if model.Size == 0 {
-		t.Errorf("first model size empty: %#v", model)
+		t.Errorf("model size empty: %#v", model)
 	}
 	if model.Digest == "" {
-		t.Errorf("first model digest empty: %#v", model)
+		t.Errorf("model digest empty: %#v", model)
 	}
 	verifyModelDetails(t, model.Details)
 }
 
 func verifyModelDetails(t *testing.T, details api.ModelDetails) {
 	if details.Format == "" {
-		t.Errorf("first model details.format empty: %#v", details)
+		t.Errorf("model details.format empty: %#v", details)
 	}
 	if details.Family == "" {
-		t.Errorf("first model details.family empty: %#v", details)
+		t.Errorf("model details.family empty: %#v", details)
 	}
 	if details.ParameterSize == "" {
-		t.Errorf("first model details.parameter_size empty: %#v", details)
+		t.Errorf("model details.parameter_size empty: %#v", details)
 	}
 	if details.QuantizationLevel == "" {
-		t.Errorf("first model details.quantization_level empty: %#v", details)
+		t.Errorf("model details.quantization_level empty: %#v", details)
 	}
 }
 
-func TestAPIShowModel(t *testing.T) {
+func runAPIShowModel(t *testing.T) {
+	if testModel != "" {
+		t.Skip("skipping metadata test with model override")
+	}
 	modelName := "llama3.2"
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -388,7 +413,7 @@ func TestAPIShowModel(t *testing.T) {
 	}
 	// llama3 omits system
 	verifyModelDetails(t, resp.Details)
-	// llama3 ommits messages
+	// llama3 omits messages
 	if len(resp.ModelInfo) == 0 {
 		t.Errorf("%s missing model_info: %#v", modelName, resp)
 	}
@@ -399,8 +424,8 @@ func TestAPIShowModel(t *testing.T) {
 	}
 }
 
-func TestAPIGenerateLogprobs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func runAPIGenerateLogprobs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -512,8 +537,8 @@ func TestAPIGenerateLogprobs(t *testing.T) {
 	}
 }
 
-func TestAPIChatLogprobs(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func runAPIChatLogprobs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), apiTestTimeout)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)

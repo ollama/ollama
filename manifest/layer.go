@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 type Layer struct {
@@ -19,6 +20,20 @@ type Layer struct {
 
 const (
 	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
+	MediaTypeImageJSON   = "application/vnd.ollama.image.json"
+	MediaTypeImageDraft  = "application/vnd.ollama.image.draft"
+
+	MediaTypeImageModel     = "application/vnd.ollama.image.model"
+	MediaTypeImageProjector = "application/vnd.ollama.image.projector"
+	MediaTypeImageAdapter   = "application/vnd.ollama.image.adapter"
+	MediaTypeImageEmbed     = "application/vnd.ollama.image.embed"
+	MediaTypeImageTemplate  = "application/vnd.ollama.image.template"
+	MediaTypeImageSystem    = "application/vnd.ollama.image.system"
+	MediaTypeImageLicense   = "application/vnd.ollama.image.license"
+	MediaTypeImageParams    = "application/vnd.ollama.image.params"
+	MediaTypeImageMessages  = "application/vnd.ollama.image.messages"
+
+	MediaTypeImageConfig = "application/vnd.docker.container.image.v1+json"
 )
 
 func NewLayer(r io.Reader, mediatype string) (Layer, error) {
@@ -60,6 +75,53 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 			return Layer{}, err
 		}
 	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
+
+	return Layer{
+		MediaType: mediatype,
+		Digest:    digest,
+		Size:      n,
+		Status:    fmt.Sprintf("%s %s", status, digest),
+	}, nil
+}
+
+func NewLayerFromFile(path, mediatype string) (Layer, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Layer{}, err
+	}
+
+	sha256sum := sha256.New()
+	n, err := io.Copy(sha256sum, f)
+	if err != nil {
+		f.Close()
+		return Layer{}, err
+	}
+	if err := f.Close(); err != nil {
+		return Layer{}, err
+	}
+
+	digest := fmt.Sprintf("sha256:%x", sha256sum.Sum(nil))
+	blob, err := BlobsPath(digest)
+	if err != nil {
+		return Layer{}, err
+	}
+
+	status := "using existing layer"
+	if _, err := os.Stat(blob); err != nil {
+		status = "creating new layer"
+		if err := os.Rename(path, blob); err != nil {
+			return Layer{}, err
+		}
+		if err := os.Chmod(blob, 0o644); err != nil {
+			return Layer{}, err
+		}
+	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
 
 	return Layer{
 		MediaType: mediatype,
@@ -83,6 +145,9 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 	if err != nil {
 		return Layer{}, err
 	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
 
 	return Layer{
 		MediaType: mediatype,
@@ -91,6 +156,11 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		From:      from,
 		Status:    fmt.Sprintf("using existing layer %s", digest),
 	}, nil
+}
+
+func touchLayer(path string) error {
+	now := time.Now()
+	return os.Chtimes(path, now, now)
 }
 
 func (l *Layer) Open() (io.ReadSeekCloser, error) {
@@ -111,25 +181,6 @@ func (l *Layer) Remove() error {
 		return nil
 	}
 
-	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
-	ms, err := Manifests(true)
-	if err != nil {
-		return err
-	}
-
-	for _, m := range ms {
-		for _, layer := range append(m.Layers, m.Config) {
-			if layer.Digest == l.Digest {
-				// something is using this layer
-				return nil
-			}
-		}
-	}
-
-	blob, err := BlobsPath(l.Digest)
-	if err != nil {
-		return err
-	}
-
-	return os.Remove(blob)
+	_, err := RemoveUnreferencedBlobs(l.Digest)
+	return err
 }

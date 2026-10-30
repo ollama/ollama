@@ -1,0 +1,249 @@
+---
+title: Decision
+description: Classify text, estimate yes/no probabilities, and score ordered criteria.
+---
+
+Use System One to classify text, answer yes/no questions, or score text against a rubric.
+
+See the [full list of decision models](https://ollama.com/search?c=decision).
+
+## Setup
+
+Start [Ollama](/quickstart) v0.35.0 or later, then download [Nimble](https://ollama.com/library/nimble):
+
+```shell setup.sh
+ollama pull nimble
+```
+
+Nimble, Tev1, [Clef](https://ollama.com/library/clef), and [Clef Flash](https://ollama.com/library/clef-flash) are decision models. The Clef models can also judge images and require v0.35.1 or later.
+
+Local requests do not need an API key.
+
+## Ask from the terminal
+
+`ollama run` answers questions about a state: text or JSON, piped in or given after the model name. Ask each question with `--ask`. It is answered yes or no, unless you follow it with labels to choose from (`--choice`) or levels to score it on (`--level`).
+
+```shell examples.sh
+# Ask a yes/no question
+ollama run nimble --ask "Is a refund being requested?" < ticket.txt
+
+# Choose a label
+ollama run nimble --ask "Which team should handle this?" \
+  --choice billing="Payments and refunds" \
+  --choice technical="Software problems" < ticket.txt
+
+# Score on a scale, from the lowest level to the highest
+ollama run nimble --ask "How urgent is this?" \
+  --level "Routine" \
+  --level "Soon" \
+  --level "Immediate" < ticket.txt
+
+# Ask several questions at once
+ollama run nimble --ask "Is a refund being requested?" \
+  --ask "Which team should handle this?" \
+  --choice billing="Payments and refunds" \
+  --choice technical="Software problems" \
+  --ask "How urgent is this?" \
+  --level "Routine" \
+  --level "Soon" \
+  --level "Immediate" < ticket.txt
+
+# Use a JSON file as the state, and refer to its fields in backticks
+ollama run nimble --ask 'Is a refund being requested in `body`?' < ticket.json
+
+# Judge an image with Clef
+ollama run clef ./receipt.png --ask "Is this a restaurant receipt?"
+
+# Print the full response
+ollama run nimble --ask "Is a refund being requested?" --format json < ticket.txt
+```
+
+Each answer prints on its own line. A yes/no answer shows the likelier answer and its probability, a label shows its probability, and a score shows the most likely level, its probability, and the score on the scale:
+
+```text
+Is a refund being requested?    yes      97%
+Which team should handle this?  billing  91%
+How urgent is this?             Soon     64%  1.2 / 2
+```
+
+Without a state, `ollama run nimble` opens an interactive prompt. Your first message is the state, and after that each line is a yes/no question about it, so you can paste several at once; `/clear` starts over. With `--ask`, each message is a new state to answer those questions about.
+
+## Choose a label
+
+Put your input in `state` and describe the possible answers in `criteria`:
+
+```shell choice.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nimble",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "label": {
+        "type": "choice",
+        "instructions": "Which label fits this ticket?",
+        "criteria": {
+          "billing": "Payments and refunds",
+          "bug": "Software errors",
+          "account": "Login and account access"
+        }
+      }
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model": "nimble",
+  "answers": {
+    "label": {
+      "type": "choice",
+      "choice": "bug",
+      "probabilities": {"billing": 0.0125, "bug": 0.9781, "account": 0.0093},
+      "confidence": 0.8906
+    }
+  },
+  "usage": {"input_tokens": 174, "output_tokens": 1}
+}
+```
+
+## Judge an image
+
+[Clef](https://ollama.com/library/clef) and [Clef Flash](https://ollama.com/library/clef-flash) read images alongside the state. Send base64-encoded PNG, JPEG, or WebP files in `images`; they are shared by all questions, in request order. URLs and data URLs are not accepted. `state` is still required — it holds the context for the decision.
+
+```shell image.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef-flash",
+    "state": "A user took this screenshot and wants to know what it shows.",
+    "images": ["<base64-encoded image>"],
+    "questions": {
+      "has_ollama": {
+        "type": "noul",
+        "instructions": "Does this image contain Ollama?"
+      },
+      "app": {
+        "type": "choice",
+        "instructions": "Which application is shown in this screenshot?",
+        "criteria": {
+          "vscode": "Visual Studio Code",
+          "terminal": "A terminal emulator",
+          "browser": "A web browser",
+          "other": "A different application"
+        }
+      }
+    }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "model": "clef-flash",
+  "answers": {
+    "has_ollama": {"type": "noul", "noul": 0.959},
+    "app": {
+      "type": "choice",
+      "choice": "vscode",
+      "probabilities": {"vscode": 0.966, "other": 0.017, "browser": 0.010, "terminal": 0.007},
+      "confidence": 0.868
+    }
+  },
+  "usage": {"input_tokens": 677, "output_tokens": 0}
+}
+```
+
+## Use a cloud model
+
+[Clef](https://ollama.com/library/clef) also runs in [Ollama's cloud](/cloud) with a paid plan or purchased [usage credits](https://ollama.com/pricing). Add `:cloud` to the model name to send the request through a local Ollama server, v0.40.5 or later, signed in to ollama.com:
+
+```shell cloud.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef:cloud",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "urgent": {
+        "type": "noul",
+        "instructions": "Does this ticket need attention within the hour?"
+      }
+    }
+  }'
+```
+
+Or call ollama.com directly with an [API key](https://ollama.com/settings/keys):
+
+```shell cloud-direct.sh
+curl https://ollama.com/v1/systemone \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "clef",
+    "state": "Our checkout has returned 500 errors since 9am.",
+    "questions": {
+      "urgent": {
+        "type": "noul",
+        "instructions": "Does this ticket need attention within the hour?"
+      }
+    }
+  }'
+```
+
+Cloud requests accept up to 64 questions, named with up to 100 ASCII letters, digits, `_`, `.`, or `-`, and up to 4 images of at most 4 MiB and 16 megapixels each, 8 MiB in total. Input is limited to the model's 65,536-token context window; longer input is rejected. Usage is billed per input token at the [listed price](https://ollama.com/pricing).
+
+## Question types
+
+| Type | Criteria | Result |
+| --- | --- | --- |
+| `choice` | 2–26 named options with descriptions | The most likely option and each option's probability |
+| `noul` | Descriptions for `"false"` and `"true"` | The probability of `true`, from 0 to 1 |
+| `score` | 2–10 descriptions, ordered from lowest to highest | The probability-weighted average of the zero-based levels |
+
+For the urgency criteria below:
+
+```text
+score = 0 × P(Routine) + 1 × P(Soon) + 2 × P(Immediate)
+```
+
+For `choice` and `score`, `confidence` measures how strongly the model favors one answer over the others, from 0 to 1. A higher value does not guarantee the answer is correct.
+
+## Ask multiple questions
+
+Combine question types in one request. Here, both questions use the same ticket:
+
+```shell multiple.sh
+curl http://localhost:11434/v1/systemone \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "nimble",
+    "state": {"ticket": "I was charged twice. Please refund the extra payment."},
+    "questions": {
+      "refund": {
+        "type": "noul",
+        "instructions": "Is the customer requesting a refund?",
+        "criteria": {
+          "false": "No refund is requested",
+          "true": "The customer requests a refund"
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgently does this ticket need a response?",
+        "criteria": [
+          "Routine: no time pressure",
+          "Soon: a customer is inconvenienced",
+          "Immediate: a critical service is unavailable"
+        ]
+      }
+    }
+  }'
+```
+
+This returns a refund probability of `0.9989` and an urgency score of `0.8308` on the 0–2 scale (rounded). Results can vary with the model and configuration.
+
+See the [API reference](/api/systemone) for request fields, limits, errors, and token usage.

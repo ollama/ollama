@@ -69,12 +69,14 @@ get_weather(location="New York")</function_calls>`,
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
+						Index:     0,
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"location": "San Francisco"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
+						Index:     1,
 						Name:      "get_weather",
 						Arguments: testArgs(map[string]any{"location": "New York"}),
 					},

@@ -3,27 +3,81 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
+	"github.com/ollama/ollama/internal/onboarding"
 )
 
 type integration struct {
 	Models    []string          `json:"models"`
 	Aliases   map[string]string `json:"aliases,omitempty"`
 	Onboarded bool              `json:"onboarded,omitempty"`
+	AutoMode  *bool             `json:"automode,omitempty"`
 }
 
+// IntegrationConfig is the persisted config for one integration.
+type IntegrationConfig = integration
+
 type config struct {
-	Integrations  map[string]*integration `json:"integrations"`
-	LastModel     string                  `json:"last_model,omitempty"`
-	LastSelection string                  `json:"last_selection,omitempty"` // "run" or integration name
+	Integrations      map[string]*integration `json:"integrations"`
+	LastModel         string                  `json:"last_model,omitempty"`
+	LastSelection     string                  `json:"last_selection,omitempty"` // "run" or integration name
+	OnboardingVersion int                     `json:"onboarding_version,omitempty"`
+}
+
+func NeedsWelcome() (bool, error) {
+	if runtime.GOOS == "linux" {
+		return needsWelcomeInConfig()
+	}
+	state := onboarding.State{}
+	completed, err := state.Completed()
+	if completed {
+		return false, err
+	}
+	// Older apps recorded completion only in SQLite.
+	if onboarding.CompletedInApp() {
+		if err := state.Complete(); err != nil {
+			slog.Warn("could not share onboarding completion", "error", err)
+		}
+		return false, nil
+	}
+	return true, err
+}
+
+func CompleteWelcome() error {
+	if runtime.GOOS == "linux" {
+		return completeWelcomeInConfig()
+	}
+	return (onboarding.State{}).Complete()
+}
+
+// Linux keeps completion with CLI preferences; desktop platforms share the marker.
+func needsWelcomeInConfig() (bool, error) {
+	cfg, err := load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.OnboardingVersion < onboarding.CurrentVersion, nil
+}
+
+func completeWelcomeInConfig() error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	if cfg.OnboardingVersion >= onboarding.CurrentVersion {
+		return nil
+	}
+	cfg.OnboardingVersion = onboarding.CurrentVersion
+	return save(cfg)
 }
 
 func configPath() (string, error) {
@@ -124,7 +178,7 @@ func save(cfg *config) error {
 		return err
 	}
 
-	return writeWithBackup(path, data)
+	return fileutil.WriteWithBackup(path, data)
 }
 
 func SaveIntegration(appName string, models []string) error {
@@ -141,22 +195,47 @@ func SaveIntegration(appName string, models []string) error {
 	existing := cfg.Integrations[key]
 	var aliases map[string]string
 	var onboarded bool
+	var autoMode *bool
 	if existing != nil {
 		aliases = existing.Aliases
 		onboarded = existing.Onboarded
+		autoMode = existing.AutoMode
 	}
 
 	cfg.Integrations[key] = &integration{
 		Models:    models,
 		Aliases:   aliases,
 		Onboarded: onboarded,
+		AutoMode:  autoMode,
 	}
 
 	return save(cfg)
 }
 
-// integrationOnboarded marks an integration as onboarded in ollama's config.
-func integrationOnboarded(appName string) error {
+// SaveIntegrationAutoMode saves an integration's auto mode preference while
+// preserving its models, aliases, and onboarding state.
+func SaveIntegrationAutoMode(appName string, enabled bool) error {
+	if appName == "" {
+		return errors.New("app name cannot be empty")
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	if existing == nil {
+		existing = &integration{}
+	}
+	existing.AutoMode = &enabled
+	cfg.Integrations[key] = existing
+	return save(cfg)
+}
+
+// MarkIntegrationOnboarded marks an integration as onboarded in Ollama's config.
+func MarkIntegrationOnboarded(appName string) error {
 	cfg, err := load()
 	if err != nil {
 		return err
@@ -174,7 +253,7 @@ func integrationOnboarded(appName string) error {
 
 // IntegrationModel returns the first configured model for an integration, or empty string if not configured.
 func IntegrationModel(appName string) string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return ""
 	}
@@ -183,7 +262,7 @@ func IntegrationModel(appName string) string {
 
 // IntegrationModels returns all configured models for an integration, or nil.
 func IntegrationModels(appName string) []string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return nil
 	}
@@ -228,31 +307,8 @@ func SetLastSelection(selection string) error {
 	return save(cfg)
 }
 
-// ModelExists checks if a model exists on the Ollama server.
-func ModelExists(ctx context.Context, name string) bool {
-	if name == "" {
-		return false
-	}
-	if isCloudModelName(name) {
-		return true
-	}
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return false
-	}
-	models, err := client.List(ctx)
-	if err != nil {
-		return false
-	}
-	for _, m := range models.Models {
-		if m.Name == name || strings.HasPrefix(m.Name, name+":") {
-			return true
-		}
-	}
-	return false
-}
-
-func loadIntegration(appName string) (*integration, error) {
+// LoadIntegration returns the saved config for one integration.
+func LoadIntegration(appName string) (*integration, error) {
 	cfg, err := load()
 	if err != nil {
 		return nil, err
@@ -266,7 +322,8 @@ func loadIntegration(appName string) (*integration, error) {
 	return integrationConfig, nil
 }
 
-func saveAliases(appName string, aliases map[string]string) error {
+// SaveAliases replaces the saved aliases for one integration.
+func SaveAliases(appName string, aliases map[string]string) error {
 	if appName == "" {
 		return errors.New("app name cannot be empty")
 	}

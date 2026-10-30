@@ -10,6 +10,7 @@ interface CopyButtonProps {
   showLabels?: boolean;
   className?: string;
   title?: string;
+  onCopy?: () => void;
 }
 
 const CopyButton: React.FC<CopyButtonProps> = ({
@@ -20,6 +21,7 @@ const CopyButton: React.FC<CopyButtonProps> = ({
   showLabels = false,
   className = "",
   title = "",
+  onCopy,
 }) => {
   const [isCopied, setIsCopied] = useState(false);
 
@@ -48,12 +50,14 @@ const CopyButton: React.FC<CopyButtonProps> = ({
       }
 
       setIsCopied(true);
+      onCopy?.();
       setTimeout(() => setIsCopied(false), 2000);
     } catch (error) {
       console.error("Clipboard API failed, falling back to plain text", error);
       try {
         await navigator.clipboard.writeText(content);
         setIsCopied(true);
+        onCopy?.();
         setTimeout(() => setIsCopied(false), 2000);
       } catch (fallbackError) {
         console.error("Fallback copy also failed:", fallbackError);
@@ -64,7 +68,7 @@ const CopyButton: React.FC<CopyButtonProps> = ({
   const iconSize = size === "sm" ? "h-3 w-3" : "h-7 w-7";
   const baseClasses =
     size === "sm"
-      ? `text-xs px-4 py-2 z-10 rounded-lg hover:cursor-pointer ${className}`
+      ? `text-xs px-4 py-2 z-10 cursor-pointer rounded-lg ${className}`
       : `${iconSize} px-1 py-0.5 text-xs cursor-pointer rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center justify-center ${className}`;
 
   const icon = isCopied ? (
