@@ -4079,6 +4079,7 @@ func TestPredictKVCache(t *testing.T) {
 		kv          gguftest.KV
 		numCtx      int
 		numParallel int
+		numBatch    int
 		cacheType   string
 		want        uint64
 	}{
@@ -4142,6 +4143,19 @@ func TestPredictKVCache(t *testing.T) {
 			want: (4*8+4*8)*1024*34/32 + (2*16+2*16)*1024*34/32,
 		},
 		{
+			// An explicit num_batch reaches llama-server as -ub, so the
+			// window holds it: 256 + 8192 = 8448 cells.
+			name: "explicit num_batch widens the window", kv: sliding,
+			numCtx: 32768, numParallel: 1, numBatch: 8192, cacheType: "q8_0",
+			want: (4*8+4*8)*8448*34/32 + (2*16+2*16)*32768*34/32,
+		},
+		{
+			// A num_batch below the automatic maximum changes nothing.
+			name: "small num_batch keeps the automatic window", kv: sliding,
+			numCtx: 32768, numParallel: 1, numBatch: 512, cacheType: "q8_0",
+			want: (4*8+4*8)*2304*34/32 + (2*16+2*16)*32768*34/32,
+		},
+		{
 			name: "scalar pattern sizes every layer as full",
 			kv: with(sliding, gguftest.KV{
 				"gemma4.attention.sliding_window_pattern": uint32(2),
@@ -4166,7 +4180,7 @@ func TestPredictKVCache(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			kv := loadTestGGUF(t, tc.kv).KV()
-			got := predictKVCache(kv, tc.numCtx, tc.numParallel, tc.cacheType)
+			got := predictKVCache(kv, tc.numCtx, tc.numParallel, tc.numBatch, tc.cacheType)
 			if got != tc.want {
 				t.Errorf("predictKVCache() = %d, want %d", got, tc.want)
 			}
@@ -4176,9 +4190,10 @@ func TestPredictKVCache(t *testing.T) {
 
 // TestPredictKVCacheGemma4 checks the estimate against what llama-server
 // allocated for gemma4:31b at 262144 context with a q8_0 cache and -ub 2048,
-// the largest batch the estimate assumes: 10880 MiB for the 10 full layers
-// plus 1275 MiB for the 50 sliding layers (3072 cells). The estimate may not
-// fall below that, and should stay close to it.
+// the largest automatic batch: 10880 MiB for the 10 full layers plus 1275 MiB
+// for the 50 sliding layers (3072 cells). The estimate may not fall below
+// that, and should stay close to it. With an explicit num_batch of 8192 the
+// sliding cache grows to 9216 cells, 3825 MiB, and the estimate must follow.
 func TestPredictKVCacheGemma4(t *testing.T) {
 	headCountKV := make([]uint32, 60)
 	pattern := make([]bool, 60)
@@ -4205,11 +4220,17 @@ func TestPredictKVCacheGemma4(t *testing.T) {
 	}).KV()
 
 	const measured = (10880 + 1275) << 20
-	got := predictKVCache(kv, 262144, 1, "q8_0")
+	got := predictKVCache(kv, 262144, 1, 0, "q8_0")
 	if got < measured {
 		t.Errorf("predicted %d MiB, below the %d MiB llama-server allocated", got>>20, measured>>20)
 	}
 	if got > measured*11/10 {
 		t.Errorf("predicted %d MiB, more than 10%% above the %d MiB llama-server allocated", got>>20, measured>>20)
+	}
+
+	const measuredWideBatch = (10880 + 3825) << 20
+	got = predictKVCache(kv, 262144, 1, 8192, "q8_0")
+	if got != measuredWideBatch {
+		t.Errorf("with num_batch 8192 predicted %d MiB, want %d MiB", got>>20, measuredWideBatch>>20)
 	}
 }

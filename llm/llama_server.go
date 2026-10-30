@@ -2838,18 +2838,21 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	return total, vram
 }
 
-// llamaServerMaxUbatch is the largest physical batch (-ub) Ollama passes to
-// llama-server. A sliding-window cache holds the window plus one batch, so
-// sizing it with the largest batch keeps the estimate from falling short.
+// llamaServerMaxUbatch is the largest physical batch (-ub) the automatic
+// batch selection passes to llama-server. A sliding-window cache holds the
+// window plus one batch, so the window is sized with the larger of this and
+// an explicit num_batch, which appendBatchArgs passes through as -ub.
 const llamaServerMaxUbatch = 2048
 
 // PredictServerVRAM estimates VRAM usage for a model without spawning llama-server.
 // Weights use the model file size, which also covers a projector stored in the
 // same file. The KV cache follows llama.cpp's per-layer allocation. The compute
-// graph is not counted; the scheduler's headroom absorbs it.
-func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel int) uint64 {
+// graph is not counted; the scheduler's headroom absorbs it. numBatch is the
+// request's num_batch; the automatic batch, chosen later, never exceeds
+// llamaServerMaxUbatch.
+func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel, numBatch int) uint64 {
 	weights := modelFileSize(modelPath, f)
-	kvCache := predictKVCache(f.KV(), numCtx, numParallel, envconfig.KvCacheType())
+	kvCache := predictKVCache(f.KV(), numCtx, numParallel, numBatch, envconfig.KvCacheType())
 
 	return weights + kvCache
 }
@@ -2859,7 +2862,7 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx, numParallel int)
 // no KV heads (recurrent layers in hybrid models) store nothing, layers marked
 // in sliding_window_pattern store only the window, and non-causal models
 // (embedding encoders) keep no cache at all.
-func predictKVCache(kv *gguf.Metadata, numCtx, numParallel int, cacheType string) uint64 {
+func predictKVCache(kv *gguf.Metadata, numCtx, numParallel, numBatch int, cacheType string) uint64 {
 	if !kv.Bool("attention.causal", true) {
 		return 0
 	}
@@ -2885,7 +2888,8 @@ func predictKVCache(kv *gguf.Metadata, numCtx, numParallel int, cacheType string
 	}
 
 	cells := uint64(max(numCtx, 0))
-	swaCells := min(cells, uint64(max(numParallel, 1))*(window+llamaServerMaxUbatch))
+	ubatch := uint64(max(llamaServerMaxUbatch, numBatch))
+	swaCells := min(cells, uint64(max(numParallel, 1))*(window+ubatch))
 	swaCells = (swaCells + 255) / 256 * 256
 
 	widthK := make([]uint64, layers)
