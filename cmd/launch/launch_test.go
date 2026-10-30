@@ -125,6 +125,7 @@ func TestResolveRunModelsUsesThinkingDiscovery(t *testing.T) {
 	}{
 		{"local custom CLI model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", false, []any{false, true, "medium"}},
 		{"local custom desktop model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "chatgpt", false, []any{false, true, "medium"}},
+		{"local custom OpenCode model", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "opencode", false, []any{false, true, "medium"}},
 		{"show overrides recommendation", `{"thinking":{"values":[false,true,"medium"],"default":true}}`, "codex", true, []any{false, true, "medium"}},
 		{"invalid metadata preserves recommendation", `{"thinking":{"values":[false,true],"default":"missing"}}`, "codex", true, []any{false, true}},
 		{"missing metadata preserves recommendation", `{}`, "codex", true, []any{false, true}},
