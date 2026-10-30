@@ -1021,7 +1021,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	var encoding string
 	switch m.Config.Renderer {
-	case "tev1", "clef", "strands", "kev", "pplx", "d3", "d1":
+	case "tev1", "clef", "strands", "kev", "pplx", "d3", "autotrust-decision", "d1":
 		encoding = m.Config.Renderer
 	}
 	compiled, err := decision.Compile(req, encoding)
