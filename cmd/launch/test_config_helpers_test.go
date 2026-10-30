@@ -1,0 +1,108 @@
+package launch
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/ollama/ollama/cmd/config"
+)
+
+var (
+	integrations       map[string]Runner
+	integrationAliases map[string]bool
+	integrationOrder   = launcherIntegrationOrder
+)
+
+func init() {
+	integrations = buildTestIntegrations()
+	integrationAliases = buildTestIntegrationAliases()
+	lookupServerModelMetadata = func(string) (serverModelMetadata, bool) { return serverModelMetadata{}, false }
+}
+
+func useServerContextLookup(t *testing.T) {
+	old := lookupServerModelMetadata
+	lookupServerModelMetadata = cachedServerModelMetadata
+	serverModelMetadataCache.Clear()
+	serverModelMetadataUnavailable.Store(false)
+	t.Cleanup(func() {
+		lookupServerModelMetadata = old
+		serverModelMetadataUnavailable.Store(false)
+	})
+}
+
+func buildTestIntegrations() map[string]Runner {
+	result := make(map[string]Runner, len(integrationSpecsByName))
+	for name, spec := range integrationSpecsByName {
+		result[strings.ToLower(name)] = spec.Runner
+	}
+	return result
+}
+
+func buildTestIntegrationAliases() map[string]bool {
+	result := make(map[string]bool)
+	for _, spec := range integrationSpecs {
+		for _, alias := range spec.Aliases {
+			result[strings.ToLower(alias)] = true
+		}
+	}
+	return result
+}
+
+func setTestHome(t *testing.T, dir string) {
+	t.Helper()
+	setLaunchTestHome(t, dir)
+	oldNativeCatalog := codexAppNativeCatalog
+	codexAppNativeCatalog = func(string) ([]byte, error) {
+		return []byte(`{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol","description":"Native Codex test model","priority":10,"supported_in_api":true,"base_instructions":"You are Codex, an agent based on GPT-5. Work carefully."}]}`), nil
+	}
+	oldOpenCodeReadConfig := openCodeReadConfig
+	openCodeReadConfig = func() ([]byte, error) { return []byte(`{}`), nil }
+	t.Cleanup(func() {
+		codexAppNativeCatalog = oldNativeCatalog
+		openCodeReadConfig = oldOpenCodeReadConfig
+	})
+}
+
+func testLaunchModels(names ...string) []LaunchModel {
+	return launchModelsFromNames(names)
+}
+
+func SaveIntegration(appName string, models []string) error {
+	return config.SaveIntegration(appName, models)
+}
+
+func LoadIntegration(appName string) (*config.IntegrationConfig, error) {
+	return config.LoadIntegration(appName)
+}
+
+func SaveAliases(appName string, aliases map[string]string) error {
+	return config.SaveAliases(appName, aliases)
+}
+
+func LastModel() string {
+	return config.LastModel()
+}
+
+func SetLastModel(model string) error {
+	return config.SetLastModel(model)
+}
+
+func LastSelection() string {
+	return config.LastSelection()
+}
+
+func SetLastSelection(selection string) error {
+	return config.SetLastSelection(selection)
+}
+
+func IntegrationModel(appName string) string {
+	return config.IntegrationModel(appName)
+}
+
+func IntegrationModels(appName string) []string {
+	return config.IntegrationModels(appName)
+}
+
+func integrationOnboarded(appName string) error {
+	return config.MarkIntegrationOnboarded(appName)
+}

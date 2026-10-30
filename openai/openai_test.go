@@ -1,733 +1,1341 @@
 package openai
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 )
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
 
 const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-var (
-	False = false
-	True  = true
-)
+func testIntPtr(v int) *int {
+	return &v
+}
 
-func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		err := json.Unmarshal(bodyBytes, capturedRequest)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusInternalServerError, "failed to unmarshal request")
-		}
-		c.Next()
+func TestFromChatRequest_Basic(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	if result.Messages[0].Role != "user" || result.Messages[0].Content != "Hello" {
+		t.Errorf("unexpected message: %+v", result.Messages[0])
 	}
 }
 
-func TestChatMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.ChatRequest
-		err  ErrorResponse
+func TestFromChatRequest_ReasoningEffort(t *testing.T) {
+	effort := func(s string) *string { return &s }
+
+	cases := []struct {
+		name    string
+		effort  *string
+		want    any // expected ThinkValue.Value; nil means req.Think should be nil
+		wantErr bool
+	}{
+		{name: "unset", effort: nil, want: nil},
+		{name: "high", effort: effort("high"), want: "high"},
+		{name: "medium", effort: effort("medium"), want: "medium"},
+		{name: "low", effort: effort("low"), want: "low"},
+		{name: "max", effort: effort("max"), want: "max"},
+		{name: "minimal clamps to low", effort: effort("minimal"), want: "low"},
+		{name: "xhigh clamps to max", effort: effort("xhigh"), want: "max"},
+		{name: "ultra clamps to max", effort: effort("ultra"), want: "max"},
+		{name: "none disables", effort: effort("none"), want: false},
+		{name: "invalid", effort: effort("extreme"), wantErr: true},
 	}
 
-	var capturedRequest *api.ChatRequest
-
-	testCases := []testCase{
-		{
-			name: "chat handler",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with options",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				],
-				"stream":            true,
-				"max_tokens":        999,
-				"seed":              123,
-				"stop":              ["\n", "stop"],
-				"temperature":       3.0,
-				"frequency_penalty": 4.0,
-				"presence_penalty":  5.0,
-				"top_p":             6.0,
-				"response_format":   {"type": "json_object"}
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-				Options: map[string]any{
-					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
-					"seed":              123.0,
-					"stop":              []any{"\n", "stop"},
-					"temperature":       3.0,
-					"frequency_penalty": 4.0,
-					"presence_penalty":  5.0,
-					"top_p":             6.0,
-				},
-				Format: json.RawMessage(`"json"`),
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler with streaming usage",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "Hello"}
-				],
-				"stream":            true,
-				"stream_options":    {"include_usage": true},
-				"max_tokens":        999,
-				"seed":              123,
-				"stop":              ["\n", "stop"],
-				"temperature":       3.0,
-				"frequency_penalty": 4.0,
-				"presence_penalty":  5.0,
-				"top_p":             6.0,
-				"response_format":   {"type": "json_object"}
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-				},
-				Options: map[string]any{
-					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
-					"seed":              123.0,
-					"stop":              []any{"\n", "stop"},
-					"temperature":       3.0,
-					"frequency_penalty": 4.0,
-					"presence_penalty":  5.0,
-					"top_p":             6.0,
-				},
-				Format: json.RawMessage(`"json"`),
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler with image content",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "Hello"
-							},
-							{
-								"type": "image_url",
-								"image_url": {
-									"url": "` + prefix + image + `"
-								}
-							}
-						]
-					}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "Hello",
-					},
-					{
-						Role: "user",
-						Images: []api.ImageData{
-							func() []byte {
-								img, _ := base64.StdEncoding.DecodeString(image)
-								return img
-							}(),
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with tools",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "What's the weather like in Paris Today?"},
-					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
-				]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "What's the weather like in Paris Today?",
-					},
-					{
-						Role: "assistant",
-						ToolCalls: []api.ToolCall{
-							{
-								Function: api.ToolCallFunction{
-									Name: "get_current_weather",
-									Arguments: map[string]any{
-										"location": "Paris, France",
-										"format":   "celsius",
-									},
-								},
-							},
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with streaming tools",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": "What's the weather like in Paris?"}
-				],
-				"stream": true,
-				"tools": [{
-					"type": "function",
-					"function": {
-						"name": "get_weather",
-						"description": "Get the current weather",
-						"parameters": {
-							"type": "object",
-							"required": ["location"],
-							"properties": {
-								"location": {
-									"type": "string",
-									"description": "The city and state"
-								},
-								"unit": {
-									"type": "string",
-									"enum": ["celsius", "fahrenheit"]
-								}
-							}
-						}
-					}
-				}]
-			}`,
-			req: api.ChatRequest{
-				Model: "test-model",
-				Messages: []api.Message{
-					{
-						Role:    "user",
-						Content: "What's the weather like in Paris?",
-					},
-				},
-				Tools: []api.Tool{
-					{
-						Type: "function",
-						Function: api.ToolFunction{
-							Name:        "get_weather",
-							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string   `json:"type"`
-								Defs       any      `json:"$defs,omitempty"`
-								Items      any      `json:"items,omitempty"`
-								Required   []string `json:"required"`
-								Properties map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								} `json:"properties"`
-							}{
-								Type:     "object",
-								Required: []string{"location"},
-								Properties: map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								}{
-									"location": {
-										Type:        api.PropertyType{"string"},
-										Description: "The city and state",
-									},
-									"unit": {
-										Type: api.PropertyType{"string"},
-										Enum: []any{"celsius", "fahrenheit"},
-									},
-								},
-							},
-						},
-					},
-				},
-				Options: map[string]any{
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &True,
-			},
-		},
-		{
-			name: "chat handler error forwarding",
-			body: `{
-				"model": "test-model",
-				"messages": [
-					{"role": "user", "content": 2}
-				]
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid message content type: float64",
-					Type:    "invalid_request_error",
-				},
-			},
-		},
-	}
-
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(ChatMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/chat", endpoint)
-
-	for _, tc := range testCases {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-
-			defer func() { capturedRequest = nil }()
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
+			req := ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				ReasoningEffort: tc.effort,
+			}
+			result, err := FromChatRequest(req)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for effort=%v, got none", *tc.effort)
 				}
 				return
 			}
-			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
-				t.Fatalf("requests did not match: %+v", diff)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if diff := cmp.Diff(tc.err, errResp); diff != "" {
-				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
-			}
-		})
-	}
-}
-
-func TestCompletionsMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.GenerateRequest
-		err  ErrorResponse
-	}
-
-	var capturedRequest *api.GenerateRequest
-
-	testCases := []testCase{
-		{
-			name: "completions handler",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &False,
-			},
-		},
-		{
-			name: "completions handler stream",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"stream": true,
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &True,
-			},
-		},
-		{
-			name: "completions handler stream with usage",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"stream": true,
-				"stream_options": {"include_usage": true},
-				"temperature": 0.8,
-				"stop": ["\n", "stop"],
-				"suffix": "suffix"
-			}`,
-			req: api.GenerateRequest{
-				Model:  "test-model",
-				Prompt: "Hello",
-				Options: map[string]any{
-					"frequency_penalty": 0.0,
-					"presence_penalty":  0.0,
-					"temperature":       0.8,
-					"top_p":             1.0,
-					"stop":              []any{"\n", "stop"},
-				},
-				Suffix: "suffix",
-				Stream: &True,
-			},
-		},
-		{
-			name: "completions handler error forwarding",
-			body: `{
-				"model": "test-model",
-				"prompt": "Hello",
-				"temperature": null,
-				"stop": [1, 2],
-				"suffix": "suffix"
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid type for 'stop' field: float64",
-					Type:    "invalid_request_error",
-				},
-			},
-		},
-	}
-
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(CompletionsMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/generate", endpoint)
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
-
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
+			if tc.want == nil {
+				if result.Think != nil {
+					t.Fatalf("expected nil Think, got %+v", result.Think)
 				}
+				return
 			}
-
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+			if result.Think == nil {
+				t.Fatalf("expected Think=%v, got nil", tc.want)
 			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
+			if result.Think.Value != tc.want {
+				t.Fatalf("got Think.Value=%v, want %v", result.Think.Value, tc.want)
 			}
-
-			capturedRequest = nil
 		})
 	}
 }
 
-func TestEmbeddingsMiddleware(t *testing.T) {
-	type testCase struct {
-		name string
-		body string
-		req  api.EmbedRequest
-		err  ErrorResponse
-	}
+func TestFromChatRequest_WithImage(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(image)
 
-	var capturedRequest *api.EmbedRequest
-
-	testCases := []testCase{
-		{
-			name: "embed handler single input",
-			body: `{
-				"input": "Hello",
-				"model": "test-model"
-			}`,
-			req: api.EmbedRequest{
-				Input: "Hello",
-				Model: "test-model",
-			},
-		},
-		{
-			name: "embed handler batch input",
-			body: `{
-				"input": ["Hello", "World"],
-				"model": "test-model"
-			}`,
-			req: api.EmbedRequest{
-				Input: []any{"Hello", "World"},
-				Model: "test-model",
-			},
-		},
-		{
-			name: "embed handler error forwarding",
-			body: `{
-				"model": "test-model"
-			}`,
-			err: ErrorResponse{
-				Error: Error{
-					Message: "invalid input",
-					Type:    "invalid_request_error",
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{"type": "text", "text": "Hello"},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
+					},
 				},
 			},
 		},
 	}
 
-	endpoint := func(c *gin.Context) {
-		c.Status(http.StatusOK)
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.Use(EmbeddingsMiddleware(), captureRequestMiddleware(&capturedRequest))
-	router.Handle(http.MethodPost, "/api/embed", endpoint)
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
+	if result.Messages[0].Content != "Hello" {
+		t.Errorf("expected first message content 'Hello', got %q", result.Messages[0].Content)
+	}
 
-			resp := httptest.NewRecorder()
-			router.ServeHTTP(resp, req)
+	if len(result.Messages[1].Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(result.Messages[1].Images))
+	}
 
-			var errResp ErrorResponse
-			if resp.Code != http.StatusOK {
-				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
-				}
+	if string(result.Messages[1].Images[0]) != string(imgData) {
+		t.Error("image data mismatch")
+	}
+}
+
+func TestFromChatRequest_ToolMessageArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":[{"type":"text","text":"sunny [img]"},{"type":"text","text":", 72F [img-99]"}]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// text parts are merged into one result; tool text is kept as sent
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "get_weather" || tool.Content != "sunny [img], 72F [img-99]" {
+		t.Errorf("expected tool message for call_1/get_weather, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
+func TestFromChatRequest_ToolMessageArrayContentWithImages(t *testing.T) {
+	const image2 = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==`
+	imgData, _ := base64.StdEncoding.DecodeString(image)
+	img2Data, _ := base64.StdEncoding.DecodeString(image2)
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "What's in the screenshot?"},
+			{
+				Role: "assistant",
+				ToolCalls: []ToolCall{{
+					ID:   "call_1",
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "screenshot", Arguments: "{}"},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_1",
+				Content: []any{
+					map[string]any{"type": "text", "text": "Before: "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image},
+					},
+					map[string]any{"type": "text", "text": " After: "},
+					map[string]any{
+						"type":      "image_url",
+						"image_url": map[string]any{"url": prefix + image2},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// parts with images stay split in order, each answering the same call
+	if len(result.Messages) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result.Messages))
+	}
+	wantContent := []string{"Before: ", "", " After: ", ""}
+	wantImages := [][]byte{nil, imgData, nil, img2Data}
+	for i, msg := range result.Messages[2:] {
+		if msg.Role != "tool" || msg.ToolCallID != "call_1" || msg.ToolName != "screenshot" {
+			t.Errorf("part %d: expected tool message for call_1/screenshot, got role=%q id=%q name=%q", i, msg.Role, msg.ToolCallID, msg.ToolName)
+		}
+		if msg.Content != wantContent[i] {
+			t.Errorf("part %d: expected content %q, got %q", i, wantContent[i], msg.Content)
+		}
+		if wantImages[i] == nil && len(msg.Images) != 0 || wantImages[i] != nil && (len(msg.Images) != 1 || string(msg.Images[0]) != string(wantImages[i])) {
+			t.Errorf("part %d: unexpected images, got %d", i, len(msg.Images))
+		}
+	}
+}
+
+func TestFromChatRequest_ToolMessageEmptyArrayContent(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"screenshot","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":[]},
+		{"role":"tool","content":[]}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// the empty result without a call id or name is skipped
+	if len(result.Messages) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+	}
+	tool := result.Messages[1]
+	if tool.Role != "tool" || tool.ToolCallID != "call_1" || tool.ToolName != "screenshot" || tool.Content != "" {
+		t.Errorf("expected empty tool message for call_1/screenshot, got role=%q id=%q name=%q content=%q", tool.Role, tool.ToolCallID, tool.ToolName, tool.Content)
+	}
+}
+
+func TestFromChatRequest_AssistantEmptyArrayContentWithToolCalls(t *testing.T) {
+	var req ChatCompletionRequest
+	if err := json.Unmarshal([]byte(`{"model":"test-model","messages":[
+		{"role":"user","content":"what is the weather?"},
+		{"role":"assistant","content":[],"tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"call_1","content":"sunny"}
+	]}`), &req); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result.Messages))
+	}
+	if user := result.Messages[0]; user.Role != "user" || len(user.ToolCalls) != 0 {
+		t.Errorf("expected user message without tool calls, got role=%q tool_calls=%d", user.Role, len(user.ToolCalls))
+	}
+	assistant := result.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("expected assistant message with get_weather tool call, got role=%q tool_calls=%+v", assistant.Role, assistant.ToolCalls)
+	}
+}
+
+func TestFromCompleteRequest_Basic(t *testing.T) {
+	temp := float32(0.8)
+	req := CompletionRequest{
+		Model:       "test-model",
+		Prompt:      "Hello",
+		Temperature: &temp,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if result.Prompt != "Hello" {
+		t.Errorf("expected prompt 'Hello', got %q", result.Prompt)
+	}
+
+	if tempVal, ok := result.Options["temperature"].(float32); !ok || tempVal != 0.8 {
+		t.Errorf("expected temperature 0.8, got %v", result.Options["temperature"])
+	}
+}
+
+func TestToUsage(t *testing.T) {
+	resp := api.ChatResponse{
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             20,
+		},
+	}
+
+	usage := ToUsage(resp)
+
+	if usage.PromptTokens != 10 {
+		t.Errorf("expected PromptTokens 10, got %d", usage.PromptTokens)
+	}
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 4 {
+		t.Errorf("expected CachedTokens 4, got %#v", usage.PromptTokensDetails)
+	}
+
+	if usage.CompletionTokens != 20 {
+		t.Errorf("expected CompletionTokens 20, got %d", usage.CompletionTokens)
+	}
+
+	if usage.TotalTokens != 30 {
+		t.Errorf("expected TotalTokens 30, got %d", usage.TotalTokens)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":4}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToUsageOmitsUnreportedCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{PromptEvalCount: 10, EvalCount: 2}})
+	if usage.PromptTokensDetails != nil {
+		t.Fatalf("expected no cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["prompt_tokens_details"]; ok {
+		t.Fatalf("unexpected cache details in %s", data)
+	}
+}
+
+func TestToUsageIncludesZeroCacheDetails(t *testing.T) {
+	usage := ToUsage(api.ChatResponse{Metrics: api.Metrics{
+		PromptEvalCount:       10,
+		PromptEvalCachedCount: testIntPtr(0),
+		EvalCount:             2,
+	}})
+	if usage.PromptTokensDetails == nil || usage.PromptTokensDetails.CachedTokens != 0 {
+		t.Fatalf("expected zero cache details, got %#v", usage.PromptTokensDetails)
+	}
+
+	data, err := json.Marshal(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"prompt_tokens_details":{"cached_tokens":0}`) {
+		t.Errorf("unexpected usage json: %s", data)
+	}
+}
+
+func TestToCompletionUsageIncludesCachedTokens(t *testing.T) {
+	completion := ToCompletion("completion-id", api.GenerateResponse{
+		Metrics: api.Metrics{
+			PromptEvalCount:       10,
+			PromptEvalCachedCount: testIntPtr(4),
+			EvalCount:             2,
+		},
+	})
+	if completion.Usage.PromptTokens != 10 || completion.Usage.TotalTokens != 12 {
+		t.Fatalf("unexpected usage: %#v", completion.Usage)
+	}
+	if details := completion.Usage.PromptTokensDetails; details == nil || details.CachedTokens != 4 {
+		t.Fatalf("expected 4 cached tokens, got %#v", details)
+	}
+}
+
+func TestNewError(t *testing.T) {
+	tests := []struct {
+		code int
+		want string
+	}{
+		{400, "invalid_request_error"},
+		{404, "not_found_error"},
+		{500, "api_error"},
+	}
+
+	for _, tt := range tests {
+		result := NewError(tt.code, "test message")
+		if result.Error.Type != tt.want {
+			t.Errorf("NewError(%d) type = %q, want %q", tt.code, result.Error.Type, tt.want)
+		}
+		if result.Error.Message != "test message" {
+			t.Errorf("NewError(%d) message = %q, want %q", tt.code, result.Error.Message, "test message")
+		}
+	}
+}
+
+func TestToToolCallsPreservesIDs(t *testing.T) {
+	original := []api.ToolCall{
+		{
+			ID: "call_abc123",
+			Function: api.ToolCallFunction{
+				Index: 2,
+				Name:  "get_weather",
+				Arguments: testArgs(map[string]any{
+					"location": "Seattle",
+				}),
+			},
+		},
+		{
+			ID: "call_def456",
+			Function: api.ToolCallFunction{
+				Index: 7,
+				Name:  "get_time",
+				Arguments: testArgs(map[string]any{
+					"timezone": "UTC",
+				}),
+			},
+		},
+	}
+
+	toolCalls := make([]api.ToolCall, len(original))
+	copy(toolCalls, original)
+	got := ToToolCalls(toolCalls)
+
+	if len(got) != len(original) {
+		t.Fatalf("expected %d tool calls, got %d", len(original), len(got))
+	}
+
+	expected := []ToolCall{
+		{
+			ID:    "call_abc123",
+			Type:  "function",
+			Index: 2,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      "get_weather",
+				Arguments: `{"location":"Seattle"}`,
+			},
+		},
+		{
+			ID:    "call_def456",
+			Type:  "function",
+			Index: 7,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      "get_time",
+				Arguments: `{"timezone":"UTC"}`,
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, got); diff != "" {
+		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(original, toolCalls, argsComparer); diff != "" {
+		t.Errorf("input tool calls mutated (-want +got):\n%s", diff)
+	}
+}
+
+func TestFromChatRequest_WithLogprobs(t *testing.T) {
+	trueVal := true
+
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Logprobs:    &trueVal,
+		TopLogprobs: 5,
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Logprobs {
+		t.Error("expected Logprobs to be true")
+	}
+
+	if result.TopLogprobs != 5 {
+		t.Errorf("expected TopLogprobs to be 5, got %d", result.TopLogprobs)
+	}
+}
+
+func TestFromChatRequest_LogprobsDefault(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Logprobs {
+		t.Error("expected Logprobs to be false by default")
+	}
+
+	if result.TopLogprobs != 0 {
+		t.Errorf("expected TopLogprobs to be 0 by default, got %d", result.TopLogprobs)
+	}
+}
+
+func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
+	logprobsVal := 5
+
+	req := CompletionRequest{
+		Model:    "test-model",
+		Prompt:   "Hello",
+		Logprobs: &logprobsVal,
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Logprobs {
+		t.Error("expected Logprobs to be true")
+	}
+
+	if result.TopLogprobs != 5 {
+		t.Errorf("expected TopLogprobs to be 5, got %d", result.TopLogprobs)
+	}
+}
+
+func TestToListCompletionUsesModelIdentity(t *testing.T) {
+	modified := time.Unix(1234567890, 0).UTC()
+
+	result := ToListCompletion(api.ListResponse{
+		Models: []api.ListModelResponse{
+			{
+				Name:       "legacy-name:latest",
+				Model:      "namespace/exposed-model:latest",
+				ModifiedAt: modified,
+			},
+			{
+				Name:       "fallback-name:latest",
+				ModifiedAt: modified.Add(time.Second),
+			},
+		},
+	})
+
+	if result.Object != "list" {
+		t.Fatalf("object = %q, want list", result.Object)
+	}
+	if len(result.Data) != 2 {
+		t.Fatalf("models = %d, want 2", len(result.Data))
+	}
+
+	if result.Data[0].Id != "namespace/exposed-model:latest" {
+		t.Fatalf("id = %q, want model field", result.Data[0].Id)
+	}
+	if result.Data[0].OwnedBy != "namespace" {
+		t.Fatalf("owned_by = %q, want namespace", result.Data[0].OwnedBy)
+	}
+	if result.Data[0].Created != modified.Unix() {
+		t.Fatalf("created = %d, want %d", result.Data[0].Created, modified.Unix())
+	}
+
+	if result.Data[1].Id != "fallback-name:latest" {
+		t.Fatalf("fallback id = %q, want name field", result.Data[1].Id)
+	}
+	if result.Data[1].OwnedBy != "library" {
+		t.Fatalf("fallback owned_by = %q, want library", result.Data[1].OwnedBy)
+	}
+}
+
+func TestToChatCompletion_WithLogprobs(t *testing.T) {
+	createdAt := time.Unix(1234567890, 0)
+	resp := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: createdAt,
+		Message:   api.Message{Role: "assistant", Content: "Hello there"},
+		Logprobs: []api.Logprob{
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   "Hello",
+					Logprob: -0.5,
+				},
+				TopLogprobs: []api.TokenLogprob{
+					{Token: "Hello", Logprob: -0.5},
+					{Token: "Hi", Logprob: -1.2},
+				},
+			},
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   " there",
+					Logprob: -0.3,
+				},
+				TopLogprobs: []api.TokenLogprob{
+					{Token: " there", Logprob: -0.3},
+					{Token: " world", Logprob: -1.5},
+				},
+			},
+		},
+		Done: true,
+		Metrics: api.Metrics{
+			PromptEvalCount: 5,
+			EvalCount:       2,
+		},
+	}
+
+	id := "test-id"
+
+	result := ToChatCompletion(id, resp)
+
+	if result.Id != id {
+		t.Errorf("expected Id %q, got %q", id, result.Id)
+	}
+
+	if result.Created != 1234567890 {
+		t.Errorf("expected Created %d, got %d", int64(1234567890), result.Created)
+	}
+
+	if len(result.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(result.Choices))
+	}
+
+	choice := result.Choices[0]
+	if choice.Message.Content != "Hello there" {
+		t.Errorf("expected content %q, got %q", "Hello there", choice.Message.Content)
+	}
+
+	if choice.Logprobs == nil {
+		t.Fatal("expected Logprobs to be present")
+	}
+
+	if len(choice.Logprobs.Content) != 2 {
+		t.Fatalf("expected 2 logprobs, got %d", len(choice.Logprobs.Content))
+	}
+
+	// Verify first logprob
+	if choice.Logprobs.Content[0].Token != "Hello" {
+		t.Errorf("expected first token %q, got %q", "Hello", choice.Logprobs.Content[0].Token)
+	}
+	if choice.Logprobs.Content[0].Logprob != -0.5 {
+		t.Errorf("expected first logprob -0.5, got %f", choice.Logprobs.Content[0].Logprob)
+	}
+	if len(choice.Logprobs.Content[0].TopLogprobs) != 2 {
+		t.Errorf("expected 2 top_logprobs, got %d", len(choice.Logprobs.Content[0].TopLogprobs))
+	}
+
+	// Verify second logprob
+	if choice.Logprobs.Content[1].Token != " there" {
+		t.Errorf("expected second token %q, got %q", " there", choice.Logprobs.Content[1].Token)
+	}
+}
+
+func TestToChatCompletion_WithoutLogprobs(t *testing.T) {
+	createdAt := time.Unix(1234567890, 0)
+	resp := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: createdAt,
+		Message:   api.Message{Role: "assistant", Content: "Hello"},
+		Done:      true,
+		Metrics: api.Metrics{
+			PromptEvalCount: 5,
+			EvalCount:       1,
+		},
+	}
+
+	id := "test-id"
+
+	result := ToChatCompletion(id, resp)
+
+	if len(result.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(result.Choices))
+	}
+
+	// When no logprobs, Logprobs should be nil
+	if result.Choices[0].Logprobs != nil {
+		t.Error("expected Logprobs to be nil when not requested")
+	}
+}
+
+func TestToStreamChunks_SplitsThinkingAndContent(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "step-by-step",
+			Content:  "final answer",
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	reasoning := chunks[0].Choices[0]
+	if reasoning.Delta.Reasoning != "step-by-step" {
+		t.Fatalf("expected reasoning chunk to contain thinking, got %q", reasoning.Delta.Reasoning)
+	}
+	if reasoning.Delta.Content != nil {
+		t.Fatalf("expected reasoning chunk content to be nil, got %v", reasoning.Delta.Content)
+	}
+	if len(reasoning.Delta.ToolCalls) != 0 {
+		t.Fatalf("expected reasoning chunk tool calls to be empty, got %d", len(reasoning.Delta.ToolCalls))
+	}
+	if reasoning.FinishReason != nil {
+		t.Fatalf("expected reasoning chunk finish reason to be nil, got %q", *reasoning.FinishReason)
+	}
+	if reasoning.Delta.Role != "assistant" {
+		t.Fatalf("expected reasoning chunk role %q, got %q", "assistant", reasoning.Delta.Role)
+	}
+
+	content := chunks[1].Choices[0]
+	if content.Delta.Reasoning != "" {
+		t.Fatalf("expected content chunk reasoning to be empty, got %q", content.Delta.Reasoning)
+	}
+	if content.Delta.Content != "final answer" {
+		t.Fatalf("expected content chunk content %q, got %v", "final answer", content.Delta.Content)
+	}
+	if content.FinishReason != nil {
+		t.Fatalf("expected content chunk finish reason to be nil, got %v", content.FinishReason)
+	}
+	if content.Delta.Role != "" {
+		t.Fatalf("expected content chunk role to be empty, got %q", content.Delta.Role)
+	}
+}
+
+func TestToStreamChunks_SplitsThinkingAndToolCalls(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "need a tool",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_123",
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Seattle",
+						}),
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	reasoning := chunks[0].Choices[0]
+	if reasoning.Delta.Reasoning != "need a tool" {
+		t.Fatalf("expected reasoning chunk to contain thinking, got %q", reasoning.Delta.Reasoning)
+	}
+	if len(reasoning.Delta.ToolCalls) != 0 {
+		t.Fatalf("expected reasoning chunk tool calls to be empty, got %d", len(reasoning.Delta.ToolCalls))
+	}
+	if reasoning.FinishReason != nil {
+		t.Fatalf("expected reasoning chunk finish reason to be nil, got %q", *reasoning.FinishReason)
+	}
+
+	toolCallChunk := chunks[1].Choices[0]
+	if toolCallChunk.Delta.Reasoning != "" {
+		t.Fatalf("expected tool-call chunk reasoning to be empty, got %q", toolCallChunk.Delta.Reasoning)
+	}
+	if len(toolCallChunk.Delta.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call in second chunk, got %d", len(toolCallChunk.Delta.ToolCalls))
+	}
+	if toolCallChunk.Delta.ToolCalls[0].ID != "call_123" {
+		t.Fatalf("expected tool call id %q, got %q", "call_123", toolCallChunk.Delta.ToolCalls[0].ID)
+	}
+	if toolCallChunk.FinishReason != nil {
+		t.Fatalf("expected tool-call chunk finish reason to be nil, got %v", toolCallChunk.FinishReason)
+	}
+}
+
+func TestToStreamChunks_SingleChunkForNonMixedResponses(t *testing.T) {
+	toolCalls := []api.ToolCall{
+		{
+			ID: "call_456",
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "get_time",
+				Arguments: testArgs(map[string]any{
+					"timezone": "UTC",
+				}),
+			},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		message api.Message
+	}{
+		{
+			name:    "thinking-only",
+			message: api.Message{Thinking: "pondering"},
+		},
+		{
+			name:    "content-only",
+			message: api.Message{Content: "hello"},
+		},
+		{
+			name:    "toolcalls-only",
+			message: api.Message{ToolCalls: toolCalls},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := api.ChatResponse{
+				Model:   "test-model",
+				Message: tt.message,
 			}
 
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+			chunks := ToStreamChunks("test-id", resp, true)
+			if len(chunks) != 1 {
+				t.Fatalf("expected 1 chunk, got %d", len(chunks))
 			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
-			}
-
-			capturedRequest = nil
 		})
 	}
 }
 
-func TestListMiddleware(t *testing.T) {
-	type testCase struct {
-		name     string
-		endpoint func(c *gin.Context)
-		resp     string
+func TestToStreamChunks_SplitsThinkingAndToolCallsWhenNotDone(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "need a tool",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_789",
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "San Francisco",
+						}),
+					},
+				},
+			},
+		},
+		Done: false,
 	}
 
-	testCases := []testCase{
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	reasoning := chunks[0].Choices[0]
+	if reasoning.Delta.Reasoning != "need a tool" {
+		t.Fatalf("expected reasoning chunk to contain thinking, got %q", reasoning.Delta.Reasoning)
+	}
+	if reasoning.FinishReason != nil {
+		t.Fatalf("expected reasoning chunk finish reason nil, got %v", reasoning.FinishReason)
+	}
+
+	toolCallChunk := chunks[1].Choices[0]
+	if len(toolCallChunk.Delta.ToolCalls) != 1 {
+		t.Fatalf("expected one tool call in second chunk, got %d", len(toolCallChunk.Delta.ToolCalls))
+	}
+	if toolCallChunk.Delta.ToolCalls[0].ID != "call_789" {
+		t.Fatalf("expected tool call id %q, got %q", "call_789", toolCallChunk.Delta.ToolCalls[0].ID)
+	}
+	if toolCallChunk.FinishReason != nil {
+		t.Fatalf("expected tool-call chunk finish reason nil when not done, got %v", toolCallChunk.FinishReason)
+	}
+}
+
+func TestToStreamChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "thinking",
+			Content:  "partial content",
+		},
+		Done: false,
+	}
+
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	reasoning := chunks[0].Choices[0]
+	if reasoning.Delta.Reasoning != "thinking" {
+		t.Fatalf("expected reasoning chunk to contain thinking, got %q", reasoning.Delta.Reasoning)
+	}
+	if reasoning.FinishReason != nil {
+		t.Fatalf("expected reasoning chunk finish reason nil, got %v", reasoning.FinishReason)
+	}
+
+	content := chunks[1].Choices[0]
+	if content.Delta.Content != "partial content" {
+		t.Fatalf("expected content chunk content %q, got %v", "partial content", content.Delta.Content)
+	}
+	if content.FinishReason != nil {
+		t.Fatalf("expected content chunk finish reason nil when not done, got %v", content.FinishReason)
+	}
+}
+
+func TestToStreamChunks_SplitSendsLogprobsOnlyOnFirstChunk(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "thinking",
+			Content:  "content",
+		},
+		Logprobs: []api.Logprob{
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   "tok",
+					Logprob: -0.25,
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	first := chunks[0].Choices[0]
+	if first.Logprobs == nil {
+		t.Fatal("expected first chunk to include logprobs")
+	}
+	if len(first.Logprobs.Content) != 1 || first.Logprobs.Content[0].Token != "tok" {
+		t.Fatalf("unexpected first chunk logprobs: %+v", first.Logprobs.Content)
+	}
+
+	second := chunks[1].Choices[0]
+	if second.Logprobs != nil {
+		t.Fatalf("expected second chunk logprobs to be nil, got %+v", second.Logprobs)
+	}
+}
+
+func TestFinishChunk(t *testing.T) {
+	tests := []struct {
+		name           string
+		doneReason     string
+		toolCallSent   bool
+		expectedReason string
+	}{
 		{
-			name: "list handler",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ListResponse{
-					Models: []api.ListModelResponse{
-						{
-							Name:       "test-model",
-							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+			name:           "stop",
+			doneReason:     "stop",
+			toolCallSent:   false,
+			expectedReason: "stop",
+		},
+		{
+			name:           "length",
+			doneReason:     "length",
+			toolCallSent:   false,
+			expectedReason: "length",
+		},
+		{
+			name:           "tool_calls",
+			doneReason:     "stop",
+			toolCallSent:   true,
+			expectedReason: "tool_calls",
+		},
+		{
+			name:           "length_with_tool_calls",
+			doneReason:     "length",
+			toolCallSent:   true,
+			expectedReason: "length",
+		},
+		{
+			name:           "empty_reason_defaults_to_stop",
+			doneReason:     "",
+			toolCallSent:   false,
+			expectedReason: "stop",
+		},
+		{
+			name:           "unknown_reason_passes_through",
+			doneReason:     "unload",
+			toolCallSent:   false,
+			expectedReason: "unload",
+		},
+		{
+			name:           "unknown_reason_not_relabeled_tool_calls",
+			doneReason:     "unload",
+			toolCallSent:   true,
+			expectedReason: "unload",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunk := FinishChunk("test-id", api.ChatResponse{Model: "test-model", DoneReason: tt.doneReason}, tt.toolCallSent)
+			if len(chunk.Choices) != 1 {
+				t.Fatalf("expected 1 choice, got %d", len(chunk.Choices))
+			}
+			choice := chunk.Choices[0]
+			if choice.Delta.Content != nil || choice.Delta.Reasoning != "" || len(choice.Delta.ToolCalls) != 0 || choice.Delta.Role != "" {
+				t.Fatalf("expected empty delta, got %+v", choice.Delta)
+			}
+			if choice.FinishReason == nil || *choice.FinishReason != tt.expectedReason {
+				t.Fatalf("expected finish reason %q, got %v", tt.expectedReason, choice.FinishReason)
+			}
+		})
+	}
+}
+
+func TestFinishChunk_JSONDeltaEmpty(t *testing.T) {
+	chunk := FinishChunk("test-id", api.ChatResponse{Model: "test-model", DoneReason: "stop"}, false)
+	d, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Parse back as generic JSON to inspect the delta field
+	var raw map[string]any
+	if err := json.Unmarshal(d, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+
+	choices := raw["choices"].([]any)
+	choice := choices[0].(map[string]any)
+	delta := choice["delta"].(map[string]any)
+
+	// The delta must be completely empty {} — no role, content, or other fields
+	if len(delta) != 0 {
+		t.Fatalf("expected empty delta {}, got %v", delta)
+	}
+
+	if choice["finish_reason"] != "stop" {
+		t.Fatalf("expected finish_reason %q, got %v", "stop", choice["finish_reason"])
+	}
+}
+
+func TestToStreamChunks_RoleOnlyWhenRequested(t *testing.T) {
+	resp := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "hello"},
+	}
+
+	// With includeRole=true, delta should have role
+	withRole := ToStreamChunks("test-id", resp, true)
+	if withRole[0].Choices[0].Delta.Role != "assistant" {
+		t.Fatalf("expected role %q, got %q", "assistant", withRole[0].Choices[0].Delta.Role)
+	}
+
+	// With includeRole=false, delta should omit role
+	withoutRole := ToStreamChunks("test-id", resp, false)
+	if withoutRole[0].Choices[0].Delta.Role != "" {
+		t.Fatalf("expected empty role, got %q", withoutRole[0].Choices[0].Delta.Role)
+	}
+}
+
+func TestToStreamChunks_ContentChunkJSON(t *testing.T) {
+	resp := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "Hi"},
+	}
+
+	chunks := ToStreamChunks("test-id", resp, false)
+	d, err := json.Marshal(chunks[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(d, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	choices := raw["choices"].([]any)
+	delta := choices[0].(map[string]any)["delta"].(map[string]any)
+
+	// Content should be present
+	if delta["content"] != "Hi" {
+		t.Fatalf("expected content %q, got %v", "Hi", delta["content"])
+	}
+	// Role should be absent (includeRole=false)
+	if _, hasRole := delta["role"]; hasRole {
+		t.Fatalf("expected role to be absent, got %v", delta["role"])
+	}
+	// Reasoning should be absent
+	if _, hasReasoning := delta["reasoning"]; hasReasoning {
+		t.Fatalf("expected reasoning to be absent, got %v", delta["reasoning"])
+	}
+}
+
+func TestToStreamChunks_EmptyContentChunkJSON(t *testing.T) {
+	resp := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: ""},
+	}
+
+	chunks := ToStreamChunks("test-id", resp, true)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	}
+
+	d, err := json.Marshal(chunks[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(d, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	delta := raw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+
+	// Empty-string content must serialize explicitly as "content":"" (OpenAI's
+	// first chunk is {"role":"assistant","content":""}); only nil content is omitted.
+	content, hasContent := delta["content"]
+	if !hasContent {
+		t.Fatalf("expected content key to be present for empty-string content, got %v", delta)
+	}
+	if content != "" {
+		t.Fatalf("expected content %q, got %v", "", content)
+	}
+	if delta["role"] != "assistant" {
+		t.Fatalf("expected role %q, got %v", "assistant", delta["role"])
+	}
+	if _, hasReasoning := delta["reasoning"]; hasReasoning {
+		t.Fatalf("expected reasoning to be absent, got %v", delta["reasoning"])
+	}
+}
+
+func TestToChatCompletion_FinishReasonPrecedence(t *testing.T) {
+	newToolCallResponse := func(doneReason string) api.ChatResponse {
+		return api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_123",
+						Function: api.ToolCallFunction{
+							Index: 0,
+							Name:  "get_weather",
+							Arguments: testArgs(map[string]any{
+								"location": "Seattle",
+							}),
 						},
 					},
-				})
+				},
 			},
-			resp: `{
-				"object": "list",
-				"data": [
-					{
-						"id": "test-model",
-						"object": "model",
-						"created": 1686935002,
-						"owned_by": "library"
-					}
-				]
-			}`,
-		},
-		{
-			name: "list handler empty output",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ListResponse{})
-			},
-			resp: `{
-				"object": "list",
-				"data": null
-			}`,
-		},
+			Done:       true,
+			DoneReason: doneReason,
+		}
 	}
 
-	gin.SetMode(gin.TestMode)
-
-	for _, tc := range testCases {
-		router := gin.New()
-		router.Use(ListMiddleware())
-		router.Handle(http.MethodGet, "/api/tags", tc.endpoint)
-		req, _ := http.NewRequest(http.MethodGet, "/api/tags", nil)
-
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
-
-		var expected, actual map[string]any
-		err := json.Unmarshal([]byte(tc.resp), &expected)
-		if err != nil {
-			t.Fatalf("failed to unmarshal expected response: %v", err)
-		}
-
-		err = json.Unmarshal(resp.Body.Bytes(), &actual)
-		if err != nil {
-			t.Fatalf("failed to unmarshal actual response: %v", err)
-		}
-
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
-		}
+	// A truncated tool-call response keeps "length" rather than "tool_calls".
+	if got := *ToChatCompletion("test-id", newToolCallResponse("length")).Choices[0].FinishReason; got != "length" {
+		t.Fatalf("expected finish reason %q for truncated tool-call response, got %q", "length", got)
+	}
+	// A completed tool-call response reports "tool_calls".
+	if got := *ToChatCompletion("test-id", newToolCallResponse("stop")).Choices[0].FinishReason; got != "tool_calls" {
+		t.Fatalf("expected finish reason %q for completed tool-call response, got %q", "tool_calls", got)
+	}
+	// An unrelated finish reason passes through unchanged.
+	if got := *ToChatCompletion("test-id", newToolCallResponse("unload")).Choices[0].FinishReason; got != "unload" {
+		t.Fatalf("expected unknown finish reason %q to pass through, got %q", "unload", got)
 	}
 }
 
-func TestRetrieveMiddleware(t *testing.T) {
-	type testCase struct {
-		name     string
-		endpoint func(c *gin.Context)
-		resp     string
+func TestFinishChunk_UsesResponseCreatedAt(t *testing.T) {
+	resp := api.ChatResponse{
+		Model:      "test-model",
+		DoneReason: "stop",
+		CreatedAt:  time.Unix(1700000000, 0),
+	}
+	if got := FinishChunk("test-id", resp, false).Created; got != 1700000000 {
+		t.Fatalf("expected created %d, got %d", 1700000000, got)
 	}
 
-	testCases := []testCase{
-		{
-			name: "retrieve handler",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ShowResponse{
-					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
-				})
-			},
-			resp: `{
-				"id":"test-model",
-				"object":"model",
-				"created":1686935002,
-				"owned_by":"library"}
-			`,
-		},
-		{
-			name: "retrieve handler error forwarding",
-			endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
-			},
-			resp: `{
-				"error": {
-				  "code": null,
-				  "message": "model not found",
-				  "param": null,
-				  "type": "api_error"
-				}
-			}`,
-		},
+	// A zero CreatedAt falls back to the current time.
+	zero := api.ChatResponse{Model: "test-model", DoneReason: "stop"}
+	if got := FinishChunk("test-id", zero, false).Created; got <= 1700000000 {
+		t.Fatalf("expected fallback created to be the current time, got %d", got)
+	}
+}
+
+func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		topLogprobs int
+		expectValid bool
+	}{
+		{name: "valid: 0", topLogprobs: 0, expectValid: true},
+		{name: "valid: 1", topLogprobs: 1, expectValid: true},
+		{name: "valid: 10", topLogprobs: 10, expectValid: true},
+		{name: "valid: 20", topLogprobs: 20, expectValid: true},
 	}
 
-	gin.SetMode(gin.TestMode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			trueVal := true
+			req := ChatCompletionRequest{
+				Model: "test-model",
+				Messages: []Message{
+					{Role: "user", Content: "Hello"},
+				},
+				Logprobs:    &trueVal,
+				TopLogprobs: tt.topLogprobs,
+			}
 
-	for _, tc := range testCases {
-		router := gin.New()
-		router.Use(RetrieveMiddleware())
-		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
-		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
+			result, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
+			if result.TopLogprobs != tt.topLogprobs {
+				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
+			}
+		})
+	}
+}
 
-		var expected, actual map[string]any
-		err := json.Unmarshal([]byte(tc.resp), &expected)
-		if err != nil {
-			t.Fatalf("failed to unmarshal expected response: %v", err)
-		}
+func TestFromChatRequest_KeepAlive(t *testing.T) {
+	// keep_alive is how an OpenAI-API client releases a model; 0 unloads
+	// immediately and a negative value pins it. Both arrive as JSON numbers.
+	for _, tt := range []struct {
+		name string
+		body string
+		want *api.Duration
+	}{
+		{"absent", `{"model":"m","messages":[]}`, nil},
+		{"unload", `{"model":"m","messages":[],"keep_alive":0}`, &api.Duration{Duration: 0}},
+		{"forever", `{"model":"m","messages":[],"keep_alive":-1}`, &api.Duration{Duration: time.Duration(math.MaxInt64)}},
+		{"seconds", `{"model":"m","messages":[],"keep_alive":30}`, &api.Duration{Duration: 30 * time.Second}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var req ChatCompletionRequest
+			if err := json.Unmarshal([]byte(tt.body), &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := FromChatRequest(req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			switch {
+			case tt.want == nil && got.KeepAlive != nil:
+				t.Fatalf("expected no KeepAlive, got %v", got.KeepAlive)
+			case tt.want != nil && got.KeepAlive == nil:
+				t.Fatal("expected KeepAlive to be carried through, got nil")
+			case tt.want != nil && got.KeepAlive.Duration != tt.want.Duration:
+				t.Errorf("KeepAlive = %v, want %v", got.KeepAlive.Duration, tt.want.Duration)
+			}
+		})
+	}
+}
 
-		err = json.Unmarshal(resp.Body.Bytes(), &actual)
-		if err != nil {
-			t.Fatalf("failed to unmarshal actual response: %v", err)
-		}
+func TestToTimings(t *testing.T) {
+	if got := ToTimings(api.Metrics{}); got != nil {
+		t.Fatalf("ToTimings(empty) = %+v, want nil", got)
+	}
 
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
-		}
+	got := ToTimings(api.Metrics{
+		PromptEvalCount:    20,
+		PromptEvalDuration: 2 * time.Second,
+		EvalCount:          10,
+		EvalDuration:       time.Second,
+	})
+	if got == nil {
+		t.Fatal("ToTimings(populated) = nil")
+	}
+	if got.PromptN != 20 || got.PromptMS != 2000 || got.PromptPerSecond != 10 {
+		t.Errorf("unexpected prompt timings: %+v", got)
+	}
+	if got.PredictedN != 10 || got.PredictedMS != 1000 || got.PredictedPerSecond != 10 {
+		t.Errorf("unexpected generation timings: %+v", got)
+	}
+}
+
+func TestNonStreamingResponsesOmitTimings(t *testing.T) {
+	chat, err := json.Marshal(ToChatCompletion("id", api.ChatResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(chat), `"timings"`) {
+		t.Errorf("chat completion unexpectedly contains timings: %s", chat)
+	}
+
+	completion, err := json.Marshal(ToCompletion("id", api.GenerateResponse{
+		Metrics: api.Metrics{PromptEvalCount: 1, PromptEvalDuration: time.Second},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(completion), `"timings"`) {
+		t.Errorf("completion unexpectedly contains timings: %s", completion)
 	}
 }

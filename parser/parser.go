@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/user"
@@ -17,11 +18,13 @@ import (
 	"strings"
 	"sync"
 
+	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 var ErrModelNotFound = errors.New("no Modelfile or safetensors files found")
@@ -58,30 +61,56 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	var messages []api.Message
 	var licenses []string
 	params := make(map[string]any)
+	var modelPaths []string
+	var draftPaths []string
 
 	for _, c := range f.Commands {
 		switch c.Name {
 		case "model":
-			path, err := expandPath(c.Args, relativeDir)
+			paths, err := expandPaths(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
+			digestMap, err := fileDigestMapForPaths(paths)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
 			} else if err != nil {
 				return nil, err
 			}
-
-			if req.Files == nil {
-				req.Files = digestMap
-			} else {
-				for k, v := range digestMap {
-					req.Files[k] = v
+			for _, path := range paths {
+				if err := rejectMatchingLocalPath("DRAFT", path, draftPaths); err != nil {
+					return nil, err
 				}
 			}
+			modelPaths = append(modelPaths, paths...)
+
+			if req.Files == nil {
+				req.Files = make(map[string]string)
+			}
+			maps.Copy(req.Files, digestMap)
+		case "draft":
+			paths, err := expandPaths(c.Args, relativeDir)
+			if err != nil {
+				return nil, err
+			}
+
+			digestMap, err := fileDigestMapForPaths(paths)
+			if err != nil {
+				return nil, err
+			}
+			for _, path := range paths {
+				if err := rejectMatchingLocalPath("DRAFT", path, modelPaths); err != nil {
+					return nil, err
+				}
+			}
+			draftPaths = append(draftPaths, paths...)
+
+			if req.DraftFiles == nil {
+				req.DraftFiles = make(map[string]string)
+			}
+			maps.Copy(req.DraftFiles, digestMap)
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
@@ -100,6 +129,25 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.System = c.Args
 		case "license":
 			licenses = append(licenses, c.Args)
+		case "renderer":
+			req.Renderer = c.Args
+		case "parser":
+			req.Parser = c.Args
+		case "capability":
+			if !model.Capability(c.Args).IsValid() {
+				return nil, fmt.Errorf("unknown capability: %q", c.Args)
+			}
+			req.Capabilities = append(req.Capabilities, c.Args)
+		case "requires":
+			// golang.org/x/mod/semver requires "v" prefix
+			requires := c.Args
+			if !strings.HasPrefix(requires, "v") {
+				requires = "v" + requires
+			}
+			if !semver.IsValid(requires) {
+				return nil, fmt.Errorf("requires must be a valid semver (e.g. 0.14.0)")
+			}
+			req.Requires = strings.TrimPrefix(requires, "v")
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
@@ -139,6 +187,67 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	return req, nil
 }
 
+func expandPaths(path, relativeDir string) ([]string, error) {
+	path, err := expandPath(path, relativeDir)
+	if err != nil {
+		return nil, err
+	}
+
+	matches, err := filepath.Glob(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return []string{path}, nil
+	}
+	return matches, nil
+}
+
+func fileDigestMapForPaths(paths []string) (map[string]string, error) {
+	files := make(map[string]string)
+	for _, path := range paths {
+		digests, err := fileDigestMap(path)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(files, digests)
+	}
+	return files, nil
+}
+
+func rejectMatchingLocalPath(name, path string, existing []string) error {
+	for _, candidate := range existing {
+		same, err := sameLocalPath(path, candidate)
+		if err != nil {
+			return err
+		}
+		if same {
+			return fmt.Errorf("%s must not reference the same local path as FROM: %s", name, path)
+		}
+	}
+	return nil
+}
+
+func sameLocalPath(a, b string) (bool, error) {
+	aa, err := canonicalLocalPath(a)
+	if err != nil {
+		return false, err
+	}
+	bb, err := canonicalLocalPath(b)
+	if err != nil {
+		return false, err
+	}
+	return aa == bb, nil
+}
+
+func canonicalLocalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
+}
+
 func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
@@ -166,6 +275,9 @@ func fileDigestMap(path string) (map[string]string, error) {
 			}
 
 			if !filepath.IsLocal(rel) {
+				if strings.Contains(rel, ".cache") {
+					return nil, fmt.Errorf("insecure path: %s\n\nUse --local-dir <dir> when downloading model to disable caching", rel)
+				}
 				return nil, fmt.Errorf("insecure path: %s", rel)
 			}
 
@@ -246,7 +358,7 @@ func filesForModel(path string) ([]string, error) {
 		for _, match := range matches {
 			if ct, err := detectContentType(match); err != nil {
 				return nil, err
-			} else if ct != contentType {
+			} else if len(contentType) > 0 && ct != contentType {
 				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
 			}
 		}
@@ -255,9 +367,18 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	var files []string
-	if st, _ := glob(filepath.Join(path, "*.safetensors"), "application/octet-stream"); len(st) > 0 {
+	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
+		files = append(files, st...)
+		nested, err := glob(filepath.Join(path, "*", "model*.safetensors"), "")
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, nested...)
+	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
+		// covers consolidated.safetensors
 		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
@@ -292,18 +413,21 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
-	// only include tokenizer.model is tokenizer.json is not present
-	if !slices.ContainsFunc(files, func(s string) bool {
-		return slices.Contains(strings.Split(s, string(os.PathSeparator)), "tokenizer.json")
-	}) {
-		if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-			// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-			// tokenizer.model might be a unresolved git lfs reference; error if it is
-			files = append(files, tks...)
-		} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-			// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-			files = append(files, tks...)
-		}
+	// Transformers stores a tokenizer's default template in this standalone
+	// file when it is not embedded in tokenizer_config.json.
+	chatTemplates, err := glob(filepath.Join(path, "chat_template.jinja"), "text/plain")
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, chatTemplates...)
+
+	// add tokenizer.model if it exists (tokenizer.json is automatically picked up by the previous glob)
+	// tokenizer.model might be a unresolved git lfs reference; error if it is
+	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+		files = append(files, tks...)
+	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+		files = append(files, tks...)
 	}
 
 	return files, nil
@@ -319,7 +443,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires", "draft", "capability":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -345,7 +469,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"draft\", \"renderer\", \"parser\", \"parameter\", \"message\", \"requires\", or \"capability\"")
 )
 
 type ParserError struct {
@@ -605,7 +729,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "license", "template", "system", "adapter", "draft", "renderer", "parser", "parameter", "message", "requires", "capability":
 		return true
 	default:
 		return false

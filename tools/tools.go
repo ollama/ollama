@@ -26,6 +26,16 @@ type Parser struct {
 	n      int
 }
 
+func (p *Parser) GetBuffer() []byte {
+	return p.buffer
+}
+
+// Tag returns the tool-call tag string the parser looks for in the output
+// stream.
+func (p *Parser) Tag() string {
+	return p.tag
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -50,6 +60,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 
 	if p.state == toolsState_LookingForTag {
 		i, found := p.findTag()
+
 		if i == -1 {
 			content = string(p.buffer)
 			p.buffer = []byte{}
@@ -120,14 +131,19 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 		return nil
 	}
 
-	var args map[string]any
-	if found, i := findArguments(p.buffer); found == nil {
+	var argsMap map[string]any
+	if found, i := findArguments(tool, p.buffer); found == nil {
 		return nil
 	} else {
-		args = found
+		argsMap = found
 		if i > end {
 			end = i
 		}
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range argsMap {
+		args.Set(k, v)
 	}
 
 	tc := &api.ToolCall{
@@ -215,41 +231,79 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 // objects for functions that have all-optional parameters
 // e.g. `{"name": "get_conditions", "arguments": {}}` will work but
 // `{"name": "get_conditions"}` will not currently work
-func findArguments(buffer []byte) (map[string]any, int) {
+func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 	if len(buffer) == 0 {
 		return nil, 0
 	}
 
+	start := -1
 	var braces int
-	var start int = -1
+	var inString, escaped bool
 
-	for i, c := range buffer {
+	for i := range buffer {
+		c := buffer[i]
+
+		if escaped {
+			escaped = false
+			continue
+		}
+
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+
+		if inString {
+			continue
+		}
+
 		if c == '{' {
 			if braces == 0 {
 				start = i
 			}
 			braces++
-		} else if c == '}' && braces > 0 {
+		} else if c == '}' {
 			braces--
 			if braces == 0 && start != -1 {
 				object := buffer[start : i+1]
 
 				var data map[string]any
 				if err := json.Unmarshal(object, &data); err != nil {
+					// not a valid object, keep looking
 					start = -1
 					continue
 				}
 
 				var findObject func(obj map[string]any) (map[string]any, bool)
 				findObject = func(obj map[string]any) (map[string]any, bool) {
-					if _, hasName := obj["name"]; hasName {
-						if args, ok := obj["arguments"].(map[string]any); ok {
+					findMap := func(name string, obj map[string]any) (map[string]any, bool) {
+						if args, ok := obj[name].(map[string]any); ok {
 							return args, true
 						}
-						if args, ok := obj["parameters"].(map[string]any); ok {
+						if argsStr, ok := obj[name].(string); ok {
+							var argsData map[string]interface{}
+							if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
+								return argsData, ok
+							}
+						}
+						return nil, false
+					}
+					if _, hasName := obj["name"]; hasName {
+						if args, ok := findMap("arguments", obj); ok {
+							return args, true
+						}
+						if args, ok := findMap("parameters", obj); ok {
 							return args, true
 						}
 						return nil, true
+					}
+					if args, ok := findMap(tool.Function.Name, obj); ok {
+						return args, true
 					}
 
 					for _, v := range obj {
@@ -278,6 +332,10 @@ func findArguments(buffer []byte) (map[string]any, int) {
 
 				return data, i
 			}
+
+			if braces < 0 {
+				braces = 0
+			}
 		}
 	}
 
@@ -300,7 +358,23 @@ func (p *Parser) done() bool {
 	}
 
 	var count int
+	var inString, escaped bool
 	for _, c := range p.buffer {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {

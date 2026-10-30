@@ -1,12 +1,36 @@
 package tools
 
 import (
+	"strings"
 	"testing"
 	"text/template"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value (order-insensitive)
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests, order not preserved)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
 
 func TestParser(t *testing.T) {
 	qwen, err := template.New("qwen").Parse(`{{if .ToolCalls}}<tool_call>{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}</tool_call>{{end}}`)
@@ -40,26 +64,10 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type:     "object",
 					Required: []string{"city"},
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"format": {
 							Type:        api.PropertyType{"string"},
 							Description: "The format to return the temperature in",
@@ -69,7 +77,7 @@ func TestParser(t *testing.T) {
 							Type:        api.PropertyType{"string"},
 							Description: "The city to get the temperature for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -78,30 +86,14 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the weather conditions for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -124,30 +116,14 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_address",
 				Description: "Get the address of a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"location": {
 							Type:        api.PropertyType{"string"},
 							Description: "The location to get the address for",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -156,25 +132,9 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "add",
 				Description: "Add two numbers",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
+				Parameters: api.ToolFunctionParameters{
 					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+					Properties: testPropsMap(map[string]api.ToolProperty{
 						"a": {
 							Type:        api.PropertyType{"string"},
 							Description: "The first number to add",
@@ -183,7 +143,7 @@ func TestParser(t *testing.T) {
 							Type:        api.PropertyType{"string"},
 							Description: "The second number to add",
 						},
-					},
+					}),
 				},
 			},
 		},
@@ -220,9 +180,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "San Francisco",
-						},
+						}),
 					},
 				},
 			},
@@ -237,7 +197,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -252,9 +212,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "New York",
-						},
+						}),
 					},
 				},
 			},
@@ -276,19 +236,19 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -303,19 +263,19 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -330,17 +290,17 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city":   "London",
 							"format": "fahrenheit",
-						},
+						}),
 					},
 				},
 			},
@@ -355,16 +315,16 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -379,9 +339,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -410,9 +370,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -434,9 +394,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -516,18 +476,18 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_temperature",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"city": "London",
-						},
+						}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index: 1,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -549,9 +509,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -591,9 +551,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_conditions",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "Tokyo",
-						},
+						}),
 					},
 				},
 			},
@@ -626,7 +586,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -654,14 +614,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -687,14 +647,14 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Index:     1,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -711,7 +671,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -728,7 +688,7 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello_world",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -750,9 +710,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "London",
-						},
+						}),
 					},
 				},
 			},
@@ -769,9 +729,9 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "get_address",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"location": "London",
-						},
+						}),
 					},
 				},
 			},
@@ -788,10 +748,10 @@ func TestParser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Index: 0,
 						Name:  "add",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"a": "5",
 							"b": "10",
-						},
+						}),
 					},
 				},
 			},
@@ -819,7 +779,7 @@ func TestParser(t *testing.T) {
 			}
 
 			for i, want := range tt.calls {
-				if diff := cmp.Diff(calls[i], want); diff != "" {
+				if diff := cmp.Diff(calls[i], want, argsComparer); diff != "" {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
 			}
@@ -881,6 +841,24 @@ func TestDone(t *testing.T) {
 			tag:    "[",
 			buffer: []byte("[]"),
 			want:   true,
+		},
+		{
+			name:   "json close brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\""),
+			want:   false,
+		},
+		{
+			name:   "json complete with brace inside string",
+			tag:    "{",
+			buffer: []byte("{\"note\": \"a}b\"}"),
+			want:   true,
+		},
+		{
+			name:   "list close bracket inside string",
+			tag:    "[",
+			buffer: []byte("[{\"note\": \"x]y\"}"),
+			want:   false,
 		},
 	}
 
@@ -1096,6 +1074,7 @@ func TestFindArguments(t *testing.T) {
 		name   string
 		buffer []byte
 		want   map[string]any
+		tool   string
 	}{
 		{
 			name:   "empty string",
@@ -1180,19 +1159,205 @@ func TestFindArguments(t *testing.T) {
 		},
 		{
 			name:   "deepseek",
-			buffer: []byte(`", "arguments": {"location": "Tokyo"}}</tool_call>`),
+			buffer: []byte(`"arguments": {"location": "Tokyo"}}</tool_call>`),
 			want: map[string]any{
 				"location": "Tokyo",
+			},
+		},
+		{
+			name:   "string with braces",
+			buffer: []byte(`{"name": "process_code", "arguments": {"code": "if (x > 0) { return true; }"}}`),
+			want: map[string]any{
+				"code": "if (x > 0) { return true; }",
+			},
+		},
+		{
+			name:   "string with nested json",
+			buffer: []byte(`{"name": "send_data", "arguments": {"payload": "{\"nested\": {\"key\": \"value\"}}"}}`),
+			want: map[string]any{
+				"payload": `{"nested": {"key": "value"}}`,
+			},
+		},
+		{
+			name:   "string with escaped quotes and braces",
+			buffer: []byte(`{"name": "analyze", "arguments": {"text": "The JSON is: {\"key\": \"val{ue}\"}"}}`),
+			want: map[string]any{
+				"text": `The JSON is: {"key": "val{ue}"}`,
+			},
+		},
+		{
+			name:   "multiple objects with string containing braces",
+			buffer: []byte(`{"name": "test", "arguments": {"query": "find } in text"}} {"name": "other"}`),
+			want: map[string]any{
+				"query": "find } in text",
+			},
+		},
+		{
+			name:   "unmatched closing brace in string",
+			buffer: []byte(`{"name": "search", "arguments": {"pattern": "regex: }"}}`),
+			want: map[string]any{
+				"pattern": "regex: }",
+			},
+		},
+		{
+			name:   "complex nested with mixed braces",
+			buffer: []byte(`{"name": "analyze", "arguments": {"data": "{\"items\": [{\"value\": \"}\"}, {\"code\": \"if (x) { return y; }\"}]}"}}`),
+			want: map[string]any{
+				"data": `{"items": [{"value": "}"}, {"code": "if (x) { return y; }"}]}`,
+			},
+		},
+		{
+			name:   "string with newline and braces",
+			buffer: []byte(`{"name": "format", "arguments": {"template": "{\n  \"key\": \"value\"\n}"}}`),
+			want: map[string]any{
+				"template": "{\n  \"key\": \"value\"\n}",
+			},
+		},
+		{
+			name:   "string with unicode escape",
+			buffer: []byte(`{"name": "test", "arguments": {"text": "Unicode: \u007B and \u007D"}}`),
+			want: map[string]any{
+				"text": "Unicode: { and }",
+			},
+		},
+		{
+			name:   "array arguments",
+			buffer: []byte(`{"name": "batch", "arguments": ["item1", "item2", "{\"nested\": true}"]}`),
+			want:   nil, // This should return nil because arguments is not a map
+		},
+		{
+			name:   "escaped backslash before quote",
+			buffer: []byte(`{"name": "path", "arguments": {"dir": "C:\\Program Files\\{App}\\"}}`),
+			want: map[string]any{
+				"dir": `C:\Program Files\{App}\`,
+			},
+		},
+		{
+			name:   "single quotes not treated as string delimiters",
+			buffer: []byte(`{"name": "query", "arguments": {"sql": "SELECT * FROM users WHERE name = '{admin}'"}}`),
+			want: map[string]any{
+				"sql": "SELECT * FROM users WHERE name = '{admin}'",
+			},
+		},
+		{
+			name:   "incomplete json at buffer end",
+			buffer: []byte(`{"name": "test", "arguments": {"data": "some {"`),
+			want:   nil,
+		},
+		{
+			name:   "multiple escaped quotes",
+			buffer: []byte(`{"name": "echo", "arguments": {"msg": "He said \"Hello {World}\" loudly"}}`),
+			want: map[string]any{
+				"msg": `He said "Hello {World}" loudly`,
+			},
+		},
+		{
+			name:   "json with comments style string",
+			buffer: []byte(`{"name": "code", "arguments": {"snippet": "// This is a comment with { and }"}}`),
+			want: map[string]any{
+				"snippet": "// This is a comment with { and }",
+			},
+		},
+		{
+			name:   "consecutive escaped backslashes",
+			buffer: []byte(`{"name": "test", "arguments": {"path": "C:\\\\{folder}\\\\"}}`),
+			want: map[string]any{
+				"path": `C:\\{folder}\\`,
+			},
+		},
+		{
+			name:   "empty string with braces after",
+			buffer: []byte(`{"name": "test", "arguments": {"a": "", "b": "{value}"}}`),
+			want: map[string]any{
+				"a": "",
+				"b": "{value}",
+			},
+		},
+		{
+			name:   "unicode in key names",
+			buffer: []byte(`{"name": "test", "arguments": {"key{": "value", "key}": "value2"}}`),
+			want: map[string]any{
+				"key{": "value",
+				"key}": "value2",
+			},
+		},
+		{
+			name:   "very long string with braces",
+			buffer: []byte(`{"name": "test", "arguments": {"data": "` + strings.Repeat("a{b}c", 100) + `"}}`),
+			want: map[string]any{
+				"data": strings.Repeat("a{b}c", 100),
+			},
+		},
+		{
+			name:   "tab characters and braces",
+			buffer: []byte(`{"name": "test", "arguments": {"code": "\tif (true) {\n\t\treturn;\n\t}"}}`),
+			want: map[string]any{
+				"code": "\tif (true) {\n\t\treturn;\n\t}",
+			},
+		},
+		{
+			name:   "null byte in string",
+			buffer: []byte(`{"name": "test", "arguments": {"data": "before\u0000{after}"}}`),
+			want: map[string]any{
+				"data": "before\x00{after}",
+			},
+		},
+		{
+			name:   "escaped quote at end of string",
+			buffer: []byte(`{"name": "test", "arguments": {"data": "text with quote at end\\\""}}`),
+			want: map[string]any{
+				"data": `text with quote at end\"`,
+			},
+		},
+		{
+			name:   "mixed array and object in arguments",
+			buffer: []byte(`{"name": "test", "arguments": {"items": ["{", "}", {"key": "value"}]}}`),
+			want: map[string]any{
+				"items": []any{"{", "}", map[string]any{"key": "value"}},
+			},
+		},
+		{
+			name:   "stringified arguments",
+			buffer: []byte(`{"name": "get_temperature", "arguments": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "stringified parameters",
+			buffer: []byte(`{"name": "get_temperature", "parameters": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "simple tool call",
+			tool:   "get_temperature",
+			buffer: []byte(`{"get_temperature": {"format": "fahrenheit", "location": "San Francisco, CA"}}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
+			},
+		},
+		{
+			name:   "stringified simple tool call",
+			tool:   "get_temperature",
+			buffer: []byte(`{"get_temperature": "{\"format\": \"fahrenheit\", \"location\": \"San Francisco, CA\"}"}`),
+			want: map[string]any{
+				"format":   "fahrenheit",
+				"location": "San Francisco, CA",
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := findArguments(tt.buffer)
+			got, _ := findArguments(&api.Tool{Function: api.ToolFunction{Name: tt.tool}}, tt.buffer)
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
-				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)
+				t.Errorf("findArguments() args mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}

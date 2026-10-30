@@ -4,7 +4,9 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +15,10 @@ import (
 
 func dotProduct[V float32 | float64](v1, v2 []V) V {
 	var result V = 0
+	if len(v1) != len(v2) {
+		return result
+	}
+
 	for i := 0; i < len(v1); i++ {
 		result += v1[i] * v2[i]
 	}
@@ -28,24 +34,169 @@ func magnitude[V float32 | float64](v []V) V {
 }
 
 func cosineSimilarity[V float32 | float64](v1, v2 []V) V {
+	mag1 := magnitude(v1)
+	mag2 := magnitude(v2)
+
+	if mag1 == 0 || mag2 == 0 {
+		return 0
+	}
+
 	return dotProduct(v1, v2) / (magnitude(v1) * magnitude(v2))
 }
 
-func TestAllMiniLMEmbeddings(t *testing.T) {
+func requireEmbedErrorContainsAny(t *testing.T, err error, substrings ...string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("expected error containing one of %q, got nil", substrings)
+	}
+
+	for _, s := range substrings {
+		if strings.Contains(err.Error(), s) {
+			return
+		}
+	}
+
+	t.Fatalf("expected error containing one of %q, got: %v", substrings, err)
+}
+
+func requireSimilarEmbedding(t *testing.T, want, got []float32) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d embedding floats, got %d", len(want), len(got))
+	}
+
+	sim := cosineSimilarity(got, want)
+	if sim < 0.999 {
+		t.Fatalf("expected embedding similar to %v, got %v (similarity: %f)", want[0:5], got[0:5], sim)
+	}
+}
+
+func euclideanDistance[V float32 | float64](v1, v2 []V) V {
+	if len(v1) != len(v2) {
+		return V(math.Inf(1))
+	}
+
+	var sum V = 0
+	for i := 0; i < len(v1); i++ {
+		diff := v1[i] - v2[i]
+		sum += diff * diff
+	}
+
+	return V(math.Sqrt(float64(sum)))
+}
+
+func manhattanDistance[V float32 | float64](v1, v2 []V) V {
+	if len(v1) != len(v2) {
+		return V(math.Inf(1))
+	}
+
+	var sum V = 0
+	for i := 0; i < len(v1); i++ {
+		sum += V(math.Abs(float64(v1[i] - v2[i])))
+	}
+
+	return sum
+}
+
+func runEmbedCosineDistanceCorrelation(t *testing.T, models []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for _, model := range testModels(models) {
+		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
+			testEmbedCosineDistanceCorrelationForModel(t, ctx, client, model, 10*time.Second)
+		})
+	}
+}
+
+func testEmbedCosineDistanceCorrelationForModel(t *testing.T, ctx context.Context, client *api.Client, model string, keepAlive time.Duration) {
+	t.Helper()
+
+	testCases := []struct {
+		a string
+		b string
+		c string
+	}{
+		{"cat", "kitten", "dog"},
+		{"king", "queen", "baron"},
+		{"paris", "london", "vancouver"},
+		{"The cat is sleeping on the sofa", "A feline is sleeping on the couch", "Quantum physics is complex"},
+		{"I love programming in python", "Coding in python brings me joy", "Pizza is delicious"},
+		{"Machine learning is fascinating", "Artificial intelligence is amazing", "I need to buy groceries"},
+		{"The quick brown fox jumps over the lazy dog", "A fast brown fox leaps over a sleepy dog", "The weather is warm and sunny today"},
+	}
+
+	for _, tc := range testCases {
+		testEmbed := make(map[string][]float32)
+		strs := []string{tc.a, tc.b, tc.c}
+
+		req := api.EmbedRequest{
+			Model:     model,
+			Input:     strs,
+			KeepAlive: &api.Duration{Duration: keepAlive},
+		}
+
+		resp, err := embedTestHelper(ctx, client, t, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for cnt, v := range resp.Embeddings {
+			testEmbed[strs[cnt]] = v
+		}
+
+		cosAB := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.b])
+		cosAC := cosineSimilarity(testEmbed[tc.a], testEmbed[tc.c])
+
+		distAB := euclideanDistance(testEmbed[tc.a], testEmbed[tc.b])
+		distAC := euclideanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+		manhattanAB := manhattanDistance(testEmbed[tc.a], testEmbed[tc.b])
+		manhattanAC := manhattanDistance(testEmbed[tc.a], testEmbed[tc.c])
+
+		// Consistency check: if cosAB > cosAC, then distances should be smaller
+		if cosAB > cosAC {
+			if distAB >= distAC {
+				t.Errorf("Euclidean distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but distAB=%f >= distAC=%f",
+					model, tc.a, tc.b, tc.c, cosAB, cosAC, distAB, distAC)
+			}
+
+			if manhattanAB >= manhattanAC {
+				t.Errorf("Manhattan distance inconsistency (%s) for %s-%s-%s: cosAB=%f > cosAC=%f but manhattanAB=%f >= manhattanAC=%f",
+					model, tc.a, tc.b, tc.c, cosAB, cosAC, manhattanAB, manhattanAC)
+			}
+		} else {
+			t.Errorf("Cosine Similarity inconsistency (%s): cosinSim(%s, %s) < cosinSim(%s, %s)",
+				model, tc.a, tc.b, tc.a, tc.c)
+		}
+	}
+}
+
+func runAllMiniLMEmbeddings(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
 	req := api.EmbeddingRequest{
-		Model:  "all-minilm",
-		Prompt: "why is the sky blue?",
+		Model:     "all-minilm",
+		Prompt:    "why is the sky blue?",
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 	}
 
 	res, err := embeddingTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embedding) != 384 {
@@ -61,7 +212,10 @@ func TestAllMiniLMEmbeddings(t *testing.T) {
 	}
 }
 
-func TestAllMiniLMEmbed(t *testing.T) {
+func runAllMiniLMEmbed(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -73,9 +227,8 @@ func TestAllMiniLMEmbed(t *testing.T) {
 	}
 
 	res, err := embedTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embeddings) != 1 {
@@ -94,12 +247,15 @@ func TestAllMiniLMEmbed(t *testing.T) {
 		t.Fatalf("expected %v, got %v (similarity: %f)", expected[0:5], res.Embeddings[0][0:5], sim)
 	}
 
-	if res.PromptEvalCount != 6 {
-		t.Fatalf("expected 6 prompt tokens, got %d", res.PromptEvalCount)
+	if res.PromptEvalCount != 8 {
+		t.Fatalf("expected 8 prompt tokens, got %d", res.PromptEvalCount)
 	}
 }
 
-func TestAllMiniLMBatchEmbed(t *testing.T) {
+func runAllMiniLMBatchEmbed(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -111,9 +267,8 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 	}
 
 	res, err := embedTestHelper(ctx, client, t, req)
-
 	if err != nil {
-		t.Fatalf("error: %v", err)
+		t.Fatal(err)
 	}
 
 	if len(res.Embeddings) != 2 {
@@ -142,12 +297,15 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 		t.Fatalf("expected %v, got %v (similarity: %f)", expected[1][0:5], res.Embeddings[1][0:5], sim)
 	}
 
-	if res.PromptEvalCount != 12 {
-		t.Fatalf("expected 12 prompt tokens, got %d", res.PromptEvalCount)
+	if res.PromptEvalCount != 16 {
+		t.Fatalf("expected 16 prompt tokens, got %d", res.PromptEvalCount)
 	}
 }
 
-func TestAllMiniLMEmbedTruncate(t *testing.T) {
+func runAllMiniLMEmbedTruncate(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -155,93 +313,370 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 
 	truncTrue, truncFalse := true, false
 
-	type testReq struct {
-		Name    string
-		Request api.EmbedRequest
+	want, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
+		Model: "all-minilm",
+		Input: "why",
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	reqs := []testReq{
+	cases := []struct {
+		name    string
+		request api.EmbedRequest
+		check   func(*testing.T, *api.EmbedResponse, error)
+	}{
 		{
-			Name: "Target Truncation",
-			Request: api.EmbedRequest{
+			name: "target truncation",
+			request: api.EmbedRequest{
 				Model: "all-minilm",
 				Input: "why",
 			},
-		},
-		{
-			Name: "Default Truncate",
-			Request: api.EmbedRequest{
-				Model:   "all-minilm",
-				Input:   "why is the sky blue?",
-				Options: map[string]any{"num_ctx": 1},
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				requireSimilarEmbedding(t, want.Embeddings[0], got.Embeddings[0])
 			},
 		},
 		{
-			Name: "Explicit Truncate",
-			Request: api.EmbedRequest{
+			name: "default truncate",
+			request: api.EmbedRequest{
+				Model:   "all-minilm",
+				Input:   "why is the sky blue?",
+				Options: map[string]any{"num_ctx": 3},
+			},
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("PromptEvalCount: want=%d got=%d", want.PromptEvalCount, got.PromptEvalCount)
+				requireSimilarEmbedding(t, want.Embeddings[0], got.Embeddings[0])
+			},
+		},
+		{
+			name: "explicit truncate",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncTrue,
+				Options:  map[string]any{"num_ctx": 3},
+			},
+			check: func(t *testing.T, got *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("PromptEvalCount: want=%d got=%d", want.PromptEvalCount, got.PromptEvalCount)
+				requireSimilarEmbedding(t, want.Embeddings[0], got.Embeddings[0])
+			},
+		},
+		{
+			name: "truncate error",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncFalse,
+				Options:  map[string]any{"num_ctx": 3},
+			},
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
+				requireEmbedErrorContainsAny(t, err, "input length exceeds the context length", "exceeds maximum context length")
+			},
+		},
+		{
+			name: "input after truncate error with context length of 1",
+			request: api.EmbedRequest{
 				Model:    "all-minilm",
 				Input:    "why is the sky blue?",
 				Truncate: &truncTrue,
 				Options:  map[string]any{"num_ctx": 1},
 			},
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
+				requireEmbedErrorContainsAny(t, err, "input after truncation exceeds maximum context length", "input exceeds maximum context length and cannot be truncated further")
+			},
+		},
+		{
+			name: "input after truncate error",
+			request: api.EmbedRequest{
+				Model:    "all-minilm",
+				Input:    "why is the sky blue?",
+				Truncate: &truncTrue,
+				Options:  map[string]any{"num_ctx": 0},
+			},
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
+				requireEmbedErrorContainsAny(t, err, "input after truncation exceeds maximum context length", "input exceeds maximum context length and cannot be truncated further")
+			},
+		},
+		{
+			name: "boundary truncation",
+			request: api.EmbedRequest{
+				Model:   "all-minilm",
+				Input:   "why is the sky blue? Why is the sky blue? hi there my",
+				Options: map[string]any{"num_ctx": 16},
+			},
+			check: func(t *testing.T, res *api.EmbedResponse, err error) {
+				if err != nil {
+					t.Fatal(err)
+				}
+			},
 		},
 	}
 
-	res := make(map[string]*api.EmbedResponse)
-
-	for _, req := range reqs {
-		response, err := embedTestHelper(ctx, client, t, req.Request)
-		if err != nil {
-			t.Fatalf("error: %v", err)
-		}
-		res[req.Name] = response
-	}
-
-	if res["Target Truncation"].Embeddings[0][0] != res["Default Truncate"].Embeddings[0][0] {
-		t.Fatal("expected default request to truncate correctly")
-	}
-
-	if res["Default Truncate"].Embeddings[0][0] != res["Explicit Truncate"].Embeddings[0][0] {
-		t.Fatal("expected default request and truncate true request to be the same")
-	}
-
-	// check that truncate set to false returns an error if context length is exceeded
-	_, err := embedTestHelper(ctx, client, t, api.EmbedRequest{
-		Model:    "all-minilm",
-		Input:    "why is the sky blue?",
-		Truncate: &truncFalse,
-		Options:  map[string]any{"num_ctx": 1},
-	})
-
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	for _, req := range cases {
+		t.Run(req.name, func(t *testing.T) {
+			resp, err := embedTestHelper(ctx, client, t, req.request)
+			req.check(t, resp, err)
+		})
 	}
 }
 
 func embeddingTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("failed to pull model %s: %v", req.Model, err)
-	}
-
-	response, err := client.Embeddings(ctx, &req)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return response, nil
+	t.Helper()
+	pullOrSkip(ctx, t, client, req.Model)
+	return client.Embeddings(ctx, &req)
 }
 
 func embedTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbedRequest) (*api.EmbedResponse, error) {
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("failed to pull model %s: %v", req.Model, err)
+	t.Helper()
+	pullOrSkip(ctx, t, client, req.Model)
+	return client.Embed(ctx, &req)
+}
+
+func runEmbedTruncation(t *testing.T, models []string) {
+	// Use test deadline if set, otherwise default to 2 minutes
+	timeout := 2 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		timeout = time.Until(deadline) - 10*time.Second // Reserve 10s buffer
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
 
-	response, err := client.Embed(ctx, &req)
+	for _, model := range testModels(models) {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
+			// Check if we're running out of time (reserve 20s for current model)
+			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
+				t.Skip("skipping remaining tests to avoid timeout")
+			}
 
-	if err != nil {
-		return nil, err
+			pullOrSkip(ctx, t, client, model)
+			skipIfModelTooLargeForSweepVRAM(ctx, t, client, model)
+
+			// Give each model its own budget to account for first-time pulls/loads
+			mctx, mcancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer mcancel()
+
+			t.Run("truncation batch", func(t *testing.T) {
+				truncTrue := true
+				req := api.EmbedRequest{
+					Model:    model,
+					Input:    []string{"short", strings.Repeat("long ", 100), "medium text"},
+					Truncate: &truncTrue,
+					Options:  map[string]any{"num_ctx": 30},
+				}
+
+				res, err := embedTestHelper(mctx, client, t, req)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if len(res.Embeddings) != 3 {
+					t.Fatalf("expected 3 embeddings, got %d", len(res.Embeddings))
+				}
+
+				if res.PromptEvalCount > 90 {
+					t.Fatalf("expected tokens <= 90 (3 × 30 max), got %d", res.PromptEvalCount)
+				}
+			})
+
+			t.Run("runner token count accuracy", func(t *testing.T) {
+				baseline := api.EmbedRequest{Model: model, Input: "test"}
+				baseRes, err := embedTestHelper(mctx, client, t, baseline)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				batch := api.EmbedRequest{
+					Model: model,
+					Input: []string{"test", "test", "test"},
+				}
+				batchRes, err := embedTestHelper(mctx, client, t, batch)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				expectedCount := baseRes.PromptEvalCount * 3
+				if batchRes.PromptEvalCount < expectedCount-2 || batchRes.PromptEvalCount > expectedCount+2 {
+					t.Fatalf("expected ~%d tokens (3 × %d), got %d",
+						expectedCount, baseRes.PromptEvalCount, batchRes.PromptEvalCount)
+				}
+			})
+		})
 	}
+}
 
-	return response, nil
+// runEmbedLargeInput tests that embedding models can handle large inputs that would exceed typical batch sizes.
+func runEmbedLargeInput(t *testing.T, models []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for _, model := range testModels(models) {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
+			pullOrSkip(ctx, t, client, model)
+			skipIfModelTooLargeForSweepVRAM(ctx, t, client, model)
+
+			mctx, mcancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer mcancel()
+
+			// Test with progressively larger inputs
+			testCases := []struct {
+				name       string
+				inputWords int
+			}{
+				{"medium_input_256_words", 256},
+				{"large_input_512_words", 512},
+				{"very_large_input_800_words", 800},
+			}
+
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					words := make([]string, tc.inputWords)
+					for i := range words {
+						words[i] = "word"
+					}
+					input := strings.Join(words, " ")
+
+					req := api.EmbedRequest{
+						Model:     model,
+						Input:     input,
+						KeepAlive: &api.Duration{Duration: 30 * time.Second},
+					}
+
+					res, err := embedTestHelper(mctx, client, t, req)
+					if err != nil {
+						t.Fatalf("embedding failed for %d words: %v", tc.inputWords, err)
+					}
+
+					if len(res.Embeddings) != 1 {
+						t.Fatalf("expected 1 embedding, got %d", len(res.Embeddings))
+					}
+
+					if len(res.Embeddings[0]) == 0 {
+						t.Fatal("expected non-empty embedding")
+					}
+
+					t.Logf("Successfully embedded %d words (%d tokens)", tc.inputWords, res.PromptEvalCount)
+				})
+			}
+		})
+	}
+}
+
+// runEmbedStatusCode tests that errors from the embedding endpoint
+// properly preserve their HTTP status codes when returned to the client.
+// This test specifically checks the error handling path in EmbedHandler
+// where api.StatusError errors should maintain their original status code.
+func runEmbedStatusCode(t *testing.T, models []string) {
+	// Use test deadline if set, otherwise default to 2 minutes
+	timeout := 2 * time.Minute
+	if deadline, ok := t.Deadline(); ok {
+		timeout = time.Until(deadline) - 10*time.Second // Reserve 10s buffer
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	for _, model := range testModels(models) {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
+			// Check if we're running out of time (reserve 20s for current model)
+			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
+				t.Skip("skipping remaining tests to avoid timeout")
+			}
+
+			mctx, mcancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer mcancel()
+
+			// Pull the model if needed
+			pullOrSkip(mctx, t, client, model)
+			skipIfModelTooLargeForSweepVRAM(mctx, t, client, model)
+
+			t.Run("truncation error status code", func(t *testing.T) {
+				truncFalse := false
+				longInput := strings.Repeat("very long input ", 100)
+
+				req := api.EmbedRequest{
+					Model:    model,
+					Input:    longInput,
+					Truncate: &truncFalse,
+					Options:  map[string]any{"num_ctx": 10},
+				}
+
+				_, err := embedTestHelper(mctx, client, t, req)
+				if err == nil {
+					t.Fatal("expected error when truncate=false with long input")
+				}
+
+				// Check that it's a StatusError with the correct status code
+				var statusErr api.StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("expected api.StatusError, got %T: %v", err, err)
+				}
+
+				// The error should be a 4xx client error (likely 400 Bad Request)
+				// not a 500 Internal Server Error
+				if statusErr.StatusCode < 400 || statusErr.StatusCode >= 500 {
+					t.Errorf("expected 4xx status code, got %d", statusErr.StatusCode)
+				}
+
+				// Verify the error message is meaningful
+				requireEmbedErrorContainsAny(t, err, "context length", "too large", "exceed_context_size")
+			})
+
+			t.Run("batch truncation error status code", func(t *testing.T) {
+				truncFalse := false
+				req := api.EmbedRequest{
+					Model: model,
+					Input: []string{
+						"short input",
+						strings.Repeat("very long input ", 100),
+						"another short input",
+					},
+					Truncate: &truncFalse,
+					Options:  map[string]any{"num_ctx": 10},
+				}
+
+				_, err := embedTestHelper(mctx, client, t, req)
+				if err == nil {
+					t.Fatal("expected error when one input exceeds context with truncate=false")
+				}
+
+				// Check that it's a StatusError with the correct status code
+				var statusErr api.StatusError
+				if !errors.As(err, &statusErr) {
+					t.Fatalf("expected api.StatusError, got %T: %v", err, err)
+				}
+
+				// The error should be a 4xx client error, not a 500 Internal Server Error
+				if statusErr.StatusCode < 400 || statusErr.StatusCode >= 500 {
+					t.Errorf("expected 4xx status code, got %d", statusErr.StatusCode)
+				}
+			})
+		})
+	}
 }

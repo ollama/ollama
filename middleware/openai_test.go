@@ -1,0 +1,1814 @@
+package middleware
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
+	"github.com/klauspost/compress/zstd"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/openai"
+)
+
+func testIntPtr(v int) *int {
+	return &v
+}
+
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
+// propsComparer provides cmp options for comparing ToolPropertiesMap by value
+var propsComparer = cmp.Comparer(func(a, b *api.ToolPropertiesMap) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
+const (
+	prefix = `data:image/jpeg;base64,`
+	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+)
+
+var (
+	False = false
+	True  = true
+)
+
+func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		err := json.Unmarshal(bodyBytes, capturedRequest)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, "failed to unmarshal request")
+		}
+		c.Next()
+	}
+}
+
+func sseDataFrames(body string) []string {
+	frames := strings.Split(body, "\n\n")
+	data := make([]string, 0, len(frames))
+	for _, frame := range frames {
+		frame = strings.TrimSpace(frame)
+		if !strings.HasPrefix(frame, "data: ") {
+			continue
+		}
+		data = append(data, strings.TrimPrefix(frame, "data: "))
+	}
+	return data
+}
+
+func TestChatWriter_StreamMixedThinkingAndContentEmitsSplitChunks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:        true,
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		id:            "chatcmpl-test",
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	response := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "reasoning",
+			Content:  "final answer",
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount: 3,
+			EvalCount:       2,
+		},
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+
+	if _, err = writer.Write(data); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	if got := recorder.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("expected Content-Type text/event-stream, got %q", got)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 5 {
+		t.Fatalf("expected 5 SSE data frames (2 content chunks + finish + usage + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[4] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[4])
+	}
+
+	// Wire-format checks that struct round-tripping cannot catch: the finish
+	// chunk serializes an empty delta object with no content key, and the usage
+	// chunk carries an explicit empty choices array (not null).
+	if !strings.Contains(frames[2], `"delta":{}`) {
+		t.Fatalf("expected finish frame to contain \"delta\":{}, got %s", frames[2])
+	}
+	if strings.Contains(frames[2], `"content"`) {
+		t.Fatalf("expected finish frame to omit content, got %s", frames[2])
+	}
+	if !strings.Contains(frames[3], `"choices":[]`) {
+		t.Fatalf("expected usage frame to contain \"choices\":[], got %s", frames[3])
+	}
+
+	var reasoningChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[0]), &reasoningChunk); err != nil {
+		t.Fatalf("unmarshal reasoning chunk: %v", err)
+	}
+
+	var contentChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[1]), &contentChunk); err != nil {
+		t.Fatalf("unmarshal content chunk: %v", err)
+	}
+
+	var finishChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[2]), &finishChunk); err != nil {
+		t.Fatalf("unmarshal finish chunk: %v", err)
+	}
+
+	var usageChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[3]), &usageChunk); err != nil {
+		t.Fatalf("unmarshal usage chunk: %v", err)
+	}
+
+	if len(reasoningChunk.Choices) != 1 {
+		t.Fatalf("expected 1 reasoning choice, got %d", len(reasoningChunk.Choices))
+	}
+	if reasoningChunk.Choices[0].Delta.Reasoning != "reasoning" {
+		t.Fatalf("expected reasoning chunk reasoning %q, got %q", "reasoning", reasoningChunk.Choices[0].Delta.Reasoning)
+	}
+	if reasoningChunk.Choices[0].Delta.Content != nil {
+		t.Fatalf("expected reasoning chunk content to be nil, got %v", reasoningChunk.Choices[0].Delta.Content)
+	}
+	if reasoningChunk.Choices[0].FinishReason != nil {
+		t.Fatalf("expected reasoning chunk finish reason nil, got %v", reasoningChunk.Choices[0].FinishReason)
+	}
+
+	if len(contentChunk.Choices) != 1 {
+		t.Fatalf("expected 1 content choice, got %d", len(contentChunk.Choices))
+	}
+	if contentChunk.Choices[0].Delta.Reasoning != "" {
+		t.Fatalf("expected content chunk reasoning to be empty, got %q", contentChunk.Choices[0].Delta.Reasoning)
+	}
+	if contentChunk.Choices[0].Delta.Content != "final answer" {
+		t.Fatalf("expected content chunk content %q, got %v", "final answer", contentChunk.Choices[0].Delta.Content)
+	}
+	if contentChunk.Choices[0].FinishReason != nil {
+		t.Fatalf("expected content chunk finish reason nil, got %v", contentChunk.Choices[0].FinishReason)
+	}
+
+	if len(finishChunk.Choices) != 1 {
+		t.Fatalf("expected 1 finish choice, got %d", len(finishChunk.Choices))
+	}
+	if finishChunk.Choices[0].FinishReason == nil || *finishChunk.Choices[0].FinishReason != "stop" {
+		t.Fatalf("expected finish reason %q, got %v", "stop", finishChunk.Choices[0].FinishReason)
+	}
+	if finishChunk.Choices[0].Delta.Content != nil {
+		t.Fatalf("expected finish chunk delta to be empty, got %+v", finishChunk.Choices[0].Delta)
+	}
+
+	if usageChunk.Usage == nil {
+		t.Fatal("expected usage chunk to include usage")
+	}
+	if usageChunk.Usage.TotalTokens != 5 {
+		t.Fatalf("expected usage total tokens 5, got %d", usageChunk.Usage.TotalTokens)
+	}
+	if len(usageChunk.Choices) != 0 {
+		t.Fatalf("expected usage chunk choices to be empty, got %d", len(usageChunk.Choices))
+	}
+}
+
+func TestChatWriter_StreamSingleChunkPathStillEmitsOneChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	response := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Content: "single chunk",
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+
+	if _, err = writer.Write(data); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames (1 content chunk + finish + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[2] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[2])
+	}
+
+	var contentChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[0]), &contentChunk); err != nil {
+		t.Fatalf("unmarshal content chunk: %v", err)
+	}
+	if len(contentChunk.Choices) != 1 {
+		t.Fatalf("expected 1 chunk choice, got %d", len(contentChunk.Choices))
+	}
+	if contentChunk.Choices[0].Delta.Content != "single chunk" {
+		t.Fatalf("expected chunk content %q, got %v", "single chunk", contentChunk.Choices[0].Delta.Content)
+	}
+	if contentChunk.Choices[0].FinishReason != nil {
+		t.Fatalf("expected content chunk finish reason nil, got %v", contentChunk.Choices[0].FinishReason)
+	}
+
+	var finishChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[1]), &finishChunk); err != nil {
+		t.Fatalf("unmarshal finish chunk: %v", err)
+	}
+	if len(finishChunk.Choices) != 1 {
+		t.Fatalf("expected 1 finish choice, got %d", len(finishChunk.Choices))
+	}
+	if finishChunk.Choices[0].FinishReason == nil || *finishChunk.Choices[0].FinishReason != "stop" {
+		t.Fatalf("expected finish reason %q, got %v", "stop", finishChunk.Choices[0].FinishReason)
+	}
+}
+
+func TestChatWriter_StreamMixedThinkingAndToolCallsWithoutDoneEmitsChunksOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:        true,
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		id:            "chatcmpl-test",
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	response := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "reasoning",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_234",
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Portland",
+						}),
+					},
+				},
+			},
+		},
+		Done: false,
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+
+	if _, err = writer.Write(data); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 2 {
+		t.Fatalf("expected 2 SSE data frames (reasoning + tool-calls), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[len(frames)-1] == "[DONE]" {
+		t.Fatalf("did not expect [DONE] frame for non-final chunk: %s", recorder.Body.String())
+	}
+
+	var reasoningChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[0]), &reasoningChunk); err != nil {
+		t.Fatalf("unmarshal reasoning chunk: %v", err)
+	}
+
+	var toolCallChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[1]), &toolCallChunk); err != nil {
+		t.Fatalf("unmarshal tool-call chunk: %v", err)
+	}
+
+	if len(reasoningChunk.Choices) != 1 || reasoningChunk.Choices[0].Delta.Reasoning != "reasoning" {
+		t.Fatalf("expected first chunk to be reasoning-only, got %+v", reasoningChunk.Choices)
+	}
+	if len(toolCallChunk.Choices) != 1 || len(toolCallChunk.Choices[0].Delta.ToolCalls) != 1 {
+		t.Fatalf("expected second chunk to contain tool calls, got %+v", toolCallChunk.Choices)
+	}
+	if toolCallChunk.Choices[0].FinishReason != nil {
+		t.Fatalf("expected nil finish reason for non-final tool-call chunk, got %v", toolCallChunk.Choices[0].FinishReason)
+	}
+	if !writer.toolCallSent {
+		t.Fatal("expected toolCallSent to be tracked after tool-call chunk emission")
+	}
+}
+
+func TestChatWriter_StreamMixedThinkingAndContentWithoutDoneEmitsChunksOnly(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:        true,
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		id:            "chatcmpl-test",
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	response := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "reasoning",
+			Content:  "partial content",
+		},
+		Done: false,
+	}
+
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+
+	if _, err = writer.Write(data); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	if len(frames) != 2 {
+		t.Fatalf("expected 2 SSE data frames (reasoning + content), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if frames[len(frames)-1] == "[DONE]" {
+		t.Fatalf("did not expect [DONE] frame for non-final chunk: %s", recorder.Body.String())
+	}
+
+	var reasoningChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[0]), &reasoningChunk); err != nil {
+		t.Fatalf("unmarshal reasoning chunk: %v", err)
+	}
+
+	var contentChunk openai.ChatCompletionChunk
+	if err := json.Unmarshal([]byte(frames[1]), &contentChunk); err != nil {
+		t.Fatalf("unmarshal content chunk: %v", err)
+	}
+
+	if len(reasoningChunk.Choices) != 1 || reasoningChunk.Choices[0].Delta.Reasoning != "reasoning" {
+		t.Fatalf("expected first chunk to be reasoning-only, got %+v", reasoningChunk.Choices)
+	}
+	if len(contentChunk.Choices) != 1 || contentChunk.Choices[0].Delta.Content != "partial content" {
+		t.Fatalf("expected second chunk to contain content, got %+v", contentChunk.Choices)
+	}
+	if contentChunk.Choices[0].FinishReason != nil {
+		t.Fatalf("expected nil finish reason for non-final content chunk, got %v", contentChunk.Choices[0].FinishReason)
+	}
+}
+
+func TestChatWriter_StreamRoleOnlyOnFirstChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	first := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "Hello"},
+		Done:    false,
+	}
+	data, _ := json.Marshal(first)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+
+	second := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: " world"},
+		Done:    false,
+	}
+	data, _ = json.Marshal(second)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write second: %v", err)
+	}
+
+	third := api.ChatResponse{
+		Model:      "test-model",
+		Message:    api.Message{Content: "!"},
+		Done:       true,
+		DoneReason: "stop",
+	}
+	data, _ = json.Marshal(third)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write third: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// Expect: chunk1 (content+role) + chunk2 (content) + chunk3 (content) + finish + [DONE]
+	if len(frames) != 5 {
+		t.Fatalf("expected 5 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	var firstRaw map[string]any
+	json.Unmarshal([]byte(frames[0]), &firstRaw)
+	firstDelta := firstRaw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	if firstDelta["role"] != "assistant" {
+		t.Fatalf("expected first chunk to have role 'assistant', got %v", firstDelta["role"])
+	}
+
+	var secondRaw map[string]any
+	json.Unmarshal([]byte(frames[1]), &secondRaw)
+	secondDelta := secondRaw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	if _, hasRole := secondDelta["role"]; hasRole {
+		t.Fatalf("expected second chunk to omit role, got %v", secondDelta["role"])
+	}
+
+	var thirdRaw map[string]any
+	json.Unmarshal([]byte(frames[2]), &thirdRaw)
+	thirdDelta := thirdRaw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	if _, hasRole := thirdDelta["role"]; hasRole {
+		t.Fatalf("expected third chunk to omit role, got %v", thirdDelta["role"])
+	}
+
+	var finishRaw map[string]any
+	json.Unmarshal([]byte(frames[3]), &finishRaw)
+	finishDelta := finishRaw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	if len(finishDelta) != 0 {
+		t.Fatalf("expected finish chunk to have empty delta {}, got %v", finishDelta)
+	}
+	finishReason := finishRaw["choices"].([]any)[0].(map[string]any)["finish_reason"]
+	if finishReason != "stop" {
+		t.Fatalf("expected finish_reason %q, got %v", "stop", finishReason)
+	}
+}
+
+func TestChatWriter_StreamSharesOneTimestamp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	first := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: time.Unix(1700000000, 0),
+		Message:   api.Message{Content: "Hello"},
+		Done:      false,
+	}
+	data, _ := json.Marshal(first)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+
+	// The server stamps each streamed response; later responses must not
+	// change the stream's created value.
+	second := api.ChatResponse{
+		Model:     "test-model",
+		CreatedAt: time.Unix(1700000010, 0),
+		Message:   api.Message{Content: " world"},
+		Done:      false,
+	}
+	data, _ = json.Marshal(second)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write second: %v", err)
+	}
+
+	third := api.ChatResponse{
+		Model:      "test-model",
+		CreatedAt:  time.Unix(1700000020, 0),
+		Done:       true,
+		DoneReason: "stop",
+	}
+	data, _ = json.Marshal(third)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write third: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// chunk1 + chunk2 + finish + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	for _, frame := range frames[:3] {
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(frame), &raw); err != nil {
+			t.Fatalf("unmarshal frame: %v", err)
+		}
+		if got := raw["created"]; got != float64(1700000000) {
+			t.Fatalf("expected all chunks to share created=1700000000, got %v in %s", got, frame)
+		}
+	}
+}
+
+func TestChatWriter_StreamFinishReasonLength(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	// Simulate a max_tokens truncation
+	resp := api.ChatResponse{
+		Model:      "test-model",
+		Message:    api.Message{Content: "partial"},
+		Done:       true,
+		DoneReason: "length",
+	}
+	data, _ := json.Marshal(resp)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + finish + [DONE]
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	var finishRaw map[string]any
+	json.Unmarshal([]byte(frames[1]), &finishRaw)
+	finishReason := finishRaw["choices"].([]any)[0].(map[string]any)["finish_reason"]
+	if finishReason != "length" {
+		t.Fatalf("expected finish_reason %q, got %v", "length", finishReason)
+	}
+
+	var contentRaw map[string]any
+	json.Unmarshal([]byte(frames[0]), &contentRaw)
+	contentFinish := contentRaw["choices"].([]any)[0].(map[string]any)["finish_reason"]
+	if contentFinish != nil {
+		t.Fatalf("expected content chunk finish_reason to be null, got %v", contentFinish)
+	}
+}
+
+func TestChatWriter_StreamToolCallsFinishReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_abc",
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_weather",
+						Arguments: testArgs(map[string]any{
+							"city": "Paris",
+						}),
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+	data, _ := json.Marshal(resp)
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// tool_call_content + finish + [DONE]
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 frames, got %d:\n%s", len(frames), recorder.Body.String())
+	}
+
+	var finishRaw map[string]any
+	json.Unmarshal([]byte(frames[1]), &finishRaw)
+	finishReason := finishRaw["choices"].([]any)[0].(map[string]any)["finish_reason"]
+	if finishReason != "tool_calls" {
+		t.Fatalf("expected finish_reason %q, got %v", "tool_calls", finishReason)
+	}
+
+	finishDelta := finishRaw["choices"].([]any)[0].(map[string]any)["delta"].(map[string]any)
+	if len(finishDelta) != 0 {
+		t.Fatalf("expected empty finish delta, got %v", finishDelta)
+	}
+}
+
+func TestChatWriter_StreamMetricsTrailerSkipsEmptyContentChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:        true,
+		id:            "chatcmpl-test",
+		streamOptions: &openai.StreamOptions{IncludeUsage: true},
+		BaseWriter:    BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	content := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "Hi"},
+	}
+	data, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("marshal content: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+
+	// Real streams end with a metrics-only response: Done with an empty message.
+	trailer := api.ChatResponse{
+		Model:      "test-model",
+		Done:       true,
+		DoneReason: "stop",
+		Metrics: api.Metrics{
+			PromptEvalCount:       3,
+			PromptEvalCachedCount: testIntPtr(1),
+			PromptEvalDuration:    30 * time.Millisecond,
+			EvalCount:             1,
+			EvalDuration:          20 * time.Millisecond,
+		},
+	}
+	data, err = json.Marshal(trailer)
+	if err != nil {
+		t.Fatalf("marshal trailer: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write trailer: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + finish + usage + [DONE] — no delta:{"content":""} frame between
+	// the last content chunk and the finish chunk.
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames (content + finish + usage + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if !strings.Contains(frames[0], `"content":"Hi"`) {
+		t.Fatalf("expected content frame to carry the content, got %s", frames[0])
+	}
+	if !strings.Contains(frames[1], `"delta":{}`) || !strings.Contains(frames[1], `"finish_reason":"stop"`) {
+		t.Fatalf("expected finish frame with empty delta and stop reason, got %s", frames[1])
+	}
+	if !strings.Contains(frames[2], `"choices":[]`) {
+		t.Fatalf("expected usage frame with empty choices, got %s", frames[2])
+	}
+	if !strings.Contains(frames[2], `"prompt_tokens_details":{"cached_tokens":1}`) {
+		t.Fatalf("expected usage frame with cached prompt tokens, got %s", frames[2])
+	}
+	if !strings.Contains(frames[2], `"timings":{"prompt_n":3,"prompt_ms":30`) {
+		t.Fatalf("expected usage frame to carry timings, got %s", frames[2])
+	}
+	if strings.Contains(strings.Join(frames[:2], ""), `"timings"`) {
+		t.Fatalf("expected timings only in the usage frame, got %s", recorder.Body.String())
+	}
+	if frames[3] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[3])
+	}
+}
+
+func TestChatWriter_StreamDoneWithLogprobsNotTreatedAsTrailer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	content := api.ChatResponse{
+		Model:   "test-model",
+		Message: api.Message{Content: "Hi"},
+	}
+	data, err := json.Marshal(content)
+	if err != nil {
+		t.Fatalf("marshal content: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+
+	// A final response can carry the last token's logprobs with an empty
+	// message; its logprobs must be streamed, not dropped with the trailer.
+	final := api.ChatResponse{
+		Model:      "test-model",
+		Done:       true,
+		DoneReason: "stop",
+		Logprobs: []api.Logprob{
+			{TokenLogprob: api.TokenLogprob{Token: "Hi", Logprob: -0.1}},
+		},
+	}
+	data, err = json.Marshal(final)
+	if err != nil {
+		t.Fatalf("marshal final: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write final: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// content + logprobs chunk + finish + [DONE]
+	if len(frames) != 4 {
+		t.Fatalf("expected 4 SSE data frames (content + logprobs + finish + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if !strings.Contains(frames[1], `"logprob":-0.1`) {
+		t.Fatalf("expected logprobs chunk to carry the logprobs, got %s", frames[1])
+	}
+	if !strings.Contains(frames[2], `"delta":{}`) || !strings.Contains(frames[2], `"finish_reason":"stop"`) {
+		t.Fatalf("expected finish frame with empty delta and stop reason, got %s", frames[2])
+	}
+}
+
+func TestChatWriter_StreamEmptyCompletionStillEmitsRoleChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	writer := &ChatWriter{
+		stream:     true,
+		id:         "chatcmpl-test",
+		BaseWriter: BaseWriter{ResponseWriter: context.Writer},
+	}
+
+	// A completion that is empty from the start must still open with a role chunk
+	// before the finish chunk.
+	resp := api.ChatResponse{
+		Model:      "test-model",
+		Done:       true,
+		DoneReason: "stop",
+	}
+	data, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if _, err := writer.Write(data); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	frames := sseDataFrames(recorder.Body.String())
+	// role/content chunk + finish + [DONE]
+	if len(frames) != 3 {
+		t.Fatalf("expected 3 SSE data frames (role chunk + finish + [DONE]), got %d:\n%s", len(frames), recorder.Body.String())
+	}
+	if !strings.Contains(frames[0], `"role":"assistant"`) || !strings.Contains(frames[0], `"content":""`) {
+		t.Fatalf("expected initial role chunk with empty content, got %s", frames[0])
+	}
+	if !strings.Contains(frames[1], `"delta":{}`) || !strings.Contains(frames[1], `"finish_reason":"stop"`) {
+		t.Fatalf("expected finish frame with empty delta and stop reason, got %s", frames[1])
+	}
+	if frames[2] != "[DONE]" {
+		t.Fatalf("expected final frame [DONE], got %q", frames[2])
+	}
+}
+
+func TestChatMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.ChatRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.ChatRequest
+
+	testCases := []testCase{
+		{
+			name: "chat handler",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with options",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: json.RawMessage(`"json"`),
+				Stream: &True,
+			},
+		},
+		{
+			name: "chat handler with streaming usage",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"stream_options":    {"include_usage": true},
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: json.RawMessage(`"json"`),
+				Stream: &True,
+			},
+		},
+		{
+			name: "chat handler with image content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "Hello"
+							},
+							{
+								"type": "image_url",
+								"image_url": {
+									"url": "` + prefix + image + `"
+								}
+							}
+						]
+					}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+					{
+						Role: "user",
+						Images: []api.ImageData{
+							func() []byte {
+								img, _ := base64.StdEncoding.DecodeString(image)
+								return img
+							}(),
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "content": "Let's see what the weather is like in Paris", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role:    "assistant",
+						Content: "Let's see what the weather is like in Paris",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and empty content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "content": "", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools and thinking content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "reasoning": "Let's see what the weather is like in Paris", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role:     "assistant",
+						Thinking: "Let's see what the weather is like in Paris",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "tool response with call ID",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id_abc", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]},
+					{"role": "tool", "tool_call_id": "id_abc", "content": "The weather in Paris is 20 degrees Celsius"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id_abc",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+					{
+						Role:       "tool",
+						Content:    "The weather in Paris is 20 degrees Celsius",
+						ToolName:   "get_current_weather",
+						ToolCallID: "id_abc",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "tool response with name",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]},
+					{"role": "tool", "name": "get_current_weather", "content": "The weather in Paris is 20 degrees Celsius"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								ID: "id",
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: testArgs(map[string]any{
+										"location": "Paris, France",
+										"format":   "celsius",
+									}),
+								},
+							},
+						},
+					},
+					{
+						Role:     "tool",
+						Content:  "The weather in Paris is 20 degrees Celsius",
+						ToolName: "get_current_weather",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with streaming tools",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris?"}
+				],
+				"stream": true,
+				"tools": [{
+					"type": "function",
+					"function": {
+						"name": "get_weather",
+						"description": "Get the current weather",
+						"parameters": {
+							"type": "object",
+							"required": ["location"],
+							"properties": {
+								"location": {
+									"type": "string",
+									"description": "The city and state"
+								},
+								"unit": {
+									"type": "string",
+									"enum": ["celsius", "fahrenheit"]
+								}
+							}
+						}
+					}
+				}]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris?",
+					},
+				},
+				Tools: []api.Tool{
+					{
+						Type: "function",
+						Function: api.ToolFunction{
+							Name:        "get_weather",
+							Description: "Get the current weather",
+							Parameters: api.ToolFunctionParameters{
+								Type:     "object",
+								Required: []string{"location"},
+								Properties: testPropsMap(map[string]api.ToolProperty{
+									"location": {
+										Type:        api.PropertyType{"string"},
+										Description: "The city and state",
+									},
+									"unit": {
+										Type: api.PropertyType{"string"},
+										Enum: []any{"celsius", "fahrenheit"},
+									},
+								}),
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &True,
+			},
+		},
+		{
+			name: "chat handler error forwarding",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": 2}
+				]
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "invalid message content type: float64",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ChatMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/chat", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			defer func() { capturedRequest = nil }()
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			var errResp openai.ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if diff := cmp.Diff(&tc.req, capturedRequest, argsComparer, propsComparer); diff != "" {
+				t.Fatalf("requests did not match: %+v", diff)
+			}
+			if diff := cmp.Diff(tc.err, errResp); diff != "" {
+				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
+			}
+		})
+	}
+}
+
+func TestCompletionsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.GenerateRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.GenerateRequest
+
+	testCases := []testCase{
+		{
+			name: "completions handler",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &False,
+			},
+		},
+		{
+			name: "completions handler stream",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
+			},
+		},
+		{
+			name: "completions handler stream with usage",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"stream_options": {"include_usage": true},
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
+			},
+		},
+		{
+			name: "completions handler error forwarding",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"temperature": null,
+				"stop": [1, 2],
+				"suffix": "suffix"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "invalid type for 'stop' field: float64",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(CompletionsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			var errResp openai.ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Fatal("errors did not match")
+			}
+
+			capturedRequest = nil
+		})
+	}
+}
+
+func TestEmbeddingsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.EmbedRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.EmbedRequest
+
+	testCases := []testCase{
+		{
+			name: "embed handler single input",
+			body: `{
+				"input": "Hello",
+				"model": "test-model"
+			}`,
+			req: api.EmbedRequest{
+				Input: "Hello",
+				Model: "test-model",
+			},
+		},
+		{
+			name: "embed handler batch input",
+			body: `{
+				"input": ["Hello", "World"],
+				"model": "test-model"
+			}`,
+			req: api.EmbedRequest{
+				Input: []any{"Hello", "World"},
+				Model: "test-model",
+			},
+		},
+		{
+			name: "embed handler error forwarding",
+			body: `{
+				"model": "test-model"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "invalid input",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(EmbeddingsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/embed", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			var errResp openai.ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Fatal("errors did not match")
+			}
+
+			capturedRequest = nil
+		})
+	}
+}
+
+func TestListMiddleware(t *testing.T) {
+	type testCase struct {
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
+	}
+
+	testCases := []testCase{
+		{
+			name: "list handler",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ListResponse{
+					Models: []api.ListModelResponse{
+						{
+							Name:       "test-model",
+							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+						},
+					},
+				})
+			},
+			resp: `{
+				"object": "list",
+				"data": [
+					{
+						"id": "test-model",
+						"object": "model",
+						"created": 1686935002,
+						"owned_by": "library"
+					}
+				]
+			}`,
+		},
+		{
+			name: "list handler empty output",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ListResponse{})
+			},
+			resp: `{
+				"object": "list",
+				"data": null
+			}`,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range testCases {
+		router := gin.New()
+		router.Use(ListMiddleware())
+		router.Handle(http.MethodGet, "/api/tags", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/tags", nil)
+
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
+
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
+	}
+}
+
+func TestRetrieveMiddleware(t *testing.T) {
+	type testCase struct {
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
+	}
+
+	testCases := []testCase{
+		{
+			name: "retrieve handler",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ShowResponse{
+					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+				})
+			},
+			resp: `{
+				"id":"test-model",
+				"object":"model",
+				"created":1686935002,
+				"owned_by":"library"}
+			`,
+		},
+		{
+			name: "retrieve handler error forwarding",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
+			},
+			resp: `{
+				"error": {
+				  "code": null,
+				  "message": "model not found",
+				  "param": null,
+				  "type": "invalid_request_error"
+				}
+			}`,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range testCases {
+		router := gin.New()
+		router.Use(RetrieveMiddleware())
+		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
+
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
+
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
+	}
+}
+
+func zstdCompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestResponsesMiddlewareZstd(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		useZstd     bool
+		oversized   bool
+		wantCode    int
+		wantModel   string
+		wantMessage string
+	}{
+		{
+			name:        "plain JSON",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:        "zstd compressed",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			useZstd:     true,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:      "zstd over max decompressed size",
+			oversized: true,
+			useZstd:   true,
+			wantCode:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedRequest *api.ChatRequest
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(ResponsesMiddleware(), captureRequestMiddleware(&capturedRequest))
+			router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			var bodyReader io.Reader
+			if tt.oversized {
+				bodyReader = bytes.NewReader(zstdCompress(t, bytes.Repeat([]byte("A"), 9<<20)))
+			} else if tt.useZstd {
+				bodyReader = bytes.NewReader(zstdCompress(t, []byte(tt.body)))
+			} else {
+				bodyReader = strings.NewReader(tt.body)
+			}
+
+			req, _ := http.NewRequest(http.MethodPost, "/v1/responses", bodyReader)
+			req.Header.Set("Content-Type", "application/json")
+			if tt.useZstd || tt.oversized {
+				req.Header.Set("Content-Encoding", "zstd")
+			}
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != tt.wantCode {
+				t.Fatalf("expected status %d, got %d: %s", tt.wantCode, resp.Code, resp.Body.String())
+			}
+
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+
+			if capturedRequest == nil {
+				t.Fatal("expected captured request, got nil")
+			}
+			if capturedRequest.Model != tt.wantModel {
+				t.Fatalf("expected model %q, got %q", tt.wantModel, capturedRequest.Model)
+			}
+			if len(capturedRequest.Messages) != 1 || capturedRequest.Messages[0].Content != tt.wantMessage {
+				t.Fatalf("expected single user message %q, got %+v", tt.wantMessage, capturedRequest.Messages)
+			}
+		})
+	}
+}

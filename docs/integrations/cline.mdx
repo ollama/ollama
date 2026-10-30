@@ -1,0 +1,37 @@
+---
+title: Cline
+---
+
+## Install
+
+Install [Cline](https://docs.cline.bot/getting-started/installing-cline) in your IDE.
+
+
+## Usage with Ollama
+
+1. Open Cline settings > `API Configuration` and set `API Provider` to `Ollama`
+2. Select a model under `Model` or type one (e.g. `qwen3`)
+3. Update the context window to at least 32K tokens under `Context Window`
+
+<Note>Use a [context window](/context-length) of at least 32K tokens for coding.</Note>
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/cline-settings.png" 
+    alt="Cline settings configuration showing API Provider set to Ollama"
+    width="50%"
+  />
+</div>
+
+
+    
+## Connecting to ollama.com
+1. Create an [API key](https://ollama.com/settings/keys) from ollama.com
+2. Click on `Use custom base URL` and set it to `https://ollama.com`
+3. Enter your **Ollama API Key**
+4. Select a model from the list
+
+
+### Models
+
+Choose a [cloud model](https://ollama.com/search?c=cloud) that supports tool calling.

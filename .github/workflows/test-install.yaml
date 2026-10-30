@@ -1,0 +1,22 @@
+name: test-install
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/install.sh'
+      - '.github/workflows/test-install.yaml'
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run install script
+        run: sh ./scripts/install.sh
+        env:
+          OLLAMA_NO_START: 1 # do not start app
+      - name: Verify ollama is available
+        run: ollama --version

@@ -1,3 +1,5 @@
+//go:build windows || darwin
+
 package assets
 
 import (

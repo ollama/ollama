@@ -2,13 +2,24 @@ package server
 
 import (
 	"bytes"
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/model"
 )
+
+func testConfigWithRenderer(renderer string) model.ConfigV2 {
+	return model.ConfigV2{Renderer: renderer}
+}
+
+func testConfigWithRendererAndType(renderer, modelType string) model.ConfigV2 {
+	return model.ConfigV2{Renderer: renderer, ModelType: modelType}
+}
 
 func TestChatPrompt(t *testing.T) {
 	type expect struct {
@@ -27,16 +38,18 @@ func TestChatPrompt(t *testing.T) {
 	visionModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 
 	cases := []struct {
-		name  string
-		model Model
-		limit int
-		msgs  []api.Message
+		name     string
+		model    Model
+		limit    int
+		truncate bool
+		msgs     []api.Message
 		expect
 	}{
 		{
-			name:  "messages",
-			model: visionModel,
-			limit: 64,
+			name:     "messages",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -47,9 +60,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages",
-			model: visionModel,
-			limit: 1,
+			name:     "truncate messages",
+			model:    visionModel,
+			limit:    1,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -60,9 +74,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages with image",
-			model: visionModel,
-			limit: 64,
+			name:     "truncate messages with image",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -76,9 +91,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate messages with images",
-			model: visionModel,
-			limit: 64,
+			name:     "truncate messages with images",
+			model:    visionModel,
+			limit:    64,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -92,9 +108,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "messages with images",
-			model: visionModel,
-			limit: 2048,
+			name:     "messages with images",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -109,9 +126,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "message with image tag",
-			model: visionModel,
-			limit: 2048,
+			name:     "message with image tag",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry! [img]", Images: []api.ImageData{[]byte("something")}},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -126,9 +144,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "messages with interleaved images",
-			model: visionModel,
-			limit: 2048,
+			name:     "messages with interleaved images",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "user", Images: []api.ImageData{[]byte("something")}},
@@ -145,9 +164,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "truncate message with interleaved images",
-			model: visionModel,
-			limit: 1024,
+			name:     "truncate message with interleaved images",
+			model:    visionModel,
+			limit:    1024,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "user", Images: []api.ImageData{[]byte("something")}},
@@ -163,9 +183,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "message with system prompt",
-			model: visionModel,
-			limit: 2048,
+			name:     "message with system prompt",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "system", Content: "You are the Test Who Lived."},
 				{Role: "user", Content: "You're a test, Harry!"},
@@ -177,9 +198,10 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "out of order system",
-			model: visionModel,
-			limit: 2048,
+			name:     "out of order system",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "You're a test, Harry!"},
 				{Role: "assistant", Content: "I-I'm a what?"},
@@ -191,15 +213,30 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
-			name:  "multiple images same prompt",
-			model: visionModel,
-			limit: 2048,
+			name:     "multiple images same prompt",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
 			msgs: []api.Message{
 				{Role: "user", Content: "Compare these two pictures of hotdogs", Images: []api.ImageData{[]byte("one hotdog"), []byte("two hotdogs")}},
 			},
 			expect: expect{
 				prompt: "[img-0][img-1]Compare these two pictures of hotdogs ",
 				images: [][]byte{[]byte("one hotdog"), []byte("two hotdogs")},
+			},
+		},
+		{
+			name:     "no truncate with limit exceeded",
+			model:    visionModel,
+			limit:    10,
+			truncate: false,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
+			},
+			expect: expect{
+				prompt: "You're a test, Harry! I-I'm a what? A test. And a thumping good one at that, I'd wager. ",
 			},
 		},
 	}
@@ -209,7 +246,7 @@ func TestChatPrompt(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			think := false
-			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &think)
+			prompt, images, err := chatPrompt(t.Context(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, tt.truncate)
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
 			} else if tt.error != nil && err != tt.error {
@@ -234,6 +271,370 @@ func TestChatPrompt(t *testing.T) {
 						t.Errorf("expected %q, got %q", tt.images[i], images[i].Data)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestChatPromptTokenizeCalls(t *testing.T) {
+	tmpl, err := template.Parse(`
+{{- if .System }}{{ .System }} {{ end }}
+{{- if .Prompt }}{{ .Prompt }} {{ end }}
+{{- if .Response }}{{ .Response }} {{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := Model{Template: tmpl}
+
+	cases := []struct {
+		name         string
+		limit        int
+		msgs         []api.Message
+		maxTokenizes int
+	}{
+		{
+			name:  "all messages fit",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 1,
+		},
+		{
+			name:  "truncate to last message",
+			limit: 5,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 5,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenizeCount := 0
+			countingTokenize := func(ctx context.Context, s string) ([]int, error) {
+				tokenizeCount++
+				tokens, err := mockRunner{}.Tokenize(ctx, s)
+				return tokens, err
+			}
+
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
+			think := false
+			_, _, err := chatPrompt(t.Context(), &model, countingTokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tokenizeCount > tt.maxTokenizes {
+				t.Errorf("tokenize called %d times, expected at most %d", tokenizeCount, tt.maxTokenizes)
+			}
+		})
+	}
+}
+
+func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "what do these photos have in common?",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2"), []byte("img-3")},
+		},
+	}
+	originalContent := msgs[0].Content
+
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "qwen3-vl-instruct"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	think := false
+
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msgs[0].Content != originalContent {
+		t.Fatalf("renderer path should not mutate message content: got %q, want %q", msgs[0].Content, originalContent)
+	}
+
+	if got, want := len(images), 3; got != want {
+		t.Fatalf("len(images) = %d, want %d", got, want)
+	}
+
+	if prompt == "" {
+		t.Fatal("prompt is empty")
+	}
+}
+
+func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "extract text",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+		},
+	}
+
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "glm-ocr"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	think := false
+
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(images), 2; got != want {
+		t.Fatalf("len(images) = %d, want %d", got, want)
+	}
+
+	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1] extract text") {
+		t.Fatalf("prompt missing glm-ocr image tags, got: %q", prompt)
+	}
+}
+
+func TestChatPromptRendererAddsToolImageTags(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "look at this file",
+			Images:  []api.ImageData{[]byte("img-1")},
+		},
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_read",
+					Function: api.ToolCallFunction{
+						Name: "Read",
+					},
+				},
+			},
+		},
+		{
+			Role:       "tool",
+			Content:    "attached image",
+			Images:     []api.ImageData{[]byte("img-2")},
+			ToolCallID: "call_read",
+		},
+	}
+
+	tests := []struct {
+		name            string
+		renderer        string
+		wantUserTag     string
+		wantToolContent string
+	}{
+		{
+			name:            "gemma4",
+			renderer:        "gemma4",
+			wantUserTag:     "<|turn>user\n[img-0] look at this file<turn|>\n",
+			wantToolContent: "[img-1] attached image",
+		},
+		{
+			name:            "qwen3-vl",
+			renderer:        "qwen3-vl-instruct",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "qwen3.5",
+			renderer:        "qwen3.5",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "glm-ocr",
+			renderer:        "glm-ocr",
+			wantUserTag:     "<|user|>\n[img-0] look at this file",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "nemotron-3-nano",
+			renderer:        "nemotron-3-nano",
+			wantUserTag:     "<|im_start|>user\n[img-0] look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1] attached image\n</tool_response>",
+		},
+		{
+			name:            "lfm3",
+			renderer:        "lfm3",
+			wantUserTag:     "<|im_start|>user\n[img-0]look at this file<|im_end|>\n",
+			wantToolContent: "<tool_response>\n[img-1]\nattached image\n</tool_response>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				Config:         model.ConfigV2{Renderer: tt.renderer},
+				ProjectorPaths: []string{"vision"},
+			}
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+			think := false
+
+			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := len(images), 2; got != want {
+				t.Fatalf("len(images) = %d, want %d", got, want)
+			}
+
+			if !strings.Contains(prompt, tt.wantUserTag) {
+				t.Fatalf("prompt missing user image tag, got: %q", prompt)
+			}
+
+			if !strings.Contains(prompt, tt.wantToolContent) {
+				t.Fatalf("prompt missing tool image tag, got: %q", prompt)
+			}
+		})
+	}
+}
+
+func TestChatPromptRendererPreservesExplicitImagePlaceholders(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "compare [img] and [img]",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+		},
+	}
+
+	tests := []struct {
+		name        string
+		renderer    string
+		wantSnippet string
+	}{
+		{
+			name:        "gemma4",
+			renderer:    "gemma4",
+			wantSnippet: "<|turn>user\ncompare [img-0] and [img-1]<turn|>\n",
+		},
+		{
+			name:        "qwen3-vl",
+			renderer:    "qwen3-vl-instruct",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "qwen3.5",
+			renderer:    "qwen3.5",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "glm-ocr",
+			renderer:    "glm-ocr",
+			wantSnippet: "<|user|>\ncompare [img-0] and [img-1]",
+		},
+		{
+			name:        "nemotron-3-nano",
+			renderer:    "nemotron-3-nano",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+		{
+			name:        "lfm3",
+			renderer:    "lfm3",
+			wantSnippet: "<|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{
+				Config:         model.ConfigV2{Renderer: tt.renderer},
+				ProjectorPaths: []string{"vision"},
+			}
+			opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+			think := false
+
+			prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got, want := len(images), 2; got != want {
+				t.Fatalf("len(images) = %d, want %d", got, want)
+			}
+
+			if !strings.Contains(prompt, tt.wantSnippet) {
+				t.Fatalf("prompt missing replaced placeholders, got: %q", prompt)
+			}
+		})
+	}
+}
+
+func TestChatPromptLFM3PreservesIndexedImagePlaceholders(t *testing.T) {
+	msgs := []api.Message{{
+		Role:    "user",
+		Content: "compare [img-0] and [img-1]",
+		Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+	}}
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "lfm3"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: false}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(images) != 2 {
+		t.Fatalf("len(images) = %d, want 2", len(images))
+	}
+	want := "<|startoftext|><|im_start|>user\ncompare [img-0] and [img-1]<|im_end|>\n<|im_start|>assistant\n<think></think>"
+	if prompt != want {
+		t.Fatalf("prompt = %q, want %q", prompt, want)
+	}
+}
+
+func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
+	msgs := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name  string
+		model Model
+		want  string
+	}{
+		{
+			name: "small from name",
+			model: Model{
+				Name:      "gemma4:e4b",
+				ShortName: "gemma4:e4b",
+				Config:    testConfigWithRenderer(gemma4RendererLegacy),
+			},
+			want: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name: "large from model type",
+			model: Model{
+				Config: testConfigWithRendererAndType(gemma4RendererLegacy, "25.2B"),
+			},
+			want: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := renderPrompt(&tt.model, msgs, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(got, tt.want); diff != "" {
+				t.Fatalf("rendered prompt mismatch (-got +want):\n%s", diff)
 			}
 		})
 	}

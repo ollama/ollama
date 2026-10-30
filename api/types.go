@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log/slog"
 	"math"
 	"os"
@@ -11,7 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -36,6 +40,19 @@ func (e StatusError) Error() string {
 	}
 }
 
+type AuthorizationError struct {
+	StatusCode int
+	Status     string
+	SigninURL  string `json:"signin_url"`
+}
+
+func (e AuthorizationError) Error() string {
+	if e.Status != "" {
+		return e.Status
+	}
+	return "something went wrong, please see the ollama server logs for details"
+}
+
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
@@ -46,6 +63,9 @@ type GenerateRequest struct {
 	// Model is the model name; it should be a name familiar to Ollama from
 	// the library at https://ollama.com/library
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
@@ -85,16 +105,40 @@ type GenerateRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding. Needs to be a pointer so we can distinguish between false
-	// (request that thinking _not_ be used) and unset (use the old behavior
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	// Needs to be a pointer so we can distinguish between false (request that
+	// thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
-	Think *bool `json:"think,omitempty"`
+	Think *ThinkValue `json:"think,omitempty"`
+
+	// Truncate is a boolean that, when set to true, truncates the chat history messages
+	// if the rendered prompt exceeds the context length limit.
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Shift is a boolean that, when set to true, shifts the chat history
+	// when hitting the context length limit instead of erroring.
+	Shift *bool `json:"shift,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
+
+	// Logprobs specifies whether to return log probabilities of the output tokens.
+	Logprobs bool `json:"logprobs,omitempty"`
+
+	// TopLogprobs is the number of most likely tokens to return at each token position,
+	// each with an associated log probability. Only applies when Logprobs is true.
+	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
 	Model string `json:"model"`
+
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
 
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
@@ -116,8 +160,28 @@ type ChatRequest struct {
 	Options map[string]any `json:"options"`
 
 	// Think controls whether thinking/reasoning models will think before
-	// responding
-	Think *bool `json:"think,omitempty"`
+	// responding. Can be a boolean (true/false) or a model-defined thinking level.
+	Think *ThinkValue `json:"think,omitempty"`
+
+	// Truncate is a boolean that, when set to true, truncates the chat history messages
+	// if the rendered prompt exceeds the context length limit.
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Shift is a boolean that, when set to true, shifts the chat history
+	// when hitting the context length limit instead of erroring.
+	Shift *bool `json:"shift,omitempty"`
+
+	// DebugRenderOnly is a debug option that, when set to true, returns the rendered
+	// template instead of calling the model.
+	DebugRenderOnly bool `json:"_debug_render_only,omitempty"`
+
+	// Logprobs specifies whether to return log probabilities of the output tokens.
+	Logprobs bool `json:"logprobs,omitempty"`
+
+	// TopLogprobs is the number of most likely tokens to return at each token position,
+	// each with an associated log probability. Only applies when Logprobs is true.
+	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
+	TopLogprobs int `json:"top_logprobs,omitempty"`
 }
 
 type Tools []Tool
@@ -140,10 +204,11 @@ type Message struct {
 	Content string `json:"content"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking  string      `json:"thinking,omitempty"`
-	Images    []ImageData `json:"images,omitempty"`
-	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
-	ToolName  string      `json:"tool_name,omitempty"`
+	Thinking   string      `json:"thinking,omitempty"`
+	Images     []ImageData `json:"images,omitempty"`
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName   string      `json:"tool_name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -159,20 +224,87 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 }
 
 type ToolCall struct {
+	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
 }
 
 type ToolCallFunction struct {
-	Index     int                       `json:"index,omitempty"`
+	Index     int                       `json:"index"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
 
-type ToolCallFunctionArguments map[string]any
+// ToolCallFunctionArguments holds tool call arguments in insertion order.
+type ToolCallFunctionArguments struct {
+	om *orderedmap.Map[string, any]
+}
+
+// NewToolCallFunctionArguments creates a new empty ToolCallFunctionArguments.
+func NewToolCallFunctionArguments() ToolCallFunctionArguments {
+	return ToolCallFunctionArguments{om: orderedmap.New[string, any]()}
+}
+
+// Get retrieves a value by key.
+func (t *ToolCallFunctionArguments) Get(key string) (any, bool) {
+	if t == nil || t.om == nil {
+		return nil, false
+	}
+	return t.om.Get(key)
+}
+
+// Set sets a key-value pair, preserving insertion order.
+func (t *ToolCallFunctionArguments) Set(key string, value any) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, any]()
+	}
+	t.om.Set(key, value)
+}
+
+// Len returns the number of arguments.
+func (t *ToolCallFunctionArguments) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+// All returns an iterator over all key-value pairs in insertion order.
+func (t *ToolCallFunctionArguments) All() iter.Seq2[string, any] {
+	if t == nil || t.om == nil {
+		return func(yield func(string, any) bool) {}
+	}
+	return t.om.All()
+}
+
+// ToMap returns a regular map (order not preserved).
+func (t *ToolCallFunctionArguments) ToMap() map[string]any {
+	if t == nil || t.om == nil {
+		return nil
+	}
+	return t.om.ToMap()
+}
 
 func (t *ToolCallFunctionArguments) String() string {
-	bts, _ := json.Marshal(t)
+	if t == nil || t.om == nil {
+		return "{}"
+	}
+	bts, _ := json.Marshal(t.om)
 	return string(bts)
+}
+
+func (t *ToolCallFunctionArguments) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, any]()
+	return json.Unmarshal(data, t.om)
+}
+
+func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
+	if t.om == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(t.om)
 }
 
 type Tool struct {
@@ -223,21 +355,143 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+// ToolPropertiesMap holds tool properties in insertion order.
+type ToolPropertiesMap struct {
+	om *orderedmap.Map[string, ToolProperty]
+}
+
+// NewToolPropertiesMap creates a new empty ToolPropertiesMap.
+func NewToolPropertiesMap() *ToolPropertiesMap {
+	return &ToolPropertiesMap{om: orderedmap.New[string, ToolProperty]()}
+}
+
+// Get retrieves a property by name.
+func (t *ToolPropertiesMap) Get(key string) (ToolProperty, bool) {
+	if t == nil || t.om == nil {
+		return ToolProperty{}, false
+	}
+	return t.om.Get(key)
+}
+
+// Set sets a property, preserving insertion order.
+func (t *ToolPropertiesMap) Set(key string, value ToolProperty) {
+	if t == nil {
+		return
+	}
+	if t.om == nil {
+		t.om = orderedmap.New[string, ToolProperty]()
+	}
+	t.om.Set(key, value)
+}
+
+// Len returns the number of properties.
+func (t *ToolPropertiesMap) Len() int {
+	if t == nil || t.om == nil {
+		return 0
+	}
+	return t.om.Len()
+}
+
+// All returns an iterator over all properties in insertion order.
+func (t *ToolPropertiesMap) All() iter.Seq2[string, ToolProperty] {
+	if t == nil || t.om == nil {
+		return func(yield func(string, ToolProperty) bool) {}
+	}
+	return t.om.All()
+}
+
+// ToMap returns a regular map (order not preserved).
+func (t *ToolPropertiesMap) ToMap() map[string]ToolProperty {
+	if t == nil || t.om == nil {
+		return nil
+	}
+	return t.om.ToMap()
+}
+
+func (t ToolPropertiesMap) MarshalJSON() ([]byte, error) {
+	if t.om == nil {
+		return []byte("null"), nil
+	}
+	return json.Marshal(t.om)
+}
+
+func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
+	t.om = orderedmap.New[string, ToolProperty]()
+	return json.Unmarshal(data, t.om)
+}
+
+type ToolProperty struct {
+	AnyOf       []ToolProperty     `json:"anyOf,omitempty"`
+	Type        PropertyType       `json:"type,omitempty"`
+	Items       any                `json:"items,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Enum        []any              `json:"enum,omitempty"`
+	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
+	Required    []string           `json:"required,omitempty"`
+}
+
+// ToTypeScriptType converts a ToolProperty to a TypeScript type string
+func (tp ToolProperty) ToTypeScriptType() string {
+	if len(tp.AnyOf) > 0 {
+		var types []string
+		for _, anyOf := range tp.AnyOf {
+			types = append(types, anyOf.ToTypeScriptType())
+		}
+		return strings.Join(types, " | ")
+	}
+
+	if len(tp.Type) == 0 {
+		return "any"
+	}
+
+	if len(tp.Type) == 1 {
+		return mapToTypeScriptType(tp.Type[0])
+	}
+
+	var types []string
+	for _, t := range tp.Type {
+		types = append(types, mapToTypeScriptType(t))
+	}
+	return strings.Join(types, " | ")
+}
+
+// mapToTypeScriptType maps JSON Schema types to TypeScript types
+func mapToTypeScriptType(jsonType string) string {
+	switch jsonType {
+	case "string":
+		return "string"
+	case "number", "integer":
+		return "number"
+	case "boolean":
+		return "boolean"
+	case "array":
+		return "any[]"
+	case "object":
+		return "Record<string, any>"
+	case "null":
+		return "null"
+	default:
+		return "any"
+	}
+}
+
+type ToolFunctionParameters struct {
+	Type       string             `json:"type"`
+	Defs       any                `json:"$defs,omitempty"`
+	Items      any                `json:"items,omitempty"`
+	Required   []string           `json:"required,omitempty"`
+	Properties *ToolPropertiesMap `json:"properties"`
+}
+
+func (t *ToolFunctionParameters) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 type ToolFunction struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Parameters  struct {
-		Type       string   `json:"type"`
-		Defs       any      `json:"$defs,omitempty"`
-		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Type        PropertyType `json:"type"`
-			Items       any          `json:"items,omitempty"`
-			Description string       `json:"description"`
-			Enum        []any        `json:"enum,omitempty"`
-		} `json:"properties"`
-	} `json:"parameters"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description,omitempty"`
+	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 
 func (t *ToolFunction) String() string {
@@ -245,26 +499,74 @@ func (t *ToolFunction) String() string {
 	return string(bts)
 }
 
+// TokenLogprob represents log probability information for a single token alternative.
+type TokenLogprob struct {
+	// Token is the text representation of the token.
+	Token string `json:"token"`
+
+	// Logprob is the log probability of this token.
+	Logprob float64 `json:"logprob"`
+
+	// Bytes contains the raw byte representation of the token
+	Bytes []int `json:"bytes,omitempty"`
+}
+
+// Logprob contains log probability information for a generated token.
+type Logprob struct {
+	TokenLogprob
+
+	// TopLogprobs contains the most likely tokens and their log probabilities
+	// at this position, if requested via TopLogprobs parameter.
+	TopLogprobs []TokenLogprob `json:"top_logprobs,omitempty"`
+}
+
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
-	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
+	// Model is the model name that generated the response.
+	Model string `json:"model"`
 
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// CreatedAt is the timestamp of the response.
+	CreatedAt time.Time `json:"created_at"`
+
+	// Message contains the message or part of a message from the model.
+	Message Message `json:"message"`
+
+	// Done specifies if the response is complete.
 	Done bool `json:"done"`
+
+	// DoneReason is the reason the model stopped generating text.
+	DoneReason string `json:"done_reason,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
+
+	// Logprobs contains log probability information for the generated tokens,
+	// if requested via the Logprobs parameter.
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 
 	Metrics
 }
 
+// DebugInfo contains debug information for template rendering
+type DebugInfo struct {
+	RenderedTemplate string `json:"rendered_template"`
+	ImageCount       int    `json:"image_count,omitempty"`
+}
+
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TotalDuration         time.Duration `json:"total_duration,omitempty"`
+	LoadDuration          time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount       int           `json:"prompt_eval_count,omitempty"`
+	PromptEvalCachedCount *int          `json:"prompt_eval_cached_count,omitempty"`
+	PromptEvalDuration    time.Duration `json:"prompt_eval_duration,omitempty"`
+	EvalCount             int           `json:"eval_count,omitempty"`
+	EvalDuration          time.Duration `json:"eval_duration,omitempty"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -279,7 +581,7 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
+	TypicalP         float32  `json:"typical_p,omitempty"` // Deprecated: rejected as a model parameter; still accepted per request with a warning
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
@@ -290,12 +592,55 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx          int   `json:"num_ctx,omitempty"`
+	NumBatch        int   `json:"num_batch,omitempty"`
+	NumGPU          int   `json:"num_gpu,omitempty"`
+	MainGPU         *int  `json:"main_gpu,omitempty"`
+	UseMMap         *bool `json:"use_mmap,omitempty"`
+	NumThread       int   `json:"num_thread,omitempty"`
+	DraftNumPredict int   `json:"draft_num_predict,omitempty"`
+}
+
+// SystemOneRequest is the request passed to [Client.SystemOne]. It asks a
+// decision model typed questions about a state.
+type SystemOneRequest struct {
+	Model     string              `json:"model"`
+	Runner    string              `json:"runner,omitempty"`
+	State     json.RawMessage     `json:"state"`
+	Images    []ImageData         `json:"images,omitempty"`
+	Videos    []json.RawMessage   `json:"videos,omitempty"`
+	Questions *SystemOneQuestions `json:"questions"`
+	KeepAlive *Duration           `json:"keep_alive,omitempty"`
+}
+
+// SystemOneQuestions keeps questions in request order, which is the order of
+// the answers.
+type SystemOneQuestions = orderedmap.Map[string, SystemOneQuestion]
+
+// SystemOneQuestion is a noul (yes/no), choice, or score question. Criteria is
+// an object for noul and choice questions and an ordered array for score.
+type SystemOneQuestion struct {
+	Type         string          `json:"type"`
+	Instructions json.RawMessage `json:"instructions"`
+	Criteria     json.RawMessage `json:"criteria,omitempty"`
+}
+
+// SystemOneResponse is the response returned by [Client.SystemOne]. Each
+// answer's type field says which answer fields it has.
+type SystemOneResponse struct {
+	Model                 string            `json:"model"`
+	Answers               *SystemOneAnswers `json:"answers"`
+	Usage                 SystemOneUsage    `json:"usage"`
+	PromptEvalCachedCount *int              `json:"prompt_eval_cached_count,omitempty"`
+}
+
+// SystemOneAnswers keeps answers in request order.
+type SystemOneAnswers = orderedmap.Map[string, json.RawMessage]
+
+// SystemOneUsage counts the tokens evaluated and generated to answer.
+type SystemOneUsage struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -303,14 +648,26 @@ type EmbedRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
 
-	// Input is the input to embed.
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
+	// Input is the input to embed. Three shapes are accepted:
+	//   - a string, or a []string — one text entry per item
+	//   - a map with any of "text", "image", "audio" — one multimodal item
+	//     (image/audio values are base64-encoded blobs)
+	//   - a list mixing strings and those maps — a batch where each item
+	//     owns its own media
 	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Truncate truncates the input to fit the model's max sequence length.
 	Truncate *bool `json:"truncate,omitempty"`
+
+	// Dimensions truncates the output embedding to the specified dimension.
+	Dimensions int `json:"dimensions,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
@@ -331,6 +688,9 @@ type EmbeddingRequest struct {
 	// Model is the model name.
 	Model string `json:"model"`
 
+	// Runner selects a runner variant from a manifest list.
+	Runner string `json:"runner,omitempty"`
+
 	// Prompt is the textual prompt to embed.
 	Prompt string `json:"prompt"`
 
@@ -349,18 +709,67 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model    string `json:"model"`
-	Stream   *bool  `json:"stream,omitempty"`
+	// Model is the model name to create.
+	Model string `json:"model"`
+
+	// Stream specifies whether the response is streaming; it is true by default.
+	Stream *bool `json:"stream,omitempty"`
+
+	// Quantize is the quantization format to apply when importing safetensors weights.
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string            `json:"from,omitempty"`
-	Files      map[string]string `json:"files,omitempty"`
-	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
-	Parameters map[string]any    `json:"parameters,omitempty"`
-	Messages   []Message         `json:"messages,omitempty"`
+	// DraftQuantize is the quantization format to apply when importing safetensors draft weights.
+	DraftQuantize string `json:"draft_quantize,omitempty"`
+
+	// From is the name of the model or file to use as the source.
+	From string `json:"from,omitempty"`
+
+	// List is the list of local model tags to include in a manifest list.
+	List []string `json:"list,omitempty"`
+
+	// RemoteHost is the URL of the upstream ollama API for the model (if any).
+	RemoteHost string `json:"remote_host,omitempty"`
+
+	// Files maps source file names to their SHA-256 digests.
+	Files map[string]string `json:"files,omitempty"`
+
+	// DraftFiles maps draft source file names to their SHA-256 digests.
+	DraftFiles map[string]string `json:"draft_files,omitempty"`
+
+	// Adapters is a map of LoRA adapters to include when creating the model.
+	//
+	// Deprecated: LoRA adapters are no longer supported.
+	Adapters map[string]string `json:"adapters,omitempty"`
+
+	// Template is the template used when constructing a request to the model.
+	Template string `json:"template,omitempty"`
+
+	// License is a string or list of strings for licenses.
+	License any `json:"license,omitempty"`
+
+	// System is the system prompt for the model.
+	System string `json:"system,omitempty"`
+
+	// Parameters is a map of hyper-parameters which are applied to the model.
+	Parameters map[string]any `json:"parameters,omitempty"`
+
+	// Messages is a list of messages added to the model before chat and generation requests.
+	Messages []Message `json:"messages,omitempty"`
+
+	// Renderer is the name of the renderer used when constructing a request to the model.
+	Renderer string `json:"renderer,omitempty"`
+
+	// Parser is the name of the parser used to parse the output of the request.
+	Parser string `json:"parser,omitempty"`
+
+	// Requires is the minimum version of Ollama required by the model.
+	Requires string `json:"requires,omitempty"`
+
+	// Capabilities adds to the model's inherited or inferred capabilities.
+	Capabilities []string `json:"capabilities,omitempty"`
+
+	// Info is a map of additional information for the model
+	Info map[string]any `json:"info,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -378,8 +787,10 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model  string `json:"model"`
-	System string `json:"system"`
+	Model        string `json:"model"`
+	Runner       string `json:"runner,omitempty"`
+	AllManifests bool   `json:"all_manifests,omitempty"`
+	System       string `json:"system"`
 
 	// Template is deprecated
 	Template string `json:"template"`
@@ -393,18 +804,47 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License       string             `json:"license,omitempty"`
-	Modelfile     string             `json:"modelfile,omitempty"`
-	Parameters    string             `json:"parameters,omitempty"`
-	Template      string             `json:"template,omitempty"`
-	System        string             `json:"system,omitempty"`
-	Details       ModelDetails       `json:"details,omitempty"`
-	Messages      []Message          `json:"messages,omitempty"`
-	ModelInfo     map[string]any     `json:"model_info,omitempty"`
-	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
-	Tensors       []Tensor           `json:"tensors,omitempty"`
-	Capabilities  []model.Capability `json:"capabilities,omitempty"`
-	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
+	Thinking       *model.Thinking    `json:"thinking,omitempty"`
+	License        string             `json:"license,omitempty"`
+	Modelfile      string             `json:"modelfile,omitempty"`
+	Parameters     string             `json:"parameters,omitempty"`
+	Template       string             `json:"template,omitempty"`
+	System         string             `json:"system,omitempty"`
+	Renderer       string             `json:"renderer,omitempty"`
+	Parser         string             `json:"parser,omitempty"`
+	TemplateSource string             `json:"template_source,omitempty"`
+	Details        ModelDetails       `json:"details,omitempty"`
+	Messages       []Message          `json:"messages,omitempty"`
+	RemoteModel    string             `json:"remote_model,omitempty"`
+	RemoteHost     string             `json:"remote_host,omitempty"`
+	ModelInfo      map[string]any     `json:"model_info"`
+	ProjectorInfo  map[string]any     `json:"projector_info,omitempty"`
+	Tensors        []Tensor           `json:"tensors,omitempty"`
+	Capabilities   []model.Capability `json:"capabilities,omitempty"`
+	Voices         []string           `json:"voices,omitempty"`
+	Manifests      []ManifestSummary  `json:"manifests,omitempty"`
+	ModifiedAt     time.Time          `json:"modified_at,omitempty"`
+	Requires       string             `json:"requires,omitempty"`
+}
+
+// ManifestSummary describes one child manifest available through a model tag.
+type ManifestSummary struct {
+	Digest   string `json:"digest,omitempty"`
+	Runner   string `json:"runner,omitempty"`
+	Format   string `json:"format,omitempty"`
+	Selected bool   `json:"selected,omitempty"`
+}
+
+// ShowManifest is a single manifest summary returned from [Client.ShowManifests].
+type ShowManifest struct {
+	Runner string `json:"runner,omitempty"`
+	ShowResponse
+}
+
+// ShowManifestsResponse is the response returned from [Client.ShowManifests].
+type ShowManifestsResponse struct {
+	Manifests []ShowManifest `json:"manifests"`
+	License   string         `json:"license,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -416,6 +856,7 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
+	Runner   string `json:"runner,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
@@ -451,6 +892,37 @@ type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
 }
 
+// ModelRecommendationsResponse is the response from [Client.ModelRecommendationsExperimental].
+type ModelRecommendationsResponse struct {
+	Recommendations []ModelRecommendation        `json:"recommendations"`
+	Mappings        *ModelRecommendationMappings `json:"mappings,omitempty"`
+}
+
+// ModelRecommendationMapping defines one app-specific route preference.
+type ModelRecommendationMapping struct {
+	Model        string `json:"model"`
+	RequiredPlan string `json:"required_plan,omitempty"`
+}
+
+// ModelRecommendationMappings defines the app-specific model routes.
+type ModelRecommendationMappings map[string]ModelRecommendationMapping
+
+// ModelRecommendation is a single recommendation entry in [ModelRecommendationsResponse].
+type ModelRecommendation struct {
+	Model           string                       `json:"model"`
+	Description     string                       `json:"description"`
+	ContextLength   int                          `json:"context_length,omitempty"`
+	MaxOutputTokens int                          `json:"max_output_tokens,omitempty"`
+	VRAMBytes       int64                        `json:"vram_bytes,omitempty"`
+	RequiredPlan    string                       `json:"required_plan,omitempty"`
+	Thinking        *ModelRecommendationThinking `json:"thinking,omitempty"`
+}
+
+// ModelRecommendationThinking advertises the controls a model honors and its
+// default. Values may be booleans or named effort levels; other strings may
+// still be accepted by the endpoint and fall back to the default.
+type ModelRecommendationThinking = model.Thinking
+
 // ProcessResponse is the response from [Client.Process].
 type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
@@ -458,12 +930,15 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
-	Details    ModelDetails `json:"details,omitempty"`
+	Name         string             `json:"name"`
+	Model        string             `json:"model"`
+	RemoteModel  string             `json:"remote_model,omitempty"`
+	RemoteHost   string             `json:"remote_host,omitempty"`
+	ModifiedAt   time.Time          `json:"modified_at"`
+	Size         int64              `json:"size"`
+	Digest       string             `json:"digest"`
+	Details      ModelDetails       `json:"details,omitempty"`
+	Capabilities []model.Capability `json:"capabilities,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
@@ -476,16 +951,63 @@ type ProcessModelResponse struct {
 	ExpiresAt     time.Time    `json:"expires_at"`
 	SizeVRAM      int64        `json:"size_vram"`
 	ContextLength int          `json:"context_length"`
+	Runner        string       `json:"runner,omitempty"`
 }
 
 type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+type CloudStatus struct {
+	Disabled bool   `json:"disabled"`
+	Source   string `json:"source"`
+}
+
+// StatusResponse is the response from [Client.CloudStatusExperimental].
+type StatusResponse struct {
+	Cloud CloudStatus `json:"cloud"`
+}
+
+// WebSearchRequest is the request for [Client.WebSearchExperimental].
+type WebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// WebSearchResult is a single result from [Client.WebSearchExperimental].
+type WebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// WebSearchResponse is the response from [Client.WebSearchExperimental].
+type WebSearchResponse struct {
+	Results []WebSearchResult `json:"results"`
+}
+
+// WebFetchRequest is the request for [Client.WebFetchExperimental].
+type WebFetchRequest struct {
+	URL string `json:"url"`
+}
+
+// WebFetchResponse is the response from [Client.WebFetchExperimental].
+type WebFetchResponse struct {
+	Title   string   `json:"title"`
+	Content string   `json:"content"`
+	Links   []string `json:"links,omitempty"`
+}
+
 // GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
 	// Model is the model name that generated the response.
 	Model string `json:"model"`
+
+	// RemoteModel is the name of the upstream model that generated the response.
+	RemoteModel string `json:"remote_model,omitempty"`
+
+	// RemoteHost is the URL of the upstream Ollama host that generated the response.
+	RemoteHost string `json:"remote_host,omitempty"`
 
 	// CreatedAt is the timestamp of the response.
 	CreatedAt time.Time `json:"created_at"`
@@ -508,6 +1030,14 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+
+	DebugInfo *DebugInfo `json:"_debug_info,omitempty"`
+
+	// Logprobs contains log probability information for the generated tokens,
+	// if requested via the Logprobs parameter.
+	Logprobs []Logprob `json:"logprobs,omitempty"`
 }
 
 // ModelDetails provides details about a model.
@@ -518,6 +1048,24 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+	ContextLength     int      `json:"context_length,omitempty"`
+	EmbeddingLength   int      `json:"embedding_length,omitempty"`
+
+	// Runner identifies which runner serves this model. Manifest-list models
+	// list one row per child manifest; Runner is what distinguishes them.
+	Runner string `json:"runner,omitempty"`
+}
+
+// UserResponse provides information about a user.
+type UserResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Bio       string    `json:"bio,omitempty"`
+	AvatarURL string    `json:"avatarurl,omitempty"`
+	FirstName string    `json:"firstname,omitempty"`
+	LastName  string    `json:"lastname,omitempty"`
+	Plan      string    `json:"plan,omitempty"`
 }
 
 // Tensor describes the metadata for a given tensor.
@@ -540,9 +1088,18 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "prompt eval count:    %d token(s)\n", m.PromptEvalCount)
 	}
 
+	cached := 0
+	if m.PromptEvalCachedCount != nil {
+		cached = *m.PromptEvalCachedCount
+	}
+	if cached > 0 {
+		fmt.Fprintf(os.Stderr, "prompt eval cached:   %d token(s)\n", cached)
+	}
+
 	if m.PromptEvalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "prompt eval duration: %s\n", m.PromptEvalDuration)
-		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(m.PromptEvalCount)/m.PromptEvalDuration.Seconds())
+		uncached := max(0, m.PromptEvalCount-cached)
+		fmt.Fprintf(os.Stderr, "prompt eval rate:     %.2f tokens/s\n", float64(uncached)/m.PromptEvalDuration.Seconds())
 	}
 
 	if m.EvalCount > 0 {
@@ -628,14 +1185,25 @@ func (opts *Options) FromMap(m map[string]any) error {
 				}
 				field.Set(reflect.ValueOf(slice))
 			case reflect.Pointer:
-				var b bool
-				if field.Type() == reflect.TypeOf(&b) {
+				switch field.Type().Elem().Kind() {
+				case reflect.Bool:
 					val, ok := val.(bool)
 					if !ok {
 						return fmt.Errorf("option %q must be of type boolean", key)
 					}
 					field.Set(reflect.ValueOf(&val))
-				} else {
+				case reflect.Int:
+					var i int
+					switch t := val.(type) {
+					case int64:
+						i = int(t)
+					case float64:
+						i = int(t)
+					default:
+						return fmt.Errorf("option %q must be of type integer", key)
+					}
+					field.Set(reflect.ValueOf(&i))
+				default:
 					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
 				}
 			default:
@@ -661,19 +1229,37 @@ func DefaultOptions() Options {
 		TopP:             0.9,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
+		RepeatPenalty:    1.0,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
 		Seed:             -1,
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:          int(envconfig.ContextLength()),
+			NumBatch:        512,
+			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:       0,  // let the runtime decide
+			DraftNumPredict: 4,
+			UseMMap:         nil,
 		},
+	}
+}
+
+// ThinkValue represents a boolean or model-defined thinking level.
+type ThinkValue = model.ThinkValue
+
+// ValidateLegacyThinking checks named levels for models without thinking metadata.
+// Transport types are checked by ThinkValue.UnmarshalJSON or IsValid.
+func ValidateLegacyThinking(think *ThinkValue) error {
+	if !think.IsString() {
+		return nil
+	}
+	switch think.String() {
+	case "low", "medium", "high", "max":
+		return nil
+	default:
+		return fmt.Errorf("invalid think value: %q (must be \"high\", \"medium\", \"low\", \"max\", true, or false)", think.String())
 	}
 }
 
@@ -701,7 +1287,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
 		} else {
-			d.Duration = time.Duration(int(t) * int(time.Second))
+			d.Duration = time.Duration(t * float64(time.Second))
 		}
 	case string:
 		d.Duration, err = time.ParseDuration(t)
@@ -769,14 +1355,20 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 					// TODO: only string slices are supported right now
 					out[key] = vals
 				case reflect.Pointer:
-					var b bool
-					if field.Type() == reflect.TypeOf(&b) {
+					switch field.Type().Elem().Kind() {
+					case reflect.Bool:
 						boolVal, err := strconv.ParseBool(vals[0])
 						if err != nil {
 							return nil, fmt.Errorf("invalid bool value %s", vals)
 						}
 						out[key] = &boolVal
-					} else {
+					case reflect.Int:
+						intVal, err := strconv.ParseInt(vals[0], 10, 64)
+						if err != nil {
+							return nil, fmt.Errorf("invalid int value %s", vals)
+						}
+						out[key] = intVal
+					default:
 						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 					}
 				default:

@@ -1,0 +1,58 @@
+---
+title: VS Code
+---
+
+Use Ollama models in VS Code Chat with the [Ollama extension](https://marketplace.visualstudio.com/items?itemName=Ollama.ollama).
+
+## Requirements
+
+- [Visual Studio Code 1.127 or newer](https://code.visualstudio.com/download)
+- Ollama installed and running
+- At least one local or cloud model available in Ollama
+
+Earlier VS Code versions do not reliably cancel requests from language model providers.
+
+Ollama 0.17.6 or newer is recommended for cloud model sign-in and richer model metadata. Older versions may still work with local models.
+
+## Install the extension
+
+1. Install the [Ollama extension](https://marketplace.visualstudio.com/items?itemName=Ollama.ollama) from the VS Code Marketplace.
+2. Open Chat in VS Code.
+3. Open the model picker at the bottom of the chat input.
+4. Choose a model from the **Ollama** section.
+
+The extension discovers models from `http://127.0.0.1:11434` by default.
+
+## Add a model
+
+Pull a local model:
+
+```shell
+ollama pull qwen3.6
+```
+
+To use a cloud model, pull it and sign in:
+
+```shell
+ollama pull kimi-k2.6:cloud
+ollama signin
+```
+
+Local models do not require sign-in.
+
+## Context length
+
+VS Code may show a model's maximum supported context length even when Ollama allocates a smaller context at runtime.
+
+For local models, open Ollama **Settings**, set the context length to at least 64k, reload the VS Code window, and resend your prompt. See [Context length](/context-length) for more information.
+
+## Troubleshooting
+
+If Ollama models do not appear in the model picker:
+
+1. Make sure Ollama is running.
+2. Run `ollama list` and confirm that models are available.
+3. Run **Ollama: Refresh Models** from the Command Palette.
+4. Run **Ollama: Diagnose Models** and check the **Ollama** output channel.
+
+If a cloud model asks you to sign in, run `ollama signin`.

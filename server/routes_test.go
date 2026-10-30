@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -19,18 +20,723 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
+	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+func TestGetExistingName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, name := range []string{"MyOrg/MyModel:Q4", "OtherOrg/OtherModel:Q8", "DefaultModel:latest", "localhost:12345/MyOrg/MyModel:Q4"} {
+		if err := manifest.WriteManifestData(model.ParseName(name), []byte(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct{ input, want string }{
+		{"MyOrg/MyModel:Q4", "MyOrg/MyModel:Q4"},
+		{"MYORG/MYMODEL:q4", "MyOrg/MyModel:Q4"},
+		{"myorg/mymodel:q8", "MyOrg/MyModel:q8"},
+		{"myorg/newmodel:q8", "MyOrg/newmodel:q8"},
+		{"neworg/newmodel:q8", "neworg/newmodel:q8"},
+		{"defaultmodel", "DefaultModel:latest"},
+		{"registry.ollama.ai/myorg/mymodel:q4", "MyOrg/MyModel:Q4"},
+		{"ollama.com/myorg/mymodel:q4", "ollama.com/myorg/mymodel:q4"},
+		{"registry.ollama.com/myorg/mymodel:q4", "registry.ollama.com/myorg/mymodel:q4"},
+		{"LOCALHOST:12345/myorg/mymodel:q4", "localhost:12345/MyOrg/MyModel:Q4"},
+		{"sha256-" + strings.Repeat("a", 64), "sha256-" + strings.Repeat("a", 64)},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := getExistingName(model.ParseName(tc.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := model.ParseName(tc.want); got.String() != want.String() {
+				t.Errorf("getExistingName = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestInferenceMissingModelResponses(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	gin.SetMode(gin.TestMode)
+	s := &Server{}
+	for _, tc := range []struct {
+		name    string
+		handler gin.HandlerFunc
+		body    any
+		status  int
+		message string
+	}{
+		{"generate", s.GenerateHandler, api.GenerateRequest{Model: "missing-model", Prompt: "hi"}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"chat", s.ChatHandler, api.ChatRequest{Model: "missing-model", Messages: []api.Message{{Role: "user", Content: "hi"}}}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"embed", s.EmbedHandler, api.EmbedRequest{Model: "missing-model", Input: "hi"}, http.StatusNotFound, "model 'missing-model' not found"},
+		{"embeddings", s.EmbeddingsHandler, api.EmbeddingRequest{Model: "missing-model", Prompt: "hi"}, http.StatusNotFound, `model "missing-model" not found, try pulling it first`},
+		{"system one", s.SystemOneHandler, map[string]any{"model": "missing-model"}, http.StatusNotFound, "model 'missing-model' not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := createRequest(t, tc.handler, tc.body)
+			if w.Code != tc.status || w.Body.String() != fmt.Sprintf(`{"error":%q}`, tc.message) {
+				t.Fatalf("status %d, body %s; want %d, %q", w.Code, w.Body, tc.status, tc.message)
+			}
+		})
+	}
+}
+
+func TestLoadedModelLookupReportsCorruptManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("corrupt-manifest")
+	if err := manifest.WriteManifestData(name, []byte("{")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := GetModelForRunner(name.String(), ""); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("previous exact-name loader error = %v; want a parse error", err)
+	}
+	s := &Server{}
+	if _, err := s.getExistingModelForRunner(name.String(), ""); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("combined lookup error = %v; want a parse error", err)
+	}
+	w := createRequest(t, s.ChatHandler, api.ChatRequest{Model: name.String(), Messages: []api.Message{{Role: "user", Content: "hi"}}})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("chat status = %d, want %d: %s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+}
+
+func TestLoadedModelLookupTracksSymlinkTag(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("Warm-Model")
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	initial, err := s.getExistingModelForRunner("warm-model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.NamedManifestPointsToDigest(name, initial.Digest) {
+		t.Skip("v2 tag is a regular file on this platform or filesystem")
+	}
+	s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
+
+	warm, err := s.getExistingModelForRunner("WARM-MODEL", "")
+	if err != nil || warm != initial {
+		t.Fatalf("warm lookup = %p, %v; want loaded model %p", warm, err, initial)
+	}
+	blobPath, err := manifest.BlobsPath("sha256:" + initial.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blobPath, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := s.getExistingModelForRunner("warm-model", ""); err != nil || cached != initial {
+		t.Fatalf("warm lookup reread manifest blob: %p, %v", cached, err)
+	}
+	delete(s.sched.loaded, "initial")
+	if _, err := s.getExistingModelForRunner("warm-model", ""); err == nil {
+		t.Fatal("cold lookup accepted a corrupt manifest blob")
+	}
+	s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2,"layers":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := s.getExistingModelForRunner("warm-model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated == initial || updated.Digest == initial.Digest {
+		t.Fatal("repointed tag reused the old model")
+	}
+	s.sched.loaded["updated"] = withModel(&runnerRef{}, updated)
+	if current, err := s.getExistingModelForRunner("warm-model", ""); err != nil || current != updated {
+		t.Fatalf("current tag lookup = %p, %v; want %p", current, err, updated)
+	}
+
+	delete(s.sched.loaded, "updated")
+	if unloaded, err := s.getExistingModelForRunner("warm-model", ""); err != nil || unloaded == updated {
+		t.Fatalf("lookup after unload = %p, %v; want a fresh model", unloaded, err)
+	}
+}
+
+func TestLoadedModelLookupConcurrent(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("concurrent-model")
+	if err := manifest.WriteManifestData(name, []byte(`{"schemaVersion":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	cached, err := s.getExistingModelForRunner(name.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.NamedManifestPointsToDigest(name, cached.Digest) {
+		t.Skip("v2 tag is a regular file on this platform or filesystem")
+	}
+	s.sched.loaded["cached"] = withModel(&runnerRef{}, cached)
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				got, err := s.getExistingModelForRunner(name.String(), "")
+				// Lock contention can fall back to loading an equivalent model.
+				if err != nil || got == nil || got.Name != cached.Name || got.Digest != cached.Digest {
+					t.Errorf("concurrent warm lookup = %+v, %v; want model %q with digest %q", got, err, cached.Name, cached.Digest)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Unloading clears runner.model under refMu while lookups still inspect
+	// the loaded runner snapshot. A lookup may use the old model or load a new
+	// one, but it must remain safe in either case.
+	runner := s.sched.loaded["cached"]
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 100 {
+			if _, err := s.getExistingModelForRunner(name.String(), ""); err != nil {
+				t.Errorf("lookup during unload: %v", err)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		runner.refMu.Lock()
+		runner.unload()
+		runner.refMu.Unlock()
+	}()
+	close(start)
+	wg.Wait()
+}
+
+func TestLoadedModelLookupDoesNotWaitForUnrelatedRunner(t *testing.T) {
+	name := model.ParseName("ready-model")
+	ready := &Model{Name: name.String()}
+	loading := withModel(&runnerRef{loading: true}, &Model{Name: "loading-model"})
+	s := &Scheduler{loaded: map[string]*runnerRef{
+		"ready":   withModel(&runnerRef{}, ready),
+		"loading": loading,
+	}}
+
+	loading.refMu.Lock()
+	defer loading.refMu.Unlock()
+	result := make(chan []*Model, 1)
+	go func() {
+		result <- s.loadedModelsForName(name, "")
+	}()
+
+	select {
+	case got := <-result:
+		if len(got) != 1 || got[0] != ready {
+			t.Fatalf("loaded models = %v, want only the ready model", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lookup waited for an unrelated loading runner")
+	}
+}
+
+func TestChatMessagesForRequestIsolation(t *testing.T) {
+	defaults := make([]api.Message, 1, 4)
+	defaults[0] = api.Message{Role: "assistant", Content: "<think>saved reasoning</think>saved reply"}
+	m := &Model{
+		Name:     "qwen3",
+		System:   "shared instructions",
+		Messages: defaults,
+	}
+	m.Config.ModelFamily = "qwen3"
+
+	aliceRequest := []api.Message{
+		{Role: "assistant", Content: "<think>Alice reasoning</think>Alice reply"},
+		{Role: "user", Content: "Alice private message"},
+	}
+	alice := chatMessagesForRequest(m, aliceRequest)
+	bob := chatMessagesForRequest(m, []api.Message{{Role: "user", Content: "Bob private message"}})
+
+	if len(alice) != 4 || len(bob) != 3 {
+		t.Fatalf("message counts: Alice = %d, Bob = %d; want 4 and 3", len(alice), len(bob))
+	}
+	if alice[0].Content != m.System || bob[0].Content != m.System {
+		t.Fatalf("system instructions missing: Alice = %q, Bob = %q", alice[0].Content, bob[0].Content)
+	}
+	if alice[3].Content != "Alice private message" || bob[2].Content != "Bob private message" {
+		t.Fatalf("request messages changed: Alice = %q, Bob = %q", alice[3].Content, bob[2].Content)
+	}
+	for _, msg := range bob {
+		if strings.Contains(msg.Content, "Alice") {
+			t.Fatalf("Bob received an Alice message: %#v", bob)
+		}
+	}
+	if m.Messages[0].Content != "<think>saved reasoning</think>saved reply" || defaults[:cap(defaults)][1].Content != "" {
+		t.Fatalf("shared model messages changed: %#v", defaults[:cap(defaults)])
+	}
+	if aliceRequest[0].Content != "<think>Alice reasoning</think>Alice reply" {
+		t.Fatalf("Alice's request messages changed: %#v", aliceRequest)
+	}
+
+	alice[1].Content = "Alice private message"
+	if bob[1].Content != "saved reply" || m.Messages[0].Content != "<think>saved reasoning</think>saved reply" {
+		t.Fatalf("Alice's prompt aliases Bob's prompt or the model: Bob = %#v, model = %#v", bob, m.Messages)
+	}
+
+	var wg sync.WaitGroup
+	for _, pair := range [][2]string{{"Alice", "Bob"}, {"Bob", "Alice"}} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				msgs := chatMessagesForRequest(m, []api.Message{{Role: "user", Content: pair[0] + " private message"}})
+				for _, msg := range msgs {
+					if strings.Contains(msg.Content, pair[1]) {
+						t.Errorf("%s received a %s message: %#v", pair[0], pair[1], msgs)
+					}
+				}
+				msgs[1].Content = pair[0] + " private message"
+			}
+		}()
+	}
+	wg.Wait()
+	if m.Messages[0].Content != "<think>saved reasoning</think>saved reply" {
+		t.Errorf("concurrent requests changed saved messages: %#v", m.Messages)
+	}
+}
+
+func TestLoadedModelLookupVerifiesRegularManifest(t *testing.T) {
+	listData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests: []manifest.Manifest{{
+			Runner: manifest.RunnerMLX,
+			Layers: []manifest.Layer{{MediaType: manifest.MediaTypeImageTensor}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "manifest", data: []byte(`{"schemaVersion":2}`)},
+		{name: "manifest list", data: listData},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			name := model.ParseName("copied-manifest")
+			if err := manifest.WriteManifestData(name, tc.data); err != nil {
+				t.Fatal(err)
+			}
+			s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+			initial, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.sched.loaded["initial"] = withModel(&runnerRef{}, initial)
+
+			path, err := manifest.V2PathForName(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, tc.data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if manifest.NamedManifestPointsToDigest(name, initial.Digest) {
+				t.Fatal("regular manifest used the symlink shortcut")
+			}
+			copyModel, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if copyModel == initial || copyModel.Digest != initial.Digest {
+				t.Fatalf("copy lookup = %p, %s; want a freshly validated model with digest %s", copyModel, copyModel.Digest, initial.Digest)
+			}
+
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := bytes.Replace(tc.data, []byte(`"schemaVersion":2`), []byte(`"schemaVersion":3`), 1)
+			if bytes.Equal(changed, tc.data) {
+				t.Fatal("test manifest did not change")
+			}
+			if err := os.WriteFile(path, changed, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := s.getExistingModelForRunner(name.String(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.Digest == initial.Digest {
+				t.Fatal("modified regular manifest reused the loaded model")
+			}
+		})
+	}
+}
+
+func TestLoadedModelLookupRunnerSelection(t *testing.T) {
+	name := model.ParseName("runner-selection")
+	defaultModel := &Model{Name: name.String(), Runner: manifest.RunnerMLX}
+	explicitModel := &Model{Name: name.String(), Runner: manifest.RunnerGGML, runnerSelection: manifest.RunnerGGML}
+	s := &Scheduler{loaded: map[string]*runnerRef{
+		"default":  withModel(&runnerRef{}, defaultModel),
+		"explicit": withModel(&runnerRef{}, explicitModel),
+	}}
+	if got := s.loadedModelsForName(name, manifest.RunnerGGML); len(got) != 1 || got[0] != explicitModel {
+		t.Fatalf("explicit runner lookup = %v; want GGML model", got)
+	}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != defaultModel {
+		t.Fatalf("default runner lookup = %v; want default model", got)
+	}
+
+	topRunner := manifest.RunnerLlamaCPP
+	if !manifest.IsTopRunnerPreference(topRunner) {
+		topRunner = manifest.RunnerMLX
+	}
+	topModel := &Model{Name: name.String(), Runner: topRunner, runnerSelection: topRunner}
+	s.loaded = map[string]*runnerRef{"top": withModel(&runnerRef{}, topModel)}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != topModel {
+		t.Fatalf("default lookup after explicit preferred runner = %v; want loaded model", got)
+	}
+
+	singleManifest := &Model{
+		Name: name.String(), Runner: manifest.RunnerGGML,
+		Digest: "single-digest", ManifestDigest: "single-digest", runnerSelection: manifest.RunnerGGML,
+	}
+	s.loaded = map[string]*runnerRef{"single": withModel(&runnerRef{}, singleManifest)}
+	if got := s.loadedModelsForName(name, ""); len(got) != 1 || got[0] != singleManifest {
+		t.Fatalf("default lookup after explicit single-manifest runner = %v; want loaded model", got)
+	}
+}
+
+func TestLoadedExplicitRunnerDoesNotChangeDefaultSelection(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	name := model.ParseName("multi-runner")
+	var children []manifest.Manifest
+	for _, runner := range []string{manifest.RunnerGGML, manifest.RunnerMLX, manifest.RunnerLlamaCPP} {
+		children = append(children, manifest.Manifest{
+			Runner: runner,
+			Layers: []manifest.Layer{{MediaType: manifest.MediaTypeImageTensor}},
+		})
+	}
+	data, err := json.Marshal(manifest.Manifest{SchemaVersion: 2, MediaType: manifest.MediaTypeManifestList, Manifests: children})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(name, data); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{sched: &Scheduler{loaded: make(map[string]*runnerRef)}}
+	explicit, err := s.getExistingModelForRunner(name.String(), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.sched.loaded["explicit"] = withModel(&runnerRef{}, explicit)
+
+	selected, err := s.getExistingModelForRunner(name.String(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected == explicit || selected.Runner == explicit.Runner {
+		t.Fatalf("default selection reused explicit %q runner", explicit.Runner)
+	}
+}
+
+func BenchmarkModelLookup(b *testing.B) {
+	// Tensor manifests are large; lookup should only decode the requested model.
+	layers := make([]manifest.Layer, 512)
+	for i := range layers {
+		layers[i] = manifest.Layer{
+			MediaType: manifest.MediaTypeImageTensor,
+			Digest:    fmt.Sprintf("sha256:%064x", i),
+			Size:      1024,
+		}
+	}
+	data, err := json.Marshal(manifest.Manifest{SchemaVersion: 2, Layers: layers})
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, models := range []int{1, 10, 100} {
+		b.Run(fmt.Sprintf("models=%d", models), func(b *testing.B) {
+			b.Setenv("OLLAMA_MODELS", b.TempDir())
+			for i := range models {
+				name := model.ParseName(fmt.Sprintf("Test/Model%d:Latest", i))
+				if err := manifest.WriteManifestData(name, data); err != nil {
+					b.Fatal(err)
+				}
+			}
+			name := model.ParseName("test/model0:latest")
+			b.Run("name", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := getExistingName(name); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("separate-lookups", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					existing, err := getExistingName(name)
+					if err != nil {
+						b.Fatal(err)
+					}
+					if _, err := GetModelForRunner(existing.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("single-lookup", func(b *testing.B) {
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := loadExistingModelForRunner(name.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+			b.Run("warm-runner", func(b *testing.B) {
+				cached, err := loadExistingModelForRunner(name.String(), "")
+				if err != nil {
+					b.Fatal(err)
+				}
+				if !manifest.NamedManifestPointsToDigest(model.ParseName(cached.Name), cached.Digest) {
+					b.Skip("v2 tag is a regular file on this platform or filesystem")
+				}
+				s := &Server{sched: &Scheduler{loaded: map[string]*runnerRef{
+					"cached": withModel(&runnerRef{}, cached),
+				}}}
+				b.ReportAllocs()
+				for b.Loop() {
+					if _, err := s.getExistingModelForRunner(name.String(), ""); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestPsHandlerUsesRunningManifestAndRunner(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	childDigest := strings.Repeat("a", 64)
+	s := Server{
+		sched: &Scheduler{
+			loaded: map[string]*runnerRef{
+				"test": withModel(&runnerRef{
+					runner:          manifest.RunnerMLX,
+					totalSize:       1024,
+					vramSize:        1024,
+					expiresAt:       time.Now().Add(time.Hour),
+					sessionDuration: time.Hour,
+				}, &Model{
+					ShortName:      "test-model:latest",
+					Digest:         strings.Repeat("b", 64),
+					ManifestDigest: childDigest,
+					Runner:         manifest.RunnerMLX,
+					Config: model.ConfigV2{
+						ModelFormat: manifest.FormatSafetensors,
+					},
+				}),
+			},
+		},
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/ps", nil)
+
+	s.PsHandler(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp api.ProcessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("model count = %d, want 1", len(resp.Models))
+	}
+	if resp.Models[0].Digest != childDigest {
+		t.Fatalf("digest = %q, want child digest %q", resp.Models[0].Digest, childDigest)
+	}
+	if resp.Models[0].Runner != manifest.RunnerMLX {
+		t.Fatalf("runner = %q, want %q", resp.Models[0].Runner, manifest.RunnerMLX)
+	}
+}
+
+func TestNormalizeRunner(t *testing.T) {
+	tests := []struct {
+		name    string
+		runner  string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty", runner: "", want: ""},
+		{name: "mlx", runner: "mlx", want: manifest.RunnerMLX},
+		{name: "mlxrunner alias", runner: "mlxrunner", want: manifest.RunnerMLX},
+		{name: "ggml", runner: "ggml", want: manifest.RunnerGGML},
+		{name: "llamacpp", runner: "llamacpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama.cpp alias", runner: "llama.cpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama-cpp alias", runner: "llama-cpp", want: manifest.RunnerLlamaCPP},
+		{name: "llama_cpp alias", runner: "llama_cpp", want: manifest.RunnerLlamaCPP},
+		{name: "trim and case fold", runner: "  MLXRunner  ", want: manifest.RunnerMLX},
+		{name: "unknown", runner: "bad", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeRunner(tt.runner)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("runner = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRouteHandlersRejectUnknownRunner(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler func(*Server) func(*gin.Context)
+		body    any
+	}{
+		{
+			name:    "generate",
+			handler: func(s *Server) func(*gin.Context) { return s.GenerateHandler },
+			body: api.GenerateRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "chat",
+			handler: func(s *Server) func(*gin.Context) { return s.ChatHandler },
+			body: api.ChatRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "embed",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbedHandler },
+			body: api.EmbedRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "embeddings",
+			handler: func(s *Server) func(*gin.Context) { return s.EmbeddingsHandler },
+			body: api.EmbeddingRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "pull",
+			handler: func(s *Server) func(*gin.Context) { return s.PullHandler },
+			body: api.PullRequest{
+				Name:   "test",
+				Runner: "bad",
+			},
+		},
+		{
+			name:    "show",
+			handler: func(s *Server) func(*gin.Context) { return s.ShowHandler },
+			body: api.ShowRequest{
+				Model:  "test",
+				Runner: "bad",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_MODELS", t.TempDir())
+			var s Server
+
+			w := createRequest(t, tt.handler(&s), tt.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+			}
+			if got := strings.TrimSpace(w.Body.String()); got != `{"error":"unknown runner \"bad\""}` {
+				t.Fatalf("response = %s", got)
+			}
+		})
+	}
+}
+
+func TestHandleScheduleErrorNoCompatibleManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	handleScheduleError(c, "test", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"no compatible manifest found for runners: mlx"}` {
+		t.Fatalf("response = %s", got)
+	}
+}
+
+// Show answers a missing runner variant with 404 so the client's
+// show-then-pull path fetches it, unlike the schedule path above.
+func TestWriteShowErrorNoCompatibleManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	writeShowError(c, "test", fmt.Errorf("%w for runners: mlx", manifest.ErrNoCompatibleManifest))
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"no compatible manifest found for runners: mlx"}` {
+		t.Fatalf("response = %s", got)
+	}
+}
 
 func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
@@ -76,22 +782,19 @@ func createTestFile(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
 		t.Fatal(err)
 	}
+	linkOrCopyTestBlob(t, f.Name(), blobPath)
 
 	return f.Name(), digest
 }
 
-type panicTransport struct{}
-
-func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	panic("unexpected RoundTrip call")
-}
-
-var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
-
 func TestRoutes(t *testing.T) {
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
 	type testCase struct {
 		Name     string
 		Method   string
@@ -99,6 +802,8 @@ func TestRoutes(t *testing.T) {
 		Setup    func(t *testing.T, req *http.Request)
 		Expected func(t *testing.T, resp *http.Response)
 	}
+
+	s := &Server{}
 
 	createTestModel := func(t *testing.T, name string) {
 		t.Helper()
@@ -121,12 +826,14 @@ func TestRoutes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := ggufLayers(digest, fn)
+		baseLayers, err := ggufLayersWithMediaType(digest, "test.gguf", "", fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		if err := createModel(r, modelName, baseLayers, fn); err != nil {
+		config := new(model.ConfigV2)
+
+		if err := createModel(t.Context(), r, modelName, baseLayers, config, fn); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -259,7 +966,7 @@ func TestRoutes(t *testing.T) {
 				}
 
 				// Verify the model was deleted
-				_, err := GetModel("model-to-delete")
+				_, err := GetModelForRunner("model-to-delete", "")
 				if err == nil || !os.IsNotExist(err) {
 					t.Errorf("expected model to be deleted, got error %v", err)
 				}
@@ -358,7 +1065,7 @@ func TestRoutes(t *testing.T) {
 					t.Errorf("expected status code 200, got %d", resp.StatusCode)
 				}
 
-				model, err := GetModel("t-bone")
+				model, err := GetModelForRunner("t-bone", "")
 				if err != nil {
 					t.Fatalf("failed to get model: %v", err)
 				}
@@ -385,7 +1092,7 @@ func TestRoutes(t *testing.T) {
 				req.Body = io.NopCloser(bytes.NewReader(jsonData))
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
-				model, err := GetModel("beefsteak")
+				model, err := GetModelForRunner("beefsteak", "")
 				if err != nil {
 					t.Fatalf("failed to get model: %v", err)
 				}
@@ -487,26 +1194,7 @@ func TestRoutes(t *testing.T) {
 		},
 	}
 
-	modelsDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", modelsDir)
-
-	rc := &ollama.Registry{
-		// This is a temporary measure to allow us to move forward,
-		// surfacing any code contacting ollama.com we do not intended
-		// to.
-		//
-		// Currently, this only handles DELETE /api/delete, which
-		// should not make any contact with the ollama.com registry, so
-		// be clear about that.
-		//
-		// Tests that do need to contact the registry here, will be
-		// consumed into our new server/api code packages and removed
-		// from here.
-		HTTPClient: panicOnRoundTrip,
-	}
-
-	s := &Server{}
-	router, err := s.GenerateRoutes(rc)
+	router, err := s.GenerateRoutes()
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
 	}
@@ -536,6 +1224,247 @@ func TestRoutes(t *testing.T) {
 				tc.Expected(t, resp)
 			}
 		})
+	}
+}
+
+func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "mxfp8" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
+	}
+}
+
+func TestGetModelInfoSafetensorsTensorInfoRequiresVerbose(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-safetensors-tensors", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		Capabilities: []string{"completion"},
+	}, nil)
+
+	resp, err := GetModelInfo(api.ShowRequest{
+		Model:  "show-safetensors-tensors",
+		Runner: manifest.RunnerMLX,
+	})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+	if len(resp.Tensors) != 0 {
+		t.Fatalf("non-verbose tensor count = %d, want 0", len(resp.Tensors))
+	}
+
+	resp, err = GetModelInfo(api.ShowRequest{
+		Model:   "show-safetensors-tensors",
+		Runner:  manifest.RunnerMLX,
+		Verbose: true,
+	})
+	if err != nil {
+		t.Fatalf("GetModelInfo(verbose) error = %v", err)
+	}
+	if len(resp.Tensors) != 1 {
+		t.Fatalf("verbose tensor count = %d, want 1", len(resp.Tensors))
+	}
+	if resp.Tensors[0].Name != "show-safetensors-tensors.weight" {
+		t.Fatalf("tensor name = %q, want %q", resp.Tensors[0].Name, "show-safetensors-tensors.weight")
+	}
+}
+
+func TestGetModelInfoRepairsUnknownGGUFFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture": "llama",
+		"general.file_type":    uint32(gguf.FileTypeQ4_K_M),
+	}, nil)
+	modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := createConfigLayer(model.ConfigV2{
+		ModelFormat:   "gguf",
+		ModelFamily:   "llama",
+		ModelFamilies: []string{"llama"},
+		FileType:      "unknown",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	name := model.ParseName("show-unknown-gguf")
+	if err := manifest.WriteManifest(name, *configLayer, []manifest.Layer{modelLayer}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "Q4_K_M" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "Q4_K_M")
+	}
+}
+
+func TestGetModelInfo_SafetensorsModelfileUsesShortName(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, capability := range []string{"completion", "decision", "image"} {
+		t.Run(capability, func(t *testing.T) {
+			config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test","max_position_embeddings":512}`), manifest.MediaTypeImageJSON)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config.Name = "config.json"
+			name := "show-safetensors-" + capability
+			createSafetensorsTestModel(t, name, model.ConfigV2{
+				ModelFormat: "safetensors", Capabilities: []string{capability},
+			}, []manifest.Layer{config})
+
+			resp, err := GetModelInfo(api.ShowRequest{Model: name})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "FROM " + name + ":latest\n"; !strings.Contains(resp.Modelfile, want) {
+				t.Fatalf("Modelfile = %q, want %q", resp.Modelfile, want)
+			}
+			if strings.Contains(resp.Modelfile, "# To build a new Modelfile based on this, replace FROM with:") {
+				t.Fatalf("Modelfile should not include replacement hint: %q", resp.Modelfile)
+			}
+			if capability == "image" {
+				if len(resp.ModelInfo) != 0 {
+					t.Fatalf("image model acquired LLM metadata: %v", resp.ModelInfo)
+				}
+			} else if resp.ModelInfo["test.context_length"] != 512 {
+				t.Fatalf("context_length = %v, want 512", resp.ModelInfo["test.context_length"])
+			}
+		})
+	}
+}
+
+func TestGetModelInfo_ManifestVoices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// Voices described in the prompt rather than stored as voice tensors are
+	// named in the manifest config.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test"}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-voices", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion", "speech"}, Voices: []string{"default", "male-french"},
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-voices"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(resp.Voices, []string{"default", "male-french"}) {
+		t.Fatalf("voices %v, want default and male-french", resp.Voices)
+	}
+}
+
+func TestGetModelInfo_GGUFSpeechVoices(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	for _, tt := range []struct {
+		name      string
+		renderer  string
+		projector bool
+		want      []string
+	}{
+		{"lfm3-audio", "lfm3-audio", true, renderers.LFM3SpeechVoices()},
+		{"lfm3-omni", "lfm3-omni", true, renderers.LFM3SpeechVoices()},
+		{"lfm3-audio without projector", "lfm3-audio", false, nil},
+		{"lfm3 text", "lfm3", true, nil},
+		{"no renderer", "", true, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, digest := createBinFile(t, gguftest.KV{"general.architecture": "lfm3"}, nil)
+			modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers := []manifest.Layer{modelLayer}
+			if tt.projector {
+				_, projector := createBinFile(t, gguftest.KV{"general.architecture": "clip"}, nil)
+				layers = append(layers, manifest.Layer{MediaType: "application/vnd.ollama.image.projector", Digest: projector})
+			}
+			configLayer, err := createConfigLayer(model.ConfigV2{ModelFormat: "gguf", Renderer: tt.renderer, Capabilities: []string{"completion", "speech"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := model.ParseName("show-gguf-speech")
+			if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
+				t.Fatal(err)
+			}
+
+			resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(resp.Voices, tt.want) {
+				t.Fatalf("voices %v, want %v", resp.Voices, tt.want)
+			}
+		})
+	}
+
+	// Safetensors speech models list the voices their package stores, never the GGUF fallback.
+	t.Run("safetensors", func(t *testing.T) {
+		_, projector := createBinFile(t, gguftest.KV{"general.architecture": "clip"}, nil)
+		createSafetensorsTestModel(t, "show-safetensors-speech", model.ConfigV2{ModelFormat: "safetensors", Renderer: "lfm3-audio", Capabilities: []string{"completion", "speech"}},
+			[]manifest.Layer{{MediaType: "application/vnd.ollama.image.projector", Digest: projector}})
+		resp, err := GetModelInfo(api.ShowRequest{Model: "show-safetensors-speech"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(resp.Voices) != 0 {
+			t.Fatalf("voices %v, want none", resp.Voices)
+		}
+	})
+}
+
+func TestGetModelInfo_SafetensorsManifestLengthsWin(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	// The language model config is nested where config.json reading doesn't
+	// look; create recorded its lengths in the manifest.
+	config, err := manifest.NewLayer(strings.NewReader(`{"model_type":"test","lm":{"max_position_embeddings":128000,"hidden_size":2048}}`), manifest.MediaTypeImageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Name = "config.json"
+	createSafetensorsTestModel(t, "show-manifest-lengths", model.ConfigV2{
+		ModelFormat: "safetensors", Capabilities: []string{"completion"}, ContextLen: 128000, EmbedLen: 2048,
+	}, []manifest.Layer{config})
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: "show-manifest-lengths"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelInfo["test.context_length"] != 128000 || resp.ModelInfo["test.embedding_length"] != 2048 {
+		t.Fatalf("context_length %v, embedding_length %v, want 128000 and 2048", resp.ModelInfo["test.context_length"], resp.ModelInfo["test.embedding_length"])
 	}
 }
 
@@ -582,11 +1511,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	checkManifestList := func() {
 		t.Helper()
 
-		mandir := filepath.Join(os.Getenv("OLLAMA_MODELS"), "manifests/")
+		mandir, err := manifest.V2Path()
+		if err != nil {
+			t.Fatalf("failed to resolve v2 manifest path: %v", err)
+		}
 		var entries []string
 		t.Logf("dir entries:")
 		fsys := os.DirFS(mandir)
-		err := fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
+		err = fs.WalkDir(fsys, ".", func(path string, info fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -609,7 +1541,14 @@ func TestManifestCaseSensitivity(t *testing.T) {
 
 		g := entries[0] // raw path
 		g = filepath.ToSlash(g)
-		w := model.ParseName(wantStableName).Filepath()
+		wp, err := manifest.V2PathForName(model.ParseName(wantStableName))
+		if err != nil {
+			t.Fatalf("failed to resolve expected manifest path: %v", err)
+		}
+		w, err := filepath.Rel(mandir, wp)
+		if err != nil {
+			t.Fatalf("failed to make expected manifest path relative: %v", err)
+		}
 		w = filepath.ToSlash(w)
 		if g != w {
 			t.Errorf("\ngot:  %s\nwant: %s", g, w)
@@ -683,8 +1622,8 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	_, digest1 := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
-	_, digest2 := createBinFile(t, ggml.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+	_, digest1 := createBinFile(t, gguftest.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, gguftest.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "show-model",
@@ -713,17 +1652,508 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowTemplateUsesSelectedRuntimeTemplate(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_GO_TEMPLATE", "")
+
+	chatTemplate := "{% if tools %}{{ tools }}{% endif %}{% set content = (content.split('</think>')|last) %}"
+	goTemplate := "{{ range .Messages }}{{ if .Thinking }}<think>{{ .Thinking }}</think>{{ end }}{{ .Content }}{{ end }}"
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": chatTemplate,
+	}, nil)
+	writeTestModelManifest(t, "show-selected-template", digest, goTemplate)
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-selected-template"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Template != chatTemplate {
+		t.Fatalf("template = %q, want selected chat_template %q", resp.Template, chatTemplate)
+	}
+}
+
+func createShowSafetensorsLayer(t *testing.T, tensorName string, shape []int64) manifest.Layer {
+	t.Helper()
+
+	header := map[string]any{
+		tensorName: map[string]any{
+			"dtype":        "F32",
+			"shape":        shape,
+			"data_offsets": []int64{0, 16},
+		},
+	}
+	headerData, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(len(headerData))); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(headerData)
+
+	layer, err := manifest.NewLayer(bytes.NewReader(buf.Bytes()), manifest.MediaTypeImageTensor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	layer.Name = tensorName
+
+	return layer
+}
+
+func writeShowManifestVariant(t *testing.T, name, runner, format string, cfg model.ConfigV2, kv map[string]any, extraLayers ...manifest.Layer) {
+	t.Helper()
+
+	configData, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(configData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	layers := make([]manifest.Layer, 0, len(extraLayers)+1)
+	switch format {
+	case manifest.FormatGGUF:
+		_, digest := createBinFile(t, kv, nil)
+		modelLayer, err := manifest.NewLayerFromLayer(digest, "application/vnd.ollama.image.model", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		layers = append(layers, modelLayer)
+	case manifest.FormatSafetensors:
+		layers = append(layers, createShowSafetensorsLayer(t, name+".weight", []int64{2, 2}))
+	}
+
+	layers = append(layers, extraLayers...)
+	if err := manifest.WriteManifestWithMetadata(model.ParseName(name), configLayer, layers, runner, format); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestShowAllManifestsNonListReturnsSingleManifest(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	_, digest := createBinFile(t, map[string]any{"general.architecture": "test"}, nil)
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "show-model",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-model",
+		AllManifests: true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowManifestsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 1 {
+		t.Fatalf("manifest count = %d, want 1", len(resp.Manifests))
+	}
+	// No compatibility detector fires for this GGUF, so it is llama.cpp's.
+	if resp.Manifests[0].Runner != manifest.RunnerLlamaCPP {
+		t.Fatalf("runner = %q, want %q", resp.Manifests[0].Runner, manifest.RunnerLlamaCPP)
+	}
+	if resp.Manifests[0].Details.Format != manifest.FormatGGUF {
+		t.Fatalf("format = %q, want %q", resp.Manifests[0].Details.Format, manifest.FormatGGUF)
+	}
+	if resp.Manifests[0].ModelInfo["general.architecture"] != "test" {
+		t.Fatalf("architecture = %v, want %q", resp.Manifests[0].ModelInfo["general.architecture"], "test")
+	}
+}
+
+func TestShowAllManifestsManifestListDedupesLicenses(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	licenseLayer, err := manifest.NewLayer(bytes.NewReader([]byte("Apache-2.0")), "application/vnd.ollama.image.license")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeShowManifestVariant(t, "show-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat:  manifest.FormatSafetensors,
+		ModelFamily:  "qwen3_5_moe",
+		ModelType:    "35.1B",
+		FileType:     "nvfp4",
+		Requires:     "0.19.0",
+		Capabilities: []string{"completion", "vision", "thinking", "tools"},
+	}, nil, licenseLayer)
+
+	writeShowManifestVariant(t, "show-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat:  manifest.FormatGGUF,
+		ModelFamily:  "qwen35moe",
+		ModelType:    "36.0B",
+		FileType:     "Q4_K_M",
+		Capabilities: []string{"completion", "vision", "thinking", "tools"},
+	}, map[string]any{"general.architecture": "qwen35moe"}, licenseLayer)
+
+	mlxManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-mlx"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-ggml"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("show-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-list",
+		AllManifests: true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowManifestsResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 2 {
+		t.Fatalf("manifest count = %d, want 2", len(resp.Manifests))
+	}
+	if resp.Manifests[0].Runner != manifest.RunnerMLX || resp.Manifests[1].Runner != manifest.RunnerGGML {
+		t.Fatalf("runner order = [%q %q], want [%q %q]", resp.Manifests[0].Runner, resp.Manifests[1].Runner, manifest.RunnerMLX, manifest.RunnerGGML)
+	}
+	if resp.License != "Apache-2.0" {
+		t.Fatalf("license = %q, want %q", resp.License, "Apache-2.0")
+	}
+	if resp.Manifests[0].License != "Apache-2.0" || resp.Manifests[1].License != "Apache-2.0" {
+		t.Fatalf("child licenses = [%q %q], want both Apache-2.0", resp.Manifests[0].License, resp.Manifests[1].License)
+	}
+	if resp.Manifests[0].Requires != "0.19.0" {
+		t.Fatalf("mlx requires = %q, want %q", resp.Manifests[0].Requires, "0.19.0")
+	}
+	if len(resp.Manifests[0].Tensors) != 0 {
+		t.Fatalf("non-verbose mlx tensor count = %d, want 0", len(resp.Manifests[0].Tensors))
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-list",
+		AllManifests: true,
+		Verbose:      true,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected verbose status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+	resp = api.ShowManifestsResponse{}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests[0].Tensors) != 1 {
+		t.Fatalf("verbose mlx tensor count = %d, want 1", len(resp.Manifests[0].Tensors))
+	}
+	if resp.Manifests[0].Tensors[0].Name != "show-mlx.weight" {
+		t.Fatalf("mlx tensor name = %q, want %q", resp.Manifests[0].Tensors[0].Name, "show-mlx.weight")
+	}
+}
+
+func TestShowManifestListIncludesChildSummaries(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-mlx", manifest.RunnerMLX, manifest.FormatSafetensors, model.ConfigV2{
+		ModelFormat: manifest.FormatSafetensors,
+		ModelFamily: "qwen3_5_moe",
+		ModelType:   "35.1B",
+		FileType:    "nvfp4",
+	}, nil)
+
+	writeShowManifestVariant(t, "show-ggml", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat: manifest.FormatGGUF,
+		ModelFamily: "qwen35moe",
+		ModelType:   "36.0B",
+		FileType:    "Q4_K_M",
+	}, map[string]any{"general.architecture": "qwen35moe"})
+
+	mlxManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-mlx"), manifest.RunnerMLX)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-ggml"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mlxRef, err := manifest.NewManifestReference(mlxManifest.BlobDigest(), manifest.RunnerMLX, manifest.FormatSafetensors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ggmlRef, err := manifest.NewManifestReference(ggmlManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{mlxRef, ggmlRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("show-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:  "show-list",
+		Runner: manifest.RunnerGGML,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Manifests) != 2 {
+		t.Fatalf("manifest summary count = %d, want 2", len(resp.Manifests))
+	}
+	if resp.Details.Runner != manifest.RunnerGGML {
+		t.Fatalf("details runner = %q, want %q", resp.Details.Runner, manifest.RunnerGGML)
+	}
+	if resp.Manifests[0].Digest != mlxManifest.BlobDigest() || resp.Manifests[0].Runner != manifest.RunnerMLX {
+		t.Fatalf("first summary = %#v, want mlx %s", resp.Manifests[0], mlxManifest.BlobDigest())
+	}
+	if resp.Manifests[1].Digest != ggmlManifest.BlobDigest() || resp.Manifests[1].Runner != manifest.RunnerGGML || !resp.Manifests[1].Selected {
+		t.Fatalf("second summary = %#v, want selected ggml %s", resp.Manifests[1], ggmlManifest.BlobDigest())
+	}
+}
+
+func TestShowManifestListRejectsInvalidChildRunner(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	writeShowManifestVariant(t, "show-good", manifest.RunnerGGML, manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat: manifest.FormatGGUF,
+		ModelFamily: "test",
+		ModelType:   "1B",
+	}, map[string]any{"general.architecture": "test"})
+	writeShowManifestVariant(t, "show-bad", "bad", manifest.FormatGGUF, model.ConfigV2{
+		ModelFormat: manifest.FormatGGUF,
+		ModelFamily: "test",
+		ModelType:   "1B",
+	}, map[string]any{"general.architecture": "test"})
+
+	goodManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-good"), manifest.RunnerGGML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badManifest, err := manifest.ParseNamedManifestForRunner(model.ParseName("show-bad"), "bad")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	goodRef, err := manifest.NewManifestReference(goodManifest.BlobDigest(), manifest.RunnerGGML, manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badRef, err := manifest.NewManifestReference(badManifest.BlobDigest(), "bad", manifest.FormatGGUF)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parentData, err := json.Marshal(manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     manifest.MediaTypeManifestList,
+		Manifests:     []manifest.Manifest{goodRef, badRef},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifestData(model.ParseName("show-list"), parentData); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Server
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:  "show-list",
+		Runner: manifest.RunnerGGML,
+	})
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status code 500, actual %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"unknown runner \"bad\""}` {
+		t.Fatalf("response = %s", got)
+	}
+}
+
+func TestShowAllManifestsRejectsRunnerSelection(t *testing.T) {
+	var s Server
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
+		Model:        "show-model",
+		Runner:       manifest.RunnerMLX,
+		AllManifests: true,
+	})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status code 400, actual %d: %s", w.Code, w.Body.String())
+	}
+	if got := strings.TrimSpace(w.Body.String()); got != `{"error":"runner cannot be used with all_manifests"}` {
+		t.Fatalf("response = %s", got)
+	}
+}
+
+func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-model",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"model_family": "gptoss",
+			"base_name":    "upstream-base-name",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeRequest := func(userAgent string) api.ShowResponse {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-model"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	withoutCopilot := makeRequest("")
+	if withoutCopilot.ModelInfo["general.basename"] != "upstream-base-name" {
+		t.Fatalf("expected general.basename to be %q, got %v", "upstream-base-name", withoutCopilot.ModelInfo["general.basename"])
+	}
+
+	withCopilot := makeRequest("GitHubCopilotChat/0.41.1")
+	if withCopilot.ModelInfo["general.basename"] != "show-model" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-model", withCopilot.ModelInfo["general.basename"])
+	}
+
+	if withCopilot.ModelInfo["general.architecture"] != "gptoss" {
+		t.Fatalf("expected general.architecture to be %q, got %v", "gptoss", withCopilot.ModelInfo["general.architecture"])
+	}
+}
+
+func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-remote",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-remote"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "GitHubCopilotChat/0.41.1")
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.basename"] != "show-remote" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-remote", resp.ModelInfo["general.basename"])
+	}
+
+	if len(resp.ModelInfo) != 1 {
+		t.Fatalf("expected model_info to contain only general.basename, got %#v", resp.ModelInfo)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	type testCase struct {
-		input []float32
+		input       []float32
+		expectError bool
 	}
 
 	testCases := []testCase{
-		{input: []float32{1}},
-		{input: []float32{0, 1, 2, 3}},
-		{input: []float32{0.1, 0.2, 0.3}},
-		{input: []float32{-0.1, 0.2, 0.3, -0.4}},
-		{input: []float32{0, 0, 0}},
+		{input: []float32{1}, expectError: false},
+		{input: []float32{0, 1, 2, 3}, expectError: false},
+		{input: []float32{0.1, 0.2, 0.3}, expectError: false},
+		{input: []float32{-0.1, 0.2, 0.3, -0.4}, expectError: false},
+		{input: []float32{0, 0, 0}, expectError: false},
+		{input: []float32{float32(math.NaN()), 0.2, 0.3}, expectError: true},
+		{input: []float32{0.1, float32(math.NaN()), 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(1)), 0.2, 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(-1)), 0.2, 0.3}, expectError: true},
 	}
 
 	isNormalized := func(vec []float32) (res bool) {
@@ -740,9 +2170,18 @@ func TestNormalize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
-			normalized := normalize(tc.input)
-			if !isNormalized(normalized) {
-				t.Errorf("Vector %v is not normalized", tc.input)
+			normalized, err := normalize(tc.input)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error for input %v, but got none", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for input %v: %v", tc.input, err)
+				}
+				if !isNormalized(normalized) {
+					t.Errorf("Vector %v is not normalized", tc.input)
+				}
 			}
 		})
 	}
@@ -767,7 +2206,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -785,7 +2224,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -807,7 +2246,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -825,7 +2264,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "llama3",
 				},
 			},
@@ -845,7 +2284,7 @@ func TestFilterThinkTags(t *testing.T) {
 			model: &Model{
 				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
 				ShortName: "deepseek-r1:7b",
-				Config:    ConfigV2{},
+				Config:    model.ConfigV2{},
 			},
 		},
 	}
@@ -954,5 +2393,106 @@ func TestWaitForStream(t *testing.T) {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestShowOmitsNonFiniteGGUFValues(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	// Real models ship non-finite floats (gemma3n pads its
+	// activation_sparsity_scale with -Inf); the show response must still
+	// serialize.
+	_, digest := createBinFile(t, gguftest.KV{
+		"general.architecture": "test",
+		"test.activation_sparsity_scale": []float32{
+			1.6448535, float32(math.Inf(-1)),
+		},
+	}, nil)
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "show-non-finite",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "show-non-finite"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resp.ModelInfo["test.activation_sparsity_scale"]; ok {
+		t.Fatalf("activation_sparsity_scale = %v, want omitted", resp.ModelInfo["test.activation_sparsity_scale"])
+	}
+}
+
+func TestShowRendererParserAndTemplateSource(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	create := func(t *testing.T, name string, kv gguftest.KV) {
+		t.Helper()
+		_, digest := createBinFile(t, kv, nil)
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:   name,
+			Files:  map[string]string{"test.gguf": digest},
+			Stream: &stream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("create %s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	show := func(t *testing.T, name string) api.ShowResponse {
+		t.Helper()
+		w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: name})
+		if w.Code != http.StatusOK {
+			t.Fatalf("show %s: %d %s", name, w.Code, w.Body.String())
+		}
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// gemma4 auto-resolves the legacy alias by model size; "12b" in the name
+	// selects the large renderer.
+	create(t, "show-gemma4-12b", gguftest.KV{
+		"general.architecture":    "gemma4",
+		"tokenizer.chat_template": "{{ not a named template }}",
+	})
+	resp := show(t, "show-gemma4-12b")
+	if resp.Renderer != gemma4RendererLarge || resp.Parser != "gemma4" {
+		t.Errorf("renderer/parser = %q/%q, want %s/gemma4 (legacy alias resolved)", resp.Renderer, resp.Parser, gemma4RendererLarge)
+	}
+	if resp.TemplateSource != "renderer_parser" {
+		t.Errorf("template source = %q, want renderer_parser", resp.TemplateSource)
+	}
+
+	// A GGUF with an embedded chat template and no renderer/parser hands the
+	// jinja template to llama-server.
+	create(t, "show-plain", gguftest.KV{
+		"general.architecture":    "llama",
+		"tokenizer.chat_template": "{{ not a named template }}",
+	})
+	resp = show(t, "show-plain")
+	if resp.Renderer != "" || resp.Parser != "" {
+		t.Errorf("renderer/parser = %q/%q, want both empty", resp.Renderer, resp.Parser)
+	}
+	if resp.TemplateSource != "gguf_chat_template" {
+		t.Errorf("template source = %q, want gguf_chat_template", resp.TemplateSource)
+	}
+
+	// No template of any kind: nothing renders a chat prompt.
+	create(t, "show-bare", gguftest.KV{"general.architecture": "test"})
+	resp = show(t, "show-bare")
+	if resp.TemplateSource != "none" {
+		t.Errorf("template source = %q, want none", resp.TemplateSource)
 	}
 }
