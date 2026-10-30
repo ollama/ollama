@@ -1,0 +1,55 @@
+diff --git a/mlx/backend/cuda/CMakeLists.txt b/mlx/backend/cuda/CMakeLists.txt
+index 0013892..6fbe0ff 100644
+--- a/mlx/backend/cuda/CMakeLists.txt
++++ b/mlx/backend/cuda/CMakeLists.txt
+@@ -208,9 +208,10 @@ foreach(arch IN LISTS MLX_CUDA_ARCHITECTURES)
+   endif()
+ endforeach()
+ list(JOIN MLX_CUDA_ARCH_LIST "," MLX_CUDA_ARCH_LIST)
+-target_compile_definitions(
+-  mlx
+-  PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:MLX_CUDA_ARCH_LIST=${MLX_CUDA_ARCH_LIST}>")
+-
++configure_file(
++  ${CMAKE_CURRENT_SOURCE_DIR}/cuda_arch_list.cpp.in
++  ${CMAKE_CURRENT_BINARY_DIR}/cuda_arch_list.cpp @ONLY)
++target_sources(mlx PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/cuda_arch_list.cpp)
++
+ # Configure Windows CUDA DLL loading.
+ if(WIN32)
+diff --git a/mlx/backend/cuda/cuda_arch_list.cpp.in b/mlx/backend/cuda/cuda_arch_list.cpp.in
+new file mode 100644
+index 0000000..3adb5c7
+--- /dev/null
++++ b/mlx/backend/cuda/cuda_arch_list.cpp.in
+@@ -0,0 +1,13 @@
++// Copyright © 2026 Apple Inc.
++
++#include "mlx/backend/cuda/cuda.h"
++
++namespace mlx::core {
++namespace cu {
++
++std::vector<std::string> get_arch_list() {
++  return {@MLX_CUDA_ARCH_LIST@};
++}
++
++} // namespace cu
++} // namespace mlx::core
+diff --git a/mlx/backend/cuda/device_info.cpp b/mlx/backend/cuda/device_info.cpp
+index 43c25ee..de3e932 100644
+--- a/mlx/backend/cuda/device_info.cpp
++++ b/mlx/backend/cuda/device_info.cpp
+@@ -227,10 +227,6 @@ bool is_available() {
+   return true;
+ }
+-
+-std::vector<std::string> get_arch_list() {
+-  return {MLX_CUDA_ARCH_LIST};
+-}
+-
++
+ } // namespace cu
+-
++
+ } // namespace mlx::core
