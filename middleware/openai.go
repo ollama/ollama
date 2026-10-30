@@ -3,12 +3,12 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"slices"
 	"strings"
@@ -386,7 +386,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			id:            "cmpl-" + rand.Text(),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -479,7 +479,7 @@ func ChatMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			id:            "chatcmpl-" + rand.Text(),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -1266,8 +1266,10 @@ func ResponsesMiddleware(thinkingLookup ...ThinkingLookup) gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
-		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
+		// Clients and proxies key logs and caches on these IDs, so they must be
+		// unique per response rather than drawn from a small range.
+		responseID := "resp_" + rand.Text()
+		itemID := "msg_" + rand.Text()
 
 		w := &ResponsesWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},

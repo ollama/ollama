@@ -1812,3 +1812,82 @@ func TestResponsesMiddlewareZstd(t *testing.T) {
 		})
 	}
 }
+
+func TestResponseIDsAreUnique(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name       string
+		middleware gin.HandlerFunc
+		path       string
+		body       string
+		ids        func(gin.ResponseWriter) []string
+		prefixes   []string
+	}{
+		{
+			name:       "chat completions",
+			middleware: ChatMiddleware(),
+			path:       "/v1/chat/completions",
+			body:       `{"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]}`,
+			ids:        func(w gin.ResponseWriter) []string { return []string{w.(*ChatWriter).id} },
+			prefixes:   []string{"chatcmpl-"},
+		},
+		{
+			name:       "completions",
+			middleware: CompletionsMiddleware(),
+			path:       "/v1/completions",
+			body:       `{"model": "test-model", "prompt": "Hello"}`,
+			ids:        func(w gin.ResponseWriter) []string { return []string{w.(*CompleteWriter).id} },
+			prefixes:   []string{"cmpl-"},
+		},
+		{
+			name:       "responses",
+			middleware: ResponsesMiddleware(),
+			path:       "/v1/responses",
+			body:       `{"model": "test-model", "input": "Hello"}`,
+			ids: func(w gin.ResponseWriter) []string {
+				rw := w.(*ResponsesWriter)
+				return []string{rw.responseID, rw.itemID}
+			},
+			prefixes: []string{"resp_", "msg_"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The previous generator drew from 999 values, so 2000 requests
+			// were guaranteed to repeat an ID.
+			const requests = 2000
+
+			seen := make(map[string]bool)
+			router := gin.New()
+			router.Use(tt.middleware)
+			router.Handle(http.MethodPost, tt.path, func(c *gin.Context) {
+				for i, id := range tt.ids(c.Writer) {
+					if !strings.HasPrefix(id, tt.prefixes[i]) {
+						t.Fatalf("id %q does not have prefix %q", id, tt.prefixes[i])
+					}
+					if seen[id] {
+						t.Fatalf("duplicate id %q", id)
+					}
+					seen[id] = true
+				}
+				c.Status(http.StatusOK)
+			})
+
+			for range requests {
+				req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/json")
+				resp := httptest.NewRecorder()
+				router.ServeHTTP(resp, req)
+				if resp.Code != http.StatusOK {
+					t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+				}
+			}
+
+			if want := requests * len(tt.prefixes); len(seen) != want {
+				t.Fatalf("expected %d unique ids, got %d", want, len(seen))
+			}
+		})
+	}
+}
