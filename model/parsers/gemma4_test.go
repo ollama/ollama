@@ -1222,6 +1222,84 @@ func TestGemma4RepairCandidates(t *testing.T) {
 	}
 }
 
+func TestGemma4PlainQuoteStringClose(t *testing.T) {
+	write := []api.Tool{gemma4TestStringTool("write", "content", "path")}
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    map[string]any // nil: the call is not repaired
+	}{
+		{
+			// A whole file's text closed with a plain quote on a line of its own, and
+			// no comma before the next argument.
+			name:    "plain_quote_then_key",
+			content: "call:write{content:<|\"|>EditorID: FlameBlade\nDescription:\n  Value: ''\nObjectEffect: 049BB7:Skyrim.esm  # EnchWeaponFireDamage01\n\"\npath:<|\"|>FlameBlade/plugin/Weapons/FlameBlade.yaml<|\"|>}",
+			tools:   write,
+			want: map[string]any{
+				"content": "EditorID: FlameBlade\nDescription:\n  Value: ''\nObjectEffect: 049BB7:Skyrim.esm  # EnchWeaponFireDamage01\n",
+				"path":    "FlameBlade/plugin/Weapons/FlameBlade.yaml",
+			},
+		},
+		{
+			name:    "plain_quote_comma_then_key",
+			content: `call:write{content:<|"|>a: 1",path:<|"|>x.yaml<|"|>}`,
+			tools:   write,
+			want:    map[string]any{"content": "a: 1", "path": "x.yaml"},
+		},
+		{
+			name:    "quote_before_a_word_that_is_no_parameter",
+			content: "call:write{content:<|\"|>a: \"b\"\nnote:<|\"|>x.yaml<|\"|>}",
+			tools:   write,
+		},
+		{
+			name:    "no_tool_to_name_the_parameters",
+			content: "call:write{content:<|\"|>a: 1\"\npath:<|\"|>x.yaml<|\"|>}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			if tt.want == nil {
+				if err == nil {
+					if _, split := got.Function.Arguments.Get("path"); split {
+						t.Fatalf("expected no repair at the quote, got %v", got.Function.Arguments)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_PlainQuoteClosedStringInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{gemma4TestStringTool("write", "content", "path")}, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>call:write{content:<|\"|>a: 1\n\"\npath:<|\"|>x.yaml<|\"|>}<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(map[string]any{
+		"content": "a: 1\n",
+		"path":    "x.yaml",
+	})}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func gemma4TestStringTool(name string, argNames ...string) api.Tool {
 	props := api.NewToolPropertiesMap()
 	for _, argName := range argNames {

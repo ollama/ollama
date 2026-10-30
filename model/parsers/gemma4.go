@@ -686,6 +686,9 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	}
 
 	addCandidate(argsStr, false)
+	if closed := repairGemma4PlainQuoteStringClose(argsStr, gemma4ToolProperties(toolName, tools)); closed != argsStr {
+		addCandidate(closed, false)
+	}
 	if raw, ok := repairGemma4RawTerminalStringValue(argsStr, toolName, tools); ok {
 		addCandidate(raw, true)
 	}
@@ -711,6 +714,57 @@ func repairGemma4MissingStringDelimiter(s string) string {
 	sb.WriteString(s[:insertAt])
 	sb.WriteString(gemma4StringDelimiter)
 	sb.WriteString(s[insertAt:])
+	return sb.String()
+}
+
+// gemma4PlainQuoteBeforeKey matches the end of a Gemma string's text where the
+// model wrote a plain `"` for the closing delimiter, before the next argument:
+// the `"`, whitespace, an optional comma, then the argument's key and its colon.
+var gemma4PlainQuoteBeforeKey = regexp.MustCompile(`"\s*,?\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*$`)
+
+// repairGemma4PlainQuoteStringClose closes a Gemma string the model ended with a
+// plain `"` instead of its delimiter, the comma before the next argument left
+// out with it, as in
+// call:write{content:<|"|>…\n"\npath:<|"|>…<|"|>}.
+// Only an odd count of delimiters is repaired, and only where a string's text
+// ends in that `"` and the key of one of the tool's parameters, so that the
+// delimiter after it opens that parameter's value: the delimiter and a comma are
+// written for the `"`. With no tool to name the parameters, nothing is repaired.
+func repairGemma4PlainQuoteStringClose(s string, props *api.ToolPropertiesMap) string {
+	if props == nil || strings.Count(s, gemma4StringDelimiter)%2 == 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s) + len(gemma4StringDelimiter) + 1)
+	rest := s
+	for {
+		open := strings.Index(rest, gemma4StringDelimiter)
+		if open == -1 {
+			break
+		}
+		sb.WriteString(rest[:open+len(gemma4StringDelimiter)])
+		rest = rest[open+len(gemma4StringDelimiter):]
+
+		end := strings.Index(rest, gemma4StringDelimiter)
+		if end == -1 {
+			break
+		}
+		if m := gemma4PlainQuoteBeforeKey.FindStringSubmatchIndex(rest[:end]); m != nil {
+			if _, ok := props.Get(rest[m[2]:m[3]]); ok {
+				sb.WriteString(rest[:m[0]])
+				sb.WriteString(gemma4StringDelimiter)
+				sb.WriteString(",")
+				sb.WriteString(rest[m[2]:end])
+				// The delimiter at end opens the key's value.
+				rest = rest[end:]
+				continue
+			}
+		}
+		sb.WriteString(rest[:end+len(gemma4StringDelimiter)])
+		rest = rest[end+len(gemma4StringDelimiter):]
+	}
+	sb.WriteString(rest)
 	return sb.String()
 }
 
