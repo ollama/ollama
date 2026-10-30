@@ -155,11 +155,13 @@ type llamaServerRunner struct {
 	// memoryMu guards memory estimates, layer counts, per-device maps, and
 	// memoryParsingWriter state after the subprocess starts.
 	memoryMu           sync.RWMutex
-	memTotal           uint64 // actual total buffer size parsed from llama-server logs (bytes)
-	memGPU             uint64 // actual GPU buffer size parsed from llama-server logs (bytes)
+	memTotal           uint64 // logged buffers plus any projector estimate (bytes)
+	memGPU             uint64 // logged GPU buffers plus any GPU projector estimate (bytes)
 	memModelFileBacked uint64 // model weight bytes whose buffers mirror the on-disk file (mmap views + direct device copies); excludes repacked copies like CPU_REPACK
 	memCPUMappedModel  uint64 // model weight bytes in mmap-backed CPU buffers (e.g. CPU_Mapped), parsed from llama-server logs
 	memCPUProjector    uint64 // projector estimate when its loader uses the CPU backend
+	memCPUDraft        uint64 // draft model and context buffers allocated on the CPU
+	memCPUTargetExtras uint64 // target adapter, state, and auxiliary buffers allocated on the CPU
 	gpuLayers          uint64 // model layers loaded on GPU, parsed from llama-server logs
 	gpuLayerOverflow   int    // number of GPU-selected layers partially overflowed to CPU
 	status             *StatusWriter
@@ -1192,6 +1194,8 @@ func (s *llamaServerRunner) resetLoadAccounting() {
 	s.memModelFileBacked = 0
 	s.memCPUMappedModel = 0
 	s.memCPUProjector = 0
+	s.memCPUDraft = 0
+	s.memCPUTargetExtras = 0
 	s.gpuLayers = 0
 	s.gpuLayerOverflow = 0
 	for k := range s.vramByDevice {
@@ -2821,7 +2825,8 @@ func (s *llamaServerRunner) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo 
 }
 
 // MemorySize returns total and GPU memory usage parsed from llama-server's
-// post-load log output. Full text-layer offload can still leave a CPU projector.
+// post-load log output. Full text-layer offload can still leave CPU draft,
+// projector, adapter, state, or auxiliary buffers.
 func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	s.memoryMu.RLock()
 	memTotal := s.memTotal
@@ -2829,6 +2834,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 	memModelFileBacked := s.memModelFileBacked
 	memCPUMappedModel := s.memCPUMappedModel
 	memCPUProjector := s.memCPUProjector
+	memCPUDraft := s.memCPUDraft
+	memCPUTargetExtras := s.memCPUTargetExtras
 	totalLayers := s.totalLayers
 	gpuLayers := s.gpuLayers
 	gpuLayerOverflow := s.gpuLayerOverflow
@@ -2850,8 +2857,8 @@ func (s *llamaServerRunner) MemorySize() (total, vram uint64) {
 			}
 		}
 		if totalLayers > 0 && gpuLayers >= totalLayers && gpuLayerOverflow == 0 {
-			// Full text-layer offload does not include a CPU projector.
-			total = vram + memCPUProjector
+			// Full target offload does not cover other live CPU components.
+			total = vram + memCPUProjector + memCPUDraft + memCPUTargetExtras
 		}
 		return total, vram
 	}
@@ -2899,7 +2906,7 @@ func PredictServerVRAM(modelPath string, f *gguf.Model, numCtx int) uint64 {
 //	ROCm0 model buffer size =  1918.35 MiB
 //	llama_context:         CUDA0 layer input buffer size =     4.00 MiB (16 layers)
 //	init_rotation:         CUDA0 rotation buffer size =    23.04 MiB
-//	main: CUDA0 h_nextn buffer size =    32.00 MiB  (b12257: emitted as h_nextn_dev_alloc: MTL0 ... = 16.01 MiB)
+//	h_nextn_dev_alloc: MTL0 h_nextn buffer size =    16.01 MiB
 type memoryParsingWriter struct {
 	inner           io.Writer
 	runner          *llamaServerRunner
@@ -2941,9 +2948,13 @@ const (
 // mmprojMemoryRegex matches the projector's worst-case memory estimate:
 //
 //	srv  load_model: [mtmd] estimated worst-case memory usage of mmproj is 1700.98 MiB (took 36.34 ms)
-var mmprojMemoryRegex = regexp.MustCompile(`estimated worst-case memory usage of mmproj is ([\d.]+)\s*MiB`)
+var mmprojMemoryRegex = regexp.MustCompile(`^srv\s+load_model:\s+\[mtmd\] estimated worst-case memory usage of mmproj is ([\d.]+)\s*MiB`)
 
-var mmprojBackendRegex = regexp.MustCompile(`clip_ctx: CLIP using (\S+) backend`)
+var mmprojBackendRegex = regexp.MustCompile(`^(?:clip_ctx: CLIP|mtmd_subcontext:) using (\S+) backend`)
+
+// llama-server can log request text after startup. Only loader events may
+// change which model owns subsequent buffer lines.
+var serverLoadModelEventRegex = regexp.MustCompile(`^srv\s+load_model:\s+(.+)$`)
 
 // deviceFreeRegex matches per-device free VRAM reported at model load time:
 //
@@ -2954,11 +2965,13 @@ var deviceFreeRegex = regexp.MustCompile(`using device (\S+)\s+\(.*\)\s+-\s+(\d+
 
 // bufferSizeRegex matches llama-server buffer size lines and captures the
 // component so repeated fit/probe values can be replaced by the final load.
-var bufferSizeRegex = regexp.MustCompile(`(?m)(?:^|\n)[^\n:]*?([A-Za-z_][A-Za-z0-9_]*):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
+// DSV4 state and LoRA are separate live allocations; the projector estimate
+// already includes CLIP compute buffers.
+var bufferSizeRegex = regexp.MustCompile(`^(llama_[A-Za-z0-9_]+|llm_load_tensors|load_tensors|sched_reserve|alloc_compute_meta|reserve_compute_meta|init_rotation|h_nextn_dev_alloc):\s+(\S+)\s+(layer input|rotation|h_nextn|model|KV|compute|output|RS|LoRA|DSV4 \S+ state)\s+buffer size\s*=\s*([\d.]+)\s*MiB`)
 
 var (
-	offloadedLayersRegex      = regexp.MustCompile(`offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
-	fitOverflowingLayersRegex = regexp.MustCompile(`common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
+	offloadedLayersRegex      = regexp.MustCompile(`^(?:llm_)?load_tensors: offloaded\s+(\d+)/(\d+)\s+layers to GPU`)
+	fitOverflowingLayersRegex = regexp.MustCompile(`^common_params_fit_impl:\s+-\s+.+:\s+\d+\s+layers\s+\(\s*(\d+)\s+overflowing\)`)
 )
 
 // isGPUBuffer returns true if the backend buffer name represents GPU memory.
@@ -3049,24 +3062,23 @@ func (w *memoryParsingWriter) discardDraftLocked() {
 // parseLineLocked parses a single llama-server log line for memory tracking.
 // Caller holds runner.memoryMu.
 func (w *memoryParsingWriter) parseLineLocked(line []byte) {
-	if bytes.Contains(line, []byte("failed to initialize speculative decoding context")) ||
-		bytes.Contains(line, []byte("speculative decoding not supported by this context")) {
-		w.discardDraftLocked()
-		return
+	if event := serverLoadModelEventRegex.FindSubmatch(line); event != nil {
+		if bytes.HasPrefix(event[1], []byte("failed to initialize speculative decoding context")) ||
+			bytes.HasPrefix(event[1], []byte("speculative decoding not supported by this context")) {
+			w.discardDraftLocked()
+			return
+		}
+		if bytes.HasPrefix(event[1], []byte("speculative decoding context initialized")) {
+			w.currentModel = memoryModelTarget
+			return
+		}
 	}
-	if bytes.Contains(line, []byte("loading draft model")) {
+	if bytes.HasPrefix(line, []byte("common_speculative_init_result: loading draft model")) ||
+		bytes.HasPrefix(line, []byte("common_speculative_init_result: creating MTP draft context")) {
 		w.currentModel = memoryModelDraft
 		return
 	}
-	if bytes.Contains(line, []byte("creating MTP draft context")) {
-		w.currentModel = memoryModelDraft
-		return
-	}
-	if bytes.Contains(line, []byte("speculative decoding context initialized")) {
-		w.currentModel = memoryModelTarget
-		return
-	}
-	if bytes.Contains(line, []byte("sched_reserve: reserving")) {
+	if bytes.HasPrefix(line, []byte("sched_reserve: reserving")) {
 		for key := range w.buffers {
 			if key.model == w.model() && key.component == "sched_reserve" {
 				delete(w.buffers, key)
@@ -3075,7 +3087,7 @@ func (w *memoryParsingWriter) parseLineLocked(line []byte) {
 		w.updateRunnerMemoryLocked()
 		return
 	}
-	if bytes.Contains(line, []byte("loading model tensors")) {
+	if bytes.HasPrefix(line, []byte("load_tensors: loading model tensors")) {
 		// A new tensor-load pass supersedes the current model's previous
 		// buffers (e.g. a fit probe); other models' buffers are kept.
 		for key := range w.buffers {
@@ -3115,7 +3127,7 @@ func (w *memoryParsingWriter) parseLineLocked(line []byte) {
 	}
 	if match := fitOverflowingLayersRegex.FindSubmatch(line); match != nil {
 		overflowing, err := strconv.ParseUint(string(match[1]), 10, 64)
-		if err == nil && overflowing > 0 {
+		if w.model() == memoryModelTarget && err == nil && overflowing > 0 {
 			w.runner.gpuLayerOverflow += int(overflowing)
 		}
 	}
@@ -3175,8 +3187,12 @@ func (w *memoryParsingWriter) setBufferLocked(key memoryBufferKey, bytes uint64,
 }
 
 func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
-	var total, gpu, modelFileBacked, cpuMappedModel, projector uint64
-	byDevice := make(map[string]uint64)
+	var total, gpu, modelFileBacked, cpuMappedModel, projector, cpuDraft, cpuTargetExtras uint64
+	byDevice := w.runner.vramByDevice
+	if byDevice == nil {
+		byDevice = make(map[string]uint64)
+	}
+	clear(byDevice)
 
 	for key, buffer := range w.buffers {
 		total += buffer.bytes
@@ -3184,9 +3200,14 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 			projector += buffer.bytes
 			continue
 		}
-		// The mmap-overlap trim in MemorySize compares against the
-		// target's file, so only target buffers participate; the draft's
-		// small mmap double-count is accepted.
+		if key.model == memoryModelDraft && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") {
+			cpuDraft += buffer.bytes
+		}
+		if key.model == memoryModelTarget && !isGPUBuffer(key.backend) && !strings.HasSuffix(key.backend, "_Host") &&
+			(key.kind == "LoRA" || key.kind == "layer input" || key.kind == "rotation" || key.kind == "h_nextn" ||
+				strings.HasPrefix(key.kind, "DSV4 ")) {
+			cpuTargetExtras += buffer.bytes
+		}
 		if key.kind == "model" && key.model == memoryModelTarget {
 			onGPU := isGPUBuffer(key.backend)
 			mmapBacked := strings.HasSuffix(key.backend, "_Mapped")
@@ -3221,6 +3242,8 @@ func (w *memoryParsingWriter) updateRunnerMemoryLocked() {
 	w.runner.memGPU = gpu
 	w.runner.memModelFileBacked = modelFileBacked
 	w.runner.memCPUMappedModel = cpuMappedModel
+	w.runner.memCPUDraft = cpuDraft
+	w.runner.memCPUTargetExtras = cpuTargetExtras
 	if w.projectorDevice == "" {
 		w.runner.memCPUProjector = projector
 	} else {
