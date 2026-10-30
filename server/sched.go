@@ -1482,26 +1482,40 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
+//
+// Metal and integrated GPUs share system memory, and the scheduler checks
+// system free memory before the next load. The OS returns a killed runner's
+// pages gradually (about 50 GiB/s measured on Apple Silicon), so without a
+// wait the next load sees almost nothing freed and evicts another model.
+// Those runners wait on system free memory instead of GPU free memory.
 func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []ml.FilteredRunnerDiscovery) chan any {
 	finished := make(chan any, 1)
 
-	// CPU, Metal and iGPUs don't need checking, so no waiting required
-	if len(runner.gpus) == 0 || !runner.discreteGPUs ||
-		(len(runner.gpus) == 1 && runner.gpus[0].Library == "Metal") {
+	sharedMemory := !runner.discreteGPUs ||
+		(len(runner.gpus) == 1 && runner.gpus[0].Library == "Metal")
+
+	// CPU runners, and runners with no recorded VRAM, have nothing to wait for
+	if len(runner.gpus) == 0 || runner.vramSize == 0 ||
+		(sharedMemory && s.getSystemInfoFn == nil) {
 		finished <- struct{}{}
 		slog.Debug("no need to wait for VRAM recovery", "runner", runner)
 		return finished
 	}
 	start := time.Now()
 
-	// Establish a baseline before we unload
-	gpusBefore := s.getGpuFn(context.Background(), runners)
-	var totalMemoryBefore, freeMemoryBefore uint64
-	for _, gpu := range gpusBefore {
-		totalMemoryBefore += gpu.TotalMemory
-		freeMemoryBefore += gpu.FreeMemory
+	freeMemory := func(ctx context.Context) uint64 {
+		if sharedMemory {
+			return s.getSystemInfoFn().FreeMemory
+		}
+		var free uint64
+		for _, gpu := range s.getGpuFn(ctx, runners) {
+			free += gpu.FreeMemory
+		}
+		return free
 	}
-	totalMemoryNow := totalMemoryBefore
+
+	// Establish a baseline before we unload
+	freeMemoryBefore := freeMemory(context.Background())
 	freeMemoryNow := freeMemoryBefore
 
 	go func() {
@@ -1513,21 +1527,15 @@ func (s *Scheduler) waitForVRAMRecovery(runner *runnerRef, runners []ml.Filtered
 		for {
 			select {
 			case <-ticker.C:
-				// Query GPUs, look for free to go back up
-				gpusNow := s.getGpuFn(ctx, runners)
-				totalMemoryNow = 0
-				freeMemoryNow = 0
-				for _, gpu := range gpusNow {
-					totalMemoryNow += gpu.TotalMemory
-					freeMemoryNow += gpu.FreeMemory
-				}
+				// Look for free memory to go back up
+				freeMemoryNow = freeMemory(ctx)
+				var recovered uint64
 				if freeMemoryNow > freeMemoryBefore {
-					logutil.Trace("gpu VRAM convergence", "percent", int(float32(freeMemoryNow-freeMemoryBefore)/float32(runner.vramSize)*100))
-				} else {
-					logutil.Trace("gpu VRAM convergence", "percent", 0)
+					recovered = freeMemoryNow - freeMemoryBefore
 				}
+				logutil.Trace("gpu VRAM convergence", "percent", int(float32(recovered)/float32(runner.vramSize)*100))
 				// If we're within ~75% of the estimated memory usage recovered, bail out
-				if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.vramSize)*0.75 {
+				if float32(recovered) > float32(runner.vramSize)*0.75 {
 					slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "free_before", format.HumanBytes2(freeMemoryBefore), "free_now", format.HumanBytes2(freeMemoryNow), "runner", runner)
 					finished <- struct{}{}
 					return
