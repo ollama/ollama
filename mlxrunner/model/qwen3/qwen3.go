@@ -2,9 +2,12 @@
 package qwen3
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
@@ -32,6 +35,11 @@ type Config struct {
 	MaxPositionEmbeddings int32   `json:"max_position_embeddings"`
 	TieWordEmbeddings     bool    `json:"tie_word_embeddings"`
 
+	// RoPE scaling. transformers 5 nests it, with rope_theta, under
+	// rope_parameters.
+	RopeScaling    *nn.RopeParameters `json:"rope_scaling"`
+	RopeParameters *nn.RopeParameters `json:"rope_parameters"`
+
 	// Quantization parameters (set during load based on model quantization).
 	QuantGroupSize int                               `json:"-"`
 	QuantBits      int                               `json:"-"`
@@ -41,6 +49,8 @@ type Config struct {
 	// Computed fields.
 	Scale     float32 `json:"-"`
 	QKNormEps float32 `json:"-"`
+	// RopeFreqs replaces the rope_theta frequencies under YaRN; nil otherwise.
+	RopeFreqs *mlx.Array `json:"-"`
 }
 
 // Model is the Qwen3 text-only model.
@@ -90,6 +100,36 @@ func resolveWeightPrefix(tensors map[string]*mlx.Array) string {
 	return ""
 }
 
+// configureRope sets rope_theta, the RoPE frequencies and the attention scale.
+// Like mlx-lm's qwen3, it reads rope_theta from the top level, else
+// rope_parameters, and the scaling from rope_scaling, else rope_parameters.
+func (cfg *Config) configureRope() {
+	if cfg.RopeTheta == 0 && cfg.RopeParameters != nil {
+		cfg.RopeTheta = cfg.RopeParameters.RopeTheta
+	}
+	if cfg.RopeTheta == 0 {
+		cfg.RopeTheta = 1000000
+	}
+	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
+
+	rope := cmp.Or(cfg.RopeScaling, cfg.RopeParameters)
+	switch ropeType := strings.ToLower(rope.TypeName()); ropeType {
+	case "", "default":
+	case "yarn":
+		if rope.Factor < 1 {
+			slog.Warn("YaRN RoPE scaling needs a factor of at least 1, using default RoPE", "factor", rope.Factor)
+			return
+		}
+		// YaRN also scales the rotated query and key by mscale. Qwen3 rotates
+		// whole heads, so that is the attention scale times mscale².
+		var mscale float32
+		cfg.RopeFreqs, mscale = nn.BuildYarnRopeFreqs(int(cfg.HeadDim), cfg.RopeTheta, rope)
+		cfg.Scale *= mscale * mscale
+	default:
+		slog.Warn("unsupported RoPE scaling, using default RoPE", "rope_type", ropeType)
+	}
+}
+
 func newModel(root *model.Root) (model.Model, error) {
 	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
@@ -125,11 +165,8 @@ func newModel(root *model.Root) (model.Model, error) {
 	if cfg.RMSNormEps == 0 {
 		cfg.RMSNormEps = 1e-6
 	}
-	if cfg.RopeTheta == 0 {
-		cfg.RopeTheta = 1000000
-	}
-	cfg.Scale = float32(1.0 / math.Sqrt(float64(cfg.HeadDim)))
 	cfg.QKNormEps = 1e-6
+	cfg.configureRope()
 
 	if qt := root.QuantType(); qt != "" {
 		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
@@ -312,8 +349,8 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	k = mlx.Transpose(k, 0, 2, 1, 3)
 	v = mlx.Transpose(v, 0, 2, 1, 3)
 
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
+	q = mlx.RoPEWithFreqs(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
+	k = mlx.RoPEWithFreqs(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions, cfg.RopeFreqs)
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a
 	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
