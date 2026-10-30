@@ -899,8 +899,6 @@ func restoreCodexAppProfile() error {
 	if err := removeCodexAppManagedAuth(configPath); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}
-	// Retain the catalogs until other cleanup succeeds so legacy disconnects
-	// without a restore record also remain retryable after a failure.
 	if err := codexAppRemoveOwnedCatalogIfUnused(text); err != nil {
 		return codexAppRestoreFailure(configPath, err)
 	}

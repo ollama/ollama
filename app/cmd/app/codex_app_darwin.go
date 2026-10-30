@@ -216,7 +216,7 @@ func setCodexDesktopConnection(enabled, restartConfirmed bool) error {
 	return nil
 }
 
-// Both native and webview controls use the same status and safe recovery message.
+// Native and webview controls share the connection handler.
 func changeCodexDesktopConnection(enabled, restartConfirmed bool) codexDesktopActionResult {
 	err := setCodexDesktopConnection(enabled, restartConfirmed)
 	result := codexDesktopActionResult{Status: getCodexDesktopStatus()}
