@@ -423,7 +423,7 @@ func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
 		session.close()
 		req := Request{
 			Tokens:            []int32{1, 2, 3},
-			CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}}},
+			CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: dflash2Depth}}},
 		}
 
 		plain := r.spec.open(req, nil)
@@ -448,6 +448,13 @@ func TestSelectorDraftKeepsFixedDepth(t *testing.T) {
 		}
 		if slices.ContainsFunc(r.spec.depth.acc.seen, func(n int) bool { return n != 0 }) || r.spec.depth.scheduled != scheduled {
 			t.Fatalf("fixed-depth rounds trained the depth controller: seen %v, scheduled %d -> %d", r.spec.depth.acc.seen, scheduled, r.spec.depth.scheduled)
+		}
+
+		// A request may still hold the selector below its fixed depth.
+		capped := r.spec.open(Request{CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: 4}}}}, nil)
+		defer capped.close()
+		if !capped.fixedDepth || capped.limit != 4 {
+			t.Fatalf("capped selector: fixedDepth %v limit %d, want true 4", capped.fixedDepth, capped.limit)
 		}
 	})
 }

@@ -95,10 +95,13 @@ func newSpeculation(r *Runner, draft model.DraftModel, targets, draftKV []cache.
 type speculationSession struct {
 	spec    *speculation
 	drafter draftSession
-	enabled bool  // whether this request drafts; false parks (maintain-only)
-	limit   int   // current draft length
-	layout  []any // the request's per-row layout state, stamped on every target forward
-	stats   specStats
+	enabled bool // whether this request drafts; false parks (maintain-only)
+	limit   int  // current draft length
+	// draftCap is the request's draft_num_predict: the ceiling on the draft
+	// depths this request may schedule. Only meaningful when enabled.
+	draftCap int
+	layout   []any // the request's per-row layout state, stamped on every target forward
+	stats    specStats
 
 	// fixedDepth holds limit for the whole request, bypassing the depth controller.
 	fixedDepth bool
@@ -125,11 +128,11 @@ func (s *speculation) open(request Request, layout []any) *speculationSession {
 	opts := request.SamplerOpts
 	enabled := !opts.Logprobs && opts.TopLogprobs == 0 && request.Options.DraftNumPredict > 0
 
-	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, prevDrafts: -1, roundDrafts: -1}
+	spec := &speculationSession{spec: s, drafter: d, layout: layout, enabled: enabled, draftCap: request.Options.DraftNumPredict, prevDrafts: -1, roundDrafts: -1}
 	if enabled {
-		spec.limit = s.depth.scheduled
+		spec.limit = min(spec.draftCap, s.depth.scheduled)
 		if _, ok := s.draft.(model.BlockSelector); ok {
-			spec.limit, spec.fixedDepth = dflash2Depth, true
+			spec.limit, spec.fixedDepth = min(spec.draftCap, dflash2Depth), true
 		}
 	}
 	return spec
@@ -168,7 +171,7 @@ func (s *speculationSession) endRound(drafted, accepted, observed int) {
 		if observed > 0 {
 			s.spec.depth.acc.observe(observed, accepted)
 		}
-		s.limit = s.spec.depth.next()
+		s.limit = min(s.draftCap, s.spec.depth.next())
 	}
 }
 
