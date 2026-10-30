@@ -14,7 +14,74 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/middleware"
 )
+
+func TestRemoteChatAnthropicStreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_NO_CLOUD", "0")
+	t.Setenv("OLLAMA_AUTH", "0")
+	t.Setenv("OLLAMA_REMOTES", "127.0.0.1")
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("unexpected upstream path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		fmt.Fprintln(w, `{"model":"test","message":{"role":"assistant","content":"Hel"},"done":false}`)
+		w.(http.Flusher).Flush()
+		fmt.Fprintln(w, `{"error":"model runner has unexpectedly stopped"}`)
+	}))
+	defer upstream.Close()
+
+	s := Server{}
+	created := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "test-remote",
+		RemoteHost: upstream.URL,
+		From:       "test",
+		Info:       map[string]any{"capabilities": []string{"completion"}},
+		Stream:     &stream,
+	})
+	if created.Code != http.StatusOK {
+		t.Fatalf("create remote model: status %d: %s", created.Code, created.Body.String())
+	}
+
+	for _, webSearch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("web_search=%t", webSearch), func(t *testing.T) {
+			router := gin.New()
+			router.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
+			tools := ""
+			if webSearch {
+				tools = `,"tools":[{"type":"web_search_20250305","name":"web_search"}]`
+			}
+			body := `{"model":"test-remote","max_tokens":100,"stream":true,"messages":[{"role":"user","content":"Hi"}]` + tools + `}`
+			req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected committed status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+			if got := resp.Result().Header.Get("Content-Type"); got != "text/event-stream" {
+				t.Errorf("expected SSE, got Content-Type %q", got)
+			}
+			wire := resp.Body.String()
+			if !strings.Contains(wire, `"text":"Hel"`) {
+				t.Errorf("missing partial text: %s", wire)
+			}
+			wantError := "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"model runner has unexpectedly stopped\"}}\n\n"
+			if !strings.HasSuffix(wire, wantError) || strings.Count(wire, "event: error\n") != 1 {
+				t.Errorf("expected one terminal error event: %s", wire)
+			}
+			if strings.Contains(wire, "event: message_stop\n") {
+				t.Error("failed stream reported successful completion")
+			}
+		})
+	}
+}
 
 func TestRemoteInferenceCancellation(t *testing.T) {
 	gin.SetMode(gin.TestMode)

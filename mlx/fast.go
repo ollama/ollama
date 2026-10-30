@@ -7,8 +7,20 @@ import (
 	"unsafe"
 )
 
-func FastScaledDotProductAttention(q, k, v *Array, scale float32, mode string, mask *Array) *Array {
-	sinks := New("")
+// FastSDPANoWindow disables sliding-window restriction for SDPA - each
+// query attends to the full key context.
+const FastSDPANoWindow = -1
+
+func FastScaledDotProductAttention(q, k, v *Array, scale float32, windowSize int, mode string, mask *Array) *Array {
+	return FastScaledDotProductAttentionWithSinks(q, k, v, scale, windowSize, mode, mask, nil)
+}
+
+// FastScaledDotProductAttentionWithSinks adds one learned softmax denominator
+// term per query head. A sink has no corresponding value vector.
+//
+// windowSize restricts each query to the most recent windowSize keys
+// (sliding window attention); pass FastSDPANoWindow for full context.
+func FastScaledDotProductAttentionWithSinks(q, k, v *Array, scale float32, windowSize int, mode string, mask, sinks *Array) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 
@@ -19,9 +31,16 @@ func FastScaledDotProductAttention(q, k, v *Array, scale float32, mode string, m
 		empty := New("")
 		maskCtx = empty.ctx
 	}
+	var sinksCtx C.mlx_array
+	if sinks != nil {
+		sinksCtx = sinks.ctx
+	} else {
+		empty := New("")
+		sinksCtx = empty.ctx
+	}
 
 	out := New("FAST_SDPA")
-	mlxCheck(C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, maskCtx, sinks.ctx, C.bool(false), DefaultStream().ctx))
+	mlxCheck(C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), C.int(windowSize), cMode, maskCtx, sinksCtx, C.bool(false), DefaultStream().ctx))
 	return out
 }
 

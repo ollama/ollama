@@ -22,7 +22,7 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		return model.ConfigV2{}, err
 	}
 
-	var parserName, rendererName string
+	var parserName, rendererName, sourceDecisionRenderer string
 	var decisionModel, decisionVision bool
 	switch cfg.Architecture() {
 	case "Qwen3_5Model":
@@ -31,9 +31,18 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 			return model.ConfigV2{}, err
 		}
 		if !hasSidecar {
-			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires Perplexity decision sidecars")
+			return model.ConfigV2{}, fmt.Errorf("Qwen3_5Model requires decision sidecars")
 		}
-		rendererName, decisionModel = "pplx", true
+		format, err := qwenDecisionFormat(modelDir)
+		if err != nil {
+			return model.ConfigV2{}, err
+		}
+		rendererName = "pplx"
+		if format == d3FormatID {
+			rendererName = "d3"
+		}
+		sourceDecisionRenderer = rendererName
+		decisionModel = true
 		decisionVision = cfg.VisionConfig != nil
 	case "ClefForDecision":
 		rendererName, decisionModel = "clef", true
@@ -44,6 +53,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		rendererName, decisionModel = "kev", true
 	case "LayaForDecision":
 		decisionModel = true
+	case "D1Model":
+		rendererName, decisionModel, decisionVision = "d1", true, true
 	default:
 		parserName, err = parserNameForConfig(modelDir, cfg, chatTemplate)
 		if err != nil {
@@ -60,8 +71,8 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 	if rendererOverride != "" {
 		rendererName = rendererOverride
 	}
-	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != "pplx" || parserName != "") {
-		return model.ConfigV2{}, fmt.Errorf("Perplexity decision models require renderer %q and no parser (got renderer %q, parser %q)", "pplx", rendererName, parserName)
+	if cfg.Architecture() == "Qwen3_5Model" && (rendererName != sourceDecisionRenderer || parserName != "") {
+		return model.ConfigV2{}, fmt.Errorf("Qwen3.5 decision models require renderer %q and no parser (got renderer %q, parser %q)", sourceDecisionRenderer, rendererName, parserName)
 	}
 
 	var capabilities []string
@@ -70,8 +81,16 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		if decisionVision {
 			capabilities = append(capabilities, "vision")
 		}
+		if cfg.Architecture() == "D1Model" && cfg.ModelType == "lfm3_omni" {
+			capabilities = append(capabilities, "audio")
+		}
+	} else if isPhononArchitecture(cfg.Architecture()) {
+		capabilities = []string{"speech"}
 	} else {
 		capabilities = inferCompletionCapabilitiesFromConfig(cfg, chatTemplate, parserName)
+	}
+	if rendererName == "lfm3-omni" || rendererName == "lfm3-audio" {
+		capabilities = lfm3AudioCapabilities(capabilities)
 	}
 	generationDefaults, err := readHFGenerationDefaults(modelDir)
 	if err != nil {
@@ -258,6 +277,10 @@ func parserNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate st
 func parserNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -294,6 +317,10 @@ func rendererNameForConfig(modelDir string, cfg sourceModelConfig, chatTemplate 
 func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error) {
 	s = strings.ToLower(s)
 	switch {
+	case strings.Contains(s, "flint"):
+		return "flint", nil
+	case strings.HasPrefix(s, "lfm3"):
+		return lfm3RendererParserName(s), nil
 	case strings.HasPrefix(s, "museglimmer") || s == "muse_glimmer":
 		return "glimmer", nil
 	case strings.Contains(s, "laguna"):
@@ -319,4 +346,29 @@ func rendererNameForIdentifier(modelDir, s, chatTemplate string) (string, error)
 	default:
 		return "", nil
 	}
+}
+
+// lfm3RendererParserName maps an LFM3 identifier to its template branch.
+func lfm3RendererParserName(s string) string {
+	switch {
+	case strings.Contains(s, "omni"):
+		return "lfm3-omni"
+	case strings.Contains(s, "audio"):
+		return "lfm3-audio"
+	default:
+		return "lfm3"
+	}
+}
+
+// lfm3AudioCapabilities marks LFM3 Audio and Omni as audio-input models served
+// without thinking (their templates mention <think>) that also speak through
+// /v1/audio/speech.
+func lfm3AudioCapabilities(caps []string) []string {
+	out := []string{}
+	for _, c := range caps {
+		if c != "audio" && c != "thinking" {
+			out = append(out, c)
+		}
+	}
+	return append(out, "audio", "speech")
 }

@@ -922,6 +922,11 @@ func TestCodexAppCountsOnlyOllamaRequestsInRegularProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Keep session files newer than the cutoff even with coarse file timestamps.
+	start = start.Add(-time.Minute)
+	if err := os.WriteFile(startPath, []byte(start.Format(time.RFC3339Nano)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	configPath, err := codexConfigPath()
 	if err != nil {
 		t.Fatal(err)

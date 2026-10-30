@@ -29,17 +29,18 @@ type Compiled struct {
 	fields   []compiledField
 	messages [][]api.Message
 	encoding string
+	names    []string // d1: question names in request order
 }
 
-// ValidateLimits checks request limits shared by all decision backends.
-func ValidateLimits(req Request) error {
+// ValidateLimits checks request limits for the selected decision backend.
+func ValidateLimits(req Request, decisionType string) error {
 	if n := req.Questions.Len(); n < 1 || n > 64 {
 		return fmt.Errorf("questions must contain 1–64 fields")
 	}
 	if len(req.Videos) > 0 {
 		return fmt.Errorf("video inputs are not supported")
 	}
-	if state, err := content(req.State); err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
+	if state, err := Content(req.State); decisionType != "vllm-d3" && err == nil && strings.TrimSpace(state) == "" && len(req.Images) == 0 {
 		return fmt.Errorf("state must not be empty")
 	}
 	for name, q := range req.Questions.All() {
@@ -65,12 +66,19 @@ func validateImages(images []api.ImageData) error {
 
 func Compile(req Request, encoding string) (*Compiled, error) {
 	switch encoding {
-	case "", "tev1", "clef", "strands", "kev", "pplx":
+	case "", "tev1", "clef", "strands", "kev", "pplx", "d3", "d1":
 	default:
 		return nil, fmt.Errorf("unsupported decision encoding %q", encoding)
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, fmt.Errorf("model is required")
+	}
+	if encoding == "d1" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeD1(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 	if encoding == "kev" {
 		if err := validateKevLimits(req); err != nil {
@@ -83,7 +91,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		return c, nil
 	}
 	if encoding == "pplx" {
-		if err := ValidateLimits(req); err != nil {
+		if err := ValidateLimits(req, encoding); err != nil {
 			return nil, err
 		}
 		if err := validateImages(req.Images); err != nil {
@@ -95,7 +103,14 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 		}
 		return c, nil
 	}
-	if err := ValidateLimits(req); err != nil {
+	if encoding == "d3" {
+		c := &Compiled{encoding: encoding}
+		if err := encodeD3(req, c); err != nil {
+			return nil, err
+		}
+		return c, nil
+	}
+	if err := ValidateLimits(req, encoding); err != nil {
 		return nil, err
 	}
 	if len(req.Images) != 0 && encoding != "clef" {
@@ -109,7 +124,7 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 	if encoding == "clef" {
 		context, err = clefContent(req.State)
 	} else {
-		context, err = content(req.State)
+		context, err = Content(req.State)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("state: %w", err)
@@ -167,7 +182,9 @@ func (c *Compiled) Render(render func([]api.Message) (string, error)) error {
 	return nil
 }
 
-func content(raw json.RawMessage) (string, error) {
+// Content renders a System One state or instructions value: a string as is, an
+// object or array as Python-style JSON text.
+func Content(raw json.RawMessage) (string, error) {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return "", fmt.Errorf("must be a string, object, or array")
@@ -189,7 +206,7 @@ func compileField(name string, q Question) (compiledField, error) {
 	if strings.TrimSpace(name) == "" {
 		return f, fmt.Errorf("field name must not be empty")
 	}
-	description, err := content(q.Instructions)
+	description, err := Content(q.Instructions)
 	if err != nil || strings.TrimSpace(description) == "" {
 		return f, fmt.Errorf("instructions must be a nonempty string, object, or array")
 	}
@@ -273,6 +290,9 @@ func compileField(name string, q Question) (compiledField, error) {
 }
 
 func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, error) {
+	if c.encoding == "d1" {
+		return c.answerD1(model, result)
+	}
 	response := Response{
 		Model: model, Answers: &Answers{},
 		Usage:                 Usage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens},
@@ -303,13 +323,10 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 			p[j] = math.Exp(float64(logit) - float64(peak))
 			sum += p[j]
 		}
-		var entropy, score float64
+		var score float64
 		for j := range p {
 			p[j] /= sum
 			score += float64(j) * p[j]
-			if p[j] > 0 {
-				entropy -= p[j] * math.Log(p[j])
-			}
 		}
 		if f.typ == "noul" {
 			for j, choice := range f.Choices {
@@ -358,7 +375,7 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 				confidence = max(0, 1-distance/baseline)
 			}
 		} else {
-			confidence = max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
+			confidence = Concentration(p)
 		}
 		if f.typ == "choice" {
 			winner := slices.Index(p, slices.Max(p))
@@ -368,4 +385,20 @@ func (c *Compiled) Answer(model string, result llm.ScoreResponse) (Response, err
 		}
 	}
 	return response, nil
+}
+
+// Concentration is System One's default confidence: 1 - H(p)/ln N for N
+// candidates, zero for uniform probabilities and one when a single candidate
+// holds all the mass, or when there is only one.
+func Concentration(p []float64) float64 {
+	if len(p) < 2 {
+		return 1
+	}
+	var entropy float64
+	for _, v := range p {
+		if v > 0 {
+			entropy -= v * math.Log(v)
+		}
+	}
+	return max(0, min(1, 1-entropy/math.Log(float64(len(p)))))
 }

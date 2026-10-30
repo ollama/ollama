@@ -33,6 +33,9 @@ import (
 const (
 	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
 	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
+	// Copied byte-for-byte from the publisher's chat_template.jinja.
+	// SHA-256: 35b7d0641b6fb4ee41c3bc623e85bdb7d583c40f6ae9f24514ae58a9d57119f3.
+	gemma4NemotronTemplate = "testdata/gemma4_nemotron_chat_template.jinja2"
 )
 
 // The upstream Gemma 4 chat templates are committed by size under testdata/.
@@ -1581,6 +1584,12 @@ Hi<turn|>
 					"hardcoded expected value doesn't match Jinja2 template output")
 				assert.Equal(t, jinja2Output, got,
 					"renderer output doesn't match Jinja2 template output")
+
+				nemotron := &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
+				nemotronGot, err := nemotron.Render(tt.messages, tt.tools, tt.think)
+				assert.NoError(t, err)
+				assert.Equal(t, renderWithJinja2Template(t, gemma4NemotronTemplate, tt.messages, tt.tools, tt.think), nemotronGot,
+					"nemotron renderer output doesn't match Jinja2 template output")
 			}
 		})
 	}
@@ -1608,6 +1617,11 @@ func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
 			name:         "large",
 			rendererName: "gemma4-large",
 			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+		{
+			name:         "nemotron",
+			rendererName: "gemma4-nemotron",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
 		},
 	}
 
@@ -1658,6 +1672,13 @@ func TestGemma4RendererCanonicalToolContinuations(t *testing.T) {
 	}{
 		{name: "small", renderer: &Gemma4Renderer{}, want: base},
 		{name: "31b", renderer: &Gemma4Renderer{emptyBlockOnNothink: true}, want: base + "<|channel>thought\n<channel|>"},
+		{name: "nemotron", renderer: &Gemma4Renderer{contentBeforeToolCalls: true}, want: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
+			"<|turn>user\nUse the tool<turn|>\n" +
+			"<|turn>model\nFirst.Checking." +
+			"<|tool_call>call:bash{command:null}<tool_call|>" +
+			"<|tool_response>response:bash{value:" + q + "done" + q + "}<tool_response|>" +
+			"Done.<turn|>\n" +
+			"<|turn>user\nNext<turn|>\n<|turn>model\n"},
 	}
 
 	for _, tt := range tests {
@@ -1827,6 +1848,11 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 			name:        "large",
 			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
 			templateRel: gemma431BTemplate,
+		},
+		{
+			name:        "nemotron",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true},
+			templateRel: gemma4NemotronTemplate,
 		},
 	}
 

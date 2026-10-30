@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
@@ -916,6 +917,12 @@ func TestPiEdit(t *testing.T) {
 	// Mock Ollama server for createConfig calls during Edit
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/show" {
+			var req api.ShowRequest
+			json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "deepseek-v4-pro:cloud" {
+				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"deepseek4.context_length":1048576}}`)
+				return
+			}
 			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
 			return
 		}
@@ -1080,6 +1087,44 @@ func TestPiEdit(t *testing.T) {
 		}
 		if _, ok := modelEntry["legacyField"]; ok {
 			t.Error("legacyField should be removed when stale managed cloud entry is rebuilt")
+		}
+	})
+
+	t.Run("rebuilds managed cloud model missing from limits with server context", func(t *testing.T) {
+		useServerContextLookup(t)
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+
+		existingConfig := `{
+			"providers": {
+				"ollama": {
+					"baseUrl": "http://localhost:11434/v1",
+					"api": "openai-completions",
+					"apiKey": "ollama",
+					"models": [
+						{"id": "deepseek-v4-pro:cloud", "_launch": true, "input": ["text"]}
+					]
+				}
+			}
+		}`
+		if err := os.WriteFile(configPath, []byte(existingConfig), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := pi.Edit(launchModelsFromNames([]string{"deepseek-v4-pro:cloud"})); err != nil {
+			t.Fatalf("Edit() error = %v", err)
+		}
+
+		cfg := readConfig()
+		providers := cfg["providers"].(map[string]any)
+		ollama := providers["ollama"].(map[string]any)
+		modelsArray := ollama["models"].([]any)
+		if len(modelsArray) != 1 {
+			t.Fatalf("models = %v, want one entry", modelsArray)
+		}
+		modelEntry := modelsArray[0].(map[string]any)
+		if modelEntry["contextWindow"] != float64(1_048_576) {
+			t.Errorf("contextWindow = %v, want 1048576", modelEntry["contextWindow"])
 		}
 	})
 

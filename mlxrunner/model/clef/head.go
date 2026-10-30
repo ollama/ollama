@@ -111,7 +111,7 @@ func (a attention) forward(query, memory *mlx.Array) *mlx.Array {
 		return y.Reshape(y.Dim(0), y.Dim(1), a.heads, -1).Transpose(0, 2, 1, 3)
 	}
 	q, k, v := project(a.Q, query), project(a.K, memory), project(a.V, memory)
-	out := mlx.FastScaledDotProductAttention(q, k, v, 1/float32(math.Sqrt(float64(q.Dim(3)))), "", nil)
+	out := mlx.FastScaledDotProductAttention(q, k, v, 1/float32(math.Sqrt(float64(q.Dim(3)))), mlx.FastSDPANoWindow, "", nil)
 	return a.Out.Forward(out.Transpose(0, 2, 1, 3).Reshape(query.Dim(0), query.Dim(1), -1))
 }
 

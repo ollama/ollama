@@ -54,14 +54,18 @@ func TestVisionTargetSize(t *testing.T) {
 }
 
 func TestDynamicVisionTargetSize(t *testing.T) {
+	cfg := &VisionConfig{ModelType: "gemma4_vision", HiddenSize: 768, NumHiddenLayers: 16, PatchSize: 16, PoolingKernelSize: 3}
 	cases := []struct {
 		name         string
 		h, w         int
 		wantH, wantW int32
 	}{
 		{"tiny", 1, 1, 384, 384},
-		{"small counting image", 120, 210, 288, 528},
-		{"small landscape", 240, 320, 336, 432},
+		{"below two pooled cells", 95, 95, 384, 384},
+		{"small counting image", 120, 210, 336, 576},
+		{"small landscape", 240, 320, 384, 480},
+		{"small document", 250, 400, 336, 528},
+		{"thin small image keeps reference grid", 1, 50, 48, 2832},
 		{"small text preserves resolution", 400, 500, 480, 624},
 		{"portrait text preserves resolution", 500, 400, 624, 480},
 		{"area alone does not preserve height", 49, 858, 96, 2352},
@@ -77,7 +81,7 @@ func TestDynamicVisionTargetSize(t *testing.T) {
 		{"huge width", 1, math.MaxInt, 48, 53760},
 		{"huge height", math.MaxInt, 1, 53760, 48},
 		{"huge square", math.MaxInt, math.MaxInt, 1584, 1584},
-		{"70 at boundary", 384, 384, 384, 384},
+		{"70 at boundary", 384, 384, 432, 432},
 		{"140 above boundary", 385, 385, 528, 528},
 		{"140 at boundary", 528, 528, 528, 528},
 		{"280 above boundary", 529, 529, 768, 768},
@@ -91,12 +95,29 @@ func TestDynamicVisionTargetSize(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			h, w, err := dynamicVisionTargetSize(c.h, c.w, 16, 3)
+			h, w, err := dynamicVisionTargetSize(c.h, c.w, cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if h != c.wantH || w != c.wantW {
 				t.Fatalf("target = %dx%d, want %dx%d", w, h, c.wantW, c.wantH)
+			}
+		})
+	}
+	for _, c := range []struct {
+		name string
+		cfg  VisionConfig
+	}{
+		{"larger tower", VisionConfig{ModelType: "gemma4_vision", HiddenSize: 1152, NumHiddenLayers: 27, PatchSize: 16, PoolingKernelSize: 3}},
+		{"unified tower", VisionConfig{ModelType: "gemma4_unified_vision", HiddenSize: 3840, PatchSize: 16, PoolingKernelSize: 3}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, w, err := dynamicVisionTargetSize(250, 400, &c.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h != 288 || w != 480 {
+				t.Fatalf("target = %dx%d, want 480x288", w, h)
 			}
 		})
 	}

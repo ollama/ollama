@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -311,8 +312,8 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 
 // getSafetensorsDtypeForRunner returns the quantization type for the safetensors
 // manifest selected for runner. Reads tensor headers and reports the
-// lowest-precision quantized weight type. Falls back to torch_dtype from
-// config.json if no quant metadata exists.
+// lowest-precision quantized target weight type. Falls back to the target dtype
+// from config.json if no target quant metadata exists.
 func getSafetensorsDtypeForRunner(name model.Name, runner string) (string, error) {
 	mf, err := manifest.ParseNamedManifestForRunner(name, runner)
 	if err != nil {
@@ -323,7 +324,7 @@ func getSafetensorsDtypeForRunner(name model.Name, runner string) (string, error
 	var bestPrecision int
 
 	for _, layer := range mf.Layers {
-		if layer.MediaType != manifest.MediaTypeImageTensor {
+		if layer.MediaType != manifest.MediaTypeImageTensor || strings.HasPrefix(layer.Name, "draft.") {
 			continue
 		}
 		blobPath, err := manifest.BlobsPath(layer.Digest)
@@ -356,15 +357,20 @@ func getSafetensorsDtypeForRunner(name model.Name, runner string) (string, error
 		return bestQuantType, nil
 	}
 
-	// Not quantized - return torch_dtype from config.json
+	// Not quantized - return the target dtype from config.json.
 	var cfg struct {
 		TorchDtype string `json:"torch_dtype"`
+		Dtype      string `json:"dtype"`
+		TextConfig struct {
+			TorchDtype string `json:"torch_dtype"`
+			Dtype      string `json:"dtype"`
+		} `json:"text_config"`
 	}
 	if err := mf.ReadConfigJSON("config.json", &cfg); err != nil {
 		return "", fmt.Errorf("failed to read config.json: %w", err)
 	}
 
-	return cfg.TorchDtype, nil
+	return cmp.Or(cfg.TorchDtype, cfg.Dtype, cfg.TextConfig.TorchDtype, cfg.TextConfig.Dtype), nil
 }
 
 func quantTypePrecision(quantType string) int {

@@ -704,6 +704,7 @@ int mlx_matmul(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s);
+int mlx_matrix_transpose(mlx_array* res, const mlx_array a, const mlx_stream s);
 int mlx_max_axes(
     mlx_array* res,
     const mlx_array a,
@@ -1360,6 +1361,15 @@ int mlx_unflatten(
     int axis,
     const int* shape,
     size_t shape_num,
+    const mlx_stream s);
+int mlx_unique(
+    mlx_vector_array* res,
+    const mlx_array a,
+    int size,
+    bool return_index,
+    bool return_inverse,
+    bool return_counts,
+    const mlx_array fill_value /* may be null */,
     const mlx_stream s);
 int mlx_unstack_axis(
     mlx_vector_array* res,

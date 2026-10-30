@@ -488,6 +488,7 @@ type Model struct {
 
 	SuppressLogitBias *mlx.Array
 	weightPrefix      string
+	auxHiddenLayers   []int
 }
 
 func parseTextConfig(configData []byte) (TextConfig, error) {
@@ -1162,6 +1163,8 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 		sharedKV = make(map[int32]sharedHistory)
 	}
 
+	var features []*mlx.Array
+	nextFeature := 0
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
@@ -1189,6 +1192,10 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 
 		var donorKV *sharedHistory
 		h, donorKV = layer.Forward(h, b, c, positions, B, L, m.TextConfig, pleInput, donor, mask)
+		if nextFeature < len(m.auxHiddenLayers) && i == m.auxHiddenLayers[nextFeature] {
+			features = append(features, h)
+			nextFeature++
+		}
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && donorKV != nil {
@@ -1197,7 +1204,22 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 	}
 
 	out := mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+	if len(features) > 0 {
+		return out, mlx.Concatenate(features, -1)
+	}
 	return out, out
+}
+
+// SetAuxHiddenLayers selects decoder outputs to condition a DFlash draft.
+func (m *Model) SetAuxHiddenLayers(layers []int) {
+	m.auxHiddenLayers = append(m.auxHiddenLayers[:0], layers...)
+}
+
+func (m *Model) NumLayers() int { return len(m.Layers) }
+
+// RawLogits projects through the target head without its output decoration.
+func (m *Model) RawLogits(hidden *mlx.Array) *mlx.Array {
+	return m.LMHead.Forward(hidden)
 }
 
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
@@ -1252,7 +1274,7 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
 }
 
-// TokenEmbeddings returns the target model's scaled token embeddings for MTP.
+// TokenEmbeddings returns the target's scaled token embeddings for drafts.
 func (m *Model) TokenEmbeddings(inputIDs *mlx.Array) *mlx.Array {
 	return mlx.MulScalar(m.EmbedTokens.Forward(inputIDs), m.EmbedScale)
 }

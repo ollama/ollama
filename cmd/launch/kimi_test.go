@@ -286,9 +286,9 @@ func TestResolveKimiMaxContextSize(t *testing.T) {
 		defer srv.Close()
 		t.Setenv("OLLAMA_HOST", srv.URL)
 
-		oldTimeout := kimiModelShowTimeout
-		kimiModelShowTimeout = 100 * 1000 * 1000 // 100ms
-		t.Cleanup(func() { kimiModelShowTimeout = oldTimeout })
+		oldTimeout := modelShowTimeout
+		modelShowTimeout = 100 * 1000 * 1000 // 100ms
+		t.Cleanup(func() { modelShowTimeout = oldTimeout })
 
 		got := resolveKimiMaxContextSize("llama3.2")
 		if got != kimiDefaultMaxContextSize {

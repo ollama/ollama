@@ -137,6 +137,11 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		}
 
 		r.Model = m
+		// Speech-only models have no tokenizer; models that also chat need
+		// the text pipeline.
+		if _, ok := m.(model.SpeechModel); ok && m.Tokenizer() == nil {
+			return w
+		}
 		r.Tokenizer = m.Tokenizer()
 		r.contextLength = m.MaxContextLength()
 		caches := m.NewCaches()

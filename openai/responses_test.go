@@ -454,7 +454,8 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 			{"type": "function_call_output", "call_id": "call_spawn", "output": "{\"task_name\":\"/root/worker\"}"},
 			{"type": "agent_message", "id": "amsg_1", "author": "/root", "recipient": "/root/worker", "content": [
 				{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n"},
-				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."}
+				{"type": "encrypted_content", "encrypted_content": "Analyze the parser module and report issues."},
+				{"type": "input_image", "file_id": "file_stale", "image_url": "data:image/png;base64,Zml4dHVyZQ=="}
 			]}
 		]
 	}`), &req)
@@ -471,10 +472,14 @@ func TestFromResponsesRequestAgentMessage(t *testing.T) {
 	}
 
 	agentMsg := chat.Messages[3]
-	want := "Agent message from \"/root\" to \"/root/worker\":\n" +
-		"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
-		"Analyze the parser module and report issues."
-	if agentMsg.Role != "user" || agentMsg.Content != want {
+	want := api.Message{
+		Role: "user",
+		Content: "Agent message from \"/root\" to \"/root/worker\":\n" +
+			"Message Type: NEW_TASK\nTask name: /root/worker\nSender: /root\nPayload:\n" +
+			"Analyze the parser module and report issues.",
+		Images: []api.ImageData{[]byte("fixture")},
+	}
+	if !reflect.DeepEqual(agentMsg, want) {
 		t.Fatalf("agent message = %#v", agentMsg)
 	}
 }
@@ -2017,6 +2022,52 @@ func TestResponsesStreamConverter_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverter_EmitFunctionCallItems(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Thinking: "Check both cities."}})
+	events = append(events, converter.EmitFunctionCallItems([]api.ToolCall{
+		{ID: "call_paris", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+		{ID: "call_london", Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
+	})...)
+	events = append(events, converter.Process(api.ChatResponse{Message: api.Message{Content: "The weather is ready."}, Done: true})...)
+
+	var addedIDs, completed, output []any
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		switch event.Event {
+		case "response.output_item.added":
+			if data["output_index"] != len(addedIDs) {
+				t.Errorf("added output_index = %v, want %d", data["output_index"], len(addedIDs))
+			}
+			addedIDs = append(addedIDs, data["item"].(map[string]any)["id"])
+		case "response.output_item.done":
+			item := data["item"].(map[string]any)
+			index := len(completed)
+			if data["output_index"] != index || index >= len(addedIDs) || item["id"] != addedIDs[index] {
+				t.Errorf("item completed out of order or at the wrong index: %#v", data)
+			}
+			completed = append(completed, item)
+		case "response.completed":
+			output = data["response"].(map[string]any)["output"].([]any)
+		}
+	}
+	wantTypes := []string{"reasoning", "function_call", "function_call", "message"}
+	if len(addedIDs) != len(wantTypes) || len(completed) != len(wantTypes) {
+		t.Fatalf("added %d and completed %d items, want %d", len(addedIDs), len(completed), len(wantTypes))
+	}
+	for i, want := range wantTypes {
+		if got := completed[i].(map[string]any)["type"]; got != want {
+			t.Errorf("completed item %d type = %v, want %s", i, got, want)
+		}
+	}
+	if !reflect.DeepEqual(output, completed) {
+		t.Fatalf("final output = %#v, want completed items %#v", output, completed)
+	}
+	if got := output[3].(map[string]any)["content"].([]map[string]any)[0]["text"]; got != "The weather is ready." {
+		t.Errorf("text after client calls = %v", got)
+	}
+}
+
 func TestResponsesStreamConverter_ToolSearchCall(t *testing.T) {
 	request := ResponsesRequest{Tools: []ResponsesTool{{Type: "tool_search", Execution: "client"}}}
 	converter := NewResponsesStreamConverter("resp_123", "msg_456", "test", request)
@@ -3209,6 +3260,40 @@ func TestResponsesStreamConverter_FinalOutputKeepsStreamedItemOrder(t *testing.T
 		if got, want := item["id"], doneIDs[outputIndex]; got != want {
 			t.Fatalf("terminal output[%d] ID = %v, streamed done ID = %v; output=%#v", outputIndex, got, want, finalOutput)
 		}
+	}
+}
+
+func TestResponsesStreamConverter_TextThenToolCompletion(t *testing.T) {
+	converter := NewResponsesStreamConverter("resp_test", "msg_test", "test-model", ResponsesRequest{})
+	events := converter.Process(api.ChatResponse{Message: api.Message{Content: "checking weather"}})
+	events = append(events, converter.Process(api.ChatResponse{
+		Message: api.Message{ToolCalls: []api.ToolCall{{ID: "call_weather", Function: api.ToolCallFunction{Name: "weather", Arguments: testArgs(map[string]any{"city": "SF"})}}}},
+		Done:    true,
+	})...)
+	done := map[int]any{}
+	for _, event := range events {
+		data := event.Data.(map[string]any)
+		if event.Event == "response.output_item.done" {
+			index := data["output_index"].(int)
+			if _, exists := done[index]; exists {
+				t.Fatalf("output index %d closed twice", index)
+			}
+			done[index] = data["item"]
+		}
+	}
+	last := events[len(events)-1]
+	if last.Event != "response.completed" {
+		t.Fatalf("last event=%s", last.Event)
+	}
+	output := last.Data.(map[string]any)["response"].(map[string]any)["output"].([]any)
+	if len(output) != 2 || !reflect.DeepEqual(output[0], done[0]) || !reflect.DeepEqual(output[1], done[1]) {
+		t.Fatalf("terminal output disagrees with streamed items: output=%#v done=%#v", output, done)
+	}
+	if events := converter.ResponseFailed(map[string]any{"error": ResponsesError{Code: "server_error", Message: "late error"}}); len(events) != 0 {
+		t.Fatalf("failure emitted after completion: %#v", events)
+	}
+	if events := converter.Process(api.ChatResponse{Done: true}); len(events) != 0 {
+		t.Fatalf("completion emitted twice: %#v", events)
 	}
 }
 

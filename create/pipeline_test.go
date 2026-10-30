@@ -59,8 +59,8 @@ func TestCreatePipeline(t *testing.T) {
 	if gotModelConfig.Requires != "0.20.0" {
 		t.Errorf("requires = %q, want 0.20.0", gotModelConfig.Requires)
 	}
-	if gotModelConfig.FileType != "" {
-		t.Errorf("file type = %q, want empty for non-Kev source", gotModelConfig.FileType)
+	if gotModelConfig.FileType != "BF16" {
+		t.Errorf("file type = %q, want BF16 from the stored weights", gotModelConfig.FileType)
 	}
 	if gotClass.Kind != SourceFloat || gotClass.Quantize != "" {
 		t.Errorf("classification = {%s %q}, want {float %q}", gotClass.Kind, gotClass.Quantize, "")
@@ -71,6 +71,24 @@ func TestCreatePipeline(t *testing.T) {
 	for _, n := range []string{"model.embed_tokens.weight", "model.norm.weight", "config.json"} {
 		if _, ok := store.blobs[n]; !ok {
 			t.Errorf("missing written blob %q (have %v)", n, store.names())
+		}
+	}
+}
+
+func TestCreatePipelinePhononRequires(t *testing.T) {
+	dir := t.TempDir()
+	writeGradiumPhononSource(t, dir, []int32{1, 512, 2})
+	// Remote creates send the generic safetensors minimum; it must not win.
+	for requires, want := range map[string]string{"": phononMinOllamaVersion, "0.19.0": phononMinOllamaVersion, "0.41.0": "0.41.0"} {
+		var got string
+		opts := testPipelineOptions()
+		opts.Requires = requires
+		err := Create(context.Background(), "phonon", dir, opts, newCaptureStore(), func(_ context.Context, _ string, info ManifestInfo) error {
+			got = info.ModelConfig.Requires
+			return nil
+		}, func(string) {})
+		if err != nil || got != want {
+			t.Errorf("requires %q: got %q, %v; want %q", requires, got, err, want)
 		}
 	}
 }

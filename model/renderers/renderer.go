@@ -71,7 +71,7 @@ func rendererForName(name string) Renderer {
 	case "qwen3.5", "tev1":
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
 		return renderer
-	case "qwen3.8":
+	case "qwen3.8", "d3":
 		return newQwen38Renderer()
 	case "ornith":
 		return newOrnithRenderer()
@@ -104,17 +104,27 @@ func rendererForName(name string) Renderer {
 	case "gemma4", "gemma4-small":
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "gemma4-large":
-		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
+		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true, transcribeThenTranslate: true}
+	case "gemma4-nemotron":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, contentBeforeToolCalls: true}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
 		return &GLM47Renderer{}
+	case "flint":
+		return &FlintRenderer{}
 	case "glm-ocr":
 		return &GlmOcrRenderer{useImgTags: RenderImgTags}
 	case "lfm2":
 		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
+	case "lfm3":
+		return &LFM3Renderer{useImgTags: RenderImgTags}
+	case "lfm3-omni":
+		return &LFM3Renderer{useImgTags: RenderImgTags, noThinking: true, speech: true}
+	case "lfm3-audio":
+		return &LFM3Renderer{useImgTags: RenderImgTags, audio: true, speech: true}
 	case "laguna":
 		return &LagunaRenderer{}
 	case "poolside-v1":

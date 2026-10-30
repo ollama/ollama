@@ -347,7 +347,7 @@ func TestClaudeEnvVars(t *testing.T) {
 		return m
 	}
 
-	got := envMap(c.envVars("llama3.2"))
+	got := envMap(c.envVars("llama3.2", nil))
 	for key, want := range map[string]string{
 		"ANTHROPIC_BASE_URL":                  envconfig.Host().String(),
 		"ANTHROPIC_API_KEY":                   "",
@@ -486,7 +486,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	}
 
 	t.Run("maps all Claude model env vars to the provided model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("llama3.2"))
+		got := envMap(c.modelEnvVars("llama3.2", nil))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "llama3.2" {
 			t.Errorf("OPUS = %q, want llama3.2", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -507,7 +507,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 	})
 
 	t.Run("supports empty model", func(t *testing.T) {
-		got := envMap(c.modelEnvVars(""))
+		got := envMap(c.modelEnvVars("", nil))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "" {
 			t.Errorf("OPUS = %q, want empty", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
@@ -532,7 +532,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 			"glm-5:cloud":     "202752",
 			"kimi-k2.6:cloud": "262144",
 		} {
-			got := envMap(c.modelEnvVars(model))
+			got := envMap(c.modelEnvVars(model, nil))
 			for _, key := range windowKeys {
 				if got[key] != want {
 					t.Errorf("%s: %s = %q, want %s", model, key, got[key], want)
@@ -541,10 +541,30 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		}
 	})
 
+	t.Run("keeps the auto compact window within Claude Code's range", func(t *testing.T) {
+		setDynamicCloudModelLimits(map[string]cloudModelLimit{"tiny": {Context: 65_536}})
+		t.Cleanup(func() { setDynamicCloudModelLimits(nil) })
+		for _, tt := range []struct {
+			model       LaunchModel
+			wantContext string
+			wantCompact string
+		}{
+			{model: LaunchModel{Name: "nemotron-3-nano:30b:cloud"}, wantContext: "1048576", wantCompact: "1000000"},
+			{model: LaunchModel{Name: "tiny:cloud"}, wantContext: "65536"},
+			{model: LaunchModel{Name: "new-large:cloud", ContextLength: 1_048_576}, wantContext: "1048576", wantCompact: "1000000"},
+			{model: LaunchModel{Name: "new-small:cloud", ContextLength: 65_536}, wantContext: "65536"},
+		} {
+			got := envMap(c.modelEnvVars(tt.model.Name, []LaunchModel{tt.model}))
+			if got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] != tt.wantContext || got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != tt.wantCompact {
+				t.Errorf("%s: context = %q, compact = %q; want %q, %q", tt.model.Name, got["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], tt.wantContext, tt.wantCompact)
+			}
+		}
+	})
+
 	t.Run("keeps the user's auto compact window but not their context window", func(t *testing.T) {
 		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
 		t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "150000")
-		got := envMap(c.modelEnvVars("kimi-k2.6:cloud"))
+		got := envMap(c.modelEnvVars("kimi-k2.6:cloud", nil))
 		if v, ok := got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"]; ok {
 			t.Errorf("AUTO_COMPACT_WINDOW = %q, want left to the user's setting", v)
 		}
@@ -553,12 +573,73 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		}
 	})
 
+	t.Run("resolved cloud metadata takes precedence over fallback", func(t *testing.T) {
+		t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "")
+		models := []LaunchModel{{Name: "kimi-k2.6:cloud", ContextLength: 524288}}
+		env := c.modelEnvVars("kimi-k2.6:cloud", models)
+		got := envMap(env)
+		for _, key := range windowKeys {
+			count := 0
+			for _, entry := range env {
+				if strings.HasPrefix(entry, key+"=") {
+					count++
+				}
+			}
+			if got[key] != "524288" || count != 1 {
+				t.Errorf("%s = %q (%d entries), want 524288 once", key, got[key], count)
+			}
+		}
+	})
+
 	t.Run("does not set windows for unknown cloud models", func(t *testing.T) {
-		got := envMap(c.modelEnvVars("unknown-model:cloud"))
+		got := envMap(c.modelEnvVars("unknown-model:cloud", nil))
 		for _, key := range windowKeys {
 			if v, ok := got[key]; ok {
 				t.Errorf("%s = %q, want unset", key, v)
 			}
 		}
 	})
+}
+
+func TestClaudeRunCloudContextWindow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell fake binary")
+	}
+
+	dir := t.TempDir()
+	output := filepath.Join(dir, "context")
+	t.Setenv("PATH", dir)
+	t.Setenv("CLAUDE_LAUNCH_TEST_OUTPUT", output)
+	t.Setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "12345")
+	t.Setenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "150000")
+	script := `#!/bin/sh
+printf '%s\n' "$CLAUDE_CODE_MAX_CONTEXT_TOKENS" "$CLAUDE_CODE_AUTO_COMPACT_WINDOW" > "$CLAUDE_LAUNCH_TEST_OUTPUT"
+`
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		model LaunchModel
+		want  string
+	}{
+		{name: "cloud model absent from fallback table", model: LaunchModel{Name: "muse-spark-open:cloud", ContextLength: 1048576}, want: "1048576"},
+		{name: "remote model without cloud suffix", model: LaunchModel{Name: "custom-cloud", Remote: true, ContextLength: 262144}, want: "262144"},
+		{name: "local trained maximum is not the allocated context", model: LaunchModel{Name: "qwen3:8b", ContextLength: 131072}, want: "12345"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			models := []LaunchModel{{Name: "other:cloud", ContextLength: 65536}, tt.model}
+			if err := (&Claude{}).Run(tt.model.Name, models, nil); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := tt.want + "\n150000\n"; string(got) != want {
+				t.Fatalf("child context settings = %q, want %q", got, want)
+			}
+		})
+	}
 }
