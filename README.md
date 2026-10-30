@@ -336,6 +336,7 @@ console.log(response.message.content);
 - [MindsDB](https://docs.mindsdb.com/integrations/ai-engines/ollama) - Connect Ollama with 200+ data platforms
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) - Embeddable vector database for Go ([example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama))
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) - AI-powered SQL client
+- [schemagate](https://github.com/ashishsinha1602/schemagate) - Text-to-SQL schema selection: gives a local model only the tables a question needs ([guide](https://github.com/ashishsinha1602/schemagate/blob/main/docs/local-models.md#two-alternatives-worth-knowing))
 
 ### Infrastructure & Deployment
 
