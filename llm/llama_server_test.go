@@ -3204,6 +3204,26 @@ func TestMemoryParsingWriter(t *testing.T) {
 			wantTotal: 15967.91 + 1664 + 156,
 		},
 		{
+			name: "DSV4 compressor state buffers accumulate",
+			lines: []string{
+				"llama_dsv4_comp_state: CUDA0 DSV4 pre state buffer size = 64.00 MiB\n",
+				"llama_dsv4_comp_state: CUDA0 DSV4 pre state buffer size = 32.00 MiB\n",
+				"llama_dsv4_comp_state: CPU DSV4 post state buffer size = 16.00 MiB\n",
+			},
+			wantGPU:   64 + 32,
+			wantTotal: 64 + 32 + 16,
+		},
+		{
+			name: "LoRA buffers add to model memory",
+			lines: []string{
+				"load_tensors: CUDA0 model buffer size = 1000.00 MiB\n",
+				"llama_adapter_lora_init_impl: CUDA0 LoRA buffer size = 24.00 MiB\n",
+				"llama_adapter_lora_init_impl: CPU LoRA buffer size = 8.00 MiB\n",
+			},
+			wantGPU:   1000 + 24,
+			wantTotal: 1000 + 24 + 8,
+		},
+		{
 			name: "later scheduler reservation replaces the old one",
 			lines: []string{
 				"load_tensors: loading model tensors, this can take a while... (load_mode = mmap)\n",
@@ -3311,6 +3331,54 @@ func TestMemoryParsingWriterSplitDraftMarker(t *testing.T) {
 	}
 	if want := uint64(1100 * 1024 * 1024); runner.memGPU != want {
 		t.Fatalf("GPU after split draft marker = %d MiB, want 1100 MiB", runner.memGPU/(1024*1024))
+	}
+}
+
+func TestMemoryParsingWriterIgnoresNonLoaderMarkers(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	for _, line := range []string{
+		"load_tensors: CUDA0 model buffer size = 1000.00 MiB\n",
+		"sched_reserve: CUDA0 compute buffer size = 20.00 MiB\n",
+		"slot log: loading draft model\n",
+		"slot log: loading model tensors\n",
+		"slot log: sched_reserve: reserving\n",
+		"slot prompt load_tensors: CUDA0 model buffer size = 9000.00 MiB\n",
+		"slot prompt load_tensors: offloaded 0/43 layers to GPU\n",
+		"slot prompt common_params_fit_impl: - CUDA0 (test): 3 layers (2 overflowing)\n",
+		"slot prompt srv load_model: [mtmd] estimated worst-case memory usage of mmproj is 3000.00 MiB\n",
+		"slot prompt clip_ctx: CLIP using CUDA9 backend\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := runner.memGPU / (1024 * 1024); got != 1020 {
+		t.Errorf("GPU after unrelated log lines = %d MiB, want 1020 MiB", got)
+	}
+	if got := w.model(); got != memoryModelTarget {
+		t.Errorf("model after unrelated log lines = %q, want target", got)
+	}
+	if runner.totalLayers != 0 || runner.gpuLayerOverflow != 0 || runner.memCPUProjector != 0 || w.projectorDevice != "" {
+		t.Errorf("unrelated log lines changed layer or projector state: layers=%d overflow=%d projector=%d device=%q",
+			runner.totalLayers, runner.gpuLayerOverflow, runner.memCPUProjector, w.projectorDevice)
+	}
+
+	for _, line := range []string{
+		"common_speculative_init_result: loading draft model '/blobs/draft'\n",
+		"load_tensors: CPU_Mapped model buffer size = 50.00 MiB\n",
+		"slot log: speculative decoding context initialized\n",
+		"slot log: failed to initialize speculative decoding context\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := w.model(); got != memoryModelDraft {
+		t.Errorf("model after unrelated log lines = %q, want draft", got)
+	}
+	if got := runner.memCPUDraft / (1024 * 1024); got != 50 {
+		t.Errorf("CPU draft after unrelated log lines = %d MiB, want 50 MiB", got)
 	}
 }
 
@@ -3518,6 +3586,7 @@ func TestMemoryParsingWriterDiscardedDraft(t *testing.T) {
 				"common_speculative_init_result: loading draft model '/blobs/draft'\n",
 				"load_tensors: loading model tensors, this can take a while...\n",
 				"load_tensors: CUDA0 model buffer size = 100.00 MiB\n",
+				"load_tensors: CPU_Mapped model buffer size = 50.00 MiB\n",
 				"sched_reserve: reserving ...\n",
 				"sched_reserve: CUDA0 compute buffer size = 200.00 MiB\n",
 				failure + "\n",
@@ -3530,6 +3599,9 @@ func TestMemoryParsingWriterDiscardedDraft(t *testing.T) {
 			}
 			if got, want := runner.memGPU/(1024*1024), uint64(1000+150); got != want {
 				t.Errorf("GPU usage after draft failure = %d MiB, want %d MiB", got, want)
+			}
+			if runner.memCPUDraft != 0 {
+				t.Errorf("CPU draft usage after draft failure = %d, want 0", runner.memCPUDraft)
 			}
 		})
 	}
@@ -3868,6 +3940,17 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 			wantProcessVRAM:  80,
 		},
 		{
+			name: "draft fit overflow does not change full target offload",
+			lines: []string{
+				"llm_load_tensors: offloaded 43/43 layers to GPU\n",
+				"common_speculative_init_result: loading draft model '/blobs/draft'\n",
+				"common_params_fit_impl:   - CUDA0 (test): 3 layers ( 2 overflowing), 100 MiB used, 50 MiB free\n",
+				"load_tensors: offloaded 3/6 layers to GPU\n",
+			},
+			wantProcessTotal: 80,
+			wantProcessVRAM:  80,
+		},
+		{
 			name: "fit overflow suppresses full offload mask",
 			lines: []string{
 				"common_params_fit_impl:   - ROCm0 (AMD Radeon RX 6700 XT): 25 layers ( 5 overflowing),  11065 MiB used,   1036 MiB free\n",
@@ -3902,6 +3985,96 @@ func TestMemoryParsingWriterMemorySizeFullOffload(t *testing.T) {
 				t.Fatalf("MemorySize() = %d/%d, want %d/%d", total, vram, tt.wantProcessTotal, tt.wantProcessVRAM)
 			}
 		})
+	}
+}
+
+func TestMemoryParsingWriterFullTargetWithDraft(t *testing.T) {
+	tests := []struct {
+		name       string
+		draftLines []string
+		wantTotal  uint64 // MiB
+		wantVRAM   uint64 // MiB
+	}{
+		{
+			name: "GPU draft",
+			draftLines: []string{
+				"load_tensors: offloaded 6/6 layers to GPU\n",
+				"load_tensors: CUDA0 model buffer size = 100.00 MiB\n",
+				"llama_kv_cache: CUDA0 KV buffer size = 8.00 MiB\n",
+			},
+			wantTotal: 1000 + 100 + 8,
+			wantVRAM:  1000 + 100 + 8,
+		},
+		{
+			name: "CPU draft",
+			draftLines: []string{
+				"load_tensors: offloaded 0/6 layers to GPU\n",
+				"load_tensors: CPU_Mapped model buffer size = 100.00 MiB\n",
+				"llama_kv_cache: CPU KV buffer size = 8.00 MiB\n",
+			},
+			wantTotal: 1000 + 100 + 8,
+			wantVRAM:  1000,
+		},
+		{
+			name: "partial draft",
+			draftLines: []string{
+				"load_tensors: offloaded 3/6 layers to GPU\n",
+				"load_tensors: CPU_Mapped model buffer size = 60.00 MiB\n",
+				"load_tensors: CUDA0 model buffer size = 40.00 MiB\n",
+				"llama_kv_cache: CPU KV buffer size = 4.00 MiB\n",
+				"llama_kv_cache: CUDA0 KV buffer size = 4.00 MiB\n",
+			},
+			wantTotal: 1000 + 60 + 40 + 4 + 4,
+			wantVRAM:  1000 + 40 + 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &llamaServerRunner{}
+			w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+			lines := []string{
+				"load_tensors: offloaded 43/43 layers to GPU\n",
+				"load_tensors: CPU_Mapped model buffer size = 500.00 MiB\n",
+				"load_tensors: CUDA0 model buffer size = 1000.00 MiB\n",
+				"sched_reserve: CUDA_Host compute buffer size = 100.00 MiB\n",
+				"common_speculative_init_result: loading draft model '/blobs/draft'\n",
+			}
+			lines = append(lines, tt.draftLines...)
+			lines = append(lines,
+				"llama_context: CUDA_Host output buffer size = 2.00 MiB\n",
+				"srv load_model: speculative decoding context initialized\n")
+			for _, line := range lines {
+				if _, err := w.Write([]byte(line)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			total, vram := runner.MemorySize()
+			if total != tt.wantTotal*1024*1024 || vram != tt.wantVRAM*1024*1024 {
+				t.Errorf("MemorySize() = %d/%d MiB, want %d/%d MiB", total/(1024*1024), vram/(1024*1024), tt.wantTotal, tt.wantVRAM)
+			}
+		})
+	}
+}
+
+func TestMemoryParsingWriterFullTargetWithCPUExtras(t *testing.T) {
+	runner := &llamaServerRunner{}
+	w := &memoryParsingWriter{inner: io.Discard, runner: runner}
+	for _, line := range []string{
+		"load_tensors: offloaded 33/33 layers to GPU\n",
+		"load_tensors: CUDA0 model buffer size = 1000.00 MiB\n",
+		"load_tensors: CPU_Mapped model buffer size = 500.00 MiB\n",
+		"llama_adapter_lora_init_impl: CPU LoRA buffer size = 8.00 MiB\n",
+		"llama_dsv4_comp_state: CPU DSV4 pre state buffer size = 16.00 MiB\n",
+	} {
+		if _, err := w.Write([]byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	total, vram := runner.MemorySize()
+	if total != 1024*1024*1024 || vram != 1000*1024*1024 {
+		t.Errorf("MemorySize = %d/%d MiB, want 1024/1000 MiB", total/(1024*1024), vram/(1024*1024))
 	}
 }
 
