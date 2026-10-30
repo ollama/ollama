@@ -38,6 +38,12 @@ func TestRequestGrammar(t *testing.T) {
 				`{"type":"optional","content":{"type":"sequence","elements":[{"type":"or","elements":[{"type":"const_string","value":"<|final|>"},{"type":"const_string","value":"<|final|>json"}]},` +
 				`{"type":"json_schema","json_schema":` + schema + `}]}}]}}`,
 		},
+		{
+			name: "tool call or formatted content",
+			req:  llm.CompletionRequest{Format: json.RawMessage(schema), ToolCallStarts: []string{"<tool_call>"}},
+			want: `{"type":"structural_tag","format":{"type":"or","elements":[{"type":"json_schema","json_schema":` + schema +
+				`},{"type":"sequence","elements":[{"type":"const_string","value":"<tool_call>"},{"type":"any_text"}]}]}}`,
+		},
 		{name: "thinking without a format", req: llm.CompletionRequest{ThinkingClose: []string{"</think>"}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
