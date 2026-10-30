@@ -2,11 +2,39 @@ package openai
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"math"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestToEmbeddingListEmpty(t *testing.T) {
+	for _, format := range []string{"", "float", "base64"} {
+		for _, tc := range []struct {
+			name       string
+			embeddings [][]float32
+		}{
+			{name: "nil"},
+			{name: "empty", embeddings: [][]float32{}},
+		} {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				result := ToEmbeddingList("test-model", api.EmbedResponse{
+					Embeddings:      tc.embeddings,
+					PromptEvalCount: 7,
+				}, format)
+				data, err := json.Marshal(result)
+				if err != nil {
+					t.Fatal(err)
+				}
+				const want = `{"object":"list","data":[],"model":"test-model","usage":{"prompt_tokens":7,"total_tokens":7}}`
+				if string(data) != want {
+					t.Errorf("got %s, want %s", data, want)
+				}
+			})
+		}
+	}
+}
 
 func TestToEmbeddingList(t *testing.T) {
 	testCases := []struct {
