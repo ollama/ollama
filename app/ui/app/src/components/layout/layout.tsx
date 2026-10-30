@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { ChatIcon } from "@/components/ChatIcon";
 import { isWindowsPlatform } from "@/lib/platform";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-let sessionSidebarOpen = false;
+let sessionSidebarOpen = true;
 
 export function SidebarLayout({
   sidebar,
@@ -14,7 +14,12 @@ export function SidebarLayout({
   title?: string;
 }>) {
   const [sidebarOpen, setSidebarOpen] = useState(sessionSidebarOpen);
+  const [mounted, setMounted] = useState(false);
   const isWindows = isWindowsPlatform();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const toggleSidebar = () => {
     sessionSidebarOpen = !sidebarOpen;
@@ -24,7 +29,7 @@ export function SidebarLayout({
   return (
     <div className="flex h-screen w-full overflow-hidden dark:bg-neutral-900">
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${mounted ? "transition-[left] duration-375" : ""} text-neutral-500 dark:text-neutral-400 ${sidebarOpen ? (isWindows ? "left-2" : "left-[140px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={toggleSidebar}
@@ -58,7 +63,7 @@ export function SidebarLayout({
         )}
       </div>
       <div
-        className={`flex max-h-screen flex-col transition-[width] duration-300 ${
+        className={`flex max-h-screen flex-col ${mounted ? "transition-[width] duration-300" : ""} ${
           sidebarOpen
             ? "w-48 border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950/40"
             : "w-0"
