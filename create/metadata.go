@@ -51,6 +51,11 @@ func inferSafetensorsConfig(modelDir string, cfg sourceModelConfig, parserOverri
 		rendererName, decisionModel = "strands", true
 	case "KevForDecision":
 		rendererName, decisionModel = "kev", true
+	// The staged architecture ID selects AutoTrust's decision runner for the
+	// publisher's Qwen3.5 checkpoint.
+	case "AutoTrustDecision":
+		rendererName, decisionModel = "autotrust-decision", true
+		decisionVision = cfg.VisionConfig != nil
 	case "LayaForDecision":
 		decisionModel = true
 	case "D1Model":
