@@ -141,7 +141,7 @@ func (s *Server) ollamaProxy() http.Handler {
 			if proxy == nil {
 				var err error
 				for i := range 2 {
-					if err := r.Context().Err(); err != nil {
+					if err = r.Context().Err(); err != nil {
 						break
 					}
 					if i > 0 {
@@ -153,7 +153,7 @@ func (s *Server) ollamaProxy() http.Handler {
 							break
 						case <-timer.C:
 						}
-						if err := r.Context().Err(); err != nil {
+						if err = r.Context().Err(); err != nil {
 							break
 						}
 					}
