@@ -19,6 +19,10 @@ func encodeStrands(req Request, c *Compiled) error {
 	if err != nil || strings.TrimSpace(state) == "" {
 		return fmt.Errorf("state must be a nonempty string, object, or array")
 	}
+	if n := req.Questions.Len(); n > 0 && len(state) > maxCompiledPromptBytes/n {
+		return ErrPromptTooLarge
+	}
+	var total int
 	for name, q := range req.Questions.All() {
 		f, err := strandsField(name, q)
 		if err != nil {
@@ -45,6 +49,10 @@ func encodeStrands(req Request, c *Compiled) error {
 		}
 		prompt.WriteString("</options>\n</question>\n<answer>")
 		row.Prompt = prompt.String()
+		if len(row.Prefix)+len(row.Prompt) > maxCompiledPromptBytes-total {
+			return ErrPromptTooLarge
+		}
+		total += len(row.Prefix) + len(row.Prompt)
 		c.Request.PointerRows = append(c.Request.PointerRows, row)
 		c.fields = append(c.fields, f)
 	}

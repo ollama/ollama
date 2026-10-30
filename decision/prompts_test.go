@@ -2,12 +2,41 @@ package decision
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 )
+
+func TestCompiledPromptBudget(t *testing.T) {
+	req := testRequest(t)
+	req.State = json.RawMessage(`"` + strings.Repeat("x", 1<<20) + `"`)
+	req.Questions = &Questions{}
+	for i := range 64 {
+		req.Questions.Set(fmt.Sprintf("q%d", i), Question{Type: "noul", Instructions: json.RawMessage(`"q"`)})
+	}
+	for _, encoding := range []string{"", "tev1", "strands"} {
+		t.Run(encoding, func(t *testing.T) {
+			_, err := Compile(req, encoding)
+			if !errors.Is(err, ErrPromptTooLarge) {
+				t.Fatalf("Compile() error = %v, want prompt budget error", err)
+			}
+		})
+	}
+}
+
+func TestRenderedPromptBudget(t *testing.T) {
+	compiled, err := Compile(testRequest(t), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Repeat("x", maxCompiledPromptBytes/2+1)
+	if err := compiled.Render(func([]api.Message) (string, error) { return large, nil }); !errors.Is(err, ErrPromptTooLarge) {
+		t.Fatalf("Render() error = %v, want prompt budget error", err)
+	}
+}
 
 func TestPublisherPrompts(t *testing.T) {
 	var req Request

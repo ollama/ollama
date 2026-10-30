@@ -172,11 +172,16 @@ func Compile(req Request, encoding string) (*Compiled, error) {
 // Render prepares scoring prompts using the model's system prompt and chat template.
 // The caller must set Request.MaxTokens to the loaded context size before scoring.
 func (c *Compiled) Render(render func([]api.Message) (string, error)) error {
+	var total int
 	for i, messages := range c.messages {
 		prompt, err := render(messages)
 		if err != nil {
 			return err
 		}
+		if len(prompt) > maxCompiledPromptBytes-total {
+			return ErrPromptTooLarge
+		}
+		total += len(prompt)
 		c.Request.Rows[i].Prompt = prompt
 	}
 	return nil

@@ -947,8 +947,6 @@ func (s *Server) systemOneLlamaServer(c *gin.Context, m *Model, req decision.Req
 
 // SystemOneHandler answers typed questions with probabilities.
 func (s *Server) SystemOneHandler(c *gin.Context) {
-	// TODO(parthsareen): Check token limits before copying state and schema into
-	// each question's prompt. Non-Kev models retain the 64 KiB byte cap until then.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<20)
 	body, err := io.ReadAll(c.Request.Body)
 	var req decision.Request
@@ -958,24 +956,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	if err != nil {
 		var sizeErr *http.MaxBytesError
 		if errors.As(err, &sizeErr) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body must not exceed 32 MiB"})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": decision.ErrPromptTooLarge.Error()})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-	textOnly := req
-	textOnly.Images = nil
-	var text bytes.Buffer
-	enc := json.NewEncoder(&text)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(textOnly); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	textSize := len(bytes.TrimSpace(text.Bytes()))
-	rejectText := func(limit int) {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("text and schema must not exceed %d KiB", limit>>10)})
 	}
 	ref, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
@@ -1005,17 +990,27 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	textLimit := 64 << 10
-	if m.Config.Renderer == "kev" || m.Config.Renderer == "d1" {
-		// Kev and d1 share the state across question rows and admit long
-		// states, which can exceed the generic decision prompt cap.
-		textLimit = 1 << 20
-	}
-	if textSize > textLimit {
-		rejectText(textLimit)
-		return
-	}
 	if m.isGGUF() {
+		// The llama.cpp decision path still expands prompts before checking its
+		// context. Keep its text cap until that path bounds the expansion.
+		textOnly := req
+		textOnly.Images = nil
+		var text bytes.Buffer
+		enc := json.NewEncoder(&text)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(textOnly); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		textLimit := 64 << 10
+		if m.Config.Renderer == "kev" || m.Config.Renderer == "d1" {
+			// These GGUF scorers share the state across question rows.
+			textLimit = 1 << 20
+		}
+		if len(bytes.TrimSpace(text.Bytes())) > textLimit {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": decision.ErrPromptTooLarge.Error()})
+			return
+		}
 		s.systemOneLlamaServer(c, m, req, body)
 		return
 	}
@@ -1026,7 +1021,11 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	}
 	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, decision.ErrPromptTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	if encoding == "pplx" {
@@ -1035,6 +1034,19 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 			return
 		}
 		compiled.Request.System = m.System
+	}
+	if err := compiled.Render(func(messages []api.Message) (string, error) {
+		if m.System != "" {
+			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
+		}
+		return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
+	}); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, decision.ErrPromptTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
 	}
 	caps := []model.Capability{model.CapabilityDecision}
 	for _, data := range req.Images {
@@ -1054,15 +1066,6 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	scorer, ok := r.(llm.Scorer)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model %q does not support System One scoring; use a local decision model with a scoring-capable runner", req.Model)})
-		return
-	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) {
-		if m.System != "" {
-			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
-		}
-		return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
-	}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	compiled.Request.MaxTokens = r.ContextLength()
