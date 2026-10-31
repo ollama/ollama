@@ -148,6 +148,14 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 				lParam,
 			)
 		}
+	case WM_SETTINGCHANGE:
+		// Re-theme the menu when the system app theme (light/dark) changes so the
+		// next time it opens it uses the current colors.
+		if lParam != 0 {
+			if area := windows.UTF16PtrToString((*uint16)(unsafe.Pointer(lParam))); area == "ImmersiveColorSet" { //nolint:govet,gosec
+				onThemeChanged()
+			}
+		}
 	case t.wmTaskbarCreated: // on explorer.exe restarts
 		t.muNID.Lock()
 		err := t.nid.add()
