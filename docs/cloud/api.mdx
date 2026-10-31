@@ -1,0 +1,42 @@
+---
+title: Creating an API key
+description: Create an API key and authenticate requests to Ollama's cloud API.
+---
+
+Create an API key to call cloud models directly through `https://ollama.com/api`. A local Ollama installation is not required.
+
+## Create a key
+
+1. Sign in to [Ollama](https://ollama.com/signin).
+2. Open [API keys](https://ollama.com/settings/keys).
+3. Create a key and copy it. You will use it as a bearer token with each request.
+
+Set the key as an environment variable in Bash or Zsh:
+
+```shell
+export OLLAMA_API_KEY="your_api_key"
+```
+
+Keep API keys out of browser code and source control.
+
+## Send a request
+
+```shell
+curl https://ollama.com/api/chat \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemma4:31b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in one sentence."
+      }
+    ],
+    "stream": false
+  }'
+```
+
+Read the answer from `message.content`.
+
+You can also use [OpenAI](/api/openai-compatibility) or [Anthropic](/api/anthropic-compatibility) clients. Each supports a subset of the original API. For endpoint schemas and response fields, see the [API Reference](/api/introduction).
