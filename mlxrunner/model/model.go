@@ -128,6 +128,23 @@ func SupportsDraftArchitecture(arch string) bool {
 	return ok
 }
 
+// configArchitecture returns the architecture a config.json declares: its
+// first architectures entry, or its model_type when it lists none, as
+// MLX-native packs may. It returns "" when the config names neither.
+func configArchitecture(configData []byte) (string, error) {
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(configData, &cfg); err != nil {
+		return "", err
+	}
+	if len(cfg.Architectures) > 0 && cfg.Architectures[0] != "" {
+		return cfg.Architectures[0], nil
+	}
+	return cfg.ModelType, nil
+}
+
 // New reads config.json from the manifest, detects the architecture, looks up
 // the registered constructor, and calls it to create the model (with config
 // parsed and struct created, but weights not yet loaded).
@@ -137,18 +154,13 @@ func New(root *Root) (Model, error) {
 		return nil, fmt.Errorf("failed to read config.json: %w", err)
 	}
 
-	var archConfig struct {
-		Architectures []string `json:"architectures"`
-	}
-	if err := json.Unmarshal(configData, &archConfig); err != nil {
+	arch, err := configArchitecture(configData)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse config.json: %w", err)
 	}
-
-	if len(archConfig.Architectures) == 0 {
-		return nil, fmt.Errorf("no architectures found in config.json")
+	if arch == "" {
+		return nil, fmt.Errorf("no architecture found in config.json")
 	}
-
-	arch := archConfig.Architectures[0]
 	slog.Info("Model architecture", "arch", arch)
 
 	mu.Lock()
@@ -177,20 +189,11 @@ func NewDraft(root *Root, target Model) (DraftModel, error) {
 		return nil, fmt.Errorf("failed to read %s: %w", configPath, err)
 	}
 
-	var archConfig struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(configData, &archConfig); err != nil {
-		return nil, fmt.Errorf("failed to parse %s: %w", configPath, err)
-	}
-
 	arch := root.Draft.Architecture
-	if arch == "" && len(archConfig.Architectures) > 0 {
-		arch = archConfig.Architectures[0]
-	}
 	if arch == "" {
-		arch = archConfig.ModelType
+		if arch, err = configArchitecture(configData); err != nil {
+			return nil, fmt.Errorf("failed to parse %s: %w", configPath, err)
+		}
 	}
 	if arch == "" {
 		return nil, fmt.Errorf("no draft architecture found in %s", configPath)
