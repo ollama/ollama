@@ -64,6 +64,13 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFilenamesParentDirectoryWithImageExtension(t *testing.T) {
+	input := `/tmp/directory.png/image.png`
+
+	res := extractFileNames(input)
+	assert.Equal(t, []string{input}, res)
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
