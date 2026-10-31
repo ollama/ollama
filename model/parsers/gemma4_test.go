@@ -1210,6 +1210,26 @@ func TestGemma4RepairCandidates(t *testing.T) {
 			tools:    []api.Tool{gemma4TestStringTool("count", "name")},
 			expected: []string{`{n:1`},
 		},
+		{
+			name:     "bare_word_candidate_comes_last",
+			input:    `{content:hello,mode:Fast}`,
+			toolName: "write",
+			tools:    []api.Tool{gemma4TestStringTool("write", "content")},
+			expected: []string{
+				`{content:hello,mode:Fast}`,
+				`{content:<|"|>hello,mode:Fast<|"|>}`,
+				`{content:<|"|>hello<|"|>,mode:<|"|>Fast<|"|>}`,
+			},
+		},
+		{
+			name:     "bare_word_candidate_keeps_single_quote_repair",
+			input:    `{pattern:'a: b',mode:Fast}`,
+			toolName: "grep",
+			expected: []string{
+				`{pattern:<|"|>a: b<|"|>,mode:Fast}`,
+				`{pattern:<|"|>a: b<|"|>,mode:<|"|>Fast<|"|>}`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1295,6 +1315,206 @@ func TestGemma4Parser_PlainQuoteClosedStringInFinishedToolCall(t *testing.T) {
 		"content": "a: 1\n",
 		"path":    "x.yaml",
 	})}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4BareWordValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "word_after_a_key",
+			input:    `{mode:Fast}`,
+			expected: `{mode:<|"|>Fast<|"|>}`,
+		},
+		{
+			name:     "word_in_an_object_in_a_list",
+			input:    `{set:[{path:<|"|>AIData.Aggression<|"|>,value:Unaggressive}]}`,
+			expected: `{set:[{path:<|"|>AIData.Aggression<|"|>,value:<|"|>Unaggressive<|"|>}]}`,
+		},
+		{
+			name:     "words_as_list_items",
+			input:    `{flags:[Female, Unique ],n:[1,2]}`,
+			expected: `{flags:[<|"|>Female<|"|>, <|"|>Unique<|"|> ],n:[1,2]}`,
+		},
+		{
+			name:     "words_with_dots_digits_and_underscores",
+			input:    `{"path" : AIData.Aggression,a:_x1,b:x_2.y}`,
+			expected: `{"path" : <|"|>AIData.Aggression<|"|>,a:<|"|>_x1<|"|>,b:<|"|>x_2.y<|"|>}`,
+		},
+		{
+			name:     "keeps_words_in_strings",
+			input:    `{note:<|"|>mode:Fast}<|"|>,raw:"mode:Fast]"}`,
+			expected: `{note:<|"|>mode:Fast}<|"|>,raw:"mode:Fast]"}`,
+		},
+		{
+			name:     "keeps_json_literals",
+			input:    `{a:true,b:false,c:null,d:[true,null]}`,
+			expected: `{a:true,b:false,c:null,d:[true,null]}`,
+		},
+		{
+			name:     "keeps_literals_written_in_other_cases",
+			input:    `{a:True,b:NULL,c:None}`,
+			expected: `{a:True,b:NULL,c:None}`,
+		},
+		{
+			name:     "keeps_numbers",
+			input:    `{a:5,b:-1.5,c:1e3,d:0x1F,e:.5}`,
+			expected: `{a:5,b:-1.5,c:1e3,d:0x1F,e:.5}`,
+		},
+		{
+			name:     "keeps_words_that_are_not_all_of_the_value",
+			input:    `{name:Iron Sword,path:a/b,c:x-y,d:Fast<|"|>x<|"|>}`,
+			expected: `{name:Iron Sword,path:a/b,c:x-y,d:Fast<|"|>x<|"|>}`,
+		},
+		{
+			name:     "keeps_keys",
+			input:    `{a:b:c,Fast}`,
+			expected: `{a:b:c,Fast}`,
+		},
+		{
+			name:     "keeps_a_word_with_nothing_after_it",
+			input:    `{mode:Fast`,
+			expected: `{mode:Fast`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{mode:Fast,a:<|"|>x}`,
+			expected: `{mode:Fast,a:<|"|>x}`,
+		},
+		{
+			name:     "keeps_a_delimiter_in_a_json_quoted_string",
+			input:    `{raw:"<|"|>",mode:Fast,b:<|"|>}`,
+			expected: `{raw:"<|"|>",mode:Fast,b:<|"|>}`,
+		},
+		{
+			name:     "keeps_brackets_that_do_not_nest",
+			input:    `{mode:Fast,a:[x}]`,
+			expected: `{mode:Fast,a:[x}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4BareWordValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4BareWordValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4BareWordEditRecordCall sets a list of paths, one to a single-quoted
+// value and one to a bare word.
+const gemma4BareWordEditRecordCall = `call:editRecord{project:<|"|>HildaTheNord<|"|>,record:<|"|>Hilda<|"|>,set:[{path:<|"|>Configuration.Level<|"|>,value:'{MutagenObjectType: PcLevelMult, LevelMult: 1}'},{path:<|"|>Configuration.CalcMinLevel<|"|>,value:5},{path:<|"|>Configuration.CalcMaxLevel<|"|>,value:30},{path:<|"|>Configuration.SpeedMultiplier<|"|>,value:100},{path:<|"|>AIData.Aggression<|"|>,value:Unaggressive}]}`
+
+var gemma4BareWordEditRecordArgs = map[string]any{
+	"project": "HildaTheNord",
+	"record":  "Hilda",
+	"set": []any{
+		map[string]any{"path": "Configuration.Level", "value": "{MutagenObjectType: PcLevelMult, LevelMult: 1}"},
+		map[string]any{"path": "Configuration.CalcMinLevel", "value": 5.0},
+		map[string]any{"path": "Configuration.CalcMaxLevel", "value": 30.0},
+		map[string]any{"path": "Configuration.SpeedMultiplier", "value": 100.0},
+		map[string]any{"path": "AIData.Aggression", "value": "Unaggressive"},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_BareWordValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "word_in_a_list_of_objects",
+			content: gemma4BareWordEditRecordCall,
+			want:    gemma4BareWordEditRecordArgs,
+		},
+		{
+			name:    "words_as_list_items",
+			content: `call:set{flags:[Female,Unique],level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			name:    "literals_numbers_and_strings_keep_their_reading",
+			content: `call:set{a:true,b:false,c:null,d:-1.5,note:<|"|>mode:Fast,<|"|>,mode:Fast}`,
+			want:    map[string]any{"a": true, "b": false, "c": nil, "d": -1.5, "note": "mode:Fast,", "mode": "Fast"},
+		},
+		{
+			name:    "word_in_an_unclosed_list",
+			content: `call:set{flags:[Female,Unique,level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			// A finished call's last string left open is closed at its end first, as
+			// it is without a bare word; the delimiters are then balanced.
+			name:    "word_before_a_last_string_left_open",
+			content: `call:set{mode:Fast,a:<|"|>x<|"|>,b:<|"|>}`,
+			want:    map[string]any{"mode": "Fast", "a": "x", "b": ""},
+		},
+		{
+			name:    "literal_written_in_another_case",
+			content: `call:set{a:True}`,
+		},
+		{
+			name:    "none",
+			content: `call:set{a:None}`,
+		},
+		{
+			name:    "two_words",
+			content: `call:set{name:Iron Sword}`,
+		},
+		{
+			name:    "word_followed_by_a_colon",
+			content: `call:set{a:b:c}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ToolCall_DoesNotRepairBareWordWithUnbalancedDelimiters(t *testing.T) {
+	// Flushed on done, the call may have been cut off, and with a string left open
+	// which words are outside every string is not clear.
+	if got, err := parseGemma4ToolCall(`call:set{mode:Fast,a:<|"|>x<|"|>,b:<|"|>}`, nil); err == nil {
+		t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+	}
+}
+
+func TestGemma4Parser_BareWordValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4BareWordEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4BareWordEditRecordArgs)}}}
 	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
 		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}

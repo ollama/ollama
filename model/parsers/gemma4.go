@@ -556,18 +556,31 @@ func repairGemma4UnclosedBrackets(s string) string {
 // gemma4KeyFollows reports whether an object's key, bare or JSON-quoted, and its
 // colon start at s[i], after any whitespace.
 func gemma4KeyFollows(s string, i int) bool {
+	return gemma4ValueAfterKey(s, i) != -1
+}
+
+// gemma4ValueAfterKey returns where the value starts after an object's key, bare
+// or JSON-quoted, and its colon at s[i], after any whitespace; -1 where no key
+// and colon are.
+func gemma4ValueAfterKey(s string, i int) int {
 	i = gemma4SkipSpace(s, i)
 	if i < len(s) && s[i] == '"' {
 		end := gemma4JSONQuotedStringEnd(s, i)
 		if end == -1 {
-			return false
+			return -1
 		}
 		end = gemma4SkipSpace(s, end)
-		return end < len(s) && s[end] == ':'
+		if end < len(s) && s[end] == ':' {
+			return gemma4SkipSpace(s, end+1)
+		}
+		return -1
 	}
 
 	keyEnd := gemma4BareKeyEnd(s, i)
-	return keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':'
+	if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
+		return gemma4SkipSpace(s, keyEnd+1)
+	}
+	return -1
 }
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
@@ -692,6 +705,12 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	if raw, ok := repairGemma4RawTerminalStringValue(argsStr, toolName, tools); ok {
 		addCandidate(raw, true)
 	}
+	// Tried last, so it reads only what every candidate above fails on. Single
+	// quotes are repaired first: a single-quoted value's text is no bare word.
+	quoted := repairGemma4SingleQuotedValues(argsStr)
+	if words := repairGemma4BareWordValues(quoted); words != quoted {
+		addCandidate(words, false)
+	}
 
 	return candidates
 }
@@ -766,6 +785,122 @@ func repairGemma4PlainQuoteStringClose(s string, props *api.ToolPropertiesMap) s
 	}
 	sb.WriteString(rest)
 	return sb.String()
+}
+
+// repairGemma4BareWordValues reads a bare word the model wrote for a value as a
+// string, as in
+// call:edit{set:[{path:<|"|>Mode<|"|>,value:Fast}]}.
+// Only an even count of delimiters is repaired, and only a word that is all of a
+// value, after an object's key and its colon or as a list's item: it starts with
+// a letter or `_`, goes on with letters, digits, `_` and `.`, and a `,`, `}` or
+// `]` follows it after any whitespace. The delimiters are written around it.
+// true, false and null are JSON already; written in other cases, or as none, they
+// may mean a literal too, and are left as they are, as are numbers. Strings are
+// copied as they are. Where the strings or brackets are unclear, nothing is
+// repaired.
+func repairGemma4BareWordValues(s string) string {
+	if strings.Count(s, gemma4StringDelimiter)%2 != 0 {
+		return s
+	}
+
+	var sb strings.Builder
+	sb.Grow(len(s) + 4*len(gemma4StringDelimiter))
+	var open []byte
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(s[start:], gemma4StringDelimiter)
+			if end == -1 {
+				return s
+			}
+			stop := start + end + len(gemma4StringDelimiter)
+			sb.WriteString(s[i:stop])
+			i = stop
+			continue
+		}
+
+		if s[i] == '"' {
+			// A JSON-quoted string closed by the quote of a delimiter leaves unclear
+			// which text is a string.
+			end := gemma4JSONQuotedStringEnd(s, i)
+			if end == -1 || strings.Contains(s[i:min(end+2, len(s))], gemma4StringDelimiter) {
+				return s
+			}
+			sb.WriteString(s[i:end])
+			i = end
+			continue
+		}
+
+		c := s[i]
+		sb.WriteByte(c)
+		i++
+
+		valueStart := -1
+		switch c {
+		case '{':
+			open = append(open, c)
+			valueStart = gemma4ValueAfterKey(s, i)
+		case '[':
+			open = append(open, c)
+			valueStart = gemma4SkipSpace(s, i)
+		case ',':
+			if len(open) > 0 && open[len(open)-1] == '{' {
+				valueStart = gemma4ValueAfterKey(s, i)
+			} else if len(open) > 0 {
+				valueStart = gemma4SkipSpace(s, i)
+			}
+		case '}', ']':
+			opener := byte('{')
+			if c == ']' {
+				opener = '['
+			}
+			if len(open) == 0 || open[len(open)-1] != opener {
+				return s
+			}
+			open = open[:len(open)-1]
+		}
+		if valueStart == -1 {
+			continue
+		}
+
+		if wordEnd, ok := gemma4BareWordValueEnd(s, valueStart); ok {
+			sb.WriteString(s[i:valueStart])
+			sb.WriteString(gemma4StringDelimiter)
+			sb.WriteString(s[valueStart:wordEnd])
+			sb.WriteString(gemma4StringDelimiter)
+			i = wordEnd
+		}
+	}
+
+	return sb.String()
+}
+
+// gemma4BareWordValueEnd returns the end of a bare word that is all of a value
+// at s[i], as repairGemma4BareWordValues reads one.
+func gemma4BareWordValueEnd(s string, i int) (int, bool) {
+	end := i
+	for end < len(s) {
+		r, size := utf8.DecodeRuneInString(s[end:])
+		if !(r == '_' || unicode.IsLetter(r) || (end > i && (r == '.' || unicode.IsDigit(r)))) {
+			break
+		}
+		end += size
+	}
+	if end == i {
+		return 0, false
+	}
+
+	next := gemma4SkipSpace(s, end)
+	if next == len(s) || (s[next] != ',' && s[next] != '}' && s[next] != ']') {
+		return 0, false
+	}
+
+	for _, literal := range []string{"true", "false", "null", "none"} {
+		if strings.EqualFold(s[i:end], literal) {
+			return 0, false
+		}
+	}
+	return end, true
 }
 
 // repairGemma4MissingObjectClose adds a final object close after another repair
