@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -35,44 +36,44 @@ func mediaTestModel(t *testing.T, audio bool) *Model {
 	return m
 }
 
-func TestCheckMessageMediaRejectsAudioOnTextModel(t *testing.T) {
+func TestMessageMediaCapabilitiesRejectsAudioOnTextModel(t *testing.T) {
 	m := mediaTestModel(t, false)
-	err := checkMessageMedia(m, []api.Message{{
+	_, _, _, err := (&Server{}).scheduleRunnerForModel(context.Background(), m, messageMediaCapabilities([]api.Message{{
 		Role:    "user",
 		Content: "Transcribe this.",
 		Images:  []api.ImageData{clipBytes},
-	}})
+	}}), nil, nil, nil)
 	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("audio")) {
 		t.Fatalf("audio sent to a model with %v: err = %v, want an audio capability error", m.Capabilities(), err)
 	}
 }
 
-func TestCheckMessageMediaKeepsAudioForAudioModel(t *testing.T) {
+func TestMessageMediaCapabilitiesKeepsAudioForAudioModel(t *testing.T) {
 	m := mediaTestModel(t, true)
 	if err := m.CheckCapabilities(model.CapabilityAudio); err != nil {
 		t.Fatalf("fixture has no audio capability: %v", err)
 	}
-	if err := checkMessageMedia(m, []api.Message{{
+	if err := m.CheckCapabilities(messageMediaCapabilities([]api.Message{{
 		Role:    "user",
 		Content: "Transcribe this.",
 		Images:  []api.ImageData{clipBytes},
-	}}); err != nil {
+	}})...); err != nil {
 		t.Fatalf("audio sent to an audio model: %v", err)
 	}
 }
 
-func TestCheckMessageMediaKeepsImages(t *testing.T) {
+func TestMessageMediaCapabilitiesKeepsImages(t *testing.T) {
 	m := mediaTestModel(t, true)
 	if err := m.CheckCapabilities(model.CapabilityVision); err != nil {
 		t.Fatalf("fixture has no vision capability: %v", err)
 	}
 	// One message holding both kinds is fine as long as the model has the
 	// encoders for them.
-	if err := checkMessageMedia(m, []api.Message{{
+	if err := m.CheckCapabilities(messageMediaCapabilities([]api.Message{{
 		Role:    "user",
 		Content: "Look and listen.",
 		Images:  []api.ImageData{[]byte("\x89PNG\r\n\x1a\n"), clipBytes},
-	}}); err != nil {
+	}})...); err != nil {
 		t.Fatalf("image and audio on a model that takes both: %v", err)
 	}
 }

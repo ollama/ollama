@@ -3204,6 +3204,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
+	caps = append(caps, messageMediaCapabilities(req.Messages)...)
 
 	requestedThink := req.Think
 	think := renderers.ResolveThinking(requestedThink, thinking)
@@ -3250,11 +3251,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	msgs := chatMessagesForRequest(m, req.Messages)
-
-	if err := checkMessageMedia(m, msgs); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
 
 	parserName := parserNameForModel(m)
 	if shouldUseHarmony(m) {
@@ -3664,28 +3660,23 @@ func chatMessagesForRequest(m *Model, requestMessages []api.Message) []api.Messa
 	return filterThinkTags(msgs, m)
 }
 
-// checkMessageMedia rejects clips the model can't take, such as audio sent
-// to a text-only model. Everything a message carries in Images is handed to
-// the projector, so a clip the model has no encoder for is only ever garbage
-// to it: without this the request is answered from the text alone and the
-// clip is silently ignored.
-//
-// A single base64 blob can hold either kind, so each one is looked at
-// separately instead of sending the model's vision capability for all of them
-// (which is how audio ended up going through Images in the first place).
-func checkMessageMedia(m *Model, msgs []api.Message) error {
+// messageMediaCapabilities returns the encoder capabilities required by the
+// media in msgs. Images can carry either images or audio, so each blob is
+// detected separately and each capability is included only once.
+func messageMediaCapabilities(msgs []api.Message) []model.Capability {
+	var caps []model.Capability
 	for _, msg := range msgs {
 		for _, data := range msg.Images {
 			capability := model.CapabilityVision
 			if llm.DetectMediaKind(data) == llm.MediaKindAudio {
 				capability = model.CapabilityAudio
 			}
-			if err := m.CheckCapabilities(capability); err != nil {
-				return err
+			if !slices.Contains(caps, capability) {
+				caps = append(caps, capability)
 			}
 		}
 	}
-	return nil
+	return caps
 }
 
 func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
