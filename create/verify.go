@@ -22,7 +22,9 @@ func validateMLXSource(cfg sourceModelConfig, draft bool, opts MLXValidationOpti
 	if len(cfg.Architectures) > 0 {
 		arch = cfg.Architectures[0]
 	}
-	if draft && arch == "" {
+	// Fall back to model_type when architectures is missing; some exporters
+	// (e.g. MLX community checkpoints) write only model_type to config.json.
+	if arch == "" {
 		arch = cfg.ModelType
 	}
 
