@@ -1,8 +1,11 @@
 package parsers
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
@@ -264,5 +267,74 @@ func TestCohereParseBareContentBeforeEndOfTurn(t *testing.T) {
 	})
 	if content != "plain answer" {
 		t.Errorf("content = %q, want %q", content, "plain answer")
+	}
+}
+
+func TestCohereParseBlockOrder(t *testing.T) {
+	action := `<|START_ACTION|>[{"tool_call_id":"0","tool_name":"write_file","parameters":{"body":"<|START_TEXT|>example"}}]<|END_ACTION|>`
+	wantCall := api.ToolCall{
+		ID: "0",
+		Function: api.ToolCallFunction{
+			Name: "write_file", Arguments: testArgs(map[string]any{"body": "<|START_TEXT|>example"}),
+		},
+	}
+	plainAction := strings.ReplaceAll(action, "<|START_TEXT|>example", "example")
+	plainCall := wantCall
+	plainCall.Function.Arguments = testArgs(map[string]any{"body": "example"})
+	for _, tt := range []struct {
+		name      string
+		input     string
+		content   string
+		wantCalls []api.ToolCall
+	}{
+		{
+			name:  "text marker inside action arguments",
+			input: action, wantCalls: []api.ToolCall{wantCall},
+		},
+		{
+			name:    "action before text",
+			input:   plainAction + "<|START_TEXT|>Done.<|END_TEXT|>",
+			content: "Done.", wantCalls: []api.ToolCall{plainCall},
+		},
+		{
+			name:    "legacy text before current text",
+			input:   "<|START_RESPONSE|>First.<|END_RESPONSE|><|START_TEXT|>Second.<|END_TEXT|>",
+			content: "First.Second.",
+		},
+		{
+			name:    "end of turn before later text close",
+			input:   "<|START_TEXT|>First.<|END_OF_TURN_TOKEN|><|START_TEXT|>Second.<|END_TEXT|>",
+			content: "First.Second.",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			check := func(t *testing.T, chunks []string) {
+				t.Helper()
+				p := &CohereParser{}
+				p.Init(nil, nil, &api.ThinkValue{Value: false})
+				content, thinking, calls := cohereAddAll(t, p, chunks)
+				if content != tt.content || thinking != "" {
+					t.Errorf("content = %q, thinking = %q; want content %q, no thinking", content, thinking, tt.content)
+				}
+				if diff := cmp.Diff(tt.wantCalls, calls, argsComparer); diff != "" {
+					t.Errorf("calls mismatch (-want +got):\n%s", diff)
+				}
+			}
+			t.Run("whole response", func(t *testing.T) {
+				check(t, []string{tt.input})
+			})
+			for split := 0; split <= len(tt.input); split++ {
+				t.Run(fmt.Sprintf("split at %d", split), func(t *testing.T) {
+					check(t, []string{tt.input[:split], tt.input[split:]})
+				})
+			}
+			t.Run("one byte per chunk", func(t *testing.T) {
+				chunks := make([]string, len(tt.input))
+				for i := range chunks {
+					chunks[i] = tt.input[i : i+1]
+				}
+				check(t, chunks)
+			})
+		})
 	}
 }
