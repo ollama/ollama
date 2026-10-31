@@ -1,6 +1,7 @@
 package parsers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -70,6 +71,48 @@ func TestQwen3ParserThinkingEnabledWithSplitOpeningTag(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3ParserThinkingEnabledWithExplicitOpeningTagStreamed(t *testing.T) {
+	// <think> is a preserved token, so the newline the model puts after it
+	// arrives in a later chunk than the tag itself.
+	for _, tt := range []struct {
+		name         string
+		chunks       []string
+		wantThinking string
+		wantContent  string
+	}{
+		{name: "newline in its own chunk", chunks: []string{"<think>", "\n", "Let me think...", "</think>", "\n\n", "Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "whitespace only chunks", chunks: []string{"<think>", "\n", " ", "\n", "Let me think...</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "newline with the first word", chunks: []string{"<think>", "\nLet me think...", "</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		{name: "tag and newline in one chunk", chunks: []string{"<think>\n", "Let me", " think...", "</think>Answer."}, wantThinking: "Let me think...", wantContent: "Answer."},
+		// Only one leading tag is stripped; a second one is part of the thinking.
+		{name: "second tag is kept", chunks: []string{"<think>", "\n\n", "<think>\nnested</think>Answer"}, wantThinking: "<think>\nnested", wantContent: "Answer"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			var content, thinking strings.Builder
+			for i, chunk := range tt.chunks {
+				c, th, calls, err := parser.Add(chunk, i == len(tt.chunks)-1)
+				if err != nil {
+					t.Fatalf("parse failed on chunk %d: %v", i, err)
+				}
+				if len(calls) != 0 {
+					t.Fatalf("expected no tool calls, got %d", len(calls))
+				}
+				content.WriteString(c)
+				thinking.WriteString(th)
+			}
+			if thinking.String() != tt.wantThinking {
+				t.Fatalf("expected thinking %q, got %q", tt.wantThinking, thinking.String())
+			}
+			if content.String() != tt.wantContent {
+				t.Fatalf("expected content %q, got %q", tt.wantContent, content.String())
+			}
+		})
 	}
 }
 
