@@ -625,6 +625,8 @@ func visibleDeviceFilterTokens(goos, library string) []string {
 		}
 	case "Vulkan":
 		return splitVisibleDeviceList(envconfig.VkVisibleDevices())
+	case "SYCL":
+		return splitSyclVisibleDeviceList(envconfig.OneapiDeviceSelector())
 	}
 
 	return nil
@@ -676,6 +678,28 @@ func splitNumericVisibleDeviceList(value string) []string {
 	return tokens
 }
 
+// splitSyclVisibleDeviceList parses ONEAPI_DEVICE_SELECTOR values like
+// "level_zero:0;level_zero:1" (or bare numeric IDs) into device ordinals.
+func splitSyclVisibleDeviceList(value string) []string {
+	var tokens []string
+	for _, field := range strings.Split(value, ";") {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if _, _, ok := strings.Cut(field, ":"); ok {
+			// Accept "<backend>:<id>" (e.g. "level_zero:0") and use the id.
+			field = field[strings.LastIndex(field, ":")+1:]
+		}
+		index, err := strconv.Atoi(field)
+		if err != nil || index < 0 {
+			return nil
+		}
+		tokens = append(tokens, strconv.Itoa(index))
+	}
+	return tokens
+}
+
 func visibleDeviceOrdinals(count int) string {
 	ordinals := make([]string, count)
 	for i := range ordinals {
@@ -714,6 +738,7 @@ func overrideWarnings() {
 		"HIP_VISIBLE_DEVICES",
 		"ROCR_VISIBLE_DEVICES",
 		"GGML_VK_VISIBLE_DEVICES",
+		"ONEAPI_DEVICE_SELECTOR",
 		"GPU_DEVICE_ORDINAL",
 		"HSA_OVERRIDE_GFX_VERSION",
 	} {
