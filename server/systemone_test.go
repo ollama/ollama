@@ -364,15 +364,15 @@ func TestSystemOneHandler(t *testing.T) {
 				t.Fatalf("expected missing audio capability: %s", w.Body)
 			}
 			if tt.calls > 0 {
-				want := time.Hour
-				if tt.expire {
-					want = 0
-				}
 				ref.refMu.Lock()
-				duration := ref.sessionDuration
+				duration, state := ref.sessionDuration, ref.state
 				ref.refMu.Unlock()
-				if duration != want {
-					t.Fatalf("runner keep-alive=%v, want %v", duration, want)
+				if tt.expire {
+					if state != runnerStateEvictRequested && state != runnerStateUnloading {
+						t.Fatalf("runner state=%v, want eviction requested", state)
+					}
+				} else if duration != time.Hour || state != runnerStateLoaded {
+					t.Fatalf("runner keep-alive=%v state=%v, want %v/loaded", duration, state, time.Hour)
 				}
 			}
 			if tt.name == "Clef image above text body limit" && (len(runner.request.Images) != 1 || len(runner.request.Images[0]) != 70<<10) {
