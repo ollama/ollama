@@ -579,7 +579,7 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 			predicted := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 			loadGpus, launchOpts = selectLlamaServerPlacement(systemInfo, gpus, predicted, req.opts)
 			availableForBatch, _, _ := availableMemoryForPlacement(systemInfo, loadGpus, launchOpts)
-			flashAttention := llm.LlamaServerFlashAttention(loadGpus)
+			flashAttention := llm.LlamaServerFlashAttention(f, loadGpus)
 			req.applyAutomaticGenerationBatch(completion, predictedCtx, predicted, availableForBatch, flashAttention, loadGpus)
 			launchOpts.NumBatch = req.opts.NumBatch
 			var batchMemory uint64
@@ -831,7 +831,7 @@ func (req *LlmRequest) reduceAutoNumCtxForLoadOOM(f *gguf.Model, numParallel int
 	predictedCtx := effectiveLlamaServerContext(req.opts.NumCtx, f, numParallel)
 	predictedVRAM := llm.PredictServerVRAM(req.model.ModelPath, f, predictedCtx)
 	available, _, _ := availableMemoryForPlacement(systemInfo, gpus, launchOpts)
-	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(gpus), gpus)
+	req.applyAutomaticGenerationBatch(completion, predictedCtx, predictedVRAM, available, llm.LlamaServerFlashAttention(f, gpus), gpus)
 	newNumBatch = req.opts.NumBatch
 	return oldNumCtx, effectiveNumCtx, newNumCtx, oldNumBatch, newNumBatch, true
 }

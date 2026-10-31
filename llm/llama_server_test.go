@@ -2033,17 +2033,59 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 		{DeviceID: ml.DeviceID{Library: "CUDA"}, DriverMajor: 12, ComputeMajor: 5, ComputeMinor: 0},
 	}
 
+	// Architectures such as gpt-oss are only practical with flash attention: the
+	// non-flash-attention graph scales with num_ctx*num_batch.
+	// ref: https://github.com/ollama/ollama/issues/17430
+	flashAttentionKV := gguftest.KV{
+		"general.architecture":           "gpt-oss",
+		"gpt-oss.attention.key_length":   uint32(64),
+		"gpt-oss.attention.value_length": uint32(64),
+	}
+	// Architectures without a flash attention default keep llama-server's auto mode.
+	autoKV := gguftest.KV{
+		"general.architecture":         "llama",
+		"llama.attention.key_length":   uint32(128),
+		"llama.attention.value_length": uint32(128),
+	}
+
 	tests := []struct {
-		name string
-		env  string
-		set  bool
-		gpus []ml.DeviceInfo
-		want []string
+		name   string
+		env    string
+		set    bool
+		gpus   []ml.DeviceInfo
+		ggufKV gguftest.KV
+		want   []string
 	}{
 		{
 			name: "unset uses llama-server auto mode",
 			gpus: supportedGPU,
 			want: []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name:   "architecture without flash attention default uses auto mode",
+			gpus:   supportedGPU,
+			ggufKV: autoKV,
+			want:   []string{"base", "--flash-attn", "auto"},
+		},
+		{
+			name:   "architecture defaulting to flash attention enables it explicitly",
+			gpus:   supportedGPU,
+			ggufKV: flashAttentionKV,
+			want:   []string{"base", "--flash-attn", "on"},
+		},
+		{
+			name:   "explicit disable overrides architecture default",
+			env:    "0",
+			set:    true,
+			gpus:   supportedGPU,
+			ggufKV: flashAttentionKV,
+			want:   []string{"base", "--flash-attn", "off"},
+		},
+		{
+			name:   "unsupported gpu overrides architecture default",
+			gpus:   oldGPU,
+			ggufKV: flashAttentionKV,
+			want:   []string{"base", "--flash-attn", "off"},
 		},
 		{
 			name: "empty uses llama-server auto mode",
@@ -2103,7 +2145,11 @@ func TestAppendFlashAttentionArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			setFlashAttentionEnv(t, tt.env, tt.set)
-			got := appendFlashAttentionArgs([]string{"base"}, tt.gpus)
+			var f *gguf.Model
+			if tt.ggufKV != nil {
+				_, f = writeTestGGUF(t, tt.ggufKV, nil)
+			}
+			got := appendFlashAttentionArgs([]string{"base"}, LlamaServerFlashAttention(f, tt.gpus))
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("appendFlashAttentionArgs = %v, want %v", got, tt.want)
 			}
