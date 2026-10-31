@@ -851,18 +851,10 @@ func FromResponsesRequest(r ResponsesRequest, thinking ...*model.Thinking) (*api
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else { //nolint:staticcheck // SA9003: empty branch
-		// TODO(drifkin): OpenAI defaults to 1.0 here, but we don't follow that here
-		// in case the model has a different default. It would be best if we
-		// understood whether there was a model-specific default and if not, we
-		// should also default to 1.0, but that will require some additional
-		// plumbing
 	}
 
 	if r.MaxOutputTokens != nil {
@@ -1236,6 +1228,8 @@ type ResponsesIncompleteDetails struct {
 	Reason string `json:"reason"`
 }
 
+// ResponsesResponse is a Responses API response. TopP and Temperature are nil
+// (null) when the request left them to the model's defaults.
 type ResponsesResponse struct {
 	ID                 string                      `json:"id"`
 	Object             string                      `json:"object"`
@@ -1253,11 +1247,11 @@ type ResponsesResponse struct {
 	Truncation         string                      `json:"truncation"`
 	ParallelToolCalls  bool                        `json:"parallel_tool_calls"`
 	Text               ResponsesTextField          `json:"text"`
-	TopP               float64                     `json:"top_p"`
+	TopP               *float64                    `json:"top_p"`
 	PresencePenalty    float64                     `json:"presence_penalty"`
 	FrequencyPenalty   float64                     `json:"frequency_penalty"`
 	TopLogprobs        int                         `json:"top_logprobs"`
-	Temperature        float64                     `json:"temperature"`
+	Temperature        *float64                    `json:"temperature"`
 	Reasoning          *ResponsesReasoningOutput   `json:"reasoning"`
 	Usage              *ResponsesUsage             `json:"usage"`
 	MaxOutputTokens    *int                        `json:"max_output_tokens"`
@@ -1351,16 +1345,10 @@ func intValue(v *int) int {
 	return *v
 }
 
-// derefFloat64 returns the value of a float64 pointer, or a default if nil.
-func derefFloat64(p *float64, def float64) float64 {
-	if p != nil {
-		return *p
-	}
-	return def
-}
-
 // ToResponse converts an api.ChatResponse to a Responses API response.
-// The request is used to echo back request parameters in the response.
+// The request is used to echo back request parameters in the response; a
+// caller that knows the model's resolved sampling defaults sets them on the
+// request so the response reports what ran.
 func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse, request ResponsesRequest) ResponsesResponse {
 	var output []ResponsesOutputItem
 
@@ -1474,11 +1462,11 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse,
 		Truncation:         truncation,
 		ParallelToolCalls:  true, // Default value
 		Text:               text,
-		TopP:               derefFloat64(request.TopP, 1.0),
+		TopP:               request.TopP,
 		PresencePenalty:    0, // Default value
 		FrequencyPenalty:   0, // Default value
 		TopLogprobs:        0, // Default value
-		Temperature:        derefFloat64(request.Temperature, 1.0),
+		Temperature:        request.Temperature,
 		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
 			InputTokens:        chatResponse.PromptEvalCount,
@@ -1558,7 +1546,9 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 	}
 }
 
-// NewResponsesStreamConverter creates a new converter with the given configuration.
+// NewResponsesStreamConverter creates a new converter with the given
+// configuration. As with ToResponse, the request's sampling settings are
+// reported, null when left to the model's defaults.
 func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
 	return &ResponsesStreamConverter{
 		responseID: responseID,
@@ -1662,16 +1652,6 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		reasoning = r
 	}
 
-	// Build top_p and temperature with defaults
-	topP := 1.0
-	if c.request.TopP != nil {
-		topP = *c.request.TopP
-	}
-	temperature := 1.0
-	if c.request.Temperature != nil {
-		temperature = *c.request.Temperature
-	}
-
 	return map[string]any{
 		"id":                   c.responseID,
 		"object":               "response",
@@ -1689,11 +1669,11 @@ func (c *ResponsesStreamConverter) buildResponseObject(status string, output []a
 		"truncation":           truncation,
 		"parallel_tool_calls":  true,
 		"text":                 map[string]any{"format": textFormat},
-		"top_p":                topP,
+		"top_p":                c.request.TopP,
 		"presence_penalty":     0,
 		"frequency_penalty":    0,
 		"top_logprobs":         0,
-		"temperature":          temperature,
+		"temperature":          c.request.Temperature,
 		"reasoning":            reasoning,
 		"usage":                usage,
 		"max_output_tokens":    c.request.MaxOutputTokens,
