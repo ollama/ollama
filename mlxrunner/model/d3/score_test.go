@@ -1,7 +1,10 @@
 package d3
 
 import (
+	"context"
+	"errors"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -37,6 +40,17 @@ func TestScorePrompt(t *testing.T) {
 	question.Options = []string{"one", "two", "three"}
 	if _, _, err := m.scorePrompt(input, question); err == nil {
 		t.Fatal("accepted more options than the decision codebook")
+	}
+}
+
+func TestRenderScoreBudget(t *testing.T) {
+	m := &Model{config: config{Codes: []string{"A", "B"}}}
+	row := llm.ScoreRow{Question: &llm.ScoreQuestion{Instructions: "Choose one.", Options: []string{"yes", "no"}}}
+	input := llm.ScoreRequest{State: strings.Repeat("x", llm.MaxScorePromptBytes/2), Rows: []llm.ScoreRow{row, row}}
+	_, err := m.renderScore(context.Background(), input)
+	var status api.StatusError
+	if !errors.Is(err, llm.ErrScorePromptTooLarge) || !errors.As(err, &status) || status.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("renderScore() error = %v, want 413", err)
 	}
 }
 

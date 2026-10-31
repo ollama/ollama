@@ -27,14 +27,14 @@ func encodeD3(req Request, c *Compiled) error {
 		stateText = "(empty)"
 	} else {
 		var err error
-		stateText, err = pplxDescribe(state)
+		stateText, err = codeReadoutDescribe(state)
 		if err != nil {
 			return fmt.Errorf("state: %w", err)
 		}
 	}
 	c.Request = llm.ScoreRequest{State: stateText, Images: req.Images}
 	for name, question := range req.Questions.All() {
-		field, descriptions, err := pplxField(name, question)
+		field, descriptions, err := codeReadoutField(name, question)
 		if err != nil {
 			return fmt.Errorf("question %q: %w", name, err)
 		}
