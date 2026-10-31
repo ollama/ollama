@@ -299,6 +299,7 @@ console.log(response.message.content);
 - [tenere](https://github.com/pythops/tenere) - TUI for LLMs
 - [ParLlama](https://github.com/paulrobello/parllama) - TUI for Ollama
 - [llm-ollama](https://github.com/taketwo/llm-ollama) - Plugin for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/)
+- [Mercury CLI](https://github.com/Whq02/MercuryCLI) - Coding agent for the terminal that runs on local Ollama models
 - [ShellOracle](https://github.com/djcopley/ShellOracle) - Shell command suggestions
 - [LLM-X](https://github.com/mrdjohnson/llm-x) - Progressive web app for LLMs
 - [cmdh](https://github.com/pgibler/cmdh) - Natural language to shell commands
