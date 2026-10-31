@@ -720,8 +720,8 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 				messages[len(messages)-1].Thinking = msg.Reasoning
 			}
 		default:
-			// content is only optional if tool calls are present
-			if msg.ToolCalls == nil {
+			// Tool calls allow omitted content, not unsupported content types.
+			if content != nil || msg.ToolCalls == nil {
 				return nil, fmt.Errorf("invalid message content type: %T", content)
 			}
 
