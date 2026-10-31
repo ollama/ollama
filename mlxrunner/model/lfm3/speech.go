@@ -227,15 +227,17 @@ func (m *SpeechModel) forwardSpeech(caches []cache.Cache, pos int, input func() 
 	if err != nil {
 		return nil, err
 	}
-	eval := slices.Clone(out)
-	for _, c := range caches {
-		for _, a := range c.State() {
-			if a != nil {
-				eval = append(eval, a)
+	mlx.Scoped(func() {
+		eval := slices.Clone(out)
+		for _, c := range caches {
+			for _, a := range c.State() {
+				if a != nil {
+					eval = append(eval, a)
+				}
 			}
 		}
-	}
-	mlx.AsyncEval(eval...)
+		mlx.AsyncEval(eval...)
+	})
 	return out[0], nil
 }
 
