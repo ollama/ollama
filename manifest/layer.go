@@ -18,6 +18,8 @@ type Layer struct {
 	Status    string `json:"-"`
 }
 
+var ErrDigestMismatch = errors.New("digest mismatch")
+
 const (
 	MediaTypeImageTensor = "application/vnd.ollama.image.tensor"
 	MediaTypeImageJSON   = "application/vnd.ollama.image.json"
@@ -74,6 +76,75 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 		if err := os.Chmod(blob, 0o644); err != nil {
 			return Layer{}, err
 		}
+	}
+	if err := touchLayer(blob); err != nil {
+		return Layer{}, err
+	}
+
+	return Layer{
+		MediaType: mediatype,
+		Digest:    digest,
+		Size:      n,
+		Status:    fmt.Sprintf("%s %s", status, digest),
+	}, nil
+}
+
+// NewLayerWithDigest stores r only once it has confirmed the content really
+// hashes to digest. NewLayer moves the file into place as soon as it has read
+// the body, so a caller that learns the digest afterwards is left with a blob
+// it has to delete again. Here the digest is checked before the file is linked
+// into blobs/, so a rejected body never shows up in the store.
+func NewLayerWithDigest(r io.Reader, mediatype, digest string) (Layer, error) {
+	blobs, err := BlobsPath("")
+	if err != nil {
+		return Layer{}, err
+	}
+
+	blob, err := BlobsPath(digest)
+	if err != nil {
+		return Layer{}, err
+	}
+
+	temp, err := os.CreateTemp(blobs, "sha256-")
+	if err != nil {
+		return Layer{}, err
+	}
+	defer temp.Close()
+	defer os.Remove(temp.Name())
+
+	sha256sum := sha256.New()
+	n, err := io.Copy(io.MultiWriter(temp, sha256sum), r)
+	if err != nil {
+		return Layer{}, err
+	}
+
+	sum := sha256sum.Sum(nil)
+	if got := fmt.Sprintf("sha256:%x", sum); got != digest {
+		return Layer{}, fmt.Errorf("%w, expected %q, got %q", ErrDigestMismatch, digest, got)
+	}
+
+	if err := temp.Close(); err != nil {
+		return Layer{}, err
+	}
+
+	status := "using existing layer"
+	_, err = os.Lstat(blob)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		status = "creating new layer"
+		// link rather than rename: if another upload of the same blob got there
+		// first this fails with EEXIST instead of replacing its file
+		if err := os.Link(temp.Name(), blob); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return Layer{}, err
+			}
+			status = "using existing layer"
+		}
+		if err := os.Chmod(blob, 0o644); err != nil {
+			return Layer{}, err
+		}
+	case err != nil:
+		return Layer{}, err
 	}
 	if err := touchLayer(blob); err != nil {
 		return Layer{}, err

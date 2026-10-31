@@ -2247,14 +2247,13 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	layer, err := manifest.NewLayer(c.Request.Body, "")
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	_, err = manifest.NewLayerWithDigest(c.Request.Body, "", c.Param("digest"))
+	switch {
+	case errors.Is(err, manifest.ErrDigestMismatch):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-
-	if layer.Digest != c.Param("digest") {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("digest mismatch, expected %q, got %q", c.Param("digest"), layer.Digest)})
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
