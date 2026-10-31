@@ -306,6 +306,7 @@ Supported integrations:
   cline           Cline
   qwen            Qwen Code
   vscode          VS Code (aliases: code)
+  wirken          Wirken
 
 Examples:
   ollama launch

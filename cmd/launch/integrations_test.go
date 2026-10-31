@@ -72,6 +72,7 @@ func TestIntegrationLookup(t *testing.T) {
 		{"opencode", "opencode", true, "OpenCode"},
 		{"omp", "omp", true, "Oh My Pi"},
 		{"pool", "pool", true, "Poolside"},
+		{"wirken", "wirken", true, "Wirken"},
 		{"unknown integration", "unknown", false, ""},
 		{"empty string", "", false, ""},
 	}
@@ -90,7 +91,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "muse", "droid", "dsh", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen"}
+	expectedIntegrations := []string{"claude", "claude-desktop", "cline", "codex", "chatgpt", "kimi", "muse", "droid", "dsh", "opencode", "omp", "hermes", "hermes-desktop", "pool", "qwen", "wirken"}
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
 			r, ok := integrations[name]
@@ -1842,6 +1843,11 @@ func TestIntegration_InstallHint(t *testing.T) {
 			wantURL: "https://qwen.ai/qwencode",
 		},
 		{
+			name:    "wirken has hint",
+			input:   "wirken",
+			wantURL: "https://github.com/gebruder/wirken#install",
+		},
+		{
 			name:      "empty name has no hint",
 			input:     "",
 			wantEmpty: true,
@@ -2122,6 +2128,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 		{"codex", false},
 		{"opencode", true},
 		{"omp", false},
+		{"wirken", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
