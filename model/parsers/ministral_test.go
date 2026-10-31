@@ -1,12 +1,92 @@
 package parsers
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
+
+func TestMinistralParserMarkerOrder(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		content  string
+		thinking string
+		calls    []api.ToolCall
+	}{
+		{
+			name:     "thinking before tool call",
+			input:    `Before [THINK]Reason[/THINK]After [TOOL_CALLS]get_weather[ARGS]{"location":"Paris"}`,
+			content:  "BeforeAfter",
+			thinking: "Reason",
+			calls: []api.ToolCall{{Function: api.ToolCallFunction{
+				Name: "get_weather", Arguments: args(`{"location":"Paris"}`),
+			}}},
+		},
+		{
+			name:     "tool marker inside thinking",
+			input:    `[THINK]Mention [TOOL_CALLS] here[/THINK][TOOL_CALLS]get_weather[ARGS]{"location":"Paris"}`,
+			thinking: "Mention [TOOL_CALLS] here",
+			calls: []api.ToolCall{{Function: api.ToolCallFunction{
+				Name: "get_weather", Arguments: args(`{"location":"Paris"}`),
+			}}},
+		},
+		{
+			name:     "tool call before thinking",
+			input:    `[TOOL_CALLS]get_weather[ARGS]{"location":"Paris"}[THINK]Reason[/THINK]After`,
+			content:  "After",
+			thinking: "Reason",
+			calls: []api.ToolCall{{Function: api.ToolCallFunction{
+				Name: "get_weather", Arguments: args(`{"location":"Paris"}`),
+			}}},
+		},
+		{
+			name:  "thinking marker inside tool arguments",
+			input: `[TOOL_CALLS]get_weather[ARGS]{"location":"[THINK]"}`,
+			calls: []api.ToolCall{{Function: api.ToolCallFunction{
+				Name: "get_weather", Arguments: args(`{"location":"[THINK]"}`),
+			}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := func(t *testing.T, chunks []string) {
+				t.Helper()
+				parser := ParserForName("ministral")
+				parser.Init([]api.Tool{{Function: api.ToolFunction{Name: "get_weather"}}}, nil, nil)
+				var content, thinking string
+				var calls []api.ToolCall
+				for i, chunk := range chunks {
+					c, th, tc, err := parser.Add(chunk, i == len(chunks)-1)
+					if err != nil {
+						t.Fatalf("Add(%q): %v", chunk, err)
+					}
+					content += c
+					thinking += th
+					calls = append(calls, tc...)
+				}
+				if content != tt.content || thinking != tt.thinking {
+					t.Errorf("content = %q, thinking = %q; want %q, %q", content, thinking, tt.content, tt.thinking)
+				}
+				if diff := cmp.Diff(tt.calls, calls, argsComparer); diff != "" {
+					t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+				}
+			}
+			t.Run("whole", func(t *testing.T) { check(t, []string{tt.input}) })
+			for split := range len(tt.input) + 1 {
+				t.Run(fmt.Sprintf("split_%d", split), func(t *testing.T) {
+					check(t, []string{tt.input[:split], tt.input[split:]})
+				})
+			}
+			t.Run("character_chunks", func(t *testing.T) { check(t, strings.Split(tt.input, "")) })
+		})
+	}
+}
 
 func TestMinistralParserStreaming(t *testing.T) {
 	type step struct {
