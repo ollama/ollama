@@ -3343,3 +3343,42 @@ func TestFromResponsesRequestAcceptsEncryptedContentPart(t *testing.T) {
 		t.Fatalf("messages = %#v", chat.Messages)
 	}
 }
+
+func TestResponsesReportRequestedSampling(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name              string
+		temperature, topP *float64
+		want              map[string]any
+	}{
+		// The model's defaults applied; the response must not claim others.
+		{"omitted", nil, nil, map[string]any{"temperature": nil, "top_p": nil}},
+		{"explicit", value(0.3), value(0.7), map[string]any{"temperature": 0.3, "top_p": 0.7}},
+		{"explicit zero", value(0), value(0), map[string]any{"temperature": 0.0, "top_p": 0.0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := ResponsesRequest{Model: "m", Temperature: tt.temperature, TopP: tt.topP}
+			chat := api.ChatResponse{Message: api.Message{Content: "hi"}, Done: true}
+			created := NewResponsesStreamConverter("resp_1", "item_1", "m", request).Process(chat)[0]
+			for builder, response := range map[string]any{
+				"ToResponse": ToResponse("m", "resp_1", "item_1", chat, request),
+				"stream":     created.Data.(map[string]any)["response"],
+			} {
+				data, err := json.Marshal(response)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var fields map[string]any
+				if err := json.Unmarshal(data, &fields); err != nil {
+					t.Fatal(err)
+				}
+				for key, want := range tt.want {
+					if got, ok := fields[key]; !ok || got != want {
+						t.Errorf("%s %s = %v (present %v), want %v", builder, key, got, ok, want)
+					}
+				}
+			}
+		})
+	}
+}
