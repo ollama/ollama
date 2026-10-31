@@ -1,10 +1,12 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFunctionGemmaRenderer(t *testing.T) {
@@ -509,6 +511,74 @@ func TestFunctionGemmaRenderer(t *testing.T) {
 			result, err := renderer.Render(tt.messages, tt.tools, nil)
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestFunctionGemmaRendererToolResultOrder verifies a tool result is attributed to
+// the tool call named by its tool_call_id, not to whichever call happens to sit at
+// the same position.
+//
+// The OpenAI-compatible API does not require the tool messages that follow a
+// multi-call assistant turn to mirror the call order, so pairing by position
+// silently swaps the payloads. Callers that send no tool_call_id (the /api/chat
+// shape) keep the positional behaviour, which the first case pins down.
+func TestFunctionGemmaRendererToolResultOrder(t *testing.T) {
+	calls := []api.ToolCall{
+		{ID: "call_tokyo", Function: api.ToolCallFunction{Name: "get_tokyo", Arguments: testArgs(map[string]any{"city": "Tokyo"})}},
+		{ID: "call_toronto", Function: api.ToolCallFunction{Name: "get_toronto", Arguments: testArgs(map[string]any{"city": "Toronto"})}},
+	}
+
+	tests := []struct {
+		name     string
+		toolMsgs []api.Message
+		want     []string
+	}{
+		{
+			name: "reversed_results_match_their_call_id",
+			toolMsgs: []api.Message{
+				{Role: "tool", ToolName: "get_toronto", ToolCallID: "call_toronto", Content: "sunny"},
+				{Role: "tool", ToolName: "get_tokyo", ToolCallID: "call_tokyo", Content: "snow"},
+			},
+			want: []string{"response:get_toronto", "response:get_tokyo"},
+		},
+		{
+			name: "in_order_results_match_their_call_id",
+			toolMsgs: []api.Message{
+				{Role: "tool", ToolName: "get_tokyo", ToolCallID: "call_tokyo", Content: "snow"},
+				{Role: "tool", ToolName: "get_toronto", ToolCallID: "call_toronto", Content: "sunny"},
+			},
+			want: []string{"response:get_tokyo", "response:get_toronto"},
+		},
+		{
+			name: "results_without_call_ids_stay_positional",
+			toolMsgs: []api.Message{
+				{Role: "tool", Content: "snow"},
+				{Role: "tool", Content: "sunny"},
+			},
+			want: []string{"response:get_tokyo", "response:get_toronto"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages := []api.Message{
+				{Role: "user", Content: "weather?"},
+				{Role: "assistant", ToolCalls: calls},
+			}
+			messages = append(messages, tt.toolMsgs...)
+
+			got, err := (&FunctionGemmaRenderer{}).Render(messages, nil, nil)
+			require.NoError(t, err)
+
+			// Every response must still be rendered, and in the order supplied.
+			assert.Equal(t, len(tt.want), strings.Count(got, "<start_function_response>"))
+			prev := -1
+			for _, want := range tt.want {
+				idx := strings.Index(got, want)
+				require.Greater(t, idx, prev, "response %q missing or out of order in:\n%s", want, got)
+				prev = idx
+			}
 		})
 	}
 }
