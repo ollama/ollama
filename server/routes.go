@@ -3204,6 +3204,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
+	caps = append(caps, messageMediaCapabilities(req.Messages)...)
 
 	requestedThink := req.Think
 	think := renderers.ResolveThinking(requestedThink, thinking)
@@ -3657,6 +3658,25 @@ func chatMessagesForRequest(m *Model, requestMessages []api.Message) []api.Messa
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 	return filterThinkTags(msgs, m)
+}
+
+// messageMediaCapabilities returns the encoder capabilities required by the
+// media in msgs. Images can carry either images or audio, so each blob is
+// detected separately and each capability is included only once.
+func messageMediaCapabilities(msgs []api.Message) []model.Capability {
+	var caps []model.Capability
+	for _, msg := range msgs {
+		for _, data := range msg.Images {
+			capability := model.CapabilityVision
+			if llm.DetectMediaKind(data) == llm.MediaKindAudio {
+				capability = model.CapabilityAudio
+			}
+			if !slices.Contains(caps, capability) {
+				caps = append(caps, capability)
+			}
+		}
+	}
+	return caps
 }
 
 func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
