@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -292,4 +293,15 @@ type CompletionResponse struct {
 
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
+}
+
+// ValidateEmbedding checks that an embedding does not contain NaN or Inf values,
+// which would cause json.Marshal to fail with "unsupported value".
+func ValidateEmbedding(embedding []float32) error {
+	for _, v := range embedding {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return errors.New("model produced invalid embedding values (NaN or Inf)")
+		}
+	}
+	return nil
 }
