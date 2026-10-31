@@ -117,7 +117,7 @@ func TestClassifyErrors(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name:      "invalid quantize type",
+			name:      "int3 is import-only",
 			tensors:   map[string]string{"model.layers.0.weight": "BF16"},
 			requested: "int3",
 			wantErr:   "unsupported quantize type",

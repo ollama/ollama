@@ -503,3 +503,101 @@ func TestWriteBlobsBlockFP8Decode(t *testing.T) {
 		t.Error("fp8 scale companion leaked as its own blob")
 	}
 }
+
+func TestWriteBlobsPrequantizedBoltExperts(t *testing.T) {
+	for _, tc := range []struct {
+		name, weight, scale, global, bias, dtype, scaleDtype, quant, config string
+		cols                                                                int32
+	}{
+		{"modelopt", ".weight", ".weight_scale", ".weight_scale_2", "", "U8", "F8_E4M3", "nvfp4", `{"llm_config":{"model_type":"nemotron_h_puzzle"}}`, 8},
+		{"compressed-tensors", ".weight_packed", ".weight_scale", ".weight_global_scale", "", "U8", "F8_E4M3", "nvfp4", `{"llm_config":{"model_type":"nemotron_h_puzzle"}}`, 8},
+		{"affine3", ".weight", ".scales", "", ".biases", "U32", "BF16", "int3", `{"llm_config":{"model_type":"nemotron_h_puzzle"},"quantization":{"mode":"affine","bits":3,"group_size":32}}`, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfigJSON(t, dir, tc.config)
+			var tensors []*st.TensorData
+			var weightBytes, scaleBytes, biasBytes, floatBytes, globalBytes []byte
+			for i := range 12 {
+				prefix := fmt.Sprintf("model.layers.0.mlp.experts.%d", i)
+				weightSize := 16 * int(tc.cols)
+				if tc.dtype == "U32" {
+					weightSize *= 4
+				}
+				weight := bytes.Repeat([]byte{byte(i)}, weightSize)
+				scale := bytes.Repeat([]byte{byte(i + 1)}, 16)
+				if tc.scaleDtype == "BF16" {
+					scale = bytes.Repeat([]byte{byte(i + 1), 0x3f}, 16)
+				}
+				floats := bytes.Repeat([]byte{byte(i), 0x3f}, 16*16)
+				tensors = append(tensors,
+					st.NewTensorDataFromBytes(prefix+".up_proj"+tc.weight, tc.dtype, []int32{16, tc.cols}, weight),
+					st.NewTensorDataFromBytes(prefix+".up_proj"+tc.scale, tc.scaleDtype, []int32{16, 1}, scale),
+					st.NewTensorDataFromBytes(prefix+".down_proj.weight", "BF16", []int32{16, 16}, floats))
+				if tc.global != "" {
+					value := float32(i + 4)
+					tensors = append(tensors, st.NewTensorDataFromBytes(prefix+".up_proj"+tc.global, "F32", nil, f32le(value)))
+					if tc.global == ".weight_global_scale" {
+						value = 1 / value
+					}
+					globalBytes = append(globalBytes, f32le(value)...)
+				}
+				if tc.bias != "" {
+					bias := bytes.Repeat([]byte{byte(i), 0xbf}, 16)
+					tensors = append(tensors, st.NewTensorDataFromBytes(prefix+".up_proj"+tc.bias, "BF16", []int32{16, 1}, bias))
+					biasBytes = append(biasBytes, bias...)
+				}
+				weightBytes = append(weightBytes, weight...)
+				scaleBytes = append(scaleBytes, scale...)
+				floatBytes = append(floatBytes, floats...)
+			}
+			createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), tensors)
+			inv, err := ReadInventory(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			specs, err := Plan(inv, Classification{Kind: SourcePrequantized}, defaultQuantPolicy{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := newCaptureStore()
+			if _, err := WriteBlobs(context.Background(), specs, dir, store); err != nil {
+				t.Fatal(err)
+			}
+			up, down := "model.layers.0.mlp.experts.up_proj.weight", "model.layers.0.mlp.experts.down_proj.weight"
+			if got := store.names(); !slices.Equal(got, []string{down, up}) {
+				t.Fatalf("blobs = %v, want two projection banks", got)
+			}
+			blob := store.blobs[up]
+			packedCols := tc.cols
+			if tc.dtype == "U8" {
+				packedCols /= 4
+			}
+			if got := blobHeader(t, blob)[up]; got.Dtype != "U32" || !slices.Equal(got.Shape, []int32{12, 16, packedCols}) {
+				t.Errorf("weight header = %+v, want U32 [12 16 %d]", got, packedCols)
+			}
+			if got := blobMetadata(t, blob)["quant_type"]; got != tc.quant {
+				t.Errorf("quant_type = %s, want %s", got, tc.quant)
+			}
+			for suffix, want := range map[string][]byte{"": weightBytes, ".scale": scaleBytes} {
+				if got := readPackedTensorRaw(t, blob, up+suffix); !bytes.Equal(got, want) {
+					t.Errorf("%s bytes differ from expert-index order", up+suffix)
+				}
+			}
+			if tc.bias != "" && !bytes.Equal(readPackedTensorRaw(t, blob, up+".bias"), biasBytes) {
+				t.Error("bias bank bytes differ")
+			}
+			if tc.global != "" {
+				if got := blobHeader(t, blob)[up+".global_scale"]; got.Dtype != "F32" || !slices.Equal(got.Shape, []int32{12}) {
+					t.Errorf("global scale header = %+v, want F32 [12]", got)
+				}
+				if got := readPackedTensorRaw(t, blob, up+".global_scale"); !bytes.Equal(got, globalBytes) {
+					t.Errorf("global scale bank = %v", got)
+				}
+			}
+			if len(blobMetadata(t, store.blobs[down])) != 0 || !bytes.Equal(readPackedTensorRaw(t, store.blobs[down], down), floatBytes) {
+				t.Error("protected float projection was changed or received quantization metadata")
+			}
+		})
+	}
+}

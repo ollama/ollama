@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -511,84 +512,113 @@ func TestGetTensorInfoFromManifest(t *testing.T) {
 }
 
 func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
-	// Create a temp directory for blobs and set OLLAMA_MODELS
-	tempDir := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", tempDir)
+	for _, tc := range []struct {
+		name, quant string
+		columns     int64
+		wantErr     bool
+	}{
+		{"int3", "int3", 24, false},
+		{"int4", "int4", 32, false},
+		{"int8", "int8", 64, false},
+		{"fractional width", "int3", 23, true},
+		{"overflow", "int3", math.MaxInt64, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a temp directory for blobs and set OLLAMA_MODELS
+			tempDir := t.TempDir()
+			t.Setenv("OLLAMA_MODELS", tempDir)
 
-	blobDir := filepath.Join(tempDir, "blobs")
-	if err := os.MkdirAll(blobDir, 0o755); err != nil {
-		t.Fatalf("failed to create blobs dir: %v", err)
-	}
+			blobDir := filepath.Join(tempDir, "blobs")
+			if err := os.MkdirAll(blobDir, 0o755); err != nil {
+				t.Fatalf("failed to create blobs dir: %v", err)
+			}
 
-	// Create a combined quantized blob with __metadata__
-	header := map[string]any{
-		"__metadata__": map[string]string{
-			"quant_type": "int4",
-			"group_size": "32",
-		},
-		"model.layers.0.mlp.up_proj.weight": map[string]any{
-			"dtype":        "U32",
-			"shape":        []int64{2560, 320}, // packed: 2560 / 8 = 320
-			"data_offsets": []int64{0, 3276800},
-		},
-		"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
-			"dtype":        "BF16",
-			"shape":        []int64{2560, 80}, // 2560 / 32 = 80
-			"data_offsets": []int64{3276800, 3686400},
-		},
-		"model.layers.0.mlp.up_proj.weight.bias": map[string]any{
-			"dtype":        "BF16",
-			"shape":        []int64{2560, 80},
-			"data_offsets": []int64{3686400, 4096000},
-		},
-	}
-	headerJSON, _ := json.Marshal(header)
+			weightBytes := int64(0)
+			if !tc.wantErr {
+				weightBytes = 64 * tc.columns * 4
+			}
+			scaleBytes := int64(64 * 8 * 2)
 
-	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON)))
-	buf.Write(headerJSON)
+			// Create a combined quantized blob with __metadata__
+			header := map[string]any{
+				"__metadata__": map[string]string{
+					"quant_type": tc.quant,
+					"group_size": "32",
+				},
+				"model.layers.0.mlp.up_proj.weight": map[string]any{
+					"dtype":        "U32",
+					"shape":        []int64{64, tc.columns},
+					"data_offsets": []int64{0, weightBytes},
+				},
+				"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
+					"dtype":        "BF16",
+					"shape":        []int64{64, 8},
+					"data_offsets": []int64{weightBytes, weightBytes + scaleBytes},
+				},
+				"model.layers.0.mlp.up_proj.weight.bias": map[string]any{
+					"dtype":        "BF16",
+					"shape":        []int64{64, 8},
+					"data_offsets": []int64{weightBytes + scaleBytes, weightBytes + 2*scaleBytes},
+				},
+			}
+			headerJSON, _ := json.Marshal(header)
 
-	digest := "sha256:aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb"
-	blobPath, err := manifest.BlobsPath(digest)
-	if err != nil {
-		t.Fatalf("failed to get blob path: %v", err)
-	}
-	if err := os.WriteFile(blobPath, buf.Bytes(), 0o644); err != nil {
-		t.Fatalf("failed to write blob: %v", err)
-	}
+			var buf bytes.Buffer
+			binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON)))
+			buf.Write(headerJSON)
+			buf.Write(make([]byte, weightBytes+2*scaleBytes))
 
-	mf := &manifest.Manifest{
-		SchemaVersion: 2,
-		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
-		Layers: []manifest.Layer{
-			{
-				MediaType: manifest.MediaTypeImageTensor,
-				Digest:    digest,
-				Size:      int64(buf.Len() + 4096000),
-				Name:      "model.layers.0.mlp.up_proj.weight",
-			},
-		},
-	}
+			digest := "sha256:aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb11aabb"
+			blobPath, err := manifest.BlobsPath(digest)
+			if err != nil {
+				t.Fatalf("failed to get blob path: %v", err)
+			}
+			if err := os.WriteFile(blobPath, buf.Bytes(), 0o644); err != nil {
+				t.Fatalf("failed to write blob: %v", err)
+			}
 
-	result, err := getTensorInfoFromManifest(mf)
-	if err != nil {
-		t.Fatalf("getTensorInfoFromManifest() error = %v", err)
-	}
+			mf := &manifest.Manifest{
+				SchemaVersion: 2,
+				MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+				Layers: []manifest.Layer{
+					{
+						MediaType: manifest.MediaTypeImageTensor,
+						Digest:    digest,
+						Size:      int64(buf.Len()),
+						Name:      "model.layers.0.mlp.up_proj.weight",
+					},
+				},
+			}
 
-	if len(result) != 1 {
-		t.Fatalf("got %d tensors, want 1", len(result))
-	}
+			result, err := getTensorInfoFromManifest(mf)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("getTensorInfoFromManifest() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
 
-	tensor := result[0]
-	if tensor.Name != "model.layers.0.mlp.up_proj.weight" {
-		t.Errorf("Name = %v, want model.layers.0.mlp.up_proj.weight", tensor.Name)
-	}
-	if tensor.Type != "int4" {
-		t.Errorf("Type = %v, want int4", tensor.Type)
-	}
-	// Shape should be unpacked: 320 * 8 = 2560
-	if len(tensor.Shape) != 2 || tensor.Shape[0] != 2560 || tensor.Shape[1] != 2560 {
-		t.Errorf("Shape = %v, want [2560, 2560]", tensor.Shape)
+			if len(result) != 1 {
+				t.Fatalf("got %d tensors, want 1", len(result))
+			}
+
+			tensor := result[0]
+			if tensor.Name != "model.layers.0.mlp.up_proj.weight" {
+				t.Errorf("Name = %v, want model.layers.0.mlp.up_proj.weight", tensor.Name)
+			}
+			if tensor.Type != tc.quant {
+				t.Errorf("Type = %v, want %s", tensor.Type, tc.quant)
+			}
+			// Every valid case represents the same logical weight.
+			if len(tensor.Shape) != 2 || tensor.Shape[0] != 64 || tensor.Shape[1] != 256 {
+				t.Errorf("Shape = %v, want [64, 256]", tensor.Shape)
+			}
+
+			count, err := getParameterCountFromManifest(mf)
+			if err != nil || count != 64*256 {
+				t.Fatalf("parameter count = %d, error = %v; want %d", count, err, 64*256)
+			}
+		})
 	}
 }
 

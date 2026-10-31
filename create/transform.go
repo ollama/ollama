@@ -53,6 +53,20 @@ func applyByteTransform(ts TensorSpec, sources []*safetensors.TensorData) (*safe
 		return invertFloat32TensorData(sources[0], ts.Name)
 
 	case TransformStackExperts:
+		if ts.SourceTransform != TransformNone {
+			transformed := make([]*safetensors.TensorData, len(sources))
+			for i, source := range sources {
+				var err error
+				transformed[i], err = applyByteTransform(TensorSpec{
+					Name: source.Name, Transform: ts.SourceTransform,
+					OutDtype: ts.OutDtype, OutShape: ts.OutShape[1:],
+				}, []*safetensors.TensorData{source})
+				if err != nil {
+					return nil, fmt.Errorf("expert %d: %w", i, err)
+				}
+			}
+			sources = transformed
+		}
 		return stackExpertTensors(ts.Name, ts.OutDtype, ts.OutShape, sources)
 
 	default:
