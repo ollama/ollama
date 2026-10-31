@@ -34,6 +34,11 @@ import { PlusIcon } from "@heroicons/react/24/outline";
 
 export type ThinkingLevel = "low" | "medium" | "high";
 
+// Stable placeholder so attachments without data don't produce a new
+// Uint8Array on every render, which would retrigger ImageThumbnail's
+// blob URL effect each time.
+const EMPTY_BYTES = new Uint8Array(0);
+
 interface FileAttachment {
   filename: string;
   data: Uint8Array;
@@ -754,7 +759,7 @@ function ChatForm({
                   <ImageThumbnail
                     image={{
                       filename: attachment.filename,
-                      data: attachment.data || new Uint8Array(0),
+                      data: attachment.data || EMPTY_BYTES,
                     }}
                     className="w-8 h-8 object-cover rounded-md flex-shrink-0"
                   />
