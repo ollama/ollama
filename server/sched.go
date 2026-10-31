@@ -78,9 +78,26 @@ type Scheduler struct {
 
 	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *gguf.Model, adapters []string, projectors []string, opts api.Options, numParallel int, config llm.LlamaServerConfig) (llm.LlamaServer, error)
+	newMLXServerFn  func(modelName string, numCtx int) (mlxServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
 	waitForRecovery time.Duration
+}
+
+// mlxServer is an MLX runner client. It predicts its memory from the
+// manifest before the subprocess exists, which is when the scheduler has to
+// decide whether to evict.
+type mlxServer interface {
+	llm.LlamaServer
+	Predicted() mlxrunner.MemoryEstimate
+}
+
+func newMLXServer(modelName string, numCtx int) (mlxServer, error) {
+	client, err := mlxrunner.NewClient(modelName, numCtx)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 // loadedModelsForName returns models still owned by loaded runners. The models
@@ -131,6 +148,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		unloadedCh:      make(chan any, maxQueue),
 		loaded:          make(map[string]*runnerRef),
 		newServerFn:     llm.NewLlamaServer,
+		newMLXServerFn:  newMLXServer,
 		getGpuFn:        discover.GPUDevices,
 		getSystemInfoFn: discover.GetSystemInfo,
 		waitForRecovery: 5 * time.Second,
@@ -629,8 +647,19 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				}
 			}
 		} else {
-			modelName := req.model.ShortName
-			llama, err = mlxrunner.NewClient(modelName, req.opts.NumCtx)
+			var mlx mlxServer
+			mlx, err = s.newMLXServerFn(req.model.ShortName, req.opts.NumCtx)
+			if err == nil {
+				// Pre-flight check: the runner reports only what it holds, which
+				// at load time is the weights, so without a prediction the cache
+				// grows into memory the ledger has given to other models. Nothing
+				// has been spawned yet, so evicting here closes nothing.
+				if requireFull && len(s.loaded) > 0 && len(gpus) > 0 && !s.mlxFits(mlx.Predicted(), systemInfo, gpus) {
+					s.loadedMu.Unlock()
+					return true
+				}
+				llama = mlx
+			}
 		}
 		if err != nil {
 			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
@@ -842,6 +871,42 @@ func explicitPartialGPUOffload(opts api.Options, f *gguf.Model) bool {
 	}
 
 	return uint64(opts.NumGPU) < f.KV().BlockCount()+1
+}
+
+// mlxFits reports whether an MLX runner predicted to reach estimate fits
+// beside the loaded models, with the same 80% headroom llama-server loads
+// keep. MLX uses the first GPU only.
+func (s *Scheduler) mlxFits(estimate mlxrunner.MemoryEstimate, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo) bool {
+	freeMemory, gpuFreeMemory, systemLimited := availableMemoryForLoad(systemInfo, gpus[:1])
+	predicted := estimate.Total()
+
+	if predicted > freeMemory*80/100 {
+		slog.Info("mlx model predicted to exceed available memory, evicting",
+			"predicted", format.HumanBytes2(predicted),
+			"predicted_num_ctx", estimate.NumCtx,
+			"weights", format.HumanBytes2(estimate.Weights),
+			"kv_cache", format.HumanBytes2(estimate.KVCache),
+			"recurrent", format.HumanBytes2(estimate.Recurrent),
+			"prefix_cache", format.HumanBytes2(estimate.PrefixCache),
+			"available", format.HumanBytes2(freeMemory),
+			"gpu_free", format.HumanBytes2(gpuFreeMemory),
+			"system_free", format.HumanBytes2(systemInfo.FreeMemory),
+			"system_limited", systemLimited)
+		return false
+	}
+
+	slog.Info("mlx model fits alongside existing models",
+		"predicted", format.HumanBytes2(predicted),
+		"predicted_num_ctx", estimate.NumCtx,
+		"weights", format.HumanBytes2(estimate.Weights),
+		"kv_cache", format.HumanBytes2(estimate.KVCache),
+		"recurrent", format.HumanBytes2(estimate.Recurrent),
+		"prefix_cache", format.HumanBytes2(estimate.PrefixCache),
+		"available", format.HumanBytes2(freeMemory),
+		"gpu_free", format.HumanBytes2(gpuFreeMemory),
+		"system_free", format.HumanBytes2(systemInfo.FreeMemory),
+		"system_limited", systemLimited)
+	return true
 }
 
 func effectiveLlamaServerContext(numCtx int, f *gguf.Model, numParallel int) int {
