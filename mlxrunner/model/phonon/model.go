@@ -243,7 +243,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
-	caches := make([]cache.Attention, len(m.Flow.Layers))
+	caches := make([]attentionCache, len(m.Flow.Layers))
 	for i := range caches {
 		caches[i] = cache.NewKVCache()
 		defer caches[i].Free()
@@ -270,7 +270,7 @@ func (m *Model) prefillVoice(prompt *mlx.Array) *Voice {
 // Speech models load through model.Model but never run the text pipeline.
 func (m *Model) NewCaches() []cache.Cache { return nil }
 
-func (m *Model) Forward(*batch.Batch, []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *Model) Forward(*batch.Batch, []cache.Layer) (*mlx.Array, *mlx.Array) {
 	panic("phonon: text forward is not supported")
 }
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array { return x }
@@ -334,7 +334,7 @@ func (m *Model) speak(ctx context.Context, text string, voice *Voice, rng *rand.
 	tokens := m.tok.encode(text)
 	maxFrames := int(math.Ceil((float64(len(tokens))/3 + 2) * m.cfg.Mimi.FrameRate))
 
-	caches := make([]cache.Attention, len(m.Flow.Layers))
+	caches := make([]attentionCache, len(m.Flow.Layers))
 	for i := range caches {
 		caches[i] = cache.NewKVCache()
 		defer caches[i].Free()

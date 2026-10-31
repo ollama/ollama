@@ -44,7 +44,7 @@ func TestDecodePreservesPanic(t *testing.T) {
 
 type panicForwardModel struct{ textOnlyModel }
 
-func (panicForwardModel) Forward(_ *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (panicForwardModel) Forward(_ *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	caches[0].(*fakeRewindableCache).feed([]int32{1, 2, 3})
 	panic("forward failed")
 }

@@ -37,7 +37,7 @@ func (m *scoringTestModel) NewCaches() []cache.Cache {
 	return m.caches
 }
 
-func (m *scoringTestModel) Forward(b *batch.Batch, caches []cache.Cache) (*mlx.Array, *mlx.Array) {
+func (m *scoringTestModel) Forward(b *batch.Batch, caches []cache.Layer) (*mlx.Array, *mlx.Array) {
 	n, offset := b.InputIDs.Dim(1), int(b.SeqOffsets[0])
 	m.positions = append(m.positions, offset)
 	m.lengths = append(m.lengths, n)

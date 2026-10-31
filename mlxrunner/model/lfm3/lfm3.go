@@ -318,7 +318,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	return nil
 }
 
-func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) Forward(b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	h := m.EmbedTokens.Forward(b.InputIDs)
 	return m.forwardHidden(h, b, caches)
 }
@@ -327,11 +327,11 @@ func (m *Model) Forward(b *batch.Batch, caches []cache.Cache) (hidden, auxHidden
 // evaluated layer by layer; shorter rows skip the per-layer round trips.
 const uncachedLayerEvalTokens = 4096
 
-func (m *Model) forwardHidden(h *mlx.Array, b *batch.Batch, caches []cache.Cache) (hidden, auxHidden *mlx.Array) {
+func (m *Model) forwardHidden(h *mlx.Array, b *batch.Batch, caches []cache.Layer) (hidden, auxHidden *mlx.Array) {
 	B, L := int32(b.InputIDs.Dim(0)), int32(b.InputIDs.Dim(1))
 	positions := mlx.FromValues(b.SeqOffsets, len(b.SeqOffsets))
 	for i, layer := range m.Layers {
-		var c cache.Cache
+		var c cache.Layer
 		if i < len(caches) {
 			c = caches[i]
 		}
@@ -378,7 +378,7 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, cfg *Config) *mlx.Array {
 	normed := l.OperatorNorm.Forward(x, cfg.NormEps)
 	var op *mlx.Array
 	if l.Conv != nil {
@@ -397,7 +397,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *
 	return mlx.Add(h, ffn)
 }
 
-func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positions *mlx.Array, B, L int32, sliding bool, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, positions *mlx.Array, B, L int32, sliding bool, cfg *Config) *mlx.Array {
 	q := mlx.Transpose(mlx.Reshape(a.QProj.Forward(x), B, L, cfg.NumAttentionHeads, cfg.HeadDim), 0, 2, 1, 3)
 	k := mlx.Transpose(mlx.Reshape(a.KProj.Forward(x), B, L, cfg.NumKeyValueHeads, cfg.HeadDim), 0, 2, 1, 3)
 	v := mlx.Transpose(mlx.Reshape(a.VProj.Forward(x), B, L, cfg.NumKeyValueHeads, cfg.HeadDim), 0, 2, 1, 3)
@@ -435,7 +435,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, positio
 	return a.OProj.Forward(out)
 }
 
-func (s *ShortConv) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (s *ShortConv) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, B, L int32, cfg *Config) *mlx.Array {
 	projection := s.InProj.Forward(x)
 	D := cfg.HiddenSize
 	bInput := mlx.SliceStartStop(projection, []int32{0, 0, 0}, []int32{B, L, D})

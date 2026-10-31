@@ -111,7 +111,7 @@ type mimiState struct {
 	scope     *mlx.Scope
 	conv      map[*Conv]*mlx.Array
 	transpose map[*ConvTr]*mlx.Array
-	attention []cache.Attention
+	attention []attentionCache
 	pos       int
 }
 

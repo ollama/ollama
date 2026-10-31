@@ -257,7 +257,7 @@ func TestDecodeGrammarTransitions(t *testing.T) {
 		caches, _ := newMTPTestCaches(2)
 		draft.draftCaches = caches[1:]
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		req := Request{
 			Tokens:            []int32{1},
 			CompletionRequest: CompletionRequest{Options: api.Options{NumPredict: 20}},
@@ -268,7 +268,7 @@ func TestDecodeGrammarTransitions(t *testing.T) {
 			t.Fatalf("want a drafting speculationSession, got %+v", spec)
 		}
 		pinDraftLimit(spec, 0)
-		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, g).(*speculativeDecoder)
+		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, g)
 
 		check := func(want []int32) {
 			t.Helper()
@@ -315,7 +315,7 @@ func TestRunMTPDecodeGrammar(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
 		req := Request{
@@ -356,7 +356,7 @@ func TestRunMTPDecodeGrammarRejectsInvalidDraft(t *testing.T) {
 		draft := &fakeMTPDraft{predict: predict}
 		caches, _ := newMTPTestCaches(1)
 		r.cache.caches = caches
-		r.spec = newSpeculation(r, draft, caches[:1], caches[1:])
+		r.spec = newSpeculation(r, pipelineSlot, draft, caches[:1], caches[1:])
 		session, ch := newMTPTestSession(caches)
 
 		req := Request{
