@@ -1,6 +1,7 @@
 package mlxrunner
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -117,18 +118,29 @@ func (m *requestMedia) extendChunk(pos, n int) int {
 
 // batchMedia returns the manifest for chunk [pos, pos+n), encoding and
 // holding each item's features on first overlap; nothing evaluates here —
-// the consuming forward pulls the encoder.
-func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
+// the consuming forward pulls the encoder. It fails only when an item's
+// Pixels producer does.
+func (m *requestMedia) batchMedia(ctx context.Context, pos, n int) ([]batch.MediaItem, error) {
 	if m == nil {
-		return nil
+		return nil, nil
 	}
 	for i, item := range m.items {
 		if item.pos >= pos+n || item.pos+item.length <= pos {
 			continue
 		}
 		if m.features[i] == nil {
+			pixels := item.item.MediaData
+			if pixels == nil && item.item.Pixels != nil {
+				var err error
+				if pixels, err = item.item.Pixels(ctx); err != nil {
+					return nil, err
+				}
+			}
 			m.features[i] = mlx.ScopedArrays(func() []*mlx.Array {
-				data := mlx.FromValues(item.item.MediaData, item.item.Dims...)
+				var data *mlx.Array
+				if pixels != nil {
+					data = mlx.FromValues(pixels, item.item.Dims...)
+				}
 				return []*mlx.Array{m.model.EncodeMedia(item.item, data)}
 			})[0]
 			m.scope.Attach(m.features[i])
@@ -138,7 +150,7 @@ func (m *requestMedia) batchMedia(pos, n int) []batch.MediaItem {
 		}
 		m.manifest[i].Features = m.features[i]
 	}
-	return m.manifest
+	return m.manifest, nil
 }
 
 // free frees what items fully evaluated or restored at position pos no
@@ -213,6 +225,9 @@ func (r *Runner) expandMedia(mm model.MediaModel, prompt string, media []llm.Med
 	}
 	items, err := bindItems(prepared, segments)
 	if err != nil {
+		if prepared.Release != nil {
+			prepared.Release()
+		}
 		return nil, nil, err
 	}
 	return prepared, items, nil

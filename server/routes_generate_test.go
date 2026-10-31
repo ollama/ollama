@@ -992,6 +992,23 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
+	t.Run("missing video capability", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "What happens here?", Images: []api.ImageData{api.ImageData("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00")}},
+			},
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"\"test\" does not support video input"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
 	t.Run("model can't think but think set false", func(t *testing.T) {
 		think := false
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
@@ -1725,6 +1742,22 @@ func TestGenerate(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(w.Body.String(), `{"error":"\"bert\" does not support generate"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("missing video capability", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "What happens here?",
+			Images: []api.ImageData{api.ImageData("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00")},
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"\"test\" does not support video input"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

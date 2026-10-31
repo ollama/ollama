@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+
 	// Every model's PrepareMedia decodes through image.Decode; the decoder
 	// set is registered once here so all models accept the same formats.
 	_ "image/gif"
@@ -38,6 +40,15 @@ type PreparedItem struct {
 	MediaData []float32
 	Dims      []int
 
+	// Pixels, set instead of MediaData, produces the encoder input when
+	// the item is first encoded, so a prefix-cache hit never runs it.
+	// Large inputs such as video use it to decode only what is encoded.
+	// An item that encodes from state the model shares between items (one
+	// soundtrack sliced across a video's frame groups) leaves both unset,
+	// or has Pixels prepare that state and return nil: EncodeMedia then
+	// gets nil data, and Dims is identity only.
+	Pixels func(context.Context) ([]float32, error)
+
 	// Opaque carries model-private preprocessing state to EncodeMedia
 	// and Forward.
 	Opaque any
@@ -62,6 +73,21 @@ type PreparedRequest struct {
 	// runner to every forward. Delivered only when Items is non-empty.
 	// Nil when the model derives nothing from it.
 	Layout any
+
+	// Release, when set, frees request-scoped model state such as an
+	// encode several items share or an open media file. The runner calls
+	// it exactly once: on the MLX thread after the request ran, or from
+	// the request goroutine when it never reached the pipeline.
+	Release func()
+}
+
+// AddRelease chains release after any release already set.
+func (r *PreparedRequest) AddRelease(release func()) {
+	if prev := r.Release; prev != nil {
+		r.Release = func() { prev(); release() }
+		return
+	}
+	r.Release = release
 }
 
 // MediaModel is implemented by models that accept media inputs.

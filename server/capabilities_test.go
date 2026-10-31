@@ -91,6 +91,10 @@ func TestCreateCapabilities(t *testing.T) {
 				want := []model.Capability{model.CapabilityDecision, model.CapabilityVision}
 				if m.Name == "base:latest" {
 					want = []model.Capability{model.CapabilityCompletion, model.CapabilityVision}
+					if format == "safetensors" {
+						// The MLX runner takes video for Qwen3.5 vision models.
+						want = append(want, model.CapabilityVideo)
+					}
 				}
 				if !slices.Equal(m.Capabilities, want) {
 					t.Fatalf("list %s capabilities = %v, want %v", m.Name, m.Capabilities, want)
