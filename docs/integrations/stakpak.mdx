@@ -1,0 +1,63 @@
+---
+title: Stakpak
+---
+
+Stakpak is an open source agent that lives on your machines 24/7, keeps your apps running, and only pings when it needs a human.
+
+## Install
+
+<CodeGroup>
+
+```shell macOS / Linux
+curl -sSL https://stakpak.dev/install.sh | sh
+```
+</CodeGroup>
+
+[Or Check The Installation Docs...](https://stakpak.gitbook.io/docs/get-started/install-stakpak)
+
+## Usage with Ollama
+
+### Quick setup
+
+1. Download the ollama model.
+2. Open your terminal and run stakpak config
+```shell
+stakpak config
+```
+3. Choose create new profile
+4. Add profile name
+```shell
+ollama
+```
+6. Choose "Use my own Model"
+7. Choose "bring your own model"
+8. Enter provider name:
+```shell
+ollama
+```
+8. Enter the endpoint:
+```shell
+http://localhost:11434/v1
+```
+9. Enter the API Key
+```shell
+ollama
+```
+10. Add your model name for smart mode
+11. Add your model name for eco mode
+12. Press "y" to save config
+13. Press "y" to open stakpak
+
+### NOTE: 
+1. To open Stakpak with the Ollama profile, all you have to do is open your terminal and write:
+```shell
+stakpak --profile ollama
+```
+
+## Recommended Models
+
+- `qwen3-coder` 
+- `glm-4.7`
+- `gpt-oss:120b`
+
+Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
