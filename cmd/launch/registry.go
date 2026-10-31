@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen"}
+var launcherIntegrationOrder = []string{"claude", "chatgpt", "hermes", "openclaw", "opencode", "hermes-desktop", "codex", "copilot", "omp", "cline", "droid", "dsh", "pi", "pool", "qwen", "atomic"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -63,6 +63,22 @@ var integrationSpecs = []*IntegrationSpec{
 				return ClaudeDesktopInstalled()
 			},
 			URL: "https://claude.com/download",
+		},
+	},
+	{
+		Name:        "atomic",
+		Runner:      &Atomic{},
+		Aliases:     []string{"atomic-agent"},
+		Description: "Local-first AI agent for the terminal",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return atomicInstalled()
+			},
+			EnsureInstalled: func() error {
+				_, err := ensureAtomicInstalled()
+				return err
+			},
+			URL: "https://atomicagent.io/docs/guides/ollama",
 		},
 	},
 	{
