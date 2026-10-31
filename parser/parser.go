@@ -690,7 +690,7 @@ func unquote(s string) (string, bool) {
 	// TODO: single quotes
 	if len(s) >= 3 && s[:3] == `"""` {
 		if len(s) >= 6 && s[len(s)-3:] == `"""` {
-			return s[3 : len(s)-3], true
+			return normalizeLineEndings(s[3 : len(s)-3]), true
 		}
 
 		return "", false
@@ -698,13 +698,23 @@ func unquote(s string) (string, bool) {
 
 	if len(s) >= 1 && s[0] == '"' {
 		if len(s) >= 2 && s[len(s)-1] == '"' {
-			return s[1 : len(s)-1], true
+			return normalizeLineEndings(s[1 : len(s)-1]), true
 		}
 
 		return "", false
 	}
 
 	return s, true
+}
+
+// normalizeLineEndings converts Windows (CRLF) and classic Mac (CR) line
+// endings inside a quoted value to LF. The parser already treats CR as a
+// line ending everywhere else, and single-line values already drop CR, so
+// without this a triple-quoted value parsed from a CRLF file kept CR bytes
+// that the same value parsed from an LF file did not have.
+func normalizeLineEndings(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
 }
 
 func isAlpha(r rune) bool {
