@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"text/template"
@@ -783,6 +784,123 @@ func TestParser(t *testing.T) {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
 			}
+		})
+	}
+}
+
+func TestParserToolNamesInArguments(t *testing.T) {
+	tools := []api.Tool{
+		{Type: "function", Function: api.ToolFunction{Name: "search"}},
+		{Type: "function", Function: api.ToolFunction{Name: "write_file"}},
+		{Type: "function", Function: api.ToolFunction{Name: "name"}},
+		{Type: "function", Function: api.ToolFunction{Name: "get"}},
+		{Type: "function", Function: api.ToolFunction{Name: "get_weather"}},
+	}
+	call := func(name string, args map[string]any) []api.ToolCall {
+		return []api.ToolCall{{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(args)}}}
+	}
+	tests := []struct {
+		name  string
+		input string
+		want  []api.ToolCall
+	}{
+		{
+			name:  "arguments before name",
+			input: `<tool_call>{"arguments":{"path":"search.txt","content":"search"},"name":"write_file"}</tool_call>`,
+			want:  call("write_file", map[string]any{"path": "search.txt", "content": "search"}),
+		},
+		{
+			name:  "name key is also a tool name",
+			input: `<tool_call>{"name":"write_file","arguments":{"content":"search"}}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "search"}),
+		},
+		{
+			name:  "nested function and argument objects",
+			input: `<tool_call>{"function":{"arguments":{"data":{"name":"search","arguments":{}}},"name":"write_file"}}</tool_call>`,
+			want:  call("write_file", map[string]any{"data": map[string]any{"name": "search", "arguments": map[string]any{}}}),
+		},
+		{
+			name:  "stringified parameters",
+			input: `<tool_call>{"parameters":"{\"content\":\"search\"}","name":"write_file"}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "search"}),
+		},
+		{
+			name:  "escaped name and quoted JSON",
+			input: `<tool_call>{"arguments":{"content":"{\"name\":\"search\"}"},"\u006eame":"write\u005ffile"}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": `{"name":"search"}`}),
+		},
+		{
+			name:  "tool name as object key",
+			input: `<tool_call>{"write_file":{"content":"search"}}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "search"}),
+		},
+		{
+			name:  "tool name as key with call-shaped arguments",
+			input: `<tool_call>{"write_file":{"name":"search","arguments":{}}}</tool_call>`,
+			want:  call("write_file", map[string]any{"name": "search", "arguments": map[string]any{}}),
+		},
+		{
+			name:  "tool keys keep their input order",
+			input: `<tool_call>{"write_file":{"content":"ok"},"search":{"query":"notes"}}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "ok"}),
+		},
+		{
+			name:  "unregistered name",
+			input: `<tool_call>{"arguments":{"content":"search"},"name":"unregistered"}</tool_call>`,
+		},
+		{
+			name:  "external name before JSON arguments",
+			input: `<tool_call>write_file({"content":"search"})</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "search"}),
+		},
+		{
+			name:  "external name immediately before arguments",
+			input: `<tool_call>get{"city":"Oslo"}</tool_call>`,
+			want:  call("get", map[string]any{"city": "Oslo"}),
+		},
+		{
+			name:  "malformed object before valid call",
+			input: `<tool_call>{bad json}</tool_call><tool_call>{"name":"write_file","arguments":{"content":"ok"}}</tool_call>`,
+			want:  call("write_file", map[string]any{"content": "ok"}),
+		},
+		{
+			name:  "multiple calls",
+			input: `<tool_call>[{"arguments":{"content":"search"},"name":"write_file"},{"name":"search","arguments":{"query":"write_file"}}]</tool_call>`,
+			want: []api.ToolCall{
+				{Function: api.ToolCallFunction{Name: "write_file", Arguments: testArgs(map[string]any{"content": "search"})}},
+				{Function: api.ToolCallFunction{Index: 1, Name: "search", Arguments: testArgs(map[string]any{"query": "write_file"})}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			check := func(t *testing.T, chunks []string) {
+				t.Helper()
+				parser := NewParserWithTag(tools, "<tool_call>")
+				var calls []api.ToolCall
+				for _, chunk := range chunks {
+					got, content := parser.Add(chunk)
+					calls = append(calls, got...)
+					if content != "" {
+						t.Errorf("unexpected content %q", content)
+					}
+				}
+				if diff := cmp.Diff(tt.want, calls, argsComparer); diff != "" {
+					t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+				}
+			}
+			for split := 0; split <= len(tt.input); split++ {
+				t.Run(strconv.Itoa(split), func(t *testing.T) {
+					check(t, []string{tt.input[:split], tt.input[split:]})
+				})
+			}
+			t.Run("bytewise", func(t *testing.T) {
+				chunks := make([]string, len(tt.input))
+				for i := range len(tt.input) {
+					chunks[i] = tt.input[i : i+1]
+				}
+				check(t, chunks)
+			})
 		})
 	}
 }
