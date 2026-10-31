@@ -1,26 +1,21 @@
 import { forwardRef, useState, useRef, useEffect } from "react";
 import type { ThinkingLevel } from "./ChatForm";
 
-const THINKING_LEVELS = {
-  LOW: "low",
-  MEDIUM: "medium",
-  HIGH: "high",
-} as const;
-
-const THINKING_LEVEL_LABELS = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-} as const;
-
 interface ThinkButtonProps {
   mode: "think" | "thinkingLevel";
   isVisible?: boolean;
   isActive?: boolean;
   currentLevel?: ThinkingLevel;
+  levels?: (string | boolean)[];
   onToggle?: () => void;
   onLevelChange?: (level: ThinkingLevel) => void;
   onDropdownToggle?: (isOpen: boolean) => void;
+}
+
+function levelLabel(value: string | boolean): string {
+  if (value === false) return "Off";
+  if (value === true) return "Default";
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 export const ThinkButton = forwardRef<HTMLButtonElement, ThinkButtonProps>(
@@ -30,6 +25,7 @@ export const ThinkButton = forwardRef<HTMLButtonElement, ThinkButtonProps>(
       isVisible,
       isActive,
       currentLevel,
+      levels,
       onToggle,
       onLevelChange,
       onDropdownToggle,
@@ -94,9 +90,8 @@ export const ThinkButton = forwardRef<HTMLButtonElement, ThinkButtonProps>(
     }
 
     // thinkingLevel mode
-    const displayLabel = currentLevel
-      ? THINKING_LEVEL_LABELS[currentLevel]
-      : "";
+    const displayLabel = currentLevel ? levelLabel(currentLevel) : "";
+    const dropdownLevels = levels ?? ["low", "medium", "high"];
     return (
       <div className="relative" ref={dropdownRef}>
         <button
@@ -137,20 +132,21 @@ export const ThinkButton = forwardRef<HTMLButtonElement, ThinkButtonProps>(
 
         {isDropdownOpen && (
           <div className="absolute bottom-full mb-2 text-[15px] rounded-2xl overflow-hidden bg-white border border-neutral-100 text-neutral-800 shadow-xl shadow-black/5 backdrop-blur-lg dark:border-neutral-600/40 dark:bg-neutral-800 dark:text-white dark:ring-black/20 min-w-[120px]">
-            {Object.entries(THINKING_LEVELS).map(([, level]) => (
+            {dropdownLevels.map((level) => (
               <button
-                key={level}
+                key={String(level)}
                 className={`w-full text-left px-3 py-2 cursor-pointer hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors text-neutral-700 dark:text-neutral-300 ${
-                  currentLevel === level
+                  (currentLevel === level ||
+                    (currentLevel === "off" && level === false))
                     ? "bg-neutral-100 dark:bg-neutral-700/60"
                     : ""
                 }`}
                 onClick={() => {
-                  onLevelChange?.(level);
+                  onLevelChange?.(level === false ? "off" : (level as string));
                   setIsDropdownOpen(false);
                 }}
               >
-                {THINKING_LEVEL_LABELS[level]}
+                {levelLabel(level)}
               </button>
             ))}
           </div>

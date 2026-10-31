@@ -328,6 +328,7 @@ export async function getModelCapabilities(
       capabilities: Array.isArray(showResponse.capabilities)
         ? showResponse.capabilities
         : [],
+      thinking: (showResponse as any).thinking,
     });
   } catch (error) {
     // Model might not be downloaded yet, return empty capabilities

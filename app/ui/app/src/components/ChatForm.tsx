@@ -20,6 +20,7 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
   useHasToolsCapability,
+  useModelThinking,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
@@ -32,7 +33,7 @@ import { processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
 
-export type ThinkingLevel = "low" | "medium" | "high";
+export type ThinkingLevel = string;
 
 interface FileAttachment {
   filename: string;
@@ -153,19 +154,50 @@ function ChatForm({
   const { cloudDisabled } = useCloudStatus();
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
-  // Use per-chat thinking level instead of global
-  const thinkLevel: ThinkingLevel =
-    settingsThinkLevel === "none" || !settingsThinkLevel
-      ? "medium"
-      : (settingsThinkLevel as ThinkingLevel);
+  const modelThinking = useModelThinking(selectedModel?.model);
+
+  const modelSupportsThinkingLevels = modelThinking?.hasLevels ?? false;
+  const supportsThinkToggling = modelThinking?.isToggleOnly ?? false;
+
+  const validLevels = modelThinking?.stringLevels ?? [];
+  const modelDefaultLevel =
+    typeof modelThinking?.default === "string" &&
+    validLevels.includes(modelThinking.default)
+      ? modelThinking.default
+      : validLevels[0] ?? "medium";
+
+  const thinkLevel: ThinkingLevel = (() => {
+    if (settingsThinkLevel === "off") {
+      return "off";
+    }
+    if (
+      settingsThinkLevel &&
+      settingsThinkLevel !== "none" &&
+      validLevels.includes(settingsThinkLevel)
+    ) {
+      return settingsThinkLevel;
+    }
+    return modelDefaultLevel;
+  })();
   const setThinkingLevel = (newLevel: ThinkingLevel) => {
     setSettings({ ThinkLevel: newLevel });
   };
 
-  const modelSupportsThinkingLevels =
-    selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
-  const supportsThinkToggling =
-    selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") || false;
+  // When a toggle-only thinking model is selected, sync the toggle to the
+  // model's advertised default. Guarded by a ref so it only fires on model
+  // change — not when setSettings gets a new identity after a settings refetch
+  // (which would cause an infinite update loop).
+  const lastSyncedModelRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      supportsThinkToggling &&
+      modelThinking &&
+      selectedModel?.model !== lastSyncedModelRef.current
+    ) {
+      lastSyncedModelRef.current = selectedModel?.model;
+      setSettings({ ThinkEnabled: modelThinking.default !== false });
+    }
+  }, [supportsThinkToggling, modelThinking?.default, selectedModel?.model, setSettings]);
 
   useEffect(() => {
     if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
@@ -493,7 +525,9 @@ function ChatForm({
     const useWebSearch =
       supportsWebSearch && webSearchEnabled && !cloudDisabled;
     const useThink = modelSupportsThinkingLevels
-      ? thinkLevel
+      ? thinkLevel === "off"
+        ? false
+        : thinkLevel
       : supportsThinkToggling
         ? thinkEnabled
         : undefined;
@@ -895,6 +929,7 @@ function ChatForm({
                       ref={thinkingLevelButtonRef}
                       isVisible={modelSupportsThinkingLevels}
                       currentLevel={thinkLevel}
+                      levels={modelThinking?.values}
                       onLevelChange={setThinkingLevel}
                       onDropdownToggle={handleThinkingLevelDropdownToggle}
                     />
