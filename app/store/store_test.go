@@ -460,6 +460,35 @@ func TestCodexDesktopUsedPreservedBySettings(t *testing.T) {
 	}
 }
 
+func TestSpeechSettingsRoundTrip(t *testing.T) {
+	s, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	settings, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.SpeechVoice != "" || settings.SpeechRate != 1 || settings.SpeechVolume != 1 || settings.SpeechAutoRead {
+		t.Fatalf("unexpected speech defaults: %+v", settings)
+	}
+
+	settings.SpeechVoice = "com.example.voice"
+	settings.SpeechRate = 1.5
+	settings.SpeechVolume = 0.4
+	settings.SpeechAutoRead = true
+	if err := s.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	saved, err := s.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.SpeechVoice != settings.SpeechVoice || saved.SpeechRate != settings.SpeechRate || saved.SpeechVolume != settings.SpeechVolume || saved.SpeechAutoRead != settings.SpeechAutoRead {
+		t.Fatalf("speech settings did not round trip: got %+v, want %+v", saved, settings)
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()
