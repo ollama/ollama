@@ -297,6 +297,7 @@ Supported integrations:
   hermes-desktop  Hermes Desktop
   copilot         Copilot CLI (aliases: copilot-cli)
   omp             OMP
+  mux             Mux
   droid           Droid
   dsh             DeepSeek Harness (alias: deepseek-harness)
   kimi            Kimi Code CLI
