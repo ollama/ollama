@@ -1520,6 +1520,148 @@ func TestGemma4Parser_BareWordValueInFinishedToolCall(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4EscapedQuoteValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "value_after_a_key",
+			input:    `{level:\"5\"}`,
+			expected: `{level:<|"|>5<|"|>}`,
+		},
+		{
+			name:     "values_in_objects_in_a_list",
+			input:    `{set:[{path:<|"|>Level<|"|>,value:\"{Type: PcLevelMult, Mult: 1}\"},{path:<|"|>Min<|"|>,value:\"5\"}]}`,
+			expected: `{set:[{path:<|"|>Level<|"|>,value:<|"|>{Type: PcLevelMult, Mult: 1}<|"|>},{path:<|"|>Min<|"|>,value:<|"|>5<|"|>}]}`,
+		},
+		{
+			name:     "values_as_list_items_and_with_spaces",
+			input:    `{flags:[\"Female\", \"Unique\" ],"mode" : \"\" ,n:1}`,
+			expected: `{flags:[<|"|>Female<|"|>, <|"|>Unique<|"|> ],"mode" : <|"|><|"|> ,n:1}`,
+		},
+		{
+			name:     "keeps_escaped_quotes_in_strings",
+			input:    `{note:<|"|>say \"hi\"<|"|>,raw:"say \"hi\""}`,
+			expected: `{note:<|"|>say \"hi\"<|"|>,raw:"say \"hi\""}`,
+		},
+		{
+			name:     "keeps_text_with_a_backslash_or_a_quote",
+			input:    `{path:\"a\b\",say:\"a"b\"}`,
+			expected: `{path:\"a\b\",say:\"a"b\"}`,
+		},
+		{
+			name:     "keeps_text_that_is_not_all_of_the_value",
+			input:    `{a:\"x\"y,b:1}`,
+			expected: `{a:\"x\"y,b:1}`,
+		},
+		{
+			name:     "keeps_a_value_left_open",
+			input:    `{a:\"x}`,
+			expected: `{a:\"x}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{a:\"x\",b:<|"|>y}`,
+			expected: `{a:\"x\",b:<|"|>y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4EscapedQuoteValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4EscapedQuoteValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4EscapedQuoteEditRecordCall sets a list of paths to values written between
+// escaped quotes.
+const gemma4EscapedQuoteEditRecordCall = `call:editRecord{build:true,project:<|"|>HildaTheNord<|"|>,record:<|"|>Hilda<|"|>,set:[{path:<|"|>Configuration.Level<|"|>,value:\"{MutagenObjectType: PcLevelMult, LevelMult: 1}\"},{path:<|"|>Configuration.CalcMinLevel<|"|>,value:\"5\"},{path:<|"|>Configuration.CalcMaxLevel<|"|>,value:\"30\"},{path:<|"|>AIData.Aggression<|"|>,value:\"Unaggressive\"}]}`
+
+var gemma4EscapedQuoteEditRecordArgs = map[string]any{
+	"build":   true,
+	"project": "HildaTheNord",
+	"record":  "Hilda",
+	"set": []any{
+		map[string]any{"path": "Configuration.Level", "value": "{MutagenObjectType: PcLevelMult, LevelMult: 1}"},
+		map[string]any{"path": "Configuration.CalcMinLevel", "value": "5"},
+		map[string]any{"path": "Configuration.CalcMaxLevel", "value": "30"},
+		map[string]any{"path": "AIData.Aggression", "value": "Unaggressive"},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_EscapedQuoteValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "values_in_a_list_of_objects",
+			content: gemma4EscapedQuoteEditRecordCall,
+			want:    gemma4EscapedQuoteEditRecordArgs,
+		},
+		{
+			name:    "beside_a_bare_word_and_a_single_quoted_value",
+			content: `call:set{a:\"x\",b:Fast,c:'y z',n:5}`,
+			want:    map[string]any{"a": "x", "b": "Fast", "c": "y z", "n": 5.0},
+		},
+		{
+			name:    "in_an_unclosed_list",
+			content: `call:set{flags:[\"Female\",\"Unique\",level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			name:    "text_with_a_backslash",
+			content: `call:set{path:\"a\b\"}`,
+		},
+		{
+			name:    "text_that_is_not_all_of_the_value",
+			content: `call:set{a:\"x\"y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_EscapedQuoteValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4EscapedQuoteEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4EscapedQuoteEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func gemma4TestStringTool(name string, argNames ...string) api.Tool {
 	props := api.NewToolPropertiesMap()
 	for _, argName := range argNames {
