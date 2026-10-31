@@ -571,6 +571,16 @@ func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
 	}
 }
 
+func TestToListCompletionEmpty(t *testing.T) {
+	b, err := json.Marshal(ToListCompletion(api.ListResponse{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"object":"list","data":[]}`; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
 func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	modified := time.Unix(1234567890, 0).UTC()
 
