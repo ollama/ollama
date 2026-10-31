@@ -6,13 +6,23 @@ import (
 	"text/template/parse"
 )
 
+// thinkingTags lists the opening and closing think tags that mark a chat
+// template as emitting thinking output. An empty closing tag means the opening
+// tag alone is enough, for templates that build the closing tag at render time.
+var thinkingTags = [][2]string{
+	{"<think>", "</think>"},
+	{"<ifm|think>", ""}, // K2 Horizon renders its closing tag as '</' + think_tag + '>'
+}
+
 // TemplateSupportsThinking reports whether a raw model chat template declares
 // thinking output. It recognizes templates that emit paired think tags and
 // templates that strip prior tagged reasoning; templates using a separate
 // reasoning_content field are not treated as tagged-thinking templates.
 func TemplateSupportsThinking(chatTemplate string) bool {
-	if strings.Contains(chatTemplate, "<think>") && strings.Contains(chatTemplate, "</think>") {
-		return true
+	for _, tags := range thinkingTags {
+		if strings.Contains(chatTemplate, tags[0]) && (tags[1] == "" || strings.Contains(chatTemplate, tags[1])) {
+			return true
+		}
 	}
 
 	return (strings.Contains(chatTemplate, "content.split('</think>')") ||
