@@ -21,8 +21,8 @@ func TestCompileStrands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Render(func([]api.Message) (string, error) { t.Fatal("unexpected chat template"); return "", nil }); err != nil {
-		t.Fatal(err)
+	if c.NeedsChatRender() {
+		t.Fatal("Strands must prepare its own prompts")
 	}
 	if len(c.Request.PointerRows) != 3 || len(c.Request.Rows) != 0 || len(c.Request.Fields) != 0 {
 		t.Fatal("expected three independent pointer rows")

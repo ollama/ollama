@@ -1,6 +1,8 @@
 package pplxdecider
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -54,5 +56,16 @@ func TestScorePromptEscapesUserControlTokens(t *testing.T) {
 	}
 	if strings.Count(prompt, readoutMarker) != 1 {
 		t.Fatalf("user text introduced an extra readout: %q", prompt)
+	}
+}
+
+func TestPrepareJointBudget(t *testing.T) {
+	m := &Model{config: config{Codes: []string{"A"}}}
+	input := llm.ScoreRequest{System: decisionSystem, State: strings.Repeat("x", llm.MaxScorePromptBytes)}
+	row := llm.ScoreRow{Question: &llm.ScoreQuestion{Instructions: "Choose one.", Options: []string{"yes"}}}
+	_, _, _, err := m.prepareJoint(input, []llm.ScoreRow{row})
+	var status api.StatusError
+	if !errors.Is(err, llm.ErrScorePromptTooLarge) || !errors.As(err, &status) || status.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("prepareJoint() error = %v, want 413", err)
 	}
 }
