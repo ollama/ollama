@@ -392,7 +392,7 @@ func TestRunMTPDecodeGreedy(t *testing.T) {
 			SamplerOpts:       sampler.Options{},
 		}
 		d := testDecoder(t, r, req, caches, []int32{1}, position)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, nil, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -459,7 +459,7 @@ func TestRunMTPDecodeSampled(t *testing.T) {
 		}
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -505,7 +505,7 @@ func TestRunMTPDecodeWarmDrafter(t *testing.T) {
 		spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -570,7 +570,7 @@ func TestRunMTPDecodeEOSCutLeavesPositionsUnjudged(t *testing.T) {
 		spec.committed(mlx.FromValues([]int32{0}, 1, 1), oneHotLogits([]int32{1}), 0, nil)
 
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -618,7 +618,7 @@ func TestDecodePlain(t *testing.T) {
 			SamplerOpts:       sampler.Options{},
 		}
 		d := testDecoder(t, r, req, caches, []int32{1}, position)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, nil, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -677,7 +677,7 @@ func TestDecodeCancelledMidStream(t *testing.T) {
 			SamplerOpts:       sampler.Options{},
 		}
 		d := testDecoder(t, r, req, caches, []int32{1}, position)
-		err := r.decode(ctx, req, session, d, 0)
+		err := r.decode(ctx, req, session, d, nil, 0)
 		d.close()
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("decode error = %v, want context.Canceled", err)
@@ -723,7 +723,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 		spec := r.spec.open(req, []any{"layout"})
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 1, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -754,7 +754,7 @@ func TestLayoutRidesEveryForward(t *testing.T) {
 // tests assert engine mechanics at known widths, so they disable adaptive
 // depth rather than steer what it learns.
 func pinDraftLimit(spec *speculationSession, limit int) {
-	spec.enabled = false
+	spec.fixedDepth = true
 	spec.limit = limit
 }
 
@@ -804,7 +804,7 @@ func TestDecodeKVDraft(t *testing.T) {
 		pinDraftLimit(spec, 4)
 		defer spec.close()
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -887,7 +887,7 @@ func TestDecodeKVDraftRejectionRebuildsFromTarget(t *testing.T) {
 		pinDraftLimit(spec, 4)
 		defer spec.close()
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -959,7 +959,7 @@ func TestDecodeMaintainsDraftCacheWithoutDrafting(t *testing.T) {
 			t.Fatalf("want a permanent-park speculationSession, got %+v", spec)
 		}
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), position, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()
@@ -1143,7 +1143,7 @@ func TestRestoredPrefixRewritesBoundaryPair(t *testing.T) {
 		spec := r.spec.open(req, nil)
 		pinDraftLimit(spec, 4)
 		d := spec.decoder(mlx.FromValues([]int32{1}, 1), 0, nil)
-		if err := r.decode(context.Background(), req, session, d, 0); err != nil {
+		if err := r.decode(context.Background(), req, session, d, spec, 0); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		d.close()

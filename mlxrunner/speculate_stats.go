@@ -12,6 +12,9 @@ type specStats struct {
 	drafted    int
 	accepted   int
 	maxDraft   int
+	// draftSteps counts the rounds that drafted at least one token; the
+	// other iterations ran plain.
+	draftSteps int
 	// chosen is the draft depth picked each round, in order; split into time
 	// buckets it distinguishes a ramp that holds from one that thrashes shallow.
 	chosen []int
@@ -43,6 +46,21 @@ func (s *specStats) depthOverTime() string {
 		parts = append(parts, fmt.Sprintf("%.1f/%d", float64(sum)/float64(hi-lo), mx))
 	}
 	return strings.Join(parts, " ")
+}
+
+// reportCounts attaches the request's speculative counts to its final
+// response. A session that cannot draft (logprobs) reports nothing; an
+// enabled session that never drafted reports zeros, so clients can tell
+// "backed off" apart from "unavailable".
+func (s *speculationSession) reportCounts(resp *CompletionResponse) {
+	if s == nil || !s.enabled {
+		return
+	}
+	drafted, accepted, draftSteps, steps := s.stats.drafted, s.stats.accepted, s.stats.draftSteps, s.stats.iterations
+	resp.DraftCount = &drafted
+	resp.DraftAcceptedCount = &accepted
+	resp.DraftStepCount = &draftSteps
+	resp.StepCount = &steps
 }
 
 func (s *speculationSession) logStats() {
