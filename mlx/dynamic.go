@@ -57,7 +57,7 @@ func mlxLibraryCandidates(dir string) []string {
 	case "darwin":
 		name = "libmlxc.dylib"
 	}
-	if info, err := os.Stat(filepath.Join(dir, name)); err != nil || !info.Mode().IsRegular() {
+	if !fileExists(filepath.Join(dir, name)) {
 		return nil
 	}
 	return []string{name}
@@ -244,11 +244,39 @@ func mlxLibraryPathsForDir(dir string) []string {
 
 func tryLoadFromMLXDir(dir string) bool {
 	restore := prependLibraryPaths(mlxLibraryPathsForDir(dir)...)
+	preloadDependencies(dir)
 	if tryLoadFromDir(dir) {
 		return true
 	}
 	restore()
 	return false
+}
+
+// preloadDependencies loads, by full path, the libraries the MLX library in
+// dir needs from the variant's dependency directory. On Linux the loader reads
+// the library search path only at process start, so prependLibraryPaths
+// reaches child processes alone. A bundled library whose runpath is only its
+// own directory would otherwise resolve these through the system loader
+// cache, which may hold a mismatched copy of the same soname; once loaded,
+// later lookups by soname bind to the bundled copies, so the handles stay open
+// for the life of the process. A failure here surfaces as the MLX library's
+// own load error.
+func preloadDependencies(dir string) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	depDir, ok := dependencyDir(dir)
+	if !ok {
+		return
+	}
+	for _, lib := range mlxLibraryCandidates(dir) {
+		for _, path := range sharedDependencies(filepath.Join(dir, lib), depDir) {
+			cPath := C.CString(path)
+			var handle C.mlx_dynamic_handle
+			C.mlx_dynamic_load(&handle, cPath)
+			C.free(unsafe.Pointer(cPath))
+		}
+	}
 }
 
 func prependLoadedLibraryPath() {
