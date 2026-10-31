@@ -37,6 +37,10 @@ func TestThinkingConversionMetadata(t *testing.T) {
 				{"exact spelling", `,"reasoning":{"effort":" HIGH "}`, " HIGH ", nil, true},
 				{"nested precedence", `,"reasoning_effort":"low","reasoning":{"effort":"xhigh"}`, "xhigh", "max", false},
 				{"empty nested precedence", `,"reasoning_effort":"low","reasoning":{"effort":""}`, nil, nil, false},
+				{"think false", `,"think":false`, false, false, false},
+				{"think true", `,"think":true`, true, true, false},
+				{"think override", `,"think":false,"reasoning":{"effort":"high"}`, false, false, false},
+				{"think override nested", `,"think":true,"reasoning_effort":"none"`, true, true, false},
 			} {
 				t.Run(metadata.name+"/"+protocol+"/"+tt.name, func(t *testing.T) {
 					body := []byte(`{"model":"test","messages":[{"role":"user","content":"hi"}],"input":"hi"` + tt.fields + `}`)
@@ -90,7 +94,7 @@ func TestThinkingConversionMetadata(t *testing.T) {
 	}
 }
 
-func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
+func TestThinkingOverrideWithMetadata(t *testing.T) {
 	for _, metadata := range []struct {
 		name     string
 		thinking *model.Thinking
@@ -99,25 +103,39 @@ func TestResponsesThinkingOverrideWithMetadata(t *testing.T) {
 		{"nil", nil},
 		{"invalid", &model.Thinking{Values: []any{"high"}, Default: "missing"}},
 	} {
-		for _, value := range []any{false, true, "low", "high", "max", "", "xhigh", "minimal", "future", 75} {
-			t.Run(metadata.name+"/"+fmt.Sprint(value), func(t *testing.T) {
-				req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
-				req.Reasoning.Effort = "xhigh"
-				got, err := FromResponsesRequest(req, metadata.thinking)
-				wantErr := value == 75 || (!metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "minimal" || value == "future"))
-				if wantErr {
-					if err == nil {
-						t.Fatal("invalid override must fail")
+		for _, protocol := range []string{"chat", "responses"} {
+			for _, value := range []any{false, true, "low", "high", "max", "", "xhigh", "minimal", "future", 75} {
+				t.Run(metadata.name+"/"+protocol+"/"+fmt.Sprint(value), func(t *testing.T) {
+					var got *api.ChatRequest
+					var err error
+					if protocol == "chat" {
+						effort := "xhigh"
+						req := ChatCompletionRequest{
+							Messages:        []Message{{Role: "user", Content: "hi"}},
+							ReasoningEffort: &effort,
+							Think:           &api.ThinkValue{Value: value},
+						}
+						got, err = FromChatRequest(req, metadata.thinking)
+					} else {
+						req := ResponsesRequest{Input: ResponsesInput{Text: "hi"}, Think: &api.ThinkValue{Value: value}}
+						req.Reasoning.Effort = "xhigh"
+						got, err = FromResponsesRequest(req, metadata.thinking)
 					}
-					return
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				if got.Think == nil || got.Think.Value != value {
-					t.Fatalf("thinking=%v, want explicit override %#v", got.Think, value)
-				}
-			})
+					wantErr := value == 75 || (!metadata.thinking.Valid() && (value == "" || value == "xhigh" || value == "minimal" || value == "future"))
+					if wantErr {
+						if err == nil {
+							t.Fatal("invalid override must fail")
+						}
+						return
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got.Think == nil || got.Think.Value != value {
+						t.Fatalf("thinking=%v, want explicit override %#v", got.Think, value)
+					}
+				})
+			}
 		}
 	}
 }
