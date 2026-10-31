@@ -1354,6 +1354,68 @@ func TestChatMiddleware(t *testing.T) {
 	}
 }
 
+func TestChatMiddleware_MaxCompletionTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var captured api.ChatRequest
+	router := gin.New()
+	router.Use(ChatMiddleware())
+	router.POST("/api/chat", func(c *gin.Context) {
+		if err := c.ShouldBindJSON(&captured); err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusOK)
+	})
+
+	tests := []struct {
+		name       string
+		fields     string
+		wantStatus int
+		wantLimit  float64
+		wantError  string
+	}{
+		{name: "new field", fields: `"max_completion_tokens": 7`, wantStatus: http.StatusOK, wantLimit: 7},
+		{name: "both fields", fields: `"max_tokens": 5, "max_completion_tokens": 7`, wantStatus: http.StatusOK, wantLimit: 7},
+		{name: "negative legacy field", fields: `"max_tokens": -1`, wantStatus: http.StatusOK, wantLimit: -1},
+		{name: "new field overrides negative legacy field", fields: `"max_tokens": -1, "max_completion_tokens": 7`, wantStatus: http.StatusOK, wantLimit: 7},
+		{name: "zero new field", fields: `"max_completion_tokens": 0`, wantStatus: http.StatusBadRequest, wantError: "Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got 0 instead."},
+		{name: "negative new field", fields: `"max_completion_tokens": -1`, wantStatus: http.StatusBadRequest, wantError: "Invalid 'max_completion_tokens': integer below minimum value. Expected a value >= 1, but got -1 instead."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			captured = api.ChatRequest{}
+			body := `{"model":"test-model","messages":[{"role":"user","content":"Hello"}],` + tt.fields + `}`
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+			if resp.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", resp.Code, tt.wantStatus, resp.Body.String())
+			}
+			if tt.wantStatus == http.StatusOK {
+				if captured.Options["num_predict"] != tt.wantLimit {
+					t.Fatalf("num_predict = %v, want %v", captured.Options["num_predict"], tt.wantLimit)
+				}
+				return
+			}
+			var got map[string]any
+			if err := json.Unmarshal(resp.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]any{"error": map[string]any{
+				"message": tt.wantError,
+				"type":    "invalid_request_error",
+				"param":   "max_completion_tokens",
+				"code":    "integer_below_min_value",
+			}}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("error response mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestCompletionsMiddleware(t *testing.T) {
 	type testCase struct {
 		name string
