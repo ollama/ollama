@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -19,6 +20,189 @@ import (
 
 	"github.com/ollama/ollama/transfer"
 )
+
+func TestDownloadRangeFallback(t *testing.T) {
+	data := []byte("abcdefghijkl")
+	for _, tc := range []struct {
+		name           string
+		supportsRanges bool
+		completed      []int64
+	}{
+		{name: "partial responses", supportsRanges: true, completed: []int64{0, 0}},
+		{name: "resumed partial responses", supportsRanges: true, completed: []int64{2, 3}},
+		{name: "ignored ranges", completed: []int64{0, 0}},
+		{name: "ignored resumed ranges", completed: []int64{2, 3}},
+		{name: "whole file response", completed: []int64{0}},
+		{name: "ignored resumed whole file", completed: []int64{5}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var fullRequests atomic.Int32
+			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Range") == fmt.Sprintf("bytes=0-%d", len(data)-1) {
+					fullRequests.Add(1)
+				}
+				if tc.supportsRanges {
+					http.ServeContent(w, r, "blob", time.Time{}, bytes.NewReader(data))
+					return
+				}
+				_, _ = w.Write(data)
+			}))
+			t.Cleanup(cdn.Close)
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, cdn.URL, http.StatusTemporaryRedirect)
+			}))
+			t.Cleanup(registry.Close)
+			requestURL, err := url.Parse(registry.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			download := &blobDownload{
+				Name:   filepath.Join(t.TempDir(), "blob"),
+				Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(data)),
+				Total:  int64(len(data)),
+			}
+			initial := make([]byte, len(data))
+			size := download.Total / int64(len(tc.completed))
+			for i, completed := range tc.completed {
+				offset := int64(i) * size
+				if err := download.newPart(offset, size); err != nil {
+					t.Fatal(err)
+				}
+				part := download.Parts[i]
+				part.Completed.Store(completed)
+				download.Completed.Add(completed)
+				if err := download.writePart(part.Name(), part); err != nil {
+					t.Fatal(err)
+				}
+				copy(initial[offset:offset+completed], data[offset:offset+completed])
+			}
+			if err := os.WriteFile(download.Name+"-partial", initial, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			if err := download.run(ctx, requestURL, &registryOptions{Insecure: true}); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(download.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, data) {
+				t.Errorf("downloaded %q, want %q", got, data)
+			}
+			if got := download.Completed.Load(); got != download.Total {
+				t.Errorf("completed bytes = %d, want %d", got, download.Total)
+			}
+			if !tc.supportsRanges && fullRequests.Load() != 1 {
+				t.Errorf("whole file requests = %d, want 1", fullRequests.Load())
+			}
+			partials, err := filepath.Glob(download.Name + "-partial*")
+			if err != nil || len(partials) != 0 {
+				t.Errorf("partial files = %v, %v, want none", partials, err)
+			}
+		})
+	}
+}
+
+func TestDownloadRangeFallbackCancellation(t *testing.T) {
+	data := []byte("abcdefghijkl")
+	var interrupt atomic.Bool
+	interrupt.Store(true)
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+		if r.Header.Get("Range") == "bytes=0-11" && interrupt.Load() {
+			_, _ = w.Write(data[:3])
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(cdn.Close)
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, cdn.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(registry.Close)
+	requestURL, err := url.Parse(registry.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	download := &blobDownload{
+		Name:   filepath.Join(t.TempDir(), "blob"),
+		Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(data)),
+		Total:  int64(len(data)),
+	}
+	for _, offset := range []int64{0, 6} {
+		if err := download.newPart(offset, 6); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- download.run(ctx, requestURL, &registryOptions{Insecure: true})
+	}()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for download.Completed.Load() == 0 && ctx.Err() == nil {
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+		}
+	}
+	if download.Completed.Load() == 0 {
+		cancel()
+		<-done
+		t.Fatal("fallback did not start writing")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted download = %v, want cancellation", err)
+	}
+	if _, err := os.Stat(download.Name); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unfinished download was published: %v", err)
+	}
+
+	interrupt.Store(false)
+	resumed := &blobDownload{Name: download.Name, Digest: download.Digest}
+	opts := &registryOptions{Insecure: true}
+	if err := resumed.Prepare(t.Context(), requestURL, opts); err != nil {
+		t.Fatal(err)
+	}
+	if len(resumed.Parts) != 1 || resumed.Completed.Load() != 3 {
+		t.Fatalf("resumed %d parts and %d bytes, want 1 part and 3 bytes", len(resumed.Parts), resumed.Completed.Load())
+	}
+	if err := resumed.run(t.Context(), requestURL, opts); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(resumed.Name)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("resumed download = %q, %v, want %q", got, err, data)
+	}
+}
+
+func TestDownloadChunkRejectsHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	requestURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	download := &blobDownload{Name: filepath.Join(t.TempDir(), "blob"), Total: 3}
+	part := &blobDownloadPart{Size: 3, blobDownload: download}
+	var body bytes.Buffer
+	err = download.downloadChunk(t.Context(), server.Client(), requestURL, &body, part)
+	if err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("download error = %v, want HTTP 503", err)
+	}
+	if body.Len() != 0 || download.Completed.Load() != 0 || part.Completed.Load() != 0 {
+		t.Fatal("HTTP error body was saved as blob data")
+	}
+}
 
 func TestDownloadChunkRedirects(t *testing.T) {
 	for _, tc := range []struct {
@@ -73,7 +257,7 @@ func TestDownloadChunkRedirects(t *testing.T) {
 			if tc.name == "lookup" {
 				requestURL, _ = url.Parse(strings.Replace(server.URL, "127.0.0.1", "localhost", 1) + "/data")
 			}
-			download := &blobDownload{Name: filepath.Join(t.TempDir(), "blob")}
+			download := &blobDownload{Name: filepath.Join(t.TempDir(), "blob"), Total: 1}
 			part := &blobDownloadPart{Size: 1, blobDownload: download}
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
