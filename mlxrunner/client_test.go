@@ -47,3 +47,17 @@ func TestRequestGrammar(t *testing.T) {
 		})
 	}
 }
+
+func TestClientBooksPredictedMemory(t *testing.T) {
+	c := &Client{predicted: MemoryEstimate{Weights: 16, KVCache: 8, PrefixCache: 4}}
+
+	// The runner holds only its weights until the caches fill.
+	if got := c.booked(16); got != 28 {
+		t.Errorf("booked(16) = %d, want the 28 predicted", got)
+	}
+
+	// A runner that has grown past the prediction reports its real size.
+	if got := c.booked(40); got != 40 {
+		t.Errorf("booked(40) = %d, want 40", got)
+	}
+}

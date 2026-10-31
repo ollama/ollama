@@ -20,6 +20,7 @@ import (
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/mlxrunner"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -2301,4 +2302,124 @@ func TestSchedulerTracksMultipleLoadedRunners(t *testing.T) {
 
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}
+
+// mockMLX stands in for an MLX runner client: it never spawns a process and
+// carries the prediction the scheduler checks before loading.
+type mockMLX struct {
+	mockLlm
+	predicted mlxrunner.MemoryEstimate
+}
+
+func (m *mockMLX) Predicted() mlxrunner.MemoryEstimate { return m.predicted }
+
+func newMLXRequest(ctx context.Context, name string) *LlmRequest {
+	m := &Model{
+		Name:      name,
+		ShortName: name,
+		Config:    model.ConfigV2{ModelFormat: "safetensors", Capabilities: []string{"completion"}},
+	}
+	return &LlmRequest{
+		ctx:             ctx,
+		model:           m,
+		opts:            api.DefaultOptions(),
+		sessionDuration: &api.Duration{Duration: 5 * time.Millisecond},
+		successCh:       make(chan *runnerRef, 1),
+		errCh:           make(chan error, 1),
+	}
+}
+
+// mlxScheduler has a 24 GiB Metal GPU with 20 GiB free and one model loaded,
+// and hands out MLX clients predicted to reach predicted bytes.
+func mlxScheduler(ctx context.Context, predicted uint64) (*Scheduler, *mockMLX) {
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true}
+		g.TotalMemory = 24 * format.GibiByte
+		g.FreeMemory = 20 * format.GibiByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = func() ml.SystemInfo {
+		return ml.SystemInfo{TotalMemory: 24 * format.GibiByte, FreeMemory: 20 * format.GibiByte}
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	mlx := &mockMLX{
+		mockLlm:   mockLlm{modelPath: "mlx-model", vramSize: 1 * format.GibiByte},
+		predicted: mlxrunner.MemoryEstimate{Weights: predicted / 2, KVCache: predicted / 2, NumCtx: 4096},
+	}
+	s.newMLXServerFn = func(modelName string, numCtx int) (mlxServer, error) {
+		mlx.contextLength = numCtx
+		return mlx, nil
+	}
+	return s, mlx
+}
+
+func TestSchedMLXEvictsWhenPredictedExceedsAvailable(t *testing.T) {
+	// 17 GiB predicted against 20 GiB free is over the 80% threshold.
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s, mlx := mlxScheduler(ctx, 17*format.GibiByte)
+	req := newMLXRequest(ctx, "mlx-model")
+
+	needEvict := s.load(req, s.getSystemInfoFn(), s.getGpuFn(ctx, nil), true)
+	require.True(t, needEvict, "expected eviction when the predicted MLX size exceeds available memory")
+	require.Equal(t, req.opts.NumCtx, mlx.contextLength, "client should be created for the requested context")
+	require.False(t, mlx.closeCalled.Load(), "nothing was spawned, so nothing should be closed")
+	s.loadedMu.Lock()
+	require.Nil(t, s.activeLoading)
+	require.Len(t, s.loaded, 1, "the MLX model must not be registered")
+	s.loadedMu.Unlock()
+}
+
+func TestSchedMLXFitsAlongside(t *testing.T) {
+	// 10 GiB predicted against 20 GiB free loads without evicting.
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s, mlx := mlxScheduler(ctx, 10*format.GibiByte)
+	req := newMLXRequest(ctx, "mlx-model")
+
+	needEvict := s.load(req, s.getSystemInfoFn(), s.getGpuFn(ctx, nil), true)
+	require.False(t, needEvict, "expected no eviction when the predicted MLX size fits")
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	require.Same(t, mlx, s.loaded[schedulerModelKey(req.model)].llama)
+	s.loadedMu.Unlock()
+}
+
+func TestSchedMLXFirstLoadSkipsFitCheck(t *testing.T) {
+	// With nothing else loaded there is nothing to evict, so the model loads
+	// however large the prediction is; the runner's own Load checks the
+	// weights fit.
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s, _ := mlxScheduler(ctx, 100*format.GibiByte)
+	s.loadedMu.Lock()
+	delete(s.loaded, "existing-model")
+	s.loadedMu.Unlock()
+	req := newMLXRequest(ctx, "mlx-model")
+
+	needEvict := s.load(req, s.getSystemInfoFn(), s.getGpuFn(ctx, nil), false)
+	require.False(t, needEvict)
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	s.loadedMu.Unlock()
+}
+
+func TestSchedMLXFitsUsesSystemMemoryOnSharedGPU(t *testing.T) {
+	// On an integrated GPU the live system free memory is the tighter
+	// measurement, so the fit is judged against it.
+	s := &Scheduler{}
+	gpus := []ml.DeviceInfo{{DeviceID: ml.DeviceID{Library: "Metal"}, Integrated: true, TotalMemory: 128 * format.GibiByte, FreeMemory: 90 * format.GibiByte}}
+	estimate := mlxrunner.MemoryEstimate{Weights: 17 * format.GibiByte, KVCache: 16 * format.GibiByte, PrefixCache: 8 * format.GibiByte, NumCtx: 262144}
+
+	require.True(t, s.mlxFits(estimate, ml.SystemInfo{FreeMemory: 90 * format.GibiByte}, gpus))
+	require.False(t, s.mlxFits(estimate, ml.SystemInfo{FreeMemory: 50 * format.GibiByte}, gpus))
 }

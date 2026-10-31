@@ -27,10 +27,8 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/mlx"
-	"github.com/ollama/ollama/types/model"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -40,7 +38,8 @@ type Client struct {
 	contextLength       atomic.Int64
 	softContextLength   int // recommended limit to avoid poor performance
 	memory              atomic.Uint64
-	embeddingDimensions atomic.Value // []int
+	predicted           MemoryEstimate // size once the caches fill; the booked floor
+	embeddingDimensions atomic.Value   // []int
 	done                chan struct{}
 	doneErr             error // valid after done is closed
 	client              *http.Client
@@ -66,17 +65,20 @@ func NewClient(modelName string, softContextLength int) (*Client, error) {
 		client:            http.DefaultClient,
 	}
 
-	modelManifest, err := manifest.ParseNamedManifest(model.ParseName(modelName))
+	estimate, err := PredictMemory(modelName, softContextLength)
 	if err != nil {
 		return nil, err
 	}
-	var tensorBytes int64
-	for _, layer := range modelManifest.TensorLayers() {
-		tensorBytes += layer.Size
-	}
-	c.memory.Store(uint64(tensorBytes))
+	c.predicted = estimate
+	c.memory.Store(estimate.Weights)
 
 	return c, nil
+}
+
+// Predicted returns the memory the runner is expected to reach once its
+// caches have filled for the context it was created with.
+func (c *Client) Predicted() MemoryEstimate {
+	return c.predicted
 }
 
 // CheckRuntime reports whether an MLX dynamic library was loaded successfully.
@@ -627,15 +629,23 @@ func (c *Client) currentMemory() uint64 {
 	return c.memory.Load()
 }
 
+// booked is the memory the scheduler should hold for this runner. The
+// runner reports what it holds right now, which is the weights until the
+// caches fill, so the prediction is the floor; a runner that has grown past
+// it reports its real size.
+func (c *Client) booked(live uint64) uint64 {
+	return max(live, c.predicted.Total())
+}
+
 // MemorySize implements llm.LlamaServer.
 func (c *Client) MemorySize() (total, vram uint64) {
-	mem := c.currentMemory()
+	mem := c.booked(c.currentMemory())
 	return mem, mem
 }
 
 // VRAMByGPU implements llm.LlamaServer.
 func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
-	return c.currentMemory()
+	return c.booked(c.currentMemory())
 }
 
 var _ llm.LlamaServer = (*Client)(nil)
