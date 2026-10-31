@@ -1210,6 +1210,26 @@ func TestGemma4RepairCandidates(t *testing.T) {
 			tools:    []api.Tool{gemma4TestStringTool("count", "name")},
 			expected: []string{`{n:1`},
 		},
+		{
+			name:     "bare_word_candidate_comes_last",
+			input:    `{content:hello,mode:Fast}`,
+			toolName: "write",
+			tools:    []api.Tool{gemma4TestStringTool("write", "content")},
+			expected: []string{
+				`{content:hello,mode:Fast}`,
+				`{content:<|"|>hello,mode:Fast<|"|>}`,
+				`{content:<|"|>hello<|"|>,mode:<|"|>Fast<|"|>}`,
+			},
+		},
+		{
+			name:     "bare_word_candidate_keeps_single_quote_repair",
+			input:    `{pattern:'a: b',mode:Fast}`,
+			toolName: "grep",
+			expected: []string{
+				`{pattern:<|"|>a: b<|"|>,mode:Fast}`,
+				`{pattern:<|"|>a: b<|"|>,mode:<|"|>Fast<|"|>}`,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1219,6 +1239,426 @@ func TestGemma4RepairCandidates(t *testing.T) {
 				t.Fatalf("gemma4RepairCandidates mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestGemma4PlainQuoteStringClose(t *testing.T) {
+	write := []api.Tool{gemma4TestStringTool("write", "content", "path")}
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    map[string]any // nil: the call is not repaired
+	}{
+		{
+			// A whole file's text closed with a plain quote on a line of its own, and
+			// no comma before the next argument.
+			name:    "plain_quote_then_key",
+			content: "call:write{content:<|\"|>EditorID: FlameBlade\nDescription:\n  Value: ''\nObjectEffect: 049BB7:Skyrim.esm  # EnchWeaponFireDamage01\n\"\npath:<|\"|>FlameBlade/plugin/Weapons/FlameBlade.yaml<|\"|>}",
+			tools:   write,
+			want: map[string]any{
+				"content": "EditorID: FlameBlade\nDescription:\n  Value: ''\nObjectEffect: 049BB7:Skyrim.esm  # EnchWeaponFireDamage01\n",
+				"path":    "FlameBlade/plugin/Weapons/FlameBlade.yaml",
+			},
+		},
+		{
+			name:    "plain_quote_comma_then_key",
+			content: `call:write{content:<|"|>a: 1",path:<|"|>x.yaml<|"|>}`,
+			tools:   write,
+			want:    map[string]any{"content": "a: 1", "path": "x.yaml"},
+		},
+		{
+			name:    "quote_before_a_word_that_is_no_parameter",
+			content: "call:write{content:<|\"|>a: \"b\"\nnote:<|\"|>x.yaml<|\"|>}",
+			tools:   write,
+		},
+		{
+			name:    "no_tool_to_name_the_parameters",
+			content: "call:write{content:<|\"|>a: 1\"\npath:<|\"|>x.yaml<|\"|>}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			if tt.want == nil {
+				if err == nil {
+					if _, split := got.Function.Arguments.Get("path"); split {
+						t.Fatalf("expected no repair at the quote, got %v", got.Function.Arguments)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+			}
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_PlainQuoteClosedStringInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init([]api.Tool{gemma4TestStringTool("write", "content", "path")}, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>call:write{content:<|\"|>a: 1\n\"\npath:<|\"|>x.yaml<|\"|>}<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "write", Arguments: testArgs(map[string]any{
+		"content": "a: 1\n",
+		"path":    "x.yaml",
+	})}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4BareWordValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "word_after_a_key",
+			input:    `{mode:Fast}`,
+			expected: `{mode:<|"|>Fast<|"|>}`,
+		},
+		{
+			name:     "word_in_an_object_in_a_list",
+			input:    `{set:[{path:<|"|>AIData.Aggression<|"|>,value:Unaggressive}]}`,
+			expected: `{set:[{path:<|"|>AIData.Aggression<|"|>,value:<|"|>Unaggressive<|"|>}]}`,
+		},
+		{
+			name:     "words_as_list_items",
+			input:    `{flags:[Female, Unique ],n:[1,2]}`,
+			expected: `{flags:[<|"|>Female<|"|>, <|"|>Unique<|"|> ],n:[1,2]}`,
+		},
+		{
+			name:     "words_with_dots_digits_and_underscores",
+			input:    `{"path" : AIData.Aggression,a:_x1,b:x_2.y}`,
+			expected: `{"path" : <|"|>AIData.Aggression<|"|>,a:<|"|>_x1<|"|>,b:<|"|>x_2.y<|"|>}`,
+		},
+		{
+			name:     "keeps_words_in_strings",
+			input:    `{note:<|"|>mode:Fast}<|"|>,raw:"mode:Fast]"}`,
+			expected: `{note:<|"|>mode:Fast}<|"|>,raw:"mode:Fast]"}`,
+		},
+		{
+			name:     "keeps_json_literals",
+			input:    `{a:true,b:false,c:null,d:[true,null]}`,
+			expected: `{a:true,b:false,c:null,d:[true,null]}`,
+		},
+		{
+			name:     "keeps_literals_written_in_other_cases",
+			input:    `{a:True,b:NULL,c:None}`,
+			expected: `{a:True,b:NULL,c:None}`,
+		},
+		{
+			name:     "keeps_numbers",
+			input:    `{a:5,b:-1.5,c:1e3,d:0x1F,e:.5}`,
+			expected: `{a:5,b:-1.5,c:1e3,d:0x1F,e:.5}`,
+		},
+		{
+			name:     "keeps_words_that_are_not_all_of_the_value",
+			input:    `{name:Iron Sword,path:a/b,c:x-y,d:Fast<|"|>x<|"|>}`,
+			expected: `{name:Iron Sword,path:a/b,c:x-y,d:Fast<|"|>x<|"|>}`,
+		},
+		{
+			name:     "keeps_keys",
+			input:    `{a:b:c,Fast}`,
+			expected: `{a:b:c,Fast}`,
+		},
+		{
+			name:     "keeps_a_word_with_nothing_after_it",
+			input:    `{mode:Fast`,
+			expected: `{mode:Fast`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{mode:Fast,a:<|"|>x}`,
+			expected: `{mode:Fast,a:<|"|>x}`,
+		},
+		{
+			name:     "keeps_a_delimiter_in_a_json_quoted_string",
+			input:    `{raw:"<|"|>",mode:Fast,b:<|"|>}`,
+			expected: `{raw:"<|"|>",mode:Fast,b:<|"|>}`,
+		},
+		{
+			name:     "keeps_brackets_that_do_not_nest",
+			input:    `{mode:Fast,a:[x}]`,
+			expected: `{mode:Fast,a:[x}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4BareWordValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4BareWordValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4BareWordEditRecordCall sets a list of paths, one to a single-quoted
+// value and one to a bare word.
+const gemma4BareWordEditRecordCall = `call:editRecord{project:<|"|>HildaTheNord<|"|>,record:<|"|>Hilda<|"|>,set:[{path:<|"|>Configuration.Level<|"|>,value:'{MutagenObjectType: PcLevelMult, LevelMult: 1}'},{path:<|"|>Configuration.CalcMinLevel<|"|>,value:5},{path:<|"|>Configuration.CalcMaxLevel<|"|>,value:30},{path:<|"|>Configuration.SpeedMultiplier<|"|>,value:100},{path:<|"|>AIData.Aggression<|"|>,value:Unaggressive}]}`
+
+var gemma4BareWordEditRecordArgs = map[string]any{
+	"project": "HildaTheNord",
+	"record":  "Hilda",
+	"set": []any{
+		map[string]any{"path": "Configuration.Level", "value": "{MutagenObjectType: PcLevelMult, LevelMult: 1}"},
+		map[string]any{"path": "Configuration.CalcMinLevel", "value": 5.0},
+		map[string]any{"path": "Configuration.CalcMaxLevel", "value": 30.0},
+		map[string]any{"path": "Configuration.SpeedMultiplier", "value": 100.0},
+		map[string]any{"path": "AIData.Aggression", "value": "Unaggressive"},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_BareWordValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "word_in_a_list_of_objects",
+			content: gemma4BareWordEditRecordCall,
+			want:    gemma4BareWordEditRecordArgs,
+		},
+		{
+			name:    "words_as_list_items",
+			content: `call:set{flags:[Female,Unique],level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			name:    "literals_numbers_and_strings_keep_their_reading",
+			content: `call:set{a:true,b:false,c:null,d:-1.5,note:<|"|>mode:Fast,<|"|>,mode:Fast}`,
+			want:    map[string]any{"a": true, "b": false, "c": nil, "d": -1.5, "note": "mode:Fast,", "mode": "Fast"},
+		},
+		{
+			name:    "word_in_an_unclosed_list",
+			content: `call:set{flags:[Female,Unique,level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			// A finished call's last string left open is closed at its end first, as
+			// it is without a bare word; the delimiters are then balanced.
+			name:    "word_before_a_last_string_left_open",
+			content: `call:set{mode:Fast,a:<|"|>x<|"|>,b:<|"|>}`,
+			want:    map[string]any{"mode": "Fast", "a": "x", "b": ""},
+		},
+		{
+			name:    "literal_written_in_another_case",
+			content: `call:set{a:True}`,
+		},
+		{
+			name:    "none",
+			content: `call:set{a:None}`,
+		},
+		{
+			name:    "two_words",
+			content: `call:set{name:Iron Sword}`,
+		},
+		{
+			name:    "word_followed_by_a_colon",
+			content: `call:set{a:b:c}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ToolCall_DoesNotRepairBareWordWithUnbalancedDelimiters(t *testing.T) {
+	// Flushed on done, the call may have been cut off, and with a string left open
+	// which words are outside every string is not clear.
+	if got, err := parseGemma4ToolCall(`call:set{mode:Fast,a:<|"|>x<|"|>,b:<|"|>}`, nil); err == nil {
+		t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+	}
+}
+
+func TestGemma4Parser_BareWordValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4BareWordEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4BareWordEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4EscapedQuoteValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "value_after_a_key",
+			input:    `{level:\"5\"}`,
+			expected: `{level:<|"|>5<|"|>}`,
+		},
+		{
+			name:     "values_in_objects_in_a_list",
+			input:    `{set:[{path:<|"|>Level<|"|>,value:\"{Type: PcLevelMult, Mult: 1}\"},{path:<|"|>Min<|"|>,value:\"5\"}]}`,
+			expected: `{set:[{path:<|"|>Level<|"|>,value:<|"|>{Type: PcLevelMult, Mult: 1}<|"|>},{path:<|"|>Min<|"|>,value:<|"|>5<|"|>}]}`,
+		},
+		{
+			name:     "values_as_list_items_and_with_spaces",
+			input:    `{flags:[\"Female\", \"Unique\" ],"mode" : \"\" ,n:1}`,
+			expected: `{flags:[<|"|>Female<|"|>, <|"|>Unique<|"|> ],"mode" : <|"|><|"|> ,n:1}`,
+		},
+		{
+			name:     "keeps_escaped_quotes_in_strings",
+			input:    `{note:<|"|>say \"hi\"<|"|>,raw:"say \"hi\""}`,
+			expected: `{note:<|"|>say \"hi\"<|"|>,raw:"say \"hi\""}`,
+		},
+		{
+			name:     "keeps_text_with_a_backslash_or_a_quote",
+			input:    `{path:\"a\b\",say:\"a"b\"}`,
+			expected: `{path:\"a\b\",say:\"a"b\"}`,
+		},
+		{
+			name:     "keeps_text_that_is_not_all_of_the_value",
+			input:    `{a:\"x\"y,b:1}`,
+			expected: `{a:\"x\"y,b:1}`,
+		},
+		{
+			name:     "keeps_a_value_left_open",
+			input:    `{a:\"x}`,
+			expected: `{a:\"x}`,
+		},
+		{
+			name:     "keeps_unbalanced_delimiters",
+			input:    `{a:\"x\",b:<|"|>y}`,
+			expected: `{a:\"x\",b:<|"|>y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4EscapedQuoteValues(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4EscapedQuoteValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// gemma4EscapedQuoteEditRecordCall sets a list of paths to values written between
+// escaped quotes.
+const gemma4EscapedQuoteEditRecordCall = `call:editRecord{build:true,project:<|"|>HildaTheNord<|"|>,record:<|"|>Hilda<|"|>,set:[{path:<|"|>Configuration.Level<|"|>,value:\"{MutagenObjectType: PcLevelMult, LevelMult: 1}\"},{path:<|"|>Configuration.CalcMinLevel<|"|>,value:\"5\"},{path:<|"|>Configuration.CalcMaxLevel<|"|>,value:\"30\"},{path:<|"|>AIData.Aggression<|"|>,value:\"Unaggressive\"}]}`
+
+var gemma4EscapedQuoteEditRecordArgs = map[string]any{
+	"build":   true,
+	"project": "HildaTheNord",
+	"record":  "Hilda",
+	"set": []any{
+		map[string]any{"path": "Configuration.Level", "value": "{MutagenObjectType: PcLevelMult, LevelMult: 1}"},
+		map[string]any{"path": "Configuration.CalcMinLevel", "value": "5"},
+		map[string]any{"path": "Configuration.CalcMaxLevel", "value": "30"},
+		map[string]any{"path": "AIData.Aggression", "value": "Unaggressive"},
+	},
+}
+
+func TestParseGemma4ClosedToolCall_EscapedQuoteValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any // nil: the call still fails
+	}{
+		{
+			name:    "values_in_a_list_of_objects",
+			content: gemma4EscapedQuoteEditRecordCall,
+			want:    gemma4EscapedQuoteEditRecordArgs,
+		},
+		{
+			name:    "beside_a_bare_word_and_a_single_quoted_value",
+			content: `call:set{a:\"x\",b:Fast,c:'y z',n:5}`,
+			want:    map[string]any{"a": "x", "b": "Fast", "c": "y z", "n": 5.0},
+		},
+		{
+			name:    "in_an_unclosed_list",
+			content: `call:set{flags:[\"Female\",\"Unique\",level:5}`,
+			want:    map[string]any{"flags": []any{"Female", "Unique"}, "level": 5.0},
+		},
+		{
+			name:    "text_with_a_backslash",
+			content: `call:set{path:\"a\b\"}`,
+		},
+		{
+			name:    "text_that_is_not_all_of_the_value",
+			content: `call:set{a:\"x\"y}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if tt.want == nil {
+				if err == nil {
+					t.Fatalf("expected the call to fail, got %v", got.Function.Arguments)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_EscapedQuoteValueInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add("<|tool_call>"+gemma4EscapedQuoteEditRecordCall+"<tool_call|>", true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "editRecord", Arguments: testArgs(gemma4EscapedQuoteEditRecordArgs)}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -1499,5 +1939,210 @@ func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
 
 	if diff := cmp.Diff(want, got, argsComparer); diff != "" {
 		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestRepairGemma4UnclosedBrackets(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "closes_list_and_object_at_end",
+			input:    `{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>,path:<|"|>x<|"|>}`,
+			expected: `{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>,path:<|"|>x<|"|>}]}`,
+		},
+		{
+			name:     "closes_list_before_a_key",
+			input:    `{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>},path:<|"|>x<|"|>}`,
+			expected: `{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>}],path:<|"|>x<|"|>}`,
+		},
+		{
+			name:     "closes_list_before_a_quoted_key",
+			input:    `{edits:[{a:1},"path":<|"|>x<|"|>}`,
+			expected: `{edits:[{a:1}],"path":<|"|>x<|"|>}`,
+		},
+		{
+			name:     "closes_list_where_its_object_closes",
+			input:    `{items:[1,2}`,
+			expected: `{items:[1,2]}`,
+		},
+		{
+			name:     "keeps_items_of_a_list",
+			input:    `{edits:[{a:1},{b:2}`,
+			expected: `{edits:[{a:1},{b:2}]}`,
+		},
+		{
+			name:     "keeps_strings_of_a_list",
+			input:    `{names:[<|"|>a<|"|>,<|"|>b<|"|>`,
+			expected: `{names:[<|"|>a<|"|>,<|"|>b<|"|>]}`,
+		},
+		{
+			name:     "ignores_brackets_in_strings",
+			input:    `{text:<|"|>[{,key:<|"|>,raw:"[x:{"`,
+			expected: `{text:<|"|>[{,key:<|"|>,raw:"[x:{"}`,
+		},
+		{
+			name:     "drops_a_brace_too_many_before_a_list_close",
+			input:    `{set:[{path:<|"|>a<|"|>,value:{b:1}}}]}`,
+			expected: `{set:[{path:<|"|>a<|"|>,value:{b:1}}]}`,
+		},
+		{
+			name:     "leaves_balanced_input",
+			input:    `{edits:[{a:1}],path:<|"|>x<|"|>}`,
+			expected: `{edits:[{a:1}],path:<|"|>x<|"|>}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := repairGemma4UnclosedBrackets(tt.input); got != tt.expected {
+				t.Fatalf("repairGemma4UnclosedBrackets(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ClosedToolCall_ClosesUnclosedBrackets(t *testing.T) {
+	// The shapes of the 30 edit calls gemma4:e4b left unclosed in ollama/ollama#19273, its editRecord call with a
+	// brace too many, and #17565's missing brace. The last case also leaves a string unterminated, which has to be
+	// closed before the brackets can be.
+	tests := []struct {
+		name    string
+		content string
+		want    map[string]any
+	}{
+		{
+			name:    "path_inside_the_item_list_unclosed",
+			content: `call:edit{edits:[{newText:<|"|>a: 1<|"|>,oldText:<|"|>a: 0<|"|>,path:<|"|>x.yaml<|"|>}`,
+			want: map[string]any{"edits": []any{
+				map[string]any{"newText": "a: 1", "oldText": "a: 0", "path": "x.yaml"},
+			}},
+		},
+		{
+			name:    "list_unclosed_before_path",
+			content: `call:edit{edits:[{newText:<|"|>a: 1<|"|>,oldText:<|"|>a: 0<|"|>},path:<|"|>x.yaml<|"|>}`,
+			want: map[string]any{
+				"edits": []any{map[string]any{"newText": "a: 1", "oldText": "a: 0"}},
+				"path":  "x.yaml",
+			},
+		},
+		{
+			name:    "list_and_call_unclosed",
+			content: `call:edit{edits:[{newText:<|"|>a: 1<|"|>,oldText:<|"|>a: 0<|"|>}`,
+			want: map[string]any{"edits": []any{
+				map[string]any{"newText": "a: 1", "oldText": "a: 0"},
+			}},
+		},
+		{
+			name:    "two_items_list_unclosed_before_path",
+			content: `call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>},{newText:<|"|>c<|"|>},path:<|"|>x.yaml<|"|>}`,
+			want: map[string]any{
+				"edits": []any{map[string]any{"newText": "a", "oldText": "b"}, map[string]any{"newText": "c"}},
+				"path":  "x.yaml",
+			},
+		},
+		{
+			name:    "brace_too_many_before_list_close",
+			content: `call:editRecord{record:<|"|>Hilda<|"|>,set:[{path:<|"|>Name<|"|>,value:<|"|>Hilda<|"|>},{path:<|"|>Level<|"|>,value:{LevelMult:1,CalcMinLevel:5}}}]}`,
+			want: map[string]any{
+				"record": "Hilda",
+				"set": []any{
+					map[string]any{"path": "Name", "value": "Hilda"},
+					map[string]any{"path": "Level", "value": map[string]any{"LevelMult": 1.0, "CalcMinLevel": 5.0}},
+				},
+			},
+		},
+		{
+			name:    "missing_final_brace",
+			content: `call:read_files{files:[{path:<|"|>assets.json<|"|>,start_line:1}]`,
+			want: map[string]any{"files": []any{
+				map[string]any{"path": "assets.json", "start_line": 1.0},
+			}},
+		},
+		{
+			name:    "string_and_list_unclosed",
+			content: `call:edit{edits:[{newText:<|"|>a: 1<|"|>,oldText:<|"|>a: 0}`,
+			want: map[string]any{"edits": []any{
+				map[string]any{"newText": "a: 1", "oldText": "a: 0"},
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseGemma4ToolCall(tt.content, nil); err == nil {
+				t.Fatal("expected the call to fail without the repair")
+			}
+			got, err := parseGemma4ClosedToolCall(tt.content, nil)
+			if err != nil {
+				t.Fatalf("parseGemma4ClosedToolCall returned error: %v", err)
+			}
+			name := tt.content[len("call:"):strings.Index(tt.content, "{")]
+			want := api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: testArgs(tt.want)}}
+			if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGemma4Parser_UnclosedListInFinishedToolCall(t *testing.T) {
+	parser := &Gemma4Parser{hasThinkingSupport: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, _, toolCalls, err := parser.Add(`<|tool_call>call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>},path:<|"|>x.yaml<|"|>}<tool_call|>`, true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	want := []api.ToolCall{{Function: api.ToolCallFunction{Name: "edit", Arguments: testArgs(map[string]any{
+		"edits": []any{map[string]any{"newText": "a", "oldText": "b"}},
+		"path":  "x.yaml",
+	})}}}
+	if diff := cmp.Diff(want, toolCalls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestGemma4Parser_UnparsableToolCallIsContent(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		expectedContent string
+	}{
+		{
+			// Finished, and still not valid once its brackets are closed: the client sees it.
+			name:            "finished_call",
+			input:           `<|tool_call>call:edit{edits:[{newText:<|"|>a<|"|>,oldText}<tool_call|>`,
+			expectedContent: `call:edit{edits:[{newText:<|"|>a<|"|>,oldText}`,
+		},
+		{
+			// Flushed on done, with no closing tag, it may have been cut off: not repaired, and passed on.
+			name:            "flushed_on_done",
+			input:           `<|tool_call>call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>}`,
+			expectedContent: `call:edit{edits:[{newText:<|"|>a<|"|>,oldText:<|"|>b<|"|>}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: true}
+			parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+			content, _, toolCalls, err := parser.Add(tt.input, true)
+			if err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+			if len(toolCalls) != 0 {
+				t.Fatalf("expected no tool calls, got %v", toolCalls)
+			}
+			if content != tt.expectedContent {
+				t.Fatalf("content = %q, want %q", content, tt.expectedContent)
+			}
+		})
 	}
 }
