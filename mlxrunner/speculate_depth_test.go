@@ -3,6 +3,8 @@ package mlxrunner
 import (
 	"testing"
 	"time"
+
+	"github.com/ollama/ollama/api"
 )
 
 // driveDepthController runs the controller for n steps against a regime mirroring
@@ -294,5 +296,46 @@ func TestDepthControllerTracksAcceptanceDrift(t *testing.T) {
 	deep := c.selected()
 	if deep <= shallow {
 		t.Errorf("expected selection to deepen after acceptance rose (was %d, now %d)", shallow, deep)
+	}
+}
+
+// A request caps the depths the controller may schedule for it: the opening
+// limit and each round's reschedule are clamped, while a request with room
+// still rides the learned sweep.
+func TestSessionDraftCap(t *testing.T) {
+	s := &speculation{drafter: grammarTestDrafter{}, depth: newDepthController()}
+	// Prove the controller out to depth 3 with a sloped cost curve, so next()
+	// seeds the one unsampled depth inside its limit: 4.
+	for range acceptanceMinSamples {
+		s.depth.acc.observe(3, 3)
+	}
+	for n := range 4 {
+		s.depth.cost.observe(n, time.Duration(n+1)*time.Millisecond)
+	}
+	s.depth.scheduled = 3
+
+	openDrafting := func(draftNumPredict int) *speculationSession {
+		req := Request{CompletionRequest: CompletionRequest{Options: api.Options{Runner: api.Runner{DraftNumPredict: draftNumPredict}}}}
+		return s.open(req, nil)
+	}
+
+	capped := openDrafting(2)
+	defer capped.close()
+	if !capped.enabled || capped.limit != 2 {
+		t.Fatalf("cap 2 opened enabled=%v limit=%d, want enabled limit 2 (scheduled 3 clamped)", capped.enabled, capped.limit)
+	}
+	capped.endRound(2, 2, 2)
+	if capped.limit != 2 {
+		t.Fatalf("cap 2 rescheduled to %d, want 2 (controller picked %d)", capped.limit, s.depth.scheduled)
+	}
+
+	roomy := openDrafting(8)
+	defer roomy.close()
+	if roomy.limit != 4 {
+		t.Fatalf("cap 8 opened at limit %d, want the controller's unclamped %d", roomy.limit, s.depth.scheduled)
+	}
+	roomy.endRound(4, 4, 4)
+	if roomy.limit != 4 {
+		t.Fatalf("cap 8 rescheduled to %d, want the controller's unclamped 4", roomy.limit)
 	}
 }
