@@ -553,8 +553,62 @@ func gemma4RepairCandidates(argsStr, toolName string, tools []api.Tool) []string
 	if raw, ok := repairGemma4RawTerminalStringValue(argsStr, toolName, tools); ok {
 		addCandidate(raw, true)
 	}
+	if trimmed, ok := repairGemma4TrailingNoise(argsStr); ok {
+		addCandidate(trimmed, false)
+	}
 
 	return candidates
+}
+
+// repairGemma4TrailingNoise drops non-structural trailing noise and closes any
+// remaining containers only after that noise has been removed.
+func repairGemma4TrailingNoise(s string) (string, bool) {
+	lastClose := strings.LastIndexAny(s, "}]")
+	if lastClose == -1 {
+		return s, false
+	}
+	noise := strings.TrimSpace(s[lastClose+1:])
+	if noise == "" || strings.ContainsAny(noise, `{}[],:"<>|`) {
+		return s, false
+	}
+
+	trimmed := s[:lastClose+1]
+	var stack []byte
+	for i := 0; i < len(trimmed); {
+		if strings.HasPrefix(trimmed[i:], gemma4StringDelimiter) {
+			start := i + len(gemma4StringDelimiter)
+			end := strings.Index(trimmed[start:], gemma4StringDelimiter)
+			if end == -1 {
+				return s, false
+			}
+			i = start + end + len(gemma4StringDelimiter)
+			continue
+		}
+		if trimmed[i] == '"' {
+			end := gemma4JSONQuotedStringEnd(trimmed, i)
+			if end == -1 {
+				return s, false
+			}
+			i = end
+			continue
+		}
+		switch trimmed[i] {
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) == 0 || stack[len(stack)-1] != trimmed[i] {
+				return s, false
+			}
+			stack = stack[:len(stack)-1]
+		}
+		i++
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		trimmed += string(stack[i])
+	}
+	return trimmed, true
 }
 
 // repairGemma4MissingStringDelimiter closes an unbalanced Gemma string marker.
