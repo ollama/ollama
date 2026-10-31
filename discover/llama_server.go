@@ -65,6 +65,7 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 	)
 	cmd.WaitDelay = llamaServerDiscoveryWaitDelay
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = discoverSysProcAttr()
 
 	llm.SetupLlamaServerCommandEnv(cmd, llamaServer, libDirs, extraEnvs)
 
@@ -143,6 +144,7 @@ func llamaServerDiscoverDevices(ctx context.Context, libDirs []string, extraEnvs
 	cmd2 := exec.CommandContext(ctx, llamaServer, "--list-devices", "--offline", "--verbose")
 	cmd2.WaitDelay = llamaServerDiscoveryWaitDelay
 	cmd2.Env = cmd.Env // reuse same environment
+	cmd2.SysProcAttr = discoverSysProcAttr()
 	listOutput, err := cmd2.CombinedOutput()
 	_, _ = status.Write(listOutput)
 	if err != nil {
