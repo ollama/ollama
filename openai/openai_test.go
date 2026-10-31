@@ -322,6 +322,120 @@ func TestFromCompleteRequest_Basic(t *testing.T) {
 	}
 }
 
+// Omitted sampler fields must stay unset so model defaults apply.
+func TestSamplerOptionsOmittedVsExplicit(t *testing.T) {
+	samplerKeys := []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"}
+
+	convert := map[string]func(t *testing.T, body string) map[string]any{
+		"chat": func(t *testing.T, body string) map[string]any {
+			var r ChatCompletionRequest
+			if err := json.Unmarshal([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]`+body+`}`), &r); err != nil {
+				t.Fatal(err)
+			}
+			out, err := FromChatRequest(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.Options
+		},
+		"completions": func(t *testing.T, body string) map[string]any {
+			var r CompletionRequest
+			if err := json.Unmarshal([]byte(`{"model":"m","prompt":"hi"`+body+`}`), &r); err != nil {
+				t.Fatal(err)
+			}
+			out, err := FromCompleteRequest(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.Options
+		},
+		"responses": func(t *testing.T, body string) map[string]any {
+			var r ResponsesRequest
+			if err := json.Unmarshal([]byte(`{"model":"m","input":"hi"`+body+`}`), &r); err != nil {
+				t.Fatal(err)
+			}
+			out, err := FromResponsesRequest(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.Options
+		},
+	}
+
+	cases := []struct {
+		name      string
+		endpoints []string
+		body      string
+		want      map[string]float64
+	}{
+		{
+			name:      "omitted",
+			endpoints: []string{"chat", "completions", "responses"},
+			want:      map[string]float64{},
+		},
+		{
+			name:      "null",
+			endpoints: []string{"chat", "completions", "responses"},
+			body:      `,"temperature":null,"top_p":null`,
+			want:      map[string]float64{},
+		},
+		{
+			name:      "explicit temperature and top_p",
+			endpoints: []string{"chat", "completions", "responses"},
+			body:      `,"temperature":0.3,"top_p":0.7`,
+			want:      map[string]float64{"temperature": 0.3, "top_p": 0.7},
+		},
+		{
+			name:      "explicit zero temperature and top_p",
+			endpoints: []string{"chat", "completions", "responses"},
+			body:      `,"temperature":0,"top_p":0`,
+			want:      map[string]float64{"temperature": 0, "top_p": 0},
+		},
+		{
+			name:      "explicit penalties",
+			endpoints: []string{"chat", "completions"},
+			body:      `,"frequency_penalty":0.25,"presence_penalty":0.5`,
+			want:      map[string]float64{"frequency_penalty": 0.25, "presence_penalty": 0.5},
+		},
+		{
+			name:      "explicit zero penalties",
+			endpoints: []string{"chat", "completions"},
+			body:      `,"frequency_penalty":0,"presence_penalty":0`,
+			want:      map[string]float64{"frequency_penalty": 0, "presence_penalty": 0},
+		},
+	}
+
+	for _, tc := range cases {
+		for _, ep := range tc.endpoints {
+			t.Run(ep+"/"+tc.name, func(t *testing.T) {
+				opts := convert[ep](t, tc.body)
+				for _, key := range samplerKeys {
+					got, present := opts[key]
+					want, wantPresent := tc.want[key]
+					if present != wantPresent {
+						t.Fatalf("%s present = %v, want %v (options %v)", key, present, wantPresent, opts)
+					}
+					if !present {
+						continue
+					}
+					var gotF float64
+					switch v := got.(type) {
+					case float32:
+						gotF = float64(v)
+					case float64:
+						gotF = v
+					default:
+						t.Fatalf("%s has type %T", key, got)
+					}
+					if math.Abs(gotF-want) > 1e-6 {
+						t.Errorf("%s = %v, want %v", key, gotF, want)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestToUsage(t *testing.T) {
 	resp := api.ChatResponse{
 		Metrics: api.Metrics{

@@ -170,15 +170,15 @@ type ChatCompletionChunk struct {
 type CompletionRequest struct {
 	Model            string         `json:"model"`
 	Prompt           string         `json:"prompt"`
-	FrequencyPenalty float32        `json:"frequency_penalty"`
+	FrequencyPenalty *float32       `json:"frequency_penalty"`
 	MaxTokens        *int           `json:"max_tokens"`
-	PresencePenalty  float32        `json:"presence_penalty"`
+	PresencePenalty  *float32       `json:"presence_penalty"`
 	Seed             *int           `json:"seed"`
 	Stop             any            `json:"stop"`
 	Stream           bool           `json:"stream"`
 	StreamOptions    *StreamOptions `json:"stream_options"`
 	Temperature      *float32       `json:"temperature"`
-	TopP             float32        `json:"top_p"`
+	TopP             *float32       `json:"top_p"`
 	Suffix           string         `json:"suffix"`
 	Logprobs         *int           `json:"logprobs"`
 	DebugRenderOnly  bool           `json:"_debug_render_only"`
@@ -754,8 +754,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
@@ -772,8 +770,6 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 
 	if r.TopP != nil {
 		options["top_p"] = *r.TopP
-	} else {
-		options["top_p"] = 1.0
 	}
 
 	var format json.RawMessage
@@ -904,22 +900,22 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
-	} else {
-		options["temperature"] = 1.0
 	}
 
 	if r.Seed != nil {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty
+	if r.FrequencyPenalty != nil {
+		options["frequency_penalty"] = *r.FrequencyPenalty
+	}
 
-	options["presence_penalty"] = r.PresencePenalty
+	if r.PresencePenalty != nil {
+		options["presence_penalty"] = *r.PresencePenalty
+	}
 
-	if r.TopP != 0.0 {
-		options["top_p"] = r.TopP
-	} else {
-		options["top_p"] = 1.0
+	if r.TopP != nil {
+		options["top_p"] = *r.TopP
 	}
 
 	var logprobs bool
