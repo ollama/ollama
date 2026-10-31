@@ -34,6 +34,7 @@ type SafetensorsManifestOptions struct {
 
 	Template     string
 	System       string
+	SystemSet    bool
 	License      any
 	Parameters   map[string]any
 	Messages     []api.Message
@@ -47,6 +48,7 @@ type SafetensorsManifestOptions struct {
 type ModelfileLayerOptions struct {
 	Template   string
 	System     string
+	SystemSet  bool
 	License    any
 	Parameters map[string]any
 	Messages   []api.Message
@@ -85,6 +87,7 @@ func NewSafetensorsManifestWriter(opts SafetensorsManifestOptions) ManifestWrite
 		manifestLayers, err := ApplyModelfileLayers(layerInfoToManifestLayers(info.Layers), ModelfileLayerOptions{
 			Template:   opts.Template,
 			System:     opts.System,
+			SystemSet:  opts.SystemSet,
 			License:    opts.License,
 			Parameters: opts.Parameters,
 			Messages:   opts.Messages,
@@ -189,12 +192,14 @@ func ApplyModelfileLayers(layers []manifest.Layer, opts ModelfileLayerOptions) (
 		}
 	}
 
-	if opts.System != "" {
+	if opts.SystemSet || opts.System != "" {
 		layers = removeLayersByMediaType(layers, "application/vnd.ollama.image.system")
-		var err error
-		layers, err = appendTextLayer(layers, "application/vnd.ollama.image.system", opts.System)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create system layer: %w", err)
+		if opts.System != "" {
+			var err error
+			layers, err = appendTextLayer(layers, "application/vnd.ollama.image.system", opts.System)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create system layer: %w", err)
+			}
 		}
 	}
 
