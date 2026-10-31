@@ -94,8 +94,10 @@ const (
 func LlamaServerBatch(f *gguf.Model, opts api.Options, completion bool) (int, uint64) {
 	batch := opts.NumBatch
 	// These decision heads read the whole prompt without a KV cache, so the
-	// physical batch must hold the entire effective context.
-	wholePrompt := f.KV().Uint("decision.block_count") > 0
+	// physical batch must hold the entire effective context. Noncausal decision
+	// models such as vllm-d3 have no head blocks but read the whole prompt too.
+	kv := f.KV()
+	wholePrompt := kv.Uint("decision.block_count") > 0 || (kv.Has("decision.type") && !kv.Bool("attention.causal", true))
 	if wholePrompt {
 		batch = opts.NumCtx
 		if trainCtx := int(f.KV().ContextLength()); trainCtx > 0 {
