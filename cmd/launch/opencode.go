@@ -472,9 +472,11 @@ func (o *OpenCode) Paths() []string {
 }
 
 // openCodeStatePath returns the path to opencode's model state file.
-// TODO: this hardcodes the Linux/macOS XDG path. On Windows, opencode stores
-// state under %LOCALAPPDATA% (or similar) — verify and branch on runtime.GOOS.
 func openCodeStatePath() (string, error) {
+	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
+		return filepath.Join(stateHome, "opencode", "model.json"), nil
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
