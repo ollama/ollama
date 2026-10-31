@@ -62,12 +62,19 @@ func getCPUMem() (memInfo, error) {
 }
 
 func getCPUMemByCgroups(mem memInfo) memInfo {
-	total, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.max")
-	if err == nil {
+	total, errMax := getUint64ValueFromFile("/sys/fs/cgroup/memory.max")
+	if errMax == nil {
 		mem.TotalMemory = total
 	}
+	// Only override FreeMemory when cgroup memory.max is a real numeric limit.
+	// memory.current counts the cgroup's reclaimable page cache against "used",
+	// so when memory.max is "max" (no hard cap) this would clobber the
+	// MemAvailable value already read from /proc/meminfo with a much smaller
+	// MemFree-equivalent number, causing false "model requires more system
+	// memory" rejections once mmap'd model files have aged into pagecache.
+	// See ollama/ollama#15650.
 	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
-	if err == nil {
+	if err == nil && errMax == nil {
 		mem.FreeMemory = mem.TotalMemory - used
 	}
 	return mem
