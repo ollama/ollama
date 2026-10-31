@@ -48,6 +48,10 @@ func (p *Qwen3Parser) HasToolSupport() bool {
 	return true
 }
 
+func (p *Qwen3Parser) ToolCallDelimiters() (string, string) {
+	return qwen3ToolOpenTag, qwen3ToolCloseTag
+}
+
 func (p *Qwen3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
