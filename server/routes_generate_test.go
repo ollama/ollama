@@ -22,7 +22,9 @@ import (
 	gguftest "github.com/ollama/ollama/internal/testutil/gguf"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/openai"
 	ollamatemplate "github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -1931,8 +1933,9 @@ func TestGenerate(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model: "test-suffix",
-		Template: `{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
+		Model:  "test-suffix",
+		System: "Do not include this in an insert prompt.",
+		Template: `{{- if .Suffix }}{{ if .System }}SYSTEM {{ end }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 {{- else }}{{ .Prompt }}
 {{- end }}`,
 		From: "test",
@@ -1987,6 +1990,167 @@ func TestGenerate(t *testing.T) {
 
 		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "Help me write tests."); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("openai completions", func(t *testing.T) {
+		for _, req := range []api.CreateRequest{
+			{Model: "test-renderer", From: "test", Renderer: "qwen3-coder", Parser: "qwen3.5", Parameters: map[string]any{"stop": []string{"<|im_end|>"}}},
+			{Model: "test-thinking", From: "test", Template: `{{ range .Messages }}{{ if eq .Role "assistant" }}<think>{{ .Thinking }}</think>{{ else }}{{ .Content }}{{ end }}{{ end }}`},
+		} {
+			req.Stream = &stream
+			w := createRequest(t, s.CreateHandler, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("create %s: status %d: %s", req.Model, w.Code, w.Body.String())
+			}
+		}
+
+		router := gin.New()
+		router.POST("/v1/completions", middleware.CompletionsMiddleware(), s.GenerateHandler)
+
+		for _, tc := range []struct {
+			name       string
+			request    openai.CompletionRequest
+			wantPrompt string
+			wantText   string
+			wantStop   []string
+		}{
+			{
+				name:       "plain template and system prompt",
+				request:    openai.CompletionRequest{Model: "test-system", Prompt: "The capital of France is"},
+				wantPrompt: "The capital of France is",
+				wantText:   " Paris",
+			},
+			{
+				name:       "builtin renderer and parser",
+				request:    openai.CompletionRequest{Model: "test-renderer", Prompt: "The next word is"},
+				wantPrompt: "The next word is",
+				wantText:   "<think>raw reasoning</think> continuation",
+				wantStop:   []string{"<|im_end|>"},
+			},
+			{
+				name:       "thinking template",
+				request:    openai.CompletionRequest{Model: "test-thinking", Prompt: "The next word is"},
+				wantPrompt: "The next word is",
+				wantText:   "<think>raw reasoning</think> continuation",
+			},
+			{
+				name:       "suffix uses insert template",
+				request:    openai.CompletionRequest{Model: "test-suffix", Prompt: "def add(", Suffix: "    return c"},
+				wantPrompt: "<PRE> def add( <SUF>    return c <MID>",
+				wantText:   "a, b):\n    c = a + b\n",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				mock.CompletionResponse.Content = tc.wantText
+				body, err := json.Marshal(tc.request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				w := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				router.ServeHTTP(w, req)
+				if w.Code != http.StatusOK {
+					t.Fatalf("completion: status %d: %s", w.Code, w.Body.String())
+				}
+				if mock.CompletionRequest.Prompt != tc.wantPrompt {
+					t.Errorf("runner prompt = %q, want %q", mock.CompletionRequest.Prompt, tc.wantPrompt)
+				}
+				if !slices.Equal(mock.CompletionRequest.Options.Stop, tc.wantStop) {
+					t.Errorf("runner stop sequences = %q, want %q", mock.CompletionRequest.Options.Stop, tc.wantStop)
+				}
+				var response openai.Completion
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if len(response.Choices) != 1 || response.Choices[0].Text != tc.wantText {
+					t.Errorf("completion choices = %+v, want text %q", response.Choices, tc.wantText)
+				}
+			})
+		}
+
+		t.Run("streaming raw continuation", func(t *testing.T) {
+			mock.CompletionResponse.Content = " Paris"
+			body, err := json.Marshal(openai.CompletionRequest{
+				Model:  "test-system",
+				Prompt: "The capital of France is",
+				Stream: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("completion: status %d: %s", w.Code, w.Body.String())
+			}
+			if mock.CompletionRequest.Prompt != "The capital of France is" {
+				t.Errorf("runner prompt = %q, want raw text", mock.CompletionRequest.Prompt)
+			}
+			events := strings.Split(w.Body.String(), "\n\n")
+			if len(events) < 3 || events[1] != "data: [DONE]" || !strings.HasPrefix(events[0], "data: ") {
+				t.Fatalf("unexpected completion stream: %q", w.Body.String())
+			}
+			var chunk openai.CompletionChunk
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(events[0], "data: ")), &chunk); err != nil {
+				t.Fatal(err)
+			}
+			if len(chunk.Choices) != 1 || chunk.Choices[0].Text != " Paris" {
+				t.Errorf("stream choices = %+v, want raw continuation", chunk.Choices)
+			}
+		})
+
+		t.Run("native generate keeps thinking split", func(t *testing.T) {
+			mock.CompletionResponse.Content = "<think>raw reasoning</think> continuation"
+			think := true
+			for _, tc := range []struct {
+				name         string
+				raw          bool
+				wantResponse string
+				wantThinking string
+			}{
+				{name: "raw", raw: true, wantResponse: "continuation", wantThinking: "raw reasoning"},
+				{name: "templated", wantResponse: "continuation", wantThinking: "raw reasoning"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+						Model:  "test-thinking",
+						Prompt: "The next word is",
+						Raw:    tc.raw,
+						Think:  &api.ThinkValue{Value: think},
+						Stream: &stream,
+					})
+					if w.Code != http.StatusOK {
+						t.Fatalf("generate: status %d: %s", w.Code, w.Body.String())
+					}
+					var response api.GenerateResponse
+					if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+						t.Fatal(err)
+					}
+					if response.Response != tc.wantResponse || response.Thinking != tc.wantThinking {
+						t.Errorf("response = %q, thinking = %q; want %q, %q", response.Response, response.Thinking, tc.wantResponse, tc.wantThinking)
+					}
+				})
+			}
+		})
+
+		body, err := json.Marshal(openai.CompletionRequest{
+			Model:  "test-system",
+			Prompt: "def add(",
+			Suffix: "    return c",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/completions", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("suffix on model without insert capability: status %d, want 400: %s", w.Code, w.Body.String())
 		}
 	})
 
