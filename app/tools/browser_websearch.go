@@ -98,9 +98,9 @@ func (w *BrowserWebSearch) Execute(ctx context.Context, args map[string]any) (an
 		return nil, fmt.Errorf("at least one query is required")
 	}
 
-	maxResults := 5
-	if mr, ok := args["max_results"].(int); ok {
-		maxResults = mr
+	maxResults, err := integerArgument(args, "max_results", 5)
+	if err != nil {
+		return nil, err
 	}
 
 	return w.performWebSearch(ctx, queries, maxResults)
