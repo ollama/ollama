@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/logutil"
@@ -269,6 +270,82 @@ Available devices:
 					}
 					if want.checkIntegrated && got.Integrated != want.integrated {
 						t.Errorf("device %d integrated = %v, want %v", i, got.Integrated, want.integrated)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("pseudo-devices preserve GPU indexes", func(t *testing.T) {
+		nativeDevices := []nativeProbeDevice{
+			{Library: "CUDA", Index: 0, IndexMatchesBackend: true, DeviceID: "0000:01:00.0"},
+			{Library: "CUDA", Index: 1, IndexMatchesBackend: true, DeviceID: "0000:02:00.0"},
+		}
+		const cudaOutput = `  Device 0: NVIDIA Tesla V100, compute capability 7.0, VMM: yes
+  Device 1: NVIDIA GeForce RTX 3070 Ti, compute capability 8.6, VMM: yes
+system_info: CUDA : ARCHS = 700,860 |
+Available devices:
+`
+		tests := []struct {
+			name    string
+			devices string
+			archs   string
+			wantIDs []string
+			wantCC  []string
+		}{
+			{
+				name: "pseudo-device before GPUs",
+				devices: `  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  CUDA0: NVIDIA Tesla V100 (16384 MiB, 16000 MiB free)
+  CUDA1: NVIDIA GeForce RTX 3070 Ti (8192 MiB, 8000 MiB free)
+`,
+				wantIDs: []string{"0", "1"},
+				wantCC:  []string{"7.0", "8.6"},
+			},
+			{
+				name: "pseudo-device between GPUs",
+				devices: `  CUDA0: NVIDIA Tesla V100 (16384 MiB, 16000 MiB free)
+  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  CUDA1: NVIDIA GeForce RTX 3070 Ti (8192 MiB, 8000 MiB free)
+`,
+				wantIDs: []string{"0", "1"},
+				wantCC:  []string{"7.0", "8.6"},
+			},
+			{
+				name: "unsupported real GPU still consumes an index",
+				devices: `  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  CUDA0: NVIDIA Tesla V100 (16384 MiB, 16000 MiB free)
+  CUDA1: NVIDIA GeForce RTX 3070 Ti (8192 MiB, 8000 MiB free)
+`,
+				archs:   "system_info: CUDA : ARCHS = 860 |\n",
+				wantIDs: []string{"1"},
+				wantCC:  []string{"8.6"},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				output := cudaOutput
+				if tt.archs != "" {
+					output = strings.Replace(output, "system_info: CUDA : ARCHS = 700,860 |\n", tt.archs, 1)
+				}
+				devices := parseLlamaServerDevicesWithNative(output+tt.devices, "", []string{"/lib/ollama", "/lib/ollama/cuda_v12"}, nativeDevices)
+				if len(devices) != len(tt.wantIDs) {
+					t.Fatalf("got %d devices, want %d", len(devices), len(tt.wantIDs))
+				}
+				for i, device := range devices {
+					if device.ID != tt.wantIDs[i] {
+						t.Errorf("device %d ID = %q, want %q", i, device.ID, tt.wantIDs[i])
+					}
+					if device.Compute() != tt.wantCC[i] {
+						t.Errorf("device %d compute = %q, want %q", i, device.Compute(), tt.wantCC[i])
+					}
+					wantPCI := nativeDevices[0].DeviceID
+					if tt.wantIDs[i] == "1" {
+						wantPCI = nativeDevices[1].DeviceID
+					}
+					if device.PCIID != wantPCI {
+						t.Errorf("device %d PCI ID = %q, want %q", i, device.PCIID, wantPCI)
 					}
 				}
 			})

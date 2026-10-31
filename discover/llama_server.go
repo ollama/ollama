@@ -283,7 +283,6 @@ func parseLlamaServerDevicesWithNative(output, nativeOutput string, libDirs []st
 		// as inference compute devices or inflate the scheduler's GPU count.
 		if totalMiB == 0 {
 			slog.Debug("skipping pseudo-device with zero memory", "name", name, "description", description)
-			deviceIndex++
 			continue
 		}
 
