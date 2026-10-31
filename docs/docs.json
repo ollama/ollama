@@ -133,7 +133,8 @@
               "/capabilities/embeddings",
               "/capabilities/speech",
               "/capabilities/tool-calling",
-              "/capabilities/web-search"
+              "/capabilities/web-search",
+              "/capabilities/image-generation"
             ]
           },
           {
