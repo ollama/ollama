@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [Bidoli LLM Hardware-Rechner](https://www.bidoli-it.ch/llm-hardware-rechner.php) - Picks the model class that fits your GPU or Mac from Ollama library file sizes (German, embeddable, no account)
 
 ### Observability & Monitoring
 
