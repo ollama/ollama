@@ -320,6 +320,7 @@ console.log(response.message.content);
 - [Serene Pub](https://github.com/doolijb/serene-pub) - AI roleplaying app
 - [Mayan EDMS](https://gitlab.com/mayan-edms/mayan-edms) - Document management with Ollama workflows
 - [TagSpaces](https://www.tagspaces.org) - File management with [AI tagging](https://docs.tagspaces.org/ai/)
+- [SuperEditr](https://github.com/spectrumzero-dev/supereditr-app) - Proofread and rewrite selected text in any macOS app with a local model
 
 ### Observability & Monitoring
 
