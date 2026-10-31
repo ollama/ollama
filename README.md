@@ -167,6 +167,7 @@ console.log(response.message.content);
 - [big-AGI](https://github.com/enricoros/big-AGI) - AI suite for professionals
 - [Lollms WebUI](https://github.com/ParisNeo/lollms-webui) - Multi-model web interface
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) - Chatbot with knowledge bases
+- [Synaplan](https://github.com/metadist/synaplan) - Self-hosted AI workspace with RAG, long-term memory, MCP server, and embeddable chat widgets
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt) - On-premise AI platform
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama) - ChatGPT-style web interface
 - [Hollama](https://github.com/fmaclen/hollama) - Minimal web interface
