@@ -596,6 +596,132 @@ TEMPLATE """
 	}
 }
 
+func TestParseFileCRLFQuotedValues(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected []Command
+		err      error
+	}{
+		{
+			"triple-quoted CRLF system value",
+			"FROM x\r\nSYSTEM \"\"\"line one\r\nline two\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "line one\nline two"},
+			},
+			nil,
+		},
+		{
+			"triple-quoted CRLF template value",
+			"FROM x\r\nTEMPLATE \"\"\"a\r\nb\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "template", Args: "a\nb"},
+			},
+			nil,
+		},
+		{
+			"triple-quoted CRLF with leading line break",
+			"FROM x\r\nSYSTEM \"\"\"\r\nline one\r\nline two\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "\nline one\nline two"},
+			},
+			nil,
+		},
+		{
+			"triple-quoted LF value unchanged",
+			"FROM x\nSYSTEM \"\"\"a\nb\"\"\"\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "a\nb"},
+			},
+			nil,
+		},
+		{
+			"single-line CRLF value unchanged",
+			"FROM x\r\nSYSTEM hello\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "hello"},
+			},
+			nil,
+		},
+		{
+			"mixed line endings in triple-quoted value",
+			"FROM x\r\nSYSTEM \"\"\"a\r\nb\nc\r\nd\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "a\nb\nc\nd"},
+			},
+			nil,
+		},
+		{
+			"lone CR in triple-quoted value becomes LF",
+			"FROM x\r\nSYSTEM \"\"\"a\rb\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "a\nb"},
+			},
+			nil,
+		},
+		{
+			"double-quoted multiline CRLF value",
+			"FROM x\r\nSYSTEM \"a\r\nb\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "a\nb"},
+			},
+			nil,
+		},
+		{
+			"triple-quoted CRLF message value keeps role prefix",
+			"FROM x\r\nMESSAGE system \"\"\"a\r\nb\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "message", Args: "system: a\nb"},
+			},
+			nil,
+		},
+		{
+			"trailing CRLF inside triple-quoted value",
+			"FROM x\r\nSYSTEM \"\"\"line one\r\n\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "line one\n"},
+			},
+			nil,
+		},
+		{
+			"unterminated triple-quoted CRLF value still errors",
+			"FROM foo\nSYSTEM \"\"\"abc\r\n",
+			nil,
+			io.ErrUnexpectedEOF,
+		},
+		{
+			"multi-command CRLF file",
+			"FROM x\r\nSYSTEM \"\"\"s1\r\ns2\"\"\"\r\nTEMPLATE \"\"\"t1\r\nt2\"\"\"\r\n",
+			[]Command{
+				{Name: "model", Args: "x"},
+				{Name: "system", Args: "s1\ns2"},
+				{Name: "template", Args: "t1\nt2"},
+			},
+			nil,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			modelfile, err := ParseFile(strings.NewReader(c.input))
+			require.ErrorIs(t, err, c.err)
+			if modelfile != nil {
+				assert.Equal(t, c.expected, modelfile.Commands)
+			}
+		})
+	}
+}
+
 func TestParseFileParameters(t *testing.T) {
 	cases := map[string]struct {
 		name, value string
