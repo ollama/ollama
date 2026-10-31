@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,6 +147,24 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		b.Total += part.Size
 		b.Completed.Add(part.Completed.Load())
 		b.Parts = append(b.Parts, part)
+	}
+
+	// Resume only from a complete set of parts. If some part files are
+	// missing, b.Total is short and the missing ranges would never be
+	// downloaded, so start over instead.
+	if len(b.Parts) > 0 && !b.partsComplete() {
+		slog.Info(fmt.Sprintf("%s: incomplete set of download parts, restarting download", b.Digest[7:19]))
+		for _, part := range b.Parts {
+			if err := os.Remove(part.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+		if err := os.Remove(b.Name + "-partial"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		b.Parts = nil
+		b.Total = 0
+		b.Completed.Store(0)
 	}
 
 	if len(b.Parts) == 0 {
@@ -317,8 +337,8 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 
-	for i := range b.Parts {
-		if err := os.Remove(file.Name() + "-" + strconv.Itoa(i)); err != nil {
+	for _, part := range b.Parts {
+		if err := os.Remove(part.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
@@ -429,6 +449,24 @@ func (b *blobDownload) downloadChunk(ctx context.Context, client *http.Client, r
 	})
 
 	return g.Wait()
+}
+
+// partsComplete reports whether the loaded parts are numbered 0..n-1 and
+// cover the existing data file from offset 0 to its end with no gaps.
+func (b *blobDownload) partsComplete() bool {
+	parts := slices.Clone(b.Parts)
+	slices.SortFunc(parts, func(a, b *blobDownloadPart) int { return cmp.Compare(a.Offset, b.Offset) })
+
+	var offset int64
+	for i, part := range parts {
+		if part.N != i || part.Offset != offset {
+			return false
+		}
+		offset += part.Size
+	}
+
+	fi, err := os.Stat(b.Name + "-partial")
+	return err == nil && fi.Size() == offset
 }
 
 func (b *blobDownload) newPart(offset, size int64) error {
