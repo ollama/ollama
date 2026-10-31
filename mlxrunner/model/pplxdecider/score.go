@@ -2,6 +2,7 @@ package pplxdecider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -70,10 +71,13 @@ func (m *Model) scorePrompt(input llm.ScoreRequest, rows []llm.ScoreRow) (string
 	return prompt, start, nil
 }
 
-func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*model.PreparedRequest, []int32, error) {
+func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*model.PreparedRequest, []int32, int, error) {
 	prompt, imageStart, err := m.scorePrompt(input, rows)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
+	}
+	if len(prompt) > llm.MaxScorePromptBytes {
+		return nil, nil, 0, llm.ErrScorePromptTooLarge
 	}
 	var prepared *model.PreparedRequest
 	if len(input.Images) == 0 {
@@ -84,7 +88,7 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 		for i, image := range input.Images {
 			end := imageStart + i*len(imageMarker)
 			if !strings.HasPrefix(prompt[end:], imageMarker) {
-				return nil, nil, fmt.Errorf("image %d is missing from the rendered prompt", i)
+				return nil, nil, 0, fmt.Errorf("image %d is missing from the rendered prompt", i)
 			}
 			segments = append(segments, model.Segment{Tokens: m.Tokenizer().Encode(prompt[start:end], false)})
 			segments = append(segments, model.Segment{Kind: "image", Data: image})
@@ -94,7 +98,7 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 		prepared, err = m.PrepareMedia(segments)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
 	var markers []int32
 	for i, token := range prepared.Tokens {
@@ -103,9 +107,9 @@ func (m *Model) prepareJoint(input llm.ScoreRequest, rows []llm.ScoreRow) (*mode
 		}
 	}
 	if len(markers) != len(rows) {
-		return nil, nil, fmt.Errorf("Perplexity readout markers do not match questions")
+		return nil, nil, 0, fmt.Errorf("Perplexity readout markers do not match questions")
 	}
-	return prepared, markers, nil
+	return prepared, markers, len(prompt), nil
 }
 
 type scoreChunk struct {
@@ -118,13 +122,18 @@ type scoreChunk struct {
 // sequence exceeds the context limit, keeping the state and images in each part.
 func (m *Model) planScore(input llm.ScoreRequest) ([]scoreChunk, error) {
 	var chunks []scoreChunk
+	var promptBytes int
 	var split func([]llm.ScoreRow) error
 	split = func(rows []llm.ScoreRow) error {
-		prepared, markers, err := m.prepareJoint(input, rows)
+		prepared, markers, size, err := m.prepareJoint(input, rows)
 		if err != nil {
 			return err
 		}
 		if len(prepared.Tokens) <= input.MaxTokens {
+			if size > llm.MaxScorePromptBytes-promptBytes {
+				return llm.ErrScorePromptTooLarge
+			}
+			promptBytes += size
 			chunks = append(chunks, scoreChunk{rows: rows, prepared: prepared, markers: markers})
 			return nil
 		}
@@ -158,6 +167,10 @@ func (m *Model) Score(ctx context.Context, input llm.ScoreRequest) (llm.ScoreRes
 	}
 	chunks, err := m.planScore(input)
 	if err != nil {
+		var status api.StatusError
+		if errors.As(err, &status) {
+			return result, err
+		}
 		return badRequest(err)
 	}
 	for _, chunk := range chunks {

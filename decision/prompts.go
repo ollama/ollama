@@ -2,22 +2,16 @@ package decision
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/renderers"
 )
 
-// Match the HTTP body budget while bounding expansion across question rows.
-const maxCompiledPromptBytes = 32 << 20
-
-// ErrPromptTooLarge reports that compiled scoring prompts exceed their byte budget.
-var ErrPromptTooLarge = errors.New("decision request is too large")
-
 func decisionPrompts(state json.RawMessage, context string, fields []compiledField, renderer string) ([]string, error) {
-	if len(fields) > 0 && len(context) > maxCompiledPromptBytes/len(fields) {
-		return nil, ErrPromptTooLarge
+	if len(fields) > 0 && len(context) > llm.MaxScorePromptBytes/len(fields) {
+		return nil, llm.ErrScorePromptTooLarge
 	}
 	var prompts []string
 	var total int
@@ -58,8 +52,8 @@ func decisionPrompts(state json.RawMessage, context string, fields []compiledFie
 			if err != nil {
 				return nil, err
 			}
-			if len(prompt) > maxCompiledPromptBytes-total {
-				return nil, ErrPromptTooLarge
+			if len(prompt) > llm.MaxScorePromptBytes-total {
+				return nil, llm.ErrScorePromptTooLarge
 			}
 			total += len(prompt)
 			prompts = append(prompts, prompt)
@@ -76,8 +70,8 @@ func decisionPrompts(state json.RawMessage, context string, fields []compiledFie
 	}
 	// Nimble escapes chat delimiters in both the schema and the requested name.
 	escape := strings.NewReplacer("<", `\u003c`, ">", `\u003e`)
-	if len(data)+5*(strings.Count(data, "<")+strings.Count(data, ">")) > maxCompiledPromptBytes {
-		return nil, ErrPromptTooLarge
+	if len(data)+5*(strings.Count(data, "<")+strings.Count(data, ">")) > llm.MaxScorePromptBytes {
+		return nil, llm.ErrScorePromptTooLarge
 	}
 	data = escape.Replace(data)
 	for _, f := range fields {
@@ -86,8 +80,8 @@ func decisionPrompts(state json.RawMessage, context string, fields []compiledFie
 			return nil, err
 		}
 		suffix := "\n\nRequested field: " + escape.Replace(name)
-		if len(data)+len(suffix) > maxCompiledPromptBytes-total {
-			return nil, ErrPromptTooLarge
+		if len(data)+len(suffix) > llm.MaxScorePromptBytes-total {
+			return nil, llm.ErrScorePromptTooLarge
 		}
 		prompt := data + suffix
 		total += len(prompt)

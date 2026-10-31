@@ -956,7 +956,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	if err != nil {
 		var sizeErr *http.MaxBytesError
 		if errors.As(err, &sizeErr) {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": decision.ErrPromptTooLarge.Error()})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": llm.ErrScorePromptTooLarge.Error()})
 			return
 		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -1008,7 +1008,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 			textLimit = 1 << 20
 		}
 		if len(bytes.TrimSpace(text.Bytes())) > textLimit {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": decision.ErrPromptTooLarge.Error()})
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": llm.ErrScorePromptTooLarge.Error()})
 			return
 		}
 		s.systemOneLlamaServer(c, m, req, body)
@@ -1022,7 +1022,7 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 	compiled, err := decision.Compile(req, encoding)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, decision.ErrPromptTooLarge) {
+		if errors.Is(err, llm.ErrScorePromptTooLarge) {
 			status = http.StatusRequestEntityTooLarge
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -1035,18 +1035,20 @@ func (s *Server) SystemOneHandler(c *gin.Context) {
 		}
 		compiled.Request.System = m.System
 	}
-	if err := compiled.Render(func(messages []api.Message) (string, error) {
-		if m.System != "" {
-			messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
+	if compiled.NeedsChatRender() {
+		if err := compiled.RenderChat(func(messages []api.Message) (string, error) {
+			if m.System != "" {
+				messages = append([]api.Message{{Role: "system", Content: m.System}}, messages...)
+			}
+			return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
+		}); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, llm.ErrScorePromptTooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
 		}
-		return renderPrompt(m, messages, nil, &api.ThinkValue{Value: false})
-	}); err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, decision.ErrPromptTooLarge) {
-			status = http.StatusRequestEntityTooLarge
-		}
-		c.JSON(status, gin.H{"error": err.Error()})
-		return
 	}
 	caps := []model.Capability{model.CapabilityDecision}
 	for _, data := range req.Images {
