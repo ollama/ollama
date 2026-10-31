@@ -163,7 +163,9 @@ function ChatForm({
   };
 
   const modelSupportsThinkingLevels =
-    selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
+    selectedModel?.model.toLowerCase().startsWith("gpt-oss") ||
+    selectedModel?.model.toLowerCase().startsWith("mimo") ||
+    false;
   const supportsThinkToggling =
     selectedModel?.model.toLowerCase().startsWith("deepseek-v3.1") || false;
 
