@@ -205,3 +205,23 @@ func TestPrepareMediaErrors(t *testing.T) {
 		t.Fatalf("zero-expansion error = %v", err)
 	}
 }
+
+func TestPrefillChunkAt(t *testing.T) {
+	full := prefillChunkSize()
+	for _, pos := range []int{0, 1024, prefillFullChunkContext} {
+		if got := prefillChunkAt(pos); got != full {
+			t.Fatalf("prefillChunkAt(%d) = %d, want %d", pos, got, full)
+		}
+	}
+	prev := full
+	for _, pos := range []int{prefillFullChunkContext + 1, 16 << 10, 32 << 10, 128 << 10, 1 << 20} {
+		got := prefillChunkAt(pos)
+		if got > prev || got < prefillMinChunk {
+			t.Fatalf("prefillChunkAt(%d) = %d, want within [%d, %d]", pos, got, prefillMinChunk, prev)
+		}
+		prev = got
+	}
+	if got := prefillChunkAt(1 << 30); got != prefillMinChunk {
+		t.Fatalf("huge position chunk = %d, want %d", got, prefillMinChunk)
+	}
+}
