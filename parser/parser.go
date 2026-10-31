@@ -544,7 +544,7 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 					cmd.Name = s
 				}
 			case stateParameter:
-				cmd.Name = b.String()
+				cmd.Name = strings.ToLower(b.String())
 			case stateMessage:
 				if !isValidMessageRole(b.String()) {
 					return nil, &ParserError{
@@ -553,7 +553,7 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 					}
 				}
 
-				role = b.String()
+				role = strings.ToLower(b.String())
 			case stateComment, stateNil:
 				// pass
 			case stateValue:
@@ -724,7 +724,12 @@ func isNewline(r rune) bool {
 }
 
 func isValidMessageRole(role string) bool {
-	return role == "system" || role == "user" || role == "assistant"
+	switch strings.ToLower(role) {
+	case "system", "user", "assistant":
+		return true
+	default:
+		return false
+	}
 }
 
 func isValidCommand(cmd string) bool {
