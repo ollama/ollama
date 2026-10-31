@@ -159,13 +159,33 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
-// findTool finds the first tool name in the list that matches the
-// beginning of the buffer, returning nil if no tool is found
-// or if the buffer ends with a partial tool name since we need
-// to wait for more data to disambiguate.
-// The second return value is the end position of the tool name
-// if one is found, otherwise 0.
+// findTool resolves a JSON tool call or a bare function name in the buffer.
+// It waits for complete JSON or enough text to disambiguate a partial name.
+// The second return value is the position to advance to if a tool is found.
 func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
+	if start := bytes.IndexByte(buf, '{'); start != -1 {
+		// Include the opening brace so it disambiguates bare names that
+		// are prefixes of other tools, such as get and get_weather.
+		if tool, end := findToolName(tools, buf[:start+1]); tool != nil {
+			return tool, end
+		}
+
+		// Wait for a complete object before decoding it. JSON member order
+		// and tool names inside argument values must not select the function.
+		object, end := findJSONObject(buf)
+		if tool, found := findJSONTool(tools, object); found {
+			return tool, end
+		}
+		if object == nil {
+			return nil, 0
+		}
+		// Keep the existing textual ordering for tool-name-as-key formats.
+		return findToolName(tools, buf)
+	}
+	return findToolName(tools, buf)
+}
+
+func findToolName(tools []api.Tool, buf []byte) (*api.Tool, int) {
 	if len(buf) == 0 {
 		return nil, 0
 	}
@@ -224,6 +244,47 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 	return nil, 0
 }
 
+// findJSONTool reports whether a call envelope contains an explicit name,
+// including names that do not correspond to a registered tool.
+func findJSONTool(tools []api.Tool, object map[string]any) (*api.Tool, bool) {
+	if name, exists := object["name"]; exists {
+		for i := range tools {
+			if name == tools[i].Function.Name {
+				return &tools[i], true
+			}
+		}
+		return nil, true
+	}
+
+	for i := range tools {
+		if _, exists := object[tools[i].Function.Name]; exists {
+			// The value is already the argument object, not another envelope.
+			return nil, false
+		}
+	}
+
+	for key, value := range object {
+		if key == "arguments" || key == "parameters" {
+			continue
+		}
+		switch child := value.(type) {
+		case map[string]any:
+			if tool, found := findJSONTool(tools, child); found {
+				return tool, true
+			}
+		case []any:
+			for _, item := range child {
+				if object, ok := item.(map[string]any); ok {
+					if tool, found := findJSONTool(tools, object); found {
+						return tool, true
+					}
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
 // findArguments returns the first object that appears to be
 // arguments for the provided tool in the provided buffer,
 // returning nil if no arguments are found and the end position
@@ -232,6 +293,67 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 // e.g. `{"name": "get_conditions", "arguments": {}}` will work but
 // `{"name": "get_conditions"}` will not currently work
 func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
+	data, end := findJSONObject(buffer)
+	if data == nil {
+		return nil, 0
+	}
+
+	var findObject func(obj map[string]any) (map[string]any, bool)
+	findObject = func(obj map[string]any) (map[string]any, bool) {
+		findMap := func(name string, obj map[string]any) (map[string]any, bool) {
+			if args, ok := obj[name].(map[string]any); ok {
+				return args, true
+			}
+			if argsStr, ok := obj[name].(string); ok {
+				var argsData map[string]interface{}
+				if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
+					return argsData, ok
+				}
+			}
+			return nil, false
+		}
+		if _, hasName := obj["name"]; hasName {
+			if args, ok := findMap("arguments", obj); ok {
+				return args, true
+			}
+			if args, ok := findMap("parameters", obj); ok {
+				return args, true
+			}
+			return nil, true
+		}
+		if args, ok := findMap(tool.Function.Name, obj); ok {
+			return args, true
+		}
+
+		for _, v := range obj {
+			switch child := v.(type) {
+			case map[string]any:
+				if result, found := findObject(child); found {
+					return result, true
+				}
+			case []any:
+				for _, item := range child {
+					if childObj, ok := item.(map[string]any); ok {
+						if result, found := findObject(childObj); found {
+							return result, true
+						}
+					}
+				}
+			}
+		}
+
+		return nil, false
+	}
+
+	if args, found := findObject(data); found {
+		return args, end
+	}
+	return data, end
+}
+
+// findJSONObject returns the first complete, valid JSON object and the position
+// of its closing brace. Malformed complete objects are skipped.
+func findJSONObject(buffer []byte) (map[string]any, int) {
 	if len(buffer) == 0 {
 		return nil, 0
 	}
@@ -277,57 +399,6 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 					// not a valid object, keep looking
 					start = -1
 					continue
-				}
-
-				var findObject func(obj map[string]any) (map[string]any, bool)
-				findObject = func(obj map[string]any) (map[string]any, bool) {
-					findMap := func(name string, obj map[string]any) (map[string]any, bool) {
-						if args, ok := obj[name].(map[string]any); ok {
-							return args, true
-						}
-						if argsStr, ok := obj[name].(string); ok {
-							var argsData map[string]interface{}
-							if err := json.Unmarshal([]byte(argsStr), &argsData); err == nil {
-								return argsData, ok
-							}
-						}
-						return nil, false
-					}
-					if _, hasName := obj["name"]; hasName {
-						if args, ok := findMap("arguments", obj); ok {
-							return args, true
-						}
-						if args, ok := findMap("parameters", obj); ok {
-							return args, true
-						}
-						return nil, true
-					}
-					if args, ok := findMap(tool.Function.Name, obj); ok {
-						return args, true
-					}
-
-					for _, v := range obj {
-						switch child := v.(type) {
-						case map[string]any:
-							if result, found := findObject(child); found {
-								return result, true
-							}
-						case []any:
-							for _, item := range child {
-								if childObj, ok := item.(map[string]any); ok {
-									if result, found := findObject(childObj); found {
-										return result, true
-									}
-								}
-							}
-						}
-					}
-
-					return nil, false
-				}
-
-				if args, found := findObject(data); found {
-					return args, i
 				}
 
 				return data, i
