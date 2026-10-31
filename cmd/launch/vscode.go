@@ -266,7 +266,7 @@ func (v *VSCode) Edit(models []LaunchModel) error {
 	filtered = append(filtered, map[string]any{
 		"vendor": "ollama",
 		"name":   "Ollama",
-		"url":    envconfig.Host().String(),
+		"url":    envconfig.ConnectableHost().String(),
 	})
 
 	data, err := json.MarshalIndent(filtered, "", "  ")

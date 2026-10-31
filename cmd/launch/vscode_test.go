@@ -157,6 +157,36 @@ func TestVSCodeEditCleansUpOldSettings(t *testing.T) {
 	}
 }
 
+func TestVSCodeEditUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	v := &VSCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+	clmPath := testVSCodePath(t, tmpDir, "chatLanguageModels.json")
+
+	if err := v.Edit(testLaunchModels("llama3.2")); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(clmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var entries []map[string]any
+	json.Unmarshal(data, &entries)
+	for _, entry := range entries {
+		if entry["vendor"] == "ollama" {
+			if entry["url"] != "http://127.0.0.1:11434" {
+				t.Errorf("url = %v, want http://127.0.0.1:11434", entry["url"])
+			}
+			return
+		}
+	}
+	t.Error("ollama vendor entry not found")
+}
+
 func TestVSCodeEdit_CreatesDistinctBackupsForManagedFiles(t *testing.T) {
 	v := &VSCode{}
 	tmpDir := t.TempDir()

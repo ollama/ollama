@@ -257,6 +257,7 @@ func TestOpenclawRun_FirstLaunchOnboardUsesLaunchManagedHealthFlow(t *testing.T)
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	t.Setenv("PATH", tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
 
 	bin := filepath.Join(tmpDir, "openclaw")
 	script := fmt.Sprintf(`#!/bin/sh
@@ -308,6 +309,9 @@ exit 0
 	}
 	if !strings.Contains(onboardInvocation, "--skip-health") {
 		t.Fatalf("expected onboard invocation to include --skip-health, got %q", onboardInvocation)
+	}
+	if !strings.Contains(onboardInvocation, "--custom-base-url http://127.0.0.1:11434 ") {
+		t.Fatalf("expected onboard invocation to use a connectable base URL, got %q", onboardInvocation)
 	}
 
 	envData, err := os.ReadFile(filepath.Join(tmpDir, "onboard-env.log"))
@@ -775,6 +779,29 @@ func TestOpenclawModels(t *testing.T) {
 			t.Errorf("expected 2 models, got %v", models)
 		}
 	})
+}
+
+func TestOpenclawEditUsesConnectableHostForUnspecifiedBind(t *testing.T) {
+	c := &Openclaw{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("OLLAMA_HOST", "http://0.0.0.0:11434")
+	configPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
+
+	if err := c.Edit(testLaunchModels("llama3.2")); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	models := cfg["models"].(map[string]any)
+	providers := models["providers"].(map[string]any)
+	ollama := providers["ollama"].(map[string]any)
+
+	if ollama["baseUrl"] != "http://127.0.0.1:11434" {
+		t.Errorf("baseUrl = %v, want http://127.0.0.1:11434", ollama["baseUrl"])
+	}
 }
 
 // Helper functions
