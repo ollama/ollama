@@ -92,7 +92,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 // NewLayerWithDigest stores r only once it has confirmed the content really
 // hashes to digest. NewLayer moves the file into place as soon as it has read
 // the body, so a caller that learns the digest afterwards is left with a blob
-// it has to delete again. Here the digest is checked before the file is linked
+// it has to delete again. Here the digest is checked before the file is moved
 // into blobs/, so a rejected body never shows up in the store.
 func NewLayerWithDigest(r io.Reader, mediatype, digest string) (Layer, error) {
 	blobs, err := BlobsPath("")
@@ -109,8 +109,12 @@ func NewLayerWithDigest(r io.Reader, mediatype, digest string) (Layer, error) {
 	if err != nil {
 		return Layer{}, err
 	}
-	defer temp.Close()
-	defer os.Remove(temp.Name())
+	defer func() {
+		// Close before removing so the cleanup also works on Windows, where an
+		// open file cannot be deleted.
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
 
 	sha256sum := sha256.New()
 	n, err := io.Copy(io.MultiWriter(temp, sha256sum), r)
@@ -128,17 +132,14 @@ func NewLayerWithDigest(r io.Reader, mediatype, digest string) (Layer, error) {
 	}
 
 	status := "using existing layer"
-	_, err = os.Lstat(blob)
+	_, err = os.Stat(blob)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		status = "creating new layer"
-		// link rather than rename: if another upload of the same blob got there
-		// first this fails with EEXIST instead of replacing its file
-		if err := os.Link(temp.Name(), blob); err != nil {
-			if !errors.Is(err, os.ErrExist) {
-				return Layer{}, err
-			}
-			status = "using existing layer"
+		// The content is already verified, so replacing a concurrently created
+		// blob is safe. Rename also works on filesystems without hard links.
+		if err := os.Rename(temp.Name(), blob); err != nil {
+			return Layer{}, err
 		}
 		if err := os.Chmod(blob, 0o644); err != nil {
 			return Layer{}, err
