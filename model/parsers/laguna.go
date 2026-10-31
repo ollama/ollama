@@ -223,8 +223,10 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 		p.atContentStart = false
 	}
 	acc := p.buffer.String()
+	toolIdx := strings.Index(acc, lagunaToolCallOpenTag)
 	if p.thinkingEnabled || p.thinkingSuppressed {
-		if idx := strings.Index(acc, lagunaThinkingOpenTag); idx != -1 {
+		// Enter an earlier tool call before interpreting its arguments as thinking.
+		if idx := strings.Index(acc, lagunaThinkingOpenTag); idx != -1 && (toolIdx == -1 || idx < toolIdx) {
 			content := acc[:idx]
 			after := strings.TrimLeftFunc(acc[idx+len(lagunaThinkingOpenTag):], unicode.IsSpace)
 			p.buffer.Reset()
@@ -233,7 +235,7 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 			p.allowLeadingThinkOpen = false
 			return true, content, nil, nil
 		}
-		if !done {
+		if !done && toolIdx == -1 {
 			overlapLen := overlap(acc, lagunaThinkingOpenTag)
 			if overlapLen > 0 && overlapLen < len(acc) {
 				content := acc[:len(acc)-overlapLen]
@@ -265,9 +267,9 @@ func (p *LagunaParser) consumeContent(done bool) (bool, string, []api.ToolCall, 
 			return false, "", nil, nil
 		}
 	}
-	if idx := strings.Index(acc, lagunaToolCallOpenTag); idx != -1 {
-		content := strings.TrimRightFunc(acc[:idx], unicode.IsSpace)
-		after := acc[idx+len(lagunaToolCallOpenTag):]
+	if toolIdx != -1 {
+		content := strings.TrimRightFunc(acc[:toolIdx], unicode.IsSpace)
+		after := acc[toolIdx+len(lagunaToolCallOpenTag):]
 		p.buffer.Reset()
 		p.buffer.WriteString(after)
 		p.state = lagunaParserStateTool
