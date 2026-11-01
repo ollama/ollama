@@ -30,6 +30,69 @@ func newBatch(seqOffsets []int32, L int, qLens []int32) *batch.Batch {
 	}
 }
 
+func TestRowKVHistoryAttention(t *testing.T) {
+	mlxtest.Run(t, func(t *mlxtest.T) {
+		b := newBatch([]int32{2, 2}, 2, nil)
+		q := mlx.FromValues([]float32{.1, .3, .7, -.2, -.1, .5, .2, .9}, 2, 1, 2, 2)
+		k := mlx.FromValues([]float32{.2, .4, .1, -.3, .8, .2, .3, .1, -.5, .2, .1, .8, .4, -.2, .9, .1}, 2, 1, 4, 2)
+		v := mlx.MulScalar(k, 3)
+		rows := make([]*KVHistory, 2)
+		for i := range rows {
+			rows[i] = NewKVHistory(
+				k.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()),
+				v.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()), nil)
+		}
+		array := mlx.FromValues([]float32{0, -.2, .1, -.4, .3, 0, -.7, .2}, 2, 1, 1, 4)
+		arrayRow := func(i int) AttentionMask {
+			return ArrayMask(array.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice(), mlx.Slice()))
+		}
+		masks := []struct {
+			batch AttentionMask
+			rows  []AttentionMask
+		}{
+			{CausalMask(), []AttentionMask{CausalMask(), CausalMask()}},
+			{CausalMask().Relax(1, 2, 3, 3, 4), []AttentionMask{CausalMask(), CausalMask().Relax(0, 2, 3, 3, 4)}},
+			{ArrayMask(array), []AttentionMask{arrayRow(0), arrayRow(1)}},
+			{CausalMask().Relax(0, 2, 3, 3, 4).Intersect(ArrayMask(array)), []AttentionMask{
+				CausalMask().Relax(0, 2, 3, 3, 4).Intersect(arrayRow(0)), CausalMask().Intersect(arrayRow(1)),
+			}},
+		}
+		for i, mask := range masks {
+			got := ScaledDotProductAttention(b, q, .7, WithKVHistory(NewRowKVHistory(rows)), WithMask(mask.batch))
+			// The contract is independent requests, which can select different
+			// native kernels than a rectangular batch (including CUDA TF32).
+			// Spell out each mask independently to verify the row remapping.
+			var outputs []*mlx.Array
+			for row, rowMask := range mask.rows {
+				query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+				outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithKVHistory(rows[row]), WithMask(rowMask)))
+			}
+			want := mlx.Concatenate(outputs, 0)
+			mlx.Eval(got, want)
+			g, w := got.Floats(), want.Floats()
+			for j := range w {
+				if math.IsNaN(float64(g[j])) || math.Abs(float64(g[j]-w[j])) > 1e-5 {
+					t.Fatalf("mask %d element %d = %g, want %g", i, j, g[j], w[j])
+				}
+			}
+		}
+		// MLA keeps per-row storage while deriving V from the K prefix.
+		got := ScaledDotProductAttention(b, q, .7, WithMLAHistory(NewRowKVHistory(rows), 1), WithMask(CausalMask()))
+		var outputs []*mlx.Array
+		for row, history := range rows {
+			query := q.Slice(mlx.Slice(row, row+1), mlx.Slice(), mlx.Slice(), mlx.Slice())
+			outputs = append(outputs, ScaledDotProductAttention(b.Row(row), query, .7, WithMLAHistory(history, 1), WithMask(CausalMask())))
+		}
+		want := mlx.Concatenate(outputs, 0)
+		mlx.Eval(got, want)
+		for i, value := range want.Floats() {
+			if math.Abs(float64(got.Floats()[i]-value)) > 1e-5 {
+				t.Fatalf("MLA element %d mismatch", i)
+			}
+		}
+	})
+}
+
 func TestAttentionMaskZero(t *testing.T) {
 	mlxtest.Run(t, func(t *mlxtest.T) {
 		var m AttentionMask

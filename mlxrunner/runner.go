@@ -42,6 +42,7 @@ type Request struct {
 }
 
 type Runner struct {
+	parallel      int
 	Model         model.Model
 	weights       *mlx.Scope
 	Tokenizer     *tokenizer.Tokenizer
@@ -148,7 +149,7 @@ func (r *Runner) loadModel(modelName string) (weights []*mlx.Array, err error) {
 		draftCaches := newDraftCaches(draftModel)
 		r.cache = newPrefixCache(slices.Concat(caches, draftCaches))
 		r.Sampler = sample.New(r.contextLength)
-		r.spec = newSpeculation(r, draftModel, caches, draftCaches)
+		r.spec = newSpeculation(r, pipelineSlot, draftModel, caches, draftCaches)
 		r.grammarEngine = newGrammarEngine(logitsWidth(m), r.Tokenizer)
 
 		mlx.EnableCompile()
@@ -187,7 +188,7 @@ func logitsWidth(m model.Model) (width int) {
 			InputIDs:     mlx.FromValues([]int32{0}, 1, 1),
 			SeqOffsets:   []int32{0},
 			SeqQueryLens: []int32{1},
-		}, caches)
+		}, cache.Layers(caches))
 		logits := m.Unembed(hidden)
 		width = logits.Dim(logits.NumDims() - 1)
 		for _, c := range caches {
@@ -295,6 +296,9 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 	g, ctx := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
+		if r.parallel > 1 && r.supportsBatching() {
+			return r.runBatchRequests(ctx)
+		}
 		for {
 			select {
 			case <-ctx.Done():

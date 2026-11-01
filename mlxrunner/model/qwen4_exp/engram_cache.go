@@ -207,3 +207,58 @@ func newEngramSnapshot(history, convHistory *mlx.Array, offset int) *engramSnaps
 func (s *engramSnapshot) Size() int                    { return s.history.NumBytes() + s.convHistory.NumBytes() }
 func (s *engramSnapshot) SetMaterializeHook(func(int)) {}
 func (s *engramSnapshot) Close()                       { s.scope.Close() }
+
+// engramState is the history borrowed by PLE, either from one request or from
+// several independent owners during a shared decode.
+type engramState interface {
+	get(*batch.Batch) *mlx.Array
+	getConvHistory(*batch.Batch, mlx.DType) *mlx.Array
+	put(*batch.Batch, *mlx.Array, *mlx.Array)
+}
+
+type engramBatch struct{ rows []*engramCache }
+
+func (c *engramCache) Batch(owners []cache.Cache) (cache.Layer, error) {
+	view := &engramBatch{rows: make([]*engramCache, len(owners))}
+	for i, owner := range owners {
+		row, ok := owner.(*engramCache)
+		if !ok || row.width != c.width || row.convTail != c.convTail || row.convDim != c.convDim || row.eosID != c.eosID {
+			return nil, fmt.Errorf("incompatible Engram cache in row %d", i)
+		}
+		view.rows[i] = row
+	}
+	return view, nil
+}
+
+func (c *engramBatch) State() []*mlx.Array {
+	var arrays []*mlx.Array
+	for _, row := range c.rows {
+		arrays = append(arrays, row.State()...)
+	}
+	return arrays
+}
+
+func (c *engramBatch) get(b *batch.Batch) *mlx.Array {
+	histories := make([]*mlx.Array, len(c.rows))
+	for i, row := range c.rows {
+		histories[i] = row.get(b.Row(i))
+	}
+	return mlx.Concatenate(histories, 0)
+}
+
+func (c *engramBatch) getConvHistory(b *batch.Batch, dtype mlx.DType) *mlx.Array {
+	histories := make([]*mlx.Array, len(c.rows))
+	for i, row := range c.rows {
+		histories[i] = row.getConvHistory(b.Row(i), dtype)
+	}
+	return mlx.Concatenate(histories, 0)
+}
+
+func (c *engramBatch) put(b *batch.Batch, inputIDs, convInput *mlx.Array) {
+	if b.InputIDs.Dim(0) != len(c.rows) || b.InputIDs.Dim(1) != 1 {
+		panic("Engram batch requires one decode token per row")
+	}
+	for i, row := range c.rows {
+		row.put(b.Row(i), inputIDs.Slice(mlx.Slice(i, i+1), mlx.Slice()), convInput.Slice(mlx.Slice(i, i+1), mlx.Slice(), mlx.Slice()))
+	}
+}

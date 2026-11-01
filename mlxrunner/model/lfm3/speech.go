@@ -221,7 +221,7 @@ func (m *SpeechModel) forwardSpeech(caches []cache.Cache, pos int, input func() 
 			InputIDs:     ids,
 			SeqOffsets:   []int32{int32(pos)},
 			SeqQueryLens: []int32{L},
-		}, caches)
+		}, cache.Layers(caches))
 		return []*mlx.Array{mlx.SliceStartStop(h, []int32{0, L - 1, 0}, []int32{1, L, m.HiddenSize})}
 	})
 	if err != nil {

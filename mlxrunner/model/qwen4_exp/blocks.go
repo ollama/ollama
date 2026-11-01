@@ -1,15 +1,13 @@
 package qwen4_exp
 
 import (
-	"math"
-
 	"github.com/ollama/ollama/mlx"
 	"github.com/ollama/ollama/mlxrunner/batch"
 	"github.com/ollama/ollama/mlxrunner/cache"
 	"github.com/ollama/ollama/mlxrunner/nn"
 )
 
-func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Layer, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	branch, state := l.AttentionConnection.Prepare(x, cfg)
 	if l.Linear != nil {
 		branch = l.Linear.Forward(branch, b, c, cfg)
@@ -23,7 +21,7 @@ func (l *Layer) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, posit
 	return l.MLPConnection.Inject(state, branch, cfg)
 }
 
-func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, cfg *Config) *mlx.Array {
+func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Layer, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 	valueDim := cfg.LinearNumValueHeads * cfg.LinearValueHeadDim
@@ -34,8 +32,8 @@ func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, c
 
 	convTail := cfg.LinearConvKernelDim - 1
 	options := []nn.RecurrentOption{nn.WithConvSiLU()}
-	var recurrent *cache.RecurrentCache
-	if value, ok := c.(*cache.RecurrentCache); ok {
+	var recurrent cache.Recurrent
+	if value, ok := c.(cache.Recurrent); ok {
 		recurrent = value
 		options = append(options, nn.WithRecurrentHistory(recurrent.Get(b, x.DType())))
 		if splits := recurrent.SnapshotSplits(int(L)); len(splits) > 0 {
@@ -63,7 +61,7 @@ func (a *linearAttention) Forward(x *mlx.Array, b *batch.Batch, c cache.Cache, c
 	return out
 }
 
-func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cache, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
+func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Layer, positions, ropePositions *mlx.Array, cfg *Config) *mlx.Array {
 	dims := x.Dims()
 	B, L := int32(dims[0]), int32(dims[1])
 
@@ -111,23 +109,11 @@ func (a *fullAttention) Forward(x *mlx.Array, b *batch.Batch, c, side cache.Cach
 	}
 
 	var out *mlx.Array
-	keyLength := L
-	for _, offset := range b.SeqOffsets {
-		keyLength = max(keyLength, offset+L)
-	}
 	if mainHistory == nil {
 		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
 			nn.WithKV(k, v, b.SeqQueryLens), nn.WithMask(nn.CausalMask()))
-	} else if keyLength <= cfg.IndexerBudget {
-		// QSA selects the entire visible history within the indexer budget.
-		out = nn.ScaledDotProductAttention(b, q, cfg.Scale,
-			nn.WithKVHistory(mainHistory), nn.WithMask(nn.CausalMask()))
 	} else {
-		compressed := qsaCompressedKeys(indexHistory.K(), indexHistory.V(), a.Indexer, cfg)
-		scores := mlx.Matmul(indexQ.AsType(mlx.DTypeFloat32), mlx.Transpose(compressed.AsType(mlx.DTypeFloat32), 0, 1, 3, 2))
-		scores = mlx.DivScalar(mlx.Sum(mlx.ReLU(scores), 1, false), float32(math.Sqrt(float64(cfg.IndexerHeadDim))))
-		logical, valid := qsaLogicalIndices(scores, b, keyLength, cfg)
-		out = qsaSparseAttention(q, mainHistory, logical, valid, cfg)
+		out = a.attend(b, q, indexQ, mainHistory, indexHistory, cfg)
 	}
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	out = mlx.Mul(out, mlx.Sigmoid(gate))

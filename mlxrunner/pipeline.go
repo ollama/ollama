@@ -87,7 +87,7 @@ func (r *Runner) Prepare(request *Request) (err error) {
 	return nil
 }
 
-// The runner serializes requests today so we just use a fixed slot ID.
+// The serial pipeline uses one stable sampling slot.
 const pipelineSlot = 0
 
 // skipCleanupOnPanic keeps a backend failure from being replaced by cleanup
@@ -144,101 +144,98 @@ func (r *Runner) generate(ctx context.Context, request Request) error {
 	if spec != nil {
 		d = spec.decoder(seed, position, grammar)
 	} else {
-		d = r.pipelinedDecoder(nil, caches, seed.ExpandDims(-1), position, media.rowLayout(), grammar)
+		d = r.pipelinedDecoder(pipelineSlot, nil, caches, seed.ExpandDims(-1), position, media.rowLayout(), grammar)
 	}
 	defer skipCleanupOnPanic(d.close)
 	return r.decode(ctx, request, session, d, promptEval)
 }
 
-// prefill evaluates the prompt in chunks, leaving one token for decode to
-// seed from, and schedules the prompt's periodic snapshots. It returns the
-// seed token, the resume position, and the prompt-evaluation duration.
-func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, media *requestMedia) (*mlx.Array, int, time.Duration, error) {
-	start := time.Now()
-	inputs := session.inputs
-	tokens := session.remaining
-	caches := session.caches
-	prefillChunk := prefillChunkSize()
+// prefillCursor advances one prompt chunk at a time so decoding can run between
+// chunks. Both the serial pipeline and the batch scheduler use this path.
+type prefillCursor struct {
+	r                   *Runner
+	session             *cacheSession
+	spec                *speculationSession
+	media               *requestMedia
+	processed, position int
+	started             time.Time
+}
 
-	// Request periodic snapshots during prefill and near the end of the
-	// prompt so that long prompts can be partially restored and
-	// thinking/generation can be retried without full reprocessing.
-	var snapshotOffsets []int
-	for offset := prefillSnapshotInterval; offset < len(inputs); offset += prefillSnapshotInterval {
-		snapshotOffsets = append(snapshotOffsets, offset)
+func (r *Runner) newPrefill(session *cacheSession, spec *speculationSession, media *requestMedia) *prefillCursor {
+	p := &prefillCursor{
+		r: r, session: session, spec: spec, media: media,
+		position: len(session.inputs) - len(session.remaining), started: time.Now(),
 	}
-
+	var offsets []int
+	for offset := prefillSnapshotInterval; offset < len(session.inputs); offset += prefillSnapshotInterval {
+		offsets = append(offsets, offset)
+	}
 	const preThinking = 4
-	if end := len(inputs) - preThinking; end > 0 {
-		snapshotOffsets = append(snapshotOffsets, end)
+	if end := len(session.inputs) - preThinking; end > 0 {
+		offsets = append(offsets, end)
 	}
+	session.schedulePrefillSnapshots(offsets)
+	media.free(p.position)
+	return p
+}
 
-	cacheState := func() []*mlx.Array {
-		state := make([]*mlx.Array, 0, 2*len(caches))
-		for _, c := range caches {
-			if c == nil {
-				continue
+func (p *prefillCursor) step(ctx context.Context) (bool, error) {
+	tokens := p.session.remaining
+	if err := ctx.Err(); err != nil {
+		p.spec.settle(mlx.FromValues(tokens[p.processed:p.processed+1], 1))
+		return false, err
+	}
+	if len(tokens)-p.processed <= 1 {
+		return true, nil
+	}
+	n := p.media.extendChunk(p.position, min(prefillChunkSize(), len(tokens)-p.processed-1))
+	mlx.Scoped(func() {
+		ids := mlx.FromValues(tokens[p.processed:p.processed+n], 1, n)
+		media := p.media.batchMedia(p.position, n)
+		aux := mlx.ScopedArrays(func() []*mlx.Array {
+			_, aux := p.r.Model.Forward(&batch.Batch{
+				InputIDs:   ids,
+				SeqOffsets: []int32{int32(p.position)}, SeqQueryLens: []int32{int32(n)},
+				Media: media, Layout: p.media.rowLayout(),
+			}, cache.Layers(p.session.caches))
+			return []*mlx.Array{aux}
+		})[0]
+		var state []*mlx.Array
+		for _, c := range p.session.caches {
+			if c != nil {
+				state = append(state, c.State()...)
 			}
-			state = append(state, c.State()...)
 		}
-		return state
-	}
+		mlx.Eval(state...)
+		p.spec.committed(ids, aux, p.position, media)
+		p.media.free(p.position + n)
+	})
+	p.processed += n
+	p.position += n
+	slog.Info("Prompt processing progress", "processed", p.processed, "total", len(tokens))
+	logutil.TraceContext(ctx, "mlx prompt forward", "processed", p.processed, "total", len(tokens), "tokens", n, "memory", mlx.Memory{})
+	mlx.ClearCache()
+	return len(tokens)-p.processed <= 1, nil
+}
 
-	session.schedulePrefillSnapshots(snapshotOffsets)
+func (p *prefillCursor) seed() *mlx.Array {
+	seed := mlx.FromValues(p.session.remaining[p.processed:], 1)
+	p.spec.settle(seed)
+	p.session.attachPrefillSnapshots()
+	return seed
+}
 
-	total, processed := len(tokens), 0
-	position := len(inputs) - len(tokens)
-	// Free restored items' buffers now: on a full cache hit the loop never runs.
-	media.free(position)
-	for total-processed > 1 {
-		if err := ctx.Err(); err != nil {
-			// Settle the drafter with the next prompt token so the caches
-			// rest level with the recorded keys and a retry resumes exactly
-			// where this prefill stopped.
-			spec.settle(mlx.FromValues(tokens[processed:processed+1], 1))
+func (r *Runner) prefill(ctx context.Context, session *cacheSession, spec *speculationSession, media *requestMedia) (*mlx.Array, int, time.Duration, error) {
+	p := r.newPrefill(session, spec, media)
+	for {
+		done, err := p.step(ctx)
+		if err != nil {
 			return nil, 0, 0, err
 		}
-
-		n := min(prefillChunk, total-processed-1)
-		n = media.extendChunk(position, n)
-
-		mlx.Scoped(func() {
-			chunkIDs := mlx.FromValues(tokens[processed:processed+n], 1, n)
-			chunkMedia := media.batchMedia(position, n)
-			auxHidden := mlx.ScopedArrays(func() []*mlx.Array {
-				_, auxHidden := r.Model.Forward(&batch.Batch{
-					InputIDs:     chunkIDs,
-					SeqOffsets:   []int32{int32(position)},
-					SeqQueryLens: []int32{int32(n)},
-					Media:        chunkMedia,
-					Layout:       media.rowLayout(),
-				}, caches)
-				return []*mlx.Array{auxHidden}
-			})[0]
-			mlx.Eval(cacheState()...)
-			// Report to the drafter only after the chunk's eval: a draft
-			// flush evaluates.
-			spec.committed(chunkIDs, auxHidden, position, chunkMedia)
-			// Freed after committed so the drafter can capture rows its
-			// deferred flush still embeds.
-			media.free(position + n)
-		})
-		processed += n
-		position += n
-		slog.Info("Prompt processing progress", "processed", processed, "total", total)
-		logutil.TraceContext(ctx, "mlx prompt forward", "processed", processed, "total", total, "tokens", n, "memory", mlx.Memory{})
-
-		mlx.ClearCache()
+		if done {
+			return p.seed(), p.position, time.Since(p.started), nil
+		}
 	}
-
-	// Settle before attaching: snapshots attach only at offsets every cache
-	// has crossed, and the draft caches stay a pair short of the target
-	// until the seed completes the frontier pair.
-	seed := mlx.FromValues(tokens[processed:], 1)
-	spec.settle(seed)
-	session.attachPrefillSnapshots()
-
-	return seed, position, time.Since(start), nil
 }
 
 // A decoder produces each run of tokens to emit, owning its own dispatch and
@@ -269,101 +266,101 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 		}
 	})
 
-	detok := detokenizer{
-		tokenizer:       r.Tokenizer,
-		wantLogprobs:    request.SamplerOpts.Logprobs,
-		wantTopLogprobs: request.SamplerOpts.TopLogprobs,
-	}
-
-	cachedPromptCount := len(session.inputs) - len(session.remaining)
-	final := CompletionResponse{
-		Done:                  true,
-		DoneReason:            1,
-		PromptEvalCount:       len(request.Tokens),
-		PromptEvalCachedCount: &cachedPromptCount,
-	}
-	final.PromptEvalDuration = promptEval
-	now := time.Now()
-
-	// Release MLX's cached free buffers every clearCacheInterval tokens so the
-	// allocator's pool does not grow unbounded over a long generation. A
-	// speculative round emits several tokens at once, so the clear fires on
-	// crossing a multiple of the interval, not on landing exactly on one.
-	const clearCacheInterval = 256
-
-	generated := 0
-	for generated < request.Options.NumPredict {
+	output := newGenerationOutput(r, request, session, promptEval)
+	for output.generated < request.Options.NumPredict {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-
 		var done bool
 		var err error
-		before := generated
+		before := output.generated
 		mlx.Scoped(func() {
 			var results []sampler.Result
-			results, err = d.next(request.Options.NumPredict - generated)
+			results, err = d.next(request.Options.NumPredict - output.generated)
 			if err != nil {
 				return
 			}
-
-			// Record the whole run before streaming any of it: a cancelled
-			// stream returns early and must not leave the caches ahead of
-			// session.outputs.
-			stream := len(results)
-			for i, res := range results {
-				id := res.Token.Int()
-				session.outputs = append(session.outputs, id)
-				if done {
-					continue
-				}
-				if r.Tokenizer.IsEOS(id) {
-					final.DoneReason = 0
-					done = true
-					stream = i
-					continue
-				}
-				generated++
-				if generated >= request.Options.NumPredict {
-					done = true
-					stream = i + 1
-				}
-			}
-
-			for _, res := range results[:stream] {
-				resp, ok := detok.detokenize(res)
-				if !ok {
-					continue
-				}
+			var responses []CompletionResponse
+			responses, done = output.consume(results)
+			for _, response := range responses {
 				select {
 				case <-ctx.Done():
 					err = ctx.Err()
 					return
-				case request.Responses <- resp:
+				case request.Responses <- response:
 				}
 			}
 		})
 		if err != nil {
 			return err
 		}
-
 		if done {
 			break
 		}
-
-		if generated/clearCacheInterval != before/clearCacheInterval {
+		if output.generated/256 != before/256 {
 			mlx.ClearCache()
 		}
 	}
-
-	final.EvalCount = generated
-	final.EvalDuration = time.Since(now)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case request.Responses <- final:
+	case request.Responses <- output.finish():
 		return nil
 	}
+}
+
+type generationOutput struct {
+	r                *Runner
+	session          *cacheSession
+	detok            detokenizer
+	limit, generated int
+	started          time.Time
+	final            CompletionResponse
+}
+
+func newGenerationOutput(r *Runner, request Request, session *cacheSession, promptEval time.Duration) *generationOutput {
+	cached := len(session.inputs) - len(session.remaining)
+	return &generationOutput{
+		r: r, session: session, limit: request.Options.NumPredict, started: time.Now(),
+		detok: detokenizer{tokenizer: r.Tokenizer, wantLogprobs: request.SamplerOpts.Logprobs, wantTopLogprobs: request.SamplerOpts.TopLogprobs},
+		final: CompletionResponse{Done: true, DoneReason: 1, PromptEvalCount: len(request.Tokens), PromptEvalCachedCount: &cached, PromptEvalDuration: promptEval},
+	}
+}
+
+func (o *generationOutput) consume(results []sampler.Result) ([]CompletionResponse, bool) {
+	done, stream := false, len(results)
+	// Record all produced tokens before emission, including speculative overshoot.
+	for i, res := range results {
+		id := res.Token.Int()
+		o.session.outputs = append(o.session.outputs, id)
+		if done {
+			continue
+		}
+		if o.r.Tokenizer.IsEOS(id) {
+			o.final.DoneReason = 0
+			done = true
+			stream = i
+			continue
+		}
+		o.generated++
+		if o.generated >= o.limit {
+			done = true
+			stream = i + 1
+		}
+	}
+	var responses []CompletionResponse
+	for _, res := range results[:stream] {
+		if response, ok := o.detok.detokenize(res); ok {
+			responses = append(responses, response)
+		}
+	}
+	return responses, done
+}
+
+func (o *generationOutput) finish() CompletionResponse {
+	o.final.EvalCount = o.generated
+	o.final.EvalDuration = time.Since(o.started)
+	return o.final
 }
 
 // pipelinedDecoder decodes one token per row per call, one call ahead of
@@ -374,7 +371,8 @@ func (r *Runner) decode(ctx context.Context, request Request, session *cacheSess
 // depends on the returned token's value, so only the forward runs ahead
 // and the host's grammar work overlaps it.
 type pipelinedDecoder struct {
-	r *Runner
+	r      *Runner
+	slotID int
 	// spec, when non-nil, receives every forwarded token and settles its
 	// drafter at close, keeping a non-drafting session's draft KV level.
 	spec     *speculationSession
@@ -389,25 +387,31 @@ type pipelinedDecoder struct {
 	err error
 }
 
-func (r *Runner) pipelinedDecoder(spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any, g *grammar) *pipelinedDecoder {
+func (r *Runner) pipelinedDecoder(slotID int, spec *speculationSession, caches []cache.Cache, seed *mlx.Array, position int, layout []any, g *grammar) *pipelinedDecoder {
 	t := &pipelinedDecoder{
-		r: r, spec: spec, caches: caches, layout: layout, position: position,
+		r: r, slotID: slotID, spec: spec, caches: caches, layout: layout, position: position,
 		grammars: []*grammar{g}, scope: mlx.NewScope(),
 	}
-	logits := t.forward(seed)
-
-	if r.grammarEngine.hasGrammar(t.grammars) {
-		// Dispatch the forward before the host builds the first masks. The
-		// first sample commits nothing, so there is nothing to accept. A mask
-		// fault here is a step fault like any other: the seed is already
-		// forwarded, so the error waits for the first call.
-		mlx.AsyncEval(logits)
-		var errs []error
-		logits, errs = r.grammarEngine.mask(t.grammars, logits, nil)
-		t.err = t.failRows(errs)
-	}
+	logits := t.constrain(t.forward(seed), nil)
 	t.pending = t.sample(logits)
 	return t
+}
+
+// constrain overlaps the forward with host grammar work. A failure belongs to
+// the next sample: the previous token has already been forwarded and is still
+// returned to the caller.
+func (t *pipelinedDecoder) constrain(logits, previous *mlx.Array) *mlx.Array {
+	if !t.r.grammarEngine.hasGrammar(t.grammars) {
+		return logits
+	}
+	mlx.AsyncEval(logits)
+	var err error
+	if previous != nil {
+		err = t.failRows(t.r.grammarEngine.accept(t.grammars, previous.Ints()))
+	}
+	logits, errs := t.r.grammarEngine.mask(t.grammars, logits, nil)
+	t.err = errors.Join(err, t.failRows(errs))
+	return logits
 }
 
 // failRows clears the grammars of rows whose grammar work faulted — a dead
@@ -426,18 +430,7 @@ func (t *pipelinedDecoder) next(int) ([]sampler.Result, error) {
 		return nil, t.err
 	}
 	out := t.pending
-	logits := t.forward(out.Token.ExpandDims(-1))
-
-	if t.r.grammarEngine.hasGrammar(t.grammars) {
-		// Dispatch the forward before the host's grammar work.
-		mlx.AsyncEval(logits)
-
-		err := t.failRows(t.r.grammarEngine.accept(t.grammars, out.Token.Ints()))
-
-		var errs []error
-		logits, errs = t.r.grammarEngine.mask(t.grammars, logits, nil)
-		t.err = errors.Join(err, t.failRows(errs))
-	}
+	logits := t.constrain(t.forward(out.Token.ExpandDims(-1)), out.Token)
 
 	t.pending = t.sample(logits)
 
@@ -454,7 +447,7 @@ func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
 			SeqOffsets:   []int32{int32(t.position)},
 			SeqQueryLens: []int32{int32(token.Dim(1))},
 			Layout:       t.layout,
-		}, t.caches)
+		}, cache.Layers(t.caches))
 		t.spec.committed(token, auxHidden, t.position, nil)
 		t.position += token.Dim(1)
 		logits := t.r.Model.Unembed(hidden)
@@ -466,7 +459,7 @@ func (t *pipelinedDecoder) forward(token *mlx.Array) *mlx.Array {
 // unconstrained step it fuses onto the forward's chain, so the whole step
 // is in flight before the previous tokens are synchronized.
 func (t *pipelinedDecoder) sample(logits *mlx.Array) sampler.Result {
-	next := t.r.Sampler.Sample([]int{pipelineSlot}, logits.Squeeze(1))
+	next := t.r.Sampler.Sample([]int{t.slotID}, logits.Squeeze(1))
 	mlx.AsyncEval(next.Arrays()...)
 	t.scope.Attach(next.Arrays()...)
 	return next
