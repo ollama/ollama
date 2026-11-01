@@ -46,12 +46,11 @@ func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		sb.WriteString("<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call>")
 	}
 
-	enableThinking := false
-	thinkingExplicitlySet := false
-	if thinkValue != nil {
-		enableThinking = thinkValue.Bool()
-		thinkingExplicitlySet = true
-	}
+	// thinkValue is accepted for renderer interface parity. Do not inject
+	// /nothink or an empty generation <think></think> when thinking is off —
+	// ResolveThinking fills Default:false on omission, and those markers
+	// derail glm-ocr table recognition (#18810).
+	_ = thinkValue
 
 	imageOffset := 0
 	for i, message := range messages {
@@ -61,9 +60,6 @@ func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 			content, nextOffset := r.renderContent(message, imageOffset)
 			imageOffset = nextOffset
 			sb.WriteString(content)
-			if thinkingExplicitlySet && !enableThinking && !strings.HasSuffix(message.Content, "/nothink") {
-				sb.WriteString("/nothink")
-			}
 		case "assistant":
 			sb.WriteString("<|assistant|>\n")
 			if message.Thinking != "" {
@@ -99,9 +95,6 @@ func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	}
 
 	sb.WriteString("<|assistant|>\n")
-	if thinkingExplicitlySet && !enableThinking {
-		sb.WriteString("<think></think>\n")
-	}
 
 	return sb.String(), nil
 }
