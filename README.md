@@ -269,6 +269,7 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
+- [AgenticOS](https://github.com/vstorm-co/agenticos) - Self-hosted platform to build, share and govern AI agents ([docs](https://vstorm-co.github.io/agenticos/models/))
 
 ### RAG & Knowledge Bases
 
