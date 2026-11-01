@@ -1286,6 +1286,9 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	case float64:
 		if t < 0 {
 			d.Duration = time.Duration(math.MaxInt64)
+		} else if t*float64(time.Second) >= float64(math.MaxInt64) {
+			// clamp instead of overflowing into a negative duration
+			d.Duration = time.Duration(math.MaxInt64)
 		} else {
 			d.Duration = time.Duration(t * float64(time.Second))
 		}
