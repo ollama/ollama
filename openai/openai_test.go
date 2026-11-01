@@ -727,6 +727,48 @@ func TestToListCompletionUsesModelIdentity(t *testing.T) {
 	}
 }
 
+func TestToListCompletionEmptyModelsReturnsEmptyArray(t *testing.T) {
+	result, err := json.Marshal(ToListCompletion(api.ListResponse{}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var response struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if string(response.Data) != "[]" {
+		t.Fatalf("data = %s, want []", response.Data)
+	}
+}
+
+func TestToEmbeddingListEmptyEmbeddingsReturnsEmptyArray(t *testing.T) {
+	result, err := json.Marshal(ToEmbeddingList("test-model", api.EmbedResponse{}, ""))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var response struct {
+		Object string          `json:"object"`
+		Data   json.RawMessage `json:"data"`
+		Model  string          `json:"model"`
+	}
+	if err := json.Unmarshal(result, &response); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if response.Object != "list" {
+		t.Errorf("object = %q, want %q", response.Object, "list")
+	}
+	if string(response.Data) != "[]" {
+		t.Errorf("data = %s, want []", response.Data)
+	}
+	if response.Model != "test-model" {
+		t.Errorf("model = %q, want %q", response.Model, "test-model")
+	}
+}
+
 func TestToChatCompletion_WithLogprobs(t *testing.T) {
 	createdAt := time.Unix(1234567890, 0)
 	resp := api.ChatResponse{
