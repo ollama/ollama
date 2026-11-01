@@ -619,7 +619,7 @@ func ThinkingFromReasoningEffort(effort string, thinking ...*model.Thinking) (*a
 // An optional thinking descriptor preserves model-defined effort names for rendering.
 func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api.ChatRequest, error) {
 	var messages []api.Message
-	for _, msg := range r.Messages {
+	for _, msg := range orderedToolResults(r.Messages) {
 		toolName := ""
 		if strings.ToLower(msg.Role) == "tool" {
 			toolName = msg.Name
@@ -811,6 +811,59 @@ func FromChatRequest(r ChatCompletionRequest, thinking ...*model.Thinking) (*api
 		DebugRenderOnly: r.DebugRenderOnly,
 		KeepAlive:       r.KeepAlive,
 	}, nil
+}
+
+// orderedToolResults aligns complete groups of tool results with their calls
+// for templates that associate them by position. Do this before conversion,
+// which can expand a message's content parts into several api.Messages.
+// Leave incomplete or ambiguous groups unchanged, and never mutate the input.
+func orderedToolResults(messages []Message) []Message {
+	var ordered []Message
+	for i := 0; i < len(messages); i++ {
+		calls := messages[i].ToolCalls
+		if messages[i].Role != "assistant" || len(calls) < 2 {
+			continue
+		}
+		start := i + 1
+		end := start
+		for end < len(messages) && messages[end].Role == "tool" {
+			end++
+		}
+		i = end - 1
+		if end-start != len(calls) {
+			continue
+		}
+		positions := make(map[string]int, len(calls))
+		for j, call := range calls {
+			if call.ID == "" {
+				break
+			}
+			positions[call.ID] = j
+		}
+		if len(positions) != len(calls) {
+			continue
+		}
+		results := make([]Message, len(calls))
+		for _, result := range messages[start:end] {
+			position, ok := positions[result.ToolCallID]
+			if !ok {
+				break
+			}
+			results[position] = result
+			delete(positions, result.ToolCallID)
+		}
+		if len(positions) != 0 {
+			continue
+		}
+		if ordered == nil {
+			ordered = append([]Message(nil), messages...)
+		}
+		copy(ordered[start:end], results)
+	}
+	if ordered != nil {
+		return ordered
+	}
+	return messages
 }
 
 func nameFromToolCallID(messages []Message, toolCallID string) string {
