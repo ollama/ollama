@@ -97,6 +97,21 @@ func testArgs(m map[string]any) api.ToolCallFunctionArguments {
 	return args
 }
 
+func toolCallsEqual(a, b []api.ToolCall) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Function.Name != b[i].Function.Name {
+			return false
+		}
+		if !toolCallEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 func args(s string) api.ToolCallFunctionArguments {
 	var result api.ToolCallFunctionArguments
 	if err := json.Unmarshal([]byte(s), &result); err != nil {
