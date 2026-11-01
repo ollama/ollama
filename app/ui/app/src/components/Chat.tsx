@@ -1,4 +1,5 @@
 import MessageList from "./MessageList";
+import { stopReadAloudPlayback } from "./ReadAloudButton";
 import ChatForm from "./ChatForm";
 import { FileUpload } from "./FileUpload";
 import { DisplayStale } from "./DisplayStale";
@@ -26,6 +27,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import { useStreamingContext } from "@/contexts/StreamingContext";
+import { useSettings } from "@/hooks/useSettings";
 import { Message } from "@/gotypes";
 
 export default function Chat({ chatId }: { chatId: string }) {
@@ -87,6 +90,11 @@ export default function Chat({ chatId }: { chatId: string }) {
 
   const messages = allMessages;
   const isStreaming = useIsStreaming(chatId);
+  const { completedChatId, setCompletedChatId } = useStreamingContext();
+  const { settings } = useSettings();
+  const onStreamingCompletionConsumed = useCallback(() => {
+    setCompletedChatId((current) => (current === chatId ? null : current));
+  }, [chatId, setCompletedChatId]);
   const isWaitingForLoad = useIsWaitingForLoad(chatId);
   const downloadProgress = useDownloadProgress(chatId);
   const isDownloadingModel = downloadProgress && !downloadProgress.done;
@@ -95,6 +103,12 @@ export default function Chat({ chatId }: { chatId: string }) {
   // Clear editing state when navigating to a different chat
   useEffect(() => {
     setEditingMessage(null);
+  }, [chatId]);
+
+  useEffect(() => {
+    return () => {
+      stopReadAloudPlayback();
+    };
   }, [chatId]);
 
   const sendMessageMutation = useSendMessage(chatId);
@@ -222,10 +236,14 @@ export default function Chat({ chatId }: { chatId: string }) {
             className={`flex-1 overflow-y-auto overscroll-contain relative min-h-0 select-none ${isWindows ? "xl:pt-4" : "xl:pt-8"}`}
           >
             <MessageList
+              chatId={chatId}
               messages={messages}
               spacerHeight={spacerHeight}
               isWaitingForLoad={isWaitingForLoad}
               isStreaming={isStreaming}
+              didCompleteStreaming={completedChatId === chatId}
+              autoReadEnabled={settings.speechAutoRead}
+              onCompletionConsumed={onStreamingCompletionConsumed}
               downloadProgress={downloadProgress}
               onEditMessage={(content: string, index: number) => {
                 handleEditMessage(content, index);
