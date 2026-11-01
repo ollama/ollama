@@ -849,6 +849,24 @@ func TestParserToolNamesInArguments(t *testing.T) {
 			input: `<tool_call>{"arguments":{"content":"search"},"name":"unregistered"}</tool_call>`,
 		},
 		{
+			name:  "unregistered name before valid call",
+			input: `<tool_call>{"name":"unregistered","arguments":{"a":1}}</tool_call><tool_call>{"name":"search","arguments":{"query":"x"}}</tool_call>`,
+			want:  call("search", map[string]any{"query": "x"}),
+		},
+		{
+			name:  "multiple unregistered names before valid call",
+			input: `<tool_call>[{"name":"unregistered","arguments":{"name":"search"}},{"function":{"name":"unknown","arguments":{"content":"write_file"}}},{"name":"search","arguments":{"query":"x"}}]</tool_call>`,
+			want:  call("search", map[string]any{"query": "x"}),
+		},
+		{
+			name:  "unregistered name between valid calls",
+			input: `<tool_call>[{"name":"search","arguments":{"query":"x"}},{"name":"unregistered","arguments":{"content":"search"}},{"name":"write_file","arguments":{"content":"ok"}}]</tool_call>`,
+			want: []api.ToolCall{
+				{Function: api.ToolCallFunction{Name: "search", Arguments: testArgs(map[string]any{"query": "x"})}},
+				{Function: api.ToolCallFunction{Index: 1, Name: "write_file", Arguments: testArgs(map[string]any{"content": "ok"})}},
+			},
+		},
+		{
 			name:  "external name before JSON arguments",
 			input: `<tool_call>write_file({"content":"search"})</tool_call>`,
 			want:  call("write_file", map[string]any{"content": "search"}),
@@ -901,6 +919,28 @@ func TestParserToolNamesInArguments(t *testing.T) {
 				}
 				check(t, chunks)
 			})
+		})
+	}
+}
+
+func TestParserUnregisteredJSONAsContent(t *testing.T) {
+	tools := []api.Tool{{Type: "function", Function: api.ToolFunction{Name: "search"}}}
+	object := `{"name":"unregistered","arguments":{"query":"search"}}`
+	for _, input := range []string{object, "[" + object + "]"} {
+		t.Run(input[:1], func(t *testing.T) {
+			parser := NewParserWithTag(tools, input[:1])
+			var content strings.Builder
+			for i := range len(input) {
+				calls, text := parser.Add(input[i : i+1])
+				if len(calls) != 0 {
+					t.Fatalf("unexpected tool calls: %v", calls)
+				}
+				content.WriteString(text)
+			}
+			content.WriteString(parser.Content())
+			if got := content.String(); got != input {
+				t.Errorf("content = %q, want %q", got, input)
+			}
 		})
 	}
 }

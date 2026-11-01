@@ -126,13 +126,24 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	tool, end := findTool(p.tools, p.buffer)
-	if tool == nil {
-		return nil
+	buffer := p.buffer
+	var tool *api.Tool
+	var end int
+	for {
+		tool, end = findTool(p.tools, buffer)
+		if tool != nil {
+			break
+		}
+		if end == 0 {
+			return nil
+		}
+		// Skip the complete unregistered call. Retain p.buffer until a
+		// valid call is found so non-tool JSON can still be returned as content.
+		buffer = buffer[end+1:]
 	}
 
 	var argsMap map[string]any
-	if found, i := findArguments(tool, p.buffer); found == nil {
+	if found, i := findArguments(tool, buffer); found == nil {
 		return nil
 	} else {
 		argsMap = found
@@ -155,7 +166,7 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	}
 
 	p.n++
-	p.buffer = p.buffer[end:]
+	p.buffer = buffer[end:]
 	return tc
 }
 
