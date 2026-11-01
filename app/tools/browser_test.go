@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/app/ui/responses"
 )
@@ -164,5 +165,22 @@ func TestDisplayPage_FormatHeaderAndLines(t *testing.T) {
 	}
 	if !strings.Contains(out, "L1: URL: https://example.com/x\n") || !strings.Contains(out, "L2: A\n") {
 		t.Fatalf("missing expected line numbers/content: %q", out)
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	// Shorter than the limit is returned unchanged.
+	if got := truncateUTF8("hello", 400); got != "hello" {
+		t.Fatalf("got %q, want %q", got, "hello")
+	}
+	// A byte limit landing inside a multi-byte rune must back up to a rune
+	// boundary and keep the result valid UTF-8.
+	s := strings.Repeat("世界", 200) // 1200 bytes; 400 is not a rune boundary
+	got := truncateUTF8(s, 400)
+	if len(got) > 400 {
+		t.Fatalf("len=%d, want <= 400", len(got))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("result not valid UTF-8: %q", got)
 	}
 }
