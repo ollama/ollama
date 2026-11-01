@@ -93,8 +93,16 @@ func WriteWithBackup(path string, data []byte, integration ...string) error {
 		return fmt.Errorf("read existing file: %w", err)
 	}
 
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	linkPath := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil && path != linkPath {
+		path = linkPath
+		tmp, err = os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	}
 	if err != nil {
 		return fmt.Errorf("create temp failed: %w", err)
 	}
