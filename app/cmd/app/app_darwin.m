@@ -434,9 +434,11 @@ static NSImage *ollamaApplicationIcon(void) {
 }
 
 - (void)application:(NSApplication *)application openURLs:(NSArray<NSURL *> *)urls {
+    appLogInfo(@"application:openURLs called");
     for (NSURL *url in urls) {
         if ([url.scheme isEqualToString:@"ollama"]) {
             NSString *path = url.path;
+            appLogInfo([NSString stringWithFormat:@"ollama URL scheme triggered: %@", url]);
 
             if (path && ([path isEqualToString:@"/connect"] || [url.host isEqualToString:@"connect"])) {
                 // Special case: handle connect by opening browser instead of app
@@ -444,7 +446,10 @@ static NSImage *ollamaApplicationIcon(void) {
             } else if (path && ([path isEqualToString:@"/apps"] || [url.host isEqualToString:@"apps"])) {
                 [self appsUI];
             } else {
-                [self openUI];
+                // Set app to be active and visible
+                [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+                [NSApp activateIgnoringOtherApps:YES];
+                ShowUI();
             }
 
             break;
@@ -1613,38 +1618,42 @@ didCompleteWithError:(NSError *)error {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 - (void)registerSelfAsLoginItem:(BOOL)firstTimeRun {
-    appLogInfo(@"using v13+ SMAppService for login registration");
-    // Maps to the file Ollama.app/Contents/Library/LaunchAgents/com.ollama.ollama.plist
-    SMAppService* service = [SMAppService agentServiceWithPlistName:@"com.ollama.ollama.plist"];
-    if (!service) {
-        appLogInfo(@"SMAppService failed to find service for com.ollama.ollama.plist");
-        return;
-    }
-    SMAppServiceStatus status = [service status];
-    switch (status) {
-        case SMAppServiceStatusNotRegistered:
-            appLogInfo(@"service not registered, registering now");
-            break;
-        case SMAppServiceStatusEnabled:
-            appLogInfo(@"service is already enabled, no need to register again");
+    if (@available(macOS 13.0, *)) {
+        appLogInfo(@"using v13+ SMAppService for login registration");
+        // Maps to the file Ollama.app/Contents/Library/LaunchAgents/com.ollama.ollama.plist
+        SMAppService* service = [SMAppService agentServiceWithPlistName:@"com.ollama.ollama.plist"];
+        if (!service) {
+            appLogInfo(@"SMAppService failed to find service for com.ollama.ollama.plist");
             return;
-        case SMAppServiceStatusRequiresApproval: 
-            // User has disabled our login behavior explicitly so leave it as is
-            appLogInfo(@"service is currently disabled and will not start at login");
+        }
+        SMAppServiceStatus status = [service status];
+        switch (status) {
+            case SMAppServiceStatusNotRegistered:
+                appLogInfo(@"service not registered, registering now");
+                break;
+            case SMAppServiceStatusEnabled:
+                appLogInfo(@"service is already enabled, no need to register again");
+                return;
+            case SMAppServiceStatusRequiresApproval:
+                // User has disabled our login behavior explicitly so leave it as is
+                appLogInfo(@"service is currently disabled and will not start at login");
+                return;
+            case SMAppServiceStatusNotFound:
+                appLogInfo(@"service not found, registering now");
+                break;
+            default:
+                appLogInfo([NSString stringWithFormat:@"unexpected status: %ld", (long)status]);
+                break;
+        }
+        NSError *error = nil;
+        if (![service registerAndReturnError:&error]) {
+            appLogInfo([NSString stringWithFormat:@"Failed to register %@ as a login item: %@", NSBundle.mainBundle.bundleURL, error]);
             return;
-        case SMAppServiceStatusNotFound:
-            appLogInfo(@"service not found, registering now");
-            break;
-        default:
-            appLogInfo([NSString stringWithFormat:@"unexpected status: %ld", (long)status]);
-            break;
-    }
-    NSError *error = nil;
-    if (![service registerAndReturnError:&error]) {
-        appLogInfo([NSString stringWithFormat:@"Failed to register %@ as a login item: %@", NSBundle.mainBundle.bundleURL, error]);
+        }
         return;
+    } else {
+        appLogInfo(@"Automatic login registration requires macOS 13; leaving Monterey login items unchanged");
     }
-    return;
 }
 
 /// Remove ollama from the deprecated Login Items list as we now use LaunchAgents
@@ -2456,7 +2465,7 @@ void styleWindow(uintptr_t wndPtr) {
     w.titleVisibility = NSWindowTitleHidden;
     w.titlebarAppearsTransparent = YES;
     w.toolbarStyle = NSWindowToolbarStyleUnified;
-    w.movableByWindowBackground = NO;
+    w.movableByWindowBackground = YES;
     w.hasShadow = YES;
 
     NSView *cv = w.contentView;
